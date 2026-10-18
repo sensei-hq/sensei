@@ -18,7 +18,7 @@ create table if not exists sync_state (
 , local_version   bigint
 , remote_version  bigint
 , state           text           not null default 'pending'
-      check (state in ('pending', 'synced', 'error', 'skipped'))
+      check (state in ('pending', 'synced', 'partial', 'error', 'skipped'))
 , last_error      text
 , attempted_at    timestamptz
 , synced_at       timestamptz

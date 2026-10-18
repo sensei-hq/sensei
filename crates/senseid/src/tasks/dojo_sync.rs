@@ -514,6 +514,27 @@ const GRAPH_ENTITY: &str = "repository_graph";
 /// for the envelope (repo key, commit) and the last batch's manifest.
 const GRAPH_BATCH_BYTES: usize = 3 * 1024 * 1024;
 
+/// Where a checkout's graph push leaves its sync state (#225).
+#[derive(Debug, PartialEq, Eq)]
+enum GraphOutcome {
+    /// Every file's slice landed.
+    Synced,
+    /// Everything landed but the named files, each over the request cap alone;
+    /// the shared graph lacks exactly those.
+    Partial(String),
+}
+
+fn graph_outcome(oversize: &[String]) -> GraphOutcome {
+    if oversize.is_empty() {
+        return GraphOutcome::Synced;
+    }
+    GraphOutcome::Partial(format!(
+        "{} file(s) over the {GRAPH_BATCH_BYTES}-byte request cap, not shared: {}",
+        oversize.len(),
+        oversize.join(", ")
+    ))
+}
+
 /// Files read from the database per slice query, so one repository's changes are
 /// never held in memory all at once.
 const GRAPH_SLICE_CHUNK: usize = 200;
@@ -564,17 +585,12 @@ async fn push_graphs(
                 Ok(CheckoutPush::Sent { batches, oversize }) => {
                     sent += batches;
                     pushed_branches.insert(branch.clone());
-                    if oversize.is_empty() {
-                        pg.mark_synced(&mark, None).await?;
-                    } else {
-                        // Pushed, but not whole: the shared graph lacks these files.
-                        let why = format!(
-                            "{} file(s) over the {GRAPH_BATCH_BYTES}-byte request cap, not shared: {}",
-                            oversize.len(),
-                            oversize.join(", ")
-                        );
-                        tracing::warn!(persona, repo = %repo.repo_key, branch, %why, "dojo_sync: graph incomplete");
-                        pg.mark_sync_error(&mark, &why).await?;
+                    match graph_outcome(&oversize) {
+                        GraphOutcome::Synced => pg.mark_synced(&mark, None).await?,
+                        GraphOutcome::Partial(missing) => {
+                            tracing::warn!(persona, repo = %repo.repo_key, branch, %missing, "dojo_sync: graph incomplete");
+                            pg.mark_sync_partial(&mark, &missing).await?;
+                        }
                     }
                 }
                 Ok(CheckoutPush::Skipped(reason)) => pg.mark_sync_skipped(&mark, reason).await?,

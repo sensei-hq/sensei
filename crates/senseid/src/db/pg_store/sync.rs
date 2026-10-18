@@ -165,6 +165,35 @@ impl PgStore {
         Ok(())
     }
 
+    /// Record that a sync agreed except for a named part — a graph push that
+    /// landed every file but one over the request cap (#225).
+    ///
+    /// An agreement, so `synced_at` is set; `what_is_missing` rides in
+    /// `last_error` as the row's detail. Not `error`: that reads "failing · never
+    /// agreed" over a graph that is all but one file there.
+    pub async fn mark_sync_partial(
+        &self,
+        m: &SyncMark<'_>,
+        what_is_missing: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.sync_state \
+                 (entity, entity_key, direction, state, last_error, attempted_at, synced_at, updated_at) \
+             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, 'partial', $4, now(), now(), now()) \
+             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET \
+                 state = 'partial', last_error = EXCLUDED.last_error, \
+                 attempted_at = now(), synced_at = now(), updated_at = now()",
+        )
+        .bind(m.entity)
+        .bind(m.key)
+        .bind(m.direction)
+        .bind(what_is_missing)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("mark_sync_partial: {e}"))?;
+        Ok(())
+    }
+
     /// Record that an entity is deliberately not synced — a private repository, a
     /// deactivated metric.
     ///
@@ -235,8 +264,9 @@ impl PgStore {
               ORDER BY CASE state
                          WHEN 'error'   THEN 0
                          WHEN 'pending' THEN 1
-                         WHEN 'skipped' THEN 2
-                         ELSE                3
+                         WHEN 'partial' THEN 2
+                         WHEN 'skipped' THEN 3
+                         ELSE                4
                        END,
                        attempted_at DESC NULLS LAST,
                        entity::text, entity_key",

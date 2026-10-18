@@ -12561,12 +12561,17 @@ async fn a_partial_sync_agrees_and_names_what_is_missing() {
     };
 
     s.mark_sync_partial(&mark, "1 file(s) over the cap, not shared: big.rs").await.unwrap();
-    let (state, detail, synced_at): (String, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
-        query_as("SELECT state, last_error, synced_at FROM sensei.sync_state WHERE entity_key = $1")
-            .bind(&key)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
+    let (state, detail, synced_at): (
+        String,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = query_as(
+        "SELECT state, last_error, synced_at FROM sensei.sync_state WHERE entity_key = $1",
+    )
+    .bind(&key)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     // A whole push afterwards clears the detail, as any success does.
     s.mark_synced(&mark, None).await.unwrap();
     let (after,): (Option<String>,) =
@@ -12593,13 +12598,13 @@ async fn a_partial_sync_agrees_and_names_what_is_missing() {
 async fn sync_state_rows_rank_partial_between_pending_and_skipped() {
     let s = pg_store().await;
     let tag = uuid::Uuid::new_v4();
-    let keys: Vec<String> =
-        ["skip", "part", "pend"].iter().map(|k| format!("github.com/test/rank-{k}-{tag}")).collect();
-    let mark = |k: &'_ str| crate::db::pg_store::sync::SyncMark {
-        entity: "repository",
-        key: k,
-        direction: "push",
-    };
+    let keys: Vec<String> = ["skip", "part", "pend"]
+        .iter()
+        .map(|k| format!("github.com/test/rank-{k}-{tag}"))
+        .collect();
+    fn mark(k: &str) -> crate::db::pg_store::sync::SyncMark<'_> {
+        crate::db::pg_store::sync::SyncMark { entity: "repository", key: k, direction: "push" }
+    }
     s.mark_sync_skipped(&mark(&keys[0]), "private").await.unwrap();
     s.mark_sync_partial(&mark(&keys[1]), "part missing").await.unwrap();
     sqlx_core::query::query(

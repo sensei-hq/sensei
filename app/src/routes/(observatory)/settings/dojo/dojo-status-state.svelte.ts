@@ -27,7 +27,7 @@ import type { SyncStateRow } from '$lib/types.js';
 
 /** Semantic tone for a sync state. `ink` = a value we did not expect but still
  *  show — silently dropping a row is how a broken sync becomes invisible. */
-export type SyncTone = 'success' | 'danger' | 'info' | 'muted' | 'ink';
+export type SyncTone = 'success' | 'warn' | 'danger' | 'info' | 'muted' | 'ink';
 
 /**
  * Pure: sync state → tone.
@@ -39,6 +39,8 @@ export function syncTone(state: string): SyncTone {
   switch (state) {
     case 'synced':
       return 'success';
+    case 'partial':
+      return 'warn';
     case 'error':
       return 'danger';
     case 'pending':
@@ -74,6 +76,8 @@ export function agreementLine(row: SyncStateRow): string {
   if (row.state === 'error') {
     return agreed ? `failing · last agreed ${agreed}` : 'failing · never agreed';
   }
+  // A partial push IS an agreement — on everything but what the detail names.
+  if (row.state === 'partial') return agreed ? `partly agreed ${agreed}` : 'partly agreed';
   if (!agreed) return 'never agreed';
   return `agreed ${agreed}`;
 }
@@ -102,8 +106,9 @@ export function detailLine(row: SyncStateRow): string | null {
 const STATE_RANK: Record<string, number> = {
   error: 0,
   pending: 1,
-  skipped: 2,
-  synced: 3,
+  partial: 2,
+  skipped: 3,
+  synced: 4,
 };
 
 /**
@@ -138,6 +143,9 @@ export function summarise(counts: Record<string, number>): string {
 
   const pending = counts.pending ?? 0;
   if (pending > 0) return `${total} tracked · ${pending} pending`;
+
+  const partial = counts.partial ?? 0;
+  if (partial > 0) return `${total} tracked · ${partial} partial`;
 
   const skipped = counts.skipped ?? 0;
   if (skipped > 0) return `${total} tracked · ${skipped} skipped`;

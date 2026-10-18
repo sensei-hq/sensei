@@ -167,3 +167,30 @@ describe('detailLine', () => {
   });
 });
 
+describe('a partial sync (#225)', () => {
+  // A push that landed all but a named part: the sides agreed, and something
+  // is missing. Neither a fault nor a clean agreement — and never "never agreed".
+  const partial = row({ state: 'partial', last_error: '1 file(s) over the cap, not shared: big.rs' });
+
+  it('reads as a warning, not a fault and not a success', () => {
+    expect(syncTone('partial')).toBe('warn');
+  });
+
+  it('says it agreed, partly, and when', () => {
+    expect(agreementLine(partial)).toBe('partly agreed 2026-08-31');
+  });
+
+  it('shows what is missing as recorded', () => {
+    expect(detailLine(partial)).toBe('1 file(s) over the cap, not shared: big.rs');
+  });
+
+  it('ranks after pending and before a skip', () => {
+    expect(worstSyncState({ partial: 1, skipped: 1, synced: 1 })).toBe('partial');
+    expect(worstSyncState({ pending: 1, partial: 1 })).toBe('pending');
+  });
+
+  it('is counted in the summary by name', () => {
+    expect(summarise({ synced: 3, partial: 1 })).toBe('4 tracked · 1 partial');
+  });
+});
+
