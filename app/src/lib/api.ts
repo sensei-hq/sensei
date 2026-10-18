@@ -28,6 +28,7 @@ import type {
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
   TranscriptSourceConsent,
   TrackerConnection, TrackerSyncCounts,
+  SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -943,6 +944,22 @@ export function senseiApi(port: number) {
       tryJson<{ counts: TrackerSyncCounts }>('POST', `/api/projects/${enc(projectId)}/trackers/sync`),
     tryDisconnectTracker: (projectId: string) =>
       tryJson<void>('DELETE', `/api/projects/${enc(projectId)}/trackers`),
+    // Usage reads (spec R7/R8). Result-based: a failed read must never pass for
+    // "no tracker" or an empty sprint.
+    tryListSprints: (projectId: string) =>
+      tryJson<SprintUsageRow[]>('GET', `/api/projects/${enc(projectId)}/sprints`),
+    tryListTrackerTasks: (projectId: string, sprintId?: string) =>
+      tryJson<TrackerTaskRow[]>(
+        'GET',
+        `/api/projects/${enc(projectId)}/tracker-tasks${sprintId ? `?sprint=${enc(sprintId)}` : ''}`,
+      ),
+    tryGetTrackerTask: (projectId: string, key: string) =>
+      tryJson<TrackerTaskDetail>('GET', `/api/projects/${enc(projectId)}/tracker-tasks/${enc(key)}`),
+    tryListUnlinkedSessions: (projectId: string, sprintId: string) =>
+      tryJson<UnlinkedSession[]>(
+        'GET',
+        `/api/projects/${enc(projectId)}/sessions/unlinked?sprint=${enc(sprintId)}`,
+      ),
 
     /** What stops syncing if this root is removed. */
     tryGetRootRepositories: (id: string) =>

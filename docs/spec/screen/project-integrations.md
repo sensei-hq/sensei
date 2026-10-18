@@ -8,7 +8,7 @@ and the connected-state line of the Dōjō mockup's Integrations tab
 **App files:**
 - `app/src/routes/(project)/project/[id]/integrations/+page.svelte`
 - the sidebar entry `{ id: 'integrations', kanji: '繋', label: 'Integrations' }` in
-  `project-sidebar-view.ts` `SECTIONS`, after `impact` and before `about`
+  `project-sidebar-view.ts` `SECTIONS`, after `sprints` and before `about`
   (`isSectionActive` matches it by the `/integrations` route prefix)
 - `app/src/lib/api.ts` wrappers: `listTrackers`, `connectTracker`, `syncTracker`,
   `disconnectTracker`
@@ -127,8 +127,8 @@ failure, focus moves to the alert.
 - Requests carry the app's own Origin, which the daemon's tracker guard allows
   through the reused `ALLOWED_ORIGINS` (`tauri://localhost`, dev
   `http://localhost:5173` and `http://127.0.0.1:5173`).
-- The screen shows no ticket/sprint usage. Those reads are CLI-only in this slice; a
-  sprint/ticket screen is a follow-up.
+- The screen shows no ticket/sprint usage; that is the Sprints screen's
+  ([`project-sprints.md`](project-sprints.md)).
 
 ## Done gate
 

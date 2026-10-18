@@ -8,6 +8,9 @@
 // is never stored, logged, or read back.
 import type { ApiResult } from '$lib/api.js';
 import type { TrackerConnection, TrackerSyncCounts } from '$lib/types.js';
+import { errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
+
+export { CREATE_TOKEN_URL, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
 
 export interface TrackerApi {
   tryListTrackers: (projectId: string) => Promise<ApiResult<TrackerConnection[]>>;
@@ -20,85 +23,8 @@ export interface TrackerApi {
   tryDisconnectTracker: (projectId: string) => Promise<ApiResult<void>>;
 }
 
-/** A failure as the screen shows it. */
-export interface TrackerAlert {
-  code: string;
-  text: string;
-  /** The form field the failure concerns, for `aria-describedby`. */
-  field: 'board_url' | 'email' | 'token' | null;
-  link: { href: string; label: string } | null;
-}
-
-export const CREATE_TOKEN_URL = 'https://id.atlassian.com/manage-profile/security/api-tokens';
-
 /** Polling interval while a first sync is pending. */
 export const POLL_MS = 2000;
-
-const reach = (code: string) =>
-  `Couldn’t reach Jira (${code}). Check the site address and your connection.`;
-const keychain = 'The saved token can’t be read from the system keychain.';
-
-/** Fixed daemon codes → the screen's words (the spec's error table). */
-const WORDS: Record<string, string> = {
-  invalid_base_url:
-    'That isn’t a Jira Cloud board address. It should look like https://<your-site>.atlassian.net/…/boards/<number> (older sites: <your-site>.jira.com).',
-  unauthorized: 'Jira rejected the email and token.',
-  forbidden: 'This account can’t read that board.',
-  email_required: 'Enter your Atlassian account email and an API token.',
-  token_required: 'Enter your Atlassian account email and an API token.',
-  board_project_mismatch: 'That board belongs to a different Jira project than the one given.',
-  not_found: 'Jira no longer has this board (it may have been deleted).',
-  rate_limited: 'Jira is rate-limiting requests. Try again in a minute.',
-  transport: reach('transport'),
-  http_error: reach('http_error'),
-  redirect: reach('redirect'),
-  decode: reach('decode'),
-  token_missing: keychain,
-  credential_store: keychain,
-  forbidden_caller: 'The sensei daemon refused this window’s request.',
-  not_connected: 'This project has no tracker connected.',
-  project_not_found: 'This project no longer exists in sensei.',
-  internal: 'The sensei daemon hit a database error.',
-  db: 'sensei hit a database error while syncing.',
-  unsupported_tracker: 'This tracker type isn’t available in this version of sensei.',
-  busy: 'A sync is already running.',
-};
-
-const FIELD: Record<string, TrackerAlert['field']> = {
-  invalid_base_url: 'board_url',
-  board_not_found: 'board_url',
-  email_required: 'email',
-  token_required: 'token',
-  unauthorized: 'token',
-};
-
-/** The alert for a failed request: `status` 0 is the daemon not answering. */
-export function errorFor(status: number, body: Record<string, unknown> | undefined): TrackerAlert {
-  if (status === 0) {
-    return { code: 'unreachable', text: 'The sensei daemon didn’t respond.', field: null, link: null };
-  }
-  const code = typeof body?.error === 'string' ? body.error : `http_${status}`;
-  const field = FIELD[code] ?? null;
-  if (code === 'board_not_found') {
-    return {
-      code,
-      text: `No board #${String(body?.board_ref ?? '')} on ${String(body?.base_url ?? '')}.`,
-      field,
-      link: null,
-    };
-  }
-  if (code === 'board_already_connected') {
-    const project = (body?.project ?? {}) as { id?: string; name?: string };
-    return {
-      code,
-      text: `This board is already connected to project ${project.name ?? ''}.`,
-      field,
-      link: project.id ? { href: `/project/${project.id}/integrations`, label: project.name ?? project.id } : null,
-    };
-  }
-  const link = code === 'unauthorized' ? { href: CREATE_TOKEN_URL, label: 'create a new token' } : null;
-  return { code, text: WORDS[code] ?? `Unexpected error from sensei (${code}).`, field, link };
-}
 
 /** "just now", "2 min ago", "3 h ago", "2 days ago". */
 export function elapsedLabel(iso: string, now: Date): string {

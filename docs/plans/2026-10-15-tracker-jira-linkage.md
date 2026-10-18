@@ -94,6 +94,18 @@ CLI are the v1 contract.
   - Given a wrong token, When Connect, Then "Jira rejected the email and token…" and the token field is empty.
   - Given the daemon is stopped, When the screen loads, Then the error state is shown, not the connect form.
 
+### Feature 7: Desktop app — project Sprints screen
+
+- **Issue:** TBD
+- **Layers:** app (`project-sidebar-view.ts` section 期 Sprints; `sprints/+page.svelte`, `sprints-state.svelte.ts`, `SprintsPanel.svelte`; `api.ts` wrappers for the four F4 read routes; the tracker error words moved to `$lib` as their second consumer appears)
+- **Depends on:** F4 (routes), F6 (error words, sidebar placement)
+- **Acceptance criteria:** [`spec/screen/project-sprints.md`](../spec/screen/project-sprints.md) done gate 1–7.
+- **Test scenarios:**
+  - Given a connected project, When the screen opens, Then the active sprint is selected and its tickets are listed with active AI time and tokens.
+  - Given a future sprint, When it is selected, Then "Not started…" shows and no zero.
+  - Given a ticket renamed in Jira, When it is opened, Then a session that wrote the old key shows "as <old key>".
+  - Given the daemon is down, When the screen loads, Then the daemon error with Retry shows, not "no tracker connected".
+
 ### Feature 5: Live verification (human)
 
 - **Issue:** TBD
@@ -113,6 +125,9 @@ graph LR
   F4 --> F5
   F1 --> F6
   F6 --> F5
+  F4 --> F7
+  F6 --> F7
+  F7 --> F5
 ```
 
 First task: **F1.1** — needs the user's Jira Cloud site, board id and API token.

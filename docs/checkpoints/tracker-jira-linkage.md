@@ -102,6 +102,13 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   that keeps the error body (`tryPutJson`/`tryPatchJson` now use it). 50 new unit tests;
   app suite 1837/1837, svelte-check 0. Checked live in headless Chromium against the real
   board. Not run: the Tauri e2e suite (macOS-only harness); the logs modal live (needs Tauri).
+- **F7 Sprints screen** ✅ (asked for after F6) project window 期 Sprints
+  (`/project/[id]/sprints`): sprint list (active selected), the sprint's own usage split
+  (linked / other / not linked) or why it has none, its tickets with sessions, active AI
+  time, tokens and cost, a ticket's per-repo breakdown and sessions (old keys shown "as
+  <key>"), unlinked sessions on demand. Spec `docs/spec/screen/project-sprints.md`; the
+  tracker error words moved to `$lib/tracker-errors.ts` (second consumer). 27 new tests;
+  app 1864/1864, svelte-check 0; checked live on the real board.
 - **Next:** F5 live verification once Claude Code transcript consent is on.
 
 ## Gate for `/sensei:build`

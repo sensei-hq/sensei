@@ -62,6 +62,24 @@ describe('tracker wrappers', () => {
     expect(del.mock.calls[0][1].method).toBe('DELETE');
   });
 
+  it('the usage reads hit the F4 routes, encoding the sprint and the key', async () => {
+    const fetch = stub(200, []);
+    await api().tryListSprints(P);
+    await api().tryListTrackerTasks(P, 'sprint-1');
+    await api().tryListTrackerTasks(P);
+    await api().tryGetTrackerTask(P, 'AUTH 1/2');
+    await api().tryListUnlinkedSessions(P, 'sprint-1');
+    const base = `http://127.0.0.1:7744/api/projects/${P}`;
+    expect(fetch.mock.calls.map((c) => c[0])).toEqual([
+      `${base}/sprints`,
+      `${base}/tracker-tasks?sprint=sprint-1`,
+      `${base}/tracker-tasks`,
+      `${base}/tracker-tasks/AUTH%201%2F2`,
+      `${base}/sessions/unlinked?sprint=sprint-1`,
+    ]);
+    expect(fetch.mock.calls.every((c) => (c[1]?.method ?? 'GET') === 'GET')).toBe(true);
+  });
+
   it('a refusal carries the code as the message and the body beside it', async () => {
     const owner = { error: 'board_already_connected', project: { id: 'p2', name: 'other' } };
     stub(409, owner);

@@ -123,6 +123,7 @@ test.describe('accessibility (axe) — light + dark', () => {
           { route: `/project/${pid}/libraries`, sel: '[data-testid="library-search"]' },
           { route: `/project/${pid}/about`,    sel: 'main' },
           { route: `/project/${pid}/integrations`, sel: '[data-screen="integrations"]' },
+          { route: `/project/${pid}/sprints`, sel: '[data-screen="sprints"]' },
         ]
       : [];
 
