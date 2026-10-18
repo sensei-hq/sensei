@@ -2344,7 +2344,7 @@ mod tests {
             .unwrap();
             for (path, hash, fqn) in [("src/a.ts", "ha", "a.x"), ("src/b.ts", "hb-dirty", "b.y")] {
                 sqlx_core::query::query(
-                    "insert into sensei.files(folder_id, file_path, mtime, content_hash) values($1, $2, 0, $3)",
+                    "insert into sensei.files(folder_id, file_path, mtime, content_hash, parsed_at) values($1, $2, 0, $3, now())",
                 )
                 .bind(folder)
                 .bind(path)
@@ -2413,6 +2413,52 @@ mod tests {
             .fetch_optional(pg.pool())
             .await
             .unwrap()
+        }
+
+        /// A committed file whose parse has not run yet is held back like an edit
+        /// (#225). The structure pass records the new content hash before the
+        /// parse rebuilds the file's nodes, so a push in between shared the new
+        /// hash with the OLD nodes — and the dōjō, holding that hash, never asked
+        /// for the file again (live: scan.rs on the dōjō had 41 nodes, 47 locally).
+        #[tokio::test]
+        async fn a_committed_file_awaiting_its_parse_is_held_back_until_parsed() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            sqlx_core::query::query(
+                "update sensei.files set parsed_at = null where folder_id = $1 and file_path = 'src/a.ts'",
+            )
+            .bind(c.folder)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            let mut plane = StubPlane::default();
+            plane.graph_remote.insert(
+                (c.repo_key.clone(), "main".into()),
+                HashMap::from([
+                    ("src/a.ts".to_string(), "ha-before".to_string()),
+                    ("src/b.ts".to_string(), "hb-committed".to_string()),
+                ]),
+            );
+
+            push_graphs(&pg, "p", "tok", &plane, &plan_tracking(&c.repo_key, &["main"]))
+                .await
+                .unwrap();
+
+            let seen = plane.graph_pushes.lock().unwrap().clone();
+            let pushed: Vec<Option<String>> = seen.iter().flat_map(|p| p.paths.clone()).collect();
+            assert!(
+                !pushed.contains(&Some("src/a.ts".into())),
+                "a file awaiting its parse is not shared: {pushed:?}"
+            );
+            assert_eq!(
+                seen.last().and_then(|p| p.manifest.clone()),
+                Some(BTreeMap::from([
+                    ("src/a.ts".to_string(), "ha-before".to_string()),
+                    ("src/b.ts".to_string(), "hb-committed".to_string()),
+                ])),
+                "it is kept at the dōjō's hash, so the next push after its parse sends it"
+            );
+            drop_checkout(&pg, c).await;
         }
 
         #[tokio::test]
