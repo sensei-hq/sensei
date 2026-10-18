@@ -15,6 +15,8 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-10-18
+
 ### Added
 
 - **Claude Code usage at the source** (#238): the sensei plugin's mods module
@@ -57,7 +59,7 @@ are marked **BREAKING**.
   on/off toggle** (#245) — restored after the redesign folded them into the
   Playground rail. A failed read says so instead of showing "none", and a
   refused toggle leaves the row as it was.
-- **A repository's code graph has a home on the dōjō** (#225, store only): the
+- **A repository's code graph is shared with the dōjō** (#225, live-verified: every table equal to local): the
   `dojo.graph_*` tables and `dojo.file_graph_slices`, which files a
   repository's graph file by file, one graph per tracked branch
   (`dojo.repository_graph_branches`: the forge default plus any the team adds,
@@ -67,13 +69,18 @@ are marked **BREAKING**.
   the dōjō's hash — skipping a checkout whose working tree has moved to another
   branch since it was indexed. Each branch's outcome is in `sensei.sync_state`
   (`repository_graph`, `<repo_key>@<branch>`). The dōjō's diagram screens over
-  this graph are not built yet.
+  this graph are not built yet (#268). Live-verified on the local stack: all
+  seven tables equal the local index for this repository.
   **Deploy:** `deploy-dojo` first (tables, functions, `/v1/you/graph`); the daemon
   then needs `sync_entity.repository_graph`, which a released daemon deploys on
   first start — a debug build at the same version needs `dbd reconcile`.
 
 ### Fixed
 
+- **Light accent text meets AA (4.65:1), and the observatory's scroll region takes
+  focus** (#245); Knowledge sources is reachable from the Review rail (#245).
+- **A dōjō database function's `invalid_parameter_value` is a 422, not a 500**
+  (#225): a refused graph slice reads as the caller's error, not a server fault.
 - **A deleted file leaves the index, and so the dōjō** (#225). Two causes:
   - A watcher batch that only deleted reached no repository.
   - A vanished file with no symbols was never pruned. On the development
