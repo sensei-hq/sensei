@@ -100,5 +100,6 @@
     "DB tests skip silently without a DB (`let Ok(pg) = connect_test() else return`) — CI must set TEST_DATABASE_URL",
     "CLI connect help lacks the env-var visibility caveat"
   ],
-  "fixed_during_f4": "tracker test isolation: SecretStore::namespace() — production keeps com.sensei.tracker., each MemoryStore gets its own; connect names secrets and drains match on the store's namespace (was: parallel tests drained each other's tombstones)"
+  "fixed_during_f4": "tracker test isolation: SecretStore::namespace() — production keeps com.sensei.tracker., each MemoryStore gets its own; connect names secrets and drains match on the store's namespace (was: parallel tests drained each other's tombstones)",
+  "f6_visual_check": "2026-10-18: user checked the Integrations screen in the running Tauri app (process-compose desktop on feature/jira_ticket_linkage) — shows fine"
 }
