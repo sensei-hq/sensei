@@ -632,9 +632,14 @@ async fn push_checkout(
             .map_err(|e| format!("git status in {}: {e}", checkout.abs_path))?,
     );
 
+    // Held back: what is not committed, and what is committed but not yet parsed
+    // (its row has the new hash, its nodes are still the old content's).
+    let mut held_back = dirty;
+    held_back.extend(pg.graph_parse_pending(&checkout.folder_id).await?);
+
     let local = pg.graph_manifest(&checkout.folder_id).await?;
     let remote = plane.graph_hashes(token, repo_key, branch).await?.files;
-    let plan = plan_push(&local, &remote, &dirty);
+    let plan = plan_push(&local, &remote, &held_back);
     let commit = user_plane::GraphCommit { branch: branch.to_string(), sha, committed_at };
 
     let mut batches = 0;

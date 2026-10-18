@@ -5,11 +5,12 @@
 //! files to push, the manifest to send and the batches come out. The I/O around
 //! it lives in `dojo_sync`.
 //!
-//! **Only committed work is shared.** The local graph is read from the working
-//! tree, so a `main` checkout with uncommitted edits would otherwise push
-//! unmerged work into the team's `main` graph. A path `git status` reports is
-//! held back — and kept in the manifest at the hash the dōjō already has, so the
-//! dōjō does not prune a file merely because it is being edited here.
+//! **Only committed, parsed work is shared.** The local graph is read from the
+//! working tree, so a `main` checkout with uncommitted edits would otherwise push
+//! unmerged work into the team's `main` graph; and a committed file whose parse
+//! is still pending carries its new hash over its old nodes. Either is held back —
+//! and kept in the manifest at the hash the dōjō already has, so the dōjō does
+//! not prune a file merely because it is being edited or parsed here.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -63,12 +64,12 @@ pub struct PushPlan {
 pub fn plan_push(
     local: &BTreeMap<String, String>,
     remote: &HashMap<String, String>,
-    dirty: &HashSet<String>,
+    held_back: &HashSet<String>,
 ) -> PushPlan {
     let mut changed = Vec::new();
     let mut manifest = BTreeMap::new();
     for (path, hash) in local {
-        if dirty.contains(path) {
+        if held_back.contains(path) {
             continue;
         }
         if remote.get(path) != Some(hash) {
@@ -76,7 +77,7 @@ pub fn plan_push(
         }
         manifest.insert(path.clone(), hash.clone());
     }
-    for path in dirty {
+    for path in held_back {
         if let Some(hash) = remote.get(path) {
             manifest.insert(path.clone(), hash.clone());
         }
