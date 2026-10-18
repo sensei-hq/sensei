@@ -12547,6 +12547,86 @@ async fn a_sync_error_keeps_when_the_sides_last_agreed() {
     assert!(synced_at.is_some(), "the last agreement time survives a later failure");
 }
 
+/// A push that landed all but a named part is `partial` (#225): the sides DID
+/// agree, so `synced_at` is set, and the detail says what is missing. `error`
+/// would read "failing · never agreed" over a graph that is 1,997 of 1,998 there.
+#[tokio::test]
+async fn a_partial_sync_agrees_and_names_what_is_missing() {
+    let s = pg_store().await;
+    let key = format!("github.com/test/partial-{}@main", uuid::Uuid::new_v4());
+    let mark = crate::db::pg_store::sync::SyncMark {
+        entity: "repository_graph",
+        key: &key,
+        direction: "push",
+    };
+
+    s.mark_sync_partial(&mark, "1 file(s) over the cap, not shared: big.rs").await.unwrap();
+    let (state, detail, synced_at): (String, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+        query_as("SELECT state, last_error, synced_at FROM sensei.sync_state WHERE entity_key = $1")
+            .bind(&key)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    // A whole push afterwards clears the detail, as any success does.
+    s.mark_synced(&mark, None).await.unwrap();
+    let (after,): (Option<String>,) =
+        query_as("SELECT last_error FROM sensei.sync_state WHERE entity_key = $1")
+            .bind(&key)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = $1")
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(state, "partial");
+    assert_eq!(detail.as_deref(), Some("1 file(s) over the cap, not shared: big.rs"));
+    assert!(synced_at.is_some(), "a partial push is an agreement");
+    assert_eq!(after, None, "a later whole push clears what was missing");
+}
+
+/// The reader ranks `partial` after `pending` and before `skipped`: it needs a
+/// look, a skip is a settled decision.
+#[tokio::test]
+async fn sync_state_rows_rank_partial_between_pending_and_skipped() {
+    let s = pg_store().await;
+    let tag = uuid::Uuid::new_v4();
+    let keys: Vec<String> =
+        ["skip", "part", "pend"].iter().map(|k| format!("github.com/test/rank-{k}-{tag}")).collect();
+    let mark = |k: &'_ str| crate::db::pg_store::sync::SyncMark {
+        entity: "repository",
+        key: k,
+        direction: "push",
+    };
+    s.mark_sync_skipped(&mark(&keys[0]), "private").await.unwrap();
+    s.mark_sync_partial(&mark(&keys[1]), "part missing").await.unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.sync_state (entity, entity_key, direction, state) VALUES ('repository', $1, 'push', 'pending')",
+    )
+    .bind(&keys[2])
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let order: Vec<String> = s
+        .sync_state_rows()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| keys.contains(&r.entity_key))
+        .map(|r| r.state)
+        .collect();
+    sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = ANY($1)")
+        .bind(&keys)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(order, vec!["pending", "partial", "skipped"]);
+}
+
 #[tokio::test]
 async fn a_verified_login_replaces_a_guessed_label_but_not_a_chosen_one() {
     // The `sensei-hq` vs `sensei-hq-org` case. Before OAuth a label can only

@@ -989,6 +989,24 @@ async fn recapture_and_replan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── graph_outcome: a checkout push's sync state (#225) ──────────────────
+
+    #[test]
+    fn a_whole_push_is_synced() {
+        assert_eq!(graph_outcome(&[]), GraphOutcome::Synced);
+    }
+
+    #[test]
+    fn a_push_missing_an_over_cap_file_is_partial_and_names_it() {
+        let oversize = vec!["crates/big.rs".to_string()];
+        assert_eq!(
+            graph_outcome(&oversize),
+            GraphOutcome::Partial(
+                "1 file(s) over the 3145728-byte request cap, not shared: crates/big.rs".into()
+            )
+        );
+    }
     use crate::db::pg_store::MetricRow;
 
     /// `forge_visibility_unknown` is the ONE denial the daemon can act on itself.
