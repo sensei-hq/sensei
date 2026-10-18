@@ -1,7 +1,7 @@
 //! What we read out of a Copilot CLI `events.jsonl`, and nothing more.
 //!
 //! The event names here were taken from real transcripts, not from documentation
-//! — see `docs/2026-08-26-copilot-adapter-review.md`. The names the ingestion
+//! — see `docs/design/transcript-adapters.md`. The names the ingestion
 //! adapter currently looks for (`tool_use`, `tool_result`) do not occur in any of
 //! the 77,139 events sampled.
 

@@ -197,14 +197,23 @@ test.describe('Settings · Metrics', () => {
 
     // Each row's rendered line must equal the registry's summary for its code —
     // so a slug, a blank, or an invented fallback all fail.
+    //
+    // Read in one pass: the adapter's `nth(i).locator(child)` builds a
+    // `:nth-match()` selector, which is Playwright-only, not CSS — it matched
+    // nothing and every summary read back as undefined.
+    const rendered = (await tauriPage.evaluate(
+      `JSON.stringify(Array.from(document.querySelectorAll('[data-metric-rows] [data-metric]')).map(function (row) {
+        var s = row.querySelector('[data-reason-summary]');
+        return { code: row.getAttribute('data-reason'), summary: s ? s.textContent.trim() : null };
+      }))`,
+    )) as string;
     const codes = new Set<string>();
-    for (const row of await rows.all()) {
-      const code = await row.getAttribute('data-reason');
+    for (const { code, summary } of JSON.parse(rendered) as Array<{ code: string | null; summary: string | null }>) {
       expect(code).toBeTruthy();
       codes.add(code!);
       const expected = live.reasons[code!]?.summary;
       expect(expected, `reason "${code}" is in the served vocabulary`).toBeTruthy();
-      await expect(row.locator('[data-reason-summary]')).toHaveText(expected!);
+      expect(summary, `row for "${code}"`).toBe(expected);
     }
 
     // Sanity: the codes on screen are the ones the summary counted for this

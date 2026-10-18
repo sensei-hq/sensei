@@ -24,8 +24,10 @@ business model with payment for private shared coordination (T4).
 ## Reading order
 
 T1 → T2 → T3 → T4. T3 is the newest surface; read [`../../../reorg.md`](../../../reorg.md) §9
-first — 2 of its 7 gating targets are buildable today, 2 need scoped reads, 3
-are blocked on the architecture-metrics family (#156).
+first — 1 of its 7 gating targets is buildable today, 2 need scoped reads, 4
+are blocked on the architecture-metrics family (#156). The T3 spec folds the
+tracker/target requirements in
+[`design/integrations-and-gating-requirements.md`](../../../design/integrations-and-gating-requirements.md).
 
 ## Customer
 

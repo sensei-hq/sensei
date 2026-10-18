@@ -13,8 +13,8 @@ use crate::gateway_keys;
 ///
 /// # Blocking
 ///
-/// Shells out to `/usr/bin/security` via `gateway_keys::get_key` (~50ms
-/// per call). Callers in an async context MUST wrap invocations in
+/// Reads the OS credential store via `gateway_keys::get_key` (blocking
+/// I/O per call). Callers in an async context MUST wrap invocations in
 /// `tokio::task::spawn_blocking`. The `init_gateway` startup call site
 /// is safe today only because the empty default config makes the
 /// resolver a no-op; once the DB-load path populates routers, this

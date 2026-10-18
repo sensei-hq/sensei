@@ -297,9 +297,14 @@ is a missing *prerequisite*: there is no way for a user to mark a repository sha
    gate 1 empty, "the cycle completed without error" is true of a cycle that did nothing.
 3. **C4 means `unpushed_metric_rows` needs widening** before it can feed the ingest endpoint, which
    requires `scope`, `grain`, `props`, `commit_sha` and `source`.
-4. **C2 confirms the user-scope deferral is real**, not cautious: 0 of 3 personas have a
-   `principal_id`, so there is genuinely nothing to attribute a user-scoped row to. The ingest
-   endpoint rejects `scope='user'` for exactly this reason.
+4. **C2 confirmed the user-scope deferral was real** at the time: 0 of 3 personas had a
+   `principal_id`. **Superseded by #240 (2026-10-14):** the daemon never names a person — the
+   dōjō stamps `principal_id` from the session — and it pushes only the user rows provably the
+   signed-in person's: a row with no identity (the machine's own session metric) when the
+   persona is the only signed-in one that elected the repository, or a row whose author address
+   the persona claimed (GitHub-verified at sign-in). Unverified `git` addresses and colleagues'
+   rows stay local, counted; two of the person's addresses on one metric-day are held back
+   rather than overwrite each other.
 
 ## 8a. REVISION — sharing is two questions, and the code answers one
 

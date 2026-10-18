@@ -28,6 +28,7 @@ pub mod dojo_sync;
 pub mod executor;
 pub mod forge_token_check;
 pub mod git_history_pruner;
+pub mod graph_push;
 pub mod handlers;
 pub mod index_audit;
 pub mod library_update_scheduler;
@@ -737,15 +738,6 @@ impl Scope {
     /// Whether absence may be read as deletion.
     pub fn is_exhaustive(&self) -> bool {
         matches!(self, Scope::Full)
-    }
-
-    /// The changed paths, empty for a full walk (which has no shortlist — it
-    /// looks at everything).
-    pub fn changed(&self) -> &[std::path::PathBuf] {
-        match self {
-            Scope::Full => &[],
-            Scope::Events { changed, .. } => changed,
-        }
     }
 
     pub fn deleted(&self) -> &[std::path::PathBuf] {

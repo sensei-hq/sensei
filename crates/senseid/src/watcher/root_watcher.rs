@@ -507,6 +507,12 @@ impl RootWatcher {
                             continue;
                         }
 
+                        // Reads and metadata-only updates change nothing; acting on
+                        // them makes the watcher react to its own reads.
+                        if !RootWatcher::is_change_event(&event.kind) {
+                            continue;
+                        }
+
                         let change_kind = RootWatcher::classify_event(&event.kind);
 
                         for path in event.paths {
@@ -517,7 +523,7 @@ impl RootWatcher {
                             // standalone roots, re-indexes changed files) rather
                             // than only an incremental re-index. Fire even when the
                             // branch is unreadable (detached HEAD mid-rebase).
-                            if RootWatcher::is_branch_switch(&path) {
+                            if RootWatcher::triggers_branch_reconcile(&event.kind, &path) {
                                 // The REPOSITORY, not the watch root containing it:
                                 // a root here holds 67 repositories, and one
                                 // checkout should not re-walk the other 66.
@@ -613,6 +619,28 @@ impl RootWatcher {
         let is_code = crate::indexer::lang::adapter_for_ext(&ext).is_some();
         let is_doc = ext == ".md" || ext == ".mdx";
         is_code || is_doc
+    }
+
+    /// Whether `kind` can mean the file's content or name changed.
+    ///
+    /// inotify (Linux) reports reads — open, close-after-read, access — as
+    /// `Access(_)`, and an atime bump as `Modify(Metadata(_))`. Neither changes
+    /// anything the index cares about, and reacting to them makes the watcher
+    /// fire on its own reads (the `.git/HEAD` reconcile loop). A close after a
+    /// WRITE is kept: it marks a finished write.
+    pub(crate) fn is_change_event(kind: &EventKind) -> bool {
+        use notify::event::{AccessKind, AccessMode, ModifyKind};
+        match kind {
+            EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+            EventKind::Access(_) => false,
+            EventKind::Modify(ModifyKind::Metadata(_)) => false,
+            _ => true,
+        }
+    }
+
+    /// A branch switch / checkout / rebase: `.git/HEAD` was written, not merely read.
+    pub(crate) fn triggers_branch_reconcile(kind: &EventKind, path: &Path) -> bool {
+        Self::is_change_event(kind) && Self::is_branch_switch(path)
     }
 
     pub(crate) fn is_branch_switch(path: &Path) -> bool {
@@ -821,6 +849,65 @@ mod tests {
             RootWatcher::classify_event(&EventKind::Remove(notify::event::RemoveKind::File)),
             ChangeKind::Delete,
         );
+    }
+
+    // ── is_change_event ───────────────────────────────────────────────
+    //
+    // On Linux (inotify) `notify` reports READS: IN_OPEN / IN_CLOSE_NOWRITE /
+    // IN_ACCESS arrive as `Access(_)`, and an atime bump as
+    // `Modify(Metadata(_))`. Treating them as changes made the watcher react to
+    // its own work: logging a branch switch reads `.git/HEAD`, which fired
+    // another "branch switch" — ~40k reconciles/s and an 88 GB log.
+
+    #[test]
+    fn reads_are_not_changes() {
+        use notify::event::{AccessKind, AccessMode};
+        for kind in [
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+            EventKind::Access(AccessKind::Read),
+            EventKind::Access(AccessKind::Any),
+        ] {
+            assert!(!RootWatcher::is_change_event(&kind), "{kind:?} is a read, not a change");
+        }
+    }
+
+    #[test]
+    fn metadata_only_updates_are_not_changes() {
+        use notify::event::{MetadataKind, ModifyKind};
+        for kind in [
+            EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)),
+            EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)),
+        ] {
+            assert!(!RootWatcher::is_change_event(&kind), "{kind:?} changes no content");
+        }
+    }
+
+    #[test]
+    fn writes_creates_renames_and_removes_are_changes() {
+        use notify::event::{CreateKind, DataChange, ModifyKind, RemoveKind, RenameMode};
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            EventKind::Modify(ModifyKind::Any),
+            // git rewrites HEAD as HEAD.lock → rename onto HEAD.
+            EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+            EventKind::Remove(RemoveKind::File),
+            // Close after WRITE means the content was just written.
+            EventKind::Access(notify::event::AccessKind::Close(notify::event::AccessMode::Write)),
+        ] {
+            assert!(RootWatcher::is_change_event(&kind), "{kind:?} is a real change");
+        }
+    }
+
+    #[test]
+    fn reading_git_head_does_not_trigger_a_branch_reconcile() {
+        use notify::event::{AccessKind, AccessMode, DataChange, ModifyKind};
+        let head = PathBuf::from("/project/.git/HEAD");
+        let read = EventKind::Access(AccessKind::Close(AccessMode::Read));
+        assert!(!RootWatcher::triggers_branch_reconcile(&read, &head));
+        let checkout = EventKind::Modify(ModifyKind::Data(DataChange::Content));
+        assert!(RootWatcher::triggers_branch_reconcile(&checkout, &head));
     }
 
     // ── should_watch_path ─────────────────────────────────────────────

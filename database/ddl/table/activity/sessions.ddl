@@ -19,6 +19,7 @@ create table if not exists sessions (
 , cache_write      integer
 , tokens_reasoning integer     -- where the source separates thinking (OpenCode)
 , metered_cost     numeric
+, list_cost_usd    numeric     -- Claude Code's /cost total (list price), not billed spend
 , duration                 interval
 , module                   text
 , summary                  text
@@ -130,5 +131,7 @@ the session so its judgments are recomputed. props.process holds the judgments;
 activity.session_process_evidence holds the cited turns.';
 comment on column sessions.metered_cost
      is 'Metered cost in whole currency units, where the source knows it (OpenCode). 0.0 is a REAL reading on a subscription plan — distinct from NULL, "not reported". Subscription cost is user-configured; see crate::cost.';
+comment on column sessions.list_cost_usd
+     is 'The session''s cost at list price in US dollars, as Claude Code''s /cost totals it, reported by the sensei plugin''s usage mod (SessionMeasure, #238). The largest total any measure reported: it only grows within a session, and a dead-lettered measure may be drained late. NOT billed spend: on a subscription the plan fee is what is paid (crate::cost), and metered_cost holds a source''s billed figure. NULL when no measure carried a cost.';
 comment on column sessions.tokens_fresh
      is 'Fresh (uncached) input tokens for the session. `tokens_in` keeps its meaning as the folded total of everything the model processed; this is its uncached part. Split because cache reads are 96-98% of input and bill far cheaper, so cost read off the folded total is roughly 8x high. See docs/database/activity.md.';

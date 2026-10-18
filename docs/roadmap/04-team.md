@@ -18,7 +18,7 @@ Status legend: [`README.md`](README.md).
 
 | Gap | What | Priority |
 |---|---|---|
-| T-1 | **T3's tracker adapters (Jira / ADO) exist only in the mockup — nothing is built**; 2 of 7 gating targets buildable today, 2 need scoped reads, 3 blocked on #156 | P1 |
+| T-1 | **T3's tracker adapters (Jira / ADO) exist only in the mockup — nothing is built**; 1 of 7 gating targets buildable today, 2 need scoped reads, 4 blocked on #156 | P1 |
 | T-2 | join/membership flow: magic-link creates `auth.users` but no membership; "Join" dead → every console surface 403s | P1 |
 | F-3 | Dōjō sync never worked (the plan's own record: "Dōjō sync never worked" — reorg §12) | P1 |
 

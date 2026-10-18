@@ -406,6 +406,114 @@ resolved or not — `DbContext` is external):
 
 Source `ef_core`; naming per table as above.
 
+## JPA: the next ORM, also a derivation (step 8, #254)
+
+### 8a · why JPA, and what its corpus says
+
+Counted per repository over the private corpus, then decomposed (spec 18, rules
+1–2). JPA leads by an order of magnitude: 529 files declare `@Entity` across 6
+repositories, but three of them are copies of one codebase (107–108 shared entity
+class names), so the corpus holds **200 distinct entities** in about three
+independent codebases. Sequelize has 39 model definitions and SQLAlchemy 4
+declarative models; Dapper declares no schema at all.
+
+| shape | files | occurrences |
+|---|---|---|
+| `@Entity` | 529 | 529 |
+| `@Table(name = …)` | 506 | 506 |
+| `@Table(schema = …)` | 0 | 0 |
+| `@Column(name = …)` | 524 | 4,817 of 4,839 `@Column` |
+| `@JoinColumn(…)` | 235 | 531 |
+| `@ManyToOne` / `@OneToOne` | 267 | 526 |
+| `@OneToMany` / `@ManyToMany` | 77 | 153 |
+| `@JoinTable` | 27 | 40 |
+| `@Id` | 512 | 512 |
+| `@EmbeddedId` / `@IdClass` | 2 | 2 |
+| `@MappedSuperclass` / `@Embeddable` | 6 / 6 | |
+| `orm.xml` | 0 | |
+
+Two things decide the design:
+
+- **Names are stated, almost everywhere** — and then rewritten. Spring Boot's
+  default physical naming strategy (`CamelCaseToUnderscoresNamingStrategy`)
+  snake-cases even an explicit `@Table(name = "OrderLine")`. Of 5,850 explicit
+  names, 124 are camelCase. The name the database holds is the strategy's output.
+- **The schema is never stated in a file that declares an entity.** No
+  `@Table(schema = …)`, no `hibernate.default_schema`. Four of the six JPA
+  repositories build against `mysql-connector`, where a schema IS a database —
+  the one named in `spring.datasource.url` (`jdbc:mysql://host/<db>`).
+
+As with EF Core, a walk sees one file, and the table, its columns, its keys and
+its schema live in different files. JPA is a per-repo derivation.
+
+### 8b · the annotation fact
+
+The Java walk records each annotation as a `Decorates` relation and walks its
+argument expressions — but keeps no literal. `@Table(name = "orders")` carries
+`"orders"` nowhere. EF Core's equivalent gap was closed by `CallSite` (7b); an
+annotation is a different shape — it is applied TO a declaration rather than
+made FROM one, and its arguments are named — so it gets its own fact:
+
+```rust
+pub struct Annotation {
+    pub target: Fqn,              // the declaration the annotation is on
+    pub at: Span,
+    pub name: String,             // as written: `Table`, `jakarta.persistence.Table`
+    pub args: Vec<AnnotationArg>, // in source order
+}
+pub struct AnnotationArg {
+    pub name: Option<String>,     // `name = "orders"` → Some("name"); `@Table("orders")` → None
+    pub value: CallArg,           // Str for a string literal; Bool/Other as below
+}
+```
+
+`CallArg` gains `Bool(bool)` — `nullable = false` is the one non-string literal a
+schema needs. Recorded only for an annotation with at least one `Str` or `Bool`
+argument; a marker annotation is already its `Decorates` relation. Persisted in
+`sensei.annotations`, keyed by `(folder_id, file_path)`, REPLACED per file,
+round-tripped by `read_back` — the call-site rules exactly.
+
+### 8c · `DeriveOrmSchema` for JPA
+
+The same per-repo task, now also enqueued for a repository with a `pom.xml` or a
+`build.gradle[.kts]`. For each class `Decorates`'d by `Entity` whose file imports
+`javax.persistence` or `jakarta.persistence`:
+
+- **Table**: `@Table(name = "t")` → `stated`; else `@Entity(name = "n")`; else the
+  class name → `convention`. Then the physical strategy: in a Spring Boot
+  repository (`spring-boot-starter-data-jpa` in its build) with no
+  `spring.jpa.hibernate.naming.physical-strategy` set, snake-case it; a repository
+  that sets the property to `PhysicalNamingStrategyStandardImpl` keeps the name
+  verbatim; **any other strategy is code — the entity is SKIPPED and counted.**
+- **Schema**: `@Table(schema = …)`; else `hibernate.default_schema` /
+  `spring.jpa.properties.hibernate.default_schema`; else the driver's: MySQL /
+  MariaDB → the database in `spring.datasource.url`, PostgreSQL → `public`,
+  SQL Server → `dbo`. A URL with a placeholder (`${DB_NAME}`) states nothing.
+  **No statement and no driver default → SKIPPED and counted.** H2 is a test
+  database and never chooses the schema.
+- **Columns**: the entity's fields in declaration order, then those of each
+  `@MappedSuperclass` it extends (an `Extends` relation, transitively). Skip
+  `static` fields, `@Transient`, and `@OneToMany` / `@ManyToMany`, which are the
+  other table's columns. `@Column(name = "c")` → stated, else the field name, both
+  through the physical strategy. `sql_type` is the Java type verbatim, as EF's is
+  the CLR type. `not_null`: `@Column(nullable = false)`, a primitive type, or
+  `@Id` — never inferred from a wrapper type.
+- **Primary key**: the `@Id` fields. `@EmbeddedId` / `@IdClass` (2 files) →
+  SKIPPED and counted.
+- **Keys**: `@ManyToOne` / owning `@OneToOne` → a column named by
+  `@JoinColumn(name = …)`, else `<field>_<target pk column>`, referencing the
+  target entity's table. A `mappedBy` side owns no column.
+- **Not in 8c**: `@JoinTable` (its columns are nested annotations, which 8b's
+  fact does not carry) and `@Embedded` / `@Embeddable` flattening. Each is counted
+  in `skipped`, so the gap stays visible.
+- **Identity**: `sql·<package of the entity's build module>·<schema>·<table>·item`
+  — the EF rule, for the same reason.
+
+Source `jpa`; naming per table and column as above.
+
+8d verifies live on one JPA repository from the corpus, checking a sample of
+entities by hand against their annotations and the datasource URL.
+
 ## Done gate
 
 - Indexing this repository's `database/` fills `schema_columns` with exactly the

@@ -17,6 +17,7 @@ create table if not exists dojo.relay_sessions (
 , heartbeat_at   timestamptz
 , started_at     timestamptz           not null default now()
 , completed_at   timestamptz
+, project_id     uuid                  references dojo.projects(id) on delete set null
 , created_at     timestamptz           not null default now()
 , updated_at     timestamptz           not null default now()
 , constraint relay_sessions_membership_run_unique unique (membership_id, run_id)
@@ -24,6 +25,7 @@ create table if not exists dojo.relay_sessions (
 
 create index if not exists relay_sessions_membership_idx on dojo.relay_sessions(membership_id, started_at desc);
 create index if not exists relay_sessions_run_idx on dojo.relay_sessions(run_id);
+create index if not exists relay_sessions_project_idx on dojo.relay_sessions(project_id) where project_id is not null;
 
 comment on table dojo.relay_sessions is
 'One row per supervised run as seen from Relay — the cloud-side presence + status
@@ -39,5 +41,7 @@ comment on column dojo.relay_sessions.status
      is 'Mirrored run status for display; authoritative value lives daemon-side.';
 comment on column dojo.relay_sessions.last_event_at
      is 'Timestamp of the newest run_event — drives the "last progress N min ago" line.';
+comment on column dojo.relay_sessions.project_id
+     is 'The run owner''s project (dojo.projects) the run works on, as the daemon files it — what lets a team owning that project see THAT the run is going (dojo.peer_run_status, #252). Only the owner''s own project; null when the run names none.';
 comment on column dojo.relay_sessions.heartbeat_at
      is 'Presence ping (~15–30s). A stale heartbeat flips the badge to unknown/degraded.';

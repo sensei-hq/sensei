@@ -65,7 +65,7 @@ test.describe('Cold start', () => {
     // Resolvers run brew install/start + dbd deploy + senseid start.
     // Total wall time on a warm dev box: ~30-90 s. Allow generous budget.
     // The $effect in (health)/health/+page.svelte calls goto('/') when
-    // healthState.isOk. The reroute hook then sends us to /setup/welcome
+    // healthState.isOk. The boot gate then sends us to /setup/welcome
     // because the cold setup dropped the DB, so setup-complete is false.
     await tauriPage.waitForURL('/setup/welcome', { timeout: 180_000 });
   });

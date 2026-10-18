@@ -20,20 +20,12 @@
 
 import { test, expect, type TauriPageLike } from '../fixtures';
 import {
-  navigateTo, navigateToScreen, daemonGet, daemonPost, DAEMON_URL,
+  navigateTo, navigateToScreen, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
+  seedProject,
 } from '../helpers';
 
-async function seedProjectId(): Promise<string> {
-  const existing = await daemonGet<Array<{ id: string; name: string }>>('/api/projects');
-  const mine = existing.find((p) => p.name === 'e2e-world');
-  if (mine) return mine.id;
-  const created = await daemonPost<{ ok: boolean; id: string }>('/api/projects', {
-    name: 'e2e-world',
-    description: 'fixture for the World diagram spec',
-  });
-  return created.id;
-}
+const seedProjectId = (): Promise<string> => seedProject('e2e-world', 'fixture for the World diagram spec');
 
 
 function control(bar: string, item: string): string {

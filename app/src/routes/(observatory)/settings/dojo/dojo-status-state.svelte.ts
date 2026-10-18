@@ -27,7 +27,7 @@ import type { SyncStateRow } from '$lib/types.js';
 
 /** Semantic tone for a sync state. `ink` = a value we did not expect but still
  *  show — silently dropping a row is how a broken sync becomes invisible. */
-export type SyncTone = 'success' | 'danger' | 'info' | 'muted' | 'ink';
+export type SyncTone = 'success' | 'warn' | 'danger' | 'info' | 'muted' | 'ink';
 
 /**
  * Pure: sync state → tone.
@@ -39,6 +39,8 @@ export function syncTone(state: string): SyncTone {
   switch (state) {
     case 'synced':
       return 'success';
+    case 'partial':
+      return 'warn';
     case 'error':
       return 'danger';
     case 'pending':
@@ -74,8 +76,29 @@ export function agreementLine(row: SyncStateRow): string {
   if (row.state === 'error') {
     return agreed ? `failing · last agreed ${agreed}` : 'failing · never agreed';
   }
+  // A partial push IS an agreement — on everything but what the detail names.
+  if (row.state === 'partial') return agreed ? `partly agreed ${agreed}` : 'partly agreed';
   if (!agreed) return 'never agreed';
   return `agreed ${agreed}`;
+}
+
+/** What each recorded skip reason means for the checkout it names (#225). The
+ *  daemon records a code; a code is not something a reader should have to look up. */
+const SKIP_REASONS: Record<string, string> = {
+  not_a_tracked_branch: 'this branch is not one the dōjō tracks, so its graph stays on this machine',
+  index_not_current: 'the checkout moved to another branch since it was indexed; it syncs once re-indexed',
+};
+
+/**
+ * Pure: the line under a row — a skipped row's reason in words, a failed row's
+ * message as recorded. Only a SKIP is translated: a failure message is the
+ * fault's own text, even if it happens to spell a code. An unknown reason passes
+ * through unchanged rather than being hidden. `null` when there is nothing to say.
+ */
+export function detailLine(row: SyncStateRow): string | null {
+  if (row.last_error === null) return null;
+  if (row.state === 'skipped') return SKIP_REASONS[row.last_error] ?? row.last_error;
+  return row.last_error;
 }
 
 /** Rank of a sync state for "what most needs saying". Lower sorts first.
@@ -83,8 +106,9 @@ export function agreementLine(row: SyncStateRow): string {
 const STATE_RANK: Record<string, number> = {
   error: 0,
   pending: 1,
-  skipped: 2,
-  synced: 3,
+  partial: 2,
+  skipped: 3,
+  synced: 4,
 };
 
 /**
@@ -119,6 +143,9 @@ export function summarise(counts: Record<string, number>): string {
 
   const pending = counts.pending ?? 0;
   if (pending > 0) return `${total} tracked · ${pending} pending`;
+
+  const partial = counts.partial ?? 0;
+  if (partial > 0) return `${total} tracked · ${partial} partial`;
 
   const skipped = counts.skipped ?? 0;
   if (skipped > 0) return `${total} tracked · ${skipped} skipped`;

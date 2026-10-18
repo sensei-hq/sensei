@@ -749,5 +749,6 @@ export interface KitHealthAlert {
 export interface KitHealth {
 	signals: KitHealthSignal[];
 	contribVsApprove: KitHealthWeek[];
-	alerts: KitHealthAlert[];
+	/** `null` = not measured: anomaly detection waits on containment events. */
+	alerts: KitHealthAlert[] | null;
 }

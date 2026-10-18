@@ -14,6 +14,7 @@ import {
   agreementLine,
   worstSyncState,
   summarise,
+  detailLine,
 } from './dojo-status-state.svelte.js';
 import type { SyncStateRow } from '$lib/types.js';
 
@@ -127,3 +128,69 @@ describe('summarise', () => {
     expect(summarise({})).toBe('nothing tracked yet');
   });
 });
+
+describe('detailLine', () => {
+  // A checkout's graph push records WHY it was skipped as a code (#225). The
+  // screen says what that means for this checkout instead of printing the code.
+  const graph = (over: Partial<SyncStateRow>) =>
+    row({ entity: 'repository_graph', entity_key: 'github.com/sensei-hq/sensei@feat-x', ...over });
+
+  it('says a checkout on an untracked branch keeps its graph on this machine', () => {
+    expect(detailLine(graph({ state: 'skipped', last_error: 'not_a_tracked_branch' }))).toBe(
+      'this branch is not one the dōjō tracks, so its graph stays on this machine',
+    );
+  });
+
+  it('says a checkout whose index is behind its branch syncs once re-indexed', () => {
+    expect(detailLine(graph({ state: 'skipped', last_error: 'index_not_current' }))).toBe(
+      'the checkout moved to another branch since it was indexed; it syncs once re-indexed',
+    );
+  });
+
+  it('passes an unknown reason through rather than hiding it', () => {
+    expect(detailLine(graph({ state: 'skipped', last_error: 'branch_unknown' }))).toBe('branch_unknown');
+  });
+
+  it('shows a failure message as it was recorded', () => {
+    const why = '1 file(s) over the 3145728-byte request cap, not shared: src/big.rs';
+    expect(detailLine(graph({ state: 'error', last_error: why }))).toBe(why);
+  });
+
+  it('does not translate a failure that happens to spell a reason code', () => {
+    expect(detailLine(graph({ state: 'error', last_error: 'not_a_tracked_branch' }))).toBe(
+      'not_a_tracked_branch',
+    );
+  });
+
+  it('is null when there is nothing to say', () => {
+    expect(detailLine(graph({ state: 'synced', last_error: null }))).toBeNull();
+  });
+});
+
+describe('a partial sync (#225)', () => {
+  // A push that landed all but a named part: the sides agreed, and something
+  // is missing. Neither a fault nor a clean agreement — and never "never agreed".
+  const partial = row({ state: 'partial', last_error: '1 file(s) over the cap, not shared: big.rs' });
+
+  it('reads as a warning, not a fault and not a success', () => {
+    expect(syncTone('partial')).toBe('warn');
+  });
+
+  it('says it agreed, partly, and when', () => {
+    expect(agreementLine(partial)).toBe('partly agreed 2026-08-31');
+  });
+
+  it('shows what is missing as recorded', () => {
+    expect(detailLine(partial)).toBe('1 file(s) over the cap, not shared: big.rs');
+  });
+
+  it('ranks after pending and before a skip', () => {
+    expect(worstSyncState({ partial: 1, skipped: 1, synced: 1 })).toBe('partial');
+    expect(worstSyncState({ pending: 1, partial: 1 })).toBe('pending');
+  });
+
+  it('is counted in the summary by name', () => {
+    expect(summarise({ synced: 3, partial: 1 })).toBe('4 tracked · 1 partial');
+  });
+});
+

@@ -264,7 +264,7 @@ describe('AppState', () => {
 
   it('load falls back to empty config + sets loaded when daemon is unreachable', async () => {
     // Contract change: load() no longer surfaces daemon failure to callers.
-    // Hooks::reroute is the single source of truth for routing decisions;
+    // The boot gate (routes/+layout.ts) is the single source of truth for routing decisions;
     // if health isn't ok it'll bounce to /health. appState just gives every
     // caller a usable cache so no page ever blocks on a daemon hiccup.
     apiMock.tryGetConfig.mockResolvedValueOnce({ ok: false, error: { status: 0, message: 'Network error' } });

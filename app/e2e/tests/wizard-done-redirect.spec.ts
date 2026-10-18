@@ -23,9 +23,9 @@ test.describe('Wizard done → observatory', () => {
     await fetch(`${DAEMON_URL}/api/config/setup_complete`, { method: 'DELETE' });
 
     // Navigate directly to /setup/done via anchor click — SvelteKit
-    // intercepts and routes via reroute. Anchor click is preferred over
+    // intercepts and routes via the boot gate. Anchor click is preferred over
     // location.href = '/setup/done' because the latter does a full
-    // navigation that may not flow through reroute the same way.
+    // navigation that may not flow through the boot gate the same way.
     await tauriPage.evaluate(`(() => {
       const a = document.createElement('a');
       a.href = '/setup/done';
@@ -42,7 +42,7 @@ test.describe('Wizard done → observatory', () => {
     // On the done stage it reads "Enter observatory →".
     await tauriPage.click('[data-action="next"]');
 
-    // Wait for the daemon write + invalidateAll + goto + reroute to settle.
+    // Wait for the daemon write + invalidateAll + goto + the boot gate to settle.
     await new Promise(r => setTimeout(r, 4000));
 
     const afterClick = await tauriPage.evaluate(`window.location.pathname`) as string;

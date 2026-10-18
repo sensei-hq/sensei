@@ -23,9 +23,8 @@ test.describe('Boot flow', () => {
   /**
    * Cold-start routing — verifies the WKWebView blank-screen fix.
    *
-   * The fix: reroute() exempts '/' from the health gate so SvelteKit can
-   * fully initialise on a simple page before loading the heavier /health
-   * modules. The root +page.svelte onMount then calls goto('/health').
+   * The boot gate (routes/+layout.ts) redirects a gated '/' to /health while
+   * health is not ok, so the health page appears without the test forcing it.
    *
    * This test simulates a cold start (clears sessionStorage) and navigates
    * to '/' WITHOUT forcing /health — the health page must appear on its own.
@@ -67,7 +66,7 @@ test.describe('Boot flow', () => {
     `);
 
     // Navigate to root — NOT /health directly.
-    // reroute() exempts '/' → root page mounts → onMount calls goto('/health')
+    // The boot gate redirects '/' → /health while health is not ok.
     await navigateTo(tauriPage, '/');
 
     // Health page must appear via the onMount chain

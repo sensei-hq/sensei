@@ -60,6 +60,36 @@ type PushableRow = (
     String,
 );
 
+/// The user-scoped rows a push could consider: this machine's, unsent or changed
+/// since, on a repository the plan allows (`$2`). `$1` and `$3` are bound by
+/// [`PROVABLY_THEIRS`].
+const USER_ROWS_IN_PLAY: &str = "rm.computed_by = 'local' AND rm.scope = 'user' \
+     AND r.repo_key = ANY($2) AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at)";
+
+/// A user-scoped row provably the persona's (`$1`): no identity on a repository
+/// only this persona elected (`$3`), or an author address the persona claimed.
+const PROVABLY_THEIRS: &str = "(rm.identity IS NULL AND r.repo_key = ANY($3)) \
+     OR lower(rm.identity) IN (SELECT lower(e.email) FROM sensei.persona_emails e \
+                               WHERE e.persona_id = $1 AND e.source = 'claimed' \
+                                 AND e.removed_at IS NULL)";
+
+/// A selected row as the push carries it.
+fn pushable(row: PushableRow) -> PushableMetric {
+    let (id, repo_key, metric, scope, grain, computed_on, value, commit_sha, props, source) = row;
+    PushableMetric {
+        id,
+        repo_key,
+        metric,
+        scope,
+        grain,
+        computed_on,
+        value,
+        commit_sha,
+        props,
+        source,
+    }
+}
+
 impl PgStore {
     /// Record which dōjō tenant a repository is enrolled with (D2).
     ///
@@ -135,6 +165,35 @@ impl PgStore {
         Ok(())
     }
 
+    /// Record that a sync agreed except for a named part — a graph push that
+    /// landed every file but one over the request cap (#225).
+    ///
+    /// An agreement, so `synced_at` is set; `what_is_missing` rides in
+    /// `last_error` as the row's detail. Not `error`: that reads "failing · never
+    /// agreed" over a graph that is all but one file there.
+    pub async fn mark_sync_partial(
+        &self,
+        m: &SyncMark<'_>,
+        what_is_missing: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.sync_state \
+                 (entity, entity_key, direction, state, last_error, attempted_at, synced_at, updated_at) \
+             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, 'partial', $4, now(), now(), now()) \
+             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET \
+                 state = 'partial', last_error = EXCLUDED.last_error, \
+                 attempted_at = now(), synced_at = now(), updated_at = now()",
+        )
+        .bind(m.entity)
+        .bind(m.key)
+        .bind(m.direction)
+        .bind(what_is_missing)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("mark_sync_partial: {e}"))?;
+        Ok(())
+    }
+
     /// Record that an entity is deliberately not synced — a private repository, a
     /// deactivated metric.
     ///
@@ -205,8 +264,9 @@ impl PgStore {
               ORDER BY CASE state
                          WHEN 'error'   THEN 0
                          WHEN 'pending' THEN 1
-                         WHEN 'skipped' THEN 2
-                         ELSE                3
+                         WHEN 'partial' THEN 2
+                         WHEN 'skipped' THEN 3
+                         ELSE                4
                        END,
                        attempted_at DESC NULLS LAST,
                        entity::text, entity_key",
@@ -323,36 +383,70 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| format!("unpushed_metric_rows: {e}"))?;
-        Ok(rows
-            .into_iter()
-            .map(
-                |(
-                    id,
-                    repo_key,
-                    metric,
-                    scope,
-                    grain,
-                    computed_on,
-                    value,
-                    commit_sha,
-                    props,
-                    source,
-                )| {
-                    PushableMetric {
-                        id,
-                        repo_key,
-                        metric,
-                        scope,
-                        grain,
-                        computed_on,
-                        value,
-                        commit_sha,
-                        props,
-                        source,
-                    }
-                },
-            )
-            .collect())
+        Ok(rows.into_iter().map(pushable).collect())
+    }
+
+    /// The signed-in person's user-scoped rows that may leave the machine (#240):
+    /// only what is PROVABLY theirs. A row with no identity is this machine's own
+    /// session metric — theirs when the persona is the only signed-in one that
+    /// elected the repository (`exclusive_keys`). A row with an author email is
+    /// theirs when that address is one of the persona's `claimed` (provider-
+    /// verified) addresses; an unverified `git` address proves nothing — anyone
+    /// can write any author — and a colleague's address is never theirs. The dōjō
+    /// stamps the person from the session; nothing here names one.
+    ///
+    /// Same window discipline as [`Self::unpushed_metric_rows`]: every filter in
+    /// SQL before the LIMIT. [`Self::unprovable_user_metric_count`] counts the
+    /// complement over the same population.
+    pub async fn unpushed_user_metric_rows(
+        &self,
+        persona: &uuid::Uuid,
+        allowed_keys: &[&str],
+        exclusive_keys: &[&str],
+        limit: i64,
+    ) -> Result<Vec<PushableMetric>, String> {
+        let rows: Vec<PushableRow> = sqlx_core::query_as::query_as(&format!(
+            "SELECT rm.id, r.repo_key, m.key, rm.scope::text, rm.grain::text, rm.computed_on \
+                  , rm.value::float8, rm.commit_sha, rm.props, rm.source::text \
+               FROM sensei.repository_metrics rm \
+               JOIN sensei.repositories r ON r.id = rm.repository_id \
+               JOIN sensei.metrics m      ON m.id = rm.metric_id \
+              WHERE {USER_ROWS_IN_PLAY} AND ({PROVABLY_THEIRS}) \
+              ORDER BY rm.computed_on DESC, rm.id \
+              LIMIT $4"
+        ))
+        .bind(persona)
+        .bind(allowed_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>())
+        .bind(exclusive_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>())
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("unpushed_user_metric_rows: {e}"))?;
+        Ok(rows.into_iter().map(pushable).collect())
+    }
+
+    /// The user-scoped rows held back because they are not provably the
+    /// persona's — the complement of [`Self::unpushed_user_metric_rows`] over the
+    /// same population, so "pushed N, held M" adds up.
+    pub async fn unprovable_user_metric_count(
+        &self,
+        persona: &uuid::Uuid,
+        allowed_keys: &[&str],
+        exclusive_keys: &[&str],
+    ) -> Result<i64, String> {
+        let row: (i64,) = sqlx_core::query_as::query_as(&format!(
+            "SELECT count(*) \
+               FROM sensei.repository_metrics rm \
+               JOIN sensei.repositories r ON r.id = rm.repository_id \
+              WHERE {USER_ROWS_IN_PLAY} AND NOT coalesce(({PROVABLY_THEIRS}), false)"
+        ))
+        .bind(persona)
+        .bind(allowed_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>())
+        .bind(exclusive_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("unprovable_user_metric_count: {e}"))?;
+        Ok(row.0)
     }
 
     pub async fn mark_metric_rows_shared(&self, ids: &[uuid::Uuid]) -> Result<u64, String> {
@@ -424,43 +518,6 @@ pub struct OfferedRepo {
 }
 
 impl PgStore {
-    /// How many unpushed rows sit in these scopes — for reporting what is held
-    /// back, so "pushed 66" is never printed without the reason 596 were not.
-    ///
-    /// **Every predicate is [`Self::unpushed_metric_rows`]', minus `scopes`.** That
-    /// is the point of the number: it answers *"and how many did this pass leave
-    /// behind purely because of their scope?"*, which is only true if the two
-    /// queries differ in exactly that one term.
-    ///
-    /// Both changed together in §8a's B2. `visibility = 'shared'` came out of both,
-    /// and `allowed_keys` — which the count had never carried — went in, because
-    /// with the visibility term gone an unfiltered count would sweep in every
-    /// cloned repository on the machine, including the ones no plan will ever
-    /// allow. It would report "596 held back" where the truthful answer for this
-    /// pass is twelve: over-stating a hold-back is the same mislead as
-    /// under-stating it, in the other direction.
-    pub async fn unpushed_metric_count(
-        &self,
-        scopes: &[&str],
-        allowed_keys: &[&str],
-    ) -> Result<i64, String> {
-        let row: (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*) \
-               FROM sensei.repository_metrics rm \
-               JOIN sensei.repositories r ON r.id = rm.repository_id \
-              WHERE rm.computed_by = 'local' \
-                AND rm.scope::text = ANY($1) \
-                AND r.repo_key = ANY($2) \
-                AND (rm.shared_at IS NULL OR rm.modified_at > rm.shared_at)",
-        )
-        .bind(scopes.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        .bind(allowed_keys.iter().map(|k| k.to_string()).collect::<Vec<_>>())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| format!("unpushed_metric_count: {e}"))?;
-        Ok(row.0)
-    }
-
     /// Opt a repository into — or out of — sharing. The write side of GATE 1.
     ///
     /// Until this existed nothing could set `visibility` at all, so gate 1 was

@@ -203,12 +203,12 @@ async function loadMcpServers(projectId?: string, force = false): Promise<McpSer
   if (!force && mcpServersStatus === 'ready') return mcpServers;
   if (mcpServersStatus === 'loading') return mcpServers;
   mcpServersStatus = 'loading';
-  try {
-    const api = senseiApi(appState.port);
-    const resp = await api.getMcpServers(projectId);
-    mcpServers = resp.servers;
+  const resp = await senseiApi(appState.port).getMcpServers(projectId);
+  if (resp.ok) {
+    mcpServers = resp.data.servers;
     mcpServersStatus = 'ready';
-  } catch {
+  } else {
+    // The cached rows stay; the status says they could not be refreshed.
     mcpServersStatus = 'error';
   }
   return mcpServers;
@@ -227,21 +227,22 @@ async function loadServerTools(
   return manifest;
 }
 
-/** Toggle a server's `enabled` flag. Fires the daemon endpoint and updates
- *  the in-memory row optimistically so the UI stays snappy. */
-async function toggleMcpServer(serverId: string, enabled: boolean): Promise<void> {
-  const api = senseiApi(appState.port);
-  await api.setMcpServerEnabled(serverId, enabled);
+/** Toggle a server's `enabled` flag. The row changes only once the daemon
+ *  took it. Returns `null` on success, else the failure in words. */
+async function toggleMcpServer(serverId: string, enabled: boolean): Promise<string | null> {
+  const res = await senseiApi(appState.port).setMcpServerEnabled(serverId, enabled);
+  if (!res.ok) return `The daemon did not change the server (${res.error.status} ${res.error.message})`;
   mcpServers = mcpServers.map((s) => s.id === serverId ? { ...s, enabled } : s);
+  return null;
 }
 
-/** Trigger a full discovery pass across $HOME + registered projects. */
-async function refreshMcpServers(): Promise<{ discovered: number; pruned: number }> {
-  const api = senseiApi(appState.port);
-  const stats = await api.refreshMcpServers();
-  // Force a reload so the store reflects the fresh scan.
+/** Trigger a full discovery pass across $HOME + registered projects, then
+ *  reload the list. Returns `null` on success, else the failure in words. */
+async function refreshMcpServers(): Promise<string | null> {
+  const res = await senseiApi(appState.port).refreshMcpServers();
+  if (!res.ok) return `The discovery scan failed (${res.error.status} ${res.error.message})`;
   await loadMcpServers(undefined, true);
-  return stats;
+  return null;
 }
 
 /** Force a fresh fetch of every catalog dataset. Session timelines

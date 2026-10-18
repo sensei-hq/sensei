@@ -189,6 +189,11 @@ describe('ScrIdentity — IdP, SCIM and git mappings', () => {
 describe('ScrHealth — signal cards, bar chart and alerts', () => {
 	afterEach(cleanup);
 
+	it('says the anomaly feed is not measured rather than showing 0 (#241)', () => {
+		const { container } = render(ScrHealth, { props: { orgName: 'Acme Corp', health: { ...health, alerts: null } } });
+		expect(container.querySelector('[data-alerts-unmeasured]')?.textContent).toMatch(/not measured/i);
+	});
+
 	it('renders a signal card per vital sign with its number and sub', () => {
 		const { getByText } = render(ScrHealth, { props: { orgName: 'Acme Corp', health } });
 		expect(getByText('Health / Monitor')).toBeTruthy();

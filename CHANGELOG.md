@@ -15,6 +15,98 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-10-18
+
+### Added
+
+- **Claude Code usage at the source** (#238): the sensei plugin's mods module
+  (Claude Code 2.1.300+) reports each session's context fill, rate-limit
+  windows and `/cost` total, and each turn's four token counts and model.
+  The cost lands in the new `activity.sessions.list_cost_usd`. It is the list
+  price, not billed spend: `metered_cost` keeps a source's billed figure.
+  The per-assistant contract is in PRD M3 §Usage & cost capture.
+- **Subagent model by risk class** (#238): with a `routing.risk_models` map
+  configured (e.g. `{"approve":"opus","review":"sonnet","auto":"haiku"}`), a
+  spawned agent runs on the model its change's risk class maps to, through
+  `POST /api/review/subagent-model`. With no map, nothing is overridden.
+- **Opt-in relay tool gate and run drive** (#238): two plugin options, both off
+  by default (`pluginConfigs.sensei.options`).
+  - `relayGate` puts tool calls to the daemon's gate. It only tightens a
+    decision and fails open.
+  - `runDrive` submits a run's dōjō nudges as prompts, each once.
+  - The never-registered shell `hooks/gate` is removed.
+- **Settings · Dōjō says why a checkout was skipped**, in words (#225).
+- **A graph push that lands all but an over-cap file is `partial`, not an error**
+  (#225). It is recorded with `synced_at` and names the missing files.
+  Settings · Dōjō shows it as "partly agreed <day>" instead of
+  "failing · never agreed". `sensei.sync_state.state` gains `partial`.
+- **A person's own metrics reach their dōjō** (#240): user-scoped rows that are
+  provably the signed-in person's — their session metrics on a repository only
+  they elected, and commit metrics under an address GitHub verified for them.
+  The dōjō files them under the person from the session; their team lead and a
+  tenant admin can read them (access matrix). Colleagues' commits and unverified
+  addresses stay on the machine, counted in the sync log.
+  **Deploy order:** the ingest now calls `dojo.file_metric_rows`; until the
+  release's `deploy-dojo` job applies it, metric pushes fail loudly ("function
+  does not exist") and retry, rather than the old `upsert_repository_metrics`
+  filing a person's row as repository-wide. Drop the old function once deployed.
+- **A team sees THAT a run is going on its project** (#252) — status only,
+  never content: `GET …/relay/status` over `dojo.peer_run_status`, for the
+  run's owner, a member or lead of a team owning the project, and a tenant
+  admin. A relay session now carries its owner's project.
+
+- **Instruments lists the discovered MCP servers by assistant, each with an
+  on/off toggle** (#245) — restored after the redesign folded them into the
+  Playground rail. A failed read says so instead of showing "none", and a
+  refused toggle leaves the row as it was.
+- **A repository's code graph is shared with the dōjō** (#225, live-verified: every table equal to local): the
+  `dojo.graph_*` tables and `dojo.file_graph_slices`, which files a
+  repository's graph file by file, one graph per tracked branch
+  (`dojo.repository_graph_branches`: the forge default plus any the team adds,
+  e.g. production).
+  The daemon pushes each tracked branch it has a checkout of after the metrics:
+  committed changes only — a file `git status` reports is held back and kept at
+  the dōjō's hash — skipping a checkout whose working tree has moved to another
+  branch since it was indexed. Each branch's outcome is in `sensei.sync_state`
+  (`repository_graph`, `<repo_key>@<branch>`). The dōjō's diagram screens over
+  this graph are not built yet (#268). Live-verified on the local stack: all
+  seven tables equal the local index for this repository.
+  **Deploy:** `deploy-dojo` first (tables, functions, `/v1/you/graph`); the daemon
+  then needs `sync_entity.repository_graph`, which a released daemon deploys on
+  first start — a debug build at the same version needs `dbd reconcile`.
+
+### Fixed
+
+- **Light accent text meets AA (4.65:1), and the observatory's scroll region takes
+  focus** (#245); Knowledge sources is reachable from the Review rail (#245).
+- **A dōjō database function's `invalid_parameter_value` is a 422, not a 500**
+  (#225): a refused graph slice reads as the caller's error, not a server fault.
+- **A deleted file leaves the index, and so the dōjō** (#225). Two causes:
+  - A watcher batch that only deleted reached no repository.
+  - A vanished file with no symbols was never pruned. On the development
+    machine 363 of 3,078 file rows were stale (185 gone from disk, 178 under a
+    since-ignored path), and they rode in the graph manifest.
+- **A changed file's graph is shared only once it is parsed** (#225). A push
+  between the new content hash and the parse sent the new hash over the old
+  nodes, and the dōjō never asked again. Such a file is now held back like an
+  uncommitted edit.
+- **A repository with an unnamed index can push its graph** (#225):
+  `dojo.graph_schema_indexes.name` is nullable, as the local column is; the
+  whole batch used to be refused.
+- **`make test` with Supabase up**: `database/tests/run.sh` runs each directory
+  against the database its scope deploys to, so `gateway/` no longer runs
+  against the dōjō.
+- **The setup/health gate no longer sticks after it recovers** (#245). SvelteKit
+  caches a `reroute` result per URL for the whole session, so once `/` resolved
+  to the setup screen it stayed there after setup completed — re-running setup
+  or a daemon blip was enough. The gate is now a redirect from the root layout
+  load, asked on every navigation.
+- **A failed config read no longer sends a set-up user back to setup**: the
+  wizard read config through a `{}` fallback, which reads as "incomplete".
+- **The dōjō org home's "needs a maintainer" band is the open triage queue**
+  (#241), not kit fixtures; below maintainer it shows nothing, and a failed read
+  is an error. Health's anomaly feed says "not measured" instead of counting 0.
+
 ## [0.13.0] — 2026-10-13
 
 **The dōjō knows the daemon only as the signed-in person.** Device tokens are

@@ -156,8 +156,18 @@ export async function fetchGithubOrgs(
 	return orgs;
 }
 
+/** What one repository read says: its visibility, and its default branch. */
+export interface ForgeRepoFacts {
+	visibility: ForgeVisibility;
+	/** The forge's default branch, or null when the response does not state one —
+	 *  never a guessed `main`. The branch the shared code graph follows by default
+	 *  (graph-sync.md §9). */
+	defaultBranch: string | null;
+}
+
 /**
- * Whether the forge considers one repository public or private.
+ * Whether the forge considers one repository public or private, and which
+ * branch is its default — both from the one repository read.
  *
  * The single fact `dojo.repositories.visibility` is allowed to come from — it is
  * never inferred from the remote URL or the owner's name (sharing acceptance
@@ -167,7 +177,7 @@ export async function fetchGithubOrgs(
  *
  * Three outcomes, kept distinct because they call for different handling:
  *
- *   'public' | 'private'   the forge answered
+ *   { visibility, … }      the forge answered
  *   null                   404 — this token cannot see the repository (no
  *                          access, or renamed upstream). A definite "we do not
  *                          know", so the caller leaves the row uncaptured.
@@ -176,12 +186,12 @@ export async function fetchGithubOrgs(
  *                          a dead credential is distinguishable from an outage.
  *   throws AdminError      a 2xx whose body has no usable `private` field.
  */
-export async function fetchGithubRepoVisibility(
+export async function fetchGithubRepoFacts(
 	owner: string,
 	repo: string,
 	token: string,
 	fetchImpl: typeof fetch = fetch
-): Promise<ForgeVisibility | null> {
+): Promise<ForgeRepoFacts | null> {
 	// Encoded because both segments arrive from a stored `repo_key`; a raw slash
 	// or space would let a segment address a different API path.
 	const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
@@ -195,7 +205,11 @@ export async function fetchGithubRepoVisibility(
 	if (typeof body?.private !== 'boolean') {
 		throw new AdminError(502, `GitHub returned no visibility for ${owner}/${repo}`);
 	}
-	return body.private ? 'private' : 'public';
+	const branch = body.default_branch;
+	return {
+		visibility: body.private ? 'private' : 'public',
+		defaultBranch: typeof branch === 'string' && branch !== '' ? branch : null
+	};
 }
 
 /** Both reads for one provisioning pass. Throws (never returns a partial) so a

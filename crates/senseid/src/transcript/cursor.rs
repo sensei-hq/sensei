@@ -173,17 +173,15 @@ pub fn parse_cursor_session(content: &str) -> Option<SynthSession> {
         let rec_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
         match rec_type {
-            "user" => {
-                if human_prompt_text(&v).is_some() {
-                    events.push(SynthEvent {
-                        event_type: "UserPromptSubmit".to_string(),
-                        tool_name: None,
-                        file_path: None,
-                        prompt: human_prompt_text(&v),
-                        tool_input: None,
-                        ts,
-                    });
-                }
+            "user" if human_prompt_text(&v).is_some() => {
+                events.push(SynthEvent {
+                    event_type: "UserPromptSubmit".to_string(),
+                    tool_name: None,
+                    file_path: None,
+                    prompt: human_prompt_text(&v),
+                    tool_input: None,
+                    ts,
+                });
             }
             "assistant" => {
                 // Emit PostToolUse for each tool_use block

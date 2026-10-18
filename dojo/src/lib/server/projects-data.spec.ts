@@ -7,6 +7,7 @@ import {
 	getUserProjectConstitution,
 	countOrgProjects,
 	upsertProjectFromRun,
+	fileRunUnderProject,
 	AdminError,
 	type DojoClient
 } from './projects-data';
@@ -132,15 +133,17 @@ describe('getUserProjectConstitution — the per-project drill-in read', () => {
 	});
 });
 
-function makeUpsertDb(error: unknown) {
+function makeUpsertDb(error: unknown, id = 'proj-1') {
 	const captured: { payload?: Record<string, unknown>; conflict?: unknown } = {};
 	const b: Record<string, unknown> = {};
 	b.from = () => b;
 	b.upsert = (payload: Record<string, unknown>, opts: unknown) => {
 		captured.payload = payload;
 		captured.conflict = opts;
-		return Promise.resolve({ error });
+		return b;
 	};
+	b.select = () => b;
+	b.single = () => Promise.resolve({ data: error ? null : { id }, error });
 	return { db: b as unknown as DojoClient, captured };
 }
 
@@ -179,8 +182,37 @@ describe('upsertProjectFromRun', () => {
 		await upsertProjectFromRun(db, CALLER, { slug: 's', name: 'n', classification: 'personal', phase: 'watch' });
 		expect(captured.payload).not.toHaveProperty('constitution');
 	});
+	it('returns the project id, so the run can be filed under it (#252)', async () => {
+		const { db } = makeUpsertDb(null, 'proj-9');
+		expect(await upsertProjectFromRun(db, CALLER, { slug: 's', name: 'n', classification: 'personal', phase: 'watch' })).toBe('proj-9');
+	});
 	it('throws AdminError on a DB error (the caller swallows it fire-and-forget)', async () => {
 		const { db } = makeUpsertDb({ message: 'boom' });
 		await expect(upsertProjectFromRun(db, CALLER, { slug: 's', name: 'n', classification: 'personal', phase: 'watch' })).rejects.toBeInstanceOf(AdminError);
+	});
+});
+
+// #252: a relay session carries its owner's project, which is what lets a team
+// owning that project see THAT the run is going (status only).
+describe('fileRunUnderProject', () => {
+	it('sets the session\'s project_id, by the session id', async () => {
+		const calls: Array<[string, unknown]> = [];
+		const b: Record<string, unknown> = {};
+		b.from = (t: string) => (calls.push(['from', t]), b);
+		b.update = (v: unknown) => (calls.push(['update', v]), b);
+		b.eq = (c: string, v: unknown) => (calls.push(['eq', [c, v]]), Promise.resolve({ error: null }));
+		await fileRunUnderProject(b as unknown as DojoClient, 'sess-1', 'proj-1');
+		expect(calls).toEqual([
+			['from', 'relay_sessions'],
+			['update', { project_id: 'proj-1' }],
+			['eq', ['id', 'sess-1']]
+		]);
+	});
+	it('throws AdminError on a DB error', async () => {
+		const b: Record<string, unknown> = {};
+		b.from = () => b;
+		b.update = () => b;
+		b.eq = () => Promise.resolve({ error: { message: 'denied' } });
+		await expect(fileRunUnderProject(b as unknown as DojoClient, 's', 'p')).rejects.toBeInstanceOf(AdminError);
 	});
 });

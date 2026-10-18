@@ -11,10 +11,10 @@ One project, deep: everything sensei knows about a single codebase, the work in
 flight, and the controls for what binds to or leaves it. The project window is the
 place a user goes to **trust** sensei's read on a project — Overview shows the FTR,
 the top recommendation and its provenance, memory / doc-drift / session stats and
-recent rows; each section (Sessions · Memories · Traceability · Libraries ·
-Instruments · Patterns · Impact · About · Atlas) offers exactly one action
-(Apply / Review / Dismiss, or send to the assistant). The user feels this as *I
-can see why sensei believes this, and act on it here*.
+recent rows; each section (Overview · Sessions · Metrics · Memories · Traceability ·
+Libraries · Instruments · Patterns · Impact · About) plus the Diagrams group offers
+exactly one action (Apply / Review / Dismiss, or send to the assistant). The user
+feels this as *I can see why sensei believes this, and act on it here*.
 
 > **Status honesty.** Overview, Sessions, Memories, Traceability, Libraries,
 > Instruments, Patterns, Impact, About and Atlas are built. The **solution-track
@@ -39,16 +39,18 @@ can see why sensei believes this, and act on it here*.
 
 - **API** — `/api/projects/{id}/overview` · `/drift` · `/drift/scan` · `/patterns` ·
   `/libraries` · `/instruments` · `/mcp-tool-stats` · `/memories` · `/impact` ·
-  `/sessions` · `/ftr` · `/icon` · `/health`; `/api/patterns/{project}`;
-  `/api/dojo-binding`.
+  `/sessions` · `/ftr` · `/icon` · `/health`; `/api/patterns/{project}`.
+  **No `/api/dojo-binding` endpoint** (gap `G-DOJO-AUDIT`).
 - **App** — `app/src/routes/(project)/project/[id]/{overview,sessions,memories,
   traceability,libraries,instruments,patterns,impact,about,atlas}/+page.svelte`;
   shell `ProjectSidebar.svelte`.
 - **Data** — `sensei.projects`, `sensei.project_ftr_metrics` (view `project_metrics`),
   `sensei.memories`, `sensei.project_drift` (view), `inference.drift_items`,
   `inference.recommendations`, `activity.sessions`, `sensei.project_libraries`,
-  `sensei.libraries`, `sensei.project_dependencies`, `sensei.promoted_patterns`
-  (view `project_patterns`), `sensei.rules`, `sensei.folder_projects`.
+  `sensei.libraries`, `sensei.project_dependencies`, **`project_patterns` (view —
+  the table `sensei.promoted_patterns` does not exist)**, `sensei.folder_projects`.
+  **No `sensei.rules` table** — rules are `memories` rows with `namespace_id` +
+  `enforcement` + `origin`.
 
 ## Data invariants
 
@@ -125,6 +127,9 @@ curl -s http://localhost:7744/api/projects/$ID/overview \
 
 ## Related
 
+- [design/project-management-detailed-requirements.md](../../../../design/project-management-detailed-requirements.md) —
+  the shell, the sidebar section list, the diagrams group, and the About document,
+  grounded in the mockup symbols.
 - [features/04-project.md](../../../../features/04-project.md) — the project-window
   dossier (legacy depth, folds here).
 - [spec/screen/project-*](../../../../spec/screen/) — overview, sessions, memories,
@@ -134,4 +139,5 @@ curl -s http://localhost:7744/api/projects/$ID/overview \
 - [architecture/app](../../../../architecture/app.md) · [design/mockup-brief](../../../../design/mockup-brief.md).
 - [prd/02-objectives.md §04](../../../02-objectives.md) · [prd/01-vision.md](../../../01-vision.md#the-core-loop).
 - Crates: `crates/senseid/src/{project_overview.rs, api/handlers/project_detail.rs,
-  api/handlers/knowledge.rs, api/handlers/codebase.rs, db/pg_store.rs}`.
+  api/handlers/knowledge.rs, api/handlers/codebase.rs, db/pg_store/project.rs,
+  db/pg_store/graph.rs}`.

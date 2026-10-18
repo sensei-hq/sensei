@@ -29,21 +29,17 @@ as $$
   select
        -- a person's own user-scoped numbers, always
        (p_scope = 'user' and p_principal_id = dojo.current_principal_id())
-       -- management: the whole tenant
+       -- repo-scoped: the rule every repository-scoped row shares
+    or (p_scope = 'repo' and dojo.can_read_repository(p_repository_id, p_tenant_id))
+       -- management: the whole tenant, user-scoped rows included
     or dojo.tenant_role_at_least(p_tenant_id, 'admin')
-    or exists (
+       -- another person's numbers: a LEAD of a team owning the project
+    or (p_scope = 'user' and exists (
          select 1
            from dojo.repositories_in_projects r
-           join dojo.projects pr on pr.id = r.project_id
           where r.repository_id = p_repository_id
-            and (
-                 -- repo-scoped: anyone on a team owning the project, or its owner
-                 (p_scope = 'repo' and (dojo.on_team_of(r.project_id)
-                                        or pr.user_id = dojo.current_principal_id()))
-                 -- another person's numbers: a LEAD of a team owning the project
-              or (p_scope = 'user' and dojo.leads_team_of(r.project_id))
-            )
-       );
+            and dojo.leads_team_of(r.project_id)
+       ));
 $$;
 
 revoke all on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) from public;

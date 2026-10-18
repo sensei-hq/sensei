@@ -121,9 +121,11 @@ test.describe('Project window — Traceability diff', () => {
     // Seed a drift row with expected + actual signatures. Requires a
     // folder + a doc node + a code node for the FK constraints. Use
     // the project's first folder; upsert two nodes as scratch.
+    // A project reaches its folders through its repositories (folders lost
+    // project_id in 0.12); sensei.folder_projects is that join.
     const folderId = psql(`
-      SELECT id FROM sensei.folders
-       WHERE project_id = '${project.id}'::uuid ORDER BY path LIMIT 1
+      SELECT folder_id FROM sensei.folder_projects
+       WHERE project_id = '${project.id}'::uuid ORDER BY folder_abs_path LIMIT 1
     `);
     if (!folderId) { test.skip(true, 'project has no folders for drift seed'); return; }
     const docNodeId = psql(`

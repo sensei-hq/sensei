@@ -85,7 +85,7 @@ export class AppState {
     // every failure including 5xx and network errors). Without trySetConfig
     // a transient daemon error silently drops the write, the next load()
     // refetches daemon truth — which now diverges from our cache — and
-    // any downstream gate (e.g. reroute's setup_complete check) reads the
+    // any downstream gate (e.g. the boot gate's setup_complete check) reads the
     // wrong value. This was the cause of the "Enter observatory → bounced
     // back to /setup/welcome" symptom.
     const prev = this.config;
@@ -138,7 +138,7 @@ export class AppState {
   /**
    * Hydrate from the daemon. Always succeeds — if the daemon is unreachable
    * we log and fall back to an empty config so callers never have to deal
-   * with a "load failed" branch. The routing layer (hooks.ts::reroute) is
+   * with a "load failed" branch. The routing layer (the boot gate (routes/+layout.ts)) is
    * the canonical place that decides what to show when health isn't ok; it
    * will send the user to /health, where the bootstrap resolver chain heals
    * whatever's broken and brings the user back. This module just provides
@@ -156,7 +156,7 @@ export class AppState {
     const result = await api.tryGetConfig();
     if (!result.ok) {
       // Daemon unreachable — fall back to empty defaults. Don't throw,
-      // don't reroute — hooks::reroute is the single source of truth for
+      // don't redirect — the boot gate (routes/+layout.ts) is the single source of truth for
       // routing decisions; if health isn't ok it'll bounce to /health,
       // where the resolver chain handles the actual repair.
       console.warn('[appState] load() falling back to defaults — daemon-config fetch failed', result.error);
@@ -168,7 +168,7 @@ export class AppState {
     this.config = result.data;
     // `setup_complete` ↔ localStorage reconciliation lives in
     // wizardState.hydrate() now (single owner). appState just caches the
-    // config map; reroute reads `setupComplete` through the facade.
+    // config map; the boot gate reads `setupComplete` through the facade.
     this.loaded = true;
   }
 

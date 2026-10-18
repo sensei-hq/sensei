@@ -9,6 +9,7 @@
     import { Eyebrow, PageHeader } from "$lib/components";
     import { Button, Select } from "@rokkit/ui";
     import { mcp, toolVerdict } from "$lib/state/mcp.svelte.js";
+    import { buildPlaygroundGroups, serversByFamily, type PlaygroundTool } from "./playground-groups.js";
     import ToolHealthCard from "./ToolHealthCard.svelte";
     import type {
         McpToolManifest, SessionToolCall, SessionReplayCall, ToolHealthSource,
@@ -77,85 +78,22 @@
         selectedInsightTool ? mcp.insightFor(selectedInsightTool) : undefined,
     );
 
-    // #84 T2 Slice A/B — discovered MCP servers state.
-    // Sensei's own tools + every discovered server merge into a single
-    // "groups" list in the sidebar left rail per instruments-simple.jsx.
-    // Each group is expandable; a discovered server's expand triggers
-    // loadServerTools() to hydrate the tool manifest lazily.
+    // #84 T2 — discovered MCP servers. Sensei's own tools and every
+    // discovered server are groups in the left rail (instruments-simple.jsx);
+    // the discovered ones sit in a section grouped by assistant, each with an
+    // on/off toggle. A server's tools load lazily when its group expands.
     const discoveredServers = $derived(mcp.mcpServers);
-
-    // Group tools by MCP for the sidebar. Sensei is always first and open by
-    // default; discovered servers default to collapsed. Search auto-expands
-    // any group that has hits so the results aren't hidden behind a
-    // chevron.
-    type PlaygroundTool = {
-        id: string;
-        mcp: string;
-        name: string;
-        kind: 'query' | 'action' | 'other';
-        summary: string;
-    };
-    type PlaygroundGroup = {
-        id: string;
-        kanji: string;
-        name: string;
-        installed: boolean;
-        source: 'sensei' | 'discovered';
-        serverId?: string;
-        tools: PlaygroundTool[];
-    };
+    const discoveredByFamily = $derived(serversByFamily(discoveredServers));
 
     let collapsedGroups = $state<Record<string, boolean>>({});
     let toolSearch = $state('');
     let refreshingServers = $state(false);
+    /** The last refused toggle or failed scan, in words; cleared on success. */
+    let serversError = $state<string | null>(null);
 
-    function inferKind(name: string, declared: string | undefined): 'query' | 'action' | 'other' {
-        if (declared === 'action' || declared === 'query') return declared;
-        // Fallback classifier for tool names from third-party MCPs whose
-        // catalog doesn't declare a kind. Verbs that mutate → action;
-        // getters / list / search → query.
-        const n = name.toLowerCase();
-        if (/^(get|list|search|find|read|show|describe|inspect|explain|status|check)/.test(n)) return 'query';
-        if (/^(set|create|delete|update|write|run|call|start|stop|restart|install|remove)/.test(n)) return 'action';
-        return 'other';
-    }
-
-    const playgroundGroups = $derived.by<PlaygroundGroup[]>(() => {
-        const senseiTools: PlaygroundTool[] = tools.map((t) => ({
-            id: `sensei:${t.name}`,
-            mcp: 'sensei',
-            name: t.name,
-            kind: t.kind === 'action' || t.kind === 'query' ? t.kind : 'other',
-            summary: t.summary,
-        }));
-        const groups: PlaygroundGroup[] = [
-            { id: 'sensei', kanji: '具', name: 'Sensei', installed: true, source: 'sensei', tools: senseiTools },
-        ];
-        for (const server of discoveredServers) {
-            const manifest = mcp.serverToolManifests[server.id];
-            const rawTools = (manifest?.tools ?? []) as Array<{ name?: string; description?: string }>;
-            const serverTools: PlaygroundTool[] = rawTools
-                .filter((t) => !!t.name)
-                .map((t) => ({
-                    id: `${server.id}:${t.name}`,
-                    mcp: server.id,
-                    name: t.name as string,
-                    kind: inferKind(t.name as string, undefined),
-                    summary: t.description ?? '',
-                }));
-            groups.push({
-                id: server.id,
-                // Small kanji per family — reasonable defaults; real mockup uses per-MCP glyphs.
-                kanji: server.acp_family === 'claude' ? '書' : server.acp_family === 'zed' ? '禅' : server.acp_family === 'cursor' ? '刀' : '器',
-                name: server.mcp_key,
-                installed: server.enabled,
-                source: 'discovered',
-                serverId: server.id,
-                tools: serverTools,
-            });
-        }
-        return groups;
-    });
+    const playgroundGroups = $derived(
+        buildPlaygroundGroups(tools, discoveredServers, mcp.serverToolManifests),
+    );
 
     // Search-filtered view of groups. Ql matches on tool name OR summary.
     const filteredGroups = $derived.by(() => {
@@ -217,10 +155,14 @@
     async function refreshDiscoveredServers() {
         refreshingServers = true;
         try {
-            await mcp.refreshMcpServers();
+            serversError = await mcp.refreshMcpServers();
         } finally {
             refreshingServers = false;
         }
+    }
+
+    async function toggleServer(serverId: string, enabled: boolean) {
+        serversError = await mcp.toggleMcpServer(serverId, enabled);
     }
 
     // Default: sensei expanded, all discovered servers collapsed.
@@ -502,19 +444,14 @@
                     {/if}
                 </div>
 
-                <!-- MCP groups list -->
-                <div class="overflow-auto flex-1 py-1">
-                    {#if filteredGroups.length === 0}
-                        <div class="text-center text-sm text-ink-faint py-4 px-3">
-                            no tools match.
-                        </div>
-                    {/if}
-                    {#each filteredGroups as group (group.id)}
-                        {@const collapsed = effectiveCollapsed[group.id] ?? (group.source !== 'sensei')}
-                        <div class="mb-1" data-testid={`mcp-group-${group.id}`}>
-                            <!-- Group header -->
+                <!-- MCP groups — sensei first, then the discovered servers by assistant -->
+                {#snippet groupBlock(group: (typeof playgroundGroups)[number], server?: (typeof discoveredServers)[number])}
+                    {@const collapsed = effectiveCollapsed[group.id] ?? (group.source !== 'sensei')}
+                    <div class="mb-1" data-testid={`mcp-group-${group.id}`}>
+                        <!-- Expand and enable are siblings: a button inside a button is invalid HTML. -->
+                        <div class="flex items-center" data-testid={server ? `server-row-${server.mcp_key}` : undefined}>
                             <button
-                                class="w-full grid grid-cols-[14px_18px_1fr_auto_auto] items-center gap-2 py-2 px-3 text-left bg-transparent border-none cursor-pointer text-ink-soft"
+                                class="flex-1 min-w-0 grid grid-cols-[14px_18px_1fr_auto_auto] items-center gap-2 py-2 px-3 text-left bg-transparent border-none cursor-pointer text-ink-soft"
                                 onclick={() => toggleGroup(group.id)}
                                 aria-expanded={!collapsed}
                                 data-testid={`mcp-group-toggle-${group.id}`}
@@ -525,46 +462,94 @@
                                 >▶</span>
                                 <span class="kanji text-sm text-accent">{group.kanji}</span>
                                 <span class="text-sm truncate">{group.name}</span>
-                                {#if !group.installed}
-                                    <span class="text-xs uppercase tracking-wide text-warning">off</span>
-                                {:else}
-                                    <span></span>
-                                {/if}
+                                <span></span>
                                 <span class="font-mono text-xs text-ink-faint">{group.tools.length}</span>
                             </button>
+                            {#if server}
+                                <button
+                                    class="mr-3 px-2 py-0.5 text-xs font-mono uppercase tracking-wide rounded border border-paper-edge bg-transparent cursor-pointer"
+                                    class:text-success={server.enabled}
+                                    class:text-ink-mute={!server.enabled}
+                                    role="switch"
+                                    aria-checked={server.enabled}
+                                    aria-label={`${server.enabled ? 'Disable' : 'Enable'} ${server.mcp_key}`}
+                                    onclick={() => void toggleServer(server.id, !server.enabled)}
+                                    data-testid={`server-toggle-${server.mcp_key}`}
+                                >{server.enabled ? 'on' : 'off'}</button>
+                            {/if}
+                        </div>
 
-                            <!-- Tool lines -->
-                            {#if !collapsed}
-                                <div>
-                                    {#each group.tools as tool (tool.id)}
-                                        {@const active = focusedTool?.id === tool.id}
-                                        {@const isAction = tool.kind === 'action'}
-                                        {@const kindGlyph = isAction ? '作' : tool.kind === 'query' ? '問' : '·'}
-                                        <button
-                                            class="w-full grid grid-cols-[32px_14px_1fr] gap-1 py-1 pl-1 pr-3 text-left bg-transparent border-none cursor-pointer"
-                                            style="border-left: {active ? '2px solid var(--accent)' : '2px solid transparent'};"
-                                            onclick={() => { selectedToolId = tool.id; toolResult = ''; toolParams = pickToolDefaults(tool); }}
-                                            data-testid={`tool-row-${tool.name}`}
-                                            data-tool-kind={tool.kind}
-                                        >
-                                            <span></span>
-                                            <span
-                                                class="kanji text-xs"
-                                                class:text-accent={isAction}
-                                                class:text-success={tool.kind === 'query'}
-                                                class:text-ink-mute={tool.kind === 'other'}
-                                            >{kindGlyph}</span>
-                                            <span
-                                                class="font-mono text-xs truncate"
-                                                class:text-ink={active}
-                                                class:text-ink-soft={!active}
-                                            >{tool.name}</span>
-                                        </button>
+                        <!-- Tool lines -->
+                        {#if !collapsed}
+                            <div>
+                                {#each group.tools as tool (tool.id)}
+                                    {@const active = focusedTool?.id === tool.id}
+                                    {@const isAction = tool.kind === 'action'}
+                                    {@const kindGlyph = isAction ? '作' : tool.kind === 'query' ? '問' : '·'}
+                                    <button
+                                        class="w-full grid grid-cols-[32px_14px_1fr] gap-1 py-1 pl-1 pr-3 text-left bg-transparent border-none cursor-pointer"
+                                        style="border-left: {active ? '2px solid var(--accent)' : '2px solid transparent'};"
+                                        onclick={() => { selectedToolId = tool.id; toolResult = ''; toolParams = pickToolDefaults(tool); }}
+                                        data-testid={`tool-row-${tool.name}`}
+                                        data-tool-kind={tool.kind}
+                                    >
+                                        <span></span>
+                                        <span
+                                            class="kanji text-xs"
+                                            class:text-accent={isAction}
+                                            class:text-success={tool.kind === 'query'}
+                                            class:text-ink-mute={tool.kind === 'other'}
+                                        >{kindGlyph}</span>
+                                        <span
+                                            class="font-mono text-xs truncate"
+                                            class:text-ink={active}
+                                            class:text-ink-soft={!active}
+                                        >{tool.name}</span>
+                                    </button>
+                                {/each}
+                            </div>
+                        {/if}
+                    </div>
+                {/snippet}
+
+                <div class="overflow-auto flex-1 py-1">
+                    {#if filteredGroups.length === 0 && toolSearch}
+                        <div class="text-center text-sm text-ink-faint py-4 px-3">
+                            no tools match.
+                        </div>
+                    {/if}
+                    {#each filteredGroups.filter((g) => g.source === 'sensei') as group (group.id)}
+                        {@render groupBlock(group)}
+                    {/each}
+
+                    <section class="mt-3 pt-3 border-t border-paper-edge" data-testid="discovered-servers">
+                        <div class="px-3 pb-1"><Eyebrow>Discovered MCP servers</Eyebrow></div>
+                        {#if serversError}
+                            <p class="px-3 py-1 text-xs text-danger" data-testid="servers-error">{serversError}</p>
+                        {/if}
+                        {#if mcp.mcpServersStatus === 'error'}
+                            <p class="px-3 py-1 text-xs text-danger" data-testid="servers-load-error">
+                                Could not read the discovered servers from the daemon.
+                            </p>
+                        {:else if discoveredServers.length === 0 && mcp.mcpServersStatus === 'ready'}
+                            <p class="px-3 py-2 text-xs text-ink-soft">
+                                No MCP servers discovered yet. Configure one in Claude Code, Cursor or Zed, then scan.
+                            </p>
+                        {/if}
+                        {#each discoveredByFamily as fam (fam.family)}
+                            {@const shown = fam.servers
+                                .map((s) => ({ server: s, group: filteredGroups.find((g) => g.id === s.id) }))
+                                .filter((x) => x.group)}
+                            {#if shown.length > 0}
+                                <div class="mb-1" data-testid={`servers-family-${fam.family}`}>
+                                    <div class="px-3 pt-2 pb-1 text-xs uppercase tracking-wide text-ink-faint">{fam.label}</div>
+                                    {#each shown as { server, group } (server.id)}
+                                        {@render groupBlock(group!, server)}
                                     {/each}
                                 </div>
                             {/if}
-                        </div>
-                    {/each}
+                        {/each}
+                    </section>
                 </div>
 
                 <!-- Footer — MCP + tool counts + refresh -->

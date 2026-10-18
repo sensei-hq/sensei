@@ -1,7 +1,7 @@
 -- Writing metrics and metric activations as the signed-in person (#236 step 3;
 -- access matrix "Metrics").
 --
--- dojo.upsert_repository_metrics files a batch of repo-scoped metric rows for
+-- dojo.file_metric_rows files a batch of repo-scoped metric rows for
 -- the caller's daemon. Every row must name a repository the caller may sync
 -- (their own verdict row says sync_enabled); the tenant is taken from that row,
 -- never from the input; one row that fails refuses the WHOLE batch
@@ -73,26 +73,36 @@ begin
                                'commit_sha', null, 'computed_on', current_date, 'grain', 'daily', 'value', 1);
 
     -- ── ingest ───────────────────────────────────────────────────────────────
-    n := dojo.upsert_repository_metrics(jsonb_build_array(row1));
+    n := dojo.file_metric_rows(jsonb_build_array(row1));
     if n <> 1 then raise exception 'ingest: ola''s permitted row should be written, wrote %', n; end if;
-    n := dojo.upsert_repository_metrics(jsonb_build_array(row1 || '{"value": 2}', row1 || '{"value": 3}'));
+    n := dojo.file_metric_rows(jsonb_build_array(row1 || '{"value": 2}', row1 || '{"value": 3}'));
     if n <> 1 then raise exception 'ingest: two rows for one key in a batch should merge, wrote %', n; end if;
 
+    -- ── user-scoped rows (#240): the person is the caller, never the payload ──
+    n := dojo.file_metric_rows(jsonb_build_array(
+        row1 || '{"scope": "user", "principal_id": "a0000000-0000-4000-8000-000000000131", "value": 5}'));
+    if n <> 1 then raise exception 'ingest: ola''s user-scoped row should be written, wrote %', n; end if;
     begin
-        perform dojo.upsert_repository_metrics(jsonb_build_array(
+        perform dojo.file_metric_rows(jsonb_build_array(row1 || '{"scope": "team"}'));
+        raise exception 'ingest: an unknown scope was accepted';
+    exception when invalid_parameter_value then null;
+    end;
+
+    begin
+        perform dojo.file_metric_rows(jsonb_build_array(
             row1 || '{"value": 9}',
             row1 || '{"repository_id": "91000000-0000-4000-8000-000000000002"}'));
         raise exception 'ingest: a row for a repository ola may not sync was accepted (another member''s verdict is not hers)';
     exception when insufficient_privilege then null;
     end;
     begin
-        perform dojo.upsert_repository_metrics(jsonb_build_array(
+        perform dojo.file_metric_rows(jsonb_build_array(
             row1 || '{"repository_id": "91000000-0000-4000-8000-000000000004"}'));
         raise exception 'ingest: a row for another tenant''s repository was accepted';
     exception when insufficient_privilege then null;
     end;
     begin
-        perform dojo.upsert_repository_metrics(jsonb_build_array(
+        perform dojo.file_metric_rows(jsonb_build_array(
             row1 || '{"tenant_id": "b0000000-0000-4000-8000-00000000013c", "commit_sha": "abc"}'));
     exception when others then
         raise exception 'ingest: an extra tenant_id in the input must be ignored, not fail: %', sqlerrm;
@@ -157,7 +167,7 @@ begin
     select string_agg(r.repo_key || '=' || rm.value || coalesce('@' || rm.commit_sha, ''), ', ' order by r.repo_key, rm.commit_sha nulls first)
       into got
       from dojo.repository_metrics rm join dojo.repositories r on r.id = rm.repository_id
-     where r.repo_key like 'github.com/ztest-%';
+     where r.repo_key like 'github.com/ztest-%' and rm.scope = 'repo';
     if got is distinct from 'github.com/ztest-mw/priv=3, github.com/ztest-mw/priv=1@abc' then
         raise exception 'ingest stored: %', got;
     end if;
@@ -165,6 +175,12 @@ begin
          where r.repo_key = 'github.com/ztest-mw/priv' and rm.commit_sha = 'abc')
        <> 'b0000000-0000-4000-8000-00000000013a' then
         raise exception 'ingest: the tenant must come from the caller''s repository, not the input';
+    end if;
+    select string_agg(rm.value || ' by ' || rm.principal_id, ', ') into got
+      from dojo.repository_metrics rm join dojo.repositories r on r.id = rm.repository_id
+     where r.repo_key like 'github.com/ztest-%' and rm.scope = 'user';
+    if got is distinct from '5 by a0000000-0000-4000-8000-000000000132' then
+        raise exception 'ingest: a user-scoped row belongs to the caller (ola), not the payload: %', got;
     end if;
     select string_agg(r.repo_key, ', ' order by r.repo_key) into got
       from dojo.metric_activations a join dojo.repositories r on r.id = a.repository_id

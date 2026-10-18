@@ -23,8 +23,9 @@
 
 import { test, expect, type TauriPageLike } from '../fixtures';
 import {
-  navigateTo, navigateToScreen, daemonGet, daemonPost, DAEMON_URL,
+  navigateTo, navigateToScreen, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
+  seedProject,
 } from '../helpers';
 
 /**
@@ -40,16 +41,7 @@ import {
  * spec covers is that the screen mounts, settles, and lands in a terminal state
  * — and the empty state is a terminal state this screen must get right.
  */
-async function seedProjectId(): Promise<string> {
-  const existing = await daemonGet<Array<{ id: string; name: string }>>('/api/projects');
-  const mine = existing.find((p) => p.name === 'e2e-structure');
-  if (mine) return mine.id;
-  const created = await daemonPost<{ ok: boolean; id: string }>('/api/projects', {
-    name: 'e2e-structure',
-    description: 'fixture for the Structure diagram spec',
-  });
-  return created.id;
-}
+const seedProjectId = (): Promise<string> => seedProject('e2e-structure', 'fixture for the Structure diagram spec');
 
 
 /**

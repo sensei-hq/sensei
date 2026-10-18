@@ -137,7 +137,9 @@ describe('toKitHealth', () => {
 		expect(h.signals[1].n).toBe('12');
 		expect(h.signals[3].tone).toBe('success'); // 0 errors → healthy
 		expect(h.contribVsApprove).toEqual([]); // absent series → empty (no bars)
-		expect(h.alerts).toEqual([]);
+		// No anomaly detection exists yet (containment events): "not measured",
+		// never an empty list that reads as "nothing detected" (#241).
+		expect(h.alerts).toBeNull();
 	});
 	it('maps the contributions-vs-approvals weekly series when present', () => {
 		const h = toKitHealth({

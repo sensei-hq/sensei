@@ -1733,7 +1733,8 @@ export interface SyncStateRow {
   entity: string;
   entity_key: string;
   direction: 'push' | 'pull';
-  state: 'pending' | 'synced' | 'error' | 'skipped';
+  /** `partial`: agreed except what `last_error` names; `synced_at` is set. */
+  state: 'pending' | 'synced' | 'partial' | 'error' | 'skipped';
   /** The failure message, or on a `skipped` row the REASON — which is not a
    *  fault. Null on `synced`: the writer clears it, because a stale message
    *  beside a success reads as "it failed". */
@@ -1743,7 +1744,7 @@ export interface SyncStateRow {
   updated_at: string;
 }
 
-/** `GET /api/dojo/sync-state`. Rows arrive worst-first (error, pending, skipped,
+/** `GET /api/dojo/sync-state`. Rows arrive worst-first (error, pending, partial, skipped,
  *  synced) so a caller rendering the head of the list sees what needs attention
  *  without re-ranking. `counts` is the by-state tally for a summary line. */
 export interface SyncStateResponse {

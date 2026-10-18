@@ -162,10 +162,8 @@ fn collect_uuids(v: &Value, out: &mut Vec<String>, max: usize) {
         return;
     }
     match v {
-        Value::String(s) => {
-            if uuid::Uuid::parse_str(s).is_ok() && !out.iter().any(|e| e == s) {
-                out.push(s.clone());
-            }
+        Value::String(s) if uuid::Uuid::parse_str(s).is_ok() && !out.iter().any(|e| e == s) => {
+            out.push(s.clone());
         }
         Value::Array(items) => {
             for it in items {

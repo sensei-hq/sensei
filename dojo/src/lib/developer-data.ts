@@ -115,8 +115,6 @@ export const CONTRIBUTIONS: readonly Contribution[] = [
 	}
 ];
 
-/** Lifetime reach shown in the contributions header (mockup: "612 devs helped"). */
-export const CONTRIB_DEVS_HELPED = 612;
 
 // ── For me: downstream (approved teachings distributed to me) ─────────────────
 

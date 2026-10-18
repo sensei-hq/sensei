@@ -38,7 +38,7 @@ The ingestion adapter produces `ParsedTranscript`, which keeps prose turns and
 synthesised events but drops tool success, turn boundaries and shutdown totals —
 the signals most of these metrics rest on. `SynthEvent` has no field for whether
 a tool call succeeded. Until it does, the richer read has to happen here. See
-`docs/2026-08-26-copilot-adapter-review.md`.
+`docs/design/transcript-adapters.md` (C-16).
 
 ## Measuring time
 

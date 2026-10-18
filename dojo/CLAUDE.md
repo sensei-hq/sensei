@@ -34,7 +34,7 @@ touch files. Never add new inline `font-size`/`@media`/color literals.
 
 ```bash
 CF_PAGES=1 bun run build
-bunx wrangler dev --port 5173 --local          # loads .dev.vars
+bunx wrangler dev --port 5175 --local          # loads .dev.vars
 # mint a magic link (local supabase service_role) → visit → /orgs → Enter → /console
 ```
 Local `/v1` data routes may 404 (dev-only artifact) — pages degrade gracefully; that

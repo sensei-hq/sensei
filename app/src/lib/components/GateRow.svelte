@@ -23,6 +23,7 @@
 <div
   data-component="gate-row"
   data-gate-id={gate.id}
+  data-gate-status={gate.status}
   class="gate-row border-b border-paper-edge py-2.5"
   style="opacity: {gate.status === 'pending' ? 0.65 : 1};"
 >

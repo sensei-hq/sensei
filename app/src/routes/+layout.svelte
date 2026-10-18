@@ -43,7 +43,7 @@
     // Expose appState + healthState on window for E2E test helpers (dev builds
     // only). Tests inject daemon config via `__sensei_state__.appState.config`
     // and can drive the boot gate via `__sensei_state__.healthState.status` to
-    // exercise reroute (e.g. the fresh-window project gate).
+    // exercise the boot gate (e.g. the fresh-window project gate).
     if (import.meta.env.DEV && typeof window !== "undefined") {
         (window as { __sensei_state__?: unknown }).__sensei_state__ = { appState, healthState };
     }
@@ -60,7 +60,7 @@
     // Wire up the Tauri native menu → SvelteKit navigation bridge. The
     // Rust side emits `open-logs` (one specific shortcut) and
     // `dev-navigate` (any view-menu item) events; we just translate them
-    // into goto() so the routing guard in hooks.reroute applies the same
+    // into goto() so the routing guard in the boot gate (routes/+layout.ts) applies the same
     // way as in-app navigation.
     onMount(() => {
         // Watch the daemon's own DB-connection mode so a degraded → recovering

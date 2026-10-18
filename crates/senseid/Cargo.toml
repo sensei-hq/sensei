@@ -1,6 +1,6 @@
 [package]
 name = "senseid"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2024"
 description = "Sensei indexer daemon — graph-based code intelligence"
 
@@ -108,6 +108,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"
+# OS credential store: Keychain (macOS), Credential Manager (Windows), Secret
+# Service over pure-Rust zbus (Linux/BSD). See `gateway_keys`.
+keyring = "4.2"
 # Implementing the gateway's `kernel::ReadinessProbe` (an async trait) for the
 # sensei-owned ModelProvisioning service. Same version the gateway kernel uses.
 async-trait = "0.1"

@@ -35,14 +35,7 @@ pub(crate) async fn set_config_handler(
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),
             };
-            if key == crate::cost::SUBSCRIPTION_CONFIG_KEY
-                && !v.trim().is_empty()
-                && crate::cost::Subscription::parse(Some(&v)).is_none()
-            {
-                // Storing an unparseable plan would silently disable cost — the
-                // screen would read "not configured" while the user believes they
-                // configured it. Reject instead. (Blank is allowed: that is how a
-                // user clears the setting.)
+            if !config_value_is_valid(key, &v) {
                 return Err(StatusCode::BAD_REQUEST);
             }
         }
@@ -55,6 +48,25 @@ pub(crate) async fn set_config_handler(
         }
     }
     Ok(Json(serde_json::json!({"ok": true})))
+}
+
+/// Whether `value` may be stored under `key`. A structured setting that does not
+/// parse would be silently ignored — the screen reading "not configured" while the
+/// user believes they configured it — so it is rejected instead. Blank is allowed:
+/// that is how a user clears the setting. Keys not listed here are free-form.
+fn config_value_is_valid(key: &str, value: &str) -> bool {
+    if value.trim().is_empty() {
+        return true;
+    }
+    match key {
+        crate::cost::SUBSCRIPTION_CONFIG_KEY => {
+            crate::cost::Subscription::parse(Some(value)).is_some()
+        }
+        crate::review::RISK_MODELS_CONFIG_KEY => {
+            crate::review::RiskModels::parse(Some(value)).is_some()
+        }
+        _ => true,
+    }
 }
 
 pub(crate) async fn delete_config_key(
@@ -339,4 +351,31 @@ pub(crate) async fn remove_all(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     Ok(Json(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_subscription_must_parse_or_be_blank() {
+        let key = crate::cost::SUBSCRIPTION_CONFIG_KEY;
+        assert!(config_value_is_valid(key, r#"{"amount":200,"period":"monthly"}"#));
+        assert!(config_value_is_valid(key, ""), "blank clears the setting");
+        assert!(!config_value_is_valid(key, "two hundred"));
+    }
+
+    #[test]
+    fn a_risk_model_map_must_parse_or_be_blank() {
+        let key = crate::review::RISK_MODELS_CONFIG_KEY;
+        assert!(config_value_is_valid(key, r#"{"approve":"opus"}"#));
+        assert!(config_value_is_valid(key, " "), "blank clears the setting");
+        assert!(!config_value_is_valid(key, r#"{"aprove":"opus"}"#));
+        assert!(!config_value_is_valid(key, "{}"), "a map that maps nothing is not a setting");
+    }
+
+    #[test]
+    fn other_keys_are_not_validated_here() {
+        assert!(config_value_is_valid("theme", "anything"));
+    }
 }

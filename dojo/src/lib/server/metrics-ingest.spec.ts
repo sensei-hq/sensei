@@ -1,6 +1,6 @@
 // The receiving half of the metric push (daemon-sync.md §7).
 //
-// The WRITE and its gate are the database's: dojo.upsert_repository_metrics
+// The WRITE and its gate are the database's: dojo.file_metric_rows
 // re-checks every row against the caller's own verdict (sync_enabled), takes the
 // tenant from that verdict row, refuses the whole batch on a mismatch, and
 // upserts on the seven-column key — proved against a real Postgres in
@@ -28,7 +28,7 @@ function tables(mine: Record<string, unknown>[] = [MINE]): Record<string, FakeTa
 				{ id: 'met-churn', key: 'churn' }
 			]
 		},
-		'rpc:upsert_repository_metrics': { rows: [] }
+		'rpc:file_metric_rows': { rows: [] }
 	};
 }
 const MINE = { repository_id: 'r-api', tenant_id: 't-acme', repo_key: 'github.com/acme/api', sync_enabled: true };
@@ -46,7 +46,7 @@ function row(over: Record<string, unknown> = {}) {
 }
 
 const sent = (db: ReturnType<typeof fakeDojoDb>) =>
-	db.rpcCalls.filter((c) => c.fn === 'upsert_repository_metrics').map((c) => c.args.p_rows);
+	db.rpcCalls.filter((c) => c.fn === 'file_metric_rows').map((c) => c.args.p_rows);
 
 beforeEach(() => resetFakeIds());
 
@@ -62,6 +62,7 @@ describe('ingestMetrics', () => {
 				{
 					repository_id: 'r-api',
 					metric_id: 'met-commits',
+					scope: 'repo',
 					commit_sha: 'abc',
 					computed_on: '2026-08-27',
 					grain: 'daily',
@@ -109,9 +110,20 @@ describe('ingestMetrics', () => {
 		expect(out.rejected.map((r) => r.reason)).toEqual(['unknown_metric']);
 	});
 
-	it('refuses a user-scoped row loudly instead of dropping it', async () => {
+	// #240: a user-scoped row is the caller's — the database stamps the person
+	// from the session, so the row carries only its scope, never a principal.
+	it('files a user-scoped row with its scope and no principal of its own', async () => {
 		const db = fakeDojoDb(tables());
 		const out = await ingestMetrics(db as never, [row({ scope: 'user' })]);
+		expect(out).toEqual({ accepted: 1, rejected: [] });
+		const [batch] = sent(db) as Array<Array<Record<string, unknown>>>;
+		expect(batch[0].scope).toBe('user');
+		expect(batch[0]).not.toHaveProperty('principal_id');
+	});
+
+	it('refuses a scope that is neither repo nor user, by name', async () => {
+		const db = fakeDojoDb(tables());
+		const out = await ingestMetrics(db as never, [row({ scope: 'team' })]);
 		expect(out.rejected.map((r) => r.reason)).toEqual(['unsupported_scope']);
 		expect(sent(db)).toEqual([]);
 	});
@@ -149,7 +161,7 @@ describe('ingestMetrics', () => {
 
 	it('THROWS when the write fails rather than reporting the rows accepted', async () => {
 		const t = tables();
-		t['rpc:upsert_repository_metrics'].error = { code: '08006', message: 'connection reset' };
+		t['rpc:file_metric_rows'].error = { code: '08006', message: 'connection reset' };
 		const db = fakeDojoDb(t);
 		await expect(ingestMetrics(db as never, [row()])).rejects.toThrow(/connection reset/);
 	});

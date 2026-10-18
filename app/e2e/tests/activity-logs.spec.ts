@@ -25,7 +25,7 @@ const RUN = `e2e-logs-${Date.now()}`;
 const MODULE = 'e2e-logtest';
 
 /** Mark setup complete in both daemon + the running app so the observatory
- *  shell is reachable (not rerouted to /setup). Same pattern as the learnings /
+ *  shell is reachable (not redirected to /setup). Same pattern as the learnings /
  *  knowledge-sources specs; localStorage set as belt-and-suspenders for a cold
  *  webview (this spec sorts first alphabetically). */
 

@@ -1,30 +1,30 @@
 Feature: Insights & Impact — the impact endpoint and the unbuilt tables
-
-  # pinned: get_project_impact_endpoint
-  Scenario: the project impact endpoint returns the verdict, trend and source memory
+ 
+   # NO TEST: get_project_impact_endpoint
+   Scenario: the project impact endpoint returns the verdict, trend and source memory
     Given a project with FTR history and a verdict
     When the impact endpoint is called
     Then it returns the verdict, the trend markers and the source memory link
 
-  # pinned: list_impact_verdicts
+  # NO TEST: list_impact_verdicts
   Scenario: listing impact verdicts returns the project's verdicts
     Given a project with several impact verdicts
     When the list endpoint is called
     Then it returns all verdicts
 
-  # pinned: create_impact_verdict
+  # NO TEST: create_impact_verdict
   Scenario: creating an impact verdict stores it
     Given a project
     When an impact verdict is created
     Then it is stored and can be listed
 
-  # pinned: decide_impact_verdict
+  # NO TEST: decide_impact_verdict
   Scenario: deciding an impact verdict updates its state
     Given a pending impact verdict
     When it is decided
     Then its state updates
 
-  # pinned: tool_insights_endpoint
+  # NO TEST: tool_insights_endpoint
   Scenario: the observatory tool-insights endpoint returns tool-level insights
     Given tool usage and verdict data
     When the tool-insights endpoint is called

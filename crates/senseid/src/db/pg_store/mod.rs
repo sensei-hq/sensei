@@ -519,6 +519,8 @@ pub(crate) mod folders;
 mod git_history;
 mod governance;
 mod graph;
+mod graph_push;
+pub use graph_push::GraphCheckout;
 mod indexer;
 /// Named outside this module because the MCP handler picks the direction and
 /// `graph` consumes it — the caller/callee envelope and `call_coverage` must

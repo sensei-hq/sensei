@@ -20,6 +20,7 @@
 // the very thing it is asking. So `unmapped` is a REGISTRATION outcome here, and
 // `denied[]` carries only entitlement reasons (§VIII.1).
 import { AdminError, type DojoClient } from './admin-data';
+import { refusalStatus } from './db-refusal';
 import { forgeRefFromRepoKey } from './repo-mapping';
 
 /** One repository the daemon is offering to register. */
@@ -68,6 +69,13 @@ export interface PlannedRepo extends MappedRepo {
 	 * while ANY of them still wants the metric.
 	 */
 	disabled_metrics: string[];
+	/**
+	 * The branches whose code graph this repository shares (#225; graph-sync.md
+	 * §9): the daemon pushes a checkout only when its branch is one of these.
+	 * Default first, then by name. Empty → the graph does not sync, never a
+	 * guessed `main`.
+	 */
+	graph_branches: { branch: string; is_default: boolean }[];
 }
 
 /** Why a repository could not be attached to a tenant. Each is a different
@@ -189,13 +197,18 @@ const PAGE = 1000;
  * a lost tail — the off-by-one that would otherwise drop exactly the rows of a
  * user whose count is a multiple of the page size.
  */
-async function readAllPages<T>(
-	page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>
+export async function readAllPages<T>(
+	page: (
+		from: number,
+		to: number
+	) => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>
 ): Promise<T[]> {
 	const out: T[] = [];
 	for (let from = 0; ; from += PAGE) {
 		const { data, error } = await page(from, from + PAGE - 1);
-		if (error) throw new AdminError(500, error.message);
+		// A database function's refusal keeps the status it means (db-refusal.ts);
+		// anything else is a 500.
+		if (error) throw new AdminError(refusalStatus(error), error.message);
 		const rows = (data ?? []) as T[];
 		out.push(...rows);
 		if (rows.length < PAGE) return out;
@@ -357,6 +370,23 @@ export async function syncPlan(db: DojoClient): Promise<SyncPlan> {
 		...new Set(rowsIn.filter((r) => r.sync_enabled).map((r) => r.tenant_id))
 	]);
 
+	// Through a function gated by the caller's sync verdict, not the table: its
+	// read policy is the team read, and a syncing member on no team would be
+	// told of no branch.
+	const branchRows = await readAllPages<{ repository_id: string; branch: string; is_default: boolean }>(
+		(from, to) => db.rpc('my_graph_branches').select('repository_id, branch, is_default').range(from, to)
+	);
+	const branchesOf = new Map<string, { branch: string; is_default: boolean }[]>();
+	for (const b of branchRows ?? []) {
+		branchesOf.set(b.repository_id, [
+			...(branchesOf.get(b.repository_id) ?? []),
+			{ branch: b.branch, is_default: b.is_default }
+		]);
+	}
+	for (const list of branchesOf.values()) {
+		list.sort((x, y) => Number(y.is_default) - Number(x.is_default) || x.branch.localeCompare(y.branch));
+	}
+
 	const allowed: PlannedRepo[] = [];
 	const denied: { repo_key: string; tenant: string; reason: string }[] = [];
 	for (const row of (data ?? []) as {
@@ -373,7 +403,8 @@ export async function syncPlan(db: DojoClient): Promise<SyncPlan> {
 				tenant: row.tenant,
 				tenant_id: row.tenant_id,
 				repo_id: row.repository_id,
-				disabled_metrics: disabled.get(`${row.tenant_id}|${row.repository_id}`) ?? []
+				disabled_metrics: disabled.get(`${row.tenant_id}|${row.repository_id}`) ?? [],
+				graph_branches: branchesOf.get(row.repository_id) ?? []
 			});
 		} else {
 			// A denial always names itself. "Nothing to sync" is the shape that hid

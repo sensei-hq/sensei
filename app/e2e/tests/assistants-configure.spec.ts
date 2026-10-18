@@ -14,8 +14,8 @@
  *   4. Continue persists setup.assistants=done and routes to /setup/roots.
  *
  * The daemon is real (e2e daemon on port 7744 against the sensei_e2e DB,
- * driven by SENSEI_INSTANCE=e2e in globalSetup). The user's prod config is
- * not touched.
+ * driven by SENSEI_INSTANCE=e2e in globalSetup), and runs under the isolated
+ * E2E_HOME, so configure and remove act on a throwaway ~/.claude (#267).
  */
 
 import { test, expect, type TauriPageLike } from '../fixtures';
@@ -179,7 +179,7 @@ test.describe('Assistants — re-entry and removal', () => {
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
     await expect(card).toBeVisible({ timeout: 10_000 });
     await waitForAttr(tauriPage, '[data-testid="assistant-card-claude"]', 'data-configured', 'true');
-    await expect(card.locator('.mono').filter({ hasText: /configured/i })).toBeVisible({ timeout: 5_000 });
+    await expect(card.locator('[data-component="assistant-status"]').filter({ hasText: /configured/i })).toBeVisible({ timeout: 5_000 });
   });
 
   test('toggling off a configured family fires remove → chips return to idle', async ({ tauriPage }) => {

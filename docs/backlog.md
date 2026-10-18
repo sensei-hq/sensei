@@ -62,6 +62,17 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
 - **Codebase-wide silent-error audit** (directed after the `node_kind` drop) → roadmap gaps `F-*`.
 - **Stale / orphaned project cleanup** — list endpoints + gated purge + housekeeping UI.
 - **Activity-data GC** — TTL prune after analysis has derived insights.
+- **Credentials — retire the legacy macOS `/usr/bin/security` backend** (decided
+  with the user 2026-10-13). `gateway_keys` now uses the `keyring` crate
+  (Keychain / Credential Manager / Secret Service); the old shell-out failed on
+  Linux with `No such file or directory`. `secret-tool` was rejected (Ubuntu does
+  not ship `libsecret-tools`; Windows is planned). **Deliberately retained:**
+  `gateway_keys/macos_security.rs`, selectable with
+  `SENSEI_CREDENTIAL_BACKEND=security` as a rollback — both address the same
+  login-Keychain items. **To delete it:** confirm on a Mac with existing items
+  that keyring reads them without a per-item access-prompt storm (or add a
+  one-time re-write migration), then remove the module, the `Backend` enum and
+  the env var.
 
 ## Where open work is described
 

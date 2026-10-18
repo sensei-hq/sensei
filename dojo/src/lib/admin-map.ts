@@ -188,7 +188,8 @@ export function toKitIdentity(identities: Identity[]): KitIdentity {
  * HealthRollup → KitHealth. Projects the four rollup counts onto the signal
  * cards, plus the real contributions-vs-approvals weekly series (from the health
  * route's `dojo.audit_events` bucketing; an empty series renders no bars). Anomaly
- * alerts still wait on the containment seam, so those render empty. Pure.
+ * alerts wait on the containment seam, so they are `null` — not measured, never
+ * an empty list that reads as "nothing detected" (#241). Pure.
  */
 export function toKitHealth(rollup: HealthRollup): KitHealth {
 	const signals: KitHealthSignal[] = [
@@ -214,5 +215,5 @@ export function toKitHealth(rollup: HealthRollup): KitHealth {
 		c: w.c,
 		a: w.a
 	}));
-	return { signals, contribVsApprove, alerts: [] };
+	return { signals, contribVsApprove, alerts: null };
 }

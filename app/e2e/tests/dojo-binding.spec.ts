@@ -105,11 +105,13 @@ test.describe('R3 · Dōjō auto-bind', () => {
     // Exactly one valid state renders: a confirmed/inferred chip, or the empty
     // hint. With no scanned git-owner project + membership match, empty is
     // expected — but assert the section is coherent either way.
-    const chip = section.locator('[data-binding-state]');
-    const emptyHint = section.getByText(/stay local/i);
-    const hasChip = await chip.count() > 0;
-    const hasEmpty = await emptyHint.count() > 0;
-    expect(hasChip || hasEmpty, 'Bindings renders a chip or the empty hint').toBe(true);
+    // Read the section's text rather than counting a getByText locator: the
+    // TauriPage adapter matches text through a synthetic attribute, so its count
+    // is not reliable. A load error (#262) is NOT a valid state here.
+    const hasChip = await section.locator('[data-binding-state]').count() > 0;
+    const text = (await section.textContent()) ?? '';
+    const hasEmpty = text.includes('stay local');
+    expect(hasChip || hasEmpty, `Bindings renders a chip or the empty hint — got: ${text.trim().slice(0, 200)}`).toBe(true);
     expectNoRuntimeErrors(await readErrors(tauriPage), 'about-bindings');
   });
 });

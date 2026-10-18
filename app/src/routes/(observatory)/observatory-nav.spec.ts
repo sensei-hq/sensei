@@ -47,6 +47,13 @@ describe("buildNavItems", () => {
     expect(prefIdx).toBeGreaterThan(sepIdx);
   });
 
+  // #245: the rules-sources screen existed with no way to reach it — the rail
+  // rebuild dropped its entry. It sits with the dōjō entries in Review.
+  it("reaches the knowledge sources screen from Review", () => {
+    const review = groups(buildNavItems()).find((g) => g.text === "Review");
+    expect(review?.children.map((c) => c.href)).toContain("/knowledge-sources");
+  });
+
   it('maps Memories to /learnings and labels it "Memories"', () => {
     const mem = byHref(buildNavItems(), "/learnings");
     expect(mem?.text).toBe("Memories");

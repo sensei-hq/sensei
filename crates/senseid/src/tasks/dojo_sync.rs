@@ -41,16 +41,19 @@
 //! consent, or an organization's mandate on that organization's own private
 //! code"*.
 //!
-//! # What it deliberately does NOT do yet
+//! # User-scoped rows
 //!
-//! **User-scoped rows are held back**, counted, and logged with the reason.
-//! `dojo.repository_metrics.principal_id` is a principal, never a git email —
-//! commit trailers are unverified — and `personas.principal_id` is unset until a
-//! persona is linked, so there is nothing honest to attribute a per-person row
-//! to. The ingest endpoint refuses them, so sending them would earn a rejection
-//! every cycle forever.
+//! **A user-scoped row leaves only when it is provably the signed-in person's**
+//! (#240): a row with no identity — this machine's own session metric — when the
+//! persona is the only signed-in one that elected the repository, or a row whose
+//! author address the persona CLAIMED (verified by GitHub at sign-in). An
+//! unverified `git` address proves nothing and a colleague's never travels; both
+//! are held back, counted, and logged. The dōjō stamps the person from the
+//! session, never from the row.
 //!
-//! Per-repo governance pull (D3) is not here.
+//! # Not here yet
+//!
+//! Per-repo governance pull (D3).
 
 use std::sync::Arc;
 
@@ -117,8 +120,33 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
     let plane = HttpUserPlane { dojo_url: dojo_url() };
     let total = personas.len();
     let mut failures = Vec::new();
+
+    // Plan EVERY persona before pushing any: a row with no identity is the
+    // machine's own session metric, and it is a persona's only when no other
+    // signed-in persona elected the same repository (#240).
+    let mut planned = Vec::new();
     for persona in personas {
-        if let Err(e) = sync_one(&pg, &persona, &plane).await {
+        let outcome = match persona_token(&persona).await {
+            Ok(token) => {
+                plan_persona(&pg, &persona, &token, &plane).await.map(|p| p.map(|p| (token, p)))
+            }
+            Err(e) => Err(e),
+        };
+        match outcome {
+            Ok(Some((token, p))) => planned.push((persona, token, p)),
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(persona, error = %e, "dojo_sync: persona skipped");
+                failures.push(format!("{persona}: {e}"));
+            }
+        }
+    }
+    let plans: Vec<(String, user_plane::SyncPlan)> =
+        planned.iter().map(|(who, _, p)| (who.clone(), p.plan.clone())).collect();
+    let mut exclusive = exclusive_repos(&plans);
+    for (persona, token, p) in &planned {
+        let mine = exclusive.remove(persona).unwrap_or_default();
+        if let Err(e) = push_planned(&pg, persona, token, &plane, p, &mine).await {
             tracing::warn!(persona, error = %e, "dojo_sync: persona skipped");
             failures.push(format!("{persona}: {e}"));
         }
@@ -129,34 +157,33 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
     // observed live (plan rows 0, shared 0, last_ok = true). A PARTIAL failure
     // still returns Ok: D1's whole point is that one expired session must not
     // stall the others, and the survivors did work.
-    if failures.len() == total {
+    if failures.len() >= total {
         return Err(format!("all {total} personas failed: {}", failures.join("; ")));
     }
     Ok(())
 }
 
-/// Resolve the persona's credential, then run the cycle.
+/// The persona's live access token.
 ///
-/// Split from [`sync_persona`] so the cycle itself is reachable in a test: token
-/// resolution needs the real Keychain, and everything after it does not.
-async fn sync_one(pg: &PgStore, persona: &str, plane: &dyn UserPlane) -> Result<(), String> {
-    let token = match live_access_token(persona).await {
-        Ok(t) => t,
+/// Separate from the cycle so the cycle is reachable in a test: token resolution
+/// needs the real Keychain, and everything after it does not.
+async fn persona_token(persona: &str) -> Result<String, String> {
+    match live_access_token(persona).await {
+        Ok(t) => Ok(t),
         Err(e) => {
             // Distinguished rather than collapsed: "sign in again" is worth
             // saying out loud, a network blip is not worth saying at all.
             let needs_sign_in = e.needs_sign_in();
-            return Err(match e {
+            Err(match e {
                 AuthError::SignedOut => "no stored session".to_string(),
                 AuthError::Rejected(d) => format!("session rejected, sign in again: {d}"),
                 AuthError::Unreachable(d) if !needs_sign_in => {
                     format!("dōjō unreachable, session kept: {d}")
                 }
                 AuthError::Unreachable(d) => d,
-            });
+            })
         }
-    };
-    sync_persona(pg, persona, &token, plane).await
+    }
 }
 
 /// Join every dōjō membership the persona holding `slot` belongs to (#236 step
@@ -271,12 +298,12 @@ async fn record_plane_failure(
 }
 
 /// One persona's cycle, with the credential and the transport handed in.
-async fn sync_persona(
+async fn plan_persona(
     pg: &PgStore,
     persona: &str,
     token: &str,
     plane: &dyn UserPlane,
-) -> Result<(), String> {
+) -> Result<Option<Planned>, String> {
     // #236 step 4e: join every dōjō this persona belongs to, so its tenant
     // calls present this session. A failure here leaves the memberships for the
     // next pass and does not stop the cycle — but it is said, never swallowed.
@@ -312,7 +339,7 @@ async fn sync_persona(
     let offered = pg.offerable_repositories(REGISTER_LIMIT).await?;
     if offered.is_empty() {
         tracing::debug!(persona, "dojo_sync: no cloned repository has a cross-install identity");
-        return Ok(());
+        return Ok(None);
     }
 
     let inputs: Vec<RepoInput<'_>> = offered
@@ -443,17 +470,269 @@ async fn sync_persona(
         Err(e) => tracing::warn!(persona, error = %e, "could not record metric deactivations"),
     }
 
-    let pushed = push_allowed(pg, persona, token, plane, &plan).await?;
+    Ok(Some(Planned { plan, mapped: registered.mapped.len(), unmapped: registered.unmapped.len() }))
+}
+
+/// What one persona's pass decided before anything was pushed.
+struct Planned {
+    plan: user_plane::SyncPlan,
+    mapped: usize,
+    unmapped: usize,
+}
+
+/// Push a persona's planned rows. `exclusive` — the repositories only this
+/// persona elected — is where its rows with no identity may go (#240).
+async fn push_planned(
+    pg: &PgStore,
+    persona: &str,
+    token: &str,
+    plane: &dyn UserPlane,
+    planned: &Planned,
+    exclusive: &[String],
+) -> Result<(), String> {
+    let pushed = push_allowed(pg, persona, token, plane, &planned.plan, exclusive).await?;
+    // After the metrics: a graph push is larger and slower, and must not hold
+    // the metrics back. Each checkout records its own outcome (#225).
+    let graph_batches = push_graphs(pg, persona, token, plane, &planned.plan).await?;
     tracing::info!(
         persona,
-        allowed = plan.allowed.len(),
-        denied = plan.denied.len(),
-        mapped = registered.mapped.len(),
-        unmapped = registered.unmapped.len(),
+        allowed = planned.plan.allowed.len(),
+        denied = planned.plan.denied.len(),
+        mapped = planned.mapped,
+        unmapped = planned.unmapped,
         pushed,
+        graph_batches,
         "dojo_sync: cycle complete"
     );
     Ok(())
+}
+
+/// The `sensei.sync_entity` a graph push records against, keyed `<repo_key>@<branch>`.
+const GRAPH_ENTITY: &str = "repository_graph";
+
+/// Bytes of slices per graph request: under the route's 4 MB cap, leaving room
+/// for the envelope (repo key, commit) and the last batch's manifest.
+const GRAPH_BATCH_BYTES: usize = 3 * 1024 * 1024;
+
+/// Where a checkout's graph push leaves its sync state (#225).
+#[derive(Debug, PartialEq, Eq)]
+enum GraphOutcome {
+    /// Every file's slice landed.
+    Synced,
+    /// Everything landed but the named files, each over the request cap alone;
+    /// the shared graph lacks exactly those.
+    Partial(String),
+}
+
+fn graph_outcome(oversize: &[String]) -> GraphOutcome {
+    if oversize.is_empty() {
+        return GraphOutcome::Synced;
+    }
+    GraphOutcome::Partial(format!(
+        "{} file(s) over the {GRAPH_BATCH_BYTES}-byte request cap, not shared: {}",
+        oversize.len(),
+        oversize.join(", ")
+    ))
+}
+
+/// Files read from the database per slice query, so one repository's changes are
+/// never held in memory all at once.
+const GRAPH_SLICE_CHUNK: usize = 200;
+
+/// What became of one checkout.
+enum CheckoutPush {
+    /// Batches sent; files whose single slice was over the cap, if any.
+    Sent {
+        batches: usize,
+        oversize: Vec<String>,
+    },
+    Skipped(&'static str),
+}
+
+/// Push the code graph of every tracked branch this persona has a checkout of
+/// (#225; graph-sync.md §5, §9). Returns the number of batches sent.
+///
+/// Each (repository, branch) records its outcome in `sensei.sync_state` under
+/// `repository_graph`, keyed `<repo_key>@<branch>`: synced, skipped with why
+/// (`not_a_tracked_branch`, `index_not_current`), or the error. One checkout's
+/// failure does not stop the others.
+async fn push_graphs(
+    pg: &PgStore,
+    persona: &str,
+    token: &str,
+    plane: &dyn UserPlane,
+    plan: &user_plane::SyncPlan,
+) -> Result<usize, String> {
+    let mut sent = 0;
+    for repo in plan.allowed.iter().filter(|r| !r.graph_branches.is_empty()) {
+        let tracked: std::collections::HashSet<&str> =
+            repo.graph_branches.iter().map(|b| b.branch.as_str()).collect();
+        // Two checkouts of one branch (two clones of main): the first one pushed
+        // speaks for the branch this cycle.
+        let mut pushed_branches = std::collections::HashSet::new();
+        for checkout in pg.graph_checkouts(&repo.repo_key).await? {
+            let Some(branch) = checkout.branch.clone() else { continue };
+            let key = format!("{}@{}", repo.repo_key, branch);
+            let mark = SyncMark { entity: GRAPH_ENTITY, key: &key, direction: "push" };
+            if !tracked.contains(branch.as_str()) {
+                pg.mark_sync_skipped(&mark, "not_a_tracked_branch").await?;
+                continue;
+            }
+            if pushed_branches.contains(&branch) {
+                continue;
+            }
+            match push_checkout(pg, token, plane, &repo.repo_key, &branch, &checkout).await {
+                Ok(CheckoutPush::Sent { batches, oversize }) => {
+                    sent += batches;
+                    pushed_branches.insert(branch.clone());
+                    match graph_outcome(&oversize) {
+                        GraphOutcome::Synced => pg.mark_synced(&mark, None).await?,
+                        GraphOutcome::Partial(missing) => {
+                            tracing::warn!(persona, repo = %repo.repo_key, branch, %missing, "dojo_sync: graph incomplete");
+                            pg.mark_sync_partial(&mark, &missing).await?;
+                        }
+                    }
+                }
+                Ok(CheckoutPush::Skipped(reason)) => pg.mark_sync_skipped(&mark, reason).await?,
+                Err(e) => {
+                    tracing::warn!(persona, repo = %repo.repo_key, branch, error = %e, "dojo_sync: graph push failed");
+                    pg.mark_sync_error(&mark, &e).await?;
+                }
+            }
+        }
+    }
+    Ok(sent)
+}
+
+/// One checkout's push: committed changes in batches, then the unplaced slice
+/// and the manifest. See `graph_push` for what is held back and why.
+async fn push_checkout(
+    pg: &PgStore,
+    token: &str,
+    plane: &dyn UserPlane,
+    repo_key: &str,
+    branch: &str,
+    checkout: &crate::db::pg_store::GraphCheckout,
+) -> Result<CheckoutPush, String> {
+    use crate::tasks::graph_push::{HEAD_FORMAT, batch, parse_head, parse_porcelain_z, plan_push};
+    let dir = std::path::Path::new(&checkout.abs_path);
+    let git = |args: &[&str]| {
+        crate::git::run_text(dir, args)
+            .map_err(|e| format!("git {args:?} in {}: {e}", checkout.abs_path))
+    };
+
+    // The graph is the last index of this folder; if the working tree has since
+    // moved to another branch, that index is not this branch's state any more.
+    if git(&["rev-parse", "--abbrev-ref", "HEAD"])?.trim() != branch {
+        return Ok(CheckoutPush::Skipped("index_not_current"));
+    }
+    let (sha, committed_at) = parse_head(&git(&["log", "-1", HEAD_FORMAT])?)?;
+    let dirty = parse_porcelain_z(
+        &crate::git::run_bytes(dir, &["status", "--porcelain", "-z", "--untracked-files=all"])
+            .map_err(|e| format!("git status in {}: {e}", checkout.abs_path))?,
+    );
+
+    // Held back: what is not committed, and what is committed but not yet parsed
+    // (its row has the new hash, its nodes are still the old content's).
+    let mut held_back = dirty;
+    held_back.extend(pg.graph_parse_pending(&checkout.folder_id).await?);
+
+    let local = pg.graph_manifest(&checkout.folder_id).await?;
+    let remote = plane.graph_hashes(token, repo_key, branch).await?.files;
+    let plan = plan_push(&local, &remote, &held_back);
+    let commit = user_plane::GraphCommit { branch: branch.to_string(), sha, committed_at };
+
+    let mut batches = 0;
+    let mut oversize = Vec::new();
+    for chunk in plan.changed.chunks(GRAPH_SLICE_CHUNK) {
+        let grouped = batch(pg.graph_slices(&checkout.folder_id, chunk).await?, GRAPH_BATCH_BYTES);
+        oversize.extend(grouped.oversize);
+        for slices in &grouped.batches {
+            let push = user_plane::GraphPush { repo_key, commit: &commit, slices, manifest: None };
+            plane.push_graph(token, &push).await?;
+            batches += 1;
+        }
+    }
+
+    // Last: the unplaced nodes and the manifest that prunes deleted files.
+    let unplaced = pg.graph_unplaced_slice(&checkout.folder_id).await?;
+    let mut last = batch(vec![("(unplaced)".to_string(), unplaced)], GRAPH_BATCH_BYTES);
+    oversize.append(&mut last.oversize);
+    let slices = last.batches.pop().unwrap_or_default();
+    let push = user_plane::GraphPush {
+        repo_key,
+        commit: &commit,
+        slices: &slices,
+        manifest: Some(&plan.manifest),
+    };
+    plane.push_graph(token, &push).await?;
+    Ok(CheckoutPush::Sent { batches: batches + 1, oversize })
+}
+
+/// One persona's whole pass on its own — every repository it may sync is its
+/// alone. Tests drive this; [`tick`] plans every persona before pushing any.
+#[cfg(test)]
+async fn sync_persona(
+    pg: &PgStore,
+    persona: &str,
+    token: &str,
+    plane: &dyn UserPlane,
+) -> Result<(), String> {
+    let Some(planned) = plan_persona(pg, persona, token, plane).await? else {
+        return Ok(());
+    };
+    let exclusive = exclusive_repos(&[(persona.to_string(), planned.plan.clone())])
+        .remove(persona)
+        .unwrap_or_default();
+    push_planned(pg, persona, token, plane, &planned, &exclusive).await
+}
+
+/// For each persona, the repositories in its plan that no other signed-in
+/// persona's plan allows (#240). Pure.
+fn exclusive_repos(
+    plans: &[(String, user_plane::SyncPlan)],
+) -> std::collections::HashMap<String, Vec<String>> {
+    let mut electors: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (_, plan) in plans {
+        let keys: std::collections::HashSet<&str> =
+            plan.allowed.iter().map(|a| a.repo_key.as_str()).collect();
+        for k in keys {
+            *electors.entry(k).or_default() += 1;
+        }
+    }
+    plans
+        .iter()
+        .map(|(who, plan)| {
+            let mine = plan
+                .allowed
+                .iter()
+                .filter(|a| electors.get(a.repo_key.as_str()) == Some(&1))
+                .map(|a| a.repo_key.clone())
+                .collect();
+            (who.clone(), mine)
+        })
+        .collect()
+}
+
+/// Hold back user-scoped rows that would land on ONE dōjō row. The dōjō keys a
+/// user row by person, not author address, so two of the person's verified
+/// addresses with a row for the same metric and day would overwrite each other
+/// silently; both are held back instead. Returns what to push and how many were
+/// held. Order preserved. Pure.
+fn drop_colliding(
+    rows: Vec<crate::db::pg_store::sync::PushableMetric>,
+) -> (Vec<crate::db::pg_store::sync::PushableMetric>, usize) {
+    type Key = (String, String, Option<String>, chrono::NaiveDate, String);
+    let key = |m: &crate::db::pg_store::sync::PushableMetric| -> Key {
+        (m.repo_key.clone(), m.metric.clone(), m.commit_sha.clone(), m.computed_on, m.grain.clone())
+    };
+    let mut seen: std::collections::HashMap<Key, usize> = std::collections::HashMap::new();
+    for m in rows.iter().filter(|m| m.scope == "user") {
+        *seen.entry(key(m)).or_default() += 1;
+    }
+    let (kept, held): (Vec<_>, Vec<_>) =
+        rows.into_iter().partition(|m| m.scope != "user" || seen.get(&key(m)) == Some(&1));
+    (kept, held.len())
 }
 
 /// Push the metric rows the plan allows, and mark exactly those as shared.
@@ -465,6 +744,7 @@ async fn push_allowed(
     token: &str,
     plane: &dyn UserPlane,
     plan: &user_plane::SyncPlan,
+    exclusive: &[String],
 ) -> Result<u32, String> {
     // The allow-list, as a set, and since §8a it is the ONLY gate on the push. The
     // daemon syncs the set it was HANDED — it never asks "may I sync X?", so it
@@ -482,33 +762,38 @@ async fn push_allowed(
         return Ok(0);
     }
 
-    // `["repo"]`, filtered in SQL so the LIMIT applies to rows we can actually
-    // push. Scope is a CAPABILITY question, not an entitlement one:
-    // `dojo.repository_metrics.principal_id` is a principal, never a git email,
-    // and `personas.principal_id` is unset until a persona is linked, so a
-    // per-person row has nothing honest to attribute to. The ingest refuses them.
-    //
-    // Filtering here rather than after the fetch is load-bearing — see
-    // `unpushed_metric_rows`. Held-back rows once crowded the window and a pass
-    // pushed 66 of 132.
+    // Repo-scoped rows first, then the user-scoped rows PROVABLY this persona's
+    // (#240): no identity on a repository only they elected, or an author address
+    // they claimed. Everything filtered in SQL so the LIMIT applies to rows that
+    // can actually go — held-back rows once crowded the window and a pass pushed
+    // 66 of 132. See `unpushed_metric_rows`.
     let keys: Vec<&str> = allowed.iter().copied().collect();
-    let pushable = pg.unpushed_metric_rows(&["repo"], &keys, PUSH_LIMIT).await?;
-    // A failure here must not print "0 held back" — that is the exact mislead the
-    // counter exists to prevent.
-    // Scoped to the SAME allow-list, so the number means "held back out of what this
-    // pass could otherwise have sent" rather than "user-scoped rows on this machine".
-    let held = match pg.unpushed_metric_count(&["user"], &keys).await {
-        Ok(n) => n,
-        Err(e) => {
-            tracing::warn!(persona, error = %e, "could not count held-back rows");
-            0
+    let exclusive: Vec<&str> = exclusive.iter().map(String::as_str).collect();
+    let mut rows = pg.unpushed_metric_rows(&["repo"], &keys, PUSH_LIMIT).await?;
+    let room = PUSH_LIMIT - rows.len() as i64;
+    let persona_id = pg.persona_id_for_slot(persona).await?;
+    let mut unprovable = 0;
+    if let Some(pid) = persona_id {
+        if room > 0 {
+            rows.extend(pg.unpushed_user_metric_rows(&pid, &keys, &exclusive, room).await?);
         }
-    };
-    if held > 0 {
+        // A failure here must not print "0 held back" — that is the exact mislead
+        // the counter exists to prevent.
+        unprovable = match pg.unprovable_user_metric_count(&pid, &keys, &exclusive).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(persona, error = %e, "could not count held-back rows");
+                0
+            }
+        };
+    }
+    let (pushable, colliding) = drop_colliding(rows);
+    if unprovable > 0 || colliding > 0 {
         tracing::info!(
             persona,
-            held,
-            "dojo_sync: user-scoped rows held back — no principal to attribute them to yet"
+            unprovable,
+            colliding,
+            "dojo_sync: user-scoped rows held back — not provably this person's, or two of their addresses on one day"
         );
     }
     if pushable.is_empty() {
@@ -725,6 +1010,24 @@ async fn recapture_and_replan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── graph_outcome: a checkout push's sync state (#225) ──────────────────
+
+    #[test]
+    fn a_whole_push_is_synced() {
+        assert_eq!(graph_outcome(&[]), GraphOutcome::Synced);
+    }
+
+    #[test]
+    fn a_push_missing_an_over_cap_file_is_partial_and_names_it() {
+        let oversize = vec!["crates/big.rs".to_string()];
+        assert_eq!(
+            graph_outcome(&oversize),
+            GraphOutcome::Partial(
+                "1 file(s) over the 3145728-byte request cap, not shared: crates/big.rs".into()
+            )
+        );
+    }
     use crate::db::pg_store::MetricRow;
 
     /// `forge_visibility_unknown` is the ONE denial the daemon can act on itself.
@@ -810,8 +1113,9 @@ mod tests {
     }
 
     use crate::dojo_client::user_plane::{
-        ActivationOutcome, DeniedRepo, IngestResult, MappedRepo, MetricPush, MyMembership,
-        ProvisionOutcome, RegisterResult, RejectedMetric, SyncPlan, UnmappedRepo, VisibilityCounts,
+        ActivationOutcome, DeniedRepo, GraphHashes, GraphPush, GraphPushResult, IngestResult,
+        MappedRepo, MetricPush, MyMembership, ProvisionOutcome, RegisterResult, RejectedMetric,
+        SyncPlan, UnmappedRepo, VisibilityCounts,
     };
     use std::sync::Mutex;
 
@@ -849,6 +1153,21 @@ mod tests {
         /// What `GET /v1/you/memberships` answers — `None` is an empty list.
         memberships: Option<Result<Vec<MyMembership>, String>>,
         membership_calls: Mutex<usize>,
+        /// What `GET /v1/you/graph` answers, per (repo_key, branch); absent → {}.
+        graph_remote:
+            std::collections::HashMap<(String, String), std::collections::HashMap<String, String>>,
+        /// Every graph batch: (repo_key, branch, sha, slice paths, manifest).
+        graph_pushes: Mutex<Vec<GraphPushSeen>>,
+    }
+
+    /// One graph batch as the stub saw it.
+    #[derive(Debug, Clone, PartialEq)]
+    struct GraphPushSeen {
+        repo_key: String,
+        branch: String,
+        sha: String,
+        paths: Vec<Option<String>>,
+        manifest: Option<std::collections::BTreeMap<String, String>>,
     }
 
     #[async_trait::async_trait]
@@ -923,6 +1242,37 @@ mod tests {
                 .clone()
                 .unwrap_or(Ok(IngestResult { accepted: m.len() as u32, rejected: vec![] }))
         }
+        async fn graph_hashes(
+            &self,
+            _t: &str,
+            repo_key: &str,
+            branch: &str,
+        ) -> Result<GraphHashes, String> {
+            Ok(GraphHashes {
+                files: self
+                    .graph_remote
+                    .get(&(repo_key.to_string(), branch.to_string()))
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+        }
+        async fn push_graph(
+            &self,
+            _t: &str,
+            push: &GraphPush<'_>,
+        ) -> Result<GraphPushResult, String> {
+            let paths: Vec<Option<String>> =
+                push.slices.iter().map(|s| s["path"].as_str().map(str::to_string)).collect();
+            let files = paths.iter().filter(|p| p.is_some()).count() as u32;
+            self.graph_pushes.lock().unwrap().push(GraphPushSeen {
+                repo_key: push.repo_key.to_string(),
+                branch: push.commit.branch.clone(),
+                sha: push.commit.sha.clone(),
+                paths,
+                manifest: push.manifest.cloned(),
+            });
+            Ok(GraphPushResult { files, refused_older: 0, pruned: 0 })
+        }
     }
 
     /// The self-heal, end to end against a scripted dōjō.
@@ -948,6 +1298,7 @@ mod tests {
                 repo_id: "22222222-2222-2222-2222-222222222222".into(),
                 // Nothing switched off: the default every dōjō starts in.
                 disabled_metrics: vec![],
+                graph_branches: vec![],
             }
         }
 
@@ -1037,6 +1388,7 @@ mod tests {
             tenant_id: tenant_id.to_string(),
             repo_id: uuid::Uuid::new_v4().to_string(),
             disabled_metrics: vec![],
+            graph_branches: vec![],
         }
     }
 
@@ -1820,6 +2172,62 @@ mod tests {
         drop_binding_fixture(&pg, persona, &[id]).await;
     }
 
+    fn plan_of(keys: &[&str]) -> SyncPlan {
+        SyncPlan { allowed: keys.iter().map(|k| mapped(k, "t")).collect(), denied: vec![] }
+    }
+
+    // #240: a row with no identity is the machine's own — the persona's only when
+    // no other signed-in persona elected the same repository.
+    #[test]
+    fn a_repository_is_exclusive_to_the_one_persona_that_elected_it() {
+        let plans = vec![
+            ("work".to_string(), plan_of(&["a", "shared"])),
+            ("home".to_string(), plan_of(&["b", "shared"])),
+        ];
+        let ex = exclusive_repos(&plans);
+        assert_eq!(ex["work"], vec!["a".to_string()]);
+        assert_eq!(ex["home"], vec!["b".to_string()]);
+        assert_eq!(
+            exclusive_repos(&plans[..1])["work"],
+            vec!["a".to_string(), "shared".to_string()]
+        );
+    }
+
+    fn push_row(metric: &str, scope: &str, day: u32) -> crate::db::pg_store::sync::PushableMetric {
+        crate::db::pg_store::sync::PushableMetric {
+            id: uuid::Uuid::new_v4(),
+            repo_key: "r".into(),
+            metric: metric.into(),
+            scope: scope.into(),
+            grain: "daily".into(),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 1, day).unwrap(),
+            value: 1.0,
+            commit_sha: None,
+            props: serde_json::json!({}),
+            source: "measured".into(),
+        }
+    }
+
+    // Two of the person's verified addresses with a row for the same metric and
+    // day would land on ONE dōjō row (it keys by person, not address) — one would
+    // silently overwrite the other. Both are held back, and counted.
+    #[test]
+    fn user_rows_that_would_collide_on_the_dojo_are_held_back_together() {
+        let rows = vec![
+            push_row("churn", "user", 1),
+            push_row("churn", "user", 1),
+            push_row("churn", "user", 2),
+            push_row("churn", "repo", 1),
+        ];
+        let (kept, held) = drop_colliding(rows);
+        assert_eq!(held, 2);
+        let kept: Vec<_> = kept
+            .iter()
+            .map(|r| (r.scope.as_str(), chrono::Datelike::day(&r.computed_on)))
+            .collect();
+        assert_eq!(kept, vec![("user", 2), ("repo", 1)]);
+    }
+
     #[tokio::test]
     async fn a_failed_list_binds_nothing_and_says_so() {
         let pg = PgStore::connect_test().await.unwrap();
@@ -1878,5 +2286,302 @@ mod tests {
 
         assert_eq!(*plane.plan_calls.lock().unwrap(), 1, "the plan is still read");
         drop_binding_fixture(&pg, persona, &[m1, m2]).await;
+    }
+
+    /// #225: a tracked checkout's graph reaches the dōjō — committed work only.
+    mod graph_sync {
+        use super::*;
+        use std::collections::{BTreeMap, HashMap};
+
+        struct Checkout {
+            dir: tempfile::TempDir,
+            repo_key: String,
+            folder: uuid::Uuid,
+            repository: uuid::Uuid,
+        }
+
+        fn git(dir: &std::path::Path, args: &[&str]) -> String {
+            let out = std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("git runs");
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        }
+
+        /// A git checkout on `main` with src/a.ts and src/b.ts committed, then
+        /// src/b.ts EDITED and not committed; indexed as such in the database.
+        async fn checkout(pg: &PgStore, indexed_branch: &str) -> Checkout {
+            let dir = tempfile::tempdir().unwrap();
+            let d = dir.path();
+            git(d, &["init", "-q", "-b", "main"]);
+            std::fs::create_dir_all(d.join("src")).unwrap();
+            std::fs::write(d.join("src/a.ts"), "export const a = 1;").unwrap();
+            std::fs::write(d.join("src/b.ts"), "export const b = 1;").unwrap();
+            git(d, &["add", "."]);
+            git(d, &["commit", "-q", "-m", "c1"]);
+            std::fs::write(d.join("src/b.ts"), "export const b = 2; // not committed").unwrap();
+
+            crate::tasks::test_support::ensure_test_watch_root(pg).await;
+            let u = uuid::Uuid::new_v4();
+            let repo_key = format!("test/graph-sync-{u}");
+            let (repository,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "insert into sensei.repositories(repo_key, name) values($1, $1) returning id",
+            )
+            .bind(&repo_key)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            let folder = uuid::Uuid::new_v4();
+            sqlx_core::query::query(
+                "insert into sensei.folders(id, root_id, kind, name, path, abs_path, repository_id, branch) \
+                 values($1, '00000000-0000-0000-0000-000000000001', 'git', $2, $2, $3, $4, $5)",
+            )
+            .bind(folder)
+            .bind(format!("gs-{u}"))
+            .bind(d.to_string_lossy().to_string())
+            .bind(repository)
+            .bind(indexed_branch)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            for (path, hash, fqn) in [("src/a.ts", "ha", "a.x"), ("src/b.ts", "hb-dirty", "b.y")] {
+                sqlx_core::query::query(
+                    "insert into sensei.files(folder_id, file_path, mtime, content_hash, parsed_at) values($1, $2, 0, $3, now())",
+                )
+                .bind(folder)
+                .bind(path)
+                .bind(hash)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+                sqlx_core::query::query(
+                    "insert into sensei.nodes(folder_id, file_id, kind, name, fqn) \
+                     values($1, (select id from sensei.files where folder_id = $1 and file_path = $2), 'function', $3, $3)",
+                )
+                .bind(folder)
+                .bind(path)
+                .bind(fqn)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            }
+            Checkout { dir, repo_key, folder, repository }
+        }
+
+        async fn drop_checkout(pg: &PgStore, c: Checkout) {
+            sqlx_core::query::query("delete from sensei.folders where id = $1")
+                .bind(c.folder)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            sqlx_core::query::query("delete from sensei.sync_state where entity = 'repository_graph' and entity_key like $1")
+                .bind(format!("{}@%", c.repo_key))
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            sqlx_core::query::query("delete from sensei.repositories where id = $1")
+                .bind(c.repository)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+
+        fn plan_tracking(repo_key: &str, branches: &[&str]) -> SyncPlan {
+            SyncPlan {
+                allowed: vec![MappedRepo {
+                    repo_key: repo_key.into(),
+                    tenant: "organization/acme".into(),
+                    tenant_id: "t".into(),
+                    repo_id: "r".into(),
+                    disabled_metrics: vec![],
+                    graph_branches: branches
+                        .iter()
+                        .enumerate()
+                        .map(|(i, b)| user_plane::GraphBranch {
+                            branch: b.to_string(),
+                            is_default: i == 0,
+                        })
+                        .collect(),
+                }],
+                denied: vec![],
+            }
+        }
+
+        async fn state(pg: &PgStore, key: &str) -> Option<(String, Option<String>)> {
+            sqlx_core::query_as::query_as(
+                "select state::text, last_error from sensei.sync_state where entity = 'repository_graph' and entity_key = $1",
+            )
+            .bind(key)
+            .fetch_optional(pg.pool())
+            .await
+            .unwrap()
+        }
+
+        /// A committed file whose parse has not run yet is held back like an edit
+        /// (#225). The structure pass records the new content hash before the
+        /// parse rebuilds the file's nodes, so a push in between shared the new
+        /// hash with the OLD nodes — and the dōjō, holding that hash, never asked
+        /// for the file again (live: scan.rs on the dōjō had 41 nodes, 47 locally).
+        #[tokio::test]
+        async fn a_committed_file_awaiting_its_parse_is_held_back_until_parsed() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            sqlx_core::query::query(
+                "update sensei.files set parsed_at = null where folder_id = $1 and file_path = 'src/a.ts'",
+            )
+            .bind(c.folder)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            let mut plane = StubPlane::default();
+            plane.graph_remote.insert(
+                (c.repo_key.clone(), "main".into()),
+                HashMap::from([
+                    ("src/a.ts".to_string(), "ha-before".to_string()),
+                    ("src/b.ts".to_string(), "hb-committed".to_string()),
+                ]),
+            );
+
+            push_graphs(&pg, "p", "tok", &plane, &plan_tracking(&c.repo_key, &["main"]))
+                .await
+                .unwrap();
+
+            let seen = plane.graph_pushes.lock().unwrap().clone();
+            let pushed: Vec<Option<String>> = seen.iter().flat_map(|p| p.paths.clone()).collect();
+            assert!(
+                !pushed.contains(&Some("src/a.ts".into())),
+                "a file awaiting its parse is not shared: {pushed:?}"
+            );
+            assert_eq!(
+                seen.last().and_then(|p| p.manifest.clone()),
+                Some(BTreeMap::from([
+                    ("src/a.ts".to_string(), "ha-before".to_string()),
+                    ("src/b.ts".to_string(), "hb-committed".to_string()),
+                ])),
+                "it is kept at the dōjō's hash, so the next push after its parse sends it"
+            );
+            drop_checkout(&pg, c).await;
+        }
+
+        #[tokio::test]
+        async fn a_tracked_checkout_pushes_its_committed_changes_and_holds_back_its_edits() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            let head = git(c.dir.path(), &["rev-parse", "HEAD"]);
+            let mut plane = StubPlane::default();
+            // The dōjō holds b.ts at its committed hash; a.ts is new to it.
+            plane.graph_remote.insert(
+                (c.repo_key.clone(), "main".into()),
+                HashMap::from([("src/b.ts".to_string(), "hb-committed".to_string())]),
+            );
+
+            let batches =
+                push_graphs(&pg, "p", "tok", &plane, &plan_tracking(&c.repo_key, &["main"]))
+                    .await
+                    .unwrap();
+
+            let seen = plane.graph_pushes.lock().unwrap().clone();
+            assert_eq!(batches, seen.len());
+            assert!(
+                seen.iter()
+                    .all(|p| p.repo_key == c.repo_key && p.branch == "main" && p.sha == head)
+            );
+            let pushed: Vec<Option<String>> = seen.iter().flat_map(|p| p.paths.clone()).collect();
+            assert!(
+                pushed.contains(&Some("src/a.ts".into())),
+                "the committed change goes: {pushed:?}"
+            );
+            assert!(
+                !pushed.contains(&Some("src/b.ts".into())),
+                "the uncommitted edit stays local: {pushed:?}"
+            );
+            // The last batch carries the unplaced slice and the manifest; b.ts is
+            // kept at the dōjō's hash, not pruned and not overwritten.
+            let last = seen.last().unwrap();
+            assert!(last.paths.contains(&None), "the unplaced slice rides the last batch");
+            assert_eq!(
+                last.manifest,
+                Some(BTreeMap::from([
+                    ("src/a.ts".to_string(), "ha".to_string()),
+                    ("src/b.ts".to_string(), "hb-committed".to_string()),
+                ]))
+            );
+            assert!(
+                seen[..seen.len() - 1].iter().all(|p| p.manifest.is_none()),
+                "only the last batch prunes"
+            );
+            assert_eq!(
+                state(&pg, &format!("{}@main", c.repo_key)).await.map(|s| s.0),
+                Some("synced".into())
+            );
+            drop_checkout(&pg, c).await;
+        }
+
+        #[tokio::test]
+        async fn a_checkout_on_a_branch_the_dojo_does_not_track_pushes_nothing_and_says_why() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            let plane = StubPlane::default();
+            push_graphs(&pg, "p", "tok", &plane, &plan_tracking(&c.repo_key, &["production"]))
+                .await
+                .unwrap();
+            assert!(plane.graph_pushes.lock().unwrap().is_empty());
+            assert_eq!(
+                state(&pg, &format!("{}@main", c.repo_key)).await,
+                Some(("skipped".into(), Some("not_a_tracked_branch".into())))
+            );
+            drop_checkout(&pg, c).await;
+        }
+
+        #[tokio::test]
+        async fn a_checkout_whose_branch_moved_since_indexing_is_not_pushed_as_the_old_one() {
+            // Indexed on main, now checked out on feature-x: its graph is main's
+            // as of the last index, but its working tree is not — skip, say why.
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            git(c.dir.path(), &["checkout", "-q", "-b", "feature-x"]);
+            let plane = StubPlane::default();
+            push_graphs(&pg, "p", "tok", &plane, &plan_tracking(&c.repo_key, &["main"]))
+                .await
+                .unwrap();
+            assert!(plane.graph_pushes.lock().unwrap().is_empty());
+            assert_eq!(
+                state(&pg, &format!("{}@main", c.repo_key)).await,
+                Some(("skipped".into(), Some("index_not_current".into())))
+            );
+            drop_checkout(&pg, c).await;
+        }
+
+        #[tokio::test]
+        async fn a_persona_pass_pushes_the_graph_after_the_metrics() {
+            // The wiring: the cycle a schedule runs reaches push_graphs.
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            let plane = StubPlane {
+                plan: Some(plan_tracking(&c.repo_key, &["main"])),
+                ..Default::default()
+            };
+            sync_persona(&pg, "p", "tok", &plane).await.unwrap();
+            assert!(
+                plane.graph_pushes.lock().unwrap().iter().any(|p| p.repo_key == c.repo_key),
+                "the pass never pushed the tracked checkout's graph"
+            );
+            drop_checkout(&pg, c).await;
+        }
+
+        #[tokio::test]
+        async fn graph_entity_is_a_real_sync_entity() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (labels,): (Vec<String>,) = sqlx_core::query_as::query_as(
+                "select enum_range(null::sensei.sync_entity)::text[]",
+            )
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert!(labels.iter().any(|l| l == GRAPH_ENTITY), "{GRAPH_ENTITY} not in {labels:?}");
+        }
     }
 }

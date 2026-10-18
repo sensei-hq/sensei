@@ -2,8 +2,9 @@
  * Observatory Instruments — playground, replay, insights.
  *
  * Verifies the enriched T2 flows against the live daemon:
- *   • Playground renders the enriched mcp_list_tools shape (T2 Slice A')
- *     and the kind chip filter narrows the tool list (T2 Slice A'').
+ *   • Playground renders the enriched mcp_list_tools shape (T2 Slice A'),
+ *     each tool row carrying its kind. (The kind-chip filter was retired
+ *     with the redesign: each row's glyph shows its kind.)
  *   • Insights tab lights up with derived / cached signal cards (T2 Slice
  *     D-lite + D full) and the row-click disclosure reveals the cached
  *     insight detail from the `tool_insights` cache table.
@@ -35,27 +36,6 @@ test.describe('Observatory Instruments', () => {
     const row = tauriPage.locator(`[data-testid="tool-row-${first.name}"]`);
     await expect(row).toBeVisible({ timeout: 10_000 });
     await expect(row).toHaveAttribute('data-tool-kind', first.kind);
-  });
-
-  test('kind chip filters the tool list (queries only)', async ({ tauriPage }) => {
-    await tauriPage.locator('[data-testid="playground-body"]').waitFor(10_000);
-
-    // The tauri-playwright wrapper doesn't expose evaluateAll on locators —
-    // fall back to a page.evaluate that queries the DOM directly.
-    const readKinds = async () => tauriPage.evaluate(`
-      Array.from(document.querySelectorAll('[data-testid^="tool-row-"]'))
-        .map(el => el.dataset.toolKind)
-    `) as Promise<string[]>;
-
-    const allKinds = await readKinds();
-    expect(allKinds.length).toBeGreaterThan(0);
-
-    await tauriPage.locator('[data-testid="kind-chip-query"]').click();
-    await new Promise<void>(r => setTimeout(r, 300));
-    const filteredKinds = await readKinds();
-    expect(filteredKinds.length).toBeGreaterThan(0);
-    expect(filteredKinds.length).toBeLessThanOrEqual(allKinds.length);
-    for (const k of filteredKinds) expect(k).toBe('query');
   });
 
   test('Insights tab shows signal cards + expandable per-tool detail', async ({ tauriPage }) => {

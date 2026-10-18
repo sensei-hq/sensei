@@ -98,6 +98,10 @@ content-free view (#252).
 `dojo.can_read_repository_metric` today grants own, repo-scope and tenant admin.
 The team-lead clause is new.
 
+A `scope = user` row arrives only as its own person's: `dojo.file_metric_rows`
+takes `principal_id` from the session, never the input, and the daemon sends only rows
+provably the signed-in person's (#240; `docs/spec/dojo/daemon-sync.md` §8, item 4).
+
 ### Knowledge — artifacts, triage, rules, policies
 
 | Data | contributor | maintainer | admin |
@@ -174,7 +178,7 @@ repository needs every tenant's forge connections to say "not yours" rather than
   route keeps as that status (`db-refusal.ts`).
 
 Today: `my_repositories`, `register_repository`, `set_repository_election`,
-`upsert_repository_metrics`, `set_metric_activation`, `set_pack_adoption`,
+`file_metric_rows`, `set_metric_activation`, `set_pack_adoption`,
 `my_adopted_pack_slugs`, `create_dojo`, `tenant_live_session_count`,
 `principal_is_member`. Each has a test under `database/tests/dojo/`.
 

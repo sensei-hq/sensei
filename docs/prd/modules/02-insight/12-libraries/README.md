@@ -17,34 +17,44 @@ drift. Heavily-used libraries gain generated **skills** ("how do I set up kavach
 auth?"). The user feels this module as *the assistant knows how to use this library,
 correctly, for this project's version*.
 
+> **Status honesty (2026-10-14).** The storage names in this doc were aspirational:
+> pages, skills and agents are all rows in **`sensei.library_content`** (`kind`), not
+> `library_pages` / `library_skills`; there is **no `wrap_library` MCP tool**; the
+> library API lives in `api/handlers/libraries.rs` (not `mcp/library_pages.rs`). See
+> gap `G-LIB-WRAP`.
+
 ## In scope / out of scope
 
 - In: detection of unmanaged dependencies + wrap-me workflow; doc ingestion from
   `llms.txt`/`llms-full.txt`, repo trees, published API refs, registries, and source
   AST (for internal libs); version pinning from the project lockfile + re-index on
   bump; skill generation above a usage threshold; library-upgrade drift surfacing;
-  `sensei.libraries`, `sensei.library_pages`, `sensei.library_versions`,
-  `sensei.library_skills`.
+  `sensei.libraries`, `sensei.library_versions`, `sensei.library_content`
+  (kind: `page | skill | agent`), `sensei.library_packages`.
 - Out: library *pattern* extraction for the assistant (M10 — the `patterns.yaml` /
   llms.txt patterns pipeline); the underlying upgrade-drift scanner (M11 — reused);
   captures/watcher that trigger re-index (M3); narration-cache copy (M7-owned).
 
 ## Surfaces
 
-- **MCP** — `add_library`, `search_lib_docs`, `list_library_skills`,
-  `get_library_skill`, `wrap_library`, `get_duplicates` (shared).
-- **API** — `crates/senseid/src/mcp/library_pages.rs`; Libraries screens (Observatory
-  + project), add-library progress, version-pin chip.
-- **Daemon** — manifest readers (`adapters/manifest/*.rs`), version pinning
-  (`libraries/version.rs`), custom-lib source ingestion (`libraries/custom.rs`),
-  skill generation (`libraries/skills.rs`), drift watch (via M11).
+- **MCP** — `add_library`, `search_lib_docs`, `get_lib_docs`, `list_library_skills`,
+  `get_library_skill`, `list_library_agents`, `get_duplicates` (shared). **No
+  `wrap_library` tool exists** (gap `G-LIB-WRAP`).
+- **API** — `crates/senseid/src/api/handlers/libraries.rs`; Libraries screens
+  (Observatory + project), add-library progress, version-pin chip.
+- **Daemon** — manifest readers (`adapters/manifest*.rs`), version pinning
+  (`libraries/version.rs`), doc/source ingestion (`libraries/docs_source.rs`), skill +
+  agent generation (`libraries/advisory.rs`), drift watch (via M11).
 
 ## Data invariants
 
-- `sensei.libraries` — one row per detected library; `sensei.library_pages` keyed on
-  `(library_id, component, version?, source_kind, source_url_or_path)`;
-  `sensei.library_versions` — project × library × version pin from the lockfile;
-  `sensei.library_skills` — name, library_id, focus, prompt_body, tokens.
+- `sensei.libraries` — one row per library (`kind` `detected|imported`, `ecosystem`,
+  `embedding`); `sensei.library_versions` — one row per `(library_id, version)` pin;
+  **`sensei.library_content`** — one row per indexed artifact, `kind`
+  (`library_content_kind`: `page | skill | agent`), keyed on `library_version_id` +
+  `name`, with `body`, `focus`, `tokens`, `source`/`source_path`, `version_range`;
+  `sensei.library_packages`. There is **no `library_pages` / `library_skills` table** —
+  both are `library_content` rows under different `kind`s.
 - **Idempotent ingestion.** Re-ingesting a library **supersedes** pages on the
   composite key — never doubles them.
 - **Version pin follows the lockfile** (`package-lock.json`, `Cargo.lock`,
@@ -115,6 +125,8 @@ mcp_call list_library_skills --library=rokkit
   and the observatory Libraries section; M12 folds both. Nominal gaps: none
   registered in [06-gaps.md](../../../../roadmap/06-gaps.md); watch the
   non-wrapped-drift opt-in policy and the skill threshold tuning.
+- **`G-LIB-WRAP`** — there is no `wrap_library` MCP tool; the wrap-me workflow has no
+  write surface today.
 
 ## Related
 
@@ -126,5 +138,5 @@ mcp_call list_library_skills --library=rokkit
 - [features/03-observatory.md](../../../../features/03-observatory.md) — Libraries
   section status.
 - [prd/02-objectives.md](../../../02-objectives.md) · [prd/01-vision.md §The core loop](../../../01-vision.md#the-core-loop).
-- Crate: `crates/senseid/src/libraries/{version.rs,custom.rs,skills.rs}`,
-  `crates/senseid/src/adapters/manifest/*.rs`.
+- Crate: `crates/senseid/src/libraries/{version.rs,docs_source.rs,advisory.rs}`,
+  `crates/senseid/src/adapters/manifest.rs`, `crates/senseid/src/api/handlers/libraries.rs`.

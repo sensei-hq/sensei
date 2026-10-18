@@ -362,7 +362,7 @@ describe('HealthState — B2: init() lifecycle', () => {
 
 describe('HealthState — B3: verify() forces a fresh check', () => {
   // The `sensei:health` sessionStorage cache was removed — nothing read it
-  // (HealthState's $state is the authoritative source for reroute via
+  // (HealthState's $state is the authoritative source for the boot gate via
   // appState.healthOk), so the writes were dead. Tests that asserted those
   // writes/removes are gone; what remains is the actual contract:
   // verify() triggers a fresh transport.resolve() and is idempotent in flight.
@@ -394,7 +394,7 @@ describe('HealthState — B3: verify() forces a fresh check', () => {
 // Previously asserted that apply() wrote/removed a `sensei:health`
 // sessionStorage cache key. The cache was dead — nothing consumed it —
 // so the writes are gone (see health-cache.ts deletion). HealthState's
-// $state is the canonical source for reroute via appState.healthOk.
+// $state is the canonical source for the boot gate via appState.healthOk.
 
 export { okPayload, needsActionPayload, remedyFixture };
 

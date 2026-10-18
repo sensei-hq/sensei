@@ -15,25 +15,43 @@ its own slice; a removed symbol disappears; nothing duplicates. That convergence
 any single feature — is the whole requirement, because it is what stopped the
 "scattered-circles" regression from silently returning.
 
+> **Context from 2026-08-06 blueprint** — The live sensei graph on 2026-08-06 showed:
+> - 1,727 of 5,394 resolved calls (32%) pointed at an *ambiguous* name (bare-name resolution)
+> - `new` mega-hub: 1,230 inbound edges collapsed onto one arbitrary node (now distributed across 308 FQN nodes, worst 105)
+> - External deps were NOT first-class — now 677 `lib_symbol` nodes (sqlx/axum/serde_json/…)
+> - File→type→method structure was missing — now 1,014 methods under structs
+> - `is_exported` was false for ALL 6,547 symbols; `call_flow` filtered on it
+> - git-subtree dirs (marketplace/homebrew) had no nested `.git` and were missed
+>
+> **Fix 1 (shipped on `develop`)** — FQN symbol-table rebuild: get-or-create nodes by FQN at emit time; no `resolve_edges` pass; external deps → `lib_symbol` nodes (677); file→type→method nests.
+
 ## In scope / out of scope
 
 - In: the scanner → graph-store write path (M3 *queues* folders; this module *parses,
-  resolves, and writes*); idempotent edge identity (D1); derived-edge replacement (D2);
-  node-identity preservation on reindex (D3); community durability/determinism (D4);
-  the grouping + granularity kinds (D5); worker execution guarantees — granular, resumable,
-  resilient, incremental (D6); the retrieval contract (`GET /api/graph/nodes`,
-  `communities/info`, the `/tree` hierarchy endpoint).
-- Out: the Atlas Svelte rendering for the retrieval contract (downstream follow-on);
-  capture / watchers / branch flips (M3 — they enqueue the work); semantic search UX.
+  resolves, and writes*); **FQN symbol-table model** (Fix 1 shipped: get-or-create by FQN, edges node→node at emit, `lib` namespace for externals); idempotent edge identity (D1); derived-edge replacement (D2); node-identity preservation on reindex (D3); community durability/determinism (D4); the grouping + granularity kinds (D5); worker execution guarantees — granular, resumable, resilient, incremental (D6); the retrieval contract (`GET /api/graph/nodes`, `communities/info`, the `/tree` hierarchy endpoint); **`is_exported` per adapter** (`pub`/`export`/`__all__`); **git-subtree detection** via `git log --grep='git-subtree-dir:'`; **DB views** (`graph_edges_resolved`, `community_edges`, `folder_tree`, `node_exports`); **per-language name resolution** (imports/scope/enclosing-type/binding-type).
+- Out: the Atlas Svelte rendering for the retrieval contract (downstream follow-on); capture / watchers / branch flips (M3 — they enqueue the work); semantic search UX; **Fix 2 (community-edge aggregation)** and **Fix 3 (DB views)** are spec'd in blueprint but not yet built; **Fix 4 (Atlas structural view)** is Delivery M17.
 
 ## Surfaces
 
 - **API** — `GET /api/graph/nodes?repoId=`, `GET /api/graph/communities/info`,
   `GET /api/graph/:repoId/tree`, the graph/imports breakdown endpoint.
 - **Daemon** — `process_file` / `resolve_edge` / `build_connections` workers; task queue
-  (`crates/senseid/src/tasks/…`); folder-status machine (`indexed`, `archived`, …).
+  (`crates/senseid/src/tasks/…`); folder-status machine (`indexed`, `archived`, …); **per-language resolvers** plug into shared FQN core (`LanguageAdapter::resolve_fqn`); **SQL adapter consults dbd `SchemaModel`** for bare-name resolution (since dbd v0.22).
 - **App** — code-graph + communities views in the Project window (layout edges
   `calls,imports,extends,implements`; containment `covers,references,rationale_for` overlay-only).
+
+## The FQN Model (Fix 1 — shipped)
+
+| Aspect | Design Decision |
+|--------|-----------------|
+| **Identity** | SCIP/LSIF moniker: every symbol has a stable FQN; `upsert_node_by_fqn(fqn) → node_id` get-or-create |
+| **Definition** | crate/module path + enclosing `impl`/type + name → `crate::widget::Widget::new` |
+| **Reference** | Resolve call path against file's scope: explicit `Foo::new()`, `self.method()`, `x.method()`, external `lib` FQN |
+| **External** | `lib_symbol` nodes grouped by crate/pkg (`serde::de::from_str` etc.) |
+| **Layering** | Shared FQN core + per-language resolvers (Rust first); cross-language refs merge on same FQN |
+| **No `resolve_edges`** | Edges are `source_id → target_id` from emit; no limbo, no ambiguity guard |
+
+**Name-resolution rules (Rust):** explicit path via `use` imports; `self`/`super`/same-`impl` → enclosing type; local `foo()` → module scope; `x.method()` on typed local → binding→type map; dynamic `dyn Trait` → trait method FQN (not nothing).
 
 ## Data invariants
 
@@ -67,6 +85,8 @@ any single feature — is the whole requirement, because it is what stopped the
 | `community_id` per node | returned in the node projection | membership drives the cluster view |
 | `/tree` hierarchy | folder → file → class → method → doc section | docs-vs-code and module nesting |
 | Communities panel | live membership counts, per-community description/god-nodes | no more stale `node_count` sizing |
+| `is_exported` | `pub`/`export`/`__all__` per adapter | exports populate everywhere |
+| `git-subtree-dir` | `git log --grep='git-subtree-dir:'` prefixes | marketplace/homebrew scope dropdown shows them |
 
 ## Done gate
 
@@ -87,12 +107,16 @@ any single feature — is the whole requirement, because it is what stopped the
 - **Scoped incremental** — touch one file: only that file's nodes change `modified_at`;
   others keep `id` + `community_id`; a deleted symbol disappears; no edge dupes.
 - **Determinism** — two `clear + full-scan` runs produce identical `community_id` assignment.
-- **Resilience** — `fatal_file_failure_is_recorded_and_retried` and
-  `restart_mid_scan_converges` pass; after a simulated restart mid-scan,
+- **Resilience** — 🟡 spec'd, **not yet built** ([D6](#open-gaps-from-blueprint--indexer-capability-coverage)
+  gap): `fatal_file_failure_is_recorded_and_retried` and `restart_mid_scan_converges` are
+  described in [`spec/pipeline/code-graph.md`](../../../../spec/pipeline/code-graph.md) §Resilience
+  but exist in no crate today. Done means: after a simulated restart mid-scan,
   `activity.task_executions` where `status='running'` reconciles to 0 and the folder reaches
   `indexed`.
 - **Retrieval** — `GET /api/graph/nodes?repoId=<fixture>` returns per-node `community_id` and
   `calls+imports+extends` edges; `/tree` returns a nested structure.
+- **`is_exported` populated** — per-adapter visibility (`pub`/`export`/`__all__`); `call_flow` reads it.
+- **Subtree folders registered** — `folders.kind='subtree'` for marketplace/homebrew.
 
 ## Wrong gate
 
@@ -106,6 +130,8 @@ any single feature — is the whole requirement, because it is what stopped the
 - **`community_id`s reshuffle between two identical scans** — non-deterministic labels.
 - **Every repo >500 nodes renders as a flat same-colour bubble cloud** — retrieval still
   reads stale `node_count`/KIND instead of live membership.
+- **`is_exported` all false** — `call_flow` filters on it and finds nothing.
+- **Subtree folders missing from scope dropdown** — marketplace/homebrew not registered.
 
 ## Scenarios
 
@@ -114,28 +140,36 @@ any single feature — is the whole requirement, because it is what stopped the
 - [`scenarios/code-graph-retrieval.feature`](scenarios/code-graph-retrieval.feature) — the
   graph API contract the UI consumes.
 
-## Open gaps
+## Open gaps (from blueprint + indexer capability coverage)
 
-- [G-1](../../../../roadmap/06-gaps.md) — graph/layered view unreadable at granular scale, no
-  L0/L1/L2 level of detail (listed under M17; retrieval feeds it).
-- [G-2](../../../../roadmap/06-gaps.md) — the indexer has **no ignore mechanism** (no
-  `.senseiignore` reader, no ignore config); it walks committed mockups / vendored /
-  generated code and skews the graph and the metrics built on it. Per decision
-  2026-10-13, ignore is stored repo config synced via the Dōjō, **seeded from the
-  repo's own ignore sources** (`.gitignore`, qlty `.qlty/qlty.toml` `exclude_patterns`)
-  — not a dotfile. This repo's `.qlty/qlty.toml` already excludes `docs/mockups/**`
-  and `crates/senseid/grammars/**` for exactly this reason.
-- Watch: worker state is in-memory today (100% queue.rs) and folder-status states collapse
-  to `indexed`/`archived` — D6 makes these durable and complete; until landing, restart
-  resume coverage is partial.
+| Gap | Description | Priority | Blocks |
+|-----|-------------|----------|--------|
+| [G-1](../../../../roadmap/06-gaps.md) | Graph/layered view unreadable at granular scale, no L0/L1/L2 level of detail | P1 (M17) | Atlas readability |
+| [G-2](../../../../roadmap/06-gaps.md) | No ignore mechanism (seeded from `.gitignore` + qlty `exclude_patterns`) | P2 | Graph/metric pollution |
+| **D1–D6** | Code-graph pipeline fixes (idempotent edge, derived-edge replace, node identity, community durability, grouping kinds, worker guarantees) | P1 | All downstream |
+| **D3** | Embedding survival across reindex (26% coverage; process_file deletes+reinserts with NULL embedding) | P1 | Semantic search, duplication persistence |
+| **D3** | Deterministic, line-independent node IDs (stable across reindex) | P1 | Stable search, drift/pattern FKs |
+| **D5b** | `section` node emission (0 rows today; blocks traceability) | P1 | Requirement-level traceability, `traces_to` |
+| **Fix 2** | Community-edge aggregation (`community_edges` view, `communities/info` relations) | P2 | Community view |
+| **Fix 3** | DB views (`graph_edges_resolved`, `folder_tree`, `node_exports`) | P2 | API simplification |
+| **Git-subtree detection** | `git log --grep='git-subtree-dir:'` prefixes (marketplace/homebrew) | P2 | Scope dropdown |
+| **`is_exported` per adapter** | `pub`/`export`/`__all__`/`__tablename__`; TDD per adapter | P1 | Exports everywhere |
+| **SQL bare-name resolution** | Consult dbd `SchemaModel` (v0.22+) for in-pass resolution | P1 | Cross-schema imports |
+| **Verdict columns** | `resolved_via` (8 rungs), `unresolved_reason` (10 codes: fault/refusal) | P1 | Edge confidence for metrics |
+| **Verdict columns** | 240,439 of 244,219 `imports` misses carry no reason | P1 | Diagnosability |
+| **Embedding coverage** | 26.4% (skewed: `module` 0%, `const` 3.5%, `type` 3.6% vs `method` 95%) | P1 | Semantic search recall |
+| **FTS** | No tsvector; lexical arm is `ILIKE '%q%'` over `name`+`signature` only | P2 | Search > grep |
 
 ## Related
 
 - [spec/pipeline/code-graph](../../../../spec/pipeline/code-graph.md) — the six fixes D1–D6,
   target + worker invariants, depth ledger (legacy depth, folds here).
 - [analysis/2026-08-04-deep-dive/10-graph-indexing-regression](../../../../history/analysis/2026-08-04-deep-dive/10-graph-indexing-regression.md) — the measured regression.
-- [spec/indexer/20-schema-entities](../../../../spec/indexer/20-schema-entities.md) —
-  node/edge/kinds detail.
+- [history/blueprints/2026-08-06-code-graph-meaningful.md](../../../../history/blueprints/2026-08-06-code-graph-meaningful.md) — Fix 1/2/3/4 blueprint.
+- [history/analysis/2026-08-05-indexer-capability-coverage.md](../../../../history/analysis/2026-08-05-indexer-capability-coverage.md) — capability audit (patterns/search/traceability).
+- [history/analysis/2026-09-29-architecture-metrics-and-visuals.md](../../../../history/analysis/2026-09-29-architecture-metrics-and-visuals.md) — architecture metrics unlocked by graph fixes.
+- [history/analysis/2026-09-27-entity-graph-feasibility.md](../../../../history/analysis/2026-09-27-entity-graph-feasibility.md) — schema entities in the graph.
+- [spec/indexer/20-schema-entities](../../../../spec/indexer/20-schema-entities.md) — node/edge/kinds detail.
 - [prd/02-objectives.md](../../../02-objectives.md) §04 The project window ·
   [prd/01-vision.md §The core loop](../../../01-vision.md#the-core-loop).
 - Crate: `crates/senseid/src/{indexer,graph}`; fixtures: `crates/senseid/tests/fixtures/graph-scan/`.

@@ -1,4 +1,4 @@
-import type { TauriPageLike } from './fixtures';
+import { expect, type TauriPageLike } from './fixtures';
 /**
  * Shared test helpers for Playwright e2e tests.
  *
@@ -106,6 +106,34 @@ export async function daemonPost<T>(path: string, body?: unknown): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+/**
+ * Remove every watch root under `prefix`, and what it indexed. A spec that adds
+ * roots takes them out again: the e2e database persists between runs, and a
+ * left-over root fails the next spec that expects none.
+ */
+export async function removeRootsUnder(prefix: string): Promise<void> {
+  const roots = await daemonGet<Array<{ id: string; path: string }>>('/api/scan/roots');
+  for (const r of roots.filter((r) => r.path.startsWith(prefix))) {
+    const resp = await fetch(`${DAEMON_URL}/api/scan/roots/${r.id}?repositories=remove`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error(`removing root ${r.path}: HTTP ${resp.status}`);
+  }
+}
+
+/**
+ * A project for a spec to scope to, SEEDED rather than assumed: `reset-e2e-db`
+ * drops `sensei_e2e` before a run, so a fresh database has no projects and a spec
+ * reading `/api/projects[0]` throws before it tests anything. Reused by name, so
+ * a spec's project is the same across runs and never one another spec left.
+ * Nothing is indexed under it — screens land in their empty terminal state.
+ */
+export async function seedProject(name: string, description: string): Promise<string> {
+  const existing = await daemonGet<Array<{ id: string; name: string }>>('/api/projects');
+  const mine = existing.find((p) => p.name === name);
+  if (mine) return mine.id;
+  const created = await daemonPost<{ ok: boolean; id: string }>('/api/projects', { name, description });
+  return created.id;
+}
+
 /** Set the daemon port in the browser's localStorage so the app connects to dev daemon. */
 export async function setAppPort(page: import('@playwright/test').Page): Promise<void> {
   await page.addInitScript((port) => {
@@ -155,17 +183,17 @@ function sleep(ms: number): Promise<void> {
  * Navigate to a gated observatory screen, RE-navigating until its root selector
  * mounts (or the budget elapses).
  *
- * The observatory shell is gated by `reroute` (health + setup). Two async
+ * The observatory shell is gated by the boot gate (routes/+layout.ts) (health + setup). Two async
  * conditions delay a screen mounting right after a test seeds setup:
  *   1. Cold health-bootstrap — on a fresh e2e DB the daemon's health probe can
- *      take ~30s to reach 'ok'. While it isn't ok, every gated route reroutes
+ *      take ~30s to reach 'ok'. While it isn't ok, every gated route redirects
  *      to /health.
  *   2. Setup reconciliation — `wizardState.setupComplete` reconciles from the
  *      daemon config ONLY inside an `$effect` that fires when `healthState.isOk`
  *      *changes* (wizard-state.svelte.ts). A test's PUT of `setup_complete=1`
- *      doesn't itself trigger a transition, so `reroute` only sees it once the
+ *      doesn't itself trigger a transition, so the gate only sees it once the
  *      next health transition reconciles — which on a cold boot lands with the
- *      health-ready transition ~50s in. Until then a gated route reroutes to
+ *      health-ready transition ~50s in. Until then a gated route redirects to
  *      /setup.
  * In both cases a SINGLE navigation lands on the wrong route and the target
  * selector never appears — waiting longer on it can't help (we're elsewhere).
@@ -266,7 +294,7 @@ export async function waitForDom(
 /**
  * Mark setup complete — in the daemon's config AND in the page's cached state.
  *
- * `hooks.ts` reroutes every page to `/setup/welcome` until setup is complete,
+ * the boot gate (routes/+layout.ts) redirects every page to `/setup/welcome` until setup is complete,
  * and `make reset-e2e-db` drops the row that says it is. A spec that skips this
  * passes only when an earlier run happened to leave `setup_complete` behind:
  * the whole Settings rail failed on a reset DB for exactly that reason.
@@ -279,14 +307,76 @@ export async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ setup_complete: '1' }),
   });
-  await tauriPage.evaluate(`
-    (function() {
-      try { localStorage.setItem('sensei:setup-complete', '1'); } catch (e) { /* shim */ }
-      var s = window.__sensei_state__;
-      if (s && s.appState) {
-        s.appState.config = Object.assign({}, s.appState.config, { setup_complete: '1' });
-        s.appState.loaded = true;
+  // The gate reads the wizard's in-memory flag, which reconciles against the
+  // daemon only when the setup layout mounts (or on a health TRANSITION) — so a
+  // config write alone changes nothing in a running page, and writing
+  // localStorage behind the wizard's back is ignored until a boot. A spec that
+  // followed one resetting setup sat on /setup/welcome for its whole budget.
+  //
+  // Do what the app does instead: mount the setup layout. Its load() reads
+  // setup_complete=1 and sends a completed setup on to `/`. (A full reload would
+  // also re-read it, but WKWebView mounts nothing after one — see navigateTo.)
+  await navigateTo(tauriPage, '/logs');
+  await navigateTo(tauriPage, '/setup/welcome');
+  await waitFor(async () => {
+    try {
+      return (await tauriPage.evaluate(
+        `!!document.querySelector('[data-component="observatory-sidebar"]')`,
+      )) === true;
+    } catch {
+      return false;
+    }
+  }, 30_000);
+}
+
+// ── Setup wizard navigation (shared by every wizard spec) ─────────────────────
+
+// `?force=1` is REQUIRED in e2e: the (config) layout's onMount redirects to the
+// observatory when `appState.setupOk` (setup already complete) unless the URL
+// carries `force=1` — the "re-run setup" escape hatch. globalSetup seeds
+// setup-complete so the observatory specs work, so without force the wizard
+// bounces to / and the rail never mounts.
+export const WELCOME = '/setup/welcome?force=1';
+
+export async function startAtWelcome(tauriPage: TauriPageLike): Promise<void> {
+  // /logs is ALWAYS_REACHABLE — visiting it unmounts the (config) layout so the
+  // next navigation remounts fresh (onMount → loadWizardData with the reset
+  // daemon).
+  await navigateTo(tauriPage, '/logs');
+  // /setup/* is gated behind healthOk (the boot gate (routes/+layout.ts)); on a cold e2e DB the
+  // health probe takes ~50s to reach 'ok', so RE-navigate until the rail mounts.
+  // Mirrors the observatory shell's navigateToScreen.
+  await navigateToScreen(tauriPage, WELCOME, '[data-testid="rail"]');
+}
+
+export async function clickAndExpectNav(
+  tauriPage: TauriPageLike,
+  selector: string,
+  expectedPath: string,
+  timeout = 10_000,
+): Promise<void> {
+  const seen: string[] = [];
+  const deadline = Date.now() + timeout;
+
+  await tauriPage.click(selector);
+
+  let reached = false;
+  while (Date.now() < deadline) {
+    try {
+      const p = await tauriPage.evaluate(`window.location.pathname`);
+      if (typeof p === 'string') {
+        seen.push(p);
+        if (p === expectedPath) { reached = true; break; }
       }
-    })()
-  `);
+    } catch { /* mid-transition */ }
+    await new Promise<void>(r => setTimeout(r, 80));
+  }
+
+  const unexpected = seen.filter(p => p === '/health');
+  expect(unexpected, `Unexpected redirect to /health while navigating to ${expectedPath}`).toHaveLength(0);
+
+  if (!reached) {
+    const current = await tauriPage.evaluate(`window.location.pathname`).catch(() => '(unknown)');
+    throw new Error(`Timed out (${timeout}ms) waiting for ${expectedPath}. Current: ${current}`);
+  }
 }

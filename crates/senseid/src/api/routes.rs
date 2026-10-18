@@ -304,6 +304,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/folders/remap", post(workspace::remap_folder_endpoint))
         // Review-depth gate (E1) — classify a change's required review depth
         .route("/api/review/risk-class", post(review::risk_class))
+        .route("/api/review/subagent-model", post(review::subagent_model))
         // Libraries
         .route("/api/libs", get(libraries::list_libs))
         .route("/api/libs/index", post(libraries::index_lib))

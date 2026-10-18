@@ -40,7 +40,7 @@
         loaded = true;
         // Daemon-canonical: if setup is already complete, the user was
         // dropped here during the cold-start race (appState wasn't loaded
-        // when reroute decided). Send them to the observatory now —
+        // when the gate decided). Send them to the observatory now —
         // UNLESS the user explicitly asked to re-enter setup (via the
         // View → Setup menu, which appends `?force=1`). That's the path
         // that lets a fully-configured user re-run the wizard.
@@ -57,12 +57,12 @@
         try {
             if (isLast) {
                 await wizardState.commitStage("done");
-                // Reload appState so reroute sees setup_complete=1 before goto fires.
+                // Reload appState so the boot gate sees setup_complete=1 before goto fires.
                 await appState.load();
                 // The microtask break + invalidateAll are load-bearing:
                 // without yielding once, pending wizard-layout $effects can
                 // hold an in-flight navigation context and SvelteKit will
-                // coalesce the goto into a no-op (reroute never fires).
+                // coalesce the goto into a no-op (the gate never re-runs).
                 // invalidateAll re-runs every layout/page load so the
                 // observatory doesn't render with stale wizard state.
                 await Promise.resolve();

@@ -48,7 +48,7 @@
   );
 </script>
 
-<section class="mt-4 border border-paper-edge rounded-xl bg-paper-soft">
+<section data-component="remedy" class="mt-4 border border-paper-edge rounded-xl bg-paper-soft">
   <header class="flex items-center gap-2.5 px-4 py-3.5 border-b border-paper-edge">
     <Kanji char="手" />
     <div class="flex-1">

@@ -298,6 +298,10 @@ pub(crate) async fn ingest_hook_event(
         tracing::warn!(error = %e, event_type = f.event_type, family = f.family, "ingest_hook_event: insert failed");
     }
 
+    // What the event says about its session beyond its own row (a usage-mod
+    // measure's cost) — the same step the drain applies to a dead-lettered one.
+    crate::tasks::capture_drain::apply_to_session(&state.pg, &payload).await;
+
     // Relay segment-publish (A2): a TodoWrite carries the run's todo outline —
     // project it into the relay and push to enrolled dojos. Fire-and-forget so
     // the publish (a DB read + bounded HTTP posts) never blocks the hook.

@@ -23,7 +23,7 @@
  */
 
 import { test, expect, type TauriPageLike } from '../fixtures';
-import { navigateTo, navigateToScreen, DAEMON_URL } from '../helpers';
+import { navigateTo, navigateToScreen, DAEMON_URL, WELCOME, startAtWelcome, clickAndExpectNav, removeRootsUnder } from '../helpers';
 import { execFileSync } from 'child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'fs';
 
@@ -61,64 +61,17 @@ async function bodyText(tauriPage: TauriPageLike): Promise<string> {
   return (await tauriPage.evaluate(`document.body.textContent ?? ''`)) as string;
 }
 
-// `?force=1` is REQUIRED in e2e: the (config) layout's onMount redirects to the
-// observatory when `appState.setupOk` (setup already complete) unless the URL
-// carries `force=1` — the "re-run setup" escape hatch. globalSetup seeds
-// setup-complete so the observatory specs work, so without force the wizard
-// bounces to / and the rail never mounts.
-const WELCOME = '/setup/welcome?force=1';
-
-async function startAtWelcome(tauriPage: TauriPageLike): Promise<void> {
-  // /logs is ALWAYS_REACHABLE — visiting it unmounts the (config) layout so the
-  // next navigation remounts fresh (onMount → loadWizardData with the reset
-  // daemon).
-  await navigateTo(tauriPage, '/logs');
-  // /setup/* is gated behind healthOk (hooks.ts::reroute); on a cold e2e DB the
-  // health probe takes ~50s to reach 'ok', so RE-navigate until the rail mounts.
-  // Mirrors the observatory shell's navigateToScreen.
-  await navigateToScreen(tauriPage, WELCOME, '[data-testid="rail"]');
-}
-
-async function clickAndExpectNav(
-  tauriPage: TauriPageLike,
-  selector: string,
-  expectedPath: string,
-  timeout = 10_000,
-): Promise<void> {
-  const seen: string[] = [];
-  const deadline = Date.now() + timeout;
-
-  await tauriPage.click(selector);
-
-  let reached = false;
-  while (Date.now() < deadline) {
-    try {
-      const p = await tauriPage.evaluate(`window.location.pathname`);
-      if (typeof p === 'string') {
-        seen.push(p);
-        if (p === expectedPath) { reached = true; break; }
-      }
-    } catch { /* mid-transition */ }
-    await new Promise<void>(r => setTimeout(r, 80));
-  }
-
-  const unexpected = seen.filter(p => p === '/health');
-  expect(unexpected, `Unexpected redirect to /health while navigating to ${expectedPath}`).toHaveLength(0);
-
-  if (!reached) {
-    const current = await tauriPage.evaluate(`window.location.pathname`).catch(() => '(unknown)');
-    throw new Error(`Timed out (${timeout}ms) waiting for ${expectedPath}. Current: ${current}`);
-  }
-}
-
 /** Clear any roots accumulated from previous runs (idempotent). */
 async function clearRoots(tauriPage: TauriPageLike): Promise<void> {
   const removes = tauriPage.locator('[data-testid="root-remove"]');
   // Remove one at a time, waiting for EACH removal (api + state update) to land
   // before the next click — clicking all at once races the async removals and
-  // leaves a residual root, which then fails a "no roots" assertion.
+  // leaves a residual root, which then fails a "no roots" assertion. The × only
+  // opens the keep-or-remove panel (#247); the row goes once Remove is chosen.
   for (let n = await removes.count(); n > 0; n--) {
     await removes.first().click();
+    await tauriPage.waitForSelector('[data-testid="root-removal-remove"]', 30_000);
+    await tauriPage.locator('[data-testid="root-removal-remove"]').click();
     await expect(removes).toHaveCount(n - 1, { timeout: 10_000 });
   }
 }
@@ -137,6 +90,9 @@ async function driveToScan(tauriPage: TauriPageLike, corpusPath: string): Promis
 }
 
 // ── Flow A: Empty corpus ──────────────────────────────────────────────────────
+
+// Both corpora live under /tmp/sensei-e2e-; the roots the wizard added go with the run.
+test.afterAll(async () => { await removeRootsUnder('/tmp/sensei-e2e-'); });
 
 test.describe('Setup Wizard — Flow A: empty corpus', () => {
   // /setup/* is health-gated; a cold e2e boot takes ~50s, longer than the

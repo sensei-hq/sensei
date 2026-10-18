@@ -91,12 +91,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     //     pruned, and it is how a repository created since the last scan is
     //     found at all); what narrows is the fan-out, which is the expensive
     //     half. A full scan keeps everything.
-    let repos = match &task.scope {
-        crate::tasks::Scope::Full => discovered.repos.clone(),
-        crate::tasks::Scope::Events { .. } => {
-            crate::indexer::repo::narrow(discovered.repos.clone(), task.scope.changed())
-        }
-    };
+    let repos = repos_in_scope(discovered.repos.clone(), &task.scope);
 
     for r in &repos {
         emit(StateEvent::activity(ActivityEvent::new(
@@ -623,10 +618,29 @@ pub(crate) fn dir_present(p: &std::path::Path) -> bool {
     !matches!(p.try_exists(), Ok(false))
 }
 
+/// The repositories a scan scope concerns: all of them for a full walk; for an
+/// event batch, those owning a path it CHANGED OR DELETED. A deletion is the
+/// one event that names a path no longer on disk, and narrowing by changed paths
+/// alone dropped a deletion-only batch on the floor (#225).
+pub(crate) fn repos_in_scope(
+    repos: Vec<std::path::PathBuf>,
+    scope: &crate::tasks::Scope,
+) -> Vec<std::path::PathBuf> {
+    match scope {
+        crate::tasks::Scope::Full => repos,
+        crate::tasks::Scope::Events { changed, deleted } => {
+            let touched: Vec<std::path::PathBuf> = changed.iter().chain(deleted).cloned().collect();
+            crate::indexer::repo::narrow(repos, &touched)
+        }
+    }
+}
+
 /// Prune indexed nodes whose file no longer exists on disk (Bug 2 safety net).
-/// Compares the folder's indexed file paths (`sensei.nodes`, module nodes
-/// excluded) against `live_paths` — the repo-relative paths present on disk now
-/// — and drops nodes for any indexed path not in the live set. This catches
+/// Compares the folder's indexed file paths — every path with nodes (`sensei.nodes`,
+/// module nodes excluded) AND every `sensei.files` row, so a file that parsed to
+/// no symbols is pruned too (#225: its row otherwise outlived the file and rode
+/// in the graph manifest) — against `live_paths`, the repo-relative paths
+/// present on disk now, and drops any indexed path not in the live set. This catches
 /// orphans the incremental `files` diff and the fs-watcher missed (e.g. a
 /// moved sub-crate whose files vanished but whose struct nodes lingered). For
 /// each vanished file it un-resolves inbound edges (preserving `target_name` for
@@ -638,10 +652,17 @@ pub async fn prune_vanished(
     folder_id: &uuid::Uuid,
     live_paths: &std::collections::HashSet<String>,
 ) -> u64 {
-    let indexed = pg.list_indexed_files(folder_id).await.unwrap_or_else(|e| {
+    // A failed read prunes nothing on its account (fail-safe), and says so.
+    let with_nodes = pg.list_indexed_files(folder_id).await.unwrap_or_else(|e| {
         tracing::warn!(folder_id = %folder_id, error = %e, "prune_vanished: list_indexed_files failed");
         Vec::new()
     });
+    let with_rows = pg.list_scan_state(folder_id).await.unwrap_or_else(|e| {
+        tracing::warn!(folder_id = %folder_id, error = %e, "prune_vanished: list_scan_state failed");
+        Vec::new()
+    });
+    let indexed: std::collections::BTreeSet<String> =
+        with_nodes.into_iter().chain(with_rows.into_iter().map(|(path, _)| path)).collect();
     let mut pruned = 0u64;
     for path in indexed {
         if live_paths.contains(&path) {
@@ -1552,6 +1573,68 @@ mod tests {
             ss.iter().all(|(p, _)| !p.contains("hive-mind")),
             "files row for the vanished file cleared"
         );
+    }
+
+    /// A vanished file with NO symbols still leaves (#225). Pruning used to read
+    /// the indexed set from nodes, so a file that parsed to nothing — a doc, a
+    /// data file, an empty module — kept its `files` row for ever, and that row
+    /// kept riding in the graph manifest to the dōjō. Measured on this repository:
+    /// 185 of 3,078 rows named paths no longer on disk.
+    #[tokio::test]
+    async fn prune_vanished_drops_a_vanished_file_that_had_no_nodes() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().to_string_lossy().to_string();
+        let root_id =
+            ctx.pg().add_watch_root(&repo_path, "pv0", &serde_json::json!([])).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            ctx.pg(),
+            &root_id,
+            "pv0-repo",
+            &repo_path,
+        )
+        .await
+        .unwrap();
+        ctx.pg().upsert_scan_state(&fid, "src/kept.ts", 1, "h1").await.unwrap();
+        ctx.pg().upsert_scan_state(&fid, "docs/gone.md", 1, "h2").await.unwrap();
+
+        let live: std::collections::HashSet<String> =
+            ["src/kept.ts".to_string()].into_iter().collect();
+        let pruned = prune_vanished(ctx.pg(), &fid, &live).await;
+
+        assert_eq!(pruned, 1, "the vanished, symbol-less file is pruned");
+        let left: Vec<String> =
+            ctx.pg().list_scan_state(&fid).await.unwrap().into_iter().map(|(p, _)| p).collect();
+        assert_eq!(left, vec!["src/kept.ts".to_string()], "only the live file's row remains");
+    }
+
+    // ── repos_in_scope: which repositories an event batch concerns ──────────
+
+    fn pb(paths: &[&str]) -> Vec<std::path::PathBuf> {
+        paths.iter().map(std::path::PathBuf::from).collect()
+    }
+
+    #[test]
+    fn a_full_scan_concerns_every_repository() {
+        let repos = pb(&["/w/a", "/w/b"]);
+        assert_eq!(repos_in_scope(repos.clone(), &crate::tasks::Scope::Full), repos);
+    }
+
+    #[test]
+    fn an_event_batch_concerns_the_repositories_owning_a_changed_path() {
+        let scope =
+            crate::tasks::Scope::Events { changed: pb(&["/w/b/src/x.ts"]), deleted: vec![] };
+        assert_eq!(repos_in_scope(pb(&["/w/a", "/w/b"]), &scope), pb(&["/w/b"]));
+    }
+
+    /// A batch that only DELETES used to narrow to no repository at all, so the
+    /// observed deletion was dropped: the file's nodes and row stayed (#225 live
+    /// check: `changed=0 deleted=1`, and the deleted file never left the index).
+    #[test]
+    fn a_deletion_only_batch_still_reaches_the_repository_that_owned_the_file() {
+        let scope =
+            crate::tasks::Scope::Events { changed: vec![], deleted: pb(&["/w/a/src/x.ts"]) };
+        assert_eq!(repos_in_scope(pb(&["/w/a", "/w/b"]), &scope), pb(&["/w/a"]));
     }
 
     #[tokio::test]

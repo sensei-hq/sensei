@@ -24,6 +24,7 @@ import { existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'f
 import { createConnection } from 'net';
 import { resolve, join } from 'path';
 import { fileURLToPath } from 'url';
+import { isolatedHomeEnv } from './isolated-home';
 
 /** The daemon's `/health` payload — the fields this setup reads. */
 type DaemonHealth = {
@@ -127,6 +128,9 @@ export default async function globalSetup(): Promise<void> {
       // model (gateway_init.rs) — a warming model would peg it and stall
       // data-dependent screens within test timeouts.
       SENSEI_INSTANCE: INSTANCE,
+      // HOME is a throwaway too: the daemon's assistant work runs the real
+      // `claude plugin` commands, which act on whatever ~/.claude HOME names.
+      ...isolatedHomeEnv(),
     },
   });
   await new Promise<void>((res, rej) => {
@@ -185,7 +189,7 @@ export default async function globalSetup(): Promise<void> {
 
   // 6. WAIT FOR READY, NOT JUST FOR BOUND. A listening port says the daemon
   //    exists; it says nothing about whether the app can render anything.
-  //    Every gated route reroutes to /health until health reports `ok`, and
+  //    Every gated route redirects to /health until health reports `ok`, and
   //    `wizardState.setupComplete` only reconciles on a health TRANSITION
   //    (see navigateToScreen's comment in helpers.ts) — so until that first
   //    transition lands, a gated route goes somewhere else and the screen
@@ -217,6 +221,6 @@ export default async function globalSetup(): Promise<void> {
     .join(', ');
   console.warn(
     `[globalSetup] Daemon health never reached 'ok' in 180s (last: ${last?.status ?? 'unreachable'}` +
-    `${notReady ? `; not ready: ${notReady}` : ''}). Running anyway — gated routes may reroute.`,
+    `${notReady ? `; not ready: ${notReady}` : ''}). Running anyway — gated routes may redirect.`,
   );
 }

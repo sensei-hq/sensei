@@ -119,7 +119,7 @@ export async function upsertProjectFromRun(
 	db: DojoClient,
 	caller: { userId: string; tenantId: string },
 	p: RunProjectInput
-): Promise<void> {
+): Promise<string> {
 	const nowIso = new Date().toISOString();
 	const row: Record<string, unknown> = {
 		user_id: caller.userId,
@@ -136,6 +136,23 @@ export async function upsertProjectFromRun(
 	if (p.constitution !== undefined && p.constitution !== null) {
 		row.constitution = p.constitution;
 	}
-	const { error } = await db.from('projects').upsert(row, { onConflict: 'user_id,slug' });
+	const { data, error } = await db
+		.from('projects')
+		.upsert(row, { onConflict: 'user_id,slug' })
+		.select('id')
+		.single();
+	if (error) throw new AdminError(500, error.message);
+	if (!data) throw new AdminError(500, 'the project upsert returned no row');
+	return (data as { id: string }).id;
+}
+
+/**
+ * File a relay session under its owner's project (#252) — what lets a team that
+ * owns the project see THAT the run is going (`dojo.peer_run_status`, status
+ * only). The session policy accepts only the caller's own project. Throws
+ * AdminError on a DB error; the route keeps it off the federation path.
+ */
+export async function fileRunUnderProject(db: DojoClient, sessionId: string, projectId: string): Promise<void> {
+	const { error } = await db.from('relay_sessions').update({ project_id: projectId }).eq('id', sessionId);
 	if (error) throw new AdminError(500, error.message);
 }

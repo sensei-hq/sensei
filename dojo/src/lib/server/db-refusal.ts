@@ -8,7 +8,11 @@
 const STATUS: Record<string, number> = {
 	P0002: 404, // no_data_found: not the caller's (or no such thing)
 	'55000': 409, // object_not_in_prerequisite_state: not decidable yet
-	'42501': 403 // insufficient_privilege: not the caller's to change
+	'42501': 403, // insufficient_privilege: not the caller's to change
+	// invalid_parameter_value: the request names something the function refuses
+	// by name — an untracked branch, an unknown scope. The caller's to fix, not a
+	// server failure.
+	'22023': 422
 };
 
 export function refusalStatus(error: { code?: string }): number {

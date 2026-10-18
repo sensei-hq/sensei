@@ -17,6 +17,7 @@
 
 import { test, expect } from '../fixtures';
 import { navigateTo, DAEMON_URL } from '../helpers';
+import { seedCursorMcpServer, clearCursorMcpServers } from '../isolated-home';
 
 test.describe('Observatory Instruments — T2 Slices', () => {
   test.beforeEach(async ({ tauriPage }) => {
@@ -64,22 +65,26 @@ test.describe('Observatory Instruments — T2 Slices', () => {
     await expect(refreshBtn).toBeVisible();
     await expect(refreshBtn).toBeEnabled();
 
-    // The button transitions to "Scanning…" during the request and back
-    // to "Refresh" on settle. We only assert the settle: the request is
-    // fast on an empty DB and can race the assertion mid-frame.
+    // The button reads "scanning…" during the request and "+ scan" on settle.
+    // We only assert the settle: the request is fast on an empty DB and can
+    // race the assertion mid-frame.
     await refreshBtn.click();
-    await expect(refreshBtn).toHaveText(/Refresh/i, { timeout: 15_000 });
+    await expect(refreshBtn).toHaveText('+ scan', { timeout: 15_000 });
   });
 
   test('Server row toggle button switches between on and off', async ({ tauriPage }) => {
+    // A server to toggle, declared the way a user would: in an assistant's
+    // config inside the isolated home, then found by a real discovery scan.
+    seedCursorMcpServer('e2e-probe');
+    expect((await fetch(`${DAEMON_URL}/api/instruments/mcp-servers/refresh`, { method: 'POST' })).ok).toBe(true);
     const list = await fetch(`${DAEMON_URL}/api/instruments/mcp-servers`).then(r => r.json()) as {
       servers: Array<{ id: string; mcp_key: string; enabled: boolean }>;
     };
-    if (list.servers.length === 0) {
-      test.skip(true, 'No discovered servers to toggle — empty e2e DB');
-      return;
-    }
-    const first = list.servers[0];
+    const first = list.servers.find((s) => s.mcp_key === 'e2e-probe');
+    expect(first, 'discovery found the seeded server').toBeTruthy();
+    await tauriPage.locator('[data-testid="refresh-servers"]').click();
+    await expect(tauriPage.locator('[data-testid="refresh-servers"]')).toHaveText('+ scan', { timeout: 15_000 });
+    if (!first) return;
     const toggle = tauriPage.locator(`[data-testid="server-toggle-${first.mcp_key}"]`);
     await expect(toggle).toBeVisible({ timeout: 5_000 });
     // Text reflects current state.
@@ -90,9 +95,11 @@ test.describe('Observatory Instruments — T2 Slices', () => {
     // flips. Allow a couple hundred ms for reactivity to settle.
     await expect(toggle).toHaveText(first.enabled ? /off/ : /on/, { timeout: 3_000 });
 
-    // Flip back so the test doesn't leave state dirty for the next spec.
+    // Flip back, then take the seeded server out again so no later spec sees it.
     await toggle.click();
     await expect(toggle).toHaveText(first.enabled ? /on/ : /off/, { timeout: 3_000 });
+    clearCursorMcpServers();
+    await fetch(`${DAEMON_URL}/api/instruments/mcp-servers/refresh`, { method: 'POST' });
   });
 
   // ─── Slice C — Replay tab verdict badges ───────────────────────────────
@@ -130,8 +137,9 @@ test.describe('Observatory Instruments — T2 Slices', () => {
     // Click the first session in the sidebar. The list uses task text +
     // date; picking by the session id via a page.evaluate is more
     // stable than matching prose.
-    const clicked = await tauriPage.evaluate((expectedSid: string) => {
-      const btns = Array.from(document.querySelectorAll<HTMLElement>('button.tool-card'));
+    // The adapter's evaluate takes a script string.
+    const clicked = await tauriPage.evaluate(`(() => {
+      const btns = Array.from(document.querySelectorAll('button.tool-card'));
       for (const b of btns) {
         // Session buttons carry no id; pick the first that isn't a
         // sensei-tool row (those have data-tool-kind).
@@ -140,20 +148,18 @@ test.describe('Observatory Instruments — T2 Slices', () => {
           return true;
         }
       }
-      // Ignore the argument — we just need something callable.
-      void expectedSid;
       return false;
-    }, sid);
+    })()`);
     expect(clicked).toBe(true);
 
     if (replay.summary.total > 0) {
       // Session summary counters appear next to the "Calls" header.
-      const anyVerdictText = tauriPage.getByText(new RegExp(
-        `${replay.summary.used}.*${replay.summary.partial}.*${replay.summary.ignored}.*${replay.summary.total}`, 's',
-      )).first();
-      // Give the reactive update a moment; verdict summary shows once
-      // the endpoint returns.
-      await expect(anyVerdictText).toBeVisible({ timeout: 10_000 });
+      // Give the reactive update a moment; verdict summary shows once the
+      // endpoint returns. toContainText takes a RegExp (getByText does not).
+      await expect(tauriPage.locator('body')).toContainText(
+        new RegExp(`${replay.summary.used}.*${replay.summary.partial}.*${replay.summary.ignored}.*${replay.summary.total}`, 's'),
+        { timeout: 10_000 },
+      );
     }
   });
 

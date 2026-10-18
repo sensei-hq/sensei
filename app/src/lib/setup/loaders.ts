@@ -103,8 +103,10 @@ export function mapLibraries(libs: LibEntry[], config: Record<string, unknown>):
 /** Fetch all wizard data from daemon in parallel. */
 export async function loadWizardData(port: number): Promise<WizardLoadData> {
   const api = senseiApi(port);
-  const [config, families, roots, projects, libs, instruments, routers] = await Promise.all([
-    api.getConfig(),
+  const [configRead, families, roots, projects, libs, instruments, routers] = await Promise.all([
+    // Error-propagating: the config says whether setup is complete, and a
+    // fallback `{}` reads as "incomplete" — sending a set-up user back to setup.
+    api.tryGetConfig(),
     api.detectAssistantFamilies(),
     api.getScanRoots(),
     api.listProjects(),
@@ -112,6 +114,11 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     api.listInstruments(),
     api.listGatewayRouters(),
   ]);
+
+  if (!configRead.ok) {
+    throw new Error(`wizard: reading the daemon config failed (${configRead.error.status}): ${configRead.error.message}`);
+  }
+  const config = configRead.data;
 
   return {
     completion: extractCompletion(config),

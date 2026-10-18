@@ -23,6 +23,7 @@
 	orgName={data.orgName}
 	projects={data.projects}
 	needs={data.needs}
+	needsError={data.needsError}
 	stats={data.stats}
 	onOpenProject={openProject}
 />

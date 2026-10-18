@@ -102,7 +102,7 @@
 
     <div class="meta">
       {#if status.text}
-        <span class="status font-mono status-{status.tone}">
+        <span data-component="assistant-status" class="status font-mono status-{status.tone}">
           {#if status.icon === 'spinner'}
             <svg class="spin" width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
               <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" stroke-opacity="0.25"/>

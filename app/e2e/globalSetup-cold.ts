@@ -19,6 +19,7 @@ import { execFileSync, spawn } from 'child_process';
 import { existsSync, unlinkSync, writeFileSync } from 'fs';
 import { resolve, join } from 'path';
 import { fileURLToPath } from 'url';
+import { isolatedHomeEnv } from './isolated-home';
 
 const __dirname = resolve(fileURLToPath(import.meta.url), '..');
 const REPO_ROOT = resolve(__dirname, '../..');
@@ -63,6 +64,9 @@ export default async function globalSetup(): Promise<void> {
       ...process.env,
       SENSEI_DDL_DIR:   join(REPO_ROOT, 'database'),
       SENSEI_INSTANCE:  INSTANCE,
+      // HOME is a throwaway too: the daemon's assistant work runs the real
+      // `claude plugin` commands, which act on whatever ~/.claude HOME names.
+      ...isolatedHomeEnv(),
     },
     detached: true,
     stdio: 'ignore',

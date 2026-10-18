@@ -9,7 +9,7 @@ import {
 	fetchGithubUser,
 	fetchGithubOrgs,
 	fetchGithubFacts,
-	fetchGithubRepoVisibility
+	fetchGithubRepoFacts
 } from './forge-github';
 
 /** A fetch stub that answers by URL substring and records the calls. */
@@ -139,12 +139,12 @@ describe('fetchGithubOrgs', () => {
 	});
 });
 
-describe('fetchGithubRepoVisibility', () => {
+describe('fetchGithubRepoFacts', () => {
 	it('maps the forge`s `private` boolean to public/private', async () => {
 		// The forge's answer, read from the forge — never inferred from the remote
 		// URL or the owner's name (acceptance criterion 6 of the sharing doc).
-		const open = fakeFetch({ '/repos/sensei-hq/dbd': { body: { private: false } } });
-		expect(await fetchGithubRepoVisibility('sensei-hq', 'dbd', 'tok', open.fn)).toBe('public');
+		const open = fakeFetch({ '/repos/sensei-hq/dbd': { body: { private: false, default_branch: 'main' } } });
+		expect((await fetchGithubRepoFacts('sensei-hq', 'dbd', 'tok', open.fn))?.visibility).toBe('public');
 		expect(open.calls[0].url).toBe('https://api.github.com/repos/sensei-hq/dbd');
 		// The token travels as a header, never in the URL.
 		expect(open.calls[0].url).not.toContain('tok');
@@ -153,7 +153,24 @@ describe('fetchGithubRepoVisibility', () => {
 		);
 
 		const shut = fakeFetch({ '/repos/acme/secret': { body: { private: true } } });
-		expect(await fetchGithubRepoVisibility('acme', 'secret', 'tok', shut.fn)).toBe('private');
+		expect((await fetchGithubRepoFacts('acme', 'secret', 'tok', shut.fn))?.visibility).toBe('private');
+	});
+
+	it('reads the default branch from the same response, and says null when GitHub does not state one', async () => {
+		// The branch the shared code graph follows by default (graph-sync.md §9).
+		// Absent is not `main`: a guessed branch would file a graph nobody tracks.
+		const stated = fakeFetch({ '/repos/acme/x': { body: { private: true, default_branch: 'develop' } } });
+		expect(await fetchGithubRepoFacts('acme', 'x', 'tok', stated.fn)).toEqual({
+			visibility: 'private',
+			defaultBranch: 'develop'
+		});
+		for (const default_branch of [undefined, '', 42]) {
+			const unstated = fakeFetch({ '/repos/acme/x': { body: { private: false, default_branch } } });
+			expect(await fetchGithubRepoFacts('acme', 'x', 'tok', unstated.fn)).toEqual({
+				visibility: 'public',
+				defaultBranch: null
+			});
+		}
 	});
 
 	it('returns null on 404 — this token cannot see it, which is not a value', async () => {
@@ -161,13 +178,13 @@ describe('fetchGithubRepoVisibility', () => {
 		// that in an org tenant resolves to ORG-MANDATED and shares the repository
 		// with no election by anyone (§8a BLOCKING).
 		const { fn } = fakeFetch({ '/repos/acme/gone': { status: 404, body: {} } });
-		expect(await fetchGithubRepoVisibility('acme', 'gone', 'tok', fn)).toBeNull();
+		expect(await fetchGithubRepoFacts('acme', 'gone', 'tok', fn)).toBeNull();
 	});
 
 	it('throws 502 on any other non-2xx — never a guessed visibility', async () => {
 		for (const status of [401, 403, 500, 503]) {
 			const { fn } = fakeFetch({ '/repos/acme/x': { status, body: {} } });
-			const err = await fetchGithubRepoVisibility('acme', 'x', 'tok', fn).catch((e) => e);
+			const err = await fetchGithubRepoFacts('acme', 'x', 'tok', fn).catch((e) => e);
 			expect(err).toBeInstanceOf(AdminError);
 			expect(err.status).toBe(502);
 		}
@@ -177,11 +194,11 @@ describe('fetchGithubRepoVisibility', () => {
 		// A shape we cannot read is a FAILED read. `!body.private` would silently
 		// call every unreadable response "public", which is the free-to-host path.
 		const missing = fakeFetch({ '/repos/acme/x': { body: { name: 'x' } } });
-		await expect(fetchGithubRepoVisibility('acme', 'x', 'tok', missing.fn)).rejects.toBeInstanceOf(
+		await expect(fetchGithubRepoFacts('acme', 'x', 'tok', missing.fn)).rejects.toBeInstanceOf(
 			AdminError
 		);
 		const notBool = fakeFetch({ '/repos/acme/x': { body: { private: 'true' } } });
-		await expect(fetchGithubRepoVisibility('acme', 'x', 'tok', notBool.fn)).rejects.toBeInstanceOf(
+		await expect(fetchGithubRepoFacts('acme', 'x', 'tok', notBool.fn)).rejects.toBeInstanceOf(
 			AdminError
 		);
 	});
@@ -190,7 +207,7 @@ describe('fetchGithubRepoVisibility', () => {
 		// owner/repo reach this from a stored repo_key. Encoding them keeps a
 		// segment from escaping into another API path.
 		const { fn, calls } = fakeFetch({ '/repos/': { body: { private: false } } });
-		await fetchGithubRepoVisibility('a/../b', 'c d', 'tok', fn);
+		await fetchGithubRepoFacts('a/../b', 'c d', 'tok', fn);
 		expect(calls[0].url).toBe('https://api.github.com/repos/a%2F..%2Fb/c%20d');
 	});
 });

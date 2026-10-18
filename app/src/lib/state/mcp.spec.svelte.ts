@@ -15,6 +15,9 @@ const mocks = {
     getToolInsights: vi.fn(),
     getToolsHealth: vi.fn(),
     getSessionToolTimeline: vi.fn(),
+    getMcpServers: vi.fn(),
+    setMcpServerEnabled: vi.fn(),
+    refreshMcpServers: vi.fn(),
 };
 
 // A representative slice of the tools-health wire: two connected probed
@@ -200,5 +203,46 @@ describe('mcp store — tools-health L1 slice', () => {
         await mcp.loadToolsHealth();
         await mcp.refresh();
         expect(mocks.getToolsHealth).toHaveBeenCalledTimes(2);
+    });
+});
+
+// A failed read or write must not look like a quiet success: the list used to
+// come back `[]` on failure ("No MCP servers discovered") and the toggle flipped
+// its row whether or not the daemon took it.
+describe('discovered MCP servers', () => {
+    const SERVER = { id: 'srv-1', acp_family: 'claude', mcp_key: 'github', enabled: true };
+    const fail = { ok: false, error: { status: 500, message: 'Internal Server Error' } };
+
+    it('loadMcpServers fills the list from the daemon', async () => {
+        mocks.getMcpServers.mockResolvedValue({ ok: true, data: { servers: [SERVER] } });
+        const mcp = await freshStore();
+        await mcp.loadMcpServers();
+        expect(mcp.mcpServersStatus).toBe('ready');
+        expect(mcp.mcpServers.map((s) => s.mcp_key)).toEqual(['github']);
+    });
+
+    it('loadMcpServers reports a failed read as an error, not as no servers', async () => {
+        mocks.getMcpServers.mockResolvedValue(fail);
+        const mcp = await freshStore();
+        await mcp.loadMcpServers();
+        expect(mcp.mcpServersStatus).toBe('error');
+    });
+
+    it('toggleMcpServer flips the row once the daemon took it', async () => {
+        mocks.getMcpServers.mockResolvedValue({ ok: true, data: { servers: [SERVER] } });
+        mocks.setMcpServerEnabled.mockResolvedValue({ ok: true, data: undefined });
+        const mcp = await freshStore();
+        await mcp.loadMcpServers();
+        expect(await mcp.toggleMcpServer('srv-1', false)).toBeNull();
+        expect(mcp.mcpServers[0].enabled).toBe(false);
+    });
+
+    it('toggleMcpServer leaves the row as it was when the daemon refused, and says why', async () => {
+        mocks.getMcpServers.mockResolvedValue({ ok: true, data: { servers: [SERVER] } });
+        mocks.setMcpServerEnabled.mockResolvedValue(fail);
+        const mcp = await freshStore();
+        await mcp.loadMcpServers();
+        expect(await mcp.toggleMcpServer('srv-1', false)).toMatch(/500/);
+        expect(mcp.mcpServers[0].enabled).toBe(true);
     });
 });
