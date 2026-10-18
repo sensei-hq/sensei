@@ -1,27 +1,30 @@
 # Checkpoint — 2026-10-18
 
-**Slice:** #268, the dōjō diagram screens (next). #225 is done; #238 is built.
+**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md). Wave 0 is released; wave 1 is next.
 
-**Done** (pushed to develop through 56bb5d4f; 3,535 Rust tests pass; rebased on PR #270):
-- #225 live verification, whole checkout: `synced`, all 7 tables equal local.
-  - `pg_store/tests.rs` is split into 18 `tests/<topic>_tests.rs` modules, with the same 353 tests.
-  - New `sync_state` state `partial`: agreed except the named files; `synced_at` is set.
-  - A file awaiting its parse is held back from the graph push (`graph_parse_pending`).
-  - Earlier fixes: unnamed index nullable; deleted files leave the index; run.sh scope routing.
-- #238 steps 2–5, built and live-verified: the usage, routing, gate and drive mods.
+**Done:**
+- **Audit:** all 109 open issues audited; 20 closed with evidence; 47 partials carry status comments.
+- **v0.14.0 released.**
+  - Tag cbf61c4a. PR #273 merged as ed533c7. main CI is green.
+  - Shipped assets checked: the tap's arm64 sha matches the asset; the shipped CLI reports 0.14.0.
+  - deploy-dojo ran on production: 3 tables altered, 0 dropped. The stale v0.13.0 deploy run is cancelled.
+  - dojo `/version` = 0.14.0.
+  - Plugin 0.14.0 is installed and its mods fire from a plain install.
+- **Issues:** #238 closed; #252 auto-closed; #240 reopened (live production push not yet observed).
 
-**Remaining:** #268 dōjō diagram screens → #254 JPA 8b. #238 stays open until `make bump`.
-Filed #272: `.py`/loose `.sql` never record a parse outcome (they never reach the dōjō).
+**Remaining:**
+- Wave 0: #240 needs a production-signed-in daemon to push a user row. #184 needs `sync_status` written or retired.
+- Wave 1: Settings → Projects (#271, #269, #144). Data first: 13,346 keyless, folderless repository rows,
+  5,618 of them linked into projects, then the API, then the UI.
+- Wave 2: the user's decisions (the table in 08-issue-burndown.md).
 
-**Next command:** `/sensei:session refocus`, then #268. The fixture is the local Supabase tenant
-`personal/graphdev`, holding this repository's develop graph. Start the Worker with
-`cd dojo && bun run dev -- --host 127.0.0.1` (note: dojo/CLAUDE.md now says wrangler `--port 5175`).
+**Next command:** `/sensei:session refocus`, then wave 1, red-first: a test that a folder prune takes its
+repository row and project link with it.
 
 **Open questions:**
-- Does `--resume` keep the session id and reset /cost? (`GREATEST` would under-count)
-- Should `check_hooks` WARN when the mods module is missing?
+- An orphaned Cloudflare build trigger (deleted Worker, tag 1ad95662…) fails every develop push. Delete it in the dashboard?
+- 8 CodeQL `rust/cleartext-logging` alerts, pre-existing in test files and relocated by the tests split, need triage.
 
 **Known-broken / pending:**
-- The mods, `list_cost_usd` and `partial` reach installs only at the next release
-  (bootstrap reconcile converges the CHECK; verified on a scratch database).
-- The committed `database/design.dbml` is stale against `dbd dbml` (pre-existing).
+- Dependabot reports 0 alerts although the lockfiles are vulnerable (#172).
+- The committed `database/design.dbml` is stale (pre-existing).

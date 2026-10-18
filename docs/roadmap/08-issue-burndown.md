@@ -17,6 +17,13 @@ duplicate, leaving 89. The production-readiness items
 
 ## Wave 0 — release what is built (no new code)
 
+**Status 2026-10-18: shipped as v0.14.0.**
+- Merged to main as ed533c7; main CI is green; deploy-dojo ran; dojo `/version` = 0.14.0.
+- **#238** is closed. Its install path is proven from a plain install.
+- **#252** auto-closed.
+- **#240** is reopened: production is deployed and the route is live, but a real user push to production is not yet observed.
+- **#184** is not started. It is a code change: write `sync_status` or retire it.
+
 | Step | Closes |
 |---|---|
 | Merge `develop` → `main` (97 commits; "Closes #N" commits auto-close) | — |
