@@ -34,6 +34,10 @@ are marked **BREAKING**.
   - `runDrive` submits a run's dōjō nudges as prompts, each once.
   - The never-registered shell `hooks/gate` is removed.
 - **Settings · Dōjō says why a checkout was skipped**, in words (#225).
+- **A graph push that lands all but an over-cap file is `partial`, not an error**
+  (#225). It is recorded with `synced_at` and names the missing files.
+  Settings · Dōjō shows it as "partly agreed <day>" instead of
+  "failing · never agreed". `sensei.sync_state.state` gains `partial`.
 - **A person's own metrics reach their dōjō** (#240): user-scoped rows that are
   provably the signed-in person's — their session metrics on a repository only
   they elected, and commit metrics under an address GitHub verified for them.
@@ -75,6 +79,10 @@ are marked **BREAKING**.
   - A vanished file with no symbols was never pruned. On the development
     machine 363 of 3,078 file rows were stale (185 gone from disk, 178 under a
     since-ignored path), and they rode in the graph manifest.
+- **A changed file's graph is shared only once it is parsed** (#225). A push
+  between the new content hash and the parse sent the new hash over the old
+  nodes, and the dōjō never asked again. Such a file is now held back like an
+  uncommitted edit.
 - **A repository with an unnamed index can push its graph** (#225):
   `dojo.graph_schema_indexes.name` is nullable, as the local column is; the
   whole batch used to be refused.
