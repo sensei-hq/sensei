@@ -308,6 +308,19 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     });
     // Delete the provably-empty phantom projects (no folder / session / artifact)
     // — pre-#101 residue that would otherwise inflate the project count.
+    // Keyless repositories no folder references can never be reached again
+    // (#271); dropping them first lets the project prune below see what they
+    // left empty. Fail-open like the other housekeeping here.
+    let orphan_repositories =
+        ctx.pg().prune_orphan_keyless_repositories(60).await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "scan_root: prune_orphan_keyless_repositories failed");
+            0
+        });
+    if orphan_repositories > 0 {
+        tracing::info!(
+            "scan_root reconcile: removed {orphan_repositories} orphan keyless repositor(ies)"
+        );
+    }
     let pruned_projects = ctx.pg().prune_empty_projects(60).await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "scan_root: prune_empty_projects failed");
         0

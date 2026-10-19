@@ -1512,6 +1512,60 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// The repository of the checkout at `folder_id` (#271).
+    ///
+    /// With a parseable remote this is [`Self::upsert_repository`]: the remote is
+    /// the identity, so every clone resolves to one row. WITHOUT one, the
+    /// checkout's identity is the folder itself, so the keyless repository the
+    /// folder already points at is reused. `upsert_repository` alone inserts a
+    /// fresh keyless row on every call (nulls never collide), and the reconcile
+    /// rescans every ~300s: that minted 13,346 keyless rows for 2 checkouts.
+    pub async fn repository_for_checkout(
+        &self,
+        folder_id: &uuid::Uuid,
+        name: &str,
+        remote: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
+        if remote.and_then(super::repo_key::normalize_repo_key).is_some() {
+            return self.upsert_repository(name, remote).await;
+        }
+        let own: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "UPDATE sensei.repositories r SET name = $2, modified_at = now()
+               FROM sensei.folders f
+              WHERE f.id = $1 AND r.id = f.repository_id AND r.repo_key IS NULL
+          RETURNING r.id",
+        )
+        .bind(folder_id)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        match own {
+            Some((id,)) => Ok(id),
+            None => self.upsert_repository(name, None).await,
+        }
+    }
+
+    /// Delete keyless repositories no folder references, older than
+    /// `grace_secs` (#271). A keyless repository's only identity IS its folder,
+    /// so once no folder points at it nothing can reach it again; its project
+    /// links and per-repository rows cascade with it. A keyed repository is kept:
+    /// its `repo_key` carries metric history and the dōjō identity. The grace
+    /// spares a row a concurrent scan inserted and has not linked yet.
+    pub async fn prune_orphan_keyless_repositories(&self, grace_secs: i32) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.repositories r
+              WHERE r.repo_key IS NULL
+                AND r.created_at < now() - make_interval(secs => $1)
+                AND NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.repository_id = r.id)",
+        )
+        .bind(grace_secs)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     /// Point a repo-root FOLDER at its repository (stage 1, S4/S6).
     ///
     /// Only the root folder carries `repository_id`; subfolders resolve by

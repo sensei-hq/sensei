@@ -784,11 +784,13 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // Keyed on the REMOTE via the one reader that answers "what is this repo's
     // remote" (`pipeline::origin_remote`), so this agrees with the reconcile
     // rather than minting a second, path-keyed identity for the same checkout.
-    // Both writers are upserts, so whichever runs first wins and the other is
-    // a no-op.
+    // A checkout with NO remote reuses the keyless repository its folder already
+    // points at (#271): a plain keyless upsert inserts a new row every time, and
+    // this runs on every ~300s reconcile.
     let repository_id = match ctx
         .pg()
-        .upsert_repository(
+        .repository_for_checkout(
+            &folder_id,
             &name,
             crate::indexer::pipeline::origin_remote(&task.folder_path).as_deref(),
         )

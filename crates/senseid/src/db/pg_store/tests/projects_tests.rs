@@ -788,7 +788,8 @@ async fn drop_repository(s: &PgStore, id: &uuid::Uuid) {
 #[tokio::test]
 async fn a_remote_less_checkout_keeps_one_repository_across_rescans() {
     let s = pg_store().await;
-    let fid = create_test_folder_unattributed(&s, &format!("keyless-{}", uuid::Uuid::new_v4())).await;
+    let fid =
+        create_test_folder_unattributed(&s, &format!("keyless-{}", uuid::Uuid::new_v4())).await;
 
     let first = s.repository_for_checkout(&fid, "keyless", None).await.unwrap();
     s.link_folder_to_repository(&fid, &first).await.unwrap();
