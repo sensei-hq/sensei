@@ -1024,14 +1024,17 @@ mod tests {
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
-        // Two completed sessions: (in=100,out=20,60s) + (in=300,out=80,120s).
+        // Two completed sessions: (in=100 of which 10 fresh, out=20, 60s) +
+        // (in=300 of which 30 fresh, out=80, 120s).
         let s1 = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
         let s2 = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
-        for (sid, tin, tout, secs) in [(s1, 100i32, 20i32, 60.0f64), (s2, 300, 80, 120.0)] {
+        for (sid, tin, fresh, tout, secs) in
+            [(s1, 100i32, 10i32, 20i32, 60.0f64), (s2, 300, 30, 80, 120.0)]
+        {
             sqlx_core::query::query(
-                "UPDATE activity.sessions SET tokens_in=$2, tokens_out=$3, duration=make_interval(secs => $4) WHERE id=$1",
+                "UPDATE activity.sessions SET tokens_in=$2, tokens_fresh=$3, tokens_out=$4, duration=make_interval(secs => $5) WHERE id=$1",
             )
-            .bind(sid).bind(tin).bind(tout).bind(secs)
+            .bind(sid).bind(tin).bind(fresh).bind(tout).bind(secs)
             .execute(pg.pool()).await.unwrap();
         }
 
@@ -1045,6 +1048,10 @@ mod tests {
         );
         let tin = daily.iter().find(|r| r.0 == "tokens_in_per_day").expect("tokens_in_per_day row");
         assert!((tin.1 - 400.0).abs() < 1e-9, "tokens_in_per_day = 100+300");
+        // #177: the fresh (uncached) input is the part that tracks cost.
+        let fresh =
+            daily.iter().find(|r| r.0 == "tokens_fresh_per_day").expect("tokens_fresh_per_day row");
+        assert!((fresh.1 - 40.0).abs() < 1e-9, "tokens_fresh_per_day = 10+30");
         let tout =
             daily.iter().find(|r| r.0 == "tokens_out_per_day").expect("tokens_out_per_day row");
         assert!((tout.1 - 100.0).abs() < 1e-9, "tokens_out_per_day = 20+80");
