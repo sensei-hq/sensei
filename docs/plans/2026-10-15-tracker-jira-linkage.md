@@ -106,6 +106,18 @@ CLI are the v1 contract.
   - Given a ticket renamed in Jira, When it is opened, Then a session that wrote the old key shows "as <old key>".
   - Given the daemon is down, When the screen loads, Then the daemon error with Retry shows, not "no tracker connected".
 
+### Feature 8: On-demand ticket discovery (R11)
+
+- **Issue:** TBD
+- **Layers:** DDL (`tracker_unknown_keys`; `trackers.discovered_through`) → daemon (`TrackerAdapter::unknown_keys` + `fetch_tasks`, Jira impl with the key-shape check and the 400 fallback; `tracker/discover.rs`; `apply_discovered` in `db/pg_store/trackers.rs`; `TaskKind::TrackerDiscover` enqueued from `ingest_capture`; the full apply clears negative-cache rows) → API (lookup miss runs discovery; 404 `task_not_on_board`) → CLI/app words for `task_not_on_board`
+- **Depends on:** F3 (matching, links), F4 (lookup route)
+- **Acceptance criteria:** Done gate 1m passes; claims C33 and C34 checked against the tenant and recorded in Evidence.
+- **Test scenarios:**
+  - Given a session ingested naming P-900 that isn't synced, When discovery runs, Then P-900 is inserted and the session linked within one run, and no other ticket or link changes.
+  - Given P-404 is not on the board, When it is discovered twice within 6 h, Then Jira is asked once.
+  - Given text `P-9x;DROP`, When keys are extracted, Then only the shape-valid `P-9` can reach JQL.
+  - Given a full sync after discovery, Then the discovered ticket remains, its links are recomputed, and its negative-cache row is gone.
+
 ### Feature 5: Live verification (human)
 
 - **Issue:** TBD
@@ -128,6 +140,9 @@ graph LR
   F4 --> F7
   F6 --> F7
   F7 --> F5
+  F3 --> F8
+  F4 --> F8
+  F8 --> F5
 ```
 
 First task: **F1.1** — needs the user's Jira Cloud site, board id and API token.
