@@ -88,6 +88,8 @@ The settings screen lists them as repositories.
   - #187: e2e typecheck in `bun run check`, 10 errors (07-quality D4).
   - #213: commit-msg leak hook, plus the off-by-one line number.
 - **App:**
+  - #133: the kanji ↔ icon display mode. Solar Bold Duotone icons beside every kanji, one preference,
+    `fields` derived in one place, across the app and the dōjō (scope expanded 2026-10-19).
   - #135: Keyboard Shortcuts → `/help`.
   - #96: render `last_error`, `next_run_at`/`avg_ms`, log tail.
   - #85: Overview hotspots and patterns-in-use.
@@ -130,7 +132,7 @@ The settings screen lists them as repositories.
 ## Wave 8 — epics and features
 
 #43, #44, #45, #46, #47, #81, #85, #91, #102, #105, #108, #111, #114, #115, #116/#119, #121, #122,
-#131, #133, #239, #241, #266, #268 and #39. Order these by product priority, not by closure count.
+#131, #239, #241, #266, #268 and #39. Order these by product priority, not by closure count.
 
 ## Expected closures
 
