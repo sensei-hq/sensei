@@ -8,6 +8,7 @@
 // during SSR (it would leak across requests). The mock/real Load feeds `load()`.
 import type { RelaySession, RelayFilter } from './types';
 import type { InboxLoad } from './relay-inbox';
+import * as m from '$lib/paraglide/messages';
 import { filterSessions, needsCount } from './relay-inbox-view';
 
 let sessions = $state<RelaySession[]>([]);
@@ -87,7 +88,11 @@ export const relayInboxState = {
 		plansMissing = r.plansMissing;
 		const allDown = r.tenants > 0 && r.unreachable.length === r.tenants;
 		status = allDown ? 'error' : 'ready';
-		error = allDown ? `None of your ${r.tenants} dōjōs could be reached.` : null;
+		error = !allDown
+			? null
+			: r.tenants === 1
+				? m.inbox_error_one_down()
+				: m.inbox_error_all_down({ count: r.tenants });
 	},
 	/** The load itself threw. */
 	fail(message: string) {

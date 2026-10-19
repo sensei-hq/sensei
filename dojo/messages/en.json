@@ -10,6 +10,8 @@
 	"inbox_loading": "Reading your dōjōs.",
 	"inbox_error_title": "The inbox could not be read.",
 	"inbox_retry": "Try again",
+	"inbox_error_one_down": "Your dōjō could not be reached.",
+	"inbox_error_all_down": "None of your {count} dōjōs could be reached.",
 	"inbox_partial_title": "Part of your inbox is missing.",
 	"inbox_partial_unreachable": "Not reached: {names}. Their runs are not listed.",
 	"inbox_partial_plans": "{count} run(s) are shown without their plan.",
