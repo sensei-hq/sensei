@@ -98,12 +98,21 @@ pub fn measured_list_cost(payload: &serde_json::Value) -> Option<f64> {
 /// beyond the event row itself. Shared by the live handler and the drain, so a
 /// dead-lettered event lands the same as a delivered one.
 pub async fn apply_to_session(pg: &PgStore, payload: &serde_json::Value) {
-    let Some(usd) = measured_list_cost(payload) else { return };
     let session_id = hook_event_fields(payload).session_id;
-    match pg.raise_session_list_cost(session_id, usd).await {
-        Ok(true) => {}
-        Ok(false) => tracing::debug!(session_id, "SessionMeasure for a session with no row"),
-        Err(e) => tracing::warn!(error = %e, session_id, "raise_session_list_cost failed"),
+    if let Some(usd) = measured_list_cost(payload) {
+        match pg.raise_session_list_cost(session_id, usd).await {
+            Ok(true) => {}
+            Ok(false) => tracing::debug!(session_id, "SessionMeasure for a session with no row"),
+            Err(e) => tracing::warn!(error = %e, session_id, "raise_session_list_cost failed"),
+        }
+    }
+    // A turn's usage (#280): the event row is already written, so the session's
+    // tokens are re-summed from `activity.turn_usage`, where this turn now counts
+    // once — linked to its transcript turn if the transcript saw it too.
+    if payload["hook_event_name"].as_str() == Some("TurnComplete") && payload.get("usage").is_some() {
+        if let Err(e) = pg.refresh_session_tokens(session_id).await {
+            tracing::warn!(error = %e, session_id, "refresh_session_tokens failed");
+        }
     }
 }
 

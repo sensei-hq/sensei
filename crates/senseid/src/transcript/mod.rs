@@ -563,6 +563,12 @@ async fn set_session_metadata(
     {
         tracing::warn!(error = %e, session = %session_id, "set_session_metadata: write failed");
     }
+    // Then the per-turn sum (#280): where the session has turn rows — this
+    // transcript's, and any hook turns — they decide its tokens, so a turn both
+    // sources saw counts once and a subagent's hook-only turn counts at all.
+    if let Err(e) = pg.refresh_session_tokens(session_id).await {
+        tracing::warn!(error = %e, session = %session_id, "refresh_session_tokens failed");
+    }
 }
 
 /// Historical-bootstrap (#75): if this session has no events yet (not
