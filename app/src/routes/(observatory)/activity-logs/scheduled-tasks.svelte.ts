@@ -1,13 +1,8 @@
 // Observatory · Logs — background-task registry (#96).
 //
 // Pure derivations for the "Background tasks" panel: what each daemon worker
-// is and when it last ran, read from `GET /api/tasks/scheduled`. The run-health
-// fields (last_ok / last_error / next_run_at / interval_secs / avg_ms) are all
-// null today — the daemon doesn't yet record run outcomes — so they render as a
-// muted em dash, never a fabricated "healthy" or a made-up number.
-//
-// Everything here is pure and unit-tested; `relativeTime` is reused from the
-// log stream so "3h ago" reads identically in both places.
+// is, when it last ran, how it went (last_ok / last_error), when it runs next
+// and how long a pass takes (avg_ms), read from `GET /api/tasks/scheduled`.
 
 import type { ScheduledTask } from '$lib/types.js';
 import { relativeTime } from './activity-logs.svelte.js';
@@ -27,10 +22,7 @@ export function taskLastRun(nowMs: number, task: ScheduledTask): string {
   return relativeTime(nowMs, task.last_run_at);
 }
 
-/** Health summary for a worker. Every field is null until the daemon records
- *  run outcomes, so this is always the em dash today — kept a helper so the
- *  moment the wire starts sending outcomes, the formatting lives in one place
- *  and the component stays a pure template. */
+/** Health summary for a worker: the em dash until its first recorded pass. */
 export function taskHealth(task: ScheduledTask): string {
   if (task.last_ok == null) return EM_DASH;
   return task.last_ok ? 'ok' : 'failing';
@@ -41,11 +33,22 @@ export function taskError(task: ScheduledTask): string {
   return task.last_error ?? EM_DASH;
 }
 
-/** Relative next-run time, or the em dash when the daemon doesn't schedule a
- *  concrete next tick yet. */
+/** When the worker runs next, read forward: "in 2m", or "due now" once that
+ *  moment has passed (it runs on the next poll). The em dash when there is no
+ *  next run — the daemon sends null for a disabled schedule. `relativeTime`
+ *  only reads backward, which clamped a future time to "just now" (#96). */
 export function taskNextRun(nowMs: number, task: ScheduledTask): string {
   if (task.next_run_at == null) return EM_DASH;
-  return relativeTime(nowMs, task.next_run_at);
+  const t = Date.parse(task.next_run_at);
+  if (Number.isNaN(t)) return task.next_run_at;
+  const secs = Math.round((t - nowMs) / 1000);
+  if (secs <= 5) return 'due now';
+  if (secs < 60) return `in ${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `in ${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `in ${hrs}h`;
+  return `in ${Math.floor(hrs / 24)}d`;
 }
 
 /** The worker's cadence as "every 5m" / "every 2h", or the em dash when no

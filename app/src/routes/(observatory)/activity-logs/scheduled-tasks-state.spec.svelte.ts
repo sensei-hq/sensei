@@ -121,9 +121,13 @@ describe('taskError', () => {
 });
 
 describe('taskNextRun', () => {
-  it('renders a relative time when next_run_at is set', () => {
+  // A next run is in the FUTURE: the past-tense formatter clamped it to "just
+  // now", and this test had pinned a next run reading "2m ago" (#96).
+  it('reads forward: "in 2m" ahead, "due now" once it has passed', () => {
     const task = makeTask({ next_run_at: '2026-07-13T02:19:29.612354+00:00' });
-    expect(taskNextRun(BASE + 2 * 60_000, task)).toBe('2m ago');
+    expect(taskNextRun(BASE - 2 * 60_000, task)).toBe('in 2m');
+    expect(taskNextRun(BASE - 3 * 3_600_000, task)).toBe('in 3h');
+    expect(taskNextRun(BASE + 2 * 60_000, task)).toBe('due now');
   });
 });
 

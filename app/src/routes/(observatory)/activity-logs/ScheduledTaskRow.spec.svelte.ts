@@ -55,6 +55,32 @@ describe('ScheduledTaskRow', () => {
     expect(m.container.querySelector('[data-task-last-run]')?.textContent).toContain('never');
   });
 
+  // #96: the daemon now sends when a worker runs next and how long it takes.
+  it('renders the next run and the average duration', () => {
+    const m = mountComponent(ScheduledTaskRowHarness, {
+      task: makeTask({ next_run_at: '2026-07-13T02:49:30Z', avg_ms: 1400 }),
+      now: NOW,
+    });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-task-next-run]')?.textContent).toBe('in 30m');
+    expect(m.container.querySelector('[data-task-avg]')?.textContent?.trim()).toBe('1.4s');
+  });
+
+  // #96: a failing worker says why, where it is listed — `last_error` was sent
+  // and never shown.
+  it('shows the last error of a failing worker, and nothing for a healthy one', () => {
+    const failing = mountComponent(ScheduledTaskRowHarness, {
+      task: makeTask({ last_ok: false, last_error: 'dōjō returned 502' }),
+      now: NOW,
+    });
+    cleanup.push(failing.destroy);
+    expect(failing.container.querySelector('[data-task-error]')?.textContent).toContain('dōjō returned 502');
+
+    const ok = mountComponent(ScheduledTaskRowHarness, { task: makeTask({ last_ok: true }), now: NOW });
+    cleanup.push(ok.destroy);
+    expect(ok.container.querySelector('[data-task-error]')).toBeNull();
+  });
+
   it('shows a muted em dash for the null health fields', () => {
     const m = mountComponent(ScheduledTaskRowHarness, { task: makeTask(), now: NOW });
     cleanup.push(m.destroy);

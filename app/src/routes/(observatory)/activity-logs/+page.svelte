@@ -60,10 +60,10 @@
   </div>
 
   <!-- Background tasks (#96) — what the daemon's workers are, WHEN each is
-       allowed to run, and when it last did. Schedule comes from
-       `sensei.schedules` and is editable via PATCH /api/tasks/scheduled/{name}.
-       Run-health (last_ok / error) stays null until the daemon records
-       outcomes, so that cell still reads a muted em dash. -->
+       allowed to run, when it last did and how it went, when it runs next and
+       how long a pass takes. Schedule comes from `sensei.schedules` and is
+       editable via PATCH /api/tasks/scheduled/{name}; a failing worker shows
+       its last error under its name. -->
   {#if data.tasks.length > 0}
     <section class="border-b border-paper-edge" data-testid="scheduled-tasks">
       <div class="flex items-baseline gap-2 px-6 pt-4 pb-2">
@@ -73,12 +73,14 @@
         </span>
       </div>
       <div
-        class="grid grid-cols-[minmax(0,1fr)_96px_84px_128px_72px] items-center gap-3 px-6 py-1 bg-paper-soft border-y border-paper-edge text-xs uppercase tracking-wider text-ink-faint"
+        class="grid grid-cols-[minmax(0,1fr)_96px_84px_84px_128px_56px_72px] items-center gap-3 px-6 py-1 bg-paper-soft border-y border-paper-edge text-xs uppercase tracking-wider text-ink-faint"
       >
         <span>worker</span>
         <span>last run</span>
         <span>interval</span>
+        <span>next run</span>
         <span>schedule</span>
+        <span>avg</span>
         <span>health</span>
       </div>
       {#each data.tasks as task (task.name)}
