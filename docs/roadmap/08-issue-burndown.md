@@ -78,16 +78,18 @@ The settings screen lists them as repositories.
 
 ## Wave 2 — decisions only (no code; each closes or narrows an issue)
 
+**Status 2026-10-19: all decided.** Each issue carries its decision.
+
 | Issue | Decision needed |
 |---|---|
-| #141 | Is the graph earning its keep? Calls now resolve at 77.7%. Narrow the CLAUDE.md MCP-first rule. |
-| #149 | Keep label propagation, drop `parent_id` from its adjacency, or replace it with hierarchy grouping (re-measure first). |
-| #138 | The project/namespace model: add a `repository:` rung. |
-| #230 | (a) is done. Close it, and file the declared layering (b) separately. |
-| #90 | The verdict classifier is delivered. Close it, and file the 75% `ignored` review. |
-| #50, #150 | Deferred by design. Close as not-now, or keep as a parking lot. |
-| #120 | Allowlist the GTK3 advisories in qlty, or keep them visible. |
-| #44 | The Benchmark runner was cut by D-SCREENS. Drop it from the issue. |
+| #141 | **Closed.** Graph reachability is trusted only at Rust's bar (Rust today); CLAUDE.md is updated. |
+| #149 | Re-measured: 7 communities hold 52% of nodes. **Experiment:** drop `parent_id` adjacency, keep it if the giants break up (wave 3). |
+| #138 | **Repository rung first.** Prune the stale `project:` namespaces after wave 9 (wave 8). |
+| #230 | **Closed.** The declared layering is #277 (wave 8). |
+| #90 | **Closed.** The review is #278: an `unknown` verdict, and action tools judged by outcome (wave 3). |
+| #50, #150 | **Kept open** with the `deferred` label; each names the trigger that reopens it. |
+| #120 | **Allowlist** with reasons and a review date (wave 4). |
+| #44 | The Benchmark runner moves to deferred epic #279, to be re-designed on transcript history. #44 keeps the extensions browser and the editors (wave 8). |
 
 ## Wave 3 — small remainders (each under about half a day; closes the issue)
 
@@ -113,6 +115,8 @@ The settings screen lists them as repositories.
   - #96: render `last_error`, `next_run_at`/`avg_ms`, log tail.
   - #85: Overview hotspots and patterns-in-use.
   - #144: on a project with no repository, say once that `scope=repo` metrics need git history.
+  - #149: the community experiment (drop `parent_id` adjacency, measure).
+  - #278: the verdict heuristic (`unknown`, and action tools by outcome).
 - **Dōjō:**
   - #132: 16 inline font sizes.
   - #106: last fixture imports, plus a vitest guard.
@@ -177,7 +181,7 @@ Bring them to the compiler-grade resolution Rust and TypeScript have.
 - **How:** one SCIP emitter per language behind the shared reader (`indexer/lang/compiler.rs`):
   scip-dotnet, scip-java, scip-python.
 - **Measured 2026-10-19:** calls resolved: Rust 100%, TypeScript 52.9%, C# 8.9%, Java not
-  indexed here, Python not parsed. TypeScript is also below Rust's bar.
+  indexed here, Python not parsed. Rust is the bar (decided 2026-10-19), so TypeScript is in scope too.
 
 | Issue | What |
 |---|---|

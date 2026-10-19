@@ -6,7 +6,7 @@
 **Data:** `sensei.benchmark_runs` (paired same-task/branch, `sensei_enabled` true/false) · `sensei.benchmark_reports` (strategy-comparison payloads). Corpus registry in-repo at `benchmarks/registry.yaml`.
 **App file:** _greenfield_
 **Daemon files:** _partial / mostly greenfield_ — DDL exists (`database/ddl/table/sensei/benchmark_runs.ddl`, `benchmark_reports.ddl`, staging `import_benchmark_reports.ddl`). The designed owner files (`crates/senseid/src/benchmarks/runner.rs`, `benchmarks/registry.yaml`, `benchmarks/competitors.yaml`) **do not exist yet**; there is no HTTP handler and no `sensei bench` CLI command.
-**Status:** **deferred / greenfield** — [[pipeline/benchmarks]] is a deferred pipeline. The tables are declared but empty in practice; the runner, corpus registry, CLI, and website surfaces are unbuilt. **Do not build the run engine from this spec.** This documents the two mockup layouts so the UI is ready when the pipeline lands, and pins the honesty stance that governs both.
+**Status:** **deferred epic [#279](https://github.com/sensei-hq/sensei/issues/279)** (2026-10-19). To be re-designed on transcript history, which did not exist when this was written; this spec is the starting point, not the plan. Previously **deferred / greenfield** — [[pipeline/benchmarks]] is a deferred pipeline. The tables are declared but empty in practice; the runner, corpus registry, CLI, and website surfaces are unbuilt. **Do not build the run engine from this spec.** This documents the two mockup layouts so the UI is ready when the pipeline lands, and pins the honesty stance that governs both.
 
 ## Purpose
 

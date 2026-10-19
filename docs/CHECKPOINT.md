@@ -1,6 +1,6 @@
 # Checkpoint — 2026-10-19
 
-**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md). Wave 1 is done; wave 2 is next.
+**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md). Waves 1 and 2 are done; wave 3 is next.
 
 **Done:**
 - **Wave 1, Settings → Projects:**
@@ -18,7 +18,11 @@
   - #190, #258, #122 and #139 carry status comments.
 
 **Remaining:**
-- Wave 2: the user's decisions (the table in 08-issue-burndown.md).
+- Wave 2 is decided:
+  - closed #141, #230, #90
+  - filed #277, #278, and deferred epic #279 (the Benchmark runner, re-designed on transcript history)
+  - `deferred` label on #50 and #150
+  - Rust is the bar for every language (#275)
 - #144 moved to wave 3 (the project metrics view, not Settings).
 - #190 moved up to wave 5: since dbd 0.27, a workspace (`modules:`) design cannot be imported until
   `project::survey` + `Workspace::load` land.
@@ -26,7 +30,7 @@
 - After waves 0–8: the full re-index (wave 9), which restores the 130 projects whose checkouts are
   gone. Then language parity for Java, C# and Python (wave 10, #275, blocked first by #276).
 
-**Next command:** `/sensei:session refocus`, then wave 2. Walk the decision table with the user.
+**Next command:** `/sensei:session refocus`, then wave 3, starting with #104 (the dōjō inbox renders a relay failure as an empty list).
 
 **Open questions:**
 - The orphaned Cloudflare build trigger fails every develop push. Delete it in the dashboard?
