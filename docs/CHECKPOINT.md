@@ -3,15 +3,9 @@
 **Slice:** issue burndown (docs/roadmap/08-issue-burndown.md). Waves 1 and 2 are done; wave 3 is next.
 
 **Done:**
-- **Wave 1, Settings → Projects:**
-  - #271 and #269 are closed with live evidence.
-  - Commits: 43b7cb6e, 650ae365, 7f533892, 1078a879, e777d692, ffc79fc6, 030592ee.
-  - The live inspect (`app/e2e/tests-inspect/settings-projects-inspect.spec.ts`) passes: 3 placed,
-    130 collapsed, sensei derives library/tool/website.
-- **Found while verifying:**
-  - `PUT /api/folders {role:null}` was a no-op 200 (e777d692).
-  - The watcher rescan demoted workspace modules to `folder` (ffc79fc6). Re-verified live after
-    redeploy: a watcher rescan kept all 18.
+- **Wave 1 (Settings → Projects):** #271 and #269 closed with live evidence. Also fixed: role null-clear
+  (e777d692) and the watcher rescan demoting modules (ffc79fc6).
+- **Wave 3 so far:** #104, #185, #186, #153, #154, #177, #157 and #280 closed. #281 was split out.
 - **Dependencies:**
   - dbd 0.27.3 everywhere (2d77d771). The live DB diffs clean.
   - rustls 0.23.46 (c11e19d2, #172).
