@@ -116,7 +116,9 @@ The settings screen lists them as repositories.
   - #133: the kanji ↔ icon display mode. Solar Bold Duotone icons beside every kanji, one preference,
     `fields` derived in one place, across the app and the dōjō (scope expanded 2026-10-19).
   - ~~#135~~ **Closed 2026-10-19**: the menu item opens `/help`; the page lists only keys that are bound.
-  - #96: render `last_error`, `next_run_at`/`avg_ms`, log tail.
+  - #96: next run, avg and last error **done and live** (7f6aa04f, 8e995d2c); the per-task log tail remains.
+  - #283 (found via #96): a pass blocked on a keychain prompt stops its worker silently — no time limit,
+    no "running since".
   - #85: Overview hotspots and patterns-in-use.
   - #144: on a project with no repository, say once that `scope=repo` metrics need git history.
   - #149: the community experiment (drop `parent_id` adjacency, measure).

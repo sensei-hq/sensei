@@ -24,7 +24,7 @@
 - After waves 0–8: the full re-index (wave 9), which restores the 130 projects whose checkouts are
   gone. Then language parity for Java, C# and Python (wave 10, #275, blocked first by #276).
 
-**Next command:** `/sensei:session refocus`, then wave 3's App group: #96 (render `last_error`, `next_run_at`/`avg_ms`, log tail). #135 is closed. #187 still needs `make test-app-e2e-cold` (stops postgres + ollama). #194 waits on a live failure.
+**Next command:** `/sensei:session refocus`, then #96's per-task log tail (a `scheduled{worker}` span per pass plus a log-tail endpoint), then #283. #187 still needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
 **Open questions:**
 - Run `make dev-signing-cert` once (asks for your login password) so local installs keep their keychain and folder grants. #282 needs an Apple Developer account for releases.
