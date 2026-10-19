@@ -24,7 +24,7 @@
 - After waves 0–8: the full re-index (wave 9), which restores the 130 projects whose checkouts are
   gone. Then language parity for Java, C# and Python (wave 10, #275, blocked first by #276).
 
-**Next command:** `/sensei:session refocus`, then #179 (route pre-bind daemon exits through write_startup_error). #181 is closed. #194 is deployed; confirm one `task_failed` row per failing task on the next live failure, then close it.
+**Next command:** `/sensei:session refocus`, then wave 3's Gates group: #187 (e2e typecheck in `bun run check`), then #213 (commit-msg leak hook). #181 and #179 are closed. #194 is deployed and waits on a live failure.
 
 **Open questions:**
 - Run `make dev-signing-cert` once (asks for your login password) so local installs keep their keychain and folder grants. #282 needs an Apple Developer account for releases.

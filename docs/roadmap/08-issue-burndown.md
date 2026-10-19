@@ -106,7 +106,7 @@ The settings screen lists them as repositories.
     the backup.
   - #194: **fixed and deployed (b3dfaf7b)**; open until a live retryable failure shows one row per task.
     Pending a user decision: the 145k/day `task_started`/`task_completed` rows duplicate `task_executions`.
-  - #179: a pre-bind exit writes the startup error (07-quality B3).
+  - ~~#179~~ **Closed 2026-10-19**: every pre-bind exit records why; `senseid status` shows it.
 - **Gates:**
   - #187: e2e typecheck in `bun run check`, 10 errors (07-quality D4).
   - #213: commit-msg leak hook, plus the off-by-one line number.
