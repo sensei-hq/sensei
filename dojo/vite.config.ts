@@ -5,6 +5,7 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import UnoCSS from '@unocss/vite';
 import { paraglideVitePlugin } from '@inlang/paraglide-js';
+import { devServer } from './dev-server';
 
 // Build-time version stamp so a deploy is verifiable (dojo v{version} · {sha} in
 // the console footer + GET /version). Computed here in the Node config context
@@ -48,6 +49,7 @@ export default defineConfig({
 		UnoCSS(),
 		sveltekit()
 	],
+	server: devServer,
 	optimizeDeps: {
 		exclude: ['@rokkit/app', '@rokkit/ui', '@rokkit/states', '@rokkit/actions']
 	}
