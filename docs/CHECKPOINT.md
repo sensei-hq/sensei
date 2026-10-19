@@ -30,7 +30,7 @@
 - After waves 0–8: the full re-index (wave 9), which restores the 130 projects whose checkouts are
   gone. Then language parity for Java, C# and Python (wave 10, #275, blocked first by #276).
 
-**Next command:** `/sensei:session refocus`, then #280: token capture has been silent since 2026-10-07. Wave 3's #104, #185, #186, #153, #154, #177 and #157 are closed.
+**Next command:** `/sensei:session refocus`, then #280's remainder: stream usage from oversized transcripts, and show a loud state when reading is off. Capture is restored (82fe9c17..b8af6520).
 
 **Open questions:**
 - The orphaned Cloudflare build trigger fails every develop push. Delete it in the dashboard?

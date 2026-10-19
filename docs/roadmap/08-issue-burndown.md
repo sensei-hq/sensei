@@ -98,9 +98,11 @@ The settings screen lists them as repositories.
   `make dojo-local` and the runbook in `dojo/CLAUDE.md`. The daemon logs `dojo_sync: cycle complete`.
 - ~~**Metric registry cluster:** #153, #154, #177, #157~~. **Closed 2026-10-19**: ratings of 0 for
   `time_to_useful_result` fell from 173 to 42 of 197, and a catalog guard test is in place.
-- **#280, found while verifying #177, next:** token usage stopped being captured on 2026-10-07, which
-  blanks every token and cost metric since. 269 of the 270 token-bearing sessions have also lost their
-  folder link.
+- **#280 (capture restored 2026-10-19):** transcript reading is now on by default; turns are linked
+  per turn through `activity.turn_usage`; `sessions.tokens_*` have one writer; the token columns are
+  `bigint`. Live, all 124 sessions with turns equal their sums.
+  - **Remaining:** stream usage from transcripts over the 64 MB cap (this session's is 162 MB), and
+    make the metrics say "transcript reading is off" instead of going blank.
 - **Operations:**
   - #181: `SKIP_DB_BACKUP`, and prune after writing (07-quality C2).
   - #194: retryable failures not logged as error on every attempt (part of C1).
