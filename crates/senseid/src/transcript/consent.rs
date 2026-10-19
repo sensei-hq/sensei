@@ -82,9 +82,11 @@ mod tests {
         assert_eq!(super::super::adapters().len(), SOURCES.len());
     }
 
-    /// Absence is no. Mutation that must break this: treat a missing key as on.
+    /// Absence is yes (decided 2026-10-19, superseding #218's default): reading
+    /// history is core to the token, cost and session metrics. An explicit `off`
+    /// is no. Mutation that must break this: treat a missing key as off.
     #[tokio::test]
-    async fn nothing_is_consented_until_someone_says_yes() {
+    async fn everything_is_consented_until_someone_says_no() {
         let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
             return;
         };
@@ -96,13 +98,16 @@ mod tests {
                 .await
                 .unwrap();
         }
-        assert!(consented(&pg).await.unwrap().is_empty());
-
-        set(&pg, "zed", true).await.unwrap();
-        assert_eq!(consented(&pg).await.unwrap(), HashSet::from(["zed".to_string()]));
+        let all: HashSet<String> = SOURCES.iter().map(|(s, _)| (*s).to_string()).collect();
+        assert_eq!(consented(&pg).await.unwrap(), all, "no key is consent");
 
         set(&pg, "zed", false).await.unwrap();
-        assert!(consented(&pg).await.unwrap().is_empty(), "off is off, not absent-and-ignored");
+        let mut without_zed = all.clone();
+        without_zed.remove("zed");
+        assert_eq!(consented(&pg).await.unwrap(), without_zed, "off is off");
+
+        set(&pg, "zed", true).await.unwrap();
+        assert_eq!(consented(&pg).await.unwrap(), all, "on again");
 
         assert!(set(&pg, "notepad", true).await.is_err(), "an unknown source is refused");
     }
