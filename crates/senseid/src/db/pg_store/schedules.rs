@@ -21,12 +21,14 @@ type ScheduleRow = (
     Option<DateTime<Utc>>, // last_run_at
     Option<bool>,          // last_ok
     Option<String>,        // last_error
+    i32,                   // runs
+    i64,                   // total_ms
 );
 
 /// That same shape as a SELECT list, so the three queries below cannot drift
 /// from [`ScheduleRow`] one column at a time.
 const SCHEDULE_COLUMNS: &str = "name, enabled, interval_secs, window_start, window_end, days, \
-                                last_run_at, last_ok, last_error";
+                                last_run_at, last_ok, last_error, runs, total_ms";
 use crate::tasks::schedule::Schedule;
 
 /// A schedule as stored, including the runtime state the daemon writes back.
@@ -41,11 +43,14 @@ pub struct StoredSchedule {
     pub last_run_at: Option<DateTime<Utc>>,
     pub last_ok: Option<bool>,
     pub last_error: Option<String>,
+    /// Mean duration of the timed passes (#96); `None` before the first.
+    pub avg_ms: Option<u64>,
 }
 
 impl From<ScheduleRow> for StoredSchedule {
     fn from(row: ScheduleRow) -> Self {
-        let (name, enabled, interval, ws, we, days, last_run, last_ok, last_error) = row;
+        let (name, enabled, interval, ws, we, days, last_run, last_ok, last_error, runs, total_ms) =
+            row;
         Self {
             name,
             enabled,
@@ -62,6 +67,7 @@ impl From<ScheduleRow> for StoredSchedule {
             last_run_at: last_run,
             last_ok,
             last_error,
+            avg_ms: (runs > 0).then(|| u64::try_from(total_ms / i64::from(runs)).unwrap_or(0)),
         }
     }
 }
@@ -233,6 +239,7 @@ impl PgStore {
         &self,
         name: &str,
         outcome: Result<(), String>,
+        duration_ms: u64,
     ) -> Result<(), String> {
         let (ok, err) = match &outcome {
             Ok(()) => (true, None),
@@ -240,12 +247,14 @@ impl PgStore {
         };
         sqlx_core::query::query(
             "UPDATE sensei.schedules \
-                SET last_run_at = now(), last_ok = $2, last_error = $3 \
+                SET last_run_at = now(), last_ok = $2, last_error = $3, \
+                    runs = runs + 1, total_ms = total_ms + $4 \
               WHERE name = $1",
         )
         .bind(name)
         .bind(ok)
         .bind(err)
+        .bind(i64::try_from(duration_ms).unwrap_or(i64::MAX))
         .execute(&self.pool)
         .await
         .map_err(|e| format!("mark_schedule_run({name}): {e}"))?;

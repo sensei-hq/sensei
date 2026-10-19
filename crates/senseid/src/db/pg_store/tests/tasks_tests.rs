@@ -426,7 +426,7 @@ async fn marking_a_run_records_the_outcome_and_clears_a_stale_error() {
         .unwrap();
 
     // A failure is recorded with its reason.
-    s.mark_schedule_run(&name, Err("boom".into())).await.unwrap();
+    s.mark_schedule_run(&name, Err("boom".into()), 10).await.unwrap();
     let after_fail = s.load_schedule(&name).await.unwrap().unwrap();
     assert_eq!(after_fail.last_ok, Some(false));
     assert_eq!(after_fail.last_error.as_deref(), Some("boom"));
@@ -434,10 +434,34 @@ async fn marking_a_run_records_the_outcome_and_clears_a_stale_error() {
 
     // A later success CLEARS it — a stale error sitting beside a healthy run
     // reads as "still broken" to anyone scanning the table.
-    s.mark_schedule_run(&name, Ok(())).await.unwrap();
+    s.mark_schedule_run(&name, Ok(()), 10).await.unwrap();
     let after_ok = s.load_schedule(&name).await.unwrap().unwrap();
     assert_eq!(after_ok.last_ok, Some(true));
     assert_eq!(after_ok.last_error, None, "success must clear the previous error");
+
+    sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
+/// #96: how long a scheduled pass takes, on average. `None` until a pass has
+/// been timed — runs from before durations were recorded are not invented.
+#[tokio::test]
+async fn a_schedule_averages_the_duration_of_its_timed_runs() {
+    let s = pg_store().await;
+    let name = test_schedule_name();
+    sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    assert_eq!(s.load_schedule(&name).await.unwrap().unwrap().avg_ms, None, "nothing timed yet");
+
+    s.mark_schedule_run(&name, Ok(()), 100).await.unwrap();
+    s.mark_schedule_run(&name, Err("slow".into()), 300).await.unwrap();
+    assert_eq!(s.load_schedule(&name).await.unwrap().unwrap().avg_ms, Some(200));
 
     sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
         .bind(&name)
@@ -595,7 +619,7 @@ async fn update_schedule_does_not_disturb_the_runtime_state() {
         .execute(s.pool())
         .await
         .unwrap();
-    s.mark_schedule_run(&name, Err("boom".into())).await.unwrap();
+    s.mark_schedule_run(&name, Err("boom".into()), 10).await.unwrap();
     let before = s.load_schedule(&name).await.unwrap().unwrap();
 
     let patch = SchedulePatch { enabled: Some(false), ..Default::default() };

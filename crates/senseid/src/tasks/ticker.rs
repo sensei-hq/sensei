@@ -160,11 +160,13 @@ async fn run_scheduled_inner<F, Fut>(
             continue;
         }
 
+        let started = std::time::Instant::now();
         let outcome = tick().await;
+        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         if let Err(e) = &outcome {
             tracing::warn!(worker = name, error = %e, "scheduled: tick failed");
         }
-        if let Err(e) = pg.mark_schedule_run(name, outcome).await {
+        if let Err(e) = pg.mark_schedule_run(name, outcome, duration_ms).await {
             // Non-fatal: the work happened; only the bookkeeping failed. Dying
             // here would stop a healthy worker over a write to a status column.
             tracing::warn!(worker = name, error = %e, "scheduled: could not record the run");

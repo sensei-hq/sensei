@@ -84,6 +84,17 @@ fn render(s: &StoredSchedule) -> serde_json::Value {
         "last_run_at": s.last_run_at.map(|t| t.to_rfc3339()),
         "last_ok": s.last_ok,
         "last_error": s.last_error,
+        // Mean duration of the timed passes; `null` before the first (#96).
+        "avg_ms": s.avg_ms,
+        // When it runs next, from the rules the ticker applies (#96). `null` when
+        // disabled. Local time decides the window, as it does in the ticker.
+        "next_run_at": crate::tasks::schedule::next_run(
+            &s.rules(),
+            chrono::Utc::now(),
+            s.last_run_at,
+            |u| u.with_timezone(&chrono::Local).naive_local(),
+        )
+        .map(|t| t.to_rfc3339()),
     })
 }
 
@@ -360,6 +371,32 @@ mod tests {
                 assert!(row.get(key).is_some(), "{name} is missing {key}");
             }
         }
+    }
+
+    /// #96: the next run is on the wire, from the same rules the ticker applies;
+    /// a disabled schedule has none.
+    #[test]
+    fn a_schedule_reports_when_it_runs_next() {
+        let last = chrono::Utc::now() - chrono::Duration::minutes(10);
+        let s = StoredSchedule {
+            name: "metrics".into(),
+            enabled: true,
+            interval_secs: 3600,
+            window_start: None,
+            window_end: None,
+            days: vec![],
+            last_run_at: Some(last),
+            last_ok: Some(true),
+            last_error: None,
+            avg_ms: Some(1200),
+        };
+        let next = render(&s)["next_run_at"].as_str().map(str::to_string).expect("next_run_at");
+        let next = chrono::DateTime::parse_from_rfc3339(&next).unwrap();
+        assert_eq!(next.timestamp(), (last + chrono::Duration::hours(1)).timestamp());
+
+        let off = StoredSchedule { enabled: false, ..s };
+        assert!(render(&off)["next_run_at"].is_null(), "disabled: no next run");
+        assert_eq!(render(&off)["avg_ms"], 1200, "the average is on the wire");
     }
 
     #[tokio::test]
