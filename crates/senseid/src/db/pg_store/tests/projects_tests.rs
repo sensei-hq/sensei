@@ -873,3 +873,43 @@ async fn prune_orphan_keyless_repositories_removes_only_old_unreferenced_keyless
     assert!(left.contains(&keyed), "a keyed repository is kept: it carries identity and history");
     assert!(left.contains(&fresh), "a keyless repository inside the grace may be mid-link");
 }
+
+/// A repository whose parsed code is entirely tests is a Quality repository
+/// (#269, #271 item 3). Only when no role is set: a chosen role is never
+/// overridden, and a repository with no code is not "all tests".
+#[tokio::test]
+async fn a_repository_whose_code_is_all_tests_is_tagged_quality() {
+    let s = pg_store().await;
+    let u = uuid::Uuid::new_v4();
+    let only_tests = create_test_folder_unattributed(&s, &format!("q-tests-{u}")).await;
+    let mixed = create_test_folder_unattributed(&s, &format!("q-mixed-{u}")).await;
+    let chosen = create_test_folder_unattributed(&s, &format!("q-chosen-{u}")).await;
+    let empty = create_test_folder_unattributed(&s, &format!("q-empty-{u}")).await;
+    for (fid, test_only) in [(only_tests, true), (mixed, false), (chosen, true)] {
+        let t = s.seed_node(&fid, "function", "it_works", "tests/a.spec.ts", None, None, None, None).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.nodes SET is_test = true WHERE id = $1").bind(t).execute(s.pool()).await.unwrap();
+        if !test_only {
+            s.seed_node(&fid, "function", "real", "src/a.ts", None, None, None, None).await.unwrap();
+        }
+    }
+    s.update_folder_role(&chosen, Some("library")).await.unwrap();
+
+    let assigned = s.assign_quality_roles(&[only_tests, mixed, chosen, empty]).await.unwrap();
+    let roles: Vec<(uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
+        "SELECT id, role::text FROM sensei.folders WHERE id = ANY($1)",
+    )
+    .bind(vec![only_tests, mixed, chosen, empty])
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let role = |id: uuid::Uuid| roles.iter().find(|(f, _)| *f == id).and_then(|(_, r)| r.clone());
+
+    for fid in [only_tests, mixed, chosen, empty] {
+        drop_folder(&s, &fid).await;
+    }
+    assert_eq!(assigned, 1);
+    assert_eq!(role(only_tests).as_deref(), Some("quality"), "all tests, no role → quality");
+    assert_eq!(role(mixed), None, "real code beside tests is not a quality repository");
+    assert_eq!(role(chosen).as_deref(), Some("library"), "a chosen role is never overridden");
+    assert_eq!(role(empty), None, "no code is not 'all tests'");
+}
