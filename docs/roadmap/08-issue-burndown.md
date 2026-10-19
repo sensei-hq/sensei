@@ -146,6 +146,9 @@ The settings screen lists them as repositories.
 - #161: typed rows, remainder.
 - #123: VS Code adapter A5/A6, Track B.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
+- #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
+  signing, notarization, and a first-start Permissions step. Needs the user's Apple Developer account.
+  Local builds are fixed already (8d09be73, `make dev-signing-cert`).
 - #190: read `design.yaml` through dbd's `project::survey`, and load a workspace design with
   `Workspace::load`. Since dbd 0.27, a repository with a `modules:` design cannot be imported.
 

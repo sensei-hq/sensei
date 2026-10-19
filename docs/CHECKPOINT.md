@@ -27,6 +27,8 @@
 **Next command:** `/sensei:session refocus`, then #179 (route pre-bind daemon exits through write_startup_error). #181 is closed. #194 is deployed; confirm one `task_failed` row per failing task on the next live failure, then close it.
 
 **Open questions:**
+- Run `make dev-signing-cert` once (asks for your login password) so local installs keep their keychain and folder grants. #282 needs an Apple Developer account for releases.
+- #194: drop the 145k/day `task_started`/`task_completed` rows from `public.logs`? That would also remove them from the Activity Logs screen.
 - The orphaned Cloudflare build trigger fails every develop push. Delete it in the dashboard?
 - 8 CodeQL `rust/cleartext-logging` alerts in test files need triage.
 
