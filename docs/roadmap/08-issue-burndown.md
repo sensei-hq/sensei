@@ -101,8 +101,10 @@ The settings screen lists them as repositories.
 - **#280 (capture restored 2026-10-19):** transcript reading is now on by default; turns are linked
   per turn through `activity.turn_usage`; `sessions.tokens_*` have one writer; the token columns are
   `bigint`. Live, all 124 sessions with turns equal their sums.
-  - **Remaining:** stream usage from transcripts over the 64 MB cap (this session's is 162 MB), and
-    make the metrics say "transcript reading is off" instead of going blank.
+  - Claude transcripts now stream, so the 64 MB cap no longer skips them (05f15a93). This session's
+    162 MB transcript now has 21 turns.
+  - **Remaining:** Zed threads over the cap (each thread is one JSON document); metrics that say
+    "transcript reading is off" instead of going blank.
 - **Operations:**
   - #181: `SKIP_DB_BACKUP`, and prune after writing (07-quality C2).
   - #194: retryable failures not logged as error on every attempt (part of C1).
