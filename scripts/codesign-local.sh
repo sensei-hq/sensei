@@ -17,7 +17,11 @@ set -euo pipefail
 
 identity="${SENSEI_SIGN_IDENTITY:-}"
 if [[ -z "$identity" ]]; then
-  if security find-identity -v -p codesigning 2>/dev/null | grep -q '"sensei-dev"'; then
+  # Read the whole listing, then search it. `security … | grep -q` under
+  # pipefail is a race: grep exits at the match, `security` SIGPIPEs on its next
+  # line, and the pipeline reads as "no identity".
+  ids=$(security find-identity -v -p codesigning 2>/dev/null || true)
+  if grep -q '"sensei-dev"' <<<"$ids"; then
     identity="sensei-dev"
   else
     identity="-"

@@ -12,22 +12,18 @@ fn script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/codesign-local.sh")
 }
 
-/// Serialises the runs in this file. Each one writes fake tools and then execs
-/// them; another test thread forking at that moment can hold the new file open,
-/// and the exec then fails — which the script reads as "tool absent". Seen once
-/// under the pre-commit hook.
-static RUN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// Fakes: `security find-identity` lists `sensei-dev` when `$HAS_DEV_ID=1`;
 /// `codesign` appends its arguments to `$CODESIGN_LOG`.
 fn run(dir: &Path, has_dev_id: bool, extra: &[(&str, &str)]) -> (std::process::Output, String) {
-    let _one_at_a_time = RUN.lock().unwrap_or_else(|e| e.into_inner());
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     for (name, body) in [
         (
             "security",
-            "#!/bin/sh\n[ \"$HAS_DEV_ID\" = 1 ] && echo '  1) ABCDEF \"sensei-dev\"'\necho '     1 valid identities found'\n",
+            // Like the real tool, more output follows the match: under
+            // `pipefail` a `| grep -q` that exits at the match SIGPIPEs it, and
+            // the pipeline read as "no identity" — the flake seen under the hook.
+            "#!/bin/sh\n[ \"$HAS_DEV_ID\" = 1 ] && echo '  1) ABCDEF \"sensei-dev\"'\ni=0; while [ $i -lt 20000 ]; do echo \"  $i) 0000 \\\"other\\\"\"; i=$((i+1)); done\necho '     1 valid identities found'\n",
         ),
         ("codesign", "#!/bin/sh\necho \"$@\" >> \"$CODESIGN_LOG\"\n"),
     ] {

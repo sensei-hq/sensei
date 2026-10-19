@@ -37,14 +37,7 @@ mkdir -p "$out" && echo '{}' > "$out/$t.jsonl"
     bin
 }
 
-/// Serialises the runs in this file. Each one writes fake tools and then execs
-/// them; another test thread forking at that moment can hold the new file open,
-/// and the exec then fails — which the script reads as "tool absent". Seen once
-/// under the pre-commit hook.
-static RUN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 fn run(dir: &Path, extra: &[(&str, &str)]) -> std::process::Output {
-    let _one_at_a_time = RUN.lock().unwrap_or_else(|e| e.into_inner());
     let bin = fakes(dir);
     let mut c = Command::new("bash");
     c.arg(script())

@@ -4,8 +4,11 @@
 # asks for your login password to trust it — this is meant to be run by you.
 set -euo pipefail
 
-if security find-identity -v -p codesigning 2>/dev/null | grep -q '"sensei-dev"'; then
-  echo "sensei-dev already exists:"; security find-identity -v -p codesigning | grep '"sensei-dev"'; exit 0
+# Listing read whole, then searched: `| grep -q` under pipefail races (see
+# codesign-local.sh).
+ids=$(security find-identity -v -p codesigning 2>/dev/null || true)
+if grep -q '"sensei-dev"' <<<"$ids"; then
+  echo "sensei-dev already exists:"; grep '"sensei-dev"' <<<"$ids"; exit 0
 fi
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -30,5 +33,6 @@ openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" -name sensei-de
 keychain="${KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
 security import "$tmp/id.p12" -k "$keychain" -P sensei-dev -T /usr/bin/codesign
 security add-trusted-cert -p codeSign -k "$keychain" "$tmp/cert.pem"
-security find-identity -v -p codesigning | grep '"sensei-dev"'
+ids=$(security find-identity -v -p codesigning 2>/dev/null || true)
+grep '"sensei-dev"' <<<"$ids"
 echo "sensei-dev created. The next 'make install*' signs with it; allow each keychain prompt once."
