@@ -180,48 +180,14 @@ install: install-service install-app
 #   • logs — pruned by the structured-log TTL (#74 partial)
 #   • task_executions — job history; noisy and self-contained
 #
-# Writes JSONL under database/backup/essential/<ts>/<schema>.<name>.jsonl.
-# Runs `dbd export -n <table> --format jsonl` per table so the file layout
-# matches import/staging/*.jsonl for future re-import.
+# Writes JSONL under database/backup/essential/<ts>/<schema>/<name>.jsonl via
+# `dbd export`, so the layout matches import/staging/*.jsonl for re-import.
+# The script prunes AFTER a complete write (two snapshots at rest, not three)
+# and FAILS when a table does not export — a snapshot missing `sessions` must
+# not report complete. `SKIP_DB_BACKUP=1 make install-debug` skips it while
+# iterating (#181). Tested by crates/bootstrap/tests/backup_script.rs.
 db-backup-essential:
-	@mkdir -p database/backup/essential
-	@if ! psql -d sensei -c "SELECT 1" >/dev/null 2>&1; then \
-	  echo "sensei DB not present — skipping essential backup"; \
-	  exit 0; \
-	fi
-	@# Rotate essential-backup snapshots: keep the 2 most recent.
-	@#
-	@# TWO, NOT FIVE, and the number that changed the answer is the SIZE. The
-	@# comment here used to say 650MB; measured 2026-10-07 it is 3.7 GB, of which
-	@# 3.6 GB is `assistant_events.jsonl` — `dbd export` writes uncompressed
-	@# JSONL. Five snapshots is an 18.5 GB ceiling, which is the shape of the
-	@# problem that removing the full `pg_dump` was meant to solve.
-	@#
-	@# Two is the smallest retention that still survives a bad export: the
-	@# previous snapshot is intact while the new one is being written, so a
-	@# process killed halfway leaves one good copy. One would not.
-	@keep=2; \
-	  ls -1t database/backup/essential 2>/dev/null | tail -n +$$((keep + 1)) \
-	    | while read d; do rm -rf "database/backup/essential/$$d"; done
-	@ts=$$(date +%Y%m%d-%H%M%S); \
-	  outdir="database/backup/essential/$${ts}"; \
-	  mkdir -p "$$outdir"; \
-	  echo "Essential backup → $$outdir"; \
-	  for t in activity.assistant_events activity.sessions activity.transcript_turns activity.turns \
-	           activity.session_process_evidence \
-	           sensei.memories sensei.memory_outcomes sensei.tool_insights \
-	           sensei.playbook_rules sensei.consolidated_rulesets \
-	           inference.detected_patterns inference.recommendations \
-	           inference.reasoning_traces inference.corrections inference.drift_items \
-	           sensei.projects sensei.folders sensei.folders_to_watch \
-	           sensei.repositories sensei.folder_path_aliases; do \
-	    DATABASE_URL="postgres://localhost/sensei" \
-	      dbd export -n "$$t" --format jsonl \
-	                 --output "$$outdir" \
-	                 --source database >/dev/null 2>&1 || \
-	      echo "  skip $$t (dbd export failed — table may not be tracked in design.yaml)"; \
-	  done; \
-	  echo "Essential backup complete — $$(du -sh "$$outdir" | awk '{print $$1}')"
+	@./scripts/db-backup-essential.sh
 
 # Overlay freshly-built release binaries into the brew prefix.
 #
