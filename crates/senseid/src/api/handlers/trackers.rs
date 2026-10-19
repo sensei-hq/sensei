@@ -23,20 +23,24 @@ use crate::tracker::{TrackerError, TrackerKind, ValidateError, adapter_for_kind}
 /// One-second waits a first sync spends on a running sync before leaving it to the tick.
 const FIRST_SYNC_BUSY_RETRIES: u32 = 15 * 60;
 
-fn fail(status: StatusCode, code: &str) -> Response {
-    err(status, code).into_response()
+/// The house error envelope (`handlers::err`): a status and `{"error": code}`.
+/// Helpers return it as their `Err`; handlers turn it into a response at the edge.
+type ApiErr = (StatusCode, Json<serde_json::Value>);
+
+fn fail(status: StatusCode, code: &str) -> ApiErr {
+    err(status, code)
 }
 
-fn internal() -> Response {
+fn internal() -> ApiErr {
     fail(StatusCode::INTERNAL_SERVER_ERROR, "internal")
 }
 
 /// The project's uuid, or the response to return (404 for an unknown project:
 /// `resolve_project_uuid` accepts any well-formed uuid without checking it).
-async fn known_project(state: &AppState, id: &str) -> Result<uuid::Uuid, Response> {
+async fn known_project(state: &AppState, id: &str) -> Result<uuid::Uuid, ApiErr> {
     let uuid = crate::api::util::resolve_project_uuid(state, id)
         .await
-        .map_err(|s| s.into_response())?
+        .map_err(|_| internal())?
         .ok_or_else(|| fail(StatusCode::NOT_FOUND, "project_not_found"))?;
     match state.pg.get_project(&uuid).await {
         Ok(Some(_)) => Ok(uuid),
@@ -46,7 +50,7 @@ async fn known_project(state: &AppState, id: &str) -> Result<uuid::Uuid, Respons
 }
 
 /// The connection as the API shows it. Never the token, never the keyring name.
-async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, Response> {
+async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, ApiErr> {
     let (tasks, sprints) = state.pg.tracker_counts(row.id).await.map_err(|_| internal())?;
     // R9: the stale threshold is the schedule's interval; the row is seeded, so a
     // missing one is a defect, not a reason to guess.
@@ -81,15 +85,15 @@ pub(crate) async fn list_trackers(
 ) -> Response {
     let project = match known_project(&state, &id).await {
         Ok(p) => p,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     match state.pg.tracker_for_project(project).await {
         Ok(None) => Json(serde_json::json!([])).into_response(),
         Ok(Some(row)) => match view(&state, &row).await {
             Ok(v) => Json(serde_json::json!([v])).into_response(),
-            Err(r) => r,
+            Err(r) => r.into_response(),
         },
-        Err(_) => internal(),
+        Err(_) => internal().into_response(),
     }
 }
 
@@ -101,14 +105,14 @@ pub(crate) async fn connect_tracker(
 ) -> Response {
     let project = match known_project(&state, &id).await {
         Ok(p) => p,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     let Some(adapter) = TrackerKind::parse(&kind).and_then(adapter_for_kind) else {
-        return fail(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_tracker");
+        return fail(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_tracker").into_response();
     };
     let params = match adapter.connect_params(&body) {
         Ok(p) => p,
-        Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, e.code()),
+        Err(e) => return fail(StatusCode::UNPROCESSABLE_ENTITY, e.code()).into_response(),
     };
     // Connect stays interactive: no 429 retries during validation.
     let transport = match state.trackers.transports.transport(
@@ -117,7 +121,7 @@ pub(crate) async fn connect_tracker(
         0,
     ) {
         Ok(t) => t,
-        Err(e) => return fail(StatusCode::BAD_GATEWAY, e.code()),
+        Err(e) => return fail(StatusCode::BAD_GATEWAY, e.code()).into_response(),
     };
     let (base_url, board_ref) = (params.base_url.clone(), params.board_ref.clone());
     let rt = state.trackers.clone();
@@ -126,11 +130,11 @@ pub(crate) async fn connect_tracker(
             .await
         {
             Ok(c) => c,
-            Err(e) => return connect_failure(e, &base_url, &board_ref),
+            Err(e) => return connect_failure(e, &base_url, &board_ref).into_response(),
         };
     let row = match state.pg.tracker_by_id(connected.tracker_id).await {
         Ok(Some(row)) => row,
-        _ => return internal(),
+        _ => return internal().into_response(),
     };
     // The first sync runs in the background: connect never waits on a sync.
     let (pg, first) = (state.pg.clone(), row.clone());
@@ -155,11 +159,11 @@ pub(crate) async fn connect_tracker(
             Json(serde_json::json!({"tracker": v, "first_sync": {"pending": true}})),
         )
             .into_response(),
-        Err(r) => r,
+        Err(r) => r.into_response(),
     }
 }
 
-fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> Response {
+fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
     use crate::tracker::TrackerError;
     match e {
         ConnectError::BoardAlreadyConnected { project_id, project_name } => (
@@ -168,13 +172,13 @@ fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> Response
                 "error": "board_already_connected",
                 "project": {"id": project_id, "name": project_name},
             })),
-        )
-            .into_response(),
+        ),
         ConnectError::Validate(ValidateError::BoardNotFound) => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "board_not_found", "base_url": base_url, "board_ref": board_ref})),
-        )
-            .into_response(),
+            Json(
+                serde_json::json!({"error": "board_not_found", "base_url": base_url, "board_ref": board_ref}),
+            ),
+        ),
         ConnectError::Validate(ValidateError::BoardProjectMismatch) => {
             fail(StatusCode::UNPROCESSABLE_ENTITY, "board_project_mismatch")
         }
@@ -184,8 +188,12 @@ fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> Response
         ConnectError::Validate(ValidateError::Tracker(TrackerError::Forbidden)) => {
             fail(StatusCode::FORBIDDEN, "forbidden")
         }
-        ConnectError::Validate(ValidateError::Tracker(e)) => fail(StatusCode::BAD_GATEWAY, e.code()),
-        ConnectError::CredentialStore => fail(StatusCode::INTERNAL_SERVER_ERROR, "credential_store"),
+        ConnectError::Validate(ValidateError::Tracker(e)) => {
+            fail(StatusCode::BAD_GATEWAY, e.code())
+        }
+        ConnectError::CredentialStore => {
+            fail(StatusCode::INTERNAL_SERVER_ERROR, "credential_store")
+        }
         ConnectError::Db(_) => internal(),
     }
 }
@@ -197,12 +205,12 @@ pub(crate) async fn disconnect_tracker(
 ) -> Response {
     let project = match known_project(&state, &id).await {
         Ok(p) => p,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     match disconnect(&state.pg, state.trackers.secrets.clone(), project).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => fail(StatusCode::NOT_FOUND, "not_connected"),
-        Err(_) => internal(),
+        Ok(false) => fail(StatusCode::NOT_FOUND, "not_connected").into_response(),
+        Err(_) => internal().into_response(),
     }
 }
 
@@ -213,12 +221,12 @@ pub(crate) async fn sync_tracker(
 ) -> Response {
     let project = match known_project(&state, &id).await {
         Ok(p) => p,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     let row = match state.pg.tracker_for_project(project).await {
         Ok(Some(row)) => row,
-        Ok(None) => return fail(StatusCode::NOT_FOUND, "not_connected"),
-        Err(_) => return internal(),
+        Ok(None) => return fail(StatusCode::NOT_FOUND, "not_connected").into_response(),
+        Err(_) => return internal().into_response(),
     };
     match sync_stored(&state.pg, &state.trackers, &row).await {
         Ok(c) => Json(serde_json::json!({"counts": {
@@ -226,10 +234,10 @@ pub(crate) async fn sync_tracker(
             "links": c.links, "skipped_members": c.skipped_members,
         }}))
         .into_response(),
-        Err(SyncError::Busy) => fail(StatusCode::CONFLICT, "busy"),
-        Err(SyncError::Gone) => fail(StatusCode::NOT_FOUND, "not_connected"),
-        Err(SyncError::Failed(e)) => fail(StatusCode::BAD_GATEWAY, e.code()),
-        Err(SyncError::Db(_)) => internal(),
+        Err(SyncError::Busy) => fail(StatusCode::CONFLICT, "busy").into_response(),
+        Err(SyncError::Gone) => fail(StatusCode::NOT_FOUND, "not_connected").into_response(),
+        Err(SyncError::Failed(e)) => fail(StatusCode::BAD_GATEWAY, e.code()).into_response(),
+        Err(SyncError::Db(_)) => internal().into_response(),
     }
 }
 
@@ -240,28 +248,28 @@ pub(crate) async fn get_tracker_task(
 ) -> Response {
     let project = match known_project(&state, &id).await {
         Ok(p) => p,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     let task = match state.pg.tracker_task_detail(project, &key).await {
         Ok(Some(task)) => task,
         Ok(None) => match discover_on_miss(&state, project, &key).await {
             Ok(task) => task,
-            Err(r) => return r,
+            Err(r) => return r.into_response(),
         },
-        Err(_) => return internal(),
+        Err(_) => return internal().into_response(),
     };
     // The ticket exists, so the project has a tracker.
     let tracker = match tracker_of(&state, project).await {
         Ok(t) => t,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     let usage = match ticket_usages(&state.pg, tracker.id, Some(&[task.id])).await {
         Ok(mut u) => u.remove(&task.id).unwrap_or_default(),
-        Err(_) => return internal(),
+        Err(_) => return internal().into_response(),
     };
     let by_repo = match ticket_usage_by_repo(&state.pg, tracker.id, task.id).await {
         Ok(r) => r,
-        Err(_) => return internal(),
+        Err(_) => return internal().into_response(),
     };
     let sessions: Vec<serde_json::Value> = task
         .sessions
@@ -300,7 +308,7 @@ async fn discover_on_miss(
     state: &AppState,
     project: uuid::Uuid,
     key: &str,
-) -> Result<crate::db::pg_store::trackers::TaskDetail, Response> {
+) -> Result<crate::db::pg_store::trackers::TaskDetail, ApiErr> {
     use crate::tracker::discover::{DiscoverError, Scope};
     let not_found = || fail(StatusCode::NOT_FOUND, "task_not_found");
     let tracker = match state.pg.tracker_for_project(project).await {
@@ -317,17 +325,20 @@ async fn discover_on_miss(
     );
     match tokio::time::timeout(LOOKUP_DISCOVERY, run).await {
         Err(_) => Err(fail(StatusCode::BAD_GATEWAY, TrackerError::Transport.code())),
-        Ok(Ok(out)) if !out.inserted.is_empty() => match state.pg.tracker_task_detail(project, key).await {
-            Ok(Some(task)) => Ok(task),
-            Ok(None) => Err(not_found()),
-            Err(_) => Err(internal()),
-        },
+        Ok(Ok(out)) if !out.inserted.is_empty() => {
+            match state.pg.tracker_task_detail(project, key).await {
+                Ok(Some(task)) => Ok(task),
+                Ok(None) => Err(not_found()),
+                Err(_) => Err(internal()),
+            }
+        }
         Ok(Ok(out)) => match out.not_on_board.first() {
             Some(k) => Err((
                 StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "task_not_on_board", "key": k, "board_ref": tracker.board_ref})),
-            )
-                .into_response()),
+                Json(
+                    serde_json::json!({"error": "task_not_on_board", "key": k, "board_ref": tracker.board_ref}),
+                ),
+            )),
             None => Err(not_found()),
         },
         Ok(Err(DiscoverError::Busy)) => Err(fail(StatusCode::CONFLICT, "busy")),
@@ -339,7 +350,7 @@ async fn discover_on_miss(
 }
 
 /// The project's tracker, or the response to return (404 `not_connected`).
-async fn tracker_of(state: &AppState, project: uuid::Uuid) -> Result<TrackerRow, Response> {
+async fn tracker_of(state: &AppState, project: uuid::Uuid) -> Result<TrackerRow, ApiErr> {
     match state.pg.tracker_for_project(project).await {
         Ok(Some(row)) => Ok(row),
         Ok(None) => Err(fail(StatusCode::NOT_FOUND, "not_connected")),
@@ -348,7 +359,7 @@ async fn tracker_of(state: &AppState, project: uuid::Uuid) -> Result<TrackerRow,
 }
 
 /// The project's tracker for a read route: the project must exist and be connected.
-async fn connected(state: &AppState, id: &str) -> Result<TrackerRow, Response> {
+async fn connected(state: &AppState, id: &str) -> Result<TrackerRow, ApiErr> {
     let project = known_project(state, id).await?;
     tracker_of(state, project).await
 }
@@ -358,7 +369,7 @@ async fn known_sprint(
     state: &AppState,
     tracker: uuid::Uuid,
     raw: &str,
-) -> Result<uuid::Uuid, Response> {
+) -> Result<uuid::Uuid, ApiErr> {
     let not_found = || fail(StatusCode::NOT_FOUND, "sprint_not_found");
     let id: uuid::Uuid = raw.parse().map_err(|_| not_found())?;
     let sprints = state.pg.tracker_sprints(tracker).await.map_err(|_| internal())?;
@@ -380,11 +391,11 @@ pub(crate) async fn list_sprints(
 ) -> Response {
     let tracker = match connected(&state, &id).await {
         Ok(t) => t,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     let sprints = match sprint_usages(&state.pg, tracker.id, chrono::Utc::now()).await {
         Ok(s) => s,
-        Err(_) => return internal(),
+        Err(_) => return internal().into_response(),
     };
     let rows: Vec<serde_json::Value> = sprints
         .into_iter()
@@ -422,23 +433,23 @@ pub(crate) async fn list_tracker_tasks(
 ) -> Response {
     let tracker = match connected(&state, &id).await {
         Ok(t) => t,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     let sprint = match q.sprint.as_deref() {
         Some(raw) => match known_sprint(&state, tracker.id, raw).await {
             Ok(s) => Some(s),
-            Err(r) => return r,
+            Err(r) => return r.into_response(),
         },
         None => None,
     };
     let tasks = match state.pg.tracker_task_rows(tracker.id, sprint, q.include_removed).await {
         Ok(t) => t,
-        Err(_) => return internal(),
+        Err(_) => return internal().into_response(),
     };
     let ids: Vec<uuid::Uuid> = tasks.iter().map(|t| t.id).collect();
     let mut usage = match ticket_usages(&state.pg, tracker.id, Some(&ids)).await {
         Ok(u) => u,
-        Err(_) => return internal(),
+        Err(_) => return internal().into_response(),
     };
     let named = |(id, name): &(uuid::Uuid, String)| serde_json::json!({"id": id, "name": name});
     let rows: Vec<serde_json::Value> = tasks
@@ -465,14 +476,14 @@ pub(crate) async fn list_unlinked_sessions(
 ) -> Response {
     let tracker = match connected(&state, &id).await {
         Ok(t) => t,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     let Some(raw) = q.sprint.as_deref() else {
-        return fail(StatusCode::UNPROCESSABLE_ENTITY, "sprint_required");
+        return fail(StatusCode::UNPROCESSABLE_ENTITY, "sprint_required").into_response();
     };
     let sprint = match known_sprint(&state, tracker.id, raw).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return r.into_response(),
     };
     match unlinked_in_sprint(&state.pg, tracker.id, sprint, chrono::Utc::now()).await {
         Ok(Some(sessions)) => Json(
@@ -484,8 +495,8 @@ pub(crate) async fn list_unlinked_sessions(
                 .collect::<Vec<_>>(),
         )
         .into_response(),
-        Ok(None) => fail(StatusCode::NOT_FOUND, "sprint_not_found"),
-        Err(_) => internal(),
+        Ok(None) => fail(StatusCode::NOT_FOUND, "sprint_not_found").into_response(),
+        Err(_) => internal().into_response(),
     }
 }
 
