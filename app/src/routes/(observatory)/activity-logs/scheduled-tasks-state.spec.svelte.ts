@@ -7,6 +7,7 @@ import {
   taskHealth,
   taskError,
   taskNextRun,
+  taskRunning,
   TaskLog,
   taskInterval,
   taskAvg,
@@ -25,6 +26,7 @@ function makeTask(over: Partial<ScheduledTask> = {}): ScheduledTask {
     next_run_at: over.next_run_at ?? null,
     interval_secs: over.interval_secs ?? null,
     avg_ms: over.avg_ms ?? null,
+    running_since: over.running_since ?? null,
     enabled: over.enabled ?? true,
     window: 'window' in over ? (over.window ?? null) : null,
     days: over.days ?? null,
@@ -129,6 +131,20 @@ describe('taskNextRun', () => {
     expect(taskNextRun(BASE - 2 * 60_000, task)).toBe('in 2m');
     expect(taskNextRun(BASE - 3 * 3_600_000, task)).toBe('in 3h');
     expect(taskNextRun(BASE + 2 * 60_000, task)).toBe('due now');
+  });
+});
+
+describe('taskRunning', () => {
+  // #283: a pass blocked for an hour read as an hour-old result.
+  it('says how long the pass in progress has been running', () => {
+    const task = makeTask({ running_since: '2026-07-13T02:19:29.612354+00:00' });
+    expect(taskRunning(BASE + 45_000, task)).toBe('running for 45s');
+    expect(taskRunning(BASE + 42 * 60_000, task)).toBe('running for 42m');
+    expect(taskRunning(BASE + 3 * 3_600_000, task)).toBe('running for 3h');
+  });
+
+  it('is null for an idle worker', () => {
+    expect(taskRunning(BASE, makeTask())).toBeNull();
   });
 });
 

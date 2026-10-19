@@ -8,6 +8,7 @@
     taskHealth,
     taskNextRun,
     taskAvg,
+    taskRunning,
   } from './scheduled-tasks.svelte.js';
 
   interface Props {
@@ -25,6 +26,7 @@
   const health = $derived(taskHealth(task));
   const nextRun = $derived(taskNextRun(now, task));
   const avg = $derived(taskAvg(task));
+  const running = $derived(taskRunning(now, task));
 </script>
 
 <div
@@ -45,6 +47,10 @@
         aria-expanded={log.open}
         onclick={() => log.toggle()}
       >{log.open ? 'hide log' : 'log'}</button>
+    {/if}
+    {#if running}
+      <!-- A pass in progress, so a stall is not read as an old result (#283). -->
+      <div class="text-xs text-ink-mute mt-[2px]" data-task-running>{running}</div>
     {/if}
     {#if task.last_ok === false && task.last_error}
       <!-- Why it is failing, where it is listed (#96). -->

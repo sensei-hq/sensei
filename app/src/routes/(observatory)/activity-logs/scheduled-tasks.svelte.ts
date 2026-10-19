@@ -44,12 +44,26 @@ export function taskNextRun(nowMs: number, task: ScheduledTask): string {
   if (Number.isNaN(t)) return task.next_run_at;
   const secs = Math.round((t - nowMs) / 1000);
   if (secs <= 5) return 'due now';
-  if (secs < 60) return `in ${secs}s`;
+  return `in ${span(secs)}`;
+}
+
+/** A span of seconds in its largest whole unit: "45s", "12m", "3h", "2d". */
+function span(secs: number): string {
+  if (secs < 60) return `${secs}s`;
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `in ${mins}m`;
+  if (mins < 60) return `${mins}m`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `in ${hrs}h`;
-  return `in ${Math.floor(hrs / 24)}d`;
+  if (hrs < 24) return `${hrs}h`;
+  return `${Math.floor(hrs / 24)}d`;
+}
+
+/** How long the pass in progress has run (#283), or null when idle — a pass
+ *  blocked for an hour otherwise reads as an hour-old result. */
+export function taskRunning(nowMs: number, task: ScheduledTask): string | null {
+  if (task.running_since == null) return null;
+  const t = Date.parse(task.running_since);
+  if (Number.isNaN(t)) return `running since ${task.running_since}`;
+  return `running for ${span(Math.max(0, Math.round((nowMs - t) / 1000)))}`;
 }
 
 /** The worker's cadence as "every 5m" / "every 2h", or the em dash when no

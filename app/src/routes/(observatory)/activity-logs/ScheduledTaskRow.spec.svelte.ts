@@ -24,6 +24,7 @@ function makeTask(over: Partial<ScheduledTask> = {}): ScheduledTask {
     next_run_at: over.next_run_at ?? null,
     interval_secs: over.interval_secs ?? null,
     avg_ms: over.avg_ms ?? null,
+    running_since: over.running_since ?? null,
     enabled: over.enabled ?? true,
     window: 'window' in over ? (over.window ?? null) : null,
     days: over.days ?? null,
@@ -66,6 +67,21 @@ describe('ScheduledTaskRow', () => {
     cleanup.push(m.destroy);
     expect(m.container.querySelector('[data-task-next-run]')?.textContent).toBe('in 30m');
     expect(m.container.querySelector('[data-task-avg]')?.textContent?.trim()).toBe('1.4s');
+  });
+
+  // #283: a pass in progress is visible on its row; an idle row says nothing.
+  it('shows how long a running pass has been running', () => {
+    const running = mountComponent(ScheduledTaskRowHarness, {
+      task: makeTask({ running_since: new Date(NOW - 42 * 60_000).toISOString() }),
+      now: NOW,
+    });
+    cleanup.push(running.destroy);
+    expect(running.container.querySelector('[data-task-running]')?.textContent?.trim()).toBe(
+      'running for 42m',
+    );
+    const idle = mountComponent(ScheduledTaskRowHarness, { task: makeTask(), now: NOW });
+    cleanup.push(idle.destroy);
+    expect(idle.container.querySelector('[data-task-running]')).toBeNull();
   });
 
   // #96: a failing worker says why, where it is listed — `last_error` was sent

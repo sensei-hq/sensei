@@ -1611,6 +1611,8 @@ export interface ScheduledTask {
   next_run_at: string | null;
   /** Mean duration of the timed passes, in ms — null before the first (#96). */
   avg_ms: number | null;
+  /** When the pass now in progress started (RFC-3339); null when idle (#283). */
+  running_since: string | null;
 }
 
 // ─── Metric computation status (sensei.metric_status) ────────────────────────
