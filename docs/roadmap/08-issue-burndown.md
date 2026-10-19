@@ -108,8 +108,10 @@ The settings screen lists them as repositories.
     Pending a user decision: the 145k/day `task_started`/`task_completed` rows duplicate `task_executions`.
   - ~~#179~~ **Closed 2026-10-19**: every pre-bind exit records why; `senseid status` shows it.
 - **Gates:**
-  - #187: e2e typecheck in `bun run check`, 10 errors (07-quality D4).
-  - #213: commit-msg leak hook, plus the off-by-one line number.
+  - #187: e2e typecheck in `bun run check`; **gate in and errors fixed (18eb0cde)**, closing once the changed
+    specs pass against the app.
+  - ~~#213~~ **Closed 2026-10-19**: commit-msg and `--stdin` scanning, the right line number, and the
+    self-test in every commit.
 - **App:**
   - #133: the kanji ↔ icon display mode. Solar Bold Duotone icons beside every kanji, one preference,
     `fields` derived in one place, across the app and the dōjō (scope expanded 2026-10-19).

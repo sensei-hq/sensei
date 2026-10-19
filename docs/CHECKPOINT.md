@@ -24,7 +24,7 @@
 - After waves 0–8: the full re-index (wave 9), which restores the 130 projects whose checkouts are
   gone. Then language parity for Java, C# and Python (wave 10, #275, blocked first by #276).
 
-**Next command:** `/sensei:session refocus`, then wave 3's Gates group: #187 (e2e typecheck in `bun run check`), then #213 (commit-msg leak hook). #181 and #179 are closed. #194 is deployed and waits on a live failure.
+**Next command:** `/sensei:session refocus`. Confirm #187's changed e2e specs pass (`bun run test:e2e -- boot-flow sign-in-overlay instruments-observatory`, `bun run test:e2e:cold`), then wave 3's App group: #135 (Keyboard Shortcuts → /help). #213, #179 and #181 are closed. #194 waits on a live failure.
 
 **Open questions:**
 - Run `make dev-signing-cert` once (asks for your login password) so local installs keep their keychain and folder grants. #282 needs an Apple Developer account for releases.
