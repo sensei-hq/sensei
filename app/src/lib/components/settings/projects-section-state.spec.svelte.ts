@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { ROLES } from '$lib/setup/types.js';
 import type { DaemonProject, DaemonProjectFolder } from '$lib/setup/contracts.js';
 import {
+  derivedRoles,
   matchesSearch,
   partitionProjects,
   ProjectsSectionState,
@@ -21,6 +22,7 @@ const folder = (over: Partial<DaemonProjectFolder>): DaemonProjectFolder => ({
   id: 'f',
   name: 'f',
   path: '/w/f',
+  abs_path: '/w/f',
   kind: 'folder',
   role: null,
   ...over,
@@ -52,6 +54,36 @@ const sensei = project({
 describe('repositoriesOf', () => {
   it('lists only git checkouts and subtrees, never modules or plain folders', () => {
     expect(repositoriesOf(sensei).map((f) => f.id)).toEqual(['root', 'sub']);
+  });
+});
+
+describe('derivedRoles', () => {
+  // The scan infers a role for each workspace package from its manifest, but a
+  // monorepo's repository row has none, so its card read "Unassigned" while its
+  // packages were a website, two tools and six libraries.
+  const mono = project({
+    folders: [
+      folder({ id: 'r', kind: 'git', abs_path: '/w/mono' }),
+      folder({ id: 'a', kind: 'module', abs_path: '/w/mono/app', role: 'website' }),
+      folder({ id: 'b', kind: 'module', abs_path: '/w/mono/crates/b', role: 'tool' }),
+      folder({ id: 'c', kind: 'module', abs_path: '/w/mono/crates/c', role: 'tool' }),
+      folder({ id: 'd', kind: 'module', abs_path: '/w/mono/crates/d', role: null }),
+      folder({ id: 's', kind: 'subtree', abs_path: '/w/mono/vendored' }),
+      folder({ id: 'v', kind: 'module', abs_path: '/w/mono/vendored/lib', role: 'library' }),
+      folder({ id: 'x', kind: 'module', abs_path: '/w/mono-other/x', role: 'docs' }),
+    ],
+  });
+
+  it('lists the distinct roles of the packages inside a repository, in role order', () => {
+    expect(derivedRoles(mono, 'r')).toEqual(['tool', 'website']);
+  });
+
+  it('gives a package to the nearest repository that holds it, never to both', () => {
+    expect(derivedRoles(mono, 's')).toEqual(['library']);
+  });
+
+  it('does not take a sibling whose path only shares a prefix', () => {
+    expect(derivedRoles(mono, 'r')).not.toContain('docs');
   });
 });
 

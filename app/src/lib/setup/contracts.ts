@@ -58,6 +58,8 @@ export interface DaemonProjectFolder {
   id: string;
   name: string;
   path: string;
+  /** Absolute on this machine; `path` is relative to the folder's root. */
+  abs_path: string;
   kind: string;
   role: string | null;
 }

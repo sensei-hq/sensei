@@ -12,7 +12,7 @@ import { mkdirSync } from 'fs';
 const DIR = '/tmp/sensei-shots';
 const REPOSITORY_KINDS = new Set(['git', 'subtree']);
 
-type Folder = { kind: string };
+type Folder = { id: string; name: string; kind: string; abs_path: string; role: string | null };
 type Project = { id: string; name: string; folders?: Folder[] };
 
 test('settings · projects lists repositories, not folders', async ({ tauriPage }) => {
@@ -50,6 +50,32 @@ test('settings · projects lists repositories, not folders', async ({ tauriPage 
   for (const s of shown) {
     expect(s.repos, `project ${s.id} lists only its repositories`).toBe(expected.get(s.id));
   }
+  // A repository shows the roles the scan inferred for its packages (#271
+  // "auto derive the category"). No checkout here nests another, so the
+  // packages under its path are its own.
+  const derived = (await tauriPage.evaluate(`
+    Object.fromEntries(Array.from(document.querySelectorAll('[data-placed] [data-repo]')).map((r) => [
+      r.closest('[data-testid^="project-card-"]').getAttribute('data-testid').replace('project-card-', '') + '/' + r.getAttribute('data-repo'),
+      r.querySelector('[data-derived-roles]')?.getAttribute('data-derived-roles') ?? '',
+    ]))
+  `)) as Record<string, string>;
+  for (const p of projects.filter((p) => placedIds.includes(p.id))) {
+    for (const repo of (p.folders ?? []).filter((f) => REPOSITORY_KINDS.has(f.kind))) {
+      const roles = new Set(
+        (p.folders ?? [])
+          .filter((f) => f.kind === 'module' && f.role && f.abs_path.startsWith(`${repo.abs_path}/`))
+          .map((f) => f.role as string),
+      );
+      const key = `${p.id}/${repo.name}`;
+      console.log(`[inspect]   ${key}: derived "${derived[key]}"`);
+      expect(new Set((derived[key] ?? '').split(' ').filter(Boolean))).toEqual(roles);
+    }
+  }
+  await tauriPage.evaluate(
+    `document.querySelector('[data-derived-roles]')?.closest('[data-testid^="project-card-"]')?.scrollIntoView({ block: 'center' })`,
+  );
+  await tauriPage.screenshot({ path: `${DIR}/settings-projects-derived.png` });
+
   if (projects.length > placedIds.length) {
     expect(unplaced).toContain(String(projects.length - placedIds.length));
   }

@@ -9,6 +9,7 @@
   import ProjectGlyph from '../../../routes/(observatory)/projects/ProjectGlyph.svelte';
   import { projectIcon } from '../../../routes/(observatory)/projects/buckets.js';
   import {
+    derivedRoles,
     repositoriesOf,
     type ProjectsApi,
     type ProjectsSectionState,
@@ -21,6 +22,7 @@
     { label: 'Unassigned', value: '' },
     ...ROLES.map((r) => ({ label: `${r.kanji} ${r.label}`, value: r.id })),
   ];
+  const roleById = new Map(ROLES.map((r) => [r.id, r]));
 </script>
 
 {#snippet card(project: (typeof state.projects)[number])}
@@ -46,10 +48,18 @@
     {#if repos.length > 0}
       <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
         {#each repos as repo (repo.id)}
+          {@const derived = derivedRoles(project, repo.id)}
           <div class="flex items-center gap-2 p-2 rounded-md bg-paper-soft border border-paper-edge" data-repo={repo.name}>
             <div class="min-w-0 flex-1">
               <div class="text-sm text-ink truncate">{repo.name}</div>
               <div class="font-mono text-xs text-ink-faint truncate" title={repo.path}>{repo.path}</div>
+              {#if derived.length > 0}
+                <div class="flex flex-wrap gap-x-2 text-xs text-ink-mute mt-0.5" data-derived-roles={derived.join(' ')} title="Inferred from its packages' manifests">
+                  {#each derived as id (id)}
+                    <span><span class="kanji text-accent">{roleById.get(id)?.kanji}</span> {roleById.get(id)?.label}</span>
+                  {/each}
+                </div>
+              {/if}
             </div>
             <Select
               size="sm"

@@ -12,6 +12,7 @@
 // `[]`, which read as "no projects" — a fabricated empty.
 import type { ApiResult } from '$lib/api.js';
 import type { DaemonProject, DaemonProjectFolder } from '$lib/setup/contracts.js';
+import { ROLES } from '$lib/setup/types.js';
 
 /** Folder kinds that are a repository of their own. */
 const REPOSITORY_KINDS = new Set(['git', 'subtree']);
@@ -19,6 +20,30 @@ const REPOSITORY_KINDS = new Set(['git', 'subtree']);
 /** Pure: a project's repositories — its git checkouts and subtrees. */
 export function repositoriesOf(p: DaemonProject): DaemonProjectFolder[] {
   return p.folders.filter((f) => REPOSITORY_KINDS.has(f.kind));
+}
+
+const inside = (dir: string, path: string) => path.startsWith(`${dir}/`);
+
+/** Pure: the roles the scan inferred for the packages inside a repository,
+ *  distinct and in picker order. A package belongs to the nearest repository
+ *  that holds it, so a subtree's packages are not also its parent's. */
+export function derivedRoles(p: DaemonProject, repoId: string): string[] {
+  const repos = repositoriesOf(p);
+  const repo = repos.find((r) => r.id === repoId);
+  if (!repo) return [];
+  const nearest = (f: DaemonProjectFolder) =>
+    repos
+      .filter((r) => inside(r.abs_path, f.abs_path))
+      .reduce<DaemonProjectFolder | null>(
+        (best, r) => (best && best.abs_path.length >= r.abs_path.length ? best : r),
+        null,
+      );
+  const found = new Set(
+    p.folders
+      .filter((f) => f.kind === 'module' && f.role && nearest(f)?.id === repo.id)
+      .map((f) => f.role as string),
+  );
+  return ROLES.map((r) => r.id).filter((id) => found.has(id));
 }
 
 /** Pure: projects with at least one repository on this machine, and those
