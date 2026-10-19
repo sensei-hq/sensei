@@ -92,11 +92,24 @@ crates-all:
 # credential resolves via env(). Nothing leaves the machine.
 #   Studio            → http://127.0.0.1:54323
 #   Inbucket (mail)   → http://127.0.0.1:54324   (magic-link emails land here)
-.PHONY: supabase-up supabase-down
+.PHONY: supabase-up supabase-down dojo-local
 supabase-up:  ## Boot the local Dōjō supabase auth stack (localhost only)
 	supabase start
 supabase-down:  ## Stop the local Dōjō supabase auth stack
 	supabase stop
+
+# The whole local chain the daemon's dojo_sync talks to (#186; runbook in
+# dojo/CLAUDE.md). Refuses a busy :5173 rather than drifting to another port the
+# daemon would never dial; boots supabase only if it is not already up; then runs
+# the dōjō dev server on 127.0.0.1:5173 in the foreground (Ctrl-C stops it).
+dojo-local:  ## Local dōjō for the daemon: supabase + dojo dev on 127.0.0.1:5173
+	@if lsof -nP -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then \
+	  echo "dojo-local: port 5173 is already in use:"; lsof -nP -iTCP:5173 -sTCP:LISTEN; exit 1; fi
+	@supabase status >/dev/null 2>&1 || supabase start
+	@echo "dojo-local: supabase is up; starting the dōjō on http://127.0.0.1:5173"
+	@echo "  then: Sensei.app → Settings → Dōjō → Connection, sign in to http://127.0.0.1:5173"
+	@echo "  working: the daemon log shows 'dojo_sync: cycle complete' within 60s"
+	cd dojo && bun run dev
 
 # ── Install ───────────────────────────────────────────────────────────────────
 #
