@@ -41,6 +41,8 @@ const WORDS: Record<string, string> = {
   db: 'sensei hit a database error while syncing.',
   unsupported_tracker: 'This tracker type isn’t available in this version of sensei.',
   busy: 'A sync is already running.',
+  task_not_found: 'No ticket with that key in sensei.',
+  bad_request: 'Jira rejected the request.',
 };
 
 const FIELD: Record<string, TrackerAlert['field']> = {
@@ -62,6 +64,14 @@ export function errorFor(status: number, body: Record<string, unknown> | undefin
     return {
       code,
       text: `No board #${String(body?.board_ref ?? '')} on ${String(body?.base_url ?? '')}.`,
+      field,
+      link: null,
+    };
+  }
+  if (code === 'task_not_on_board') {
+    return {
+      code,
+      text: `${String(body?.key ?? '')} isn’t on board #${String(body?.board_ref ?? '')}: it may be in another Jira project, or outside the board’s filter.`,
       field,
       link: null,
     };

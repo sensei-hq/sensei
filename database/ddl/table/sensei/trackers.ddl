@@ -15,6 +15,7 @@ create table if not exists trackers (
 , last_attempt_at  timestamptz
 , last_success_at  timestamptz
 , last_error       tracker_error
+, discovered_through timestamptz not null default now()
 , created_at       timestamptz   not null default now()
 , unique (project_id)
 , unique (kind, base_url, board_ref)
@@ -45,5 +46,7 @@ comment on column trackers.last_success_at
      is 'When a sync last committed in full. NULL = never (status pending), also reset by a re-connect.';
 comment on column trackers.last_error
      is 'Failure code of the last sync or connect; NULL after a success. Never a raw message.';
+comment on column trackers.discovered_through
+     is 'R11 watermark: transcript turns ingested up to here have been checked for ticket keys the tracker does not have yet. Starts at connect time; the first full sync covers what came before.';
 comment on column trackers.created_at
      is 'When the connection was first made.';

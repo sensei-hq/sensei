@@ -17,6 +17,7 @@ create type tracker_error as enum (
 , 'credential_store'      -- the keyring could not be used (or timed out)
 , 'unsupported_tracker'   -- no adapter registered for the kind
 , 'db'                    -- a database failure during a sync
+, 'bad_request'           -- 400: the provider rejected the request (e.g. a key that exists nowhere)
 );
 
 comment on type tracker_error is

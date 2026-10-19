@@ -248,6 +248,12 @@ pub fn describe_error(status: u16, body: &Value) -> String {
             .into(),
         "forbidden" => "This account can't read that board. Ask the board admin for access, or use another account.".into(),
         "board_not_found" => format!("No board #{} on {}.", field("board_ref"), field("base_url")),
+        "task_not_on_board" => format!(
+            "{} isn't on board #{}: it may be in another Jira project, or outside the board's filter.",
+            field("key"),
+            field("board_ref")
+        ),
+        "task_not_found" => "No ticket with that key in sensei.".into(),
         "board_already_connected" => {
             let p = body.get("project");
             let name = p.and_then(|p| p.get("name")).and_then(Value::as_str).unwrap_or("?");
@@ -712,6 +718,17 @@ mod tests {
 
     #[test]
     fn errors_are_described_in_words() {
+        assert_eq!(
+            describe_error(
+                404,
+                &json!({"error": "task_not_on_board", "key": "AUTH-404", "board_ref": "42"})
+            ),
+            "AUTH-404 isn't on board #42: it may be in another Jira project, or outside the board's filter."
+        );
+        assert_eq!(
+            describe_error(404, &json!({"error": "task_not_found"})),
+            "No ticket with that key in sensei."
+        );
         assert!(
             describe_error(401, &json!({"error": "unauthorized"}))
                 .contains("rejected the email and token")

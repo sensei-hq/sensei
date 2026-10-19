@@ -388,6 +388,13 @@ describe('errorFor (daemon code → words)', () => {
     expect(words('something_new')).toBe('Unexpected error from sensei (something_new).');
   });
 
+  it('names a ticket the board does not have', () => {
+    expect(errorFor(404, { error: 'task_not_on_board', key: 'AUTH-404', board_ref: '42' }).text).toBe(
+      'AUTH-404 isn’t on board #42: it may be in another Jira project, or outside the board’s filter.',
+    );
+    expect(errorFor(404, { error: 'task_not_found' }).text).toBe('No ticket with that key in sensei.');
+  });
+
   it('a network failure is the daemon not responding, never "not connected"', () => {
     expect(errorFor(0, undefined).text).toBe('The sensei daemon didn’t respond.');
   });

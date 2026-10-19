@@ -43,6 +43,8 @@ pub struct TrackerRuntime {
     pub locks: TrackerLocks,
     pub secrets: Arc<dyn SecretStore>,
     pub transports: Arc<dyn TransportFactory>,
+    /// R11: per-tracker pause after a failed discovery.
+    pub discovery: crate::tracker::discover::DiscoverBackoff,
 }
 
 impl Default for TrackerRuntime {
@@ -51,6 +53,7 @@ impl Default for TrackerRuntime {
             locks: TrackerLocks::default(),
             secrets: Arc::new(KeyringSecretStore),
             transports: Arc::new(ReqwestTransportFactory),
+            discovery: Default::default(),
         }
     }
 }
@@ -92,6 +95,22 @@ pub async fn sync_stored(
     sync_tracker(pg, &rt.locks, row.id, adapter, transport.as_ref(), SYNC_DEADLINE).await
 }
 
+/// R11 discovery for one stored tracker, resolving its adapter and transport.
+pub async fn discover_stored(
+    pg: &PgStore,
+    rt: &TrackerRuntime,
+    row: &TrackerRow,
+    scope: crate::tracker::discover::Scope<'_>,
+) -> Result<crate::tracker::discover::DiscoverOutcome, crate::tracker::discover::DiscoverError> {
+    use crate::tracker::discover::{DiscoverError, discover};
+    let adapter = crate::tracker::TrackerKind::parse(&row.kind)
+        .and_then(crate::tracker::adapter_for_kind)
+        .ok_or(DiscoverError::Failed(TrackerError::UnsupportedTracker))?;
+    let transport =
+        transport_for(rt, adapter, row, SYNC_RETRIES).await.map_err(DiscoverError::Failed)?;
+    discover(pg, &rt.locks, &rt.discovery, row.id, adapter, transport.as_ref(), scope).await
+}
+
 #[cfg(test)]
 pub mod test_support {
     use super::*;
@@ -103,8 +122,15 @@ pub mod test_support {
         pub boards: std::sync::Mutex<HashMap<String, Arc<dyn GetTransport>>>,
     }
     impl FakeFactory {
-        pub fn serve(&self, base_url: &str, board: crate::tracker::test_support::FakeBoard) {
-            self.boards.lock().unwrap().insert(base_url.to_string(), Arc::new(board));
+        /// Serve `board` for `base_url`; the handle lets a test read its call log.
+        pub fn serve(
+            &self,
+            base_url: &str,
+            board: crate::tracker::test_support::FakeBoard,
+        ) -> Arc<crate::tracker::test_support::FakeBoard> {
+            let board = Arc::new(board);
+            self.boards.lock().unwrap().insert(base_url.to_string(), board.clone());
+            board
         }
     }
     impl TransportFactory for FakeFactory {
@@ -130,6 +156,7 @@ pub mod test_support {
             locks: TrackerLocks::default(),
             secrets: store.clone(),
             transports: factory.clone(),
+            discovery: Default::default(),
         });
         (rt, store, factory)
     }

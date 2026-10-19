@@ -8,7 +8,9 @@ use std::time::Duration;
 use crate::db::pg_store::PgStore;
 use crate::db::pg_store::trackers::{ApplyCounts, ApplyError};
 use crate::tracker::link::known_tasks;
-use crate::tracker::{BoardScope, GetTransport, Link, Snapshot, TrackerAdapter, TrackerError};
+use crate::tracker::{
+    BoardScope, GetTransport, KnownTask, Link, SessionText, Snapshot, TrackerAdapter, TrackerError,
+};
 
 /// Candidate sessions read per chunk when computing links.
 pub const LINK_CHUNK: i64 = 200;
@@ -128,28 +130,56 @@ async fn compute_links(
 ) -> Result<Vec<Link>, String> {
     let aliases = pg.tracker_key_aliases(tracker_id).await?;
     let known = Arc::new(known_tasks(&aliases, &snapshot.tasks));
-    let mut links = Vec::new();
+    links_to(pg, tracker_id, adapter, known, None).await
+}
+
+/// Every candidate session's links to `known` (R6 matching), optionally only the
+/// sessions with turns ingested after a time.
+pub(crate) async fn links_to(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    adapter: &'static dyn TrackerAdapter,
+    known: Arc<Vec<KnownTask>>,
+    ingested_after: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<Vec<Link>, String> {
     if known.is_empty() {
-        return Ok(links);
+        return Ok(Vec::new());
     }
+    scan_sessions(pg, tracker_id, ingested_after, move |s| adapter.match_links(s, &known)).await
+}
+
+/// Run a pure per-session function over the tracker's candidate sessions, read
+/// in chunks of [`LINK_CHUNK`] (R5 step 3) and evaluated on a blocking thread.
+pub(crate) async fn scan_sessions<T, F>(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    ingested_after: Option<chrono::DateTime<chrono::Utc>>,
+    per_session: F,
+) -> Result<Vec<T>, String>
+where
+    T: Send + 'static,
+    F: Fn(&SessionText) -> Vec<T> + Send + Sync + 'static,
+{
+    let per_session = Arc::new(per_session);
+    let mut out = Vec::new();
     let mut after = None;
     loop {
-        let chunk = pg.load_link_inputs(tracker_id, after, LINK_CHUNK).await?;
+        let chunk = pg.load_link_inputs(tracker_id, after, LINK_CHUNK, ingested_after).await?;
         let Some(last) = chunk.last() else { break };
         after = Some(last.session_id);
         let full = chunk.len() as i64 == LINK_CHUNK;
-        let known = known.clone();
+        let f = per_session.clone();
         let found = tokio::task::spawn_blocking(move || {
-            chunk.iter().flat_map(|s| adapter.match_links(s, &known)).collect::<Vec<_>>()
+            chunk.iter().flat_map(|s| f(s)).collect::<Vec<_>>()
         })
         .await
         .map_err(|e| e.to_string())?;
-        links.extend(found);
+        out.extend(found);
         if !full {
             break;
         }
     }
-    Ok(links)
+    Ok(out)
 }
 
 /// Step 5 for a database failure: recorded as `db`, conditional like the others.
@@ -600,6 +630,21 @@ mod tests {
                 })
                 .collect()
         }
+        fn unknown_keys(
+            &self,
+            _session: &crate::tracker::SessionText,
+            _known: &[crate::tracker::KnownTask],
+        ) -> Vec<String> {
+            Vec::new()
+        }
+        async fn fetch_tasks(
+            &self,
+            _t: &dyn GetTransport,
+            _board: &BoardScope,
+            _keys: &[String],
+        ) -> Result<crate::tracker::Discovered, TrackerError> {
+            Ok(Default::default())
+        }
     }
 
     #[tokio::test]
@@ -899,6 +944,21 @@ mod tests {
                 .into_iter()
                 .map(|l| crate::tracker::Link { mentions: 0, ..l })
                 .collect()
+        }
+        fn unknown_keys(
+            &self,
+            session: &crate::tracker::SessionText,
+            known: &[crate::tracker::KnownTask],
+        ) -> Vec<String> {
+            JiraAdapter.unknown_keys(session, known)
+        }
+        async fn fetch_tasks(
+            &self,
+            t: &dyn GetTransport,
+            board: &BoardScope,
+            keys: &[String],
+        ) -> Result<crate::tracker::Discovered, TrackerError> {
+            JiraAdapter.fetch_tasks(t, board, keys).await
         }
     }
 

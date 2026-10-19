@@ -279,7 +279,7 @@ describe('a ticket', () => {
     const { s } = await ready({ tryGetTrackerTask: async () => fail(404, 'task_not_found') });
     await s.openTicket('AUTH-1');
     expect(s.ticket).toBe(null);
-    expect(s.ticketError).toBe('Unexpected error from sensei (task_not_found).');
+    expect(s.ticketError).toBe('No ticket with that key in sensei.');
   });
 });
 

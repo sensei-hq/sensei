@@ -163,7 +163,8 @@ sensei project ──< repositories        (existing: repositories_in_projects; 
 
 `tracker_error` enum: `unauthorized`, `forbidden`, `not_found`, `rate_limited`,
 `http_error`, `transport`, `decode`, `redirect`, `token_missing`,
-`credential_store`, `unsupported_tracker`, `db` (a database failure during a sync,
+`credential_store`, `unsupported_tracker`, `bad_request` (a 400: the provider rejected
+the request, e.g. R11's search for a key that exists nowhere; 5xx stays `http_error`), `db` (a database failure during a sync,
 recorded like the others so status can't read `connected` while every sync fails). `last_error` and sync/connect failures caused by the provider or the
 credential store carry only these codes — never a raw error string (a reqwest error
 carries the URL; a body may carry issue text). R8 adds request-validation codes of
@@ -558,7 +559,10 @@ rows); it never marks anything removed and never deletes a link.
 **Triggers.**
 - **Ingest.** After `ingest_capture` writes turns (`upsert_transcript_turns` > 0) for a
   session that is a candidate (R1) of a tracker, enqueue `TaskKind::TrackerDiscover`
-  for that tracker unless one is already pending (coalescing). Latency: within the
+  for that tracker unless one is already pending (coalescing:
+  `TaskQueue::has_pending_kind_path`, path = tracker id). The seam is
+  `tracker::discover::after_ingest(pg, queue, client_session_id)`, called from
+  `transcript::run_ingest_capture`. Latency: within the
   `ingest_captures` interval (300 s) plus seconds. Live session hooks are not a
   trigger in this slice.
 - **Lookup.** `GET …/tracker-tasks/{key}` that misses (R8), for a key in the board's
@@ -581,8 +585,10 @@ R5 shape (no DB transaction or connection across network calls):
 4. **Fetch:** `adapter.fetch_tasks(board, keys)` under a 60 s deadline. Jira:
    `GET /rest/agile/1.0/board/{id}/issue?jql=key in (K1,…)&fields=summary,issuetype,status,sprint,closedSprints`
    — board-scoped, so only issues on the board come back. If Jira answers 400 for the
-   batch (claim C33: a key that exists nowhere fails the whole `key in` query), ask
-   one key at a time; a key that fails alone is "not on the board". JQL is built
+   batch with `bad_request` (claim C33: a key that exists nowhere fails the whole
+   `key in` query), ask one key at a time; a key whose own request is `bad_request` is
+   "not on the board". Any other failure (5xx, transport, 401…) fails the run and
+   negative-caches nothing. JQL is built
    **only** from keys that passed the adapter's key-shape check (no quoting or
    escaping is ever needed, and none is attempted).
 5. **Apply** — one short transaction, `apply_discovered(id, secret_service,
@@ -591,7 +597,9 @@ R5 shape (no DB transaction or connection across network calls):
    `last_seen_at = now()`), add their keys to `tracker_task_keys`, add memberships for
    sprints sensei already has (an unknown sprint is skipped and counted; the next full
    sync brings it), recompute `current_sprint_id` for those tasks (R5 rule), insert the
-   links of the examined sessions to these tasks (`match_links` against the new tasks;
+   links of **every candidate session** to these tasks — computed before the
+   transaction by the R5 step 3 read with `known` = the new tasks only, so a session
+   ingested before the watermark (or a lookup's) links too (`match_links`;
    `on conflict (session_id, task_id, source) do update` of `matched_key`/`mentions`/
    `linked_at`), upsert `not_found` into `tracker_unknown_keys`, advance
    `discovered_through`.
@@ -674,6 +682,7 @@ Unattended (CI):
 2a. `rg -n -i '\b(select|insert|update|delete)\b.*\b(from|into|set|where)\b' crates/senseid/src/tracker` → no hits **outside `#[cfg(test)]` modules** (test fixtures may seed rows, as `check-sql-in-layer` allows; `make check-sql-in-layer` only matches `sqlx_core::query*` call sites, so SQL text in a `const` would slip past it).
 2b. Outside `#[cfg(test)]` modules: `rg -n -i 'jira|atlassian'` over `crates/senseid/src/tracker/{http,sync,status,sprint,transport,runtime,secret,connect}.rs` (and `link.rs`/`usage.rs` once F3/F4 add them) → no output; in `tracker/mod.rs` the only hits are `mod jira;`, the `JiraAdapter` entry in `adapters()`, the `TrackerKind::Jira` variant with its `"jira"` label (the `tracker_kind` enum), and doc comments. Naming the adapter in the registry, the CLI's `jira` subcommand and `SENSEI_JIRA_TOKEN` is expected; Jira **logic** (key shape, endpoints, auth, host rule) lives only in `tracker/jira.rs`.
 3. `rg -n 'api_token|SENSEI_JIRA_TOKEN' crates/senseid/src crates/cli/src` hits only the connect request type, its keyring call, and the CLI token reader; no DDL column holds a token.
+3b. `rg -n 'discover::after_ingest' crates/senseid/src/transcript/mod.rs` → 1 hit (the R11 ingest trigger; its unit test can't see a missing call).
 4. `tracker_sync` is in `SCHEDULABLE`, `DESCRIPTIONS` and `schedules.jsonl`; `every_schedulable_worker_has_a_description`, `every_schedulable_worker_has_a_schedule_row`, `every_schedule_row_names_a_real_worker` and `schedulable_names_are_unique_and_sorted` pass; `rg -n 'tracker_sync::spawn' crates/senseid/src/api/server.rs` → 1 hit (the tests above can't see a missing spawn).
 5. `rg -n 'const ALLOWED_ORIGINS|fn origin_may_mutate' crates/senseid/src` → exactly one definition each, in `api/origin_guard.rs`.
 
@@ -751,7 +760,7 @@ Human (after both prerequisites; needs the user's tenant):
 | C30 | `gateway_keys` calls are blocking and must be wrapped in `spawn_blocking` | `gateway_keys/mod.rs:14-17` | as stated | as stated | CONFIRMED |
 | C31 | CLI blocking client default timeout is 30 s (`client()` → `client_with_timeout(30)`); DB pool max 24, acquire timeout 10 s | `crates/cli/src/main.rs:291-297`; `crates/bootstrap/src/config.rs:93,109` | as stated | as stated | CONFIRMED |
 | C32 | `scripts/check-sql-in-layer.py` matches only `sqlx_core::query*` call sites and exempts test modules | read the script | as stated | `CALL` regex line 38; test exemptions lines 21–37 | CONFIRMED |
-| C33 | Jira Cloud answers 400 for a whole `jql=key in (…)` when one key exists nowhere | needs the tenant | R11 falls back to one key per request | — | UNCHECKED (verify in F8 against senecaglobal.jira.com) |
+| C33 | Jira Cloud answers 400 for a whole `jql=key in (…)` when one key exists nowhere | needs the tenant | R11 falls back to one key per request | 2026-10-19, senecaglobal.jira.com board 333: `GET …/tracker-tasks/P057542601-999999` → 404 `task_not_on_board`, key negative-cached; Jira's raw status (400 or an empty result) is not logged, and R11 handles both identically | CONFIRMED (behaviour); raw status unobserved, not load-bearing |
 | C34 | `GET /rest/agile/1.0/board/{id}/issue` returns `fields.sprint` (current) and `fields.closedSprints` when asked for them | needs the tenant | R11 builds memberships from them | — | UNCHECKED (verify in F8; without them discovery inserts the task with no membership and the next full sync adds it) |
 | C35 | Transcript turns are written by `upsert_transcript_turns` from `ingest_capture`, and `ingest_captures` runs every 300 s | `transcript/mod.rs` (~L500); `database/import/staging/schedules.jsonl` | the R11 ingest trigger and its latency | as stated | CONFIRMED 2026-10-19 |
 | C36 | The task queue can tell whether a task kind is already pending (`TaskQueue::has_pending_kind`) | `tasks/transcript_scheduler.rs` `enqueue_backfill` | R11 coalescing | as stated | CONFIRMED 2026-10-19 |

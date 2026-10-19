@@ -18,7 +18,7 @@ use crate::tracker::sync::SyncError;
 use crate::tracker::usage::{
     sprint_usages, ticket_usage_by_repo, ticket_usages, unlinked_in_sprint,
 };
-use crate::tracker::{TrackerKind, ValidateError, adapter_for_kind};
+use crate::tracker::{TrackerError, TrackerKind, ValidateError, adapter_for_kind};
 
 /// One-second waits a first sync spends on a running sync before leaving it to the tick.
 const FIRST_SYNC_BUSY_RETRIES: u32 = 15 * 60;
@@ -244,7 +244,10 @@ pub(crate) async fn get_tracker_task(
     };
     let task = match state.pg.tracker_task_detail(project, &key).await {
         Ok(Some(task)) => task,
-        Ok(None) => return fail(StatusCode::NOT_FOUND, "task_not_found"),
+        Ok(None) => match discover_on_miss(&state, project, &key).await {
+            Ok(task) => task,
+            Err(r) => return r,
+        },
         Err(_) => return internal(),
     };
     // The ticket exists, so the project has a tracker.
@@ -286,6 +289,53 @@ pub(crate) async fn get_tracker_task(
         "sessions": sessions,
     }))
     .into_response()
+}
+
+/// Longest a lookup waits on discovery before answering.
+const LOOKUP_DISCOVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// R11 lookup: a key in the board's shape that sensei has not synced is fetched
+/// once before answering. Anything else stays `task_not_found`, with no request.
+async fn discover_on_miss(
+    state: &AppState,
+    project: uuid::Uuid,
+    key: &str,
+) -> Result<crate::db::pg_store::trackers::TaskDetail, Response> {
+    use crate::tracker::discover::{DiscoverError, Scope};
+    let not_found = || fail(StatusCode::NOT_FOUND, "task_not_found");
+    let tracker = match state.pg.tracker_for_project(project).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return Err(not_found()),
+        Err(_) => return Err(internal()),
+    };
+    let keys = [key.to_string()];
+    let run = crate::tracker::runtime::discover_stored(
+        &state.pg,
+        &state.trackers,
+        &tracker,
+        Scope::Keys(&keys),
+    );
+    match tokio::time::timeout(LOOKUP_DISCOVERY, run).await {
+        Err(_) => Err(fail(StatusCode::BAD_GATEWAY, TrackerError::Transport.code())),
+        Ok(Ok(out)) if !out.inserted.is_empty() => match state.pg.tracker_task_detail(project, key).await {
+            Ok(Some(task)) => Ok(task),
+            Ok(None) => Err(not_found()),
+            Err(_) => Err(internal()),
+        },
+        Ok(Ok(out)) => match out.not_on_board.first() {
+            Some(k) => Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "task_not_on_board", "key": k, "board_ref": tracker.board_ref})),
+            )
+                .into_response()),
+            None => Err(not_found()),
+        },
+        Ok(Err(DiscoverError::Busy)) => Err(fail(StatusCode::CONFLICT, "busy")),
+        Ok(Err(DiscoverError::Failed(e))) => Err(fail(StatusCode::BAD_GATEWAY, e.code())),
+        Ok(Err(DiscoverError::Db(_))) => Err(internal()),
+        // Paused after a recent failure, or re-connected meanwhile: answer from what is stored.
+        Ok(Err(DiscoverError::Paused | DiscoverError::Gone)) => Err(not_found()),
+    }
 }
 
 /// The project's tracker, or the response to return (404 `not_connected`).
@@ -868,11 +918,12 @@ mod tests {
             call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/AUTH-3"), None, None).await;
         assert_eq!((st, json(&b)["task"]["key"].clone()), (StatusCode::OK, json!("PLAT-9")), "{b}");
 
+        // A key in the board's shape is looked for on the board first (R11).
         let missing =
             call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/AUTH-404"), None, None).await;
         assert_eq!(
             (missing.0, json(&missing.1)["error"].clone()),
-            (StatusCode::NOT_FOUND, json!("task_not_found"))
+            (StatusCode::NOT_FOUND, json!("task_not_on_board"))
         );
         let foreign = call(
             &h,
@@ -972,5 +1023,53 @@ mod tests {
             call(&h, "GET", &format!("/api/projects/{p}/sprints"), None, Some("https://evil.com"))
                 .await;
         assert_eq!(foreign.0, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn a_lookup_miss_in_the_board_shape_discovers_the_ticket_first() {
+        let h = harness().await;
+        let p = project(&h).await;
+        let s = site();
+        let board = h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().with_jql(
+                "key in (AUTH-900)",
+                json!([{"id": "10900", "key": "AUTH-900", "fields": {"summary": "New"}}]),
+            ),
+        );
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+
+        let (st, b) =
+            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/auth-900"), None, None).await;
+        assert_eq!(
+            (st, json(&b)["task"]["key"].clone()),
+            (StatusCode::OK, json!("AUTH-900")),
+            "{b}"
+        );
+
+        let (st, b) =
+            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/AUTH-404"), None, None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{b}");
+        assert_eq!(
+            json(&b),
+            json!({"error": "task_not_on_board", "key": "AUTH-404", "board_ref": "42"})
+        );
+
+        let asked = board.jql_calls().len();
+        let (st, b) =
+            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/UTF-8"), None, None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("task_not_found"))
+        );
+        let (_, b) =
+            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/AUTH-404"), None, None).await;
+        assert_eq!(
+            json(&b)["error"],
+            json!("task_not_found"),
+            "negative-cached: answered without asking"
+        );
+        assert_eq!(board.jql_calls().len(), asked, "neither asked the board");
     }
 }

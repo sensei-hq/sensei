@@ -6,6 +6,7 @@
 //! every SQL statement lives in `db::pg_store::trackers`.
 
 pub mod connect;
+pub mod discover;
 pub mod http;
 pub mod jira;
 pub mod link;
@@ -203,6 +204,14 @@ pub struct KnownTask {
     pub current: bool,
 }
 
+/// Tickets fetched by key (R11), and their memberships of sprints:
+/// `(sprint external id, task external id)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Discovered {
+    pub tasks: Vec<TaskRow>,
+    pub members: Vec<(String, String)>,
+}
+
 /// A session linked to a ticket, named by the ticket's provider id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
@@ -237,6 +246,18 @@ pub trait TrackerAdapter: Send + Sync {
     ) -> Result<Snapshot, TrackerError>;
     /// Pure: which known tickets this session's text refers to.
     fn match_links(&self, session: &SessionText, known: &[KnownTask]) -> Vec<Link>;
+    /// R11: pure — keys in this session's text shaped like this board's tickets (a
+    /// prefix the board already uses) that match no known ticket. Every key returned
+    /// is in the adapter's validated key shape.
+    fn unknown_keys(&self, session: &SessionText, known: &[KnownTask]) -> Vec<String>;
+    /// R11: fetch these tickets, scoped to the board. A key the board does not have
+    /// is absent from the result; a request the provider rejects is `BadRequest`.
+    async fn fetch_tasks(
+        &self,
+        t: &dyn GetTransport,
+        board: &BoardScope,
+        keys: &[String],
+    ) -> Result<Discovered, TrackerError>;
 }
 
 /// The registered adapters — the only place a new tracker is added.
@@ -267,12 +288,13 @@ pub enum TrackerError {
     CredentialStore,
     UnsupportedTracker,
     Db,
+    BadRequest,
 }
 
 impl TrackerError {
     /// Every variant, for exhaustiveness checks against the DDL enum.
     #[cfg(test)]
-    pub const ALL: [TrackerError; 12] = [
+    pub const ALL: [TrackerError; 13] = [
         TrackerError::Unauthorized,
         TrackerError::Forbidden,
         TrackerError::NotFound,
@@ -285,6 +307,7 @@ impl TrackerError {
         TrackerError::CredentialStore,
         TrackerError::UnsupportedTracker,
         TrackerError::Db,
+        TrackerError::BadRequest,
     ];
 
     /// The `sensei.tracker_error` enum label for this error.
@@ -302,6 +325,7 @@ impl TrackerError {
             TrackerError::CredentialStore => "credential_store",
             TrackerError::UnsupportedTracker => "unsupported_tracker",
             TrackerError::Db => "db",
+            TrackerError::BadRequest => "bad_request",
         }
     }
 }
@@ -360,6 +384,10 @@ pub mod test_support {
         calls: Mutex<Vec<String>>,
         on_call: Option<Hook>,
         delay: Option<std::time::Duration>,
+        /// Board-scoped searches (R11), keyed by the exact `jql`; an unknown one
+        /// finds nothing.
+        jql: HashMap<String, Result<serde_json::Value, TrackerError>>,
+        jql_calls: Mutex<Vec<String>>,
     }
 
     /// Runs on every call, before the response — e.g. to delete the tracker
@@ -378,7 +406,26 @@ pub mod test_support {
                 calls: Mutex::new(vec![]),
                 on_call: None,
                 delay: None,
+                jql: HashMap::new(),
+                jql_calls: Mutex::new(vec![]),
             }
+        }
+        /// Answer a board-scoped search for this exact `jql` with these issues.
+        pub fn with_jql(mut self, jql: &str, issues: serde_json::Value) -> Self {
+            self.jql.insert(
+                jql.into(),
+                Ok(serde_json::json!({"startAt": 0, "total": 0, "issues": issues})),
+            );
+            self
+        }
+        /// Fail a board-scoped search for this exact `jql`.
+        pub fn fail_jql(mut self, jql: &str, e: TrackerError) -> Self {
+            self.jql.insert(jql.into(), Err(e));
+            self
+        }
+        /// Every `jql` asked, in order.
+        pub fn jql_calls(&self) -> Vec<String> {
+            self.jql_calls.lock().unwrap().clone()
         }
         pub fn with(mut self, path: &str, start_at: u32, body: serde_json::Value) -> Self {
             self.pages.insert((path.into(), start_at), body);
@@ -450,6 +497,12 @@ pub mod test_support {
             }
             if let Some(d) = self.delay {
                 tokio::time::sleep(d).await;
+            }
+            if let Some((_, jql)) = query.iter().find(|(k, _)| *k == "jql") {
+                self.jql_calls.lock().unwrap().push(jql.clone());
+                return self.jql.get(jql).cloned().unwrap_or_else(|| {
+                    Ok(serde_json::json!({"startAt": 0, "total": 0, "issues": []}))
+                });
             }
             let start: u32 = query
                 .iter()

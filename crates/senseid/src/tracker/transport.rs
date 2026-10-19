@@ -39,6 +39,7 @@ pub fn map_response(resp: &RawResponse) -> Result<serde_json::Value, TrackerErro
     match resp.status {
         200..=299 => serde_json::from_slice(&resp.body).map_err(|_| TrackerError::Decode),
         300..=399 => Err(TrackerError::Redirect),
+        400 => Err(TrackerError::BadRequest),
         401 => Err(TrackerError::Unauthorized),
         403 => Err(TrackerError::Forbidden),
         404 => Err(TrackerError::NotFound),
@@ -155,7 +156,7 @@ mod tests {
             (403, TrackerError::Forbidden),
             (404, TrackerError::NotFound),
             (500, TrackerError::HttpError),
-            (400, TrackerError::HttpError),
+            (400, TrackerError::BadRequest),
             (301, TrackerError::Redirect),
             (302, TrackerError::Redirect),
             (429, TrackerError::RateLimited),

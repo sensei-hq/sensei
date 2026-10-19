@@ -4,9 +4,9 @@
 use crate::tracker::http::{InvalidBaseUrl, normalize_base_url};
 use crate::tracker::sprint::SprintState;
 use crate::tracker::{
-    ApiToken, AuthScheme, BoardScope, ConnectParams, GetTransport, KnownTask, Link, LinkSource,
-    ParamError, PrevState, SessionText, Snapshot, SprintRow, TaskRow, TrackerAdapter, TrackerError,
-    TrackerKind, ValidateError, Validated,
+    ApiToken, AuthScheme, BoardScope, ConnectParams, Discovered, GetTransport, KnownTask, Link,
+    LinkSource, ParamError, PrevState, SessionText, Snapshot, SprintRow, TaskRow, TrackerAdapter,
+    TrackerError, TrackerKind, ValidateError, Validated,
 };
 
 /// Jira Cloud's site domains: `atlassian.net`, and `jira.com` for older sites.
@@ -187,6 +187,19 @@ impl TrackerAdapter for JiraAdapter {
     fn match_links(&self, session: &SessionText, known: &[KnownTask]) -> Vec<Link> {
         match_keys(session, known)
     }
+
+    fn unknown_keys(&self, session: &SessionText, known: &[KnownTask]) -> Vec<String> {
+        unknown_keys_in(session, known)
+    }
+
+    async fn fetch_tasks(
+        &self,
+        t: &dyn GetTransport,
+        board: &BoardScope,
+        keys: &[String],
+    ) -> Result<Discovered, TrackerError> {
+        fetch_keys(t, board, keys).await
+    }
 }
 
 /// Jira's `match_links` (spec R6): keys of `known` found in the session's branches
@@ -197,14 +210,7 @@ pub fn match_keys(session: &SessionText, known: &[KnownTask]) -> Vec<Link> {
     for k in known {
         by_key.entry(k.key.as_str()).or_default().push(k);
     }
-    let mut prefixes: Vec<String> = known
-        .iter()
-        .filter_map(|k| k.key.rsplit_once('-').map(|(p, _)| p.to_ascii_uppercase()))
-        .filter(|p| !p.is_empty())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    prefixes.sort_by_key(|p| std::cmp::Reverse(p.len()));
+    let prefixes = key_prefixes(known);
     // The (task, alias) pairs a text carries, one per occurrence.
     let tasks_in = |text: &str| -> Vec<(&str, String)> {
         keys_in(text.as_bytes(), &prefixes)
@@ -272,6 +278,103 @@ pub fn match_keys(session: &SessionText, known: &[KnownTask]) -> Vec<Link> {
         .collect()
 }
 
+/// The project-key prefixes of `known`, longest first (the scan order).
+fn key_prefixes(known: &[KnownTask]) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut prefixes: Vec<String> = known
+        .iter()
+        .filter_map(|k| k.key.rsplit_once('-').map(|(p, _)| p.to_ascii_uppercase()))
+        .filter(|p| !p.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    prefixes.sort_by_key(|p| std::cmp::Reverse(p.len()));
+    prefixes
+}
+
+/// R11: keys in the session's branches and prompts that use a prefix the board
+/// already has but match no known key. Sorted, once each, shape-checked.
+pub fn unknown_keys_in(session: &SessionText, known: &[KnownTask]) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let prefixes = key_prefixes(known);
+    let have: BTreeSet<&str> = known.iter().map(|k| k.key.as_str()).collect();
+    session
+        .branches
+        .iter()
+        .chain(&session.prompts)
+        .flat_map(|text| keys_in(text.as_bytes(), &prefixes))
+        .filter(|k| !have.contains(k.as_str()) && is_jira_key(k))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// One board-scoped search for these (shape-checked) keys.
+async fn search_keys(
+    t: &dyn GetTransport,
+    board: &BoardScope,
+    keys: &[String],
+) -> Result<Discovered, TrackerError> {
+    let query = [
+        ("jql", format!("key in ({})", keys.join(","))),
+        ("fields", "summary,issuetype,status,sprint,closedSprints".to_string()),
+        ("maxResults", crate::tracker::discover::DISCOVER_MAX_KEYS.to_string()),
+    ];
+    let page = t.get_json(&format!("{}/issue", board_path(&board.board_ref)), &query).await?;
+    let issues = page.get("issues").and_then(|v| v.as_array()).ok_or(TrackerError::Decode)?;
+    let mut out = Discovered::default();
+    for v in issues {
+        let task = task_row(v)?;
+        let sprint_ids = v.pointer("/fields/sprint/id").into_iter().chain(
+            v.pointer("/fields/closedSprints")
+                .and_then(|c| c.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|s| s.get("id")),
+        );
+        for id in sprint_ids {
+            let id = id.as_u64().map(|n| n.to_string()).ok_or(TrackerError::Decode)?;
+            out.members.push((id, task.external_id.clone()));
+        }
+        out.tasks.push(task);
+    }
+    Ok(out)
+}
+
+/// R11 fetch: one search for all keys; when Jira rejects it (a key that exists
+/// nowhere fails the whole `key in` query, claim C33), one search per key, a
+/// rejected key being one the board does not have. Any other failure fails.
+pub async fn fetch_keys(
+    t: &dyn GetTransport,
+    board: &BoardScope,
+    keys: &[String],
+) -> Result<Discovered, TrackerError> {
+    let mut keys: Vec<String> = keys.iter().filter(|k| is_jira_key(k)).cloned().collect();
+    keys.sort();
+    keys.dedup();
+    if keys.is_empty() {
+        return Ok(Discovered::default());
+    }
+    match search_keys(t, board, &keys).await {
+        Err(TrackerError::BadRequest) if keys.len() > 1 => {
+            let mut out = Discovered::default();
+            for key in &keys {
+                match search_keys(t, board, std::slice::from_ref(key)).await {
+                    Ok(d) => {
+                        out.tasks.extend(d.tasks);
+                        out.members.extend(d.members);
+                    }
+                    Err(TrackerError::BadRequest) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(out)
+        }
+        Err(TrackerError::BadRequest) => Ok(Discovered::default()),
+        other => other,
+    }
+}
+
 /// Every key shape `PREFIX-digits` in `text`, scanned left to right with prefixes
 /// longest first; a key must not follow an ASCII letter or digit, and a matched
 /// span is consumed. Comparison is ASCII-only, on the original bytes.
@@ -310,6 +413,17 @@ fn keys_in(text: &[u8], prefixes: &[String]) -> Vec<String> {
 const ISSUE_FIELDS: [(&str, &str); 1] = [("fields", "summary,issuetype,status")];
 /// A listing that never signals its end is a provider fault, not a reason to loop.
 const MAX_PAGES: usize = 1000;
+
+/// Jira's key shape: an upper-case project key (letters, digits, `_`, starting with
+/// a letter), `-`, then digits. Only keys passing this reach a JQL string (R11).
+pub fn is_jira_key(key: &str) -> bool {
+    let Some((prefix, number)) = key.split_once('-') else { return false };
+    let mut chars = prefix.chars();
+    chars.next().is_some_and(|c| c.is_ascii_uppercase())
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && !number.is_empty()
+        && number.bytes().all(|b| b.is_ascii_digit())
+}
 
 fn board_path(board_ref: &str) -> String {
     format!("/rest/agile/1.0/board/{board_ref}")
@@ -830,6 +944,144 @@ mod match_tests {
             found(&session(&[], &["AUTH-420 IAM-5"]), &k),
             vec![("1".into(), LinkSource::Prompt, "IAM-5".into(), 2)],
             "a tie goes to the current key"
+        );
+    }
+}
+
+#[cfg(test)]
+mod discover_tests {
+    use super::*;
+    use crate::tracker::test_support::FakeBoard;
+    use serde_json::json;
+
+    fn known(keys: &[&str]) -> Vec<KnownTask> {
+        keys.iter()
+            .enumerate()
+            .map(|(i, k)| KnownTask {
+                external_id: i.to_string(),
+                key: k.to_string(),
+                scope: None,
+                current: true,
+            })
+            .collect()
+    }
+
+    fn session(branches: &[&str], prompts: &[&str]) -> SessionText {
+        SessionText {
+            session_id: uuid::Uuid::nil(),
+            branches: branches.iter().map(|b| b.to_string()).collect(),
+            prompts: prompts.iter().map(|p| p.to_string()).collect(),
+            repo_key: None,
+        }
+    }
+
+    #[test]
+    fn the_jira_key_shape() {
+        for ok in ["AUTH-1", "MY_PROJ-12", "P057542601-30", "A-0"] {
+            assert!(is_jira_key(ok), "{ok}");
+        }
+        for bad in [
+            "auth-1",
+            "AUTH-",
+            "-1",
+            "1AUTH-1",
+            "_A-1",
+            "AUTH-1)",
+            "AU TH-1",
+            "AUTH-1 OR 1=1",
+            "AUTH-1x",
+            "",
+        ] {
+            assert!(!is_jira_key(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn unknown_keys_are_board_shaped_unsynced_and_safe() {
+        let k = known(&["AUTH-1", "AUTH-2"]);
+        let s = session(
+            &["fix/auth-900-login", "feature/AUTH-77"],
+            &["AUTH-900 again, AUTH-1, UTF-8, Q-5 and AUTH-9x;DROP"],
+        );
+        assert_eq!(
+            JiraAdapter.unknown_keys(&s, &k),
+            vec!["AUTH-77".to_string(), "AUTH-9".into(), "AUTH-900".into()],
+            "sorted, once each, upper-cased; known, other-prefix and non-keys excluded"
+        );
+        assert!(JiraAdapter.unknown_keys(&s, &[]).is_empty(), "no known prefix, nothing to ask");
+        // Defence in depth: a malformed stored key's prefix never yields a key
+        // that could reach JQL.
+        let odd = known(&["A B-1"]);
+        assert!(JiraAdapter.unknown_keys(&session(&[], &["A B-5"]), &odd).is_empty());
+        for key in JiraAdapter.unknown_keys(&s, &k) {
+            assert!(is_jira_key(&key), "{key} must pass the shape check before any JQL");
+        }
+    }
+
+    fn scope() -> BoardScope {
+        BoardScope { base_url: "https://acme.atlassian.net".into(), board_ref: "42".into() }
+    }
+
+    #[tokio::test]
+    async fn fetch_tasks_asks_the_board_and_reads_memberships() {
+        let board = FakeBoard::empty().with_jql(
+            "key in (AUTH-77,AUTH-900)",
+            json!([{"id": "10900", "key": "auth-900", "fields": {
+                "summary": "New thing", "issuetype": {"name": "Bug"}, "status": {"name": "To Do"},
+                "sprint": {"id": 101, "state": "active"},
+                "closedSprints": [{"id": 100, "state": "closed"}]}}]),
+        );
+        let keys = vec!["AUTH-900".to_string(), "AUTH-77".into()];
+        let d = JiraAdapter.fetch_tasks(&board, &scope(), &keys).await.unwrap();
+        assert_eq!(
+            board.jql_calls(),
+            vec!["key in (AUTH-77,AUTH-900)"],
+            "sorted keys, one request"
+        );
+        assert_eq!(d.tasks.len(), 1);
+        assert_eq!(
+            (d.tasks[0].external_id.as_str(), d.tasks[0].key.as_str()),
+            ("10900", "AUTH-900")
+        );
+        assert_eq!(d.tasks[0].summary.as_deref(), Some("New thing"));
+        let mut members = d.members.clone();
+        members.sort();
+        assert_eq!(
+            members,
+            vec![("100".to_string(), "10900".to_string()), ("101".into(), "10900".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_tasks_never_puts_an_unchecked_key_in_jql() {
+        let board = FakeBoard::empty();
+        let keys = vec!["AUTH-1) OR (project = X".to_string(), "AUTH-2".into()];
+        JiraAdapter.fetch_tasks(&board, &scope(), &keys).await.unwrap();
+        assert_eq!(board.jql_calls(), vec!["key in (AUTH-2)"]);
+        let none = FakeBoard::empty();
+        let d = JiraAdapter.fetch_tasks(&none, &scope(), &["bad key".to_string()]).await.unwrap();
+        assert_eq!((d, none.jql_calls()), (Discovered::default(), Vec::<String>::new()));
+    }
+
+    #[tokio::test]
+    async fn a_rejected_batch_falls_back_to_one_key_per_request() {
+        let board = FakeBoard::empty()
+            .fail_jql("key in (AUTH-404,AUTH-900)", TrackerError::BadRequest)
+            .fail_jql("key in (AUTH-404)", TrackerError::BadRequest)
+            .with_jql(
+                "key in (AUTH-900)",
+                json!([{"id": "10900", "key": "AUTH-900", "fields": {}}]),
+            );
+        let keys = vec!["AUTH-404".to_string(), "AUTH-900".into()];
+        let d = JiraAdapter.fetch_tasks(&board, &scope(), &keys).await.unwrap();
+        assert_eq!(d.tasks.iter().map(|t| t.key.as_str()).collect::<Vec<_>>(), vec!["AUTH-900"]);
+
+        // Any other failure fails the fetch: "not on the board" is only a 400's answer.
+        let down =
+            FakeBoard::empty().fail_jql("key in (AUTH-404,AUTH-900)", TrackerError::HttpError);
+        assert_eq!(
+            JiraAdapter.fetch_tasks(&down, &scope(), &keys).await,
+            Err(TrackerError::HttpError)
         );
     }
 }

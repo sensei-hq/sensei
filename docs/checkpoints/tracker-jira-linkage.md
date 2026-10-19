@@ -109,6 +109,15 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   <key>"), unlinked sessions on demand. Spec `docs/spec/screen/project-sprints.md`; the
   tracker error words moved to `$lib/tracker-errors.ts` (second consumer). 27 new tests;
   app 1864/1864, svelte-check 0; checked live on the real board.
+- **F8 on-demand discovery (R11)** ✅ (asked for 2026-10-19) a ticket first named in a
+  Claude Code session is fetched by key — board-scoped, GET only, keys shape-checked before
+  any JQL — when the session is ingested (`TrackerDiscover`, coalesced per tracker) or the
+  key is looked up, then inserted and linked to every session naming it. Adds only; keys
+  the board lacks are cached 6 h (`tracker_unknown_keys`); a failure pauses discovery 5 min
+  and writes no `last_error`. New code `bad_request` (400) so a 5xx is never "not on the
+  board"; 404 `task_not_on_board`. The full and discovery applies share their SQL helpers.
+  Found by the tests: the shared candidate fragment's `tr` alias shadowed an outer `tr`.
+  C33/C34 still need a live check on the tenant.
 - **Next:** F5 live verification once Claude Code transcript consent is on.
 
 ## Gate for `/sensei:build`
