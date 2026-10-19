@@ -468,17 +468,20 @@ async fn ingest_one(
     // whether the session has events yet (so an already-prose-ingested but
     // never-synthesized historical session still gets imported). Load the
     // content only if there's something to do.
-    let prose_fresh = matches!(
-        pg.get_capture_watermark(adapter.source(), key).await,
-        Ok(Some(prev)) if prev >= stamp
-    );
-    let needs_synth = !pg.session_has_events(&session_id).await.unwrap_or(true);
+    //
+    // Every gate read PROPAGATES its error: read as a default, a database fault
+    // decided "fresh", "has events" or "needs no backfill" and the ingest
+    // reported a skip — a success — so the session's tokens were never written
+    // and nothing said why (#280). A failed read fails the task, which retries.
+    let prev = pg.get_capture_watermark(adapter.source(), key).await?;
+    let prose_fresh = matches!(prev, Some(prev) if prev >= stamp);
+    let needs_synth = !pg.session_has_events(&session_id).await?;
     // A session captured before token-capture existed still needs its model + token
     // usage backfilled from the transcript — force a metadata refresh for it even
     // when prose + events are already fresh. `false` for new sessions (synthesis
     // sets their metadata) and for sessions already attempted (skip the re-read,
     // even a token-less source), keyed on the `meta_synced_at` marker.
-    let needs_meta = pg.session_needs_meta_backfill(&session_id).await.unwrap_or(false);
+    let needs_meta = pg.session_needs_meta_backfill(&session_id).await?;
     if prose_fresh && !needs_synth && !needs_meta {
         return Ok(IngestOutcome::skipped());
     }
