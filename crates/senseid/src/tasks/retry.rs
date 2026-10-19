@@ -49,6 +49,12 @@ pub fn plan_retry(task: &Task) -> Option<Task> {
     Some(task.retry())
 }
 
+/// Whether this task's failure is its last: nothing will retry it. The same rule
+/// as [`plan_retry`], so what the log says matches what the worker does (#194).
+pub fn failure_is_terminal(task: &Task) -> bool {
+    plan_retry(task).is_none()
+}
+
 /// Schedule a backed-off re-enqueue of `next` on a detached task — sleeps
 /// `delay`, then `enqueue_unique` (single-writer safe, D6e). Never blocks the
 /// caller's worker. Returns the join handle (ignored in production; awaited in
@@ -79,6 +85,21 @@ pub fn schedule_if_retryable(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #194: only a failure nothing will retry is logged at error. A retryable one
+    /// was logged at error, with its full context, on every attempt, although
+    /// `task_executions` already records each attempt with its retry number.
+    #[test]
+    fn a_failure_is_terminal_only_when_nothing_will_retry_it() {
+        let first = Task::new(TaskKind::ScanGitHistory, "r", "/p");
+        assert!(!failure_is_terminal(&first), "a retryable kind's first failure retries");
+        let mut last = first.clone();
+        last.retry_number = MAX_RETRIES;
+        assert!(failure_is_terminal(&last), "the last attempt's failure is terminal");
+        let never = Task::new(TaskKind::ScanRoot, "", "/p");
+        assert!(!never.kind.is_retryable());
+        assert!(failure_is_terminal(&never), "a non-retryable kind fails terminally at once");
+    }
 
     #[test]
     fn graph_pipeline_kinds_are_retryable() {
