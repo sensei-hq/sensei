@@ -98,13 +98,9 @@ The settings screen lists them as repositories.
   `make dojo-local` and the runbook in `dojo/CLAUDE.md`. The daemon logs `dojo_sync: cycle complete`.
 - ~~**Metric registry cluster:** #153, #154, #177, #157~~. **Closed 2026-10-19**: ratings of 0 for
   `time_to_useful_result` fell from 173 to 42 of 197, and a catalog guard test is in place.
-- **#280 (capture restored 2026-10-19):** transcript reading is now on by default; turns are linked
-  per turn through `activity.turn_usage`; `sessions.tokens_*` have one writer; the token columns are
-  `bigint`. Live, all 124 sessions with turns equal their sums.
-  - Claude transcripts now stream, so the 64 MB cap no longer skips them (05f15a93). This session's
-    162 MB transcript now has 21 turns.
-  - **Remaining:** Zed threads over the cap (each thread is one JSON document); metrics that say
-    "transcript reading is off" instead of going blank.
+- ~~**#280**~~ **Closed 2026-10-19**: transcript reading on by default; per-turn linkage (`turn_usage`); one
+  writer for `sessions.tokens_*`, now `bigint`; Claude transcripts streamed past the 64 MB cap; the metrics
+  screen names assistants whose history is not read. Also fixed: `/api/metrics/correlations` 500 (c30ae5bb).
 - **Operations:**
   - #181: `SKIP_DB_BACKUP`, and prune after writing (07-quality C2).
   - #194: retryable failures not logged as error on every attempt (part of C1).
@@ -147,6 +143,7 @@ The settings screen lists them as repositories.
 - #125: 68 orphaned transcript turn sets.
 - #161: typed rows, remainder.
 - #123: VS Code adapter A5/A6, Track B.
+- #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #190: read `design.yaml` through dbd's `project::survey`, and load a workspace design with
   `Workspace::load`. Since dbd 0.27, a repository with a `modules:` design cannot be imported.
 

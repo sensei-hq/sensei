@@ -30,7 +30,7 @@
 - After waves 0–8: the full re-index (wave 9), which restores the 130 projects whose checkouts are
   gone. Then language parity for Java, C# and Python (wave 10, #275, blocked first by #276).
 
-**Next command:** `/sensei:session refocus`, then #280's remainder: a loud metric state when transcript reading is off, then Zed threads over the cap. Claude streaming is done (05f15a93). The burndown tick runs every 20 minutes (job `0d7bac1e`, `.claude/scheduled_tasks.json`).
+**Next command:** `/sensei:session refocus`, then wave 3's next open item: the Operations group (#181, #194, #179). #280 is closed (82fe9c17..2e5dd647). The burndown tick runs every 20 minutes (job `0d7bac1e`, `.claude/scheduled_tasks.json`).
 
 **Open questions:**
 - The orphaned Cloudflare build trigger fails every develop push. Delete it in the dashboard?
