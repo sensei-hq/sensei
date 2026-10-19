@@ -109,10 +109,11 @@ pub async fn apply_to_session(pg: &PgStore, payload: &serde_json::Value) {
     // A turn's usage (#280): the event row is already written, so the session's
     // tokens are re-summed from `activity.turn_usage`, where this turn now counts
     // once — linked to its transcript turn if the transcript saw it too.
-    if payload["hook_event_name"].as_str() == Some("TurnComplete") && payload.get("usage").is_some() {
-        if let Err(e) = pg.refresh_session_tokens(session_id).await {
-            tracing::warn!(error = %e, session_id, "refresh_session_tokens failed");
-        }
+    if payload["hook_event_name"].as_str() == Some("TurnComplete")
+        && payload.get("usage").is_some()
+        && let Err(e) = pg.refresh_session_tokens(session_id).await
+    {
+        tracing::warn!(error = %e, session_id, "refresh_session_tokens failed");
     }
 }
 
