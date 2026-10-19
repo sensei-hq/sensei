@@ -277,6 +277,7 @@ mod tests {
             deps: vec![],
             history: vec![],
             enums: vec![],
+            modules: vec![],
         }
     }
 
@@ -302,6 +303,7 @@ mod tests {
             }],
             indexes: vec![],
             checks: vec![],
+            module: None,
         }
     }
 
@@ -320,6 +322,7 @@ mod tests {
             kind: kind.into(),
             note: None,
             note_md: None,
+            module: None,
         };
         let got = facts_of(
             &model(vec![], vec![entity("audit", "trigger"), entity("totals", "view")], vec![]),
