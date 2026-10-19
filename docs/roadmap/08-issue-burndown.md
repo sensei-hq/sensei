@@ -33,6 +33,24 @@ duplicate, leaving 89. The production-readiness items
 
 ## Wave 1 — Settings → Projects / Repositories (#271, #269, #144)
 
+**Status 2026-10-19: built and verified on live data.**
+- **Data:**
+  - A checkout keeps one repository row across rescans (43b7cb6e).
+  - The 13,346 orphan keyless rows were pruned on the live DB.
+- **Quality role:** test-only repositories are tagged `quality` (650ae365).
+- **UI:** repository cards, the icon, roles saved with rollback, a sticky header, search, and a note on
+  projects with no repository (7f533892).
+- **Derived roles:** a repository card shows the roles the scan inferred for its packages, so a
+  monorepo no longer reads "Unassigned" (030592ee).
+- **Modules stay modules:** the watcher's rescan wrote every subfolder as `folder` and demoted a
+  workspace's packages. It now writes the pipeline's kind, from one shared rule (ffc79fc6).
+- **#144 stays open** and moves to wave 3. It is about the project metrics view, not Settings.
+- **Clearing a role:** a `null` role clears it; before, it was a 200 that changed nothing (e777d692).
+- **Live inspect** (`app/e2e/tests-inspect/settings-projects-inspect.spec.ts`):
+  - 3 projects placed, 1 repository each.
+  - 130 collapsed as having no repository on this machine.
+  - Search narrows the list.
+
 Measured 2026-10-18:
 - `sensei.repositories` holds **13,504 rows for 2 indexed checkouts**.
 - 13,346 of them have no `repo_key` and no folder.
@@ -93,6 +111,7 @@ The settings screen lists them as repositories.
   - #135: Keyboard Shortcuts → `/help`.
   - #96: render `last_error`, `next_run_at`/`avg_ms`, log tail.
   - #85: Overview hotspots and patterns-in-use.
+  - #144: on a project with no repository, say once that `scope=repo` metrics need git history.
 - **Dōjō:**
   - #132: 16 inline font sizes.
   - #106: last fixture imports, plus a vitest guard.
@@ -119,6 +138,16 @@ The settings screen lists them as repositories.
 - #125: 68 orphaned transcript turn sets.
 - #161: typed rows, remainder.
 - #123: VS Code adapter A5/A6, Track B.
+- #190: read `design.yaml` through dbd's `project::survey`, and load a workspace design with
+  `Workspace::load`. Since dbd 0.27, a repository with a `modules:` design cannot be imported.
+
+**dbd 0.27.3 (2026-10-19).**
+- All four pins move from v0.26.0.
+- 0.27.0 adds workspace designs (`modules:`):
+  - The hand-rolled reader in `adapters/manifest/dbd.rs` does not know them.
+  - `indexer/dbd_import.rs`'s `Design::from_config` refuses them.
+  - So #190's `project::survey` step, together with `Workspace::load`, moves up to wave 5.
+- #258 gains a `module` field to persist, alongside identity, generated, predicate and checks.
 
 ## Wave 6 — indexer quality cluster
 
@@ -139,7 +168,7 @@ The settings screen lists them as repositories.
 | Wave | Issues closed | Rough effort |
 |---|---|---|
 | 0 | 2–3 | a release |
-| 1 | 3 | 2–3 days |
+| 1 | 2 (#271, #269; #144 moved to wave 3) | 2–3 days |
 | 2 | 6–9 | decisions only |
 | 3 | ~20 | ~1–2 weeks of small items |
 | 4 | ~6 | ~1 week |
