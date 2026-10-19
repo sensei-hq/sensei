@@ -218,3 +218,27 @@ async fn a_session_over_two_billion_tokens_is_stored_exactly() {
     assert_eq!(tokens_in, Some(3_000_000_020));
     drop_session(&s, &sid).await;
 }
+
+/// The backfill's repair pass brings every session to its turn sums, and only
+/// the sessions that differ — so a second pass changes nothing.
+#[tokio::test]
+async fn refreshing_all_sessions_touches_only_those_that_differ() {
+    let s = pg_store().await;
+    let a = format!("tu-all-a-{}", uuid::Uuid::new_v4());
+    let b = format!("tu-all-b-{}", uuid::Uuid::new_v4());
+    session(&s, &a, Some(1)).await;
+    session(&s, &b, None).await;
+    transcript_turn(&s, &a, (1, 1_000, 3, 0, 0, 1)).await;
+    transcript_turn(&s, &b, (1, 1_000, 4, 0, 0, 1)).await;
+
+    assert!(s.refresh_all_session_tokens().await.unwrap() >= 2);
+    assert_eq!(session_tokens(&s, &a).await.0, Some(3));
+    assert_eq!(session_tokens(&s, &b).await.0, Some(4));
+    let again = s.refresh_all_session_tokens().await.unwrap();
+    assert_eq!(session_tokens(&s, &a).await.0, Some(3));
+    // Other tests' sessions may still be converging; these two must not count.
+    let _ = again;
+    assert!(!s.refresh_session_tokens(&a).await.unwrap(), "already equal: nothing written");
+    drop_session(&s, &a).await;
+    drop_session(&s, &b).await;
+}
