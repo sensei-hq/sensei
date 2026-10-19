@@ -89,6 +89,44 @@ impl TranscriptAdapter for ClaudeAdapter {
             .ok()
     }
 
+    /// Streamed, with no whole-file cap (#280): each pass reads the file line by
+    /// line, so a transcript of any size is read in bounded memory — only an
+    /// over-long single line is skipped, by the per-line guard. A 162 MB session
+    /// transcript was skipped whole as "oversized" before this.
+    fn parse_file(&self, key: &str) -> Option<ParsedTranscript> {
+        // Lines are split on raw bytes and decoded one at a time, lossily, so a
+        // line of invalid UTF-8 costs that line, not the rest of the file. An I/O
+        // error mid-read fails the whole read: a partial transcript must not pass
+        // for the session.
+        let failed = std::cell::Cell::new(false);
+        let lines = || -> Option<_> {
+            use std::io::BufRead;
+            let f = std::fs::File::open(key)
+                .map_err(
+                    |e| tracing::debug!(error = %e, file = key, "claude: open transcript failed"),
+                )
+                .ok()?;
+            let failed = &failed;
+            Some(std::io::BufReader::new(f).split(b'\n').map_while(move |r| match r {
+                Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+                Err(e) => {
+                    tracing::warn!(error = %e, file = key, "claude: transcript read failed mid-file");
+                    failed.set(true);
+                    None
+                }
+            }))
+        };
+        let session = parse_claude_session_of(lines()?);
+        let parsed = ParsedTranscript {
+            turns: parse_claude_transcript_of(lines()?),
+            cwds: session.as_ref().map(|s| s.cwds.clone()).unwrap_or_default(),
+            events: session.map(|s| s.events).unwrap_or_default(),
+            model: claude_model_of(lines()?).map(|m| ("anthropic".to_string(), m)),
+            tokens: claude_tokens_of(lines()?),
+        };
+        (!failed.get()).then_some(parsed)
+    }
+
     fn parse(&self, content: &str) -> ParsedTranscript {
         let session = parse_claude_session(content);
         ParsedTranscript {
@@ -105,9 +143,13 @@ impl TranscriptAdapter for ClaudeAdapter {
 /// SPLIT (fresh input / cache write / cache read / output). `None` when no record
 /// carries usage (honest-empty). Pure.
 pub fn claude_tokens(content: &str) -> Option<SessionTokens> {
+    claude_tokens_of(content.lines())
+}
+
+fn claude_tokens_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Option<SessionTokens> {
     let (mut fresh, mut cw, mut cr, mut tout, mut seen) = (0i64, 0i64, 0i64, 0i64, false);
-    for line in content.lines() {
-        let line = line.trim();
+    for raw in lines {
+        let line = raw.as_ref().trim();
         if line.is_empty() || line.len() > MAX_LINE_BYTES {
             continue;
         }
@@ -146,10 +188,14 @@ pub fn claude_tokens(content: &str) -> Option<SessionTokens> {
 /// across assistant records (a session can switch models mid-run; the dominant
 /// one wins). `None` if no assistant record carries a model. Pure.
 pub fn claude_model(content: &str) -> Option<String> {
+    claude_model_of(content.lines())
+}
+
+fn claude_model_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Option<String> {
     use std::collections::HashMap;
     let mut counts: HashMap<String, u32> = HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
+    for raw in lines {
+        let line = raw.as_ref().trim();
         if line.is_empty() || line.len() > MAX_LINE_BYTES {
             continue;
         }
@@ -177,12 +223,16 @@ pub fn claude_model(content: &str) -> Option<String> {
 /// block (name + file_path), and a synthetic terminal `Stop` (transcripts carry
 /// no end marker). Also collects distinct `cwd`s for project resolution. Pure.
 pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
+    parse_claude_session_of(content.lines())
+}
+
+fn parse_claude_session_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Option<SynthSession> {
     let mut cwds: Vec<String> = Vec::new();
     let mut events: Vec<SynthEvent> = Vec::new();
     let mut max_ts: i64 = 0;
 
-    for line in content.lines() {
-        let line = line.trim();
+    for raw in lines {
+        let line = raw.as_ref().trim();
         if line.is_empty() || line.len() > MAX_LINE_BYTES {
             continue;
         }
@@ -271,12 +321,18 @@ pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
 /// starts at each genuine human prompt; assistant `text` blocks until the next
 /// prompt form that turn's response. Pure + deterministic.
 pub fn parse_claude_transcript(content: &str) -> Vec<TranscriptTurn> {
+    parse_claude_transcript_of(content.lines())
+}
+
+fn parse_claude_transcript_of<L: AsRef<str>>(
+    lines: impl Iterator<Item = L>,
+) -> Vec<TranscriptTurn> {
     let mut turns: Vec<TranscriptTurn> = Vec::new();
     let mut cur: Option<TranscriptTurn> = None;
     let mut idx = 0i32;
 
-    for line in content.lines() {
-        let line = line.trim();
+    for raw in lines {
+        let line = raw.as_ref().trim();
         // skip blank lines and oversized (blob/attachment) lines — parsing a
         // multi-MB JSON line would stall the executor.
         if line.is_empty() || line.len() > MAX_LINE_BYTES {
@@ -373,6 +429,62 @@ fn assistant_text_blocks(v: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    use super::super::TranscriptAdapter;
+
+    const TRANSCRIPT: &str = concat!(
+        r#"{"type":"user","cwd":"/r","timestamp":"2026-06-20T10:00:00.000Z","message":{"role":"user","content":"go"}}"#,
+        "\n",
+        r#"{"type":"assistant","timestamp":"2026-06-20T10:00:05.000Z","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":2,"output_tokens":4,"cache_read_input_tokens":10327,"cache_creation_input_tokens":55095}}}"#,
+        "\n",
+    );
+
+    /// #280: streaming a file reads exactly what parsing its text reads.
+    #[test]
+    fn streaming_a_file_reads_what_parsing_its_text_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        std::fs::write(&path, TRANSCRIPT).unwrap();
+        let ad = super::ClaudeAdapter::new(dir.path().to_path_buf());
+        let streamed = ad.parse_file(&path.to_string_lossy()).expect("readable");
+        assert_eq!(streamed, ad.parse(TRANSCRIPT));
+        assert_eq!(streamed.turns.len(), 1);
+    }
+
+    /// One line of invalid UTF-8 must not end the read: `lines()` stopped at it
+    /// and silently dropped every turn after, a partial transcript passed off as
+    /// the whole. Lines are decoded one by one, lossily.
+    #[test]
+    fn an_invalid_utf8_line_does_not_cut_the_transcript_short() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.jsonl");
+        let mut bytes = b"{\"type\":\"note\",\"x\":\"\xff\xfe\"}\n".to_vec();
+        bytes.extend_from_slice(TRANSCRIPT.as_bytes());
+        std::fs::write(&path, bytes).unwrap();
+        let ad = super::ClaudeAdapter::new(dir.path().to_path_buf());
+
+        let got = ad.parse_file(&path.to_string_lossy()).expect("readable");
+        assert_eq!(got.turns.len(), 1, "the turn after the bad line is read");
+    }
+
+    /// #280: a transcript over the whole-file cap is still read. The cap guarded
+    /// loading the file as one string; streaming needs only the per-line guard.
+    /// This session's own transcript was 162 MB and was skipped as "oversized" on
+    /// every pass, so the longest — and costliest — sessions had no turns at all.
+    #[test]
+    fn a_transcript_over_the_size_cap_is_still_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("long.jsonl");
+        std::fs::write(&path, TRANSCRIPT).unwrap();
+        // Sparse padding past the cap: one over-long line the per-line guard skips.
+        let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        f.set_len(super::MAX_TRANSCRIPT_BYTES + 1).unwrap();
+        let ad = super::ClaudeAdapter::new(dir.path().to_path_buf());
+
+        let got = ad.parse_file(&path.to_string_lossy()).expect("read despite its size");
+        assert_eq!(got.turns.len(), 1);
+        assert_eq!(got.tokens.map(|t| t.total_input()), Some(65_424));
+    }
 
     #[test]
     fn turn_keeps_split_tokens_and_promoted_attributes() {

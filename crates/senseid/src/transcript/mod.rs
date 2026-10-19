@@ -350,6 +350,14 @@ pub trait TranscriptAdapter: Send + Sync {
     /// testable without a DB); a source that can't reconstruct events returns them
     /// empty and/or `model`/`tokens` as `None`.
     fn parse(&self, content: &str) -> ParsedTranscript;
+    /// Read and parse one unit. The default loads it whole ([`Self::load_content`],
+    /// with its size cap) and parses that; an adapter whose format is line-based
+    /// overrides it to stream, so a transcript too large to hold as one string is
+    /// still read (#280).
+    fn parse_file(&self, key: &str) -> Option<ParsedTranscript> {
+        let content = self.load_content(key)?;
+        Some(self.parse(&content))
+    }
 }
 
 #[cfg(test)]
@@ -486,12 +494,12 @@ async fn ingest_one(
         return Ok(IngestOutcome::skipped());
     }
     // Adapter owns the read + its own oversize/format guards (returns None to skip).
-    let Some(content) = adapter.load_content(key) else {
+    // Read and parse ONCE into the common structure (the adapter owns the read and
+    // its guards; a line-based source streams, so size is not a reason to skip);
+    // every persistence step below reads from `parsed` — the adapter→persistence seam.
+    let Some(parsed) = adapter.parse_file(key) else {
         return Ok(IngestOutcome::skipped());
     };
-    // Parse ONCE into the common structure; every persistence step below reads from
-    // `parsed`, never the raw content — the adapter→persistence seam.
-    let parsed = adapter.parse(&content);
     // 1. prose turns (#73) — only when stale.
     let mut turns = 0u32;
     if !prose_fresh {
