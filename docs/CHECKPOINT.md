@@ -30,7 +30,7 @@
 - After waves 0–8: the full re-index (wave 9), which restores the 130 projects whose checkouts are
   gone. Then language parity for Java, C# and Python (wave 10, #275, blocked first by #276).
 
-**Next command:** `/sensei:session refocus`, then wave 3, starting with #104 (the dōjō inbox renders a relay failure as an empty list).
+**Next command:** `/sensei:session refocus`, then wave 3. #104 is closed (f9ebca17..ee5e64de); next are #185 and #186 (local dōjō setup).
 
 **Open questions:**
 - The orphaned Cloudflare build trigger fails every develop push. Delete it in the dashboard?

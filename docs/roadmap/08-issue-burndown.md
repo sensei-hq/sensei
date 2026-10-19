@@ -93,7 +93,7 @@ The settings screen lists them as repositories.
 
 ## Wave 3 — small remainders (each under about half a day; closes the issue)
 
-- **Hard-rule violation, first:** #104. The dōjō inbox renders a relay failure as an empty list.
+- ~~**Hard-rule violation, first:** #104. The dōjō inbox renders a relay failure as an empty list.~~ **Closed 2026-10-19**: error and partial states and a skeleton, verified on the local stack.
 - **Local dōjō setup:** #185 (vite `server.host: '127.0.0.1'` + note) and #186 (runbook / `make dojo-local`).
   The steps were exercised on 2026-10-15/18.
 - **Metric registry cluster:**
