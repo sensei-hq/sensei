@@ -421,6 +421,29 @@ impl PgStore {
         Ok(())
     }
 
+    /// Tag as `quality` each repository root among `folder_ids` whose parsed
+    /// code is entirely tests (#269): at least one non-module node, and every one
+    /// of them `is_test`. Only where no role is set, so a role the user (or a
+    /// manifest/README) chose is never overridden. Returns the folders tagged.
+    pub async fn assign_quality_roles(&self, folder_ids: &[uuid::Uuid]) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.folders f SET role = 'quality'::sensei.folder_role, modified_at = now()
+              WHERE f.id = ANY($1)
+                AND f.role IS NULL
+                AND f.kind IN ('git', 'subtree')
+                AND EXISTS (SELECT 1 FROM sensei.nodes n
+                             WHERE n.folder_id = f.id AND n.kind::text <> 'module')
+                AND NOT EXISTS (SELECT 1 FROM sensei.nodes n
+                                 WHERE n.folder_id = f.id AND n.kind::text <> 'module'
+                                   AND NOT n.is_test)",
+        )
+        .bind(folder_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     /// All folders belonging to a project, ordered by path. Used to enrich
     /// /api/projects responses with folder membership so the Projects setup
     /// page can render per-folder details.

@@ -285,6 +285,15 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             if libs > 0 {
                 tracing::info!("scan_root reconcile: collected {libs} unreferenced lib node(s)");
             }
+            // A repository whose code is all tests is a Quality repository (#269),
+            // only where no role was chosen.
+            match ctx.pg().assign_quality_roles(&ids).await {
+                Ok(n) if n > 0 => tracing::info!(
+                    "scan_root reconcile: tagged {n} test-only repositor(ies) quality"
+                ),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "scan_root: assign_quality_roles failed"),
+            }
             (stubs, bogus)
         }
         Err(e) => {
