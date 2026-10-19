@@ -4,14 +4,18 @@
 //! instrument the agent, and it is a different thing from reading every past
 //! conversation it has on disk. Transcripts are the most sensitive data sensei
 //! touches — whole conversations, often with code, pasted credentials and client
-//! names — so reading them gets its own yes, per assistant, and DEFAULTS TO NO.
+//! names — so reading them has its own switch, per assistant.
+//!
+//! ON BY DEFAULT since 2026-10-19 (#280, docs/decisions.md), superseding #218's
+//! default of off: the token, cost and session metrics read this history, and an
+//! off-by-default left every one of them blank without saying why.
 //!
 //! Before this, `dispatch()` walked all six adapters unconditionally every 300 s,
 //! so turning an assistant off removed its hooks and sensei kept reading its
 //! history anyway.
 //!
 //! One `sensei.config` key per capture source, `transcripts.consent.<source>`,
-//! holding `on`. Anything else, including absence, is no.
+//! `off` is no; anything else, including absence, is yes.
 
 use std::collections::HashSet;
 
@@ -29,6 +33,7 @@ pub const SOURCES: &[(&str, &str)] = &[
 ];
 
 const ON: &str = "on";
+const OFF: &str = "off";
 
 fn key(source: &str) -> String {
     format!("transcripts.consent.{source}")
@@ -45,7 +50,7 @@ pub fn is_known(source: &str) -> bool {
 pub async fn consented(pg: &crate::db::pg_store::PgStore) -> Result<HashSet<String>, String> {
     let mut yes = HashSet::new();
     for (source, _) in SOURCES {
-        if pg.get_config(&key(source)).await?.as_deref() == Some(ON) {
+        if pg.get_config(&key(source)).await?.as_deref() != Some(OFF) {
             yes.insert((*source).to_string());
         }
     }
@@ -58,7 +63,7 @@ pub async fn set(pg: &crate::db::pg_store::PgStore, source: &str, on: bool) -> R
     if !is_known(source) {
         return Err(format!("unknown transcript source '{source}'"));
     }
-    pg.set_config(&key(source), if on { ON } else { "off" }).await
+    pg.set_config(&key(source), if on { ON } else { OFF }).await
 }
 
 /// Serialises the tests that write these config keys — they share one table.
