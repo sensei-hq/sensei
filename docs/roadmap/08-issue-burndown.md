@@ -115,7 +115,7 @@ The settings screen lists them as repositories.
 - **App:**
   - #133: the kanji ↔ icon display mode. Solar Bold Duotone icons beside every kanji, one preference,
     `fields` derived in one place, across the app and the dōjō (scope expanded 2026-10-19).
-  - #135: Keyboard Shortcuts → `/help`.
+  - ~~#135~~ **Closed 2026-10-19**: the menu item opens `/help`; the page lists only keys that are bound.
   - #96: render `last_error`, `next_run_at`/`avg_ms`, log tail.
   - #85: Overview hotspots and patterns-in-use.
   - #144: on a project with no repository, say once that `scope=repo` metrics need git history.
