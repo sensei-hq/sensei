@@ -23,11 +23,12 @@
 - #190 moved up to wave 5: since dbd 0.27, a workspace (`modules:`) design cannot be imported until
   `project::survey` + `Workspace::load` land.
 - Wave 0 leftovers: #240 (production-signed-in push), #184 (`sync_status`).
+- After waves 0–8: the full re-index (wave 9), which restores the 130 projects whose checkouts are
+  gone. Then language parity for Java, C# and Python (wave 10, #275, blocked first by #276).
 
 **Next command:** `/sensei:session refocus`, then wave 2. Walk the decision table with the user.
 
 **Open questions:**
-- Projects with no repository on this machine (130 here): archive them, delete them, or keep them collapsed?
 - The orphaned Cloudflare build trigger fails every develop push. Delete it in the dashboard?
 - 8 CodeQL `rust/cleartext-logging` alerts in test files need triage.
 

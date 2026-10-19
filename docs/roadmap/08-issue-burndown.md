@@ -64,7 +64,8 @@ The settings screen lists them as repositories.
    - Prune repository rows that no folder references and that have no `repo_key`, together with
      their project links.
    - Make the folder prune take its repository row with it, so this cannot recur.
-   - Decide what a project whose folders are all gone becomes: archived, or deleted.
+   - What a project whose folders are all gone becomes was decided 2026-10-19: neither. They stay
+     collapsed until the full re-index (wave 9) brings their checkouts back.
 2. **API:** a project lists only repositories and subtrees that have a live checkout.
 3. **UI (#271 items 2–7):**
    - repository cards
@@ -152,7 +153,7 @@ The settings screen lists them as repositories.
 ## Wave 6 — indexer quality cluster
 
 #146, #152 (external/local classifier and the local `mod` import resolver) close together and feed
-#156 step 3. Then #147, #148, #174, #192, #229, #272, #237, #246, #254, #258.
+#156 step 3. Then #147, #148, #174, #192, #229, #272, #246, #258.
 
 ## Wave 7 — metrics confidence chain
 
@@ -162,6 +163,28 @@ The settings screen lists them as repositories.
 
 #43, #44, #45, #46, #47, #81, #85, #91, #102, #105, #108, #111, #114, #115, #116/#119, #121, #122,
 #131, #239, #241, #266, #268 and #39. Order these by product priority, not by closure count.
+
+## Wave 9 — the full re-index (after waves 0–8)
+
+Held back until most of the issues above are resolved, because a full scan is slow.
+- It brings back the projects with no checkout on this machine (130 on 2026-10-19).
+- **Before running it:** time a full scan stage by stage and set a budget, so the wait is
+  measured rather than guessed.
+
+## Wave 10 — language parity: Java, C#, Python (#275)
+
+Bring them to the compiler-grade resolution Rust and TypeScript have.
+- **How:** one SCIP emitter per language behind the shared reader (`indexer/lang/compiler.rs`):
+  scip-dotnet, scip-java, scip-python.
+- **Measured 2026-10-19:** calls resolved: Rust 100%, TypeScript 52.9%, C# 8.9%, Java not
+  indexed here, Python not parsed. TypeScript is also below Rust's bar.
+
+| Issue | What |
+|---|---|
+| #276 | Python files recorded but never parsed or skipped (a blocker) |
+| #237 | C# is 52% indexed |
+| #254 | The next ORM after EF Core (JPA) |
+| #275 | The epic: scip-dotnet, scip-java, scip-python |
 
 ## Expected closures
 
