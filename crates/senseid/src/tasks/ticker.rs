@@ -160,9 +160,7 @@ async fn run_scheduled_inner<F, Fut>(
             continue;
         }
 
-        let started = std::time::Instant::now();
-        let outcome = tick().await;
-        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let (outcome, duration_ms) = run_pass(name, &tick).await;
         if let Err(e) = &outcome {
             tracing::warn!(worker = name, error = %e, "scheduled: tick failed");
         }
@@ -174,9 +172,97 @@ async fn run_scheduled_inner<F, Fut>(
     }
 }
 
+/// Run one scheduled pass inside a `scheduled{worker="<name>"}` span, so every
+/// line the worker logs during it carries its name — the daemon's compact file
+/// log prints span fields on each line, which is what [`log_tail`] filters on
+/// (#96). Returns the outcome and how long the pass took.
+pub(crate) async fn run_pass<F, Fut>(name: &str, tick: &F) -> (Result<(), String>, u64)
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    use tracing::Instrument;
+    let started = std::time::Instant::now();
+    let outcome = tick().instrument(tracing::info_span!("scheduled", worker = name)).await;
+    (outcome, u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX))
+}
+
+/// The last `n` log lines of one worker: those tagged `worker="<name>"`. The
+/// closing quote bounds the name, so `dojo_sync` never matches `dojo_sync_v2`.
+pub(crate) fn log_tail<S: AsRef<str>>(
+    lines: impl Iterator<Item = S>,
+    worker: &str,
+    n: usize,
+) -> Vec<String> {
+    let needle = format!("worker=\"{worker}\"");
+    let mut kept = std::collections::VecDeque::with_capacity(n);
+    for line in lines.filter(|l| l.as_ref().contains(&needle)) {
+        if kept.len() == n {
+            kept.pop_front();
+        }
+        kept.push_back(line.as_ref().to_string());
+    }
+    kept.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #96: a worker's log tail is the lines its passes logged, tagged
+    /// `worker="<name>"` — the exact name, so `dojo_sync` never pulls in a
+    /// `dojo_sync_v2`'s lines.
+    #[test]
+    fn a_log_tail_keeps_the_last_lines_of_that_worker_only() {
+        let lines = [
+            r#"INFO scheduled: a: one worker="dojo_sync""#,
+            r#"INFO scheduled: b: other worker="metrics""#,
+            r#"WARN scheduled: a: two worker="dojo_sync""#,
+            r#"INFO scheduled: a: lookalike worker="dojo_sync_v2""#,
+            r#"WARN ticker: three worker="dojo_sync" error=x"#,
+        ];
+        assert_eq!(
+            log_tail(lines.iter().copied(), "dojo_sync", 2),
+            vec![lines[2].to_string(), lines[4].to_string()]
+        );
+    }
+
+    /// A line a worker logs DURING its pass carries the tag — through the same
+    /// compact format the daemon's file log uses — so the tail sees what the
+    /// worker said, not only the ticker's own lines.
+    #[tokio::test]
+    async fn a_pass_tags_what_the_worker_logs_with_its_name() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let sink = buf.clone();
+        let layer = tracing_subscriber::fmt::layer()
+            .compact()
+            .with_ansi(false)
+            .with_writer(move || Capture(sink.clone()));
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let _ = run_pass("dojo_sync", &|| async {
+            tracing::warn!("persona skipped");
+            Ok::<(), String>(())
+        })
+        .await;
+
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let line = out.lines().find(|l| l.contains("persona skipped")).expect("logged");
+        assert!(line.contains(r#"worker="dojo_sync""#), "untagged: {line}");
+    }
+
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     /// Is this tick ready RIGHT NOW? `biased` polls the tick first and falls
     /// through to an already-ready future when it is pending, so readiness is

@@ -22,7 +22,7 @@ use crate::api::state::AppState;
 use crate::db::pg_store::{SchedulePatch, StoredSchedule};
 use crate::tasks::schedule::{SCHEDULABLE, window_label};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
 };
@@ -234,6 +234,72 @@ pub(crate) async fn patch_scheduled(
     Ok(Json(render(&updated)))
 }
 
+/// `?lines=N` for a log tail: default 50, at most 500.
+#[derive(serde::Deserialize)]
+pub(crate) struct LogQuery {
+    pub lines: Option<usize>,
+}
+
+/// The last `n` lines of `file` tagged with `worker` (#96). Streamed, so a large
+/// day's log is read in bounded memory. A file that does not exist yet — no log
+/// written today — is no lines; one that cannot be read is an error.
+fn tail_file(file: &std::path::Path, worker: &str, n: usize) -> std::io::Result<Vec<String>> {
+    use std::io::BufRead;
+    let f = match std::fs::File::open(file) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    // Streamed line by line into the tail — only the last `n` matches are kept.
+    // A read error mid-file fails the read rather than passing off a partial
+    // tail as the day's.
+    let mut failed = None;
+    let lines = std::io::BufReader::new(f).split(b'\n').map_while(|r| match r {
+        Ok(b) => Some(String::from_utf8_lossy(&b).into_owned()),
+        Err(e) => {
+            failed = Some(e);
+            None
+        }
+    });
+    let tail = crate::tasks::ticker::log_tail(lines, worker, n);
+    match failed {
+        Some(e) => Err(e),
+        None => Ok(tail),
+    }
+}
+
+/// GET /api/tasks/scheduled/{name}/log — the last lines this worker's passes
+/// logged today, from the daemon's file log (each pass runs in a
+/// `scheduled{worker}` span, so its own lines carry the name). 404 for a name
+/// no worker has.
+pub(crate) async fn scheduled_log(
+    Path(name): Path<String>,
+    Query(q): Query<LogQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !SCHEDULABLE.contains(&name.as_str()) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let n = q.lines.unwrap_or(50).clamp(1, 500);
+    // The rolling appender names each day's file by its UTC date.
+    let file = sensei_bootstrap::tracing_init::daemon_log_dir().join(format!(
+        "{}.{}.log",
+        sensei_bootstrap::config::SENSEID_BIN,
+        chrono::Utc::now().format("%Y-%m-%d")
+    ));
+    let worker = name.clone();
+    let path = file.clone();
+    let lines = tokio::task::spawn_blocking(move || tail_file(&path, &worker, n))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|e| {
+            tracing::warn!(error = %e, file = %file.display(), "scheduled_log: read failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(
+        serde_json::json!({ "worker": name, "file": file.display().to_string(), "lines": lines }),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,6 +463,36 @@ mod tests {
         let off = StoredSchedule { enabled: false, ..s };
         assert!(render(&off)["next_run_at"].is_null(), "disabled: no next run");
         assert_eq!(render(&off)["avg_ms"], 1200, "the average is on the wire");
+    }
+
+    /// #96: a worker's log tail — the last lines tagged with it, from a file.
+    #[test]
+    fn a_log_file_tails_to_the_workers_last_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("senseid.log");
+        std::fs::write(
+            &f,
+            "a worker=\"metrics\"\nb worker=\"dojo_sync\"\nc worker=\"dojo_sync\"\nd worker=\"dojo_sync\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            tail_file(&f, "dojo_sync", 2).unwrap(),
+            vec!["c worker=\"dojo_sync\"".to_string(), "d worker=\"dojo_sync\"".to_string(),]
+        );
+        assert!(
+            tail_file(&dir.path().join("absent.log"), "x", 5).unwrap().is_empty(),
+            "no file today: no lines"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_log_of_a_worker_that_does_not_exist_is_a_404() {
+        let got = scheduled_log(
+            axum::extract::Path("no_such_worker".to_string()),
+            axum::extract::Query(LogQuery { lines: None }),
+        )
+        .await;
+        assert_eq!(got.err(), Some(StatusCode::NOT_FOUND));
     }
 
     #[tokio::test]

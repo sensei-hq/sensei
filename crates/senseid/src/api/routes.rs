@@ -264,6 +264,10 @@ pub fn create_router(state: AppState) -> Router {
             "/api/tasks/scheduled/{name}",
             axum::routing::patch(crate::api::handlers::scheduled_tasks::patch_scheduled),
         )
+        .route(
+            "/api/tasks/scheduled/{name}/log",
+            get(crate::api::handlers::scheduled_tasks::scheduled_log),
+        )
         // Repository sharing (gate 1) — the surface that turns it on/off. Until
         // this existed nothing could set `visibility`, so gate 1 was unreachable.
         // `{*repo_key}` is a WILDCARD: a repo_key is `host/org/repo`, which a
