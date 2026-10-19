@@ -132,6 +132,11 @@ async fn run_scheduled_inner<F, Fut>(
     if defer_first && let Err(e) = pg.defer_schedule_start(name).await {
         tracing::warn!(worker = name, error = %e, "scheduled: could not defer the first run");
     }
+    // Nothing of this worker runs yet in this process; a `running_since` left
+    // by the last one would read as a pass in progress (#283).
+    if let Err(e) = pg.clear_schedule_running(name).await {
+        tracing::warn!(worker = name, error = %e, "scheduled: could not clear a stale pass");
+    }
     let initial = pg.load_schedule(name).await.ok().flatten();
     let mut poll = Poll::new(initial.as_ref().map_or(60, |s| poll_secs(s.interval_secs)));
 
@@ -160,7 +165,21 @@ async fn run_scheduled_inner<F, Fut>(
             continue;
         }
 
-        let (outcome, duration_ms) = run_pass(name, &tick).await;
+        if let Err(e) = pg.mark_schedule_started(name).await {
+            tracing::warn!(worker = name, error = %e, "scheduled: could not record the start");
+        }
+        let overrun = |after: Duration| {
+            let pg = pg.clone();
+            async move {
+                let msg = format!("still running after {}s", after.as_secs());
+                tracing::warn!(worker = name, "scheduled: {msg}");
+                if let Err(e) = pg.mark_schedule_overrun(name, &msg).await {
+                    tracing::warn!(worker = name, error = %e, "scheduled: could not record the overrun");
+                }
+            }
+        };
+        let (outcome, duration_ms) =
+            watch_pass(run_pass(name, &tick), pass_limit(stored.interval_secs), overrun).await;
         if let Err(e) = &outcome {
             tracing::warn!(worker = name, error = %e, "scheduled: tick failed");
         }
@@ -185,6 +204,38 @@ where
     let started = std::time::Instant::now();
     let outcome = tick().instrument(tracing::info_span!("scheduled", worker = name)).await;
     (outcome, u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX))
+}
+
+/// How long one pass may run before it is recorded as overrunning (#283).
+///
+/// The question is "stuck?", not "slow?": the worker's own interval, but never
+/// under half an hour (a 15 s worker is not stuck at 16 s) and never over two
+/// hours (a daily worker blocked on a keychain prompt must not take a day to
+/// say so).
+pub(crate) fn pass_limit(interval_secs: u32) -> Duration {
+    Duration::from_secs(u64::from(interval_secs).clamp(30 * 60, 2 * 60 * 60))
+}
+
+/// Await `pass`; if it is still running after `limit`, call `on_overrun` once
+/// with that limit and keep waiting.
+///
+/// The pass is NOT cancelled. A pass stuck in a `spawn_blocking` keychain read
+/// cannot be stopped by dropping its future — the thread stays blocked — so
+/// cancelling would only let the next poll start a second read beside it. The
+/// loop stays sequential; the overrun is recorded so the stall is visible.
+pub(crate) async fn watch_pass<P, O, OFut>(pass: P, limit: Duration, on_overrun: O) -> P::Output
+where
+    P: std::future::Future,
+    O: FnOnce(Duration) -> OFut,
+    OFut: std::future::Future<Output = ()>,
+{
+    tokio::pin!(pass);
+    tokio::select! {
+        out = &mut pass => return out,
+        () = tokio::time::sleep(limit) => {}
+    }
+    on_overrun(limit).await;
+    pass.await
 }
 
 /// The last `n` log lines of one worker: those tagged `worker="<name>"`. The
@@ -262,6 +313,48 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    /// #283: the limit is about STUCK, not slow — the interval, but never under
+    /// half an hour (a 15 s worker is not stuck at 16 s) nor over two hours (a
+    /// daily worker blocked on a prompt must not wait a day to say so).
+    #[test]
+    fn a_pass_limit_is_the_interval_within_half_an_hour_and_two_hours() {
+        assert_eq!(pass_limit(15), Duration::from_secs(1800));
+        assert_eq!(pass_limit(3600), Duration::from_secs(3600));
+        assert_eq!(pass_limit(86_400), Duration::from_secs(7200));
+    }
+
+    /// #283: a pass still running at its limit is reported ONCE, and is not
+    /// cancelled — its own outcome is still what the pass returns, so a blocked
+    /// keychain read is never abandoned and re-issued beside itself.
+    #[tokio::test(start_paused = true)]
+    async fn an_overrunning_pass_is_reported_once_and_still_finishes() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let out = watch_pass(
+            async {
+                tokio::time::sleep(Duration::from_secs(250)).await;
+                "finished"
+            },
+            Duration::from_secs(100),
+            move |after| async move { log.lock().unwrap().push(after) },
+        )
+        .await;
+        assert_eq!(out, "finished");
+        assert_eq!(*seen.lock().unwrap(), vec![Duration::from_secs(100)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_pass_inside_its_limit_is_not_reported() {
+        let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = called.clone();
+        let out = watch_pass(async { 7 }, Duration::from_secs(100), move |_| async move {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst)
+        })
+        .await;
+        assert_eq!(out, 7);
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     /// Is this tick ready RIGHT NOW? `biased` polls the tick first and falls

@@ -31,6 +31,7 @@ create table if not exists schedules (
 , last_error     text
 , runs           integer     not null default 0
 , total_ms       bigint      not null default 0
+, running_since  timestamptz
 , created_at     timestamptz not null default now()
 , modified_at    timestamptz not null default now()
 );
@@ -66,3 +67,5 @@ comment on column schedules.runs
      is 'Passes timed since durations were recorded (#96). With total_ms gives the average; passes before that are not counted, so no average is invented for them.';
 comment on column schedules.total_ms
      is 'Summed wall-clock duration of the timed passes, in milliseconds (#96).';
+comment on column schedules.running_since
+     is 'When the pass now in progress started (#283); NULL when idle. Set as a pass starts, cleared as it ends and at daemon start, so a pass blocked for an hour reads as running for an hour rather than as an hour-old result.';

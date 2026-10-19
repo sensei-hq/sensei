@@ -86,6 +86,8 @@ fn render(s: &StoredSchedule) -> serde_json::Value {
         "last_error": s.last_error,
         // Mean duration of the timed passes; `null` before the first (#96).
         "avg_ms": s.avg_ms,
+        // When the pass now running started; `null` when idle (#283).
+        "running_since": s.running_since.map(|t| t.to_rfc3339()),
         // When it runs next, from the rules the ticker applies (#96). `null` when
         // disabled. Local time decides the window, as it does in the ticker.
         "next_run_at": crate::tasks::schedule::next_run(
@@ -455,6 +457,7 @@ mod tests {
             last_ok: Some(true),
             last_error: None,
             avg_ms: Some(1200),
+            running_since: None,
         };
         let next = render(&s)["next_run_at"].as_str().map(str::to_string).expect("next_run_at");
         let next = chrono::DateTime::parse_from_rfc3339(&next).unwrap();
@@ -463,6 +466,28 @@ mod tests {
         let off = StoredSchedule { enabled: false, ..s };
         assert!(render(&off)["next_run_at"].is_null(), "disabled: no next run");
         assert_eq!(render(&off)["avg_ms"], 1200, "the average is on the wire");
+    }
+
+    /// #283: a pass in progress says since when; an idle worker says null.
+    #[test]
+    fn a_schedule_reports_a_pass_in_progress() {
+        let since = chrono::Utc::now() - chrono::Duration::minutes(62);
+        let s = StoredSchedule {
+            name: "dojo_sync".into(),
+            enabled: true,
+            interval_secs: 60,
+            window_start: None,
+            window_end: None,
+            days: vec![],
+            last_run_at: None,
+            last_ok: None,
+            last_error: None,
+            avg_ms: None,
+            running_since: Some(since),
+        };
+        assert_eq!(render(&s)["running_since"], since.to_rfc3339());
+        let idle = StoredSchedule { running_since: None, ..s };
+        assert!(render(&idle)["running_since"].is_null());
     }
 
     /// #96: a worker's log tail — the last lines tagged with it, from a file.

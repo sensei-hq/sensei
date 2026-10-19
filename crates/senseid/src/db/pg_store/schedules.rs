@@ -23,12 +23,13 @@ type ScheduleRow = (
     Option<String>,        // last_error
     i32,                   // runs
     i64,                   // total_ms
+    Option<DateTime<Utc>>, // running_since
 );
 
 /// That same shape as a SELECT list, so the three queries below cannot drift
 /// from [`ScheduleRow`] one column at a time.
 const SCHEDULE_COLUMNS: &str = "name, enabled, interval_secs, window_start, window_end, days, \
-                                last_run_at, last_ok, last_error, runs, total_ms";
+                                last_run_at, last_ok, last_error, runs, total_ms, running_since";
 use crate::tasks::schedule::Schedule;
 
 /// A schedule as stored, including the runtime state the daemon writes back.
@@ -45,12 +46,26 @@ pub struct StoredSchedule {
     pub last_error: Option<String>,
     /// Mean duration of the timed passes (#96); `None` before the first.
     pub avg_ms: Option<u64>,
+    /// When the pass now in progress started (#283); `None` when idle.
+    pub running_since: Option<DateTime<Utc>>,
 }
 
 impl From<ScheduleRow> for StoredSchedule {
     fn from(row: ScheduleRow) -> Self {
-        let (name, enabled, interval, ws, we, days, last_run, last_ok, last_error, runs, total_ms) =
-            row;
+        let (
+            name,
+            enabled,
+            interval,
+            ws,
+            we,
+            days,
+            last_run,
+            last_ok,
+            last_error,
+            runs,
+            total_ms,
+            running_since,
+        ) = row;
         Self {
             name,
             enabled,
@@ -68,6 +83,7 @@ impl From<ScheduleRow> for StoredSchedule {
             last_ok,
             last_error,
             avg_ms: (runs > 0).then(|| u64::try_from(total_ms / i64::from(runs)).unwrap_or(0)),
+            running_since,
         }
     }
 }
@@ -248,7 +264,7 @@ impl PgStore {
         sqlx_core::query::query(
             "UPDATE sensei.schedules \
                 SET last_run_at = now(), last_ok = $2, last_error = $3, \
-                    runs = runs + 1, total_ms = total_ms + $4 \
+                    runs = runs + 1, total_ms = total_ms + $4, running_since = NULL \
               WHERE name = $1",
         )
         .bind(name)
@@ -258,6 +274,45 @@ impl PgStore {
         .execute(&self.pool)
         .await
         .map_err(|e| format!("mark_schedule_run({name}): {e}"))?;
+        Ok(())
+    }
+
+    /// A pass has started (#283): the listing shows it as running from now
+    /// until [`Self::mark_schedule_run`] clears it.
+    pub async fn mark_schedule_started(&self, name: &str) -> Result<(), String> {
+        self.set_schedule_running(name, true).await
+    }
+
+    /// No pass of this worker is running (#283) — at daemon start, so a pass the
+    /// previous process left behind never reads as running in this one.
+    pub async fn clear_schedule_running(&self, name: &str) -> Result<(), String> {
+        self.set_schedule_running(name, false).await
+    }
+
+    async fn set_schedule_running(&self, name: &str, running: bool) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.schedules SET running_since = CASE WHEN $2 THEN now() END WHERE name = $1",
+        )
+        .bind(name)
+        .bind(running)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_schedule_running({name}): {e}"))?;
+        Ok(())
+    }
+
+    /// The pass in progress has run past its limit (#283): recorded as a failure
+    /// so it shows, while `last_run_at` and `running_since` stay as they are —
+    /// the pass has not completed, and its own outcome replaces this when it does.
+    pub async fn mark_schedule_overrun(&self, name: &str, error: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.schedules SET last_ok = false, last_error = $2 WHERE name = $1",
+        )
+        .bind(name)
+        .bind(error)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("mark_schedule_overrun({name}): {e}"))?;
         Ok(())
     }
 }
