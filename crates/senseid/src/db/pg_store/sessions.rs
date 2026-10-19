@@ -1431,6 +1431,34 @@ impl PgStore {
         Ok(())
     }
 
+    /// Set a session's token columns from `activity.turn_usage` (#280): the ONE
+    /// writer for a session with turn rows, so a turn both the hook and the
+    /// transcript saw is counted once and a subagent's hook-only turn is counted
+    /// at all. `tokens_in` keeps its meaning — ALL input (fresh + cache read +
+    /// cache write). `false` when the session has no turn rows: a source that
+    /// reports only a session total keeps it, untouched.
+    pub async fn refresh_session_tokens(&self, client_session_id: &str) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE activity.sessions s
+                SET tokens_in    = u.fresh + u.cache_read + u.cache_write,
+                    tokens_fresh = u.fresh,
+                    cache_read   = u.cache_read,
+                    cache_write  = u.cache_write,
+                    tokens_out   = u.output
+               FROM (SELECT sum(fresh)::int4 AS fresh, sum(cache_read)::int4 AS cache_read,
+                            sum(cache_write)::int4 AS cache_write, sum(output)::int4 AS output
+                       FROM activity.turn_usage
+                      WHERE session_id = $1
+                     HAVING count(*) > 0) u
+              WHERE s.client_session_id = $1",
+        )
+        .bind(client_session_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected() > 0)
+    }
+
     /// Raise a session's list-price cost to `usd` (#238): the largest /cost total
     /// any SessionMeasure reported, so a late-drained smaller figure cannot
     /// regress it (`GREATEST` ignores the NULL of a first reading). `false` when
