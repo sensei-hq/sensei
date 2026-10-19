@@ -761,3 +761,114 @@ async fn scoped_search_and_count_across_child_folder() {
     s.delete_project(&proj_id).await.unwrap();
     let _ = (fn_id, tgt_id);
 }
+
+// ── One repository per checkout (#271) ─────────────────────────────────────
+//
+// A checkout with no remote used to mint a NEW keyless repository on every
+// rescan (nulls never collide), and the reconcile rescans every ~300s: 13,346
+// keyless rows for 2 indexed checkouts, 5,618 of them still linked into projects,
+// which Settings → Projects listed as that project's repositories.
+
+async fn drop_folder(s: &PgStore, id: &uuid::Uuid) {
+    sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+        .bind(id)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+async fn drop_repository(s: &PgStore, id: &uuid::Uuid) {
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1")
+        .bind(id)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_remote_less_checkout_keeps_one_repository_across_rescans() {
+    let s = pg_store().await;
+    let fid = create_test_folder_unattributed(&s, &format!("keyless-{}", uuid::Uuid::new_v4())).await;
+
+    let first = s.repository_for_checkout(&fid, "keyless", None).await.unwrap();
+    s.link_folder_to_repository(&fid, &first).await.unwrap();
+    let second = s.repository_for_checkout(&fid, "keyless", None).await.unwrap();
+
+    drop_folder(&s, &fid).await;
+    drop_repository(&s, &first).await;
+    if second != first {
+        drop_repository(&s, &second).await;
+    }
+    assert_eq!(second, first, "a rescan reuses the checkout's own keyless repository");
+}
+
+#[tokio::test]
+async fn a_keyed_checkout_resolves_by_its_remote_from_any_folder() {
+    let s = pg_store().await;
+    let u = uuid::Uuid::new_v4();
+    let remote = format!("git@github.com:test/keyed-{u}.git");
+    let a = create_test_folder_unattributed(&s, &format!("keyed-a-{u}")).await;
+    let b = create_test_folder_unattributed(&s, &format!("keyed-b-{u}")).await;
+
+    let ra = s.repository_for_checkout(&a, "keyed", Some(&remote)).await.unwrap();
+    let rb = s.repository_for_checkout(&b, "keyed", Some(&remote)).await.unwrap();
+
+    drop_folder(&s, &a).await;
+    drop_folder(&s, &b).await;
+    drop_repository(&s, &ra).await;
+    assert_eq!(ra, rb, "two clones of one remote are one repository");
+}
+
+#[tokio::test]
+async fn prune_orphan_keyless_repositories_removes_only_old_unreferenced_keyless_rows() {
+    let s = pg_store().await;
+    let u = uuid::Uuid::new_v4();
+    let mk = |key: Option<String>, name: String| {
+        let s = s.clone();
+        async move {
+            let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, $2) RETURNING id",
+            )
+            .bind(key)
+            .bind(name)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+            id
+        }
+    };
+    let orphan = mk(None, format!("orphan-{u}")).await;
+    let referenced = mk(None, format!("referenced-{u}")).await;
+    let keyed = mk(Some(format!("github.com/test/keyed-orphan-{u}")), format!("keyed-{u}")).await;
+    let fresh = mk(None, format!("fresh-{u}")).await;
+    let fid = create_test_folder_unattributed(&s, &format!("prune-ref-{u}")).await;
+    s.link_folder_to_repository(&fid, &referenced).await.unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.repositories SET created_at = now() - interval '10 minutes' WHERE id = ANY($1)",
+    )
+    .bind(vec![orphan, referenced, keyed])
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    s.prune_orphan_keyless_repositories(60).await.unwrap();
+    let left: Vec<uuid::Uuid> = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+        "SELECT id FROM sensei.repositories WHERE id = ANY($1)",
+    )
+    .bind(vec![orphan, referenced, keyed, fresh])
+    .fetch_all(s.pool())
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(id,)| id)
+    .collect();
+
+    drop_folder(&s, &fid).await;
+    for id in [orphan, referenced, keyed, fresh] {
+        drop_repository(&s, &id).await;
+    }
+    assert!(!left.contains(&orphan), "an old keyless repository no folder references is pruned");
+    assert!(left.contains(&referenced), "a keyless repository a folder references is kept");
+    assert!(left.contains(&keyed), "a keyed repository is kept: it carries identity and history");
+    assert!(left.contains(&fresh), "a keyless repository inside the grace may be mid-link");
+}
