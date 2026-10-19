@@ -118,7 +118,13 @@ describe('relayInboxState · load outcome', () => {
 		relayInboxState.begin();
 		relayInboxState.loaded(result({ sessions: [], unreachable: ['one', 'two'] }));
 		expect(relayInboxState.status).toBe('error');
-		expect(relayInboxState.error).toContain('2');
+		expect(relayInboxState.error).toBe('None of your 2 dōjōs could be reached.');
+	});
+
+	it('one dōjō unreachable reads in the singular', () => {
+		relayInboxState.begin();
+		relayInboxState.loaded(result({ sessions: [], tenants: 1, unreachable: ['one'] }));
+		expect(relayInboxState.error).toBe('Your dōjō could not be reached.');
 	});
 
 	it('a thrown load is an error with its message', () => {
