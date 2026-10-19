@@ -195,3 +195,26 @@ async fn a_session_without_turn_rows_keeps_its_totals() {
     assert_eq!(session_tokens(&s, &sid).await.0, Some(999));
     drop_session(&s, &sid).await;
 }
+
+/// A long session's input passes 2³¹ (one measured session read 1.96 billion
+/// tokens, nearly all cache). The integer columns would make its refresh fail on
+/// every attempt — a poison pill — so the token columns are bigint.
+#[tokio::test]
+async fn a_session_over_two_billion_tokens_is_stored_exactly() {
+    let s = pg_store().await;
+    let sid = format!("tu-big-{}", uuid::Uuid::new_v4());
+    session(&s, &sid, None).await;
+    transcript_turn(&s, &sid, (1, 1_000, 10, 1_500_000_000, 0, 1)).await;
+    transcript_turn(&s, &sid, (2, 2_000, 10, 1_500_000_000, 0, 1)).await;
+
+    assert!(s.refresh_session_tokens(&sid).await.unwrap());
+    let (tokens_in,): (Option<i64>,) = sqlx_core::query_as::query_as(
+        "SELECT tokens_in::int8 FROM activity.sessions WHERE client_session_id = $1",
+    )
+    .bind(&sid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(tokens_in, Some(3_000_000_020));
+    drop_session(&s, &sid).await;
+}
