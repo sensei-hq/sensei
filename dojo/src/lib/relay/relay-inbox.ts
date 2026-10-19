@@ -15,28 +15,56 @@ export interface InboxLoadOpts {
 	fetch: typeof fetch;
 }
 
-export async function loadRelayInbox(opts: InboxLoadOpts): Promise<RelaySession[]> {
-	const perTenant = await Promise.all(opts.memberships.map((m) => loadTenant(m.url, opts)));
-	return perTenant.flat();
+/** What the fan-out found. A dōjō that did not answer, or a run whose plan did not
+ *  load, is NAMED here rather than read as "no runs" / "no plan" (#104). */
+export interface InboxLoad {
+	sessions: RelaySession[];
+	/** How many dōjōs were asked — so "every one failed" is distinguishable. */
+	tenants: number;
+	/** The tenantKeys whose relay did not answer. */
+	unreachable: string[];
+	/** Runs listed without their plan, because its segments read failed. */
+	plansMissing: number;
 }
 
-// One dōjō's sessions. A single tenant's failure yields [] so one unreachable dōjō
-// never blanks the whole inbox.
-async function loadTenant(tenantKey: string, opts: InboxLoadOpts): Promise<RelaySession[]> {
+export async function loadRelayInbox(opts: InboxLoadOpts): Promise<InboxLoad> {
+	const perTenant = await Promise.all(opts.memberships.map((m) => loadTenant(m.url, opts)));
+	return {
+		sessions: perTenant.flatMap((t) => t.sessions),
+		tenants: opts.memberships.length,
+		unreachable: perTenant.filter((t) => t.failed).map((t) => t.tenantKey),
+		plansMissing: perTenant.reduce((n, t) => n + t.plansMissing, 0)
+	};
+}
+
+interface TenantLoad {
+	tenantKey: string;
+	sessions: RelaySession[];
+	failed: boolean;
+	plansMissing: number;
+}
+
+// One dōjō's sessions. A failure is recorded against the dōjō, so one unreachable
+// dōjō neither blanks the inbox nor passes for one with nothing in flight.
+async function loadTenant(tenantKey: string, opts: InboxLoadOpts): Promise<TenantLoad> {
 	const call = { fetch: opts.fetch, accessToken: opts.accessToken };
+	let runs: RelayRun[];
+	let gates: RelayGate[];
 	try {
-		const [runs, gates]: [RelayRun[], RelayGate[]] = await Promise.all([
-			listRuns(tenantKey, call),
-			listGates(tenantKey, call)
-		]);
-		return Promise.all(
-			runs.map(async (run) => {
-				const segments = await getSegments(tenantKey, run.run_id, call).catch(() => []);
-				const runGates = gates.filter((g) => g.run_id === run.run_id);
-				return toRelaySession(run, runGates, segments);
-			})
-		);
+		[runs, gates] = await Promise.all([listRuns(tenantKey, call), listGates(tenantKey, call)]);
 	} catch {
-		return [];
+		return { tenantKey, sessions: [], failed: true, plansMissing: 0 };
 	}
+	let plansMissing = 0;
+	const sessions = await Promise.all(
+		runs.map(async (run) => {
+			const segments = await getSegments(tenantKey, run.run_id, call).catch(() => {
+				plansMissing += 1;
+				return [];
+			});
+			const runGates = gates.filter((g) => g.run_id === run.run_id);
+			return toRelaySession(run, runGates, segments);
+		})
+	);
+	return { tenantKey, sessions, failed: false, plansMissing };
 }
