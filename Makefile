@@ -219,13 +219,20 @@ install-service: db-backup-essential crates
 	cp target/release/senseid    "$$DEST/senseid" && \
 	cp target/release/sensei     "$$DEST/sensei" && \
 	cp target/release/sensei-mcp "$$DEST/sensei-mcp" && \
-	codesign --sign - --options runtime --force "$$DEST/senseid" && \
-	codesign --sign - --options runtime --force "$$DEST/sensei" && \
-	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
+	./scripts/codesign-local.sh "$$DEST/senseid" "$$DEST/sensei" "$$DEST/sensei-mcp" && \
 	echo "Overlaid fresh release binaries into $$DEST (codesigned)"
 	@echo "Restarting sensei service so the new daemon is live..."
 	-@brew services start sensei
 	@$(MAKE) mcp-refresh-note
+
+# One-time, per machine: a self-signed `sensei-dev` code-signing identity, so
+# local installs keep one signature across rebuilds and macOS remembers keychain
+# "Always Allow" and folder access instead of asking after every build.
+# Asks for your login password (it trusts the certificate). See
+# scripts/codesign-local.sh, which every install target signs through.
+.PHONY: dev-signing-cert
+dev-signing-cert:
+	@./scripts/create-dev-signing-cert.sh
 
 # Build the desktop .app bundle and install it to /Applications/.
 # Stop any running instance first — `cp -R` over a running .app would mix
@@ -262,9 +269,7 @@ install-debug: db-backup-essential crates-debug
 	cp target/debug/senseid    "$$DEST/senseid" && \
 	cp target/debug/sensei     "$$DEST/sensei" && \
 	cp target/debug/sensei-mcp "$$DEST/sensei-mcp" && \
-	codesign --sign - --options runtime --force "$$DEST/senseid" && \
-	codesign --sign - --options runtime --force "$$DEST/sensei" && \
-	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
+	./scripts/codesign-local.sh "$$DEST/senseid" "$$DEST/sensei" "$$DEST/sensei-mcp" && \
 	echo "Overlaid debug binaries into $$DEST (codesigned)"
 	@echo "Restarting sensei service so the new daemon is live..."
 	-@brew services start sensei
