@@ -21,6 +21,6 @@ export function historyOffNotice(consent: TranscriptSourceConsent[] | null): His
       : `${assistants.slice(0, -1).join(', ')} and ${assistants[assistants.length - 1]}`;
   return {
     assistants,
-    text: `Conversation history reading is off for ${names}, so their token, cost and session metrics are not updating. Turn it on in Settings → Assistants.`,
+    text: `Conversation history reading is off for ${names}, so ${assistants.length === 1 ? 'its' : 'their'} token, cost and session metrics are not updating. Turn it on in Settings → Assistants.`,
   };
 }

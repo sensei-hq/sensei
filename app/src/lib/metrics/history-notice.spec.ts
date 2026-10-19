@@ -19,6 +19,12 @@ describe('historyOffNotice', () => {
     );
   });
 
+  it('one assistant reads in the singular', () => {
+    expect(historyOffNotice([src('zed', 'Zed', false)])?.text).toBe(
+      'Conversation history reading is off for Zed, so its token, cost and session metrics are not updating. Turn it on in Settings → Assistants.',
+    );
+  });
+
   it('says nothing when every assistant is read', () => {
     expect(historyOffNotice([src('zed', 'Zed', true)])).toBeNull();
   });
