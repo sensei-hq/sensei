@@ -872,6 +872,48 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
 mod tests {
     use super::*;
 
+    /// A transcript whose content is gone, so `ingest_one` returns as soon as its
+    /// gates are decided — which isolates what the gates do with a failed read.
+    struct GoneTranscript;
+    impl TranscriptAdapter for GoneTranscript {
+        fn source(&self) -> &'static str {
+            "claude_code"
+        }
+        fn family(&self) -> &'static str {
+            "claude"
+        }
+        fn units(&self) -> Vec<UnitRef> {
+            vec![]
+        }
+        fn stamp_for(&self, _key: &str) -> Option<i64> {
+            Some(1)
+        }
+        fn session_id_for(&self, _key: &str) -> Option<String> {
+            Some("gone-session".to_string())
+        }
+        fn load_content(&self, _key: &str) -> Option<String> {
+            None
+        }
+        fn parse(&self, _content: &str) -> ParsedTranscript {
+            ParsedTranscript::default()
+        }
+    }
+
+    /// #280: the ingest's gates turned a failed read into a decision —
+    /// `session_has_events(..).unwrap_or(true)` and
+    /// `session_needs_meta_backfill(..).unwrap_or(false)` — so a database fault
+    /// reported "skipped", a success, and the session's tokens were never written.
+    /// A failed read must fail the task, which retries.
+    #[tokio::test]
+    async fn a_failed_read_fails_the_ingest_instead_of_skipping_it() {
+        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
+            return;
+        };
+        pg.close().await;
+        let got = ingest_one(&pg, &GoneTranscript, "/gone.jsonl").await;
+        assert!(got.is_err(), "a read that failed was reported as {:?}", got.map(|o| o.skipped));
+    }
+
     /// A task queued BEFORE consent was withdrawn must not read the file after
     /// it (#218): the per-file handler re-checks, so "off" takes effect on the
     /// next task, not the next dispatch.
