@@ -1,5 +1,6 @@
 <script lang="ts">
     import { PageHeader } from '$lib/components';
+    import { SHORTCUTS } from '$lib/shortcuts.js';
 </script>
 
 <PageHeader kanji="助" eyebrow="Sensei" title="Help" size="lg" />
@@ -41,13 +42,14 @@
                 </tr>
             </thead>
             <tbody>
-                {#each [["⌘N", "New project"], ["⌘W", "Close window"], ["⌘,", "Preferences"], ["⌘\\", "Toggle sidebar"], ["⌘1", "Today"], ["⌘2", "Projects"], ["⌘3", "Sessions"], ["⌘0", "Show Observatory"], ["⌘?", "This help window"]] as [shortcut, action]}
-                    <tr>
+                <!-- Only keys that are bound: shortcuts.spec.ts holds each to its binding. -->
+                {#each SHORTCUTS as s (s.binding)}
+                    <tr data-shortcut={s.binding}>
                         <td
                             class="shortcuts-row py-1 pr-3 font-mono text-sm font-semibold min-w-[60px]"
-                            >{shortcut}</td
+                            >{s.keys}</td
                         >
-                        <td class="shortcuts-row py-1 pr-3">{action}</td>
+                        <td class="shortcuts-row py-1 pr-3">{s.action}</td>
                     </tr>
                 {/each}
             </tbody>

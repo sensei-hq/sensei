@@ -99,8 +99,12 @@ fn build_app_menu(
     }
     let window_menu = window_builder.build()?;
 
+    // ⌘? — the key the help page names for itself.
+    let shortcuts_item = MenuItemBuilder::with_id("shortcuts", "Keyboard Shortcuts")
+        .accelerator("CmdOrCtrl+Shift+/")
+        .build(app)?;
     let help_menu = SubmenuBuilder::new(app, "Help")
-        .text("shortcuts", "Keyboard Shortcuts")
+        .item(&shortcuts_item)
         .text("whats-new", "What's New")
         .separator()
         .text("report-issue", "Report an Issue")
@@ -223,23 +227,13 @@ pub fn run() {
                     "check-for-updates" => {
                         let _ = app.emit("update-check-requested", ());
                     }
-                    // View → Health is an explicit inspection request: pass
-                    // `?auto=false` so /health stays put when status is ok
-                    // instead of redirecting straight to the observatory.
-                    "go-health"      => { let _ = app.emit("dev-navigate", "/health?auto=false"); }
-                    "go-upgrade"     => { let _ = app.emit("dev-navigate", "/upgrade"); }
-                    // "(observatory)" is a SvelteKit group, not a URL segment —
-                    // the observatory page lives at "/".
+                    // Navigation items — the route table is `menu_route`, so it is testable.
                     // Not a navigation: the overlay is global, so it opens
                     // wherever the user already is rather than moving them.
                     "open-identities" => { let _ = app.emit("open-identities", ()); }
-                    "go-observatory" => { let _ = app.emit("dev-navigate", "/"); }
-                    // `?force=1` lets the user re-enter setup after it's already
-                    // been completed. The (config) layout's setupOk-redirect
-                    // (which exists to recover from a cold-start race) bails
-                    // out when this param is present, so the menu always
-                    // brings the user back to the welcome stage.
-                    "go-setup"       => { let _ = app.emit("dev-navigate", "/setup/welcome?force=1"); }
+                    id if menu_route(id).is_some() => {
+                        let _ = app.emit("dev-navigate", menu_route(id).unwrap_or("/"));
+                    }
                     "report-issue" => {
                         use tauri_plugin_opener::OpenerExt;
                         let url = format!(
@@ -248,9 +242,6 @@ pub fn run() {
                             sensei_bootstrap::GITHUB_REPO,
                         );
                         let _ = app.opener().open_url(&url, None::<&str>);
-                    }
-                    "shortcuts" => {
-                        // TODO: open help window (Task 19)
                     }
                     // Window menu → raise the chosen open project window.
                     id if id.starts_with("focus-window:") => {
@@ -273,4 +264,46 @@ pub fn run() {
     builder
         .run(tauri::generate_context!())
         .expect("error while running sensei desktop")
+}
+
+/// Where a navigation menu item goes, or `None` for an item that is not a route.
+/// Emitted as `dev-navigate`, which the root layout turns into `goto` in every
+/// build (#135).
+fn menu_route(id: &str) -> Option<&'static str> {
+    Some(match id {
+        // View → Health is an explicit inspection request: `?auto=false` keeps
+        // /health in place when status is ok instead of redirecting onward.
+        "go-health" => "/health?auto=false",
+        "go-upgrade" => "/upgrade",
+        // "(observatory)" is a SvelteKit group, not a URL segment — the
+        // observatory page lives at "/".
+        "go-observatory" => "/",
+        // `?force=1` lets the user re-enter setup after it is complete: the
+        // (config) layout's setupOk-redirect bails out when it is present.
+        "go-setup" => "/setup/welcome?force=1",
+        // Help → Keyboard Shortcuts: the help page carries the shortcut table.
+        "shortcuts" => "/help",
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::menu_route;
+
+    /// #135: "Keyboard Shortcuts" had a `// TODO` for a handler, so the Help
+    /// menu item did nothing although `/help` exists.
+    #[test]
+    fn keyboard_shortcuts_opens_help() {
+        assert_eq!(menu_route("shortcuts"), Some("/help"));
+    }
+
+    #[test]
+    fn the_view_menu_routes_are_unchanged() {
+        assert_eq!(menu_route("go-health"), Some("/health?auto=false"));
+        assert_eq!(menu_route("go-upgrade"), Some("/upgrade"));
+        assert_eq!(menu_route("go-observatory"), Some("/"));
+        assert_eq!(menu_route("go-setup"), Some("/setup/welcome?force=1"));
+        assert_eq!(menu_route("open-logs"), None, "not a route: it has its own event");
+    }
 }
