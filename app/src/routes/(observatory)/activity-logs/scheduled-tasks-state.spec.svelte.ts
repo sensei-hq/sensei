@@ -7,6 +7,7 @@ import {
   taskHealth,
   taskError,
   taskNextRun,
+  TaskLog,
   taskInterval,
   taskAvg,
   taskSchedule,
@@ -154,5 +155,26 @@ describe('taskAvg', () => {
 
   it('is the em dash for a negative average', () => {
     expect(taskAvg(makeTask({ avg_ms: -1 }))).toBe(EM_DASH);
+  });
+});
+
+// #96: a worker's log tail, opened from its row. A failed read is an error,
+// never an empty log — "nothing logged" and "could not read the log" are
+// different answers.
+describe('TaskLog', () => {
+  it('loads the tail when opened, and closes again', async () => {
+    const log = new TaskLog(async () => ({ ok: true as const, data: { lines: ['a worker="x"', 'b worker="x"'] } }));
+    await log.toggle();
+    expect(log.open).toBe(true);
+    expect(log.lines).toEqual(['a worker="x"', 'b worker="x"']);
+    await log.toggle();
+    expect(log.open).toBe(false);
+  });
+
+  it('reports a failed read as an error, not as an empty log', async () => {
+    const log = new TaskLog(async () => ({ ok: false as const, error: { status: 500, message: 'read failed' } }));
+    await log.toggle();
+    expect(log.error).toContain('read failed');
+    expect(log.lines).toEqual([]);
   });
 });

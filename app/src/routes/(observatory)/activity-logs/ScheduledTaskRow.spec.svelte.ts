@@ -3,6 +3,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
 import type { ScheduledTask } from '$lib/types.js';
 import ScheduledTaskRowHarness from './ScheduledTaskRow.harness.svelte';
+import { TaskLog } from './scheduled-tasks.svelte.js';
+import { flushSync, tick } from 'svelte';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -79,6 +81,19 @@ describe('ScheduledTaskRow', () => {
     const ok = mountComponent(ScheduledTaskRowHarness, { task: makeTask({ last_ok: true }), now: NOW });
     cleanup.push(ok.destroy);
     expect(ok.container.querySelector('[data-task-error]')).toBeNull();
+  });
+
+  // #96: the row opens the worker's log tail.
+  it('opens the log tail from the row', async () => {
+    const log = new TaskLog(async () => ({ ok: true as const, data: { lines: ['x worker="analyzer" ran'] } }));
+    const m = mountComponent(ScheduledTaskRowHarness, { task: makeTask(), now: NOW, log });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-task-log]')).toBeNull();
+    (m.container.querySelector('[data-task-log-toggle]') as HTMLButtonElement).click();
+    await tick();
+    await Promise.resolve();
+    flushSync();
+    expect(m.container.querySelector('[data-task-log]')?.textContent).toContain('x worker="analyzer" ran');
   });
 
   it('shows a muted em dash for the null health fields', () => {

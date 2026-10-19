@@ -6,6 +6,7 @@
 
 import type { ScheduledTask } from '$lib/types.js';
 import { relativeTime } from './activity-logs.svelte.js';
+import type { ApiResult } from '$lib/api.js';
 
 /** Muted placeholder for a field the daemon hasn't recorded yet. */
 export const EM_DASH = '—';
@@ -113,4 +114,30 @@ export function taskAvg(task: ScheduledTask): string {
   if (ms == null || ms < 0) return EM_DASH;
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/** A worker's log tail, opened from its row (#96). The loader is injected so
+ *  the state is testable; a failed read is an error, never an empty log. */
+export class TaskLog {
+  open = $state(false);
+  loading = $state(false);
+  lines = $state<string[]>([]);
+  error = $state<string | null>(null);
+
+  constructor(private readonly load: () => Promise<ApiResult<{ lines: string[] }>>) {}
+
+  async toggle(): Promise<void> {
+    this.open = !this.open;
+    if (!this.open) return;
+    this.loading = true;
+    this.error = null;
+    const res = await this.load();
+    this.loading = false;
+    if (res.ok) {
+      this.lines = res.data.lines;
+    } else {
+      this.lines = [];
+      this.error = `Could not read the log: ${res.error.message || `HTTP ${res.error.status}`}`;
+    }
+  }
 }

@@ -16,10 +16,25 @@
   } from './activity-logs.svelte.js';
   import LogRow from './LogRow.svelte';
   import ScheduledTaskRow from './ScheduledTaskRow.svelte';
+  import { TaskLog } from './scheduled-tasks.svelte.js';
+  import { senseiApi } from '$lib/api.js';
+  import { appState } from '$lib/appstate.svelte.js';
 
   let { data } = $props();
 
   const view = new ActivityLogsView();
+
+  // One log tail per worker, opened from its row (#96).
+  const api = senseiApi(appState.port);
+  const logs = new Map<string, TaskLog>();
+  function logFor(name: string): TaskLog {
+    let l = logs.get(name);
+    if (!l) {
+      l = new TaskLog(() => api.tryGetScheduledLog(name));
+      logs.set(name, l);
+    }
+    return l;
+  }
 
   // Fresh "x ago" baseline, recomputed whenever a new page loads. Kept a pure
   // derivation (not an $effect assigning state) — reading `data.rows` registers
@@ -64,7 +79,9 @@
        how long a pass takes. Schedule comes from `sensei.schedules` and is
        editable via PATCH /api/tasks/scheduled/{name}; a failing worker shows
        its last error under its name. -->
-  {#if data.tasks.length > 0}
+  {#if data.tasksError}
+    <p class="text-sm text-danger px-6 py-3 m-0 border-b border-paper-edge" data-tasks-error>{data.tasksError}</p>
+  {:else if data.tasks.length > 0}
     <section class="border-b border-paper-edge" data-testid="scheduled-tasks">
       <div class="flex items-baseline gap-2 px-6 pt-4 pb-2">
         <h2 class="text-xs uppercase tracking-wider text-ink-soft m-0">Background tasks</h2>
@@ -84,7 +101,7 @@
         <span>health</span>
       </div>
       {#each data.tasks as task (task.name)}
-        <ScheduledTaskRow {task} {now} />
+        <ScheduledTaskRow {task} {now} log={logFor(task.name)} />
       {/each}
     </section>
   {/if}
@@ -206,7 +223,9 @@
   </div>
 
   <!-- Rows -->
-  {#if data.rows.length === 0}
+  {#if data.rowsError}
+    <p class="text-sm text-danger px-6 py-6 m-0" data-logs-error>{data.rowsError}</p>
+  {:else if data.rows.length === 0}
     <div class="p-6">
       <EmptyState
         kanji="診"

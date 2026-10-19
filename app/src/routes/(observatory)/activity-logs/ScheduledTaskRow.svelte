@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ScheduledTask } from '$lib/types.js';
+  import type { TaskLog } from './scheduled-tasks.svelte.js';
   import {
     taskLastRun,
     taskInterval,
@@ -13,8 +14,10 @@
     task: ScheduledTask;
     /** `Date.now()` at render — kept a prop so relative time stays pure/testable. */
     now: number;
+    /** The worker's log tail (#96); absent where no tail is offered. */
+    log?: TaskLog;
   }
-  let { task, now }: Props = $props();
+  let { task, now, log }: Props = $props();
 
   const lastRun = $derived(taskLastRun(now, task));
   const interval = $derived(taskInterval(task));
@@ -34,6 +37,15 @@
     <div class="text-xs text-ink-mute truncate mt-[2px]" title={task.description}>
       {task.description}
     </div>
+    {#if log}
+      <button
+        type="button"
+        class="text-xs text-ink-faint hover:text-ink underline mt-[2px] bg-transparent border-0 p-0 cursor-pointer"
+        data-task-log-toggle
+        aria-expanded={log.open}
+        onclick={() => log.toggle()}
+      >{log.open ? 'hide log' : 'log'}</button>
+    {/if}
     {#if task.last_ok === false && task.last_error}
       <!-- Why it is failing, where it is listed (#96). -->
       <div class="text-xs text-danger mt-[2px] line-clamp-2" data-task-error title={task.last_error}>
@@ -66,3 +78,17 @@
     {health}
   </span>
 </div>
+
+{#if log?.open}
+  <div class="px-6 pb-3 border-b border-paper-edge" data-task-log>
+    {#if log.loading}
+      <p class="text-xs text-ink-faint m-0">Reading the log…</p>
+    {:else if log.error}
+      <p class="text-xs text-danger m-0" data-task-log-error>{log.error}</p>
+    {:else if log.lines.length === 0}
+      <p class="text-xs text-ink-faint m-0">Nothing logged by {task.name} today.</p>
+    {:else}
+      <pre class="font-mono text-xs text-ink-mute m-0 overflow-x-auto whitespace-pre max-h-64 overflow-y-auto">{log.lines.join('\n')}</pre>
+    {/if}
+  </div>
+{/if}

@@ -898,10 +898,9 @@ export function senseiApi(port: number) {
     // Structured daemon/cli/mcp/app log rows for the Logs screen. All filters
     // are optional server query params: exact `level` / `source` / `module`
     // match, `since` (relative `15m|1h|24h|7d`, RFC-3339, or `all`), and a row
-    // `limit` (clamped daemon-side to 1000). Newest-first. Fallback is the
-    // empty array so a daemon hiccup renders the quiet state, never a broken
-    // screen. An unparseable `since` is a 400 daemon-side → empty via fallback.
-    getLogs: (q: { level?: string; source?: string; module?: string; since?: string; limit?: number } = {}) => {
+    // `limit` (clamped daemon-side to 1000). Newest-first. A failed read is an
+    // ApiResult error — it once fell back to [], which read as "no entries".
+    tryGetLogs: (q: { level?: string; source?: string; module?: string; since?: string; limit?: number } = {}) => {
       const p = new URLSearchParams();
       if (q.level) p.set('level', q.level);
       if (q.source) p.set('source', q.source);
@@ -909,13 +908,18 @@ export function senseiApi(port: number) {
       if (q.since) p.set('since', q.since);
       if (q.limit !== undefined) p.set('limit', String(q.limit));
       const qs = p.toString() ? `?${p.toString()}` : '';
-      return get<LogRow[]>(`/api/logs${qs}`, []);
+      return tryGet<LogRow[]>(`/api/logs${qs}`);
     },
 
-    // Background-worker registry + last-run times (#96). Fallback empty so a
-    // daemon hiccup renders the empty state, never a broken panel.
-    getScheduledTasks: () =>
-      get<{ tasks: ScheduledTask[] }>('/api/tasks/scheduled', { tasks: [] }),
+    // Background-worker registry (#96). A failed read is an error state — it
+    // once fell back to an empty list, which read as "no background tasks".
+    tryGetScheduledTasks: () => tryGet<{ tasks: ScheduledTask[] }>('/api/tasks/scheduled'),
+
+    /** The last `lines` log lines a worker's passes wrote today (#96). */
+    tryGetScheduledLog: (name: string, lines = 50) =>
+      tryGet<{ worker: string; file: string; lines: string[] }>(
+        `/api/tasks/scheduled/${enc(name)}/log?lines=${lines}`,
+      ),
 
     // ── Scan ─────────────────────────────────────────────────────────────
     /** Add a root to the DB immediately (synchronous). Does not start scanning. */
