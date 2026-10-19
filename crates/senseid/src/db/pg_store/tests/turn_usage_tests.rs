@@ -134,3 +134,64 @@ async fn a_subagent_turn_is_its_own_row_and_a_disagreement_is_flagged() {
     );
     clear(&s, &sid).await;
 }
+
+async fn session(s: &PgStore, sid: &str, tokens_in: Option<i32>) {
+    sqlx_core::query::query(
+        "INSERT INTO activity.sessions (client_session_id, tokens_in) VALUES ($1, $2)",
+    )
+    .bind(sid)
+    .bind(tokens_in)
+    .execute(s.pool())
+    .await
+    .unwrap();
+}
+
+async fn session_tokens(s: &PgStore, sid: &str) -> (Option<i32>, Option<i32>, Option<i32>) {
+    sqlx_core::query_as::query_as(
+        "SELECT tokens_in, tokens_fresh, tokens_out FROM activity.sessions WHERE client_session_id = $1",
+    )
+    .bind(sid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap()
+}
+
+async fn drop_session(s: &PgStore, sid: &str) {
+    clear(s, sid).await;
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE client_session_id = $1")
+        .bind(sid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+/// The one writer of `sessions.tokens_*` for a session with turn rows: the sums
+/// over `turn_usage`, so a subagent's hook-only turn is counted and a turn both
+/// sources saw is counted once.
+#[tokio::test]
+async fn a_sessions_tokens_are_the_sum_of_its_turns() {
+    let s = pg_store().await;
+    let sid = format!("tu-sum-{}", uuid::Uuid::new_v4());
+    session(&s, &sid, None).await;
+    transcript_turn(&s, &sid, (1, 1_000, 2, 10, 20, 4)).await;
+    hook_turn(&s, &sid, "t1", None, 1_005, [2, 10, 20, 4]).await;
+    hook_turn(&s, &sid, "a1", Some("agent-x"), 1_003, [5, 0, 0, 1]).await;
+
+    assert!(s.refresh_session_tokens(&sid).await.unwrap(), "the session had turns");
+    // in = (2+10+20) + 5 = 37; fresh = 2 + 5 = 7; out = 4 + 1 = 5.
+    assert_eq!(session_tokens(&s, &sid).await, (Some(37), Some(7), Some(5)));
+    drop_session(&s, &sid).await;
+}
+
+/// A session with no turn rows (a source that reports only a session total)
+/// keeps what it has — the refresh is not a reset.
+#[tokio::test]
+async fn a_session_without_turn_rows_keeps_its_totals() {
+    let s = pg_store().await;
+    let sid = format!("tu-keep-{}", uuid::Uuid::new_v4());
+    session(&s, &sid, Some(999)).await;
+
+    assert!(!s.refresh_session_tokens(&sid).await.unwrap(), "no turns, nothing written");
+    assert_eq!(session_tokens(&s, &sid).await.0, Some(999));
+    drop_session(&s, &sid).await;
+}
