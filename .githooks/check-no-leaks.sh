@@ -112,7 +112,9 @@ scan_content() {
   while IFS= read -r line; do
     case "$line" in
       '+++ b/'*) file="${line#+++ b/}"; lineno=0; continue ;;
-      '@@'*) lineno=$(printf '%s' "$line" | sed -n 's/^@@ -[0-9,]* +\([0-9]*\).*/\1/p'); continue ;;
+      # `+N` is the number of the FIRST added line; the counter is advanced
+      # before each use, so it starts one short (#213 — it reported N+1).
+      '@@'*) lineno=$(printf '%s' "$line" | sed -n 's/^@@ -[0-9,]* +\([0-9]*\).*/\1/p'); lineno=$((lineno - 1)); continue ;;
       '+'*) text="${line#+}"; lineno=$((lineno + 1)) ;;
       *) continue ;;
     esac
@@ -176,6 +178,26 @@ scan_content() {
       note "  $file:$lineno — raw transcript event content"
     fi
   done <<< "$diff"
+}
+
+# Text that is not a staged file, through the SAME rules (#213): presented to
+# `scan_content` as a file of added lines, so there is one implementation.
+scan_text() { # label, text
+  local diff
+  diff=$(printf '+++ b/%s\n@@ -0,0 +1 @@\n' "$1"; printf '%s\n' "$2" | sed 's/^/+/')
+  scan_content "$diff"
+  return $fail
+}
+
+# A commit message, as git will store it: `#` lines are stripped.
+scan_message() {
+  scan_text COMMIT_MSG "$(printf '%s\n' "$1" | grep -v '^#')"
+}
+
+# Any text on stdin — an issue or PR body before it is posted. No git hook sees
+# those, and a leak there is beyond any history rewrite.
+scan_stdin() {
+  scan_text stdin "$(cat)"
 }
 
 run_scan() {
@@ -267,6 +289,30 @@ self_test() {
   fail=0
   scan_paths 'crates/senseid/src/transcripts/session.jsonl' 2>/dev/null
   [ $fail -eq 1 ] && { pass=$((pass+1)); echo "  ok    transcript elsewhere blocked"; } || echo "  FAIL  transcript elsewhere blocked"; t=$((t+1))
+  # #213: the line a hit is reported on is the line it is ON. A hunk header
+  # `+5` means the first added line IS line 5; counting before use said 6.
+  fail=0; t=$((t+1))
+  out=$(scan_content "$(printf '+++ b/src/x.rs\n@@ -0,0 +5 @@\n+%s' '"/Users/rkale/notes"')" 2>&1)
+  case "$out" in *"src/x.rs:5 "*) pass=$((pass+1)); echo "  ok    reports the hit's own line";;
+                 *) echo "  FAIL  reports the hit's own line (got: ${out%%$'\n'*})";; esac
+  # #213: a commit MESSAGE is scanned with the same rules. Four commits once
+  # carried client names in their messages past every file-content check.
+  fail=0; t=$((t+1))
+  scan_message "$(printf 'fix: thing\n\nseen under /Users/rkale/notes\n')" 2>/dev/null
+  [ $fail -eq 1 ] && { pass=$((pass+1)); echo "  ok    message leak caught"; } || echo "  FAIL  message leak caught"
+  # Comment lines are stripped by git before the message is stored.
+  fail=0; t=$((t+1))
+  scan_message "$(printf 'fix: thing\n# /Users/rkale/notes is only in a comment\n')" 2>/dev/null
+  [ $fail -eq 0 ] && { pass=$((pass+1)); echo "  ok    message comment ignored"; } || echo "  FAIL  message comment ignored"
+  # And any text on stdin — an issue or PR body, which no git hook ever sees.
+  fail=0; t=$((t+1))
+  scan_stdin < <(printf 'see /Users/rkale/notes\n') 2>/dev/null
+  [ $fail -eq 1 ] && { pass=$((pass+1)); echo "  ok    body on stdin caught"; } || echo "  FAIL  body on stdin caught"
+  # The hooks act on the EXIT STATUS, not on `$fail`: a scan that reports a hit
+  # and exits 0 blocks nothing (the first --stdin/--message did exactly that).
+  fail=0; t=$((t+1))
+  if scan_message "$(printf 'fix\n\n/Users/rkale/notes\n')" 2>/dev/null; then echo "  FAIL  a message hit exits non-zero"
+  else pass=$((pass+1)); echo "  ok    a message hit exits non-zero"; fi
   echo "  $pass/$t passed"
   [ "$pass" -eq "$t" ]
 }
@@ -327,6 +373,14 @@ audit_tree() {
 
 if [ "${1:-}" = "--test" ]; then self_test; exit $?; fi
 if [ "${1:-}" = "--audit" ]; then audit_tree; exit $?; fi
+if [ "${1:-}" = "--message" ]; then
+  scan_message "$(cat "$2")" || {
+    printf '\n%sCommit blocked — the MESSAGE carries the above.%s Edit it and commit again.\n' "$YEL" "$NC" >&2
+    exit 1
+  }
+  exit 0
+fi
+if [ "${1:-}" = "--stdin" ]; then scan_stdin; exit $?; fi
 
 if ! run_scan; then
   printf '\n%sCommit blocked — the above looks like transcript, log or personal data.%s\n' "$YEL" "$NC" >&2
