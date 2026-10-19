@@ -1015,6 +1015,38 @@ mod tests {
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
+    /// #177: a day where one session predates `tokens_fresh` capture gets no
+    /// fresh-tokens row. Summing the sessions that do carry it would pass a part
+    /// of the day off as the whole; tokens_in_per_day is still written.
+    #[tokio::test]
+    async fn a_day_with_a_session_missing_fresh_tokens_has_no_fresh_row() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        let with = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+        let without =
+            seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+        for (sid, fresh) in [(with, Some(10i32)), (without, None)] {
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET tokens_in=100, tokens_out=20, tokens_fresh=$2 WHERE id=$1",
+            )
+            .bind(sid).bind(fresh)
+            .execute(pg.pool()).await.unwrap();
+        }
+
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
+        let daily = daily_rows(pg, &pid).await;
+
+        assert!(daily.iter().any(|r| r.0 == "tokens_in_per_day"), "tokens in is still written");
+        assert!(
+            !daily.iter().any(|r| r.0 == "tokens_fresh_per_day"),
+            "no fresh row from a partial day: {daily:?}"
+        );
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
     #[tokio::test]
     async fn session_outcomes_writes_token_volume_duration_efficiency() {
         // Token volume (count → summed), session duration (duration → averaged), and
