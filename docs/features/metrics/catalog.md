@@ -211,9 +211,8 @@ today.
   15,975 files in one day (`spec`, 2026-01-22) against a median of 6 — so a linear
   axis over full history is one spike and a flat line.
 - **Representation:** trend line, log scale or winsorised with the raw value in the tooltip.
-- **Status:** live. ⚠️ **The registry's `unit`, `formula` and `description` still
-  describe the retired `activity.task_executions` indexing feed** — see
-  [#153](https://github.com/sensei-hq/sensei/issues/153). Real unit is *files changed per day*.
+- **Status:** live. Registry unit `files/day`; its text was corrected from the retired
+  indexing feed on 2026-10-19 ([#153](https://github.com/sensei-hq/sensei/issues/153)).
 
 ### Churn concentration `churn_concentration`
 - **Facets:** quality · pct · ● · weight **0** (descriptive)
@@ -301,10 +300,10 @@ today.
   median means the first usable output is taking longer. Idle time between turns
   inflates it.
 - **Representation:** trend line (duration axis).
-- **Status:** live, but ⚠️ **its rating is meaningless — the `rating_scale`
-  `[60,30,15,8,4]` is in minutes while the value is in seconds, so 87.3% of
-  readings score 0.** Do not present as a graded signal until
-  [#154](https://github.com/sensei-hq/sensei/issues/154) lands.
+- **Rating:** `rating_scale` `[3600, 1800, 900, 480, 240]` seconds — 4 min or less is 5/5,
+  over an hour is 0. It was `[60,30,15,8,4]`, which read as minutes against a value in
+  seconds, so 87% of readings scored 0 ([#154](https://github.com/sensei-hq/sensei/issues/154)).
+- **Status:** live and graded.
 
 ### Session duration `session_duration`
 - **Facets:** velocity · duration (seconds) · ● · weight **0** (descriptive)
@@ -364,6 +363,16 @@ consumed**, not money — see `cost_per_result` for the money question.
 - **Status:** live, unscored by design.
 
 ---
+
+### Fresh tokens per day `tokens_fresh_per_day`
+- **Facets:** usage · count · ● · weight **0** (descriptive)
+- **Definition:** fresh (uncached) input tokens per day — input that is neither a cache read nor a cache write.
+- **Calculation:** `sum(tokens_fresh)` over sessions with token usage, per repository per day. A day where any
+  session predates `tokens_fresh` capture has **no row**, never a partial sum.
+- **Source:** `activity.sessions.tokens_fresh` — live from 2026-10-19 ([#177](https://github.com/sensei-hq/sensei/issues/177)).
+- **How to read:** the cost-bearing share of input. `tokens_per_day` is dominated by cache reads (one measured day:
+  99.9996%), so it cannot proxy spend; this can. Compare against `tokens_in_per_day` for the cache share.
+- **Representation:** trend line beside tokens in.
 
 ## Cost — what did it cost?
 
@@ -458,6 +467,35 @@ has 1,806 daily / 449 weekly / 228 monthly rows back to 2018.
 
 ---
 
+## Architecture — is the structure sound?
+
+Computed from the code graph by the `architecture` task. Read `graph_confidence` first: the others
+describe only the part of the graph that resolved.
+
+### Graph confidence `graph_confidence`
+- **Facets:** architecture · pct · ▲ · weight 1
+- **Definition:** share of code-graph edges whose target was actually placed.
+- **Calculation:** `count(edges where target_id is not null) / count(edges)`.
+- **How to read:** read it **before** any coupling or cycle number. At 40% a coupling metric describes two fifths of
+  the codebase. A fall here invalidates the others for that repository rather than indicating a design regression.
+- **Status:** live — ~650 readings across 68 repos.
+
+### Public surface `public_surface_ratio`
+- **Facets:** architecture · pct · ▼ · weight 1
+- **Definition:** share of declared symbols exported from their file.
+- **Calculation:** `count(nodes where is_exported) / count(nodes)`, over declarations only.
+- **How to read:** the direction is a default, not a law — a library legitimately exports more than an application.
+  Compare a repository against its own history. Languages are pooled, so cross-language comparison is unsound.
+- **Status:** live — ~660 readings across 72 repos.
+
+### Symbol size (p95) `symbol_size_p95`
+- **Facets:** architecture · count (lines) · ▼ · weight 1
+- **Definition:** line span of the 95th-percentile callable.
+- **Calculation:** `percentile_cont(0.95)` over `(line_end - line_start + 1)` for callables with a recorded span.
+- **How to read:** a rising p95 with a flat over-100-line count is one function growing; both rising is a pattern.
+  A symbol with no recorded span is excluded, never counted as zero.
+- **Status:** live — ~630 readings across 64 repos.
+
 ## Retired
 
 Both remain in `sensei.metrics` with an `effective_until` in the past, so they are
@@ -495,28 +533,24 @@ reader who encounters an old row or an old chart can find out what it was.
 |---|---|---|---|
 | Outcome | ftr, rework_ratio, spec_depth, spec_deviation_rate, context_pressure_rate | run_completion (low-N, 1 repo) | |
 | Quality | duplication_ratio, module_quality, churn_rate, churn_concentration, rework_density, incomplete_analysis_rate, incomplete_analysis_llm_rate, refuted_finding_rate | coverage (3 repos — needs an lcov report) | per-module attribution for duplication/maintainability |
-| Velocity | throughput, session_duration | time_to_useful_result (rating broken, [#154](https://github.com/sensei-hq/sensei/issues/154)) | |
-| Usage | tokens_per_day, tokens_in_per_day, tokens_out_per_day, tokens_per_result, cache_reuse | | |
+| Velocity | throughput, session_duration, time_to_useful_result | | |
+| Usage | tokens_per_day, tokens_in_per_day, tokens_out_per_day, tokens_fresh_per_day, tokens_per_result, cache_reuse | | |
 | Cost | | cost_per_result (2 repos — needs a configured plan) | |
 | Autonomy | interruption_rate | | false_crash_rate (never computed) |
 | Knowledge | memory_promotion (≈0 = the signal) | | recall-hit, repeat-mistake, guidance-adherence — all unregistered |
 | Composite | project health (via `project_health_score` view) | | coverage gating ([#155](https://github.com/sensei-hq/sensei/issues/155)) |
-| **Architecture** | — | — | **the whole family — see below** |
+| Architecture | graph_confidence, public_surface_ratio, symbol_size_p95 | | module-level coupling, cohesion, cycles — see below |
 
 ### The architecture gap
 
-**No registered metric reads the code graph.** `sensei.edges` holds 811,071
-edges, `inference.communities` 32,495 clusters, and nothing consumes them. There
-is no coupling, cohesion, fan-in/fan-out, dependency-cycle, layering-violation or
-instability metric. `module_quality` sounds architectural but is a project-level
-qlty smell density.
-
-Three signals are computable **today** (public-surface ratio, symbol-size
-distribution, graph resolution confidence); the module-level ones are **blocked on
-edge resolution**, not on metric design — sensei's own repo yields only 13 distinct
-module→module dependency edges because Rust call resolution is broken
-([#146](https://github.com/sensei-hq/sensei/issues/146),
-[#151](https://github.com/sensei-hq/sensei/issues/151),
+Three graph metrics are live (graph confidence, public surface, symbol size — above). There is
+still no coupling, cohesion, fan-in/fan-out, dependency-cycle, layering-violation or instability
+metric; `module_quality` sounds architectural but is a project-level qlty smell density. The
+module-level ones were **blocked on
+edge resolution**, not on metric design. As of 2026-10-19 Rust calls resolve at 100%,
+TypeScript at 52.9% and C# at 8.9%, so module-level metrics are sound for Rust repositories
+only until the other languages reach that bar ([#275](https://github.com/sensei-hq/sensei/issues/275);
+earlier: [#146](https://github.com/sensei-hq/sensei/issues/146),
 [#152](https://github.com/sensei-hq/sensei/issues/152)).
 
 The full proposal, with prototype queries and measured feasibility per metric,

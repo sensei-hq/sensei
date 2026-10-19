@@ -67,6 +67,7 @@ const KEY_CONTEXT_PRESSURE: &str = "context_pressure_rate";
 const KEY_TOKENS_PER_DAY: &str = "tokens_per_day";
 const KEY_TOKENS_IN: &str = "tokens_in_per_day";
 const KEY_TOKENS_OUT: &str = "tokens_out_per_day";
+const KEY_TOKENS_FRESH: &str = "tokens_fresh_per_day";
 const KEY_SESSION_DURATION: &str = "session_duration";
 const KEY_TOKENS_PER_RESULT: &str = "tokens_per_result";
 const KEY_INCOMPLETE_ANALYSIS: &str = "incomplete_analysis_rate";
@@ -117,6 +118,7 @@ pub(super) async fn compute(
     let tokens_day_id = ids.get(KEY_TOKENS_PER_DAY).copied();
     let tokens_in_id = ids.get(KEY_TOKENS_IN).copied();
     let tokens_out_id = ids.get(KEY_TOKENS_OUT).copied();
+    let tokens_fresh_id = ids.get(KEY_TOKENS_FRESH).copied();
     let duration_id = ids.get(KEY_SESSION_DURATION).copied();
     let tokens_result_id = ids.get(KEY_TOKENS_PER_RESULT).copied();
     let incomplete_id = ids.get(KEY_INCOMPLETE_ANALYSIS).copied();
@@ -259,56 +261,32 @@ pub(super) async fn compute(
     }
 
     // Per-repository daily token volume: tokens_per_day (in+out), tokens_in_per_day,
-    // tokens_out_per_day — count-type, so value IS the daily sum (the pooling view
-    // sums across repositories). Base = sessions carrying token usage.
-    if tokens_day_id.is_some() || tokens_in_id.is_some() || tokens_out_id.is_some() {
-        for (day, repository_id, sum_in, sum_out, n) in
-            pg.session_outcomes_token_volume_by_day(&project_id, window_days, as_of).await?
-        {
-            let props =
-                serde_json::json!({ "sessions": n, "tokens_in": sum_in, "tokens_out": sum_out });
-            if let Some(mid) = tokens_day_id {
+    // tokens_out_per_day and tokens_fresh_per_day — count-type, so value IS the daily
+    // sum (the pooling view sums across repositories). Base = sessions carrying token
+    // usage. A day whose sessions do not all carry `tokens_fresh` has no fresh row.
+    if [tokens_day_id, tokens_in_id, tokens_out_id, tokens_fresh_id].iter().any(Option::is_some) {
+        for t in pg.session_outcomes_token_volume_by_day(&project_id, window_days, as_of).await? {
+            let props = serde_json::json!({
+                "sessions": t.sessions, "tokens_in": t.sum_in, "tokens_out": t.sum_out,
+                "tokens_fresh": t.sum_fresh,
+            });
+            let values = [
+                (tokens_day_id, Some(t.sum_in + t.sum_out)),
+                (tokens_in_id, Some(t.sum_in)),
+                (tokens_out_id, Some(t.sum_out)),
+                (tokens_fresh_id, t.sum_fresh),
+            ];
+            for (mid, value) in values {
+                let (Some(mid), Some(value)) = (mid, value) else { continue };
                 pg.upsert_project_metric_repo(&MetricRow {
                     metric_id: &mid,
-                    repository_id: &repository_id,
+                    repository_id: &t.repository_id,
                     scope: SCOPE_USER,
                     identity: None,
                     commit_sha: None,
-                    computed_on: day,
+                    computed_on: t.day,
                     grain: GRAIN_DAILY,
-                    value: (sum_in + sum_out) as f64,
-                    props: &props,
-                    source: SOURCE_MEASURED,
-                })
-                .await?;
-                written += 1;
-            }
-            if let Some(mid) = tokens_in_id {
-                pg.upsert_project_metric_repo(&MetricRow {
-                    metric_id: &mid,
-                    repository_id: &repository_id,
-                    scope: SCOPE_USER,
-                    identity: None,
-                    commit_sha: None,
-                    computed_on: day,
-                    grain: GRAIN_DAILY,
-                    value: sum_in as f64,
-                    props: &props,
-                    source: SOURCE_MEASURED,
-                })
-                .await?;
-                written += 1;
-            }
-            if let Some(mid) = tokens_out_id {
-                pg.upsert_project_metric_repo(&MetricRow {
-                    metric_id: &mid,
-                    repository_id: &repository_id,
-                    scope: SCOPE_USER,
-                    identity: None,
-                    commit_sha: None,
-                    computed_on: day,
-                    grain: GRAIN_DAILY,
-                    value: sum_out as f64,
+                    value: value as f64,
                     props: &props,
                     source: SOURCE_MEASURED,
                 })
