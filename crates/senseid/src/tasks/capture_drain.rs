@@ -552,6 +552,45 @@ not json
         }
     }
 
+    /// #280: a turn's usage from the usage mod reaches the session's token
+    /// columns. It was stored as an event and never summed, so a measured session
+    /// showed a list cost and no tokens.
+    ///
+    /// MUTATION: drop the TurnComplete arm of `apply_to_session` — tokens stay NULL.
+    #[tokio::test]
+    async fn a_drained_turn_complete_sets_the_session_tokens() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let fid = crate::db::pg_store::tests::create_test_folder(&pg, "drain-turn-usage").await;
+        let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let id = pg.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let line = json!({
+            "session_id": sid, "assistant_family": "claude", "hook_event_name": "TurnComplete",
+            "ts": 1_760_000_000_000_i64, "turn_id": "t1", "reason": "answer",
+            "usage": {"model": "claude-opus-5-5", "input_tokens": 2, "output_tokens": 4,
+                      "cache_read_input_tokens": 10_327, "cache_creation_input_tokens": 55_095}
+        });
+        std::fs::write(dir.path().join("events.jsonl"), format!("{line}\n")).unwrap();
+
+        drain_once(&pg, dir.path()).await.unwrap();
+
+        let tokens: (Option<i64>, Option<i64>, Option<i64>) = sqlx_core::query_as::query_as(
+            "SELECT tokens_in, tokens_fresh, tokens_out FROM activity.sessions WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(tokens, (Some(65_424), Some(2), Some(4)));
+
+        for sql in [
+            "DELETE FROM activity.assistant_events WHERE session_id = $1",
+            "DELETE FROM activity.sessions WHERE client_session_id = $1",
+        ] {
+            sqlx_core::query::query(sql).bind(&sid).execute(pg.pool()).await.unwrap();
+        }
+    }
+
     #[test]
     fn sanitize_nul_strips_from_nested_strings_keys_and_arrays() {
         let mut v = json!({
