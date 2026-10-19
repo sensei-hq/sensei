@@ -31,7 +31,7 @@ import type {
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
   ProposalCreateBody, MemoryCreateBody, OutcomeBody, OutcomesBatchResponse,
-  DaemonWatchRoot,
+  DaemonWatchRoot, DaemonProject,
 } from './setup/contracts.js';
 import type {
   ConsolidatedRuleset, ConsolidateResult,
@@ -318,6 +318,13 @@ export function senseiApi(port: number) {
     /** Update a single folder. Currently only `role` is honored daemon-side. */
     updateFolder: (id: string, patch: { role?: string | null }) =>
       put(`/api/folders/${enc(id)}`, patch),
+
+    /** Error-propagating reads/writes for Settings · Projects (#271): a failed
+     *  load is an error state, never an empty list, and a role save that fails
+     *  is rolled back and reported rather than silently kept on screen. */
+    tryListProjects: () => tryGet<DaemonProject[]>('/api/projects'),
+    tryUpdateFolder: (id: string, patch: { role?: string | null }) =>
+      tryPut(`/api/folders/${enc(id)}`, patch),
 
     addProjectRepo: (projectId: string, repo: { repoId: string; role?: string }) =>
       post(`/api/projects/${enc(projectId)}/repos`, repo, { ok: false }),
