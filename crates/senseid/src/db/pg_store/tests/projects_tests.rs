@@ -886,10 +886,19 @@ async fn a_repository_whose_code_is_all_tests_is_tagged_quality() {
     let chosen = create_test_folder_unattributed(&s, &format!("q-chosen-{u}")).await;
     let empty = create_test_folder_unattributed(&s, &format!("q-empty-{u}")).await;
     for (fid, test_only) in [(only_tests, true), (mixed, false), (chosen, true)] {
-        let t = s.seed_node(&fid, "function", "it_works", "tests/a.spec.ts", None, None, None, None).await.unwrap();
-        sqlx_core::query::query("UPDATE sensei.nodes SET is_test = true WHERE id = $1").bind(t).execute(s.pool()).await.unwrap();
+        let t = s
+            .seed_node(&fid, "function", "it_works", "tests/a.spec.ts", None, None, None, None)
+            .await
+            .unwrap();
+        sqlx_core::query::query("UPDATE sensei.nodes SET is_test = true WHERE id = $1")
+            .bind(t)
+            .execute(s.pool())
+            .await
+            .unwrap();
         if !test_only {
-            s.seed_node(&fid, "function", "real", "src/a.ts", None, None, None, None).await.unwrap();
+            s.seed_node(&fid, "function", "real", "src/a.ts", None, None, None, None)
+                .await
+                .unwrap();
         }
     }
     s.update_folder_role(&chosen, Some("library")).await.unwrap();
