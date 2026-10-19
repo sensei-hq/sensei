@@ -5,8 +5,9 @@
 // Usage: bun run test:e2e:cold
 
 import { defineConfig } from '@playwright/test';
+import type { TauriFixtures } from '@srsholmes/tauri-playwright';
 
-export default defineConfig({
+export default defineConfig<Pick<TauriFixtures, 'mode'>>({
   testDir: './tests-cold',
   // Resolvers run real brew install/start commands — total time can be
   // 2-3 minutes on a fresh dev box. Per-test budget reflects that.

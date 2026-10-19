@@ -40,7 +40,7 @@ test.describe('Observatory Instruments', () => {
 
   test('Insights tab shows signal cards + expandable per-tool detail', async ({ tauriPage }) => {
     // Switch to the Insights tab (third tab).
-    await tauriPage.locator('.tab-bar button, [role="tab"]', { hasText: /Insights/i }).first().click().catch(async () => {
+    await tauriPage.locator('.tab-bar button, [role="tab"]').filter({ hasText: /Insights/i }).first().click().catch(async () => {
       // Some TabBar variants use plain buttons — fallback to text hunt.
       await tauriPage.getByText('Insights', { exact: true }).click();
     });
