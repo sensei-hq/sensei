@@ -5,7 +5,8 @@
 **Done:**
 - **Wave 1 (Settings → Projects):** #271 and #269 closed with live evidence. Also fixed: role null-clear
   (e777d692) and the watcher rescan demoting modules (ffc79fc6).
-- **Wave 3 so far:** #104, #185, #186, #153, #154, #177, #157 and #280 closed. #281 was split out.
+- **Wave 3 so far:** #104, #185, #186, #153, #154, #177, #157, #280, #213, #135, #179, #181 and #96
+  closed. #281 split out; #283 and #284 filed from #96.
 - **Dependencies:**
   - dbd 0.27.3 everywhere (2d77d771). The live DB diffs clean.
   - rustls 0.23.46 (c11e19d2, #172).
@@ -24,7 +25,7 @@
 - After waves 0–8: the full re-index (wave 9), which restores the 130 projects whose checkouts are
   gone. Then language parity for Java, C# and Python (wave 10, #275, blocked first by #276).
 
-**Next command:** `/sensei:session refocus`, then #96's per-task log tail (a `scheduled{worker}` span per pass plus a log-tail endpoint), then #283. #187 still needs `make test-app-e2e-cold`. #194 waits on a live failure.
+**Next command:** `/sensei:session refocus`, then #283 (a pass blocked on a keychain prompt: a time limit plus "running since"). #187 still needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
 **Open questions:**
 - Run `make dev-signing-cert` once (asks for your login password) so local installs keep their keychain and folder grants. #282 needs an Apple Developer account for releases.

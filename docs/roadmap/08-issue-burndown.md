@@ -116,7 +116,9 @@ The settings screen lists them as repositories.
   - #133: the kanji ↔ icon display mode. Solar Bold Duotone icons beside every kanji, one preference,
     `fields` derived in one place, across the app and the dōjō (scope expanded 2026-10-19).
   - ~~#135~~ **Closed 2026-10-19**: the menu item opens `/help`; the page lists only keys that are bound.
-  - #96: next run, avg and last error **done and live** (7f6aa04f, 8e995d2c); the per-task log tail remains.
+  - ~~#96~~ **Closed 2026-10-19**: next run, avg, last error, and a per-worker log tail (a
+    `scheduled{worker}` span per pass; a row toggle). The page no longer shows `[]` for a failed read.
+  - #284 (found via #96): some inspect screenshots capture a blank webview.
   - #283 (found via #96): a pass blocked on a keychain prompt stops its worker silently — no time limit,
     no "running since".
   - #85: Overview hotspots and patterns-in-use.
