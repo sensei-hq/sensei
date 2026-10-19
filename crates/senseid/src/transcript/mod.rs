@@ -795,6 +795,14 @@ pub async fn repair_sessions(pg: &crate::db::pg_store::PgStore) -> u32 {
             tracing::warn!(error = %e, "repair_sessions: repair_sessions_from_transcripts failed")
         }
     }
+    // Then tokens (#280): every session with turn rows to its sums. A transcript
+    // already ingested is skipped as fresh, so this is what brings a session
+    // captured before turn_usage existed — or one re-attached above — to it.
+    match pg.refresh_all_session_tokens().await {
+        Ok(n) if n > 0 => tracing::info!(sessions = n, "repair_sessions: token sums refreshed"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "repair_sessions: refresh_all_session_tokens failed"),
+    }
     repaired
 }
 
