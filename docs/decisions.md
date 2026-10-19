@@ -12,6 +12,19 @@ updated: 2026-10-15
 
 ---
 
+## 2026-10-19 — Transcript reading on by default; token usage linked per turn (#280)
+
+Token capture went silent on 2026-10-07. #218 had made reading conversation history its own consent, **off by
+default**, and nobody had granted it. Meanwhile the #238 usage mod's per-turn usage was stored as events and never
+summed into sessions.
+
+| Decision | Locked answer | Why / rejected |
+|---|---|---|
+| **Transcript reading defaults to ON — supersedes #218's default** | A missing `transcripts.consent.<source>` key means yes; an explicit `off` means no. The per-assistant switch in Settings → Assistants stays. When reading is off, the metrics that depend on it say so instead of going blank. | Core functionality (token, cost and session metrics) depends on it, and #218's default left every metric blank without saying why. The switch stays because a user can have real grounds (client confidentiality, an employer's rule). Open: whether to allow off at all. Recorded, not yet decided. |
+| **Token usage is linked per turn, counted once, sourced** | `activity.turn_usage` holds one row per turn: the split counts, the model and `agent_id`, which sources saw it (hook, transcript, both) and whether they agreed. Main-loop hook turns (`turn.complete` without `agentId`) pair with transcript turns by order and time; agreeing usage is one value, and disagreement is flagged, never averaged. Subagent turns come from hooks (sidechain transcripts are not ingested). `sessions.tokens_*` are sums over it. | History needs transcripts; live sessions and subagents need hooks. The two must not double-count. No shared id exists: the hook's `turnId` is not in the transcript, and the transcript's `requestId` is not in the hook. Rejected: hooks only (loses history); transcripts only (blank without consent, no subagents); one total per source per session (no subagent attribution, no per-turn check). |
+
+---
+
 ## 2026-10-15 — Claude Code mods: usage, model routing, drive, gating (#238)
 
 Claude Code 2.1.300's mods API reaches what shell hooks cannot. Four policy calls
