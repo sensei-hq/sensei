@@ -102,8 +102,10 @@ The settings screen lists them as repositories.
   writer for `sessions.tokens_*`, now `bigint`; Claude transcripts streamed past the 64 MB cap; the metrics
   screen names assistants whose history is not read. Also fixed: `/api/metrics/correlations` 500 (c30ae5bb).
 - **Operations:**
-  - #181: `SKIP_DB_BACKUP`, and prune after writing (07-quality C2).
-  - #194: retryable failures not logged as error on every attempt (part of C1).
+  - ~~#181~~ **Closed 2026-10-19**: `SKIP_DB_BACKUP`, prune after writing (12 → 8 GB), a failed export fails
+    the backup.
+  - #194: **fixed and deployed (b3dfaf7b)**; open until a live retryable failure shows one row per task.
+    Pending a user decision: the 145k/day `task_started`/`task_completed` rows duplicate `task_executions`.
   - #179: a pre-bind exit writes the startup error (07-quality B3).
 - **Gates:**
   - #187: e2e typecheck in `bun run check`, 10 errors (07-quality D4).
