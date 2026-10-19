@@ -96,11 +96,11 @@ The settings screen lists them as repositories.
 - ~~**Hard-rule violation, first:** #104. The dōjō inbox renders a relay failure as an empty list.~~ **Closed 2026-10-19**: error and partial states and a skeleton, verified on the local stack.
 - ~~**Local dōjō setup:** #185 and #186~~. **Closed 2026-10-19**: the dev server binds `127.0.0.1:5173`, plus
   `make dojo-local` and the runbook in `dojo/CLAUDE.md`. The daemon logs `dojo_sync: cycle complete`.
-- **Metric registry cluster:**
-  - #153: the churn caption.
-  - #154: `time_to_useful_result` rating scale in seconds.
-  - #177: a fresh-tokens metric plus `how_to_read`.
-  - #157: generate or drop the catalog prose.
+- ~~**Metric registry cluster:** #153, #154, #177, #157~~. **Closed 2026-10-19**: ratings of 0 for
+  `time_to_useful_result` fell from 173 to 42 of 197, and a catalog guard test is in place.
+- **#280, found while verifying #177, next:** token usage stopped being captured on 2026-10-07, which
+  blanks every token and cost metric since. 269 of the 270 token-bearing sessions have also lost their
+  folder link.
 - **Operations:**
   - #181: `SKIP_DB_BACKUP`, and prune after writing (07-quality C2).
   - #194: retryable failures not logged as error on every attempt (part of C1).
