@@ -879,6 +879,50 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
 mod tests {
     use super::*;
 
+    /// #280: a backfill's repair pass brings existing sessions to their turn sums.
+    /// A fully-ingested transcript is skipped as fresh, so without this pass a
+    /// session captured before turn_usage existed keeps its old figures for ever.
+    ///
+    /// MUTATION: drop the token step from `repair_sessions` — tokens stay NULL.
+    #[tokio::test]
+    async fn the_repair_pass_sets_session_tokens_from_their_turns() {
+        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
+            return;
+        };
+        let sid = format!("_test-repair-tokens-{}", uuid::Uuid::new_v4());
+        sqlx_core::query::query("INSERT INTO activity.sessions (client_session_id) VALUES ($1)")
+            .bind(&sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_turns
+                 (source, session_id, family, turn_index, started_at, tokens_in, cache_read, cache_write, tokens_out)
+             VALUES ('claude_code', $1, 'claude', 1, now(), 5, 100, 0, 2)",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        repair_sessions(&pg).await;
+
+        let (tokens_in,): (Option<i64>,) = sqlx_core::query_as::query_as(
+            "SELECT tokens_in FROM activity.sessions WHERE client_session_id = $1",
+        )
+        .bind(&sid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(tokens_in, Some(105));
+        for sql in [
+            "DELETE FROM activity.transcript_turns WHERE session_id = $1",
+            "DELETE FROM activity.sessions WHERE client_session_id = $1",
+        ] {
+            sqlx_core::query::query(sql).bind(&sid).execute(pg.pool()).await.unwrap();
+        }
+    }
+
     /// A transcript whose content is gone, so `ingest_one` returns as soon as its
     /// gates are decided — which isolates what the gates do with a failed read.
     struct GoneTranscript;
