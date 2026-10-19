@@ -108,20 +108,23 @@ pub(crate) async fn set_router_key(
     }
     let id_clone = id.clone();
     let key_owned = body.key;
-    tokio::task::spawn_blocking(move || gateway_keys::set_key(&id_clone, &key_owned))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("keychain spawn failed: {e}") })),
-            )
-        })?
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("keychain write failed: {e}") })),
-            )
-        })?;
+    // Saving a key is the user's own action, so it may prompt (#283).
+    tokio::task::spawn_blocking(move || {
+        gateway_keys::allow_prompt(|| gateway_keys::set_key(&id_clone, &key_owned))
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("keychain spawn failed: {e}") })),
+        )
+    })?
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("keychain write failed: {e}") })),
+        )
+    })?;
     // Pre-fetch every router's current key in one spawn_blocking, then
     // hand the gateway a resolver over the snapshot. Avoids N blocking
     // blocking credential-store reads on the async runtime thread.
@@ -156,20 +159,23 @@ pub(crate) async fn clear_router_key(
         ));
     }
     let id_clone = id.clone();
-    tokio::task::spawn_blocking(move || gateway_keys::delete_key(&id_clone))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("keychain spawn failed: {e}") })),
-            )
-        })?
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("keychain delete failed: {e}") })),
-            )
-        })?;
+    // The user's own action, so it may prompt (#283).
+    tokio::task::spawn_blocking(move || {
+        gateway_keys::allow_prompt(|| gateway_keys::delete_key(&id_clone))
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("keychain spawn failed: {e}") })),
+        )
+    })?
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("keychain delete failed: {e}") })),
+        )
+    })?;
     // Pre-fetch every router's current key in one spawn_blocking, then
     // hand the gateway a resolver over the snapshot. Avoids N blocking
     // blocking credential-store reads on the async runtime thread.

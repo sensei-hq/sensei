@@ -158,3 +158,9 @@ tokio-test = "0.4"
 # real proxy code and issuing them against the in-process router. senseid has no
 # runtime dependency on mcp, so this stays acyclic.
 sensei-mcp = { path = "../mcp" }
+
+# The Keychain's own error codes and its UI switch, so a background read fails
+# fast with "needs approval" instead of waiting on a prompt (#283). Already in
+# the tree under `keyring`'s Apple store.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"

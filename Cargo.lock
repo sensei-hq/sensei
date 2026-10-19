@@ -5042,6 +5042,7 @@ dependencies = [
  "rusqlite",
  "ruzstd",
  "scip",
+ "security-framework",
  "semver",
  "sensei-bootstrap",
  "sensei-gateway",

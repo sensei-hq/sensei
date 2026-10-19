@@ -297,24 +297,28 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
             // read:org exists for — provisioning cannot list organisations
             // without it, and would report "none" rather than "never asked".
             let provider = tokens.provider_token.clone();
+            // The user just signed in, so a Keychain prompt has someone to
+            // answer it (#283) — the only kind of call that may ask.
             let stored = tokio::task::spawn_blocking(move || {
-                if let Some(pt) = provider.as_deref() {
-                    // Non-fatal: a failed provider-token write costs
-                    // provisioning, not the sign-in itself.
-                    if let Err(e) = session::store_provider_token(&who, pt) {
-                        tracing::warn!(error = %e, "could not store the GitHub token");
+                crate::gateway_keys::allow_prompt(|| {
+                    if let Some(pt) = provider.as_deref() {
+                        // Non-fatal: a failed provider-token write costs
+                        // provisioning, not the sign-in itself.
+                        if let Err(e) = session::store_provider_token(&who, pt) {
+                            tracing::warn!(error = %e, "could not store the GitHub token");
+                        }
                     }
-                }
-                // GitHub's refresh token is deliberately NOT kept. Spending it
-                // needs the App's client secret, which stays in Supabase alone
-                // — so this credential has no consumer here, and a 182-day
-                // grant at rest with no upside is exactly what the Keychain
-                // rules already exclude access tokens for. The delete also
-                // clears what earlier builds stored.
-                if let Err(e) = session::discard_provider_refresh_token(&who) {
-                    tracing::warn!(error = %e, "could not discard the GitHub refresh token");
-                }
-                session::store_refresh_token(&who, &refresh)
+                    // GitHub's refresh token is deliberately NOT kept. Spending it
+                    // needs the App's client secret, which stays in Supabase alone
+                    // — so this credential has no consumer here, and a 182-day
+                    // grant at rest with no upside is exactly what the Keychain
+                    // rules already exclude access tokens for. The delete also
+                    // clears what earlier builds stored.
+                    if let Err(e) = session::discard_provider_refresh_token(&who) {
+                        tracing::warn!(error = %e, "could not discard the GitHub refresh token");
+                    }
+                    session::store_refresh_token(&who, &refresh)
+                })
             })
             .await;
             // Derive the identity from AUTH rather than leaving it a guess.
@@ -522,7 +526,12 @@ pub(crate) async fn signout(
     Query(p): Query<PersonaQuery>,
 ) -> Json<serde_json::Value> {
     let who = p.persona.clone();
-    let keychain = match tokio::task::spawn_blocking(move || session::clear_session(&who)).await {
+    // A sign-out the user asked for may prompt (#283).
+    let keychain = match tokio::task::spawn_blocking(move || {
+        crate::gateway_keys::allow_prompt(|| session::clear_session(&who))
+    })
+    .await
+    {
         Ok(r) => r.map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
@@ -570,8 +579,8 @@ pub(crate) enum AuthError {
     /// The dōjō REJECTED the refresh token (401/403). Terminal, and the stored
     /// session has already been cleared.
     Rejected(String),
-    /// The dōjō could not be reached, or failed. Transient — the stored session
-    /// was deliberately left alone.
+    /// The dōjō could not be reached, or failed — or the stored session could
+    /// not be read (#283). Transient: the stored session was left alone.
     Unreachable(String),
 }
 
@@ -614,6 +623,19 @@ pub(crate) struct LiveSession {
     pub session: session::Session,
 }
 
+/// The stored refresh token, or why there is none. Only a miss is `SignedOut`:
+/// a Keychain that would not answer (#283) says nothing about the session, and
+/// reporting "signed out" for it sends the user to sign in over a session that
+/// is still there.
+fn stored_session(
+    read: Result<String, crate::gateway_keys::KeychainError>,
+) -> Result<String, AuthError> {
+    read.map_err(|e| match e {
+        crate::gateway_keys::KeychainError::NotFound => AuthError::SignedOut,
+        other => AuthError::Unreachable(format!("stored session unreadable: {other}")),
+    })
+}
+
 /// Refresh one persona's stored session and hand back a usable one.
 ///
 /// The single implementation of "get me a working credential for this persona".
@@ -631,9 +653,10 @@ pub(crate) struct LiveSession {
 ///   never yields an empty or stale token that a caller would send as a bearer.
 pub(crate) async fn live_session(persona: &str) -> Result<LiveSession, AuthError> {
     let who = persona.to_string();
-    let stored = tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await;
-    let Ok(Ok(refresh)) = stored else {
-        return Err(AuthError::SignedOut);
+    let refresh = match tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await
+    {
+        Ok(read) => stored_session(read)?,
+        Err(e) => return Err(AuthError::Unreachable(format!("session read panicked: {e}"))),
     };
 
     let tokens = match dojo_auth::refresh(&dojo_url(), &refresh).await {
@@ -1286,6 +1309,21 @@ mod tests {
         // curl sends `*/*`. It is not a browser, so it keeps the JSON.
         assert!(!wants_html(Some("*/*")));
         assert!(!wants_html(None));
+    }
+
+    /// #283: a Keychain refusal is not a sign-out.
+    #[test]
+    fn only_a_missing_session_reads_as_signed_out() {
+        use crate::gateway_keys::KeychainError;
+        assert!(matches!(stored_session(Err(KeychainError::NotFound)), Err(AuthError::SignedOut)));
+        match stored_session(Err(KeychainError::NeedsApproval)) {
+            Err(e @ AuthError::Unreachable(_)) => {
+                assert!(e.to_string().contains("needs approval"), "{e}");
+                assert!(!e.needs_sign_in());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(stored_session(Ok("rt".into())).ok().as_deref(), Some("rt"));
     }
 
     #[test]

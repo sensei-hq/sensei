@@ -42,6 +42,11 @@ pub enum KeychainError {
     Unavailable(String),
     #[error("credential store error: {0}")]
     Store(String),
+    /// The OS refused without asking: this binary is not trusted on the item
+    /// and the daemon does not prompt (#283). Approve it from sensei, or sign
+    /// local builds with `make dev-signing-cert` so the trust survives a rebuild.
+    #[error("keychain access needs approval")]
+    NeedsApproval,
     #[error("keychain command failed: {0}")]
     CommandFailed(String),
     #[error("io error: {0}")]
@@ -78,6 +83,31 @@ fn parse_backend(value: Option<&str>) -> Backend {
 fn backend() -> Backend {
     static BACKEND: OnceLock<Backend> = OnceLock::new();
     *BACKEND.get_or_init(|| parse_backend(std::env::var(BACKEND_ENV).ok().as_deref()))
+}
+
+/// Run `f` with keychain prompts allowed on this thread (#283).
+///
+/// The daemon never prompts by default: a background pass that waits on a
+/// dialog nobody is watching stops its worker. Only an action the user just
+/// took — signing in or out, saving a router key — may ask.
+pub fn allow_prompt<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PROMPT_ALLOWED.set(self.0);
+        }
+    }
+    let _restore = Restore(PROMPT_ALLOWED.replace(true));
+    f()
+}
+
+thread_local! {
+    static PROMPT_ALLOWED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the current thread may prompt — false outside [`allow_prompt`].
+pub(crate) fn prompting_allowed() -> bool {
+    PROMPT_ALLOWED.get()
 }
 
 /// Store a secret, replacing any existing value for `(service, account)`.
@@ -174,6 +204,18 @@ mod tests {
     fn delete_missing_is_noop() {
         let id = unique_id();
         delete_key(&id).expect("delete on missing should not error");
+    }
+
+    /// #283: quiet unless the caller says the user is there to answer.
+    #[test]
+    fn prompting_is_allowed_only_inside_allow_prompt() {
+        assert!(!prompting_allowed());
+        assert!(allow_prompt(prompting_allowed));
+        assert!(!prompting_allowed(), "the scope ends with the call");
+        let other = std::thread::spawn(|| {
+            allow_prompt(|| std::thread::spawn(prompting_allowed).join().unwrap())
+        });
+        assert!(!other.join().unwrap(), "another thread is not in the scope");
     }
 
     #[test]
