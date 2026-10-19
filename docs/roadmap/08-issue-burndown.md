@@ -94,8 +94,8 @@ The settings screen lists them as repositories.
 ## Wave 3 — small remainders (each under about half a day; closes the issue)
 
 - ~~**Hard-rule violation, first:** #104. The dōjō inbox renders a relay failure as an empty list.~~ **Closed 2026-10-19**: error and partial states and a skeleton, verified on the local stack.
-- **Local dōjō setup:** #185 (vite `server.host: '127.0.0.1'` + note) and #186 (runbook / `make dojo-local`).
-  The steps were exercised on 2026-10-15/18.
+- ~~**Local dōjō setup:** #185 and #186~~. **Closed 2026-10-19**: the dev server binds `127.0.0.1:5173`, plus
+  `make dojo-local` and the runbook in `dojo/CLAUDE.md`. The daemon logs `dojo_sync: cycle complete`.
 - **Metric registry cluster:**
   - #153: the churn caption.
   - #154: `time_to_useful_result` rating scale in seconds.
