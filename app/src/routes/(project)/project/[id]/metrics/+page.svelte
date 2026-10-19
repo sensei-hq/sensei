@@ -31,6 +31,14 @@
 </script>
 
 <div class="pt-8 px-6 md:px-10 pb-12 max-w-[1040px]">
+    {#if data.history}
+        <div
+            data-component="metrics-history-off"
+            class="mb-6 bg-warning-soft border border-paper-edge rounded-lg px-4 py-3 text-sm text-ink"
+        >
+            {data.history.text}
+        </div>
+    {/if}
     {#if data.error}
         <div
             data-component="metrics-error"
