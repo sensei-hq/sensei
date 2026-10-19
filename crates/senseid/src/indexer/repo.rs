@@ -351,6 +351,8 @@ pub struct PlannedFolder {
     /// `None` only for the repo root, whose parent is the watch root and is
     /// therefore not this repository's to name.
     pub parent: Option<PathBuf>,
+    /// `git`, `module` or `folder` — see `structure::structural_kind`.
+    pub kind: &'static str,
 }
 
 /// The folder tree to write, PARENTS BEFORE CHILDREN.
@@ -387,6 +389,12 @@ pub fn folder_tree(contents: &RepoContents) -> Vec<PlannedFolder> {
         }
     }
 
+    let manifest_dirs: BTreeSet<PathBuf> = contents
+        .manifests()
+        .into_iter()
+        .map(|m| m.rel_path.parent().map(Path::to_path_buf).unwrap_or_default())
+        .collect();
+
     // A `BTreeSet<PathBuf>` already orders an ancestor before its descendants:
     // a parent is a strict prefix ending at a separator, so it sorts first.
     paths
@@ -397,7 +405,12 @@ pub fn folder_tree(contents: &RepoContents) -> Vec<PlannedFolder> {
             } else {
                 Some(rel_path.parent().map(Path::to_path_buf).unwrap_or_default())
             };
-            PlannedFolder { rel_path, parent }
+            let kind = super::structure::structural_kind(
+                &rel_path,
+                Path::new(""),
+                manifest_dirs.contains(&rel_path),
+            );
+            PlannedFolder { rel_path, parent, kind }
         })
         .collect()
 }
@@ -984,6 +997,30 @@ mod tests {
                 ("src".into(), Some("".into())),
                 ("src/deep".into(), Some("src".into())),
             ]
+        );
+    }
+
+    /// A manifest-bearing directory is a `module`, as the indexer pipeline
+    /// plans it. The repo scan wrote every subfolder as `folder`, and its
+    /// upsert relabels between the two, so each watcher-driven rescan demoted
+    /// a workspace's modules until the next full index promoted them again —
+    /// and the roles inferred from their manifests vanished with them.
+    #[test]
+    fn a_folder_holding_a_manifest_is_a_module() {
+        let manifest = EntryClass::Manifest { ecosystem: "npm" };
+        let tree = tree_of(&[
+            ("package.json", manifest.clone()),
+            ("app", EntryClass::Folder),
+            ("app/package.json", manifest),
+            ("app/src", EntryClass::Folder),
+            ("app/src/a.ts", EntryClass::Source { language: Language::TypeScript }),
+        ]);
+        let kinds: Vec<(String, &str)> =
+            tree.iter().map(|f| (f.rel_path.to_string_lossy().to_string(), f.kind)).collect();
+
+        assert_eq!(
+            kinds,
+            vec![("".into(), "git"), ("app".into(), "module"), ("app/src".into(), "folder")]
         );
     }
 

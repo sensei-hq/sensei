@@ -195,7 +195,7 @@ pub fn plan_folders(
         .map(|d| PlannedFolder {
             abs_path: d.clone(),
             parent: if d == repo_root { None } else { deepest_owner(d, &dirs, true) },
-            kind: if d == repo_root { "git" } else { "module" },
+            kind: structural_kind(d, repo_root, true),
             workspace_root: declaring_workspace(repo_root, d, declared_members),
         })
         .collect();
@@ -211,6 +211,21 @@ pub fn plan_folders(
     files.sort_by(|a, b| a.abs_path.cmp(&b.abs_path));
 
     FolderPlan { folders, files }
+}
+
+/// The `folders.kind` of a directory in one repository: `git` for the repo
+/// root, `module` for a directory holding a package manifest, `folder`
+/// otherwise. ONE rule for both writers — the indexer pipeline and the repo
+/// scan — because the upsert relabels `folder`↔`module`, so two rules flip a
+/// row on every pass of whichever disagrees.
+pub fn structural_kind(dir: &Path, repo_root: &Path, holds_manifest: bool) -> &'static str {
+    if dir == repo_root {
+        "git"
+    } else if holds_manifest {
+        "module"
+    } else {
+        "folder"
+    }
 }
 
 /// Which workspace root DECLARES `dir`, if any.
