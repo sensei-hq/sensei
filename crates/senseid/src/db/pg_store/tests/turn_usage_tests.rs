@@ -135,7 +135,7 @@ async fn a_subagent_turn_is_its_own_row_and_a_disagreement_is_flagged() {
     clear(&s, &sid).await;
 }
 
-async fn session(s: &PgStore, sid: &str, tokens_in: Option<i32>) {
+async fn session(s: &PgStore, sid: &str, tokens_in: Option<i64>) {
     sqlx_core::query::query(
         "INSERT INTO activity.sessions (client_session_id, tokens_in) VALUES ($1, $2)",
     )
@@ -146,7 +146,7 @@ async fn session(s: &PgStore, sid: &str, tokens_in: Option<i32>) {
     .unwrap();
 }
 
-async fn session_tokens(s: &PgStore, sid: &str) -> (Option<i32>, Option<i32>, Option<i32>) {
+async fn session_tokens(s: &PgStore, sid: &str) -> (Option<i64>, Option<i64>, Option<i64>) {
     sqlx_core::query_as::query_as(
         "SELECT tokens_in, tokens_fresh, tokens_out FROM activity.sessions WHERE client_session_id = $1",
     )
@@ -209,7 +209,7 @@ async fn a_session_over_two_billion_tokens_is_stored_exactly() {
 
     assert!(s.refresh_session_tokens(&sid).await.unwrap());
     let (tokens_in,): (Option<i64>,) = sqlx_core::query_as::query_as(
-        "SELECT tokens_in::int8 FROM activity.sessions WHERE client_session_id = $1",
+        "SELECT tokens_in FROM activity.sessions WHERE client_session_id = $1",
     )
     .bind(&sid)
     .fetch_one(s.pool())

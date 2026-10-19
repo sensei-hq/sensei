@@ -649,7 +649,7 @@ async fn session_complete() {
     assert_eq!(sess["turns"], 5);
     assert!(sess["completed_at"].as_str().is_some());
     // summary + tokens actually PERSIST (were previously advertised-but-dropped).
-    let meta: (Option<String>, Option<i32>, Option<i32>) = sqlx_core::query_as::query_as(
+    let meta: (Option<String>, Option<i64>, Option<i64>) = sqlx_core::query_as::query_as(
         "SELECT summary, tokens_in, tokens_out FROM activity.sessions WHERE id=$1",
     )
     .bind(sid)

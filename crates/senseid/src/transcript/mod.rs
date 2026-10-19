@@ -546,17 +546,15 @@ async fn set_session_metadata(
         Some((p, m)) => (Some(p.as_str()), Some(m.as_str())),
         None => (None, None),
     };
-    // Token totals fit `integer` (verified << i32::MAX for real sources); a value
-    // that somehow overflows is dropped rather than truncated to a wrong number.
+    // `bigint` columns: a long session's input passes 2³¹ (1.96 billion tokens,
+    // nearly all cache, was measured in one), which the old `integer` columns —
+    // and an `i32::try_from` that dropped what did not fit — could not hold (#280).
     // `tokens_in` keeps its established meaning — ALL input the model processed —
     // so existing consumers are unaffected; the split rides alongside in its own
     // columns rather than changing what the old one means.
     let t = parsed.tokens;
     let (tokens_in, tokens_out) = match &t {
-        Some(t) => (
-            i32::try_from(t.total_input()).ok(),
-            i32::try_from(t.output + t.reasoning.unwrap_or(0)).ok(),
-        ),
+        Some(t) => (Some(t.total_input()), Some(t.output + t.reasoning.unwrap_or(0))),
         None => (None, None),
     };
     if let Err(e) = pg
@@ -1087,8 +1085,8 @@ mod tests {
             bool,               // started_at is historical
             Option<String>,     // provider
             Option<String>,     // model
-            Option<i32>,        // tokens_in
-            Option<i32>,        // tokens_out
+            Option<i64>,        // tokens_in
+            Option<i64>,        // tokens_out
             bool,               // meta_synced_at IS NOT NULL
         );
         let (project_id, backfilled, historical, provider, model, tokens_in, tokens_out, meta_synced):

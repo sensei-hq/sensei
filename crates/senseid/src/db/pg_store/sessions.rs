@@ -46,8 +46,8 @@ pub struct SessionOutcomeRow<'a> {
     pub turns: i32,
     pub corrections: i32,
     pub summary: Option<&'a str>,
-    pub tokens_in: Option<i32>,
-    pub tokens_out: Option<i32>,
+    pub tokens_in: Option<i64>,
+    pub tokens_out: Option<i64>,
 }
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
@@ -83,8 +83,8 @@ impl PgStore {
             chrono::DateTime<chrono::Utc>,
             Option<chrono::DateTime<chrono::Utc>>,
             Option<String>,
-            Option<i32>,
-            Option<i32>,
+            Option<i64>,
+            Option<i64>,
             Option<f64>,
             Option<String>,
             Option<String>,
@@ -288,7 +288,7 @@ impl PgStore {
     pub async fn get_session(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         // folder_id is nullable since P1 (a pruned raw-cwd folder SET-NULLs it; the session
         // survives via repo_folder_id) — decode as Option so a pruned row doesn't error.
-        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, Option<i32>, Option<f64>, Option<String>, Option<String>)> =
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<i64>, Option<i64>, Option<f64>, Option<String>, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, folder_id, task, acp_id, outcome::text, ftr, turns, corrections, started_at, completed_at, \
                         tokens_in, tokens_out, EXTRACT(EPOCH FROM duration)::float8, provider, model FROM activity.sessions WHERE id = $1"
@@ -1014,8 +1014,8 @@ impl PgStore {
             Option<serde_json::Value>,
             Option<bool>,
             Option<serde_json::Value>,
-            Option<i32>,
-            Option<i32>,
+            Option<i64>,
+            Option<i64>,
             Option<f64>,
             Option<String>,
             Option<String>,
@@ -1395,8 +1395,8 @@ impl PgStore {
         client_session_id: &str,
         provider: Option<&str>,
         model: Option<&str>,
-        tokens_in: Option<i32>,
-        tokens_out: Option<i32>,
+        tokens_in: Option<i64>,
+        tokens_out: Option<i64>,
         split: Option<&crate::transcript::SessionTokens>,
     ) -> Result<(), String> {
         // COALESCE throughout: a source that reports no split must not erase what
@@ -1445,8 +1445,8 @@ impl PgStore {
                     cache_read   = u.cache_read,
                     cache_write  = u.cache_write,
                     tokens_out   = u.output
-               FROM (SELECT sum(fresh)::int4 AS fresh, sum(cache_read)::int4 AS cache_read,
-                            sum(cache_write)::int4 AS cache_write, sum(output)::int4 AS output
+               FROM (SELECT sum(fresh)::int8 AS fresh, sum(cache_read)::int8 AS cache_read,
+                            sum(cache_write)::int8 AS cache_write, sum(output)::int8 AS output
                        FROM activity.turn_usage
                       WHERE session_id = $1
                      HAVING count(*) > 0) u

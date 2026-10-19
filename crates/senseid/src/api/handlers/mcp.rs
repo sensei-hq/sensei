@@ -312,9 +312,9 @@ pub(crate) async fn mcp_call_tool(
                 // tokensIn/tokensOut are persisted (were previously advertised but dropped).
                 let summary = params["summary"].as_str().filter(|s| !s.is_empty());
                 let tokens_in =
-                    params["tokensIn"].as_str().and_then(|s| s.trim().parse::<i32>().ok());
+                    params["tokensIn"].as_str().and_then(|s| s.trim().parse::<i64>().ok());
                 let tokens_out =
-                    params["tokensOut"].as_str().and_then(|s| s.trim().parse::<i32>().ok());
+                    params["tokensOut"].as_str().and_then(|s| s.trim().parse::<i64>().ok());
                 let found = state.pg.complete_session(&SessionOutcomeRow {
                     id: &session_id,
                     outcome,
