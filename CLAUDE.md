@@ -64,7 +64,8 @@ DB. For iterating on DDL without publishing a release tag, set
 ## Rules
 
 - Always start with `docs/backlog.md`
-- **Code navigation** — prefer the sensei MCP tools (`search`, `get_callers`/`get_callees`, `get_patterns`, `get_rules`, `get_project_conventions`, `get_project_summary`) over `grep`/`glob` for finding symbols and understanding structure: they use the indexed code graph and return richer, ranked results. Fall back to grep/glob only when a tool errors or returns empty, and say so.
+- **Code navigation** — prefer the sensei MCP tools (`search`, `get_callers`/`get_callees`, `get_patterns`, `get_rules`, `get_project_conventions`, `get_project_summary`) over `grep`/`glob` for finding symbols and understanding structure: they use the indexed code graph and return richer, ranked results. Fall back to grep/glob when a tool errors or returns empty, and say so.
+  - **Reachability ("X has no callers", "nothing uses Y") is trusted from the graph only for a language whose calls resolve at Rust's bar** (100% graded by the compiler). Today that is Rust alone; TypeScript/JS/Svelte (52.9%), C# (8.9%), Java and Python answer such questions with ripgrep (`--no-ignore -g '!target'`), said aloud. A language joins as it reaches the bar (#275); decided in #141.
 - Create a todo list for complex tasks
 - TDD — always use zero-errors-policy before starting work
 - Commit and push when a logical chunk is complete

@@ -5,8 +5,9 @@ import {
   projectIcon,
   lastSessionLabel,
   isWarning,
-  type EnrichedProject,
-} from './buckets.js';
+  baseProject,
+  withQuality,
+  type EnrichedProject, PROJECT_ICON } from './buckets.js';
 
 const p = (over: Partial<EnrichedProject> = {}): EnrichedProject => ({
   id: 'p',
@@ -20,6 +21,7 @@ const p = (over: Partial<EnrichedProject> = {}): EnrichedProject => ({
   libs_count: 0,
   last_session_at: null,
   vision: null,
+  readError: null,
   ...over,
 });
 
@@ -141,6 +143,23 @@ describe('projectIcon', () => {
     expect(projectIcon(p({ icon: null }))).toEqual({ kind: 'kanji', glyph: '場' });
   });
 
+  // #133: in icon mode only the DEFAULT mark becomes an icon. A logo is the
+  // project's own identity and a chosen kanji has no icon to stand for it, so
+  // both stay as they are.
+  it('shows the project icon for the default mark in icon mode only', () => {
+    expect(projectIcon(p({ icon: null }), '', 'icon')).toEqual({
+      kind: 'icon',
+      cls: PROJECT_ICON,
+      glyph: '場',
+    });
+    expect(projectIcon(p({ icon: { kind: 'kanji', value: '禅' } }), '', 'icon')).toEqual({
+      kind: 'kanji',
+      glyph: '禅',
+    });
+    expect(projectIcon(p({ icon: { kind: 'image', value: 'http://x/y.png' } }), '', 'icon').kind).toBe('image');
+    expect(projectIcon(p({ icon: null }), '', 'kanji')).toEqual({ kind: 'kanji', glyph: '場' });
+  });
+
   it('falls back to 場 for an image icon with no value', () => {
     expect(projectIcon(p({ icon: { kind: 'image' } }))).toEqual({ kind: 'kanji', glyph: '場' });
   });
@@ -185,5 +204,33 @@ describe('isWarning', () => {
     // project amber — the sessions7d guard suppresses it.
     expect(isWarning({ open_drift_count: 0, ftr_7d: 0 }, 0)).toBe(false);
     expect(isWarning({ open_drift_count: 5, ftr_7d: 0 }, 0)).toBe(false);
+  });
+});
+
+// #288: a project's quality reads either land, or the card says they failed —
+// never a blank rate, never a warning dot made up from a default.
+describe('withQuality', () => {
+  const base = baseProject({ id: 'p', name: 'p', maturity: 'learning', stack: {}, sessions7d: 5 });
+  const ok = <T,>(data: T) => ({ ok: true as const, data });
+  const down = { ok: false as const, error: { status: 502, message: 'Bad Gateway' } };
+  const calm = { open_drift_count: 0, ftr_7d: 0.9 };
+
+  it('starts with no rate, no warning and no read error', () => {
+    expect([base.ftr14d, base.warn, base.readError, base.sessions7d]).toEqual([null, false, null, 5]);
+  });
+
+  it('takes the rate and the warning from the reads', () => {
+    const p = withQuality(base, ok({ ftr14d: 0.7 }), ok({ open_drift_count: 2, ftr_7d: 0.9 }));
+    expect([p.ftr14d, p.warn, p.readError]).toEqual([0.7, true, null]);
+  });
+
+  it('a failed signals read is an error, not a warning from ftr_7d: 0', () => {
+    const p = withQuality(base, ok({ ftr14d: 0.7 }), down);
+    expect([p.warn, p.readError]).toEqual([false, 'Bad Gateway']);
+  });
+
+  it('a failed FTR read is an error, not a blank rate', () => {
+    const p = withQuality(base, down, ok(calm));
+    expect([p.ftr14d, p.readError]).toEqual([null, 'Bad Gateway']);
   });
 });

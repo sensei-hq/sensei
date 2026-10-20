@@ -288,7 +288,7 @@ export interface BuildAtlasInput {
   communities: CommunityInfo[];
   callFlow: { moduleCount: number; exportCount: number; callCount: number };
   graph: { nodes: GraphSymbolNode[]; edges: GraphCallEdge[] };
-  solution: { repos: number; nodes: number; edges: number } | null;
+  solution: { repos: number; nodes: number; edges: number };
   cap?: number;
 }
 
@@ -325,7 +325,7 @@ export function buildAtlasPage(input: BuildAtlasInput): AtlasPageData {
       exports: input.callFlow.exportCount,
       calls: input.callFlow.callCount,
     },
-    solution: input.solution ?? { repos: 0, nodes: 0, edges: 0 },
+    solution: input.solution,
   };
 }
 

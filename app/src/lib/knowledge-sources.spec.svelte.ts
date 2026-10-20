@@ -33,7 +33,7 @@ describe('validateSourceUrl', () => {
 // touches are stubbed; cast to SenseiApi since the state only uses these.
 function mockApi(overrides: Partial<SenseiApi> = {}): SenseiApi {
   return {
-    listKnowledgeSources: vi.fn().mockResolvedValue({ sources: [] }),
+    tryListKnowledgeSources: vi.fn().mockResolvedValue({ ok: true, data: { sources: [] } }),
     createKnowledgeSource: vi.fn().mockResolvedValue({ ok: true, data: {} }),
     deleteKnowledgeSource: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
     syncKnowledgeSource: vi.fn().mockResolvedValue({ ok: true, data: {} }),
@@ -56,13 +56,23 @@ const sourceFixture = (over: Partial<KnowledgeSource> = {}): KnowledgeSource => 
 describe('KnowledgeSourcesState', () => {
   it('load() populates sources and clears loading', async () => {
     const api = mockApi({
-      listKnowledgeSources: vi.fn().mockResolvedValue({ sources: [sourceFixture()] }),
+      tryListKnowledgeSources: vi.fn().mockResolvedValue({ ok: true, data: { sources: [sourceFixture()] } }),
     });
     const state = new KnowledgeSourcesState();
     await state.load(api);
     expect(state.sources).toHaveLength(1);
     expect(state.sources[0].id).toBe('s1');
     expect(state.loading).toBe(false);
+  });
+
+  // #288: a failed read is an error — it used to fold into "no sources".
+  it('load() with a failed read sets error and keeps no sources', async () => {
+    const api = mockApi({
+      tryListKnowledgeSources: vi.fn().mockResolvedValue({ ok: false, error: { status: 503, message: 'Service Unavailable' } }),
+    });
+    const state = new KnowledgeSourcesState();
+    await state.load(api);
+    expect([state.error, state.sources, state.loading]).toEqual(['Service Unavailable', [], false]);
   });
 
   it('add() with an invalid url sets addError and does NOT call createKnowledgeSource', async () => {
@@ -77,8 +87,8 @@ describe('KnowledgeSourcesState', () => {
 
   it('add() with a valid url calls createKnowledgeSource and reloads', async () => {
     const create = vi.fn().mockResolvedValue({ ok: true, data: sourceFixture() });
-    const list = vi.fn().mockResolvedValue({ sources: [sourceFixture()] });
-    const api = mockApi({ createKnowledgeSource: create, listKnowledgeSources: list });
+    const list = vi.fn().mockResolvedValue({ ok: true, data: { sources: [sourceFixture()] } });
+    const api = mockApi({ createKnowledgeSource: create, tryListKnowledgeSources: list });
     const state = new KnowledgeSourcesState();
     state.url = 'https://hive.example.com';
     state.name = 'Hive';

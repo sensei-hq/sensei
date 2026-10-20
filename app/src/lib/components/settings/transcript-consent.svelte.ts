@@ -39,7 +39,7 @@ export class TranscriptConsent {
   }
 
   get explanation(): string {
-    return 'Reads past conversations from disk and stores them in sensei’s local database. Off until you turn it on. Configuring an assistant does not turn this on.';
+    return 'Reads past conversations from disk and stores them in sensei’s local database. On unless you turn it off. Turned off, that assistant’s token, cost and session metrics stop updating.';
   }
 
   async load() {

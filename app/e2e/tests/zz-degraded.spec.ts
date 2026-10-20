@@ -4,7 +4,7 @@
  * service after. Not a regression gate. Uses ollama (safe to bounce).
  */
 import { test } from '../fixtures';
-import { navigateTo } from '../helpers';
+import { navigateTo, shot } from '../helpers';
 import { execFileSync } from 'child_process';
 import { mkdirSync } from 'fs';
 
@@ -21,7 +21,7 @@ test('capture degraded health with ollama stopped', async ({ tauriPage }) => {
     // Re-enter the health page so it re-probes with ollama down.
     await navigateTo(tauriPage, '/health?auto=false');
     await settle(7000);
-    await tauriPage.screenshot({ path: `${DIR}/health-degraded.png` });
+    await shot(tauriPage, `${DIR}/health-degraded.png`);
   } finally {
     brew('start');
   }

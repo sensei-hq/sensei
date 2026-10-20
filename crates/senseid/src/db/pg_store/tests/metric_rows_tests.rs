@@ -1031,3 +1031,46 @@ async fn holistic_ftr_daily_pools_not_average_of_rates() {
         .await
         .unwrap();
 }
+
+/// A repository in no project has metric rows with a NULL `project_id` in
+/// `sensei.project_metrics`. Correlation cells are keyed by (project, day), so
+/// such a row cannot take part — but it decoded into a non-optional uuid and
+/// failed the whole portfolio read with a 500 (live, 2026-10-19: 725 rows from
+/// 24 repositories).
+#[tokio::test]
+async fn correlations_read_past_a_repository_in_no_project() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (rid,): (uuid::Uuid,) =
+        query_as("INSERT INTO sensei.repositories (name) VALUES ($1) RETURNING id")
+            .bind(format!("_test:no-project:{uniq}"))
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    let mid = seed_metric(&s, &format!("_test:no-project:{uniq}:m"), "ComputeFtr", 0, None).await;
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
+    .await
+    .unwrap();
+
+    let got = s.get_metric_correlations(None).await;
+    assert!(got.is_ok(), "the portfolio read failed: {got:?}");
+
+    for (sql, id) in [
+        ("DELETE FROM sensei.repository_metrics WHERE repository_id = $1", rid),
+        ("DELETE FROM sensei.repositories WHERE id = $1", rid),
+        ("DELETE FROM sensei.metrics WHERE id = $1", mid),
+    ] {
+        sqlx_core::query::query(sql).bind(id).execute(s.pool()).await.unwrap();
+    }
+}

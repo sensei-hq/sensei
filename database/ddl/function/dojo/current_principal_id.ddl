@@ -6,7 +6,7 @@ set search_path to dojo, extensions;
 -- `principals.auth_user_id` is a re-pointable POINTER at the login (see that
 -- table for why the indirection exists). `auth.uid()` returns the LOGIN id, so
 -- anything comparing it directly to a column holding a principal id —
--- `memberships.user_id`, `projects.user_id` — matches nothing.
+-- `memberships.user_id` — matches nothing.
 --
 -- That is a silent failure, not a loud one: the Worker connects as
 -- `service_role` and bypasses RLS, so a policy can be entirely wrong while every
@@ -48,6 +48,6 @@ grant execute on function dojo.current_principal_id() to authenticated;
 
 comment on function dojo.current_principal_id() is
 'The caller''s dojo.principals id, resolved from auth.uid(). The single place the
-login→principal translation lives: memberships.user_id and projects.user_id hold
-principal ids, so comparing either to auth.uid() directly silently matches no
+login→principal translation lives: memberships.user_id holds principal ids, so
+comparing it to auth.uid() directly silently matches no
 rows (and the service_role app path never notices).';

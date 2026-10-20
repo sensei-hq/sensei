@@ -118,16 +118,19 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, provider, visibili
   -- A2 personal · private · NOT subscribed · user elected
   ('5ecc0000-0000-0000-0000-000000000011', '5ecc0000-0000-0000-0000-000000000002',
    'github.com/ztest-alice-free/a2', 'a2', 'github', 'private', now()),
-  -- B  personal · private · subscribed · NOT elected
+  -- B  personal · private · subscribed · no election row (auto-sync, #301)
   ('5ecc0000-0000-0000-0000-000000000012', '5ecc0000-0000-0000-0000-000000000001',
    'github.com/ztest-alice-sub/b', 'b', 'github', 'private', now()),
-  -- C  personal · public · NOT elected
+  -- C  personal · public · no election row (auto-sync, #301)
   ('5ecc0000-0000-0000-0000-000000000013', '5ecc0000-0000-0000-0000-000000000002',
    'github.com/ztest-alice-free/c', 'c', 'github', 'public', now()),
+  -- O  personal · public · the user OPTED OUT (an explicit elected = false row)
+  ('5ecc0000-0000-0000-0000-00000000001f', '5ecc0000-0000-0000-0000-000000000002',
+   'github.com/ztest-alice-free/o', 'o', 'github', 'public', now()),
   -- D  org · public · user elected
   ('5ecc0000-0000-0000-0000-000000000014', '5ecc0000-0000-0000-0000-000000000003',
    'github.com/ztest-on/d', 'd', 'github', 'public', now()),
-  -- E  org · public · policy on · NOT elected by the user
+  -- E  org · public · policy on · no election row from the user (auto-sync, #301)
   ('5ecc0000-0000-0000-0000-000000000015', '5ecc0000-0000-0000-0000-000000000003',
    'github.com/ztest-on/e', 'e', 'github', 'public', now()),
   -- F  org · private · subscribed · policy on · no user election
@@ -177,7 +180,9 @@ insert into dojo.repository_elections (tenant_id, repository_id, authority, prin
   -- there is no authority to apply it under.
   ('5ecc0000-0000-0000-0000-000000000003', '5ecc0000-0000-0000-0000-00000000001a', 'user', '5ecc0000-0000-0000-0000-00000000a11c', true),
   -- J: the per-repo exception a tenant-wide flag cannot express.
-  ('5ecc0000-0000-0000-0000-000000000004', '5ecc0000-0000-0000-0000-00000000001b', 'organization', null, true);
+  ('5ecc0000-0000-0000-0000-000000000004', '5ecc0000-0000-0000-0000-00000000001b', 'organization', null, true),
+  -- O: the user turned it OFF. Auto-sync is a default, never a mandate (#301).
+  ('5ecc0000-0000-0000-0000-000000000002', '5ecc0000-0000-0000-0000-00000000001f', 'user', '5ecc0000-0000-0000-0000-00000000a11c', false);
 
 -- ---------------------------------------------------------------------------
 -- The table of §8b, asserted row by row.
@@ -193,10 +198,13 @@ begin
             --  §8b   repo_key                          authority   may_share elected sync   refused_by     reason_code
             ('A',  'github.com/ztest-alice-sub/a',   'user',         true,  true,  true,  null,          null),
             ('A2', 'github.com/ztest-alice-free/a2', 'user',         false, true,  false, 'entitlement', 'not_subscribed'),
-            ('B',  'github.com/ztest-alice-sub/b',   'user',         true,  false, false, 'election',    'not_elected_user'),
-            ('C',  'github.com/ztest-alice-free/c',  'user',         true,  false, false, 'election',    'not_elected_user'),
+            -- B, C, E: no election row. A connected identity's repository syncs by
+            -- default (#301): absence is consent, an explicit `false` (O) is not.
+            ('B',  'github.com/ztest-alice-sub/b',   'user',         true,  true,  true,  null,          null),
+            ('C',  'github.com/ztest-alice-free/c',  'user',         true,  true,  true,  null,          null),
+            ('O',  'github.com/ztest-alice-free/o',  'user',         true,  false, false, 'election',    'not_elected_user'),
             ('D',  'github.com/ztest-on/d',          'user',         true,  true,  true,  null,          null),
-            ('E',  'github.com/ztest-on/e',          'user',         true,  false, false, 'election',    'not_elected_user'),
+            ('E',  'github.com/ztest-on/e',          'user',         true,  true,  true,  null,          null),
             ('F',  'github.com/ztest-on/f',          'organization', true,  true,  true,  null,          null),
             ('G',  'github.com/ztest-off/g',         'organization', true,  false, false, 'election',    'not_elected_org'),
             ('H',  'github.com/ztest-pastdue/h',     'organization', false, true,  false, 'entitlement', 'not_subscribed'),
@@ -278,8 +286,8 @@ begin
       from dojo.all_my_repositories
      where principal_id = '5ecc0000-0000-0000-0000-00000000a11c'
        and repo_key like 'github.com/ztest-%';
-    if n <> 15 then
-        raise exception 'expected 15 fixture rows for Alice (one per repository), got %.', n;
+    if n <> 16 then
+        raise exception 'expected 16 fixture rows for Alice (one per repository), got %.', n;
     end if;
 end $$;
 

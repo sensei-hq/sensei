@@ -196,18 +196,14 @@
 {:else if data.section === 'sharing'}
 	<ScrSharing repos={sharingRepos} error={sharingError} pending={sharingPending} onToggle={elect} />
 {:else if data.section === 'dojos'}
-	<div class="flex items-center justify-end gap-3" style="padding: 12px 32px 0">
-		{#if ghMsg}<span class="text-ink-mute text-xs">{ghMsg}</span>{/if}
-		<button
-			type="button"
-			onclick={syncGithub}
-			disabled={ghBusy}
-			class="border-paper-edge text-ink-soft cursor-pointer rounded-lg border bg-transparent px-3 py-1.5 text-xs disabled:cursor-default disabled:opacity-50"
-		>
-			{ghBusy ? 'Syncing…' : 'Sync from GitHub'}
-		</button>
-	</div>
-	<ScrMyDojos dojos={data.dojos} onOpen={openDojo} onCreateOrJoin={openCreate} />
+	<ScrMyDojos
+		dojos={data.dojos}
+		onOpen={openDojo}
+		onCreateOrJoin={openCreate}
+		onSyncGithub={syncGithub}
+		syncing={ghBusy}
+		syncMessage={ghMsg}
+	/>
 	{#if creating}
 		<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
 			<button

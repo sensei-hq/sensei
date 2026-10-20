@@ -9,12 +9,13 @@ vi.mock('$lib/appstate.svelte.js', () => ({
 
 // Stub senseiApi with call trackers we assert against later.
 const mocks = {
-    mcpListTools: vi.fn(),
-    getToolUsage: vi.fn(),
-    getToolSignals: vi.fn(),
-    getToolInsights: vi.fn(),
-    getToolsHealth: vi.fn(),
-    getSessionToolTimeline: vi.fn(),
+    tryMcpListTools: vi.fn(),
+    tryGetToolUsage: vi.fn(),
+    tryGetToolSignals: vi.fn(),
+    tryGetToolInsights: vi.fn(),
+    tryGetToolsHealth: vi.fn(),
+    tryGetSessionReplay: vi.fn(),
+    tryGetMcpServerTools: vi.fn(),
     getMcpServers: vi.fn(),
     setMcpServerEnabled: vi.fn(),
     refreshMcpServers: vi.fn(),
@@ -30,9 +31,13 @@ const HEALTH_SOURCES = [
     { assistant_family: 'claude', source_type: 'mcp', source_key: 'plugin_svelte_svelte', name: 'plugin_svelte_svelte', connected: false, connection_state: null, server_id: null, tools_registered: null, tools_invoked_14d: 2, calls_14d: 156, share_invoked: null },
 ];
 
-vi.mock('$lib/api.js', () => ({
+vi.mock('$lib/api.js', async (importOriginal) => ({
+    failureReason: ((await importOriginal()) as typeof import('$lib/api.js')).failureReason,
     senseiApi: () => mocks,
 }));
+
+const okRead = <T,>(data: T) => ({ ok: true as const, data });
+const down = { ok: false as const, error: { status: 503, message: 'Service Unavailable' } };
 
 // Re-import fresh for each test so the module-level $state resets.
 async function freshStore() {
@@ -45,12 +50,13 @@ beforeEach(() => {
     for (const key of Object.keys(mocks)) {
         (mocks as Record<string, ReturnType<typeof vi.fn>>)[key].mockReset();
     }
-    mocks.mcpListTools.mockResolvedValue({ tools: [{ mcp: 'sensei', id: 'sensei.search', name: 'search', kind: 'query', summary: 's', inputs: [], example: { response: '' } }] });
-    mocks.getToolUsage.mockResolvedValue({ tools: [] });
-    mocks.getToolSignals.mockResolvedValue({ signals: [], source: 'cache' });
-    mocks.getToolInsights.mockResolvedValue({ insights: [{ toolName: 'search', computedAt: '2026-07-02T12:00:00Z', metrics: {}, variant: 'win', title: 'Workhorse', detail: 'ok' }] });
-    mocks.getToolsHealth.mockResolvedValue({ sources: HEALTH_SOURCES });
-    mocks.getSessionToolTimeline.mockResolvedValue({ sessionId: 's1', calls: [{ callId: 1, toolName: 'search', family: 'claude', request: {}, response: null, success: null, startedAtMs: 0, completedAtMs: null, durationMs: null, startedAt: '', completedAt: null, inFlight: true }], count: 1 });
+    mocks.tryMcpListTools.mockResolvedValue(okRead({ tools: [{ mcp: 'sensei', id: 'sensei.search', name: 'search', kind: 'query', summary: 's', inputs: [], example: { response: '' } }] }));
+    mocks.tryGetToolUsage.mockResolvedValue(okRead({ tools: [] }));
+    mocks.tryGetToolSignals.mockResolvedValue(okRead({ signals: [], source: 'cache' }));
+    mocks.tryGetToolInsights.mockResolvedValue(okRead({ insights: [{ toolName: 'search', computedAt: '2026-07-02T12:00:00Z', metrics: {}, variant: 'win', title: 'Workhorse', detail: 'ok' }] }));
+    mocks.tryGetToolsHealth.mockResolvedValue(okRead({ sources: HEALTH_SOURCES }));
+    mocks.tryGetSessionReplay.mockResolvedValue(okRead({ sessionId: 's1', calls: [], count: 0, summary: { used: 1, partial: 0, ignored: 0, total: 1 }, classified: 0 }));
+    mocks.tryGetMcpServerTools.mockResolvedValue(okRead({ id: 'm', server_id: 'srv-1', tools: [{ name: 'list_issues' }], tool_count: 1, probed_at: '', ttl_seconds: 900, error: null }));
 });
 
 describe('toolVerdict', () => {
@@ -82,21 +88,21 @@ describe('mcp store', () => {
         expect(mcp.catalogStatus).toBe('ready');
         expect(mcp.tools.length).toBe(1);
         expect(mcp.signalSource).toBe('cache');
-        expect(mocks.mcpListTools).toHaveBeenCalledTimes(1);
+        expect(mocks.tryMcpListTools).toHaveBeenCalledTimes(1);
     });
 
     it('loadCatalog is idempotent — a second call hits no endpoints', async () => {
         const mcp = await freshStore();
         await mcp.loadCatalog();
         await mcp.loadCatalog();
-        expect(mocks.mcpListTools).toHaveBeenCalledTimes(1);
+        expect(mocks.tryMcpListTools).toHaveBeenCalledTimes(1);
     });
 
     it('loadCatalog(force=true) re-fetches even after ready', async () => {
         const mcp = await freshStore();
         await mcp.loadCatalog();
         await mcp.loadCatalog(true);
-        expect(mocks.mcpListTools).toHaveBeenCalledTimes(2);
+        expect(mocks.tryMcpListTools).toHaveBeenCalledTimes(2);
     });
 
     it('insightFor returns the cached insight row by tool name', async () => {
@@ -106,30 +112,31 @@ describe('mcp store', () => {
         expect(mcp.insightFor('missing')).toBeUndefined();
     });
 
-    it('loadSessionTimeline caches per session id', async () => {
-        const mcp = await freshStore();
-        await mcp.loadSessionTimeline('s1');
-        await mcp.loadSessionTimeline('s1');
-        expect(mocks.getSessionToolTimeline).toHaveBeenCalledTimes(1);
-        expect(mcp.sessionTimelines['s1'].length).toBe(1);
-    });
-
-    it('refresh clears the timeline cache and re-loads catalog + insights', async () => {
+    it('refresh re-loads catalog + insights', async () => {
         const mcp = await freshStore();
         await mcp.loadCatalog();
         await mcp.loadInsights();
-        await mcp.loadSessionTimeline('s1');
         await mcp.refresh();
-        expect(mocks.mcpListTools).toHaveBeenCalledTimes(2);
-        expect(mocks.getToolInsights).toHaveBeenCalledTimes(2);
-        expect(Object.keys(mcp.sessionTimelines)).toHaveLength(0);
+        expect(mocks.tryMcpListTools).toHaveBeenCalledTimes(2);
+        expect(mocks.tryGetToolInsights).toHaveBeenCalledTimes(2);
     });
 
-    it('marks catalog status error when the API throws', async () => {
-        mocks.mcpListTools.mockRejectedValueOnce(new Error('boom'));
+    // #288: a failed read is an error with its reason — the fallback reads
+    // never threw, so this status could never become 'error' before.
+    for (const read of ['tryMcpListTools', 'tryGetToolUsage', 'tryGetToolSignals'] as const) {
+        it(`a failed ${read} marks the catalog in error, with the reason`, async () => {
+            mocks[read].mockResolvedValueOnce(down);
+            const mcp = await freshStore();
+            await mcp.loadCatalog();
+            expect([mcp.catalogStatus, mcp.catalogError]).toEqual(['error', 'Service Unavailable']);
+        });
+    }
+
+    it('a failed insights read marks insights in error, with the reason', async () => {
+        mocks.tryGetToolInsights.mockResolvedValueOnce(down);
         const mcp = await freshStore();
-        await mcp.loadCatalog();
-        expect(mcp.catalogStatus).toBe('error');
+        await mcp.loadInsights();
+        expect([mcp.insightsStatus, mcp.insightsError, mcp.toolInsights]).toEqual(['error', 'Service Unavailable', []]);
     });
 });
 
@@ -139,14 +146,14 @@ describe('mcp store — tools-health L1 slice', () => {
         await mcp.loadToolsHealth();
         expect(mcp.toolsHealthStatus).toBe('ready');
         expect(mcp.toolsHealth.length).toBe(4);
-        expect(mocks.getToolsHealth).toHaveBeenCalledTimes(1);
+        expect(mocks.tryGetToolsHealth).toHaveBeenCalledTimes(1);
     });
 
     it('loadToolsHealth is idempotent — a second call hits no endpoint', async () => {
         const mcp = await freshStore();
         await mcp.loadToolsHealth();
         await mcp.loadToolsHealth();
-        expect(mocks.getToolsHealth).toHaveBeenCalledTimes(1);
+        expect(mocks.tryGetToolsHealth).toHaveBeenCalledTimes(1);
     });
 
     it('sorts connected sources first, then by 14d call volume desc', async () => {
@@ -180,29 +187,29 @@ describe('mcp store — tools-health L1 slice', () => {
     });
 
     it('coverage is null (not 0%) when no source has been probed', async () => {
-        mocks.getToolsHealth.mockResolvedValueOnce({
+        mocks.tryGetToolsHealth.mockResolvedValueOnce(okRead({
             sources: [
                 { assistant_family: 'claude', source_type: 'mcp', source_key: 'x', name: 'x', connected: false, connection_state: null, server_id: null, tools_registered: null, tools_invoked_14d: 1, calls_14d: 4, share_invoked: null },
             ],
-        });
+        }));
         const mcp = await freshStore();
         await mcp.loadToolsHealth();
         expect(mcp.toolsHealthKpis.coverage).toBeNull();
         expect(mcp.toolsHealthKpis.sumRegistered).toBe(0);
     });
 
-    it('marks tools-health status error when the API throws', async () => {
-        mocks.getToolsHealth.mockRejectedValueOnce(new Error('boom'));
+    it('a failed tools-health read is an error, with the reason', async () => {
+        mocks.tryGetToolsHealth.mockResolvedValueOnce(down);
         const mcp = await freshStore();
         await mcp.loadToolsHealth();
-        expect(mcp.toolsHealthStatus).toBe('error');
+        expect([mcp.toolsHealthStatus, mcp.toolsHealthError]).toEqual(['error', 'Service Unavailable']);
     });
 
     it('refresh re-loads the tools-health slice', async () => {
         const mcp = await freshStore();
         await mcp.loadToolsHealth();
         await mcp.refresh();
-        expect(mocks.getToolsHealth).toHaveBeenCalledTimes(2);
+        expect(mocks.tryGetToolsHealth).toHaveBeenCalledTimes(2);
     });
 });
 
@@ -244,5 +251,27 @@ describe('discovered MCP servers', () => {
         await mcp.loadMcpServers();
         expect(await mcp.toggleMcpServer('srv-1', false)).toMatch(/500/);
         expect(mcp.mcpServers[0].enabled).toBe(true);
+    });
+});
+
+// #288: a session's replay and a server's tools are the daemon's, or why not.
+describe('replay and server tools', () => {
+    it('loadSessionReplay caches a read, and says why one failed', async () => {
+        const mcp = await freshStore();
+        expect((await mcp.loadSessionReplay('s1')).error).toBeNull();
+        await mcp.loadSessionReplay('s1');
+        expect(mocks.tryGetSessionReplay).toHaveBeenCalledTimes(1);
+        mocks.tryGetSessionReplay.mockResolvedValueOnce(down);
+        const failed = await mcp.loadSessionReplay('s2');
+        expect([failed.replay, failed.error]).toEqual([null, 'Service Unavailable']);
+    });
+
+    it('loadServerTools records a failed read per server — not a server with no tools', async () => {
+        mocks.tryGetMcpServerTools.mockResolvedValueOnce(down);
+        const mcp = await freshStore();
+        await mcp.loadServerTools('srv-1');
+        expect([mcp.serverToolManifests['srv-1'], mcp.serverToolErrors['srv-1']]).toEqual([undefined, 'Service Unavailable']);
+        await mcp.loadServerTools('srv-1');
+        expect([mcp.serverToolManifests['srv-1']?.tool_count, mcp.serverToolErrors['srv-1']]).toEqual([1, undefined]);
     });
 });

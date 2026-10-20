@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
     import { onMount } from "svelte";
     import { scanState } from "$lib/scan-state.svelte.js";
 
@@ -27,9 +28,7 @@
         <div
             class="flex flex-col items-center text-center gap-6 bg-paper-mute rounded-lg px-10 py-12"
         >
-            <div class="kanji text-4xl text-accent opacity-25 leading-none">
-                探
-            </div>
+            <Kanji char="探" size="4xl" tone="inherit" class="block text-accent opacity-25" />
             <p
                 class="text-base text-ink-mute max-w-[440px] leading-normal m-0"
             >

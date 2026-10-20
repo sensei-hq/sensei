@@ -46,8 +46,22 @@ test.describe('Cold start', () => {
     // 'checking' (postgres → failed, ollama → failed, etc.). Without
     // the 7b8c5e89 streaming fix + the 83dfd7b4 timeout fix, every
     // badge would stay "checking" for ~13 s before all flipping at once.
-    const stillChecking = tauriPage.locator('[data-row] [data-badge]', { hasText: /^checking$/ });
-    await expect(stillChecking).not.toHaveCount(5, { timeout: 10_000 });
+    //
+    // Counted in the page, not with a filtered locator: `filter()` here resolves
+    // to ONE element (`find`), so `not.toHaveCount(5)` on it could never fail —
+    // and the two-argument `locator(sel, { hasText })` it replaced ignored the
+    // filter and counted every badge, so it could never pass (#187).
+    const badges = () =>
+      tauriPage.evaluate<{ total: number; checking: number }>(`(() => {
+        const b = Array.from(document.querySelectorAll('[data-row] [data-badge]'));
+        return { total: b.length, checking: b.filter((e) => (e.textContent || '').trim() === 'checking').length };
+      })()`);
+    await expect
+      .poll(async () => {
+        const { total, checking } = await badges();
+        return total > 0 && checking < total;
+      }, { timeout: 10_000 })
+      .toBe(true);
   });
 
   test('enters resolve phase without test intervention', async ({ tauriPage }) => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import type { Snippet } from 'svelte';
   import EmptyState from './EmptyState.svelte';
 
@@ -51,7 +52,7 @@
     data-screen-state="error"
     role="alert"
   >
-    <span class="kanji text-4xl text-danger opacity-40" aria-hidden="true">難</span>
+    <Kanji char="難" size="inherit" tone="inherit" class="text-4xl text-danger opacity-40" />
     <p class="display text-xl font-normal m-0 text-ink">Couldn't load this</p>
     <p class="text-sm text-ink-soft max-w-[420px] leading-normal m-0">
       {error ?? 'sensei couldn’t be reached. Check that the daemon is running, then retry.'}

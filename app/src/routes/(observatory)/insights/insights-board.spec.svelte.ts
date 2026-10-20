@@ -7,13 +7,16 @@ import {
 import type { InsightsBoard } from '$lib/types.js';
 import type { SenseiApi } from '$lib/api.js';
 
+const ok = <T,>(data: T) => ({ ok: true as const, data });
+const down = { ok: false as const, error: { status: 503, message: 'Service Unavailable' } };
+
 // Hand-rolled mock api — only the three methods the state touches are stubbed;
 // cast to SenseiApi since the state uses nothing else.
 function mockApi(overrides: Partial<SenseiApi> = {}): SenseiApi {
   return {
-    getInsights: vi.fn().mockResolvedValue(EMPTY_INSIGHTS_BOARD),
-    acceptProjectRecommendation: vi.fn().mockResolvedValue({ ok: true }),
-    rejectProjectRecommendation: vi.fn().mockResolvedValue({ ok: true }),
+    tryGetInsights: vi.fn().mockResolvedValue(ok(EMPTY_INSIGHTS_BOARD)),
+    tryAcceptProjectRecommendation: vi.fn().mockResolvedValue(ok({ ok: true })),
+    tryRejectProjectRecommendation: vi.fn().mockResolvedValue(ok({ ok: true })),
     ...overrides,
   } as unknown as SenseiApi;
 }
@@ -95,8 +98,8 @@ describe('InsightsBoardState — one decision, one default', () => {
 
 describe('InsightsBoardState — actions', () => {
   it('apply() optimistically removes the rec and calls accept (schedules MeasureVerdicts)', async () => {
-    const accept = vi.fn().mockResolvedValue({ ok: true });
-    const api = mockApi({ acceptProjectRecommendation: accept });
+    const accept = vi.fn().mockResolvedValue(ok({ ok: true }));
+    const api = mockApi({ tryAcceptProjectRecommendation: accept });
     const s = new InsightsBoardState(fixture());
     const rec = s.now.recs[0];
 
@@ -109,8 +112,8 @@ describe('InsightsBoardState — actions', () => {
   });
 
   it('apply() restores the card and surfaces an error when accept fails', async () => {
-    const accept = vi.fn().mockResolvedValue({ ok: false });
-    const api = mockApi({ acceptProjectRecommendation: accept });
+    const accept = vi.fn().mockResolvedValue(down);
+    const api = mockApi({ tryAcceptProjectRecommendation: accept });
     const s = new InsightsBoardState(fixture());
     const rec = s.now.recs[0];
 
@@ -119,11 +122,13 @@ describe('InsightsBoardState — actions', () => {
     expect(s.now.recs.map((r) => r.id)).toEqual(['r1']);
     expect(s.actionError).not.toBeNull();
     expect(s.actionError).toContain('Now rec');
+    // The daemon's reason, not a guess that it "may already be decided" (#288).
+    expect(s.actionError).toContain('Service Unavailable');
   });
 
   it('dismiss() optimistically removes the rec and calls reject', async () => {
-    const reject = vi.fn().mockResolvedValue({ ok: true });
-    const api = mockApi({ rejectProjectRecommendation: reject });
+    const reject = vi.fn().mockResolvedValue(ok({ ok: true }));
+    const api = mockApi({ tryRejectProjectRecommendation: reject });
     const s = new InsightsBoardState(fixture());
     const rec = s.soon.recs[0];
 
@@ -134,8 +139,8 @@ describe('InsightsBoardState — actions', () => {
   });
 
   it('dismiss() restores the card and surfaces an error when reject fails', async () => {
-    const reject = vi.fn().mockResolvedValue({ ok: false });
-    const api = mockApi({ rejectProjectRecommendation: reject });
+    const reject = vi.fn().mockResolvedValue(down);
+    const api = mockApi({ tryRejectProjectRecommendation: reject });
     const s = new InsightsBoardState(fixture());
     const rec = s.now.recs[0];
 
@@ -157,8 +162,8 @@ describe('InsightsBoardState — project filter re-scope', () => {
       patterns: [],
       corrections: [],
     });
-    const getInsights = vi.fn().mockResolvedValue(scoped);
-    const api = mockApi({ getInsights });
+    const getInsights = vi.fn().mockResolvedValue(ok(scoped));
+    const api = mockApi({ tryGetInsights: getInsights });
     const s = new InsightsBoardState(fixture());
 
     await s.selectProject(api, 'p1');
@@ -170,8 +175,8 @@ describe('InsightsBoardState — project filter re-scope', () => {
   });
 
   it('selectProject(null) refetches the unscoped board', async () => {
-    const getInsights = vi.fn().mockResolvedValue(fixture());
-    const api = mockApi({ getInsights });
+    const getInsights = vi.fn().mockResolvedValue(ok(fixture()));
+    const api = mockApi({ tryGetInsights: getInsights });
     const s = new InsightsBoardState(fixture());
     s.selectedProjectId = 'p1';
 
@@ -182,12 +187,42 @@ describe('InsightsBoardState — project filter re-scope', () => {
   });
 
   it('selectProject is a no-op when the scope is unchanged', async () => {
-    const getInsights = vi.fn().mockResolvedValue(fixture());
-    const api = mockApi({ getInsights });
+    const getInsights = vi.fn().mockResolvedValue(ok(fixture()));
+    const api = mockApi({ tryGetInsights: getInsights });
     const s = new InsightsBoardState(fixture());
 
     await s.selectProject(api, null);
 
     expect(getInsights).not.toHaveBeenCalled();
+  });
+});
+
+// #288: a board that could not be read is an error — not the quiet board.
+describe('InsightsBoardState — a failed read', () => {
+  it('starts in error when the first load failed', () => {
+    const s = new InsightsBoardState(null, 'Service Unavailable');
+    expect([s.loadError, s.isEmpty]).toEqual(['Service Unavailable', true]);
+  });
+
+  it('a failed re-scope is an error, and drops the previous scope\'s board', async () => {
+    const s = new InsightsBoardState(fixture());
+    await s.selectProject(mockApi({ tryGetInsights: vi.fn().mockResolvedValue(down) }), 'p1');
+    expect([s.loadError, s.now.count, s.loading]).toEqual(['Service Unavailable', 0, false]);
+  });
+
+  it('a successful re-scope clears the error', async () => {
+    const s = new InsightsBoardState(null, 'Service Unavailable');
+    await s.selectProject(mockApi({ tryGetInsights: vi.fn().mockResolvedValue(ok(fixture())) }), 'p1');
+    expect(s.loadError).toBeNull();
+    expect(s.now.count).toBeGreaterThan(0);
+  });
+
+  it('retry() re-reads the current scope', async () => {
+    const getInsights = vi.fn().mockResolvedValue(ok(fixture()));
+    const s = new InsightsBoardState(null, 'Service Unavailable');
+    s.selectedProjectId = 'p1';
+    await s.retry(mockApi({ tryGetInsights: getInsights }));
+    expect(getInsights).toHaveBeenCalledWith('p1');
+    expect(s.loadError).toBeNull();
   });
 });

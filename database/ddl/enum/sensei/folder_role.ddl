@@ -5,5 +5,7 @@ create type folder_role
         -- architectural component roles
         'backend', 'frontend', 'library', 'tool', 'docs', 'infra',
         -- product / deployment / structure roles (from README frontmatter)
-        'website', 'desktop', 'mobile', 'config', 'packaging'
+        'website', 'desktop', 'mobile', 'config', 'packaging',
+        -- a repository whose code is all tests (#269), auto-assigned when unset
+        'quality'
     );

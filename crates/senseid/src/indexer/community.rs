@@ -39,46 +39,11 @@ pub async fn detect_communities_for_folder(
         node_ids.push(id);
     }
 
-    let adjacency = build_adjacency(pg, folder_id, &id_to_idx, &nodes).await?;
-    let mut labels = label_propagation(&adjacency, nodes.len(), 20);
-
-    // Group members by raw propagation label.
+    let pairs = semantic_pairs(pg, folder_id, &id_to_idx, &nodes).await?;
+    let (adjacency, labels) = assign_labels(&nodes, &id_to_idx, &pairs);
     let mut groups: HashMap<u32, Vec<usize>> = HashMap::new();
     for (i, &label) in labels.iter().enumerate() {
         groups.entry(label).or_default().push(i);
-    }
-
-    // D4.4 singleton assignment: a node the propagation left alone (its label
-    // group has one member — no calls/imports/extends/references edge AND no
-    // parent inside the folder) inherits its enclosing FILE community rather than
-    // being dropped, so coverage is ~100 % of nodes (invariant 5). Re-point each
-    // such singleton's label at its file node's label; a lone file (no children,
-    // no edges) keeps its own label and forms a one-node community.
-    let singletons: Vec<usize> =
-        groups.values().filter(|members| members.len() == 1).map(|members| members[0]).collect();
-    if !singletons.is_empty() {
-        let file_idx_by_path: HashMap<&str, usize> = nodes
-            .iter()
-            .enumerate()
-            .filter(|(_, node)| node["kind"].as_str() == Some("file"))
-            .filter_map(|(i, node)| node["file_path"].as_str().map(|fp| (fp, i)))
-            .collect();
-        for i in singletons {
-            if nodes[i]["kind"].as_str() == Some("file") {
-                continue; // a lone file forms its own community — nothing to inherit
-            }
-            if let Some(fp) = nodes[i]["file_path"].as_str()
-                && let Some(&f) = file_idx_by_path.get(fp)
-                && f != i
-            {
-                labels[i] = labels[f];
-            }
-        }
-        // Re-group after folding singletons into their file's label.
-        groups.clear();
-        for (i, &label) in labels.iter().enumerate() {
-            groups.entry(label).or_default().push(i);
-        }
     }
 
     // D4 deterministic ids: KEEP EVERY group — singletons now belong to their
@@ -103,7 +68,8 @@ pub async fn detect_communities_for_folder(
         // D4.5 god nodes: the community's top-5 members by degree (the hubs).
         //
         // Degree is counted from `adjacency`, which this function has already built
-        // from every calls/imports/extends/references edge plus parent containment.
+        // from every calls/imports/extends/references/implements edge plus parent
+        // containment.
         // It used to be read from a `nodes.degree` column that a separate
         // `build_connections` barrier had to populate first — a cache of a
         // `count(*)`, whose only consumer was this loop, running immediately after
@@ -203,24 +169,17 @@ fn admits_to_adjacency(edge_kind: &str, target_fqn: Option<&str>) -> bool {
 
 const COMMUNITY_EDGE_KINDS: &[&str] = &["calls", "imports", "extends", "references", "implements"];
 
-/// Build the undirected adjacency list community detection runs over.
-///
-/// D4.4 — two adjacency sources:
-/// - **Semantic edges** [`COMMUNITY_EDGE_KINDS`] (resolved only). `implements`
-///   was excluded here while it had 0 rows; slice 2 gives it a producer, so it
-///   is back in the set.
-/// - **Structural containment** via `parent_id`: a node is adjacent to its
-///   enclosing parent (file/class/module). This clusters a file's symbols
-///   together and gives a symbol with no semantic edge a path into its
-///   container's community (so coverage reaches ~100 %).
-async fn build_adjacency(
+/// The semantic edges community detection runs over, as index pairs: the
+/// resolved [`COMMUNITY_EDGE_KINDS`] between two nodes of the folder.
+/// `implements` was excluded while it had 0 rows; slice 2 gives it a producer,
+/// so it is back in the set.
+async fn semantic_pairs(
     pg: &crate::db::pg_store::PgStore,
     folder_id: &uuid::Uuid,
     id_to_idx: &HashMap<String, usize>,
     nodes: &[serde_json::Value],
-) -> Result<Vec<Vec<usize>>, String> {
-    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
-
+) -> Result<Vec<(usize, usize)>, String> {
+    let mut pairs = Vec::new();
     for kind in COMMUNITY_EDGE_KINDS {
         let edges = pg
             .get_edges_by_kind(folder_id, kind)
@@ -241,13 +200,32 @@ async fn build_adjacency(
                 if !admits_to_adjacency(kind, tfqn) {
                     continue;
                 }
-                adj[si].push(ti);
-                adj[ti].push(si); // undirected
+                pairs.push((si, ti));
             }
         }
     }
+    Ok(pairs)
+}
 
-    // parent_id containment — connect each node to its enclosing parent.
+/// The communities of one folder's nodes: label propagation over the semantic
+/// edges, then each node the propagation left alone folded into its file's
+/// community, so every node carries one (D4.4, invariant 5). Returns the
+/// adjacency (its degrees rank the god nodes) and each node's label. Pure.
+fn assign_labels(
+    nodes: &[serde_json::Value],
+    id_to_idx: &HashMap<String, usize>,
+    pairs: &[(usize, usize)],
+) -> (Vec<Vec<usize>>, Vec<u32>) {
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    for &(a, b) in pairs {
+        adj[a].push(b);
+        adj[b].push(a); // undirected
+    }
+    // parent_id containment — connect each node to its enclosing parent. #149
+    // measured dropping it (2026-10-20): the >50-file communities did not break
+    // up (4 → 8 holding 22,484 → 24,258 nodes in this repository's folder; the
+    // largest 17,301 → 17,201). They are dense call/reference cores, not
+    // containment chains, so the edges stay.
     for (i, node) in nodes.iter().enumerate() {
         if let Some(pid) = node["parent_id"].as_str()
             && let Some(&pi) = id_to_idx.get(pid)
@@ -257,7 +235,42 @@ async fn build_adjacency(
         }
     }
 
-    Ok(adj)
+    let mut labels = label_propagation(&adj, nodes.len(), 20);
+
+    // Group members by raw propagation label.
+    let mut groups: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, &label) in labels.iter().enumerate() {
+        groups.entry(label).or_default().push(i);
+    }
+
+    // D4.4 singleton assignment: a node the propagation left alone (its label
+    // group has one member — no calls/imports/extends/references/implements
+    // edge AND no parent inside the folder) inherits its enclosing FILE community rather than
+    // being dropped, so coverage is ~100 % of nodes (invariant 5). Re-point each
+    // such singleton's label at its file node's label; a lone file (no children,
+    // no edges) keeps its own label and forms a one-node community.
+    let singletons: Vec<usize> =
+        groups.values().filter(|members| members.len() == 1).map(|members| members[0]).collect();
+    if !singletons.is_empty() {
+        let file_idx_by_path: HashMap<&str, usize> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node["kind"].as_str() == Some("file"))
+            .filter_map(|(i, node)| node["file_path"].as_str().map(|fp| (fp, i)))
+            .collect();
+        for i in singletons {
+            if nodes[i]["kind"].as_str() == Some("file") {
+                continue; // a lone file forms its own community — nothing to inherit
+            }
+            if let Some(fp) = nodes[i]["file_path"].as_str()
+                && let Some(&f) = file_idx_by_path.get(fp)
+                && f != i
+            {
+                labels[i] = labels[f];
+            }
+        }
+    }
+    (adj, labels)
 }
 
 /// Label propagation: each node starts with its own label,
@@ -440,6 +453,36 @@ mod tests {
             natural_key(&mk("p-A", "n-1")) < natural_key(&mk("p-A", "n-2")),
             "when all else ties, ordering is by id"
         );
+    }
+
+    /// A folder's nodes as detection sees them: `(id, parent, kind, file_path)`.
+    fn tree(
+        spec: &[(&str, Option<&str>, &str, &str)],
+    ) -> (Vec<serde_json::Value>, HashMap<String, usize>) {
+        let nodes = spec
+            .iter()
+            .map(|(id, parent, kind, fp)| {
+                serde_json::json!({ "id": id, "parent_id": parent, "kind": kind, "file_path": fp })
+            })
+            .collect();
+        let idx = spec.iter().enumerate().map(|(i, (id, ..))| (id.to_string(), i)).collect();
+        (nodes, idx)
+    }
+
+    /// Every node lands in a community (D4.4): a node with no semantic edge
+    /// joins its file's, and a call joins two files.
+    #[test]
+    fn an_unconnected_symbol_joins_its_file_and_a_call_joins_two_files() {
+        let (nodes, idx) = tree(&[
+            ("f1", None, "file", "a.rs"),
+            ("a", Some("f1"), "function", "a.rs"),
+            ("lone", Some("f1"), "function", "a.rs"),
+            ("f2", None, "file", "b.rs"),
+            ("b", Some("f2"), "function", "b.rs"),
+        ]);
+        let (_, labels) = assign_labels(&nodes, &idx, &[(1, 4)]); // a calls b
+        assert_eq!(labels[1], labels[4], "a call ties two files");
+        assert_eq!(labels[2], labels[0], "an unconnected symbol joins its file");
     }
 
     #[test]

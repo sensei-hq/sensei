@@ -8,6 +8,7 @@ const NOW = new Date('2026-07-30T00:00:00Z');
 function row(over: Partial<ProjectRow> = {}): ProjectRow {
 	return {
 		id: 'p1',
+		tenant_id: 't1',
 		slug: 'acme/ledger',
 		name: 'ledger-core',
 		classification: 'company',

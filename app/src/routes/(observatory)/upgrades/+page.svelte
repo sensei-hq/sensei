@@ -1,8 +1,10 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
+    import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, EmptyState } from '$lib/components';
+  import { PageHeader, Screen, EmptyState, ScreenState, UnreadProjectsNotice } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import type { DojoUpgrade } from '$lib/types.js';
   import { KIND_META, type Upgrade, type UpgradeKind } from './buckets.js';
@@ -58,7 +60,7 @@
     <!-- header: type pill · state chip · dereferenced badge · received-at -->
     <div class="flex items-center gap-2 mb-2">
       <span class="inline-flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded-full {pill.bg} {pill.text}">
-        <span class="kanji">{pill.kanji}</span>
+        <Kanji char={pill.kanji} size="inherit" tone="inherit" class="" />
         <span class="uppercase tracking-wide">{pill.label}</span>
       </span>
       {@render chip(stateChip(up.state))}
@@ -128,7 +130,7 @@
     <!-- typed descriptor + project mono -->
     <div class="flex items-center gap-2 mb-1">
       <span class="inline-flex items-center gap-1 text-xs {toneClass(kind)}">
-        <span class="kanji text-xs">{meta.kanji}</span>
+        <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xs" />
         <span class="uppercase tracking-wide">{meta.title}</span>
       </span>
       <span class="flex-1"></span>
@@ -162,12 +164,12 @@
 
 {#snippet bucket(kind: UpgradeKind)}
   {@const meta = KIND_META[kind]}
-  {@const items = data.buckets[kind]}
+  {@const items = data.buckets?.[kind] ?? []}
   {#if items.length > 0}
     <section class="mb-8" data-upgrade-bucket={kind}>
       <!-- bucket header mirrors the mockup: big kanji + title + count + sub -->
       <div class="flex items-baseline gap-3 mb-1">
-        <span class="kanji text-xl {toneClass(kind)}">{meta.kanji}</span>
+        <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xl {toneClass(kind)}" />
         <h2 class="display text-lg font-normal m-0">{meta.title}</h2>
         <span class="font-mono text-xs {toneClass(kind)}">{items.length}</span>
       </div>
@@ -181,71 +183,82 @@
   {/if}
 {/snippet}
 
-<PageHeader
-  eyebrow="Observatory · Upgrades"
-  kanji="贈"
-  title="Upgrades waiting for your call."
-  description="Practice arriving from your Dōjō, and candidate skills, agents, rules and lints your own analyzer is asking for. Review each, then apply it or set it aside."
-/>
+<Screen>
+    {#snippet header()}
+    <PageHeader
+      eyebrow="Observatory · Upgrades"
+      kanji="贈" icon={railIcon("/upgrades")}
+      title="Upgrades waiting for your call."
+      description="Practice arriving from your Dōjō, and candidate skills, agents, rules and lints your own analyzer is asking for. Review each, then apply it or set it aside."
+    />
+    {/snippet}
 
-<div
-  class="max-w-[1060px] mx-auto px-7 pb-10"
-  data-upgrades-total={data.total}
-  data-dojo-total={data.dojoUpgrades.length}
->
-  <!-- Lane 1 · the Dōjō downstream inbox -->
-  <section class="mb-10" data-lane="dojo">
-    <div class="flex items-baseline gap-3 mb-1">
-      <h2 class="display text-lg font-normal m-0">From your Dōjō</h2>
-      {#if data.dojoUnread > 0}
-        <span class="font-mono text-xs text-accent" data-dojo-unread>{data.dojoUnread} new</span>
-      {/if}
+    <div
+      class="max-w-[1060px] mx-auto px-7 pb-10"
+      data-upgrades-total={data.total}
+      data-dojo-total={data.dojoUpgrades.length}
+    >
+      <!-- Lane 1 · the Dōjō downstream inbox -->
+      <section class="mb-10" data-lane="dojo">
+        <div class="flex items-baseline gap-3 mb-1">
+          <h2 class="display text-lg font-normal m-0">From your Dōjō</h2>
+          {#if data.dojoUnread > 0}
+            <span class="font-mono text-xs text-accent" data-dojo-unread>{data.dojoUnread} new</span>
+          {/if}
+        </div>
+        <p class="text-xs text-ink-soft mb-4">
+          Approved practice pulled back from the teams you've paired with. Applying lands it into your
+          local rules and memory.
+        </p>
+
+        {#if actions.error}
+          <p class="text-xs text-danger mb-3" data-dojo-error>{actions.error}</p>
+        {/if}
+
+        {#if data.dojoError}
+          <ScreenState status="error" error={data.dojoError} onretry={() => invalidateAll()} />
+        {:else if orderedUpgrades.length === 0}
+          <EmptyState
+            kanji="贈"
+            title="no dōjō upgrades yet"
+            description="Connect a Dōjō to receive shared learnings. Approved principles, patterns, skills and guards land here for you to apply."
+          />
+        {:else}
+          {#each orderedUpgrades as up (up.id)}
+            {@render upgradeCard(up)}
+          {/each}
+        {/if}
+      </section>
+
+      <!-- Lane 2 · candidates from the local analyzer (behaviour unchanged) -->
+      <section data-lane="local">
+        <div class="flex items-baseline gap-3 mb-1">
+          <h2 class="display text-lg font-normal m-0">From your analyzer</h2>
+          {#if data.total > 0}
+            <span class="font-mono text-xs text-ink-soft">{data.total}</span>
+          {/if}
+        </div>
+        <p class="text-xs text-ink-soft mb-4">
+          Candidate skills, agents, rules and lints your project's own patterns are asking for. Each
+          links back to the recommendation that produced it.
+        </p>
+
+        {#if data.localError}
+          <ScreenState status="error" error={data.localError} onretry={() => invalidateAll()} />
+        {:else}
+        <UnreadProjectsNotice unread={data.unread} />
+        {#if data.total === 0}
+          <EmptyState
+            kanji="贈"
+            title="no upgrades waiting"
+            description="Recommended skills, agents, rules and lints will appear here once the analyzer has enough evidence — typically after 20+ sessions across a project."
+          />
+        {:else}
+          {#each orderedKinds as kind (kind)}
+            {@render bucket(kind)}
+          {/each}
+        {/if}
+        {/if}
+      </section>
     </div>
-    <p class="text-xs text-ink-soft mb-4">
-      Approved practice pulled back from the teams you've paired with. Applying lands it into your
-      local rules and memory.
-    </p>
-
-    {#if actions.error}
-      <p class="text-xs text-danger mb-3" data-dojo-error>{actions.error}</p>
-    {/if}
-
-    {#if orderedUpgrades.length === 0}
-      <EmptyState
-        kanji="贈"
-        title="no dōjō upgrades yet"
-        description="Connect a Dōjō to receive shared learnings. Approved principles, patterns, skills and guards land here for you to apply."
-      />
-    {:else}
-      {#each orderedUpgrades as up (up.id)}
-        {@render upgradeCard(up)}
-      {/each}
-    {/if}
-  </section>
-
-  <!-- Lane 2 · candidates from the local analyzer (behaviour unchanged) -->
-  <section data-lane="local">
-    <div class="flex items-baseline gap-3 mb-1">
-      <h2 class="display text-lg font-normal m-0">From your analyzer</h2>
-      {#if data.total > 0}
-        <span class="font-mono text-xs text-ink-soft">{data.total}</span>
-      {/if}
-    </div>
-    <p class="text-xs text-ink-soft mb-4">
-      Candidate skills, agents, rules and lints your project's own patterns are asking for. Each
-      links back to the recommendation that produced it.
-    </p>
-
-    {#if data.total === 0}
-      <EmptyState
-        kanji="贈"
-        title="no upgrades waiting"
-        description="Recommended skills, agents, rules and lints will appear here once the analyzer has enough evidence — typically after 20+ sessions across a project."
-      />
-    {:else}
-      {#each orderedKinds as kind (kind)}
-        {@render bucket(kind)}
-      {/each}
-    {/if}
-  </section>
-</div>
+</Screen>

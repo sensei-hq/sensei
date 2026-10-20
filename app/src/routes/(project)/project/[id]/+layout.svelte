@@ -4,6 +4,7 @@
     import ProjectGlyph from '../../../(observatory)/projects/ProjectGlyph.svelte';
     import { projectIcon } from '../../../(observatory)/projects/buckets.js';
     import { apiBase } from '$lib/api.js';
+    import { glyphMode } from '$lib/glyphs';
     import { appState } from '$lib/appstate.svelte.js';
 
     let { data, children } = $props();
@@ -17,7 +18,7 @@
     // repo logo .svg) renders as an <img>, a kanji icon as a glyph, else the 場
     // fallback — never the raw icon value (e.g. "rokkit.svg") shown as text.
     const icon = $derived(
-        projectIcon(data.project ?? { id: data.projectId, icon: null }, apiBase(appState.port)),
+        projectIcon(data.project ?? { id: data.projectId, icon: null }, apiBase(appState.port), glyphMode(appState.config)),
     );
     // Keep an absent FTR as null (honest no-data → "—" in the sidebar), never 0.
     const ftr14d = $derived(data.ftrMetrics?.ftr14d ?? null);
@@ -48,9 +49,10 @@
             ftr14dPrev={data.ftrMetrics?.ftr14dPrev ?? null}
             ftrTrend={data.ftrMetrics?.ftrTrend ?? []}
             sessions7d={data.ftrMetrics?.sessions7d ?? null}
+            ftrError={data.ftrError}
         />
 
-        <main data-component="project-main" data-section={section} class="flex-1 overflow-y-auto">
+        <main data-component="project-main" data-section={section} class="flex-1 min-w-0 min-h-0 overflow-hidden">
             {@render children()}
         </main>
     </div>

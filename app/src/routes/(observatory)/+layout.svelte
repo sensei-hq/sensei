@@ -6,9 +6,10 @@
     import { shortcuts } from '@rokkit/actions';
     import { CommandPalette } from '@rokkit/ui';
     import { appState } from '$lib/appstate.svelte.js';
-    import { senseiApi } from '$lib/api.js';
+    import { senseiApi, failureReason } from '$lib/api.js';
     import { openProjectWindow } from '$lib/stores/windows.svelte.js';
     import ObservatorySidebar from './ObservatorySidebar.svelte';
+    import { glyphMode } from '$lib/glyphs';
     import { buildNavItems } from './observatory-nav.js';
 
     let { children } = $props();
@@ -45,20 +46,22 @@
             await appState.load();
             // Cache the project count once for the rail badge (projects rarely change).
             await appState.loadProjectCount();
-            try {
-                const projects = await senseiApi(appState.port).listProjects();
-                unregisterProjects = commands.registerMany(
-                    projects.map((p) => ({
-                        id: `project.open:${p.id}`,
-                        label: `Open project · ${p.name}`,
-                        group: 'Projects',
-                        keywords: p.client ? [p.client] : undefined,
-                        run: () => { void openProjectWindow(p.id, p.name); },
-                    })),
-                );
-            } catch (e) {
-                console.error('[observatory] project command load failed', e);
+            // A failed read registers no project commands and says why in the
+            // log — the palette offers actions, it asserts nothing (#288).
+            const read = await senseiApi(appState.port).tryListProjects();
+            if (!read.ok) {
+                console.error('[observatory] project command load failed', failureReason(read.error));
+                return;
             }
+            unregisterProjects = commands.registerMany(
+                read.data.map((p) => ({
+                    id: `project.open:${p.id}`,
+                    label: `Open project · ${p.name}`,
+                    group: 'Projects',
+                    keywords: p.client ? [p.client] : undefined,
+                    run: () => { void openProjectWindow(p.id, p.name); },
+                })),
+            );
         })();
 
         return () => {
@@ -76,10 +79,11 @@
             port={appState.port}
             pathname={page.url.pathname}
             projectCount={appState.projectCount ?? undefined}
+            glyphs={glyphMode(appState.config)}
         />
 
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <main data-component="observatory-main" class="flex-1 overflow-auto" tabindex="0">
+        <!-- Not a scroller: each screen's body is, and takes focus itself (#245, #293). -->
+        <main data-component="observatory-main" class="flex-1 min-w-0 min-h-0 overflow-hidden">
             {@render children()}
         </main>
     </div>

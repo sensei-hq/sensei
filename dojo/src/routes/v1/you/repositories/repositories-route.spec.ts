@@ -90,6 +90,22 @@ describe('POST /v1/you/repositories', () => {
 		]);
 	});
 
+	// #299: each repository's sensei project reaches registerRepositories. Dropping
+	// it here is how a synced repository would silently never show a project.
+	it('passes each repository\'s project through', async () => {
+		const project = { slug: 'sensei', name: 'sensei' };
+		await register.POST(post({ repos: [{ repo_key: 'github.com/acme/api', project }] }));
+		expect(mocks.registerRepositories.mock.calls[0][1][0].project).toEqual(project);
+	});
+
+	it('400s on a malformed project rather than dropping it', async () => {
+		for (const project of [{ slug: '', name: 'x' }, { slug: 's' }, 'sensei']) {
+			const res = await register.POST(post({ repos: [{ repo_key: 'github.com/acme/api', project }] }));
+			expect(res.status).toBe(400);
+		}
+		expect(mocks.registerRepositories).not.toHaveBeenCalled();
+	});
+
 	it('400s when repos is missing or not an array', async () => {
 		expect((await register.POST(post({}))).status).toBe(400);
 		expect((await register.POST(post({ repos: 'all of them' }))).status).toBe(400);

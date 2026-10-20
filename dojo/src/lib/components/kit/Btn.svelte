@@ -1,4 +1,5 @@
 <script lang="ts" module>
+	import KanjiToken from './KanjiToken.svelte';
 	// variant → surface token classes + the icon/kanji tint. The kit rode on
 	// `zs-btn`; dōjō has no zs-* layer, so the button is built from named-token
 	// utilities: `primary` is the ink-on-paper CTA (`bg-primary text-on-primary`,
@@ -54,7 +55,5 @@
 		: 'text-sm'} {v.surface}"
 	style="padding: {pad}"
 >
-	{#if icon}<Icon name={icon} size={iconPx} toneClass={v.tint} />{:else if kanji}<span
-			class="kanji {v.tint}">{kanji}</span
-		>{/if}{#if children}{@render children()}{/if}
+	{#if icon}<Icon name={icon} size={iconPx} toneClass={v.tint} />{:else if kanji}<KanjiToken char={kanji} size="inherit" toneClass={v.tint} />{/if}{#if children}{@render children()}{/if}
 </button>

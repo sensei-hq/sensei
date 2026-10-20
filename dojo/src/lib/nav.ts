@@ -23,26 +23,26 @@ export const NAV_YOU: KitNavGroup[] = [
 	{
 		group: 'Work',
 		items: [
-			{ id: 'inbox', icon: 'inbox', label: 'Inbox' },
-			{ id: 'projects', icon: 'folder', label: 'Projects' }
+			{ id: 'inbox', icon: 'inbox', label: 'Inbox', kanji: '受' },
+			{ id: 'projects', icon: 'folder', label: 'Projects', kanji: '場' }
 		]
 	},
 	{
 		group: 'Govern',
 		items: [
-			{ id: 'rules', icon: 'scale', label: 'Constitution' },
-			{ id: 'packs', icon: 'box', label: 'Rule packs' }
+			{ id: 'rules', icon: 'scale', label: 'Constitution', kanji: '則' },
+			{ id: 'packs', icon: 'box', label: 'Rule packs', kanji: '包' }
 		]
 	},
 	{
 		group: 'Dōjōs',
 		items: [
-			{ id: 'dojos', icon: 'users-group-two-rounded', label: 'My dōjōs' },
+			{ id: 'dojos', icon: 'users-group-two-rounded', label: 'My dōjōs', kanji: '結' },
 			// Sharing is a DECISION surface, not a listing: three repositories sat
 			// at `not_elected_user` — refusing for want of a choice nobody could
 			// make, because the election had a write path and no toggle.
-			{ id: 'sharing', icon: 'share-circle', label: 'Sharing' },
-			{ id: 'contributions', icon: 'upload-square', label: 'Contributions' }
+			{ id: 'sharing', icon: 'share-circle', label: 'Sharing', kanji: '群' },
+			{ id: 'contributions', icon: 'upload-square', label: 'Contributions', kanji: '贈' }
 		]
 	}
 ];
@@ -61,39 +61,39 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 	{
 		group: 'Overview',
 		items: [
-			{ id: 'home', icon: 'buildings-2', label: 'Home' },
-			{ id: 'ladder', icon: 'scale', label: 'Constitution' },
-			{ id: 'projects', icon: 'folder', label: 'Projects' }
+			{ id: 'home', icon: 'buildings-2', label: 'Home', kanji: '社' },
+			{ id: 'ladder', icon: 'scale', label: 'Constitution', kanji: '則' },
+			{ id: 'projects', icon: 'folder', label: 'Projects', kanji: '場' }
 		]
 	},
 	{
 		group: 'Govern',
 		role: 'maintainer',
 		items: [
-			{ id: 'triage', icon: 'inbox', label: 'Triage' },
-			{ id: 'approvals', icon: 'clipboard-check', label: 'Approvals' },
-			{ id: 'knowledge', icon: 'book-2', label: 'Knowledge' }
+			{ id: 'triage', icon: 'inbox', label: 'Triage', kanji: '診' },
+			{ id: 'approvals', icon: 'clipboard-check', label: 'Approvals', kanji: '印' },
+			{ id: 'knowledge', icon: 'book-2', label: 'Knowledge', kanji: '書' }
 		]
 	},
 	{
 		group: 'Clients',
 		role: 'lead',
 		items: [
-			{ id: 'engagements', icon: 'case-round', label: 'Engagements' },
-			{ id: 'incidents', icon: 'shield-warning', label: 'Incidents' },
-			{ id: 'clientaudit', icon: 'document-text', label: 'Client audit' }
+			{ id: 'engagements', icon: 'case-round', label: 'Engagements', kanji: '約' },
+			{ id: 'incidents', icon: 'shield-warning', label: 'Incidents', kanji: '警' },
+			{ id: 'clientaudit', icon: 'document-text', label: 'Client audit', kanji: '査' }
 		]
 	},
 	{
 		group: 'Admin',
 		role: 'admin',
 		items: [
-			{ id: 'members', icon: 'users-group-rounded', label: 'Members & Roles' },
-			{ id: 'scopes', icon: 'shield-check', label: 'Scopes & policies' },
-			{ id: 'identity', icon: 'key', label: 'Identity & SSO' },
-			{ id: 'audit', icon: 'clipboard-list', label: 'Audit' },
-			{ id: 'health', icon: 'pulse', label: 'Health / Monitor' },
-			{ id: 'billing', icon: 'card', label: 'Plan & billing' }
+			{ id: 'members', icon: 'users-group-rounded', label: 'Members & Roles', kanji: '員' },
+			{ id: 'scopes', icon: 'shield-check', label: 'Scopes & policies', kanji: '守' },
+			{ id: 'identity', icon: 'key', label: 'Identity & SSO', kanji: '鍵' },
+			{ id: 'audit', icon: 'clipboard-list', label: 'Audit', kanji: '査' },
+			{ id: 'health', icon: 'pulse', label: 'Health / Monitor', kanji: '健' },
+			{ id: 'billing', icon: 'card', label: 'Plan & billing', kanji: '金' }
 		]
 	}
 ];
@@ -133,18 +133,18 @@ export function navGroupsFor(role: string | null | undefined): KitNavGroup[] {
 
 /** Personal bottom tabs — Inbox leads (the landing). */
 export const TABS_YOU: KitNavItem[] = [
-	{ id: 'inbox', icon: 'inbox', label: 'Inbox' },
-	{ id: 'projects', icon: 'folder', label: 'Projects' },
-	{ id: 'rules', icon: 'scale', label: 'Rules' },
-	{ id: 'dojos', icon: 'users-group-two-rounded', label: 'Dōjōs' }
+	{ id: 'inbox', icon: 'inbox', label: 'Inbox', kanji: '受' },
+	{ id: 'projects', icon: 'folder', label: 'Projects', kanji: '場' },
+	{ id: 'rules', icon: 'scale', label: 'Rules', kanji: '則' },
+	{ id: 'dojos', icon: 'users-group-two-rounded', label: 'Dōjōs', kanji: '結' }
 ];
 
 /** Org bottom tabs (mockup `TABS_ORG`). */
 export const TABS_ORG: KitNavItem[] = [
-	{ id: 'home', icon: 'buildings-2', label: 'Home' },
-	{ id: 'projects', icon: 'folder', label: 'Projects' },
-	{ id: 'ladder', icon: 'scale', label: 'Rules' },
-	{ id: 'members', icon: 'users-group-rounded', label: 'Members' }
+	{ id: 'home', icon: 'buildings-2', label: 'Home', kanji: '社' },
+	{ id: 'projects', icon: 'folder', label: 'Projects', kanji: '場' },
+	{ id: 'ladder', icon: 'scale', label: 'Rules', kanji: '則' },
+	{ id: 'members', icon: 'users-group-rounded', label: 'Members', kanji: '員' }
 ];
 
 /** The bottom tabs for a context: personal (`role == null`) ⇒ TABS_YOU. */

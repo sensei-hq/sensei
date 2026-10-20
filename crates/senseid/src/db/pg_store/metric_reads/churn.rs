@@ -10,19 +10,20 @@
 use crate::db::pg_store::PgStore;
 
 impl PgStore {
-    /// `# project files` — `kind = 'file'` nodes across the project's folders (the
-    /// `rework_density` denominator). One scalar count; the former per-folder breakdown
-    /// is gone with the per-module rows.
+    /// `# project files` — the distinct files the project's nodes sit in (the
+    /// `rework_density` denominator). It counted `kind = 'file'` nodes, which the
+    /// indexer no longer writes: 0 files, no denominator, and the metric stopped
+    /// being written (#290). A file is where declarations are, whatever their kind.
     pub(crate) async fn churn_project_file_count(
         &self,
         project_id: &uuid::Uuid,
     ) -> Result<i64, String> {
         let (total,): (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*)::int8
+            "SELECT count(DISTINCT (n.folder_id, np.file_path))::int8
                FROM sensei.nodes   n
+               JOIN sensei.node_paths np ON np.node_id = n.id
                JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id
-              WHERE fp.project_id = $1
-                AND n.kind        = 'file'::sensei.node_kind",
+              WHERE fp.project_id = $1",
         )
         .bind(project_id)
         .fetch_one(&self.pool)

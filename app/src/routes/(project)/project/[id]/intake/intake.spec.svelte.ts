@@ -22,7 +22,6 @@ function fakeApi(result: PlaybookRecommendation, opts: { ok?: boolean } = {}): I
   const calls: Record<string, unknown>[] = [];
   return {
     calls,
-    getIntakeGuide: async () => GUIDE,
     recommendPlaybook: async (body) => {
       calls.push(body);
       return opts.ok === false

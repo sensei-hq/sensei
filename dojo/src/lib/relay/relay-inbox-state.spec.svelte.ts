@@ -89,3 +89,55 @@ describe('relayInboxState', () => {
 		expect(relayInboxState.selectedId).toBe(null);
 	});
 });
+
+// #104: a relay failure rendered as an empty inbox, and nothing showed while loading.
+describe('relayInboxState · load outcome', () => {
+	const result = (over: Partial<Parameters<typeof relayInboxState.loaded>[0]> = {}) => ({
+		sessions: [s({ id: 'a' })],
+		tenants: 2,
+		unreachable: [] as string[],
+		plansMissing: 0,
+		...over
+	});
+
+	it('is loading between begin() and the result', () => {
+		relayInboxState.begin();
+		expect(relayInboxState.status).toBe('loading');
+	});
+
+	it('a partial result is ready, keeps its runs, and names what is missing', () => {
+		relayInboxState.begin();
+		relayInboxState.loaded(result({ unreachable: ['two'], plansMissing: 1 }));
+		expect(relayInboxState.status).toBe('ready');
+		expect(relayInboxState.sessions.map((x) => x.id)).toEqual(['a']);
+		expect(relayInboxState.unreachable).toEqual(['two']);
+		expect(relayInboxState.plansMissing).toBe(1);
+	});
+
+	it('every dōjō unreachable is an error, not an empty inbox', () => {
+		relayInboxState.begin();
+		relayInboxState.loaded(result({ sessions: [], unreachable: ['one', 'two'] }));
+		expect(relayInboxState.status).toBe('error');
+		expect(relayInboxState.error).toBe('None of your 2 dōjōs could be reached.');
+	});
+
+	it('one dōjō unreachable reads in the singular', () => {
+		relayInboxState.begin();
+		relayInboxState.loaded(result({ sessions: [], tenants: 1, unreachable: ['one'] }));
+		expect(relayInboxState.error).toBe('Your dōjō could not be reached.');
+	});
+
+	it('a thrown load is an error with its message', () => {
+		relayInboxState.begin();
+		relayInboxState.fail('relay timed out');
+		expect(relayInboxState.status).toBe('error');
+		expect(relayInboxState.error).toBe('relay timed out');
+	});
+
+	it('a membership-less inbox is ready and empty', () => {
+		relayInboxState.begin();
+		relayInboxState.loaded(result({ sessions: [], tenants: 0 }));
+		expect(relayInboxState.status).toBe('ready');
+		expect(relayInboxState.sessions).toEqual([]);
+	});
+});

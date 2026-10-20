@@ -1,6 +1,8 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { invalidateAll } from '$app/navigation';
-  import { EmptyState, Eyebrow, ScreenState } from '$lib/components';
+  import { EmptyState, PageHeader, Screen, ScreenState } from '$lib/components';
+  import { railIcon } from '../observatory-nav';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import {
@@ -56,39 +58,35 @@
   }
 </script>
 
-<div class="flex flex-col h-full" data-consolidation-status={ruleset?.status ?? 'none'}>
-  <!-- Hero — kanji + eyebrow + title + description + count minis -->
-  <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
-    <span class="kanji text-4xl text-accent leading-none">結</span>
-    <div class="flex-1 min-w-0">
-      <p class="m-0 mb-1"><Eyebrow>Governance · Ruleset consolidation</Eyebrow></p>
-      <h1 class="display text-xl font-normal m-0 text-ink">
-        One coherent ruleset from many raw rules.
-      </h1>
-      <p class="text-sm text-ink-mute mt-1 mb-0 max-w-[720px] leading-relaxed">
-        Tier-1 gathers every rule governing this scope. Tier-2 asks a model to
-        merge them into one deduped ruleset. Nothing changes until you approve —
-        leaving it unapproved keeps the raw rules separate.
-      </p>
-    </div>
-    {#if ruleset && meta}
-      <div class="flex gap-5 pl-5 border-l border-paper-edge">
-        <div class="text-center">
-          <div class="font-mono text-lg font-light {toneClass(meta.tone)}">v{ruleset.version}</div>
-          <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">version</div>
-        </div>
-        <div class="text-center">
-          <div class="font-mono text-lg font-light text-ink">{sections.filter((s) => s.heading).length}</div>
-          <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">sections</div>
-        </div>
-        <div class="text-center">
-          <div class="font-mono text-lg font-light {toneClass(meta.tone)}">{meta.label}</div>
-          <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">status</div>
-        </div>
-      </div>
-    {/if}
-  </div>
-
+<Screen data-consolidation-status={ruleset?.status ?? 'none'}>
+  {#snippet header()}
+    <PageHeader
+      kanji="統"
+      icon={railIcon('/consolidation')}
+      eyebrow="Governance · Ruleset consolidation"
+      title="One coherent ruleset from many raw rules."
+      description="Tier-1 gathers every rule governing this scope. Tier-2 asks a model to merge them into one deduped ruleset. Nothing changes until you approve — leaving it unapproved keeps the raw rules separate."
+    >
+      {#snippet right()}
+        {#if ruleset && meta}
+          <div class="flex gap-5 pl-5 border-l border-paper-edge">
+            <div class="text-center">
+              <div class="font-mono text-lg font-light {toneClass(meta.tone)}">v{ruleset.version}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">version</div>
+            </div>
+            <div class="text-center">
+              <div class="font-mono text-lg font-light text-ink">{sections.filter((s) => s.heading).length}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">sections</div>
+            </div>
+            <div class="text-center">
+              <div class="font-mono text-lg font-light {toneClass(meta.tone)}">{meta.label}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">status</div>
+            </div>
+          </div>
+        {/if}
+      {/snippet}
+    </PageHeader>
+  {/snippet}
   {#if data.error}
     <ScreenState status="error" error={data.error} onretry={invalidateAll} />
   {:else if !ruleset}
@@ -112,7 +110,7 @@
       {/if}
     </div>
   {:else}
-    <div class="overflow-auto pt-5 pb-6 px-7 flex-1 min-h-0">
+    <div class="pt-5 pb-6 px-7">
       <div class="max-w-[920px]">
         <!-- Eyebrow line — id + model -->
         <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-soft mb-3">
@@ -147,7 +145,7 @@
           <span class="text-xs uppercase tracking-wider text-accent font-medium">
             {meta?.approvable ? 'Proposed merged ruleset' : 'Merged ruleset'}
           </span>
-          <span class="kanji text-sm text-accent">新</span>
+          <Kanji char="新" size="inherit" tone="inherit" class="text-sm text-accent" />
         </div>
 
         <div class="bg-paper-soft border border-accent rounded-lg py-3 px-4 mb-5">
@@ -193,4 +191,4 @@
       </div>
     </div>
   {/if}
-</div>
+</Screen>

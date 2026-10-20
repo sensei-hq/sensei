@@ -649,7 +649,7 @@ async fn session_complete() {
     assert_eq!(sess["turns"], 5);
     assert!(sess["completed_at"].as_str().is_some());
     // summary + tokens actually PERSIST (were previously advertised-but-dropped).
-    let meta: (Option<String>, Option<i32>, Option<i32>) = sqlx_core::query_as::query_as(
+    let meta: (Option<String>, Option<i64>, Option<i64>) = sqlx_core::query_as::query_as(
         "SELECT summary, tokens_in, tokens_out FROM activity.sessions WHERE id=$1",
     )
     .bind(sid)
@@ -985,4 +985,44 @@ async fn query_logs_empty_result_is_empty_array() {
     let none =
         pg.query_logs(None, Some("_test:logs:does-not-exist"), None, None, 200).await.unwrap();
     assert!(none.is_empty());
+}
+
+/// The staging import must be idempotent: the same staged event imported twice
+/// is one row. It was a plain INSERT, and each `dbd import` appended the staging
+/// file again — the live DB held 167,932 duplicate events (26%), tool calls
+/// stored 12 times, which skewed every count over them (found via #278).
+#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
+#[tokio::test]
+async fn importing_the_same_staged_event_twice_keeps_one_row() {
+    // The event belongs to no session, so a concurrent `prune_activity` (which
+    // is database-wide) would delete it mid-test — the gate serialises them.
+    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
+    let s = pg_store().await;
+    let session = format!("import-idem-{}", uuid::Uuid::new_v4());
+    sqlx_core::query::query(
+        "INSERT INTO staging.assistant_events (session_id, family, event_type, tool_name, ts, payload, created_at)
+         VALUES ($1, 'claude', 'PostToolUse', 'Bash', 1781374265314, '{\"tool_use_id\":\"t1\"}', now())",
+    )
+    .bind(&session)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    s.execute_raw("CALL staging.import_assistant_events()").await.unwrap();
+    s.execute_raw("CALL staging.import_assistant_events()").await.unwrap();
+
+    let (n,): (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM activity.assistant_events WHERE session_id = $1",
+    )
+    .bind(&session)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    for sql in [
+        "DELETE FROM staging.assistant_events WHERE session_id = $1",
+        "DELETE FROM activity.assistant_events WHERE session_id = $1",
+    ] {
+        sqlx_core::query::query(sql).bind(&session).execute(s.pool()).await.ok();
+    }
+    assert_eq!(n, 1, "a re-import must not add a second copy");
 }

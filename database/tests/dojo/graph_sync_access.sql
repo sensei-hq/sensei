@@ -45,13 +45,18 @@ insert into dojo.billing_accounts (tenant_id, plan, status, period_start, period
   ('b0000000-0000-4000-8000-00000000014a', 'team', 'active', current_date - 1, current_date + 30);
 insert into dojo.tenant_share_policy (tenant_id, private_repos_shared) values ('b0000000-0000-4000-8000-00000000014a', true);
 
--- 1 T private (syncs for ola via the org policy) · 2 T public (nobody elected it) ·
+-- 1 T private (syncs for ola via the org policy) · 2 T public (ola opted out) ·
 -- 3 T private, no branch tracked · 4 U public (not ola's)
 insert into dojo.repositories (id, tenant_id, repo_key, name, visibility, visibility_captured_at, provider, default_branch) values
   ('92000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000014a', 'github.com/ztest-gs/priv', 'priv', 'private', now(), 'github', 'main'),
   ('92000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-00000000014a', 'github.com/ztest-gs/pub',  'pub',  'public',  now(), 'github', 'main'),
   ('92000000-0000-4000-8000-000000000003', 'b0000000-0000-4000-8000-00000000014a', 'github.com/ztest-gs/nob',  'nob',  'private', now(), 'github', null),
   ('92000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-00000000014c', 'github.com/ztest-gu/x',    'x',    'public',  now(), 'github', 'main');
+-- ola OPTED OUT of repository 2. Absence would elect it now (#301), so the
+-- refusal below needs her explicit decision.
+insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected) values
+  ('b0000000-0000-4000-8000-00000000014a', '92000000-0000-4000-8000-000000000002', 'user',
+   'a0000000-0000-4000-8000-000000000142', false);
 -- Repository 1 tracks its default (main) and production.
 insert into dojo.repository_graph_branches (repository_id, tenant_id, branch, is_default, label) values
   ('92000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000014a', 'main',       true,  null),
@@ -61,8 +66,8 @@ insert into dojo.repository_graph_branches (repository_id, tenant_id, branch, is
 
 -- ola is on team X, which owns project P holding repository 1; eve is
 -- on no team, so she reads nothing.
-insert into dojo.projects (id, user_id, tenant_id, slug, name) values
-  ('c0000000-0000-4000-8000-0000000000b1', 'a0000000-0000-4000-8000-000000000141',
+insert into dojo.projects (id, tenant_id, slug, name) values
+  ('c0000000-0000-4000-8000-0000000000b1',
    'b0000000-0000-4000-8000-00000000014a', 'ztest-gs-p', 'project P');
 insert into dojo.teams (id, tenant_id, name) values
   ('d0000000-0000-4000-8000-0000000000b1', 'b0000000-0000-4000-8000-00000000014a', 'ztest gs team X');
@@ -274,7 +279,7 @@ begin
     -- ── access: only a repository the caller may sync ────────────────────────
     begin
         perform dojo.file_graph_slices('92000000-0000-4000-8000-000000000002', c1, jsonb_build_array(b), null);
-        raise exception 'access: a repository nobody elected was filed';
+        raise exception 'access: a repository its member opted out of was filed';
     exception when insufficient_privilege then null;
     end;
     begin

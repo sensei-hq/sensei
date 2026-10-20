@@ -47,6 +47,7 @@ type AtlasNodeRow = (
     Option<String>,
     bool,
     bool,
+    bool,
 );
 
 /// True only for a unique violation on `nodes_unique_identity` — the structural
@@ -3652,12 +3653,12 @@ impl PgStore {
         // moniker and distinguish enriched defs from reference stubs. `fqn` is NULL
         // for pre-FQN/legacy rows; `resolved` is NOT NULL (defaults false).
         let rows: Vec<AtlasNodeRow> = sqlx_core::query_as::query_as(
-            "SELECT n.id, n.kind::text, n.name, np.file_path, n.parent_id, n.line_start, n.line_end, n.community_id, n.folder_id, n.language, n.fqn, n.resolved, n.is_test \
+            "SELECT n.id, n.kind::text, n.name, np.file_path, n.parent_id, n.line_start, n.line_end, n.community_id, n.folder_id, n.language, n.fqn, n.resolved, n.is_test, n.is_exported \
                FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id \
               WHERE n.folder_id = ANY($1) ORDER BY np.file_path, n.line_start, n.parent_id, n.id"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, community_id, folder_id, language, fqn, resolved, is_test)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved, "is_test": is_test })
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, community_id, folder_id, language, fqn, resolved, is_test, is_exported)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved, "is_test": is_test, "is_exported": is_exported })
         }).collect())
     }
 

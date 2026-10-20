@@ -15,12 +15,25 @@ import { AdminError } from '$lib/server/admin-data';
 import {
 	listMyRepositories,
 	registerRepositories,
-	type RepoInput
+	type RepoInput,
+	type RepoProject
 } from '$lib/server/repositories';
 
 /** Accept only well-formed entries. A repo with no key has no identity, and
  *  registering it under a derived one would invent the very thing `repo_key`
  *  exists to make machine- and user-independent. */
+/** A repository's sensei project (#299). Malformed is a 400, never dropped:
+ *  dropping it is how a synced repository would silently show no project. */
+function parseProject(raw: unknown, repoKey: string): RepoProject {
+	const p = (raw ?? {}) as Record<string, unknown>;
+	const slug = typeof p.slug === 'string' ? p.slug.trim() : '';
+	const name = typeof p.name === 'string' ? p.name.trim() : '';
+	if (!slug || !name) {
+		throw new AdminError(400, `the project sent for ${repoKey} needs a slug and a name`);
+	}
+	return { slug, name };
+}
+
 function parseRepos(body: Record<string, unknown>): RepoInput[] {
 	const raw = Array.isArray(body.repos) ? body.repos : null;
 	if (!raw) throw new AdminError(400, 'repos must be an array');
@@ -31,11 +44,13 @@ function parseRepos(body: Record<string, unknown>): RepoInput[] {
 		const r = (entry ?? {}) as Record<string, unknown>;
 		const key = typeof r.repo_key === 'string' ? r.repo_key.trim() : '';
 		if (!key) continue;
-		out.push({
+		const repo: RepoInput = {
 			repo_key: key,
 			remote_url: typeof r.remote_url === 'string' ? r.remote_url : null,
 			name: typeof r.name === 'string' ? r.name : null
-		});
+		};
+		if (r.project != null) repo.project = parseProject(r.project, key);
+		out.push(repo);
 	}
 	return out;
 }

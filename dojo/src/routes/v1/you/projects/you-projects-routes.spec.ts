@@ -52,8 +52,9 @@ describe('GET /v1/you/projects', () => {
 		mocks.listUserProjects.mockResolvedValueOnce([{ id: 'p1', slug: 'me/x' }]);
 		const res = await route.GET(ev());
 		expect(await res.json()).toEqual({ projects: [{ id: 'p1', slug: 'me/x' }] });
-		// Read is scoped to the JWT-resolved caller, not a path tenant.
-		expect(mocks.listUserProjects.mock.calls[0][1]).toBe('u1');
+		// #299: no owner filter — the CALLER's client carries the read, and RLS
+		// (dojo.can_read_project) decides what it sees. One argument: the client.
+		expect(mocks.listUserProjects.mock.calls[0]).toHaveLength(1);
 	});
 
 	it('maps an AdminError(500) to 500 (fail-closed, never a fixture)', async () => {

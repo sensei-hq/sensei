@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
+import type { TauriFixtures } from '@srsholmes/tauri-playwright';
 
-export default defineConfig({
+export default defineConfig<Pick<TauriFixtures, 'mode'>>({
   testDir: './tests',
   timeout: 60_000,
   retries: 0,

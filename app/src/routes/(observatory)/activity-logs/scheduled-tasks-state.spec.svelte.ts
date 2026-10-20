@@ -7,6 +7,8 @@ import {
   taskHealth,
   taskError,
   taskNextRun,
+  taskRunning,
+  TaskLog,
   taskInterval,
   taskAvg,
   taskSchedule,
@@ -24,6 +26,7 @@ function makeTask(over: Partial<ScheduledTask> = {}): ScheduledTask {
     next_run_at: over.next_run_at ?? null,
     interval_secs: over.interval_secs ?? null,
     avg_ms: over.avg_ms ?? null,
+    running_since: over.running_since ?? null,
     enabled: over.enabled ?? true,
     window: 'window' in over ? (over.window ?? null) : null,
     days: over.days ?? null,
@@ -121,9 +124,27 @@ describe('taskError', () => {
 });
 
 describe('taskNextRun', () => {
-  it('renders a relative time when next_run_at is set', () => {
+  // A next run is in the FUTURE: the past-tense formatter clamped it to "just
+  // now", and this test had pinned a next run reading "2m ago" (#96).
+  it('reads forward: "in 2m" ahead, "due now" once it has passed', () => {
     const task = makeTask({ next_run_at: '2026-07-13T02:19:29.612354+00:00' });
-    expect(taskNextRun(BASE + 2 * 60_000, task)).toBe('2m ago');
+    expect(taskNextRun(BASE - 2 * 60_000, task)).toBe('in 2m');
+    expect(taskNextRun(BASE - 3 * 3_600_000, task)).toBe('in 3h');
+    expect(taskNextRun(BASE + 2 * 60_000, task)).toBe('due now');
+  });
+});
+
+describe('taskRunning', () => {
+  // #283: a pass blocked for an hour read as an hour-old result.
+  it('says how long the pass in progress has been running', () => {
+    const task = makeTask({ running_since: '2026-07-13T02:19:29.612354+00:00' });
+    expect(taskRunning(BASE + 45_000, task)).toBe('running for 45s');
+    expect(taskRunning(BASE + 42 * 60_000, task)).toBe('running for 42m');
+    expect(taskRunning(BASE + 3 * 3_600_000, task)).toBe('running for 3h');
+  });
+
+  it('is null for an idle worker', () => {
+    expect(taskRunning(BASE, makeTask())).toBeNull();
   });
 });
 
@@ -150,5 +171,26 @@ describe('taskAvg', () => {
 
   it('is the em dash for a negative average', () => {
     expect(taskAvg(makeTask({ avg_ms: -1 }))).toBe(EM_DASH);
+  });
+});
+
+// #96: a worker's log tail, opened from its row. A failed read is an error,
+// never an empty log — "nothing logged" and "could not read the log" are
+// different answers.
+describe('TaskLog', () => {
+  it('loads the tail when opened, and closes again', async () => {
+    const log = new TaskLog(async () => ({ ok: true as const, data: { lines: ['a worker="x"', 'b worker="x"'] } }));
+    await log.toggle();
+    expect(log.open).toBe(true);
+    expect(log.lines).toEqual(['a worker="x"', 'b worker="x"']);
+    await log.toggle();
+    expect(log.open).toBe(false);
+  });
+
+  it('reports a failed read as an error, not as an empty log', async () => {
+    const log = new TaskLog(async () => ({ ok: false as const, error: { status: 500, message: 'read failed' } }));
+    await log.toggle();
+    expect(log.error).toContain('read failed');
+    expect(log.lines).toEqual([]);
   });
 });

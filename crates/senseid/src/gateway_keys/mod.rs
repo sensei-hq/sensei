@@ -42,6 +42,11 @@ pub enum KeychainError {
     Unavailable(String),
     #[error("credential store error: {0}")]
     Store(String),
+    /// The OS refused without asking: this binary is not trusted on the item
+    /// and the daemon does not prompt (#283). Approve it from sensei, or sign
+    /// local builds with `make dev-signing-cert` so the trust survives a rebuild.
+    #[error("keychain access needs approval")]
+    NeedsApproval,
     #[error("keychain command failed: {0}")]
     CommandFailed(String),
     #[error("io error: {0}")]
@@ -78,6 +83,35 @@ fn parse_backend(value: Option<&str>) -> Backend {
 fn backend() -> Backend {
     static BACKEND: OnceLock<Backend> = OnceLock::new();
     *BACKEND.get_or_init(|| parse_backend(std::env::var(BACKEND_ENV).ok().as_deref()))
+}
+
+/// Run `f` with keychain prompts allowed on this thread (#283).
+///
+/// The daemon never prompts by default: a background pass that waits on a
+/// dialog nobody is watching stops its worker. Only an action the user just
+/// took — signing in or out, saving a router key — may ask.
+pub fn allow_prompt<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PROMPT_ALLOWED.set(self.0);
+        }
+    }
+    let _restore = Restore(PROMPT_ALLOWED.replace(true));
+    f()
+}
+
+thread_local! {
+    static PROMPT_ALLOWED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the current thread may prompt — false outside [`allow_prompt`].
+///
+/// Only the macOS keychain path can prompt, so only it (and the tests) read
+/// this; elsewhere it would be dead code, which Linux CI's clippy rejects.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn prompting_allowed() -> bool {
+    PROMPT_ALLOWED.get()
 }
 
 /// Store a secret, replacing any existing value for `(service, account)`.
@@ -122,15 +156,41 @@ pub fn delete_key(router_id: &str) -> Result<(), KeychainError> {
     keychain_delete(&service_name(router_id), ACCOUNT)
 }
 
-/// True when a key exists for this router. Cheap check used by the
-/// /api/gateway/routers endpoint to compute `configured`.
-pub fn has_key(router_id: &str) -> bool {
-    match get_key(router_id) {
-        Ok(_) => true,
-        Err(KeychainError::NotFound) => false,
-        Err(e) => {
-            tracing::warn!(router_id, error = %e, "keychain check failed");
-            false
+/// What the store says about one router's key (#285). Three answers, because
+/// "could not read it" is not "not set": a key the Keychain withholds after a
+/// rebuild would otherwise read as a router nobody configured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyStanding {
+    Set(String),
+    NotSet,
+    Unreadable(String),
+}
+
+/// The standing a read comes to. Pure, so each case is testable.
+pub fn standing_of(read: Result<String, KeychainError>) -> KeyStanding {
+    match read {
+        Ok(key) => KeyStanding::Set(key),
+        Err(KeychainError::NotFound) => KeyStanding::NotSet,
+        Err(e) => KeyStanding::Unreadable(e.to_string()),
+    }
+}
+
+/// A router's key, read quietly.
+pub fn key_standing(router_id: &str) -> KeyStanding {
+    standing_of(get_key(router_id))
+}
+
+impl KeyStanding {
+    /// The key to hand the gateway, if there is one. An unreadable key is
+    /// logged with its reason, since the gateway can only take a key or none.
+    pub fn usable(self, router_id: &str) -> Option<String> {
+        match self {
+            Self::Set(key) => Some(key),
+            Self::NotSet => None,
+            Self::Unreadable(why) => {
+                tracing::warn!(router_id, error = %why, "router key is set but unreadable");
+                None
+            }
         }
     }
 }
@@ -147,15 +207,15 @@ mod tests {
     #[cfg_attr(target_os = "linux", ignore = "needs a running Secret Service (desktop session)")]
     fn roundtrip_set_get_delete() {
         let id = unique_id();
-        assert!(!has_key(&id), "fresh id should not have a key");
+        assert_eq!(key_standing(&id), KeyStanding::NotSet, "fresh id should not have a key");
 
         set_key(&id, "sk-test-12345").expect("set should succeed");
         let key = get_key(&id).expect("get should succeed");
         assert_eq!(key, "sk-test-12345");
-        assert!(has_key(&id), "has_key should report true after set");
+        assert_eq!(key_standing(&id), KeyStanding::Set("sk-test-12345".into()));
 
         delete_key(&id).expect("delete should succeed");
-        assert!(!has_key(&id), "has_key should be false after delete");
+        assert_eq!(key_standing(&id), KeyStanding::NotSet, "not set after delete");
         assert!(matches!(get_key(&id), Err(KeychainError::NotFound)));
     }
 
@@ -174,6 +234,32 @@ mod tests {
     fn delete_missing_is_noop() {
         let id = unique_id();
         delete_key(&id).expect("delete on missing should not error");
+    }
+
+    /// #283: quiet unless the caller says the user is there to answer.
+    #[test]
+    fn prompting_is_allowed_only_inside_allow_prompt() {
+        assert!(!prompting_allowed());
+        assert!(allow_prompt(prompting_allowed));
+        assert!(!prompting_allowed(), "the scope ends with the call");
+        let other = std::thread::spawn(|| {
+            allow_prompt(|| std::thread::spawn(prompting_allowed).join().unwrap())
+        });
+        assert!(!other.join().unwrap(), "another thread is not in the scope");
+    }
+
+    /// #285: a key the store would not hand over is unreadable, not unset.
+    #[test]
+    fn a_withheld_key_is_unreadable_not_unset() {
+        assert_eq!(standing_of(Ok("sk".into())), KeyStanding::Set("sk".into()));
+        assert_eq!(standing_of(Err(KeychainError::NotFound)), KeyStanding::NotSet);
+        assert_eq!(
+            standing_of(Err(KeychainError::NeedsApproval)),
+            KeyStanding::Unreadable("keychain access needs approval".into())
+        );
+        assert_eq!(KeyStanding::Set("sk".into()).usable("openai"), Some("sk".into()));
+        assert_eq!(KeyStanding::NotSet.usable("openai"), None);
+        assert_eq!(KeyStanding::Unreadable("x".into()).usable("openai"), None);
     }
 
     #[test]

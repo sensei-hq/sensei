@@ -339,12 +339,15 @@ impl PgStore {
     ) -> Result<serde_json::Value, String> {
         // Cells are keyed by (project, day) even in the portfolio view: pooling two
         // projects' values into one day would correlate unrelated codebases and
-        // manufacture a relationship that exists in neither.
+        // manufacture a relationship that exists in neither. So a row of a
+        // repository in NO project (NULL project_id) cannot be a cell, and is not
+        // read — decoding it failed the whole portfolio with a 500.
         let obs: Vec<(uuid::Uuid, chrono::NaiveDate, String, f64)> = sqlx_core::query_as::query_as(
             "SELECT pm.project_id, pm.computed_on, m.key, pm.value::float8 \
                FROM sensei.project_metrics pm \
                JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE ($1::uuid IS NULL OR pm.project_id = $1) \
+              WHERE pm.project_id IS NOT NULL \
+                AND ($1::uuid IS NULL OR pm.project_id = $1) \
                 AND pm.grain = 'daily' \
                 AND pm.scope = 'user' AND pm.value IS NOT NULL",
         )

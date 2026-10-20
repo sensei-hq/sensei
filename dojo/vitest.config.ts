@@ -31,6 +31,9 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			$lib: new URL('./src/lib', import.meta.url).pathname,
+			// Mirrors svelte.config.js: the vocabulary shared with the app (#133).
+			'@sensei/glyphs': new URL('../packages/glyphs/index.js', import.meta.url).pathname,
+			'@sensei/ui': new URL('../packages/ui/index.js', import.meta.url).pathname,
 			// $env/dynamic/public isn't generated outside the SvelteKit plugin; point
 			// it at a stub so the triage API client imports cleanly under vitest.
 			'$env/dynamic/public': new URL(

@@ -67,6 +67,7 @@ const KEY_CONTEXT_PRESSURE: &str = "context_pressure_rate";
 const KEY_TOKENS_PER_DAY: &str = "tokens_per_day";
 const KEY_TOKENS_IN: &str = "tokens_in_per_day";
 const KEY_TOKENS_OUT: &str = "tokens_out_per_day";
+const KEY_TOKENS_FRESH: &str = "tokens_fresh_per_day";
 const KEY_SESSION_DURATION: &str = "session_duration";
 const KEY_TOKENS_PER_RESULT: &str = "tokens_per_result";
 const KEY_INCOMPLETE_ANALYSIS: &str = "incomplete_analysis_rate";
@@ -117,6 +118,7 @@ pub(super) async fn compute(
     let tokens_day_id = ids.get(KEY_TOKENS_PER_DAY).copied();
     let tokens_in_id = ids.get(KEY_TOKENS_IN).copied();
     let tokens_out_id = ids.get(KEY_TOKENS_OUT).copied();
+    let tokens_fresh_id = ids.get(KEY_TOKENS_FRESH).copied();
     let duration_id = ids.get(KEY_SESSION_DURATION).copied();
     let tokens_result_id = ids.get(KEY_TOKENS_PER_RESULT).copied();
     let incomplete_id = ids.get(KEY_INCOMPLETE_ANALYSIS).copied();
@@ -259,56 +261,32 @@ pub(super) async fn compute(
     }
 
     // Per-repository daily token volume: tokens_per_day (in+out), tokens_in_per_day,
-    // tokens_out_per_day — count-type, so value IS the daily sum (the pooling view
-    // sums across repositories). Base = sessions carrying token usage.
-    if tokens_day_id.is_some() || tokens_in_id.is_some() || tokens_out_id.is_some() {
-        for (day, repository_id, sum_in, sum_out, n) in
-            pg.session_outcomes_token_volume_by_day(&project_id, window_days, as_of).await?
-        {
-            let props =
-                serde_json::json!({ "sessions": n, "tokens_in": sum_in, "tokens_out": sum_out });
-            if let Some(mid) = tokens_day_id {
+    // tokens_out_per_day and tokens_fresh_per_day — count-type, so value IS the daily
+    // sum (the pooling view sums across repositories). Base = sessions carrying token
+    // usage. A day whose sessions do not all carry `tokens_fresh` has no fresh row.
+    if [tokens_day_id, tokens_in_id, tokens_out_id, tokens_fresh_id].iter().any(Option::is_some) {
+        for t in pg.session_outcomes_token_volume_by_day(&project_id, window_days, as_of).await? {
+            let props = serde_json::json!({
+                "sessions": t.sessions, "tokens_in": t.sum_in, "tokens_out": t.sum_out,
+                "tokens_fresh": t.sum_fresh,
+            });
+            let values = [
+                (tokens_day_id, Some(t.sum_in + t.sum_out)),
+                (tokens_in_id, Some(t.sum_in)),
+                (tokens_out_id, Some(t.sum_out)),
+                (tokens_fresh_id, t.sum_fresh),
+            ];
+            for (mid, value) in values {
+                let (Some(mid), Some(value)) = (mid, value) else { continue };
                 pg.upsert_project_metric_repo(&MetricRow {
                     metric_id: &mid,
-                    repository_id: &repository_id,
+                    repository_id: &t.repository_id,
                     scope: SCOPE_USER,
                     identity: None,
                     commit_sha: None,
-                    computed_on: day,
+                    computed_on: t.day,
                     grain: GRAIN_DAILY,
-                    value: (sum_in + sum_out) as f64,
-                    props: &props,
-                    source: SOURCE_MEASURED,
-                })
-                .await?;
-                written += 1;
-            }
-            if let Some(mid) = tokens_in_id {
-                pg.upsert_project_metric_repo(&MetricRow {
-                    metric_id: &mid,
-                    repository_id: &repository_id,
-                    scope: SCOPE_USER,
-                    identity: None,
-                    commit_sha: None,
-                    computed_on: day,
-                    grain: GRAIN_DAILY,
-                    value: sum_in as f64,
-                    props: &props,
-                    source: SOURCE_MEASURED,
-                })
-                .await?;
-                written += 1;
-            }
-            if let Some(mid) = tokens_out_id {
-                pg.upsert_project_metric_repo(&MetricRow {
-                    metric_id: &mid,
-                    repository_id: &repository_id,
-                    scope: SCOPE_USER,
-                    identity: None,
-                    commit_sha: None,
-                    computed_on: day,
-                    grain: GRAIN_DAILY,
-                    value: sum_out as f64,
+                    value: value as f64,
                     props: &props,
                     source: SOURCE_MEASURED,
                 })
@@ -1015,6 +993,38 @@ mod tests {
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
+    /// #177: a day where one session predates `tokens_fresh` capture gets no
+    /// fresh-tokens row. Summing the sessions that do carry it would pass a part
+    /// of the day off as the whole; tokens_in_per_day is still written.
+    #[tokio::test]
+    async fn a_day_with_a_session_missing_fresh_tokens_has_no_fresh_row() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let ts = chrono::Utc::now() - chrono::Duration::hours(2);
+        let with = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+        let without =
+            seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
+        for (sid, fresh) in [(with, Some(10i32)), (without, None)] {
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET tokens_in=100, tokens_out=20, tokens_fresh=$2 WHERE id=$1",
+            )
+            .bind(sid).bind(fresh)
+            .execute(pg.pool()).await.unwrap();
+        }
+
+        compute(&ctx, &pid.to_string(), None).await.unwrap();
+        let daily = daily_rows(pg, &pid).await;
+
+        assert!(daily.iter().any(|r| r.0 == "tokens_in_per_day"), "tokens in is still written");
+        assert!(
+            !daily.iter().any(|r| r.0 == "tokens_fresh_per_day"),
+            "no fresh row from a partial day: {daily:?}"
+        );
+        cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
+    }
+
     #[tokio::test]
     async fn session_outcomes_writes_token_volume_duration_efficiency() {
         // Token volume (count → summed), session duration (duration → averaged), and
@@ -1024,14 +1034,17 @@ mod tests {
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
-        // Two completed sessions: (in=100,out=20,60s) + (in=300,out=80,120s).
+        // Two completed sessions: (in=100 of which 10 fresh, out=20, 60s) +
+        // (in=300 of which 30 fresh, out=80, 120s).
         let s1 = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
         let s2 = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
-        for (sid, tin, tout, secs) in [(s1, 100i32, 20i32, 60.0f64), (s2, 300, 80, 120.0)] {
+        for (sid, tin, fresh, tout, secs) in
+            [(s1, 100i32, 10i32, 20i32, 60.0f64), (s2, 300, 30, 80, 120.0)]
+        {
             sqlx_core::query::query(
-                "UPDATE activity.sessions SET tokens_in=$2, tokens_out=$3, duration=make_interval(secs => $4) WHERE id=$1",
+                "UPDATE activity.sessions SET tokens_in=$2, tokens_fresh=$3, tokens_out=$4, duration=make_interval(secs => $5) WHERE id=$1",
             )
-            .bind(sid).bind(tin).bind(tout).bind(secs)
+            .bind(sid).bind(tin).bind(fresh).bind(tout).bind(secs)
             .execute(pg.pool()).await.unwrap();
         }
 
@@ -1045,6 +1058,10 @@ mod tests {
         );
         let tin = daily.iter().find(|r| r.0 == "tokens_in_per_day").expect("tokens_in_per_day row");
         assert!((tin.1 - 400.0).abs() < 1e-9, "tokens_in_per_day = 100+300");
+        // #177: the fresh (uncached) input is the part that tracks cost.
+        let fresh =
+            daily.iter().find(|r| r.0 == "tokens_fresh_per_day").expect("tokens_fresh_per_day row");
+        assert!((fresh.1 - 40.0).abs() < 1e-9, "tokens_fresh_per_day = 10+30");
         let tout =
             daily.iter().find(|r| r.0 == "tokens_out_per_day").expect("tokens_out_per_day row");
         assert!((tout.1 - 100.0).abs() < 1e-9, "tokens_out_per_day = 20+80");

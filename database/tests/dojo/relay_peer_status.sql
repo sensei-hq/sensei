@@ -10,12 +10,13 @@
 -- | member of another tenant)               |                                        |
 --
 -- Status only: `dojo.peer_run_status` returns no title, goal, phase or feature —
--- relay CONTENT stays the owner's (#249). And a session can only be filed under
--- the caller's own project, so nobody can post their run into another's team.
+-- relay CONTENT stays the owner's (#249). A project is a SHARED item (#299): a
+-- run may be filed under any project in a dōjō the runner is a member of, and
+-- never under one in a dōjō they are not.
 --
 -- WHAT BREAKS THIS TEST: returning a content column; dropping the team clause;
 -- letting a tenant lead or another tenant's admin see runs; letting a session's
--- project_id name somebody else's project.
+-- project_id name a project in a dōjō the runner is not a member of.
 
 begin;
 
@@ -43,13 +44,15 @@ insert into dojo.memberships (id, tenant_id, user_id, role, kind, authenticated_
   ('e0000000-0000-4000-8000-000000000036', 'b0000000-0000-4000-8000-00000000003a', 'a0000000-0000-4000-8000-000000000036', 'admin',       'employer', 'github_oauth'),
   ('e0000000-0000-4000-8000-000000000037', 'b0000000-0000-4000-8000-00000000003b', 'a0000000-0000-4000-8000-000000000037', 'admin',       'employer', 'github_oauth');
 
--- Project P (alice's) is owned by team X: dave leads it, mia is on it.
--- Project Q is zed's, on no team.
-insert into dojo.projects (id, user_id, tenant_id, slug, name) values
-  ('c0000000-0000-4000-8000-0000000000a1', 'a0000000-0000-4000-8000-000000000031',
+-- Project P is owned by team X: dave leads it, mia is on it. Q is on no team.
+-- R lives in U, where alice is not a member.
+insert into dojo.projects (id, tenant_id, slug, name) values
+  ('c0000000-0000-4000-8000-0000000000a1',
    'b0000000-0000-4000-8000-00000000003a', 'ztest-peer-p', 'project P'),
-  ('c0000000-0000-4000-8000-0000000000a2', 'a0000000-0000-4000-8000-000000000034',
-   'b0000000-0000-4000-8000-00000000003a', 'ztest-peer-q', 'project Q');
+  ('c0000000-0000-4000-8000-0000000000a2',
+   'b0000000-0000-4000-8000-00000000003a', 'ztest-peer-q', 'project Q'),
+  ('c0000000-0000-4000-8000-0000000000a3',
+   'b0000000-0000-4000-8000-00000000003b', 'ztest-peer-r', 'project R');
 insert into dojo.teams (id, tenant_id, name) values
   ('d0000000-0000-4000-8000-0000000000a1', 'b0000000-0000-4000-8000-00000000003a', 'ztest peer team X');
 insert into dojo.team_members (team_id, principal_id, role) values
@@ -101,17 +104,19 @@ begin
     end loop;
 end $$;
 
--- ── a session is filed only under the caller's own project ───────────────────
+-- ── a session is filed under a project in a dōjō the runner belongs to ───────
 do $$
 begin
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000031"}', true);
     begin
-        update dojo.relay_sessions set project_id = 'c0000000-0000-4000-8000-0000000000a2'
+        update dojo.relay_sessions set project_id = 'c0000000-0000-4000-8000-0000000000a3'
          where run_id = 'f0000000-0000-4000-8000-000000000002';
-        raise exception 'relay_sessions: alice filed her run under zed''s project';
+        raise exception 'relay_sessions: alice filed her run under a project in a dōjō she is not in';
     exception when insufficient_privilege or check_violation then null;
     end;
-    -- Her own project is fine.
+    -- Any project of her own dōjō is fine — projects are shared, not anyone's.
+    update dojo.relay_sessions set project_id = 'c0000000-0000-4000-8000-0000000000a2'
+     where run_id = 'f0000000-0000-4000-8000-000000000002';
     update dojo.relay_sessions set project_id = 'c0000000-0000-4000-8000-0000000000a1'
      where run_id = 'f0000000-0000-4000-8000-000000000002';
 end $$;

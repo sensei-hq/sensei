@@ -45,6 +45,7 @@ pub mod ranking;
 pub mod relay_drivers;
 pub mod resolution;
 mod review;
+mod rework_hotspots;
 pub mod run_limits;
 pub mod run_watchdog;
 pub mod runs;
@@ -199,6 +200,15 @@ async fn main() {
     }
 }
 
+/// Exit before binding, leaving the reason where it can be read (#179): printed,
+/// and recorded in `startup-error.log`, which `senseid status` shows. stderr
+/// alone was lost under launchd, where nobody reads it.
+fn fail_start(msg: &str) -> ! {
+    sensei_bootstrap::startup_error::record(msg);
+    eprintln!("{msg}");
+    std::process::exit(1);
+}
+
 fn start_daemon(port: u16) {
     // Check if already running
     let pid_path = sensei_dir().join("serve.pid");
@@ -213,23 +223,26 @@ fn start_daemon(port: u16) {
             .map(|s| s.success())
             .unwrap_or(false);
         if alive {
-            eprintln!("senseid: already running (pid {})", pid);
-            std::process::exit(1);
+            fail_start(&format!("senseid: already running (pid {pid})"));
         }
         // Stale PID file — clean up and continue
         std::fs::remove_file(&pid_path).ok();
     }
 
-    std::fs::create_dir_all(sensei_dir()).expect("senseid: cannot create ~/.sensei/");
+    if let Err(e) = std::fs::create_dir_all(sensei_dir()) {
+        fail_start(&format!("senseid: cannot create {}: {e}", sensei_dir().display()));
+    }
     let log_path = sensei_dir().join("senseid.log");
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .expect("senseid: cannot open log file");
-    let log_err = log_file.try_clone().expect("senseid: cannot clone log handle");
+    let log_file =
+        std::fs::OpenOptions::new().create(true).append(true).open(&log_path).unwrap_or_else(|e| {
+            fail_start(&format!("senseid: cannot open {}: {e}", log_path.display()))
+        });
+    let log_err = log_file
+        .try_clone()
+        .unwrap_or_else(|e| fail_start(&format!("senseid: cannot clone the log handle: {e}")));
 
-    let exe = std::env::current_exe().expect("senseid: cannot resolve own path");
+    let exe = std::env::current_exe()
+        .unwrap_or_else(|e| fail_start(&format!("senseid: cannot resolve its own path: {e}")));
     let mut cmd = Command::new(exe);
     cmd.args(["--port", &port.to_string()]);
 
@@ -247,7 +260,7 @@ fn start_daemon(port: u16) {
         .stderr(log_err)
         .stdin(std::process::Stdio::null())
         .spawn()
-        .expect("senseid: failed to spawn daemon");
+        .unwrap_or_else(|e| fail_start(&format!("senseid: failed to spawn the daemon: {e}")));
 
     let pid = child.id();
     // Detach: we don't wait — the daemon runs independently.
@@ -274,7 +287,10 @@ async fn run_foreground(port: u16) {
     engine_boot::spawn();
 
     if let Err(e) = api::start_server(port).await {
-        eprintln!("[senseid] Server error: {}", e);
+        // Recorded as well as printed: under launchd nobody reads stderr (#179).
+        let msg = format!("[senseid] Server error: {e}");
+        sensei_bootstrap::startup_error::record(&msg);
+        eprintln!("{msg}");
     }
     std::fs::remove_file(&pid_path).ok();
 }
@@ -336,6 +352,11 @@ async fn check_status(port: u16) {
                 println!("senseid: not running (cleaned stale PID)");
             } else {
                 println!("senseid: not running");
+            }
+            // Why, when the last start failed — the only place the reason
+            // survives a daemon started by launchd (#179).
+            if let Some(reason) = sensei_bootstrap::startup_error::last() {
+                println!("  last start failed: {reason}");
             }
         }
     }

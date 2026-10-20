@@ -3,8 +3,10 @@
 // insights, adopted). This module only projects the wire numbers into the
 // header chip / strip and maps discriminators (insight tone, hero
 // provenance) to tokens — no screen-side decisions about what to teach.
-import type { ObservatoryFtr, ObservatoryInsight, ObservatoryTodayHero } from '$lib/types.js';
+import type { ObservatoryFtr, ObservatoryInsight, ObservatoryToday, ObservatoryTodayHero } from '$lib/types.js';
 import { ftrPct } from '$lib/ftr.js';
+import { readOutcome, type ApiResult } from '$lib/api.js';
+import { toRecentSessions } from './recent-sessions.js';
 
 export type FtrDirection = 'up' | 'down' | 'flat';
 
@@ -91,4 +93,21 @@ export function heroProvenance(hero: Pick<ObservatoryTodayHero, 'source' | 'noti
     .map((p) => p?.trim() ?? '')
     .filter(Boolean)
     .join(' · ');
+}
+
+/** The Today page's data: each read, or why it could not be read (#288). A
+ *  failed Today read is not the early "still listening" state, and a failed
+ *  FTR read is not a "—" that reads as no data yet. Recent sessions are
+ *  re-shaped into the display contract (label fallback, no ghost rows #61,
+ *  the spec's ≤5) so RecentSessions stays a pure template. */
+export function todayPageData(today: ApiResult<ObservatoryToday>, ftr: ApiResult<ObservatoryFtr>) {
+  const t = readOutcome(today);
+  const f = readOutcome(ftr);
+  return {
+    today: t.data,
+    todayError: t.error,
+    ftr: f.data,
+    ftrError: f.error,
+    recentSessions: t.data ? toRecentSessions(t.data.recentSessions, 5) : [],
+  };
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import type { SignalVariant } from '$lib/types.js';
 
   interface Props {
@@ -27,7 +28,7 @@
      and the left border only (like the mockup's SignalCard which uses
      borderLeft: 3px solid <accent> rather than tinting the title text). -->
 <article class="{style.bg} border rounded-lg p-4 flex items-start gap-3 border-l-2 {style.edge}">
-  <span class="kanji text-xl {style.ink} w-6 text-center shrink-0">{style.kanji}</span>
+  <Kanji char={style.kanji} size="inherit" tone="inherit" class="text-xl {style.ink} w-6 text-center shrink-0" />
   <div class="flex-1 min-w-0">
     {#if toolName}
       <div class="text-xs uppercase tracking-wide text-ink-mute font-mono">{toolName}</div>

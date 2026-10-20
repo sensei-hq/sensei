@@ -733,9 +733,22 @@ impl PgStore {
             })
             .collect();
 
-        Ok(
-            serde_json::json!({ "items": items, "total": total, "drifted": drifted, "broken": broken }),
+        // How many documents the scan had to check (#290): with none indexed, an
+        // empty drift list means "nothing checked", not "no drift".
+        let (indexed_docs,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*)::int8 FROM sensei.nodes n
+               JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id
+              WHERE fp.project_id = $1 AND n.kind = 'doc'::sensei.node_kind",
         )
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "items": items, "total": total, "drifted": drifted, "broken": broken,
+            "indexedDocs": indexed_docs,
+        }))
     }
 
     /// Resolve a local project by name → its id (scope-match for a project-scoped

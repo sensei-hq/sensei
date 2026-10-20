@@ -40,16 +40,22 @@ async fn suggest_binding_infers_from_git_owner_then_stops_once_bound() {
     };
     let suffix = format!("suggestbind_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
-    // The project's repo is owned by "Acme" (mixed case in the remote).
+    // An owner no other test uses: the database is shared, and a test that
+    // connects an "acme" membership concurrently made "no membership yet" false.
+    let owner = format!("acme{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    // The project's repo is owned by it, in mixed case in the remote.
     sqlx_core::query::query("UPDATE sensei.folders SET remote_urls = $2 WHERE id = $1")
         .bind(fid)
-        .bind(serde_json::json!([{ "name": "origin", "url": "git@github.com:Acme/widget.git" }]))
+        .bind(serde_json::json!([{
+            "name": "origin",
+            "url": format!("git@github.com:{}/widget.git", owner.to_uppercase()),
+        }]))
         .execute(s.pool())
         .await
         .unwrap();
     assert_eq!(
         s.project_org_owners(&pid).await.unwrap(),
-        vec!["acme".to_string()],
+        vec![owner.clone()],
         "owner parsed + lowercased"
     );
 
@@ -61,10 +67,10 @@ async fn suggest_binding_infers_from_git_owner_then_stops_once_bound() {
     s.create_dojo_membership(&NewDojoMembership {
         id: mid,
         registry_url: "http://localhost:7755".into(),
-        tenant_key: "github/acme".into(),
-        dojo_url: "http://localhost:7755/github/acme".into(),
+        tenant_key: format!("github/{owner}"),
+        dojo_url: format!("http://localhost:7755/github/{owner}"),
         kind: "client".into(),
-        org_slugs: vec!["acme".into()],
+        org_slugs: vec![owner.clone()],
         role: "contributor".into(),
         authenticated_via: "device_code".into(),
         attribution_default: "anonymous".into(),
@@ -78,8 +84,8 @@ async fn suggest_binding_infers_from_git_owner_then_stops_once_bound() {
         crate::dojo::memberships::suggest_binding(&s, &pid).await.unwrap().expect("a suggestion");
     assert_eq!(sug.membership_id, mid);
     assert_eq!(sug.kind, "client");
-    assert_eq!(sug.matched_slug, "acme");
-    assert_eq!(sug.tenant_key, "github/acme");
+    assert_eq!(sug.matched_slug, owner);
+    assert_eq!(sug.tenant_key, format!("github/{owner}"));
 
     // Once the project is bound, the chip no longer applies.
     assert!(s.bind_project_to_dojo(&pid, Some(&mid)).await.unwrap());

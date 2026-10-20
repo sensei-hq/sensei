@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   // Impact reasoning panel — the analyzer's single FTR-delta verdict for a
   // measured recommendation: headline, body, the real models that ran, and (on
   // a negative verdict) a suggested revision. There is ONE verdict, not an
@@ -28,7 +29,7 @@
 >
   <!-- Header row: 議 + eyebrow -->
   <div class="flex items-center gap-2 mb-2">
-    <span class="kanji text-sm text-accent">議</span>
+    <Kanji char="議" size="inherit" tone="inherit" class="text-sm text-accent" />
     <span class="text-xs uppercase tracking-wider text-ink-soft">impact reasoning</span>
   </div>
 

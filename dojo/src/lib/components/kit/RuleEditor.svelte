@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from './KanjiToken.svelte';
 	import { untrack } from 'svelte';
 	import Icon from './Icon.svelte';
 	import Btn from './Btn.svelte';
@@ -100,7 +101,7 @@
 								: 'bg-paper-mute border-paper-edge text-ink-soft'}"
 							style="padding: 8px 12px"
 						>
-							<span class="kanji" style="font-size: 14px">{f.kanji}</span>{f.label}
+							<KanjiToken char={f.kanji} size="sm" toneClass="" />{f.label}
 						</button>
 					{/each}
 				</div>
@@ -115,7 +116,7 @@
 					: 'bg-paper-mute border-paper-edge'}"
 				style="padding: 12px 16px"
 			>
-				<span class={hard ? 'text-accent' : 'text-ink-faint'} style="font-size: 16px">★</span>
+				<span class="text-base {hard ? 'text-accent' : 'text-ink-faint'}">★</span>
 				<div class="flex-1">
 					<div class="text-ink text-sm font-medium">Non-negotiable</div>
 					<div class="mono text-ink-mute text-xs">

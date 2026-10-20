@@ -30,6 +30,7 @@ mod repo_anchor_tests;
 mod scan_tests;
 mod stub_gc_tests;
 mod tasks_tests;
+mod turn_usage_tests;
 
 // Fixtures one group defines and others reuse.
 use dojo_tests::{seed_sync_fixture, seed_sync_fixture_at};

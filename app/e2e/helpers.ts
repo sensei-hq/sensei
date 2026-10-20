@@ -8,7 +8,8 @@ import { expect, type TauriPageLike } from './fixtures';
  */
 
 import { execSync, spawn, type ChildProcess } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, rmSync } from 'fs';
+import { isUniformPng, PAGE_BAND } from './lib/png-blank';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -379,4 +380,52 @@ export async function clickAndExpectNav(
     const current = await tauriPage.evaluate(`window.location.pathname`).catch(() => '(unknown)');
     throw new Error(`Timed out (${timeout}ms) waiting for ${expectedPath}. Current: ${current}`);
   }
+}
+
+/**
+ * Capture the app window to `path`, and say so when the capture is not a
+ * picture of the app (#284). Two ways it fails:
+ *
+ * - `blank`: one flat colour. The window capture needs macOS Screen Recording
+ *   permission for Sensei.app, and a rebuilt, re-signed bundle loses it (the
+ *   e2e build is signed with a stable identity by `make app-e2e-build`; with
+ *   the `sensei-dev` certificate the grant then survives rebuilds).
+ * - `unpainted`: the frame and docked devtools paint, the page area does not.
+ *
+ * Either way the file is removed — a blank PNG left behind reads as evidence —
+ * and the cause is logged. The test does not fail on it: its DOM assertions
+ * are the evidence; the picture is for a person.
+ */
+export async function shot(
+  tauriPage: { screenshot: (o: { path: string }) => Promise<unknown> },
+  path: string,
+): Promise<'ok' | 'blank' | 'unpainted'> {
+  await tauriPage.screenshot({ path });
+  const png = readFileSync(path);
+  const result = isUniformPng(png) ? 'blank' : isUniformPng(png, PAGE_BAND) ? 'unpainted' : 'ok';
+  if (result !== 'ok') {
+    rmSync(path);
+    console.warn(
+      result === 'blank'
+        ? `[shot] ${path}: the capture is blank — grant Sensei.app Screen Recording in System Settings › Privacy & Security (#284)`
+        : `[shot] ${path}: the page area did not paint in the capture (#284)`,
+    );
+  }
+  return result;
+}
+
+/** Close the sign-in overlay if it opened itself (an identity needing the
+ *  user, e.g. #283's keychain approval): it is modal and covers the page. */
+export async function dismissSignIn(tauriPage: TauriPageLike) {
+  const state = await tauriPage.evaluate(`(function () {
+    var b = document.querySelector('[data-component="sign-in-overlay"] footer button');
+    if (!b) return 'absent';
+    b.click(); return 'closed';
+  })()`);
+  console.log(`[inspect] sign-in overlay: ${state}`);
+  await expect
+    .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-component="sign-in-overlay"]')`), {
+      timeout: 5_000,
+    })
+    .toBe(false);
 }

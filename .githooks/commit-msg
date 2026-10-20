@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# The leak guard over the commit MESSAGE (#213). pre-commit only sees staged file
+# content, so a name in a message passed every gate and landed in history.
+set -euo pipefail
+exec "$(dirname "$0")/check-no-leaks.sh" --message "$1"

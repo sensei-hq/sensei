@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { resolve } from '$app/paths';
 
 	// The shared "join or create a Dōjō" empty state (DJ1). Every org-scoped
@@ -16,7 +17,7 @@
 		class="bg-paper-soft border-paper-edge flex flex-col items-center rounded-xl border text-center"
 		style="padding: 32px 24px; max-width: 460px"
 	>
-		<span class="kanji text-accent text-3xl" style="line-height: 1">結</span>
+		<KanjiToken char="結" icon={null} size="inherit" toneClass="" class="text-accent text-3xl" />
 		<h2 class="display text-ink text-lg font-normal" style="letter-spacing: -0.01em; margin: 16px 0 0">
 			{what} lives inside a Dōjō
 		</h2>
@@ -29,7 +30,7 @@
 			class="bg-ink text-on-primary inline-flex items-center gap-2 rounded-lg text-sm font-medium no-underline"
 			style="margin-top: 20px; padding: 8px 16px"
 		>
-			<span class="kanji text-xs">迎</span>
+			<KanjiToken char="迎" size="inherit" toneClass="" class="text-xs" />
 			join or create a Dōjō
 		</a>
 	</div>

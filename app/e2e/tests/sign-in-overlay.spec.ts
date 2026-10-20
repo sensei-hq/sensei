@@ -93,7 +93,7 @@ test.describe('sign-in overlay', () => {
     // 3. It renders exactly ONE honest state: the loading line, the empty
     //    message, an error, or a list of rows. Never "no identities" over data
     //    it has not read.
-    const states = await tauriPage.evaluate(`
+    const states = await tauriPage.evaluate<{ loading: boolean; error: boolean; rows: number; text: string }>(`
       (function() {
         var root = document.querySelector('${OVERLAY}');
         return {

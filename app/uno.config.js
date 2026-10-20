@@ -1,6 +1,7 @@
 import { defineConfig, transformerDirectives } from "unocss";
 import { presetRokkit } from "@rokkit/unocss";
 import config from "./rokkit.config.js";
+import { contentInclude } from "./uno.content.js";
 
 /**
  * Source of truth: docs/mockups/lib/tokens.css.
@@ -8,6 +9,8 @@ import config from "./rokkit.config.js";
  */
 export default defineConfig({
   transformers: [transformerDirectives()],
+  // `.ts` too: the rails' icon classes live in data files (#133).
+  content: { pipeline: { include: contentInclude } },
   presets: [presetRokkit(config)],
   theme: {
     // UnoCSS tuple-short form `[fontSize, lineHeight]` is preferred over

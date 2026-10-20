@@ -145,6 +145,33 @@ pub fn should_run(
     Ok(())
 }
 
+/// When the schedule will next run (#96): the first minute, from the later of
+/// `now` and the end of the interval, at which [`should_run`] says yes. The
+/// window and weekday rules are asked, not re-implemented, so this cannot
+/// disagree with the ticker. `None` when disabled. Bounded at eight days — a
+/// week covers every weekday, so a schedule that allows nothing in that span is
+/// one that never runs, and saying so beats looping.
+///
+/// `to_local` maps a UTC instant to the local time the window is written in;
+/// injected so the rule is testable without the machine's timezone.
+pub fn next_run(
+    s: &Schedule,
+    now_utc: DateTime<Utc>,
+    last_run: Option<DateTime<Utc>>,
+    to_local: impl Fn(DateTime<Utc>) -> NaiveDateTime,
+) -> Option<DateTime<Utc>> {
+    if !s.enabled {
+        return None;
+    }
+    let due = last_run
+        .map_or(now_utc, |prev| prev + chrono::Duration::seconds(i64::from(s.interval_secs)));
+    let start = due.max(now_utc);
+    (0..=8 * 24 * 60).find_map(|minute| {
+        let at = start + chrono::Duration::minutes(minute);
+        should_run(s, to_local(at), at, last_run).is_ok().then_some(at)
+    })
+}
+
 /// A human-readable window, for the API and the UI. `None` = any time.
 pub fn window_label(start: Option<NaiveTime>, end: Option<NaiveTime>) -> Option<String> {
     let (start, end) = (start?, end?);
@@ -177,6 +204,52 @@ mod tests {
             window_end: None,
             days: vec![],
         }
+    }
+
+    /// #96: when a schedule will next run, from the same rules that decide it.
+    /// Local time is UTC in these cases, so the window reads plainly.
+    fn as_local(u: DateTime<Utc>) -> NaiveDateTime {
+        u.naive_utc()
+    }
+    fn at(d: NaiveDateTime) -> DateTime<Utc> {
+        d.and_utc()
+    }
+
+    #[test]
+    fn next_run_is_the_interval_after_the_last_run() {
+        let s = sched(); // hourly, any time, any day
+        let next = next_run(&s, at(monday(10, 30)), Some(at(monday(10, 0))), as_local);
+        assert_eq!(next, Some(at(monday(11, 0))));
+    }
+
+    #[test]
+    fn an_overdue_or_never_run_schedule_runs_now() {
+        let s = sched();
+        assert_eq!(
+            next_run(&s, at(monday(10, 30)), Some(at(monday(8, 0))), as_local),
+            Some(at(monday(10, 30)))
+        );
+        assert_eq!(next_run(&s, at(monday(10, 30)), None, as_local), Some(at(monday(10, 30))));
+    }
+
+    #[test]
+    fn a_window_defers_the_next_run_to_its_opening() {
+        let s = Schedule { window_start: Some(t(22, 0)), window_end: Some(t(5, 0)), ..sched() };
+        let next = next_run(&s, at(monday(12, 0)), Some(at(monday(4, 0))), as_local);
+        assert_eq!(next, Some(at(monday(22, 0))));
+    }
+
+    #[test]
+    fn a_weekday_mask_defers_it_to_the_next_allowed_day() {
+        let s = Schedule { days: vec![1], ..sched() }; // Mondays only
+        let next = next_run(&s, at(sunday(9, 0)), Some(at(sunday(8, 0))), as_local);
+        assert_eq!(next, Some(at(monday(0, 0))));
+    }
+
+    #[test]
+    fn a_disabled_schedule_has_no_next_run() {
+        let s = Schedule { enabled: false, ..sched() };
+        assert_eq!(next_run(&s, at(monday(10, 0)), None, as_local), None);
     }
 
     #[test]

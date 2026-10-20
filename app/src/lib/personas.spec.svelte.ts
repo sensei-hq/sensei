@@ -3,11 +3,12 @@
 // The identity list behind the sign-in overlay.
 //
 // Two properties carry the weight. First, each row's action comes from the
-// DAEMON, never re-derived here. Second, the browsing context is chosen by what
-// the action IS: renewal reuses the session (that is what makes it prompt-free),
-// while connecting or re-authenticating demands a fresh one, because a shared
-// session answers as whoever is already logged in and would re-link the wrong
-// account while reporting success.
+// DAEMON, never re-derived here. Second (#300, decided 2026-10-20): every
+// sign-in opens the SYSTEM browser — the in-app window could not complete
+// passkey, SMS or GitHub Mobile — and the wrong account is caught by the
+// daemon's guard, not by a private window. So the list records which account a
+// sign-in expects and the link, for the UI to show and to copy into a private
+// window.
 import { describe, it, expect, vi } from 'vitest';
 import { PersonaList } from './personas.svelte.js';
 
@@ -32,20 +33,37 @@ const LIST = {
   ]
 };
 
-function harness(payload: unknown, url: string | null = 'https://github.test/authorize') {
-  const opened: Array<{ url: string; fresh: boolean; label: string }> = [];
+function harness(
+  payload: unknown,
+  url: string | null = 'https://github.test/authorize',
+  approved: string | null = null
+) {
+  const opened: string[] = [];
   const startSignIn = vi.fn(async () => url);
+  const approveKeychain = vi.fn(async () => approved);
   const list = new PersonaList({
     fetchPersonas: vi.fn(async () => (payload === null ? null : (payload as never))),
     startSignIn,
-    openAuth: vi.fn(async (u: string, opts: { fresh: boolean; label: string }) => {
-      opened.push({ url: u, ...opts });
+    approveKeychain,
+    openAuth: vi.fn(async (u: string) => {
+      opened.push(u);
     })
   });
-  return { list, opened, startSignIn };
+  return { list, opened, startSignIn, approveKeychain };
 }
 
 describe('PersonaList.load', () => {
+  it('keeps which identity is the default, and why there is none when there is none (#296)', async () => {
+    const { list } = harness({ ...LIST, personas: LIST.personas.map((p, i) => ({ ...p, isDefault: i === 0 })) });
+    await list.load();
+    expect(list.personas.map((p) => p.isDefault)).toEqual([true, false]);
+    expect(list.defaultError).toBeNull();
+
+    const unresolved = harness({ ...LIST, defaultError: 'no default identity: git has no global user.email' });
+    await unresolved.list.load();
+    expect(unresolved.list.defaultError).toMatch(/no global user.email/);
+  });
+
   it('keeps the daemon-supplied action rather than deciding for itself', async () => {
     const { list } = harness(LIST);
     await list.load();
@@ -90,46 +108,36 @@ describe('PersonaList.load', () => {
 });
 
 describe('PersonaList.signIn', () => {
-  it('CONNECTING a new identity opens a fresh context', async () => {
-    // The system browser answers as whoever is already signed in to GitHub, so
-    // connecting a second identity through it re-links the first — and reports
-    // success, as the wrong person. A fresh context forces the real choice.
+  it('opens the system browser with the daemon\'s link, for every kind of sign-in', async () => {
     const { list, opened } = harness(LIST);
     await list.load();
-    await list.signIn(list.personas[1]); // action: 'connect'
-    expect(opened).toHaveLength(1);
-    expect(opened[0].fresh).toBe(true);
-  });
-
-  it('RENEWING reuses the session, because that is what makes it silent', async () => {
-    // The opposite case, and it looks inconsistent until you see why: renewal
-    // is the SAME account, and the existing browser session is exactly what
-    // lets GitHub redirect straight through with no prompt. A fresh context
-    // here would turn a silent 6-second renewal into a login form every time.
-    const { list, opened } = harness(LIST);
-    await list.load();
+    await list.signIn(list.personas[1]); // connect
     await list.signIn({ ...list.personas[0], action: 'renew' });
-    expect(opened[0].fresh).toBe(false);
-  });
-
-  it('signing in again after a death also forces the account choice', async () => {
-    // The credential is gone and we are re-authenticating. The login hint is
-    // only a hint — GitHub may answer as a different signed-in account — so the
-    // safe direction is to make the user pick.
-    const { list, opened } = harness(LIST);
-    await list.load();
     await list.signIn({ ...list.personas[0], action: 'signIn' });
-    expect(opened[0].fresh).toBe(true);
+    expect(opened).toEqual([
+      'https://github.test/authorize',
+      'https://github.test/authorize',
+      'https://github.test/authorize'
+    ]);
   });
 
-  it('gives each persona its own window so two sign-ins cannot share one', async () => {
-    // A single reused label would have the second sign-in navigate the first
-    // window, and whichever callback landed last would win.
-    const { list, opened } = harness(LIST);
+  it('records the sign-in in flight: which identity, which account, and the link', async () => {
+    // What the UI shows ("sign in to GitHub as …") and what Copy link copies.
+    const { list } = harness(LIST);
     await list.load();
     await list.signIn(list.personas[0]);
+    expect(list.pending).toEqual({
+      label: 'sensei-hq-org',
+      expectedLogin: 'sensei-hq-org',
+      url: 'https://github.test/authorize'
+    });
+  });
+
+  it('a first connect expects no particular account', async () => {
+    const { list } = harness(LIST);
+    await list.load();
     await list.signIn(list.personas[1]);
-    expect(new Set(opened.map((o) => o.label)).size).toBe(2);
+    expect(list.pending).toMatchObject({ label: 'devuser', expectedLogin: null });
   });
 
   it('asks for the persona by its KEYCHAIN SLOT, not its display label', async () => {
@@ -157,6 +165,7 @@ describe('PersonaList.signIn', () => {
     await list.signIn(list.personas[0]);
     expect(opened).toHaveLength(0);
     expect(list.error).toMatch(/could not start/i);
+    expect(list.pending).toBeNull();
   });
 
   it('marks the row busy while its own sign-in is in flight, and no others', async () => {
@@ -173,6 +182,7 @@ describe('PersonaList.signIn', () => {
         await gate;
         return 'https://github.test/a';
       },
+      approveKeychain: async () => null,
       openAuth: async () => {}
     });
     await slow.load();
@@ -284,5 +294,54 @@ describe('PersonaList.tone', () => {
     await list.load();
     const unknown = { ...list.personas[0], forgeToken: { state: 'active', expiresAt: null } };
     expect(list.tone(unknown, 0)).toBe('idle');
+  });
+});
+
+// #283: the daemon never prompts for the Keychain, so a session it holds but
+// cannot read after a rebuild waits for the user's click. That click is an
+// approval, not a sign-in: no browser, no OAuth round trip.
+describe('PersonaList approve', () => {
+  const withheld = { ...LIST.personas[0], action: 'approve' };
+
+  it('opens the overlay unasked: sync is down until it is done', async () => {
+    const { list } = harness({ personas: [withheld] });
+    await list.load();
+    expect(list.needsAttention).toBe(true);
+  });
+
+  it('says what it is and what the button does', async () => {
+    const { list } = harness({ personas: [withheld] });
+    await list.load();
+    const p = list.personas[0];
+    expect(list.actionLabel(p)).toBe('Approve keychain access');
+    expect(list.describe(p, 0)).toBe('keychain access needs approval');
+    expect(list.tone(p, 0)).toBe('warn');
+  });
+
+  it('approves the slot instead of starting a sign-in', async () => {
+    const { list, startSignIn, approveKeychain, opened } = harness({ personas: [withheld] });
+    await list.load();
+    await list.act(list.personas[0]);
+    expect(approveKeychain).toHaveBeenCalledWith('default');
+    expect(startSignIn).not.toHaveBeenCalled();
+    expect(opened).toEqual([]);
+    expect(list.error).toBeNull();
+  });
+
+  it('a declined or failed approval says why', async () => {
+    const { list } = harness({ personas: [withheld] }, null, 'keychain access needs approval');
+    await list.load();
+    await list.act(list.personas[0]);
+    expect(list.error).toBe('keychain access needs approval');
+  });
+
+  it('any other action is still a sign-in', async () => {
+    const { list, startSignIn, approveKeychain } = harness({
+      personas: [{ ...LIST.personas[0], action: 'signIn' }]
+    });
+    await list.load();
+    await list.act(list.personas[0]);
+    expect(startSignIn).toHaveBeenCalled();
+    expect(approveKeychain).not.toHaveBeenCalled();
   });
 });

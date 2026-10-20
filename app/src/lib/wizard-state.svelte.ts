@@ -9,13 +9,16 @@
  * objects; status persists via commitStage; active flips on route change.
  */
 
-import { senseiApi, type ApiResult } from './api.js';
+import { senseiApi, failureReason, type ApiResult } from './api.js';
+import { roleAssignments } from './setup/role-meta.js';
+import { DEFAULT_PREFERENCES } from './setup/preferences.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
 import { healthState } from './health-state.svelte.js';
 import { scanState } from './scan-state.svelte.js';
 import { loadWizardData } from './setup/loaders.js';
 import { STORAGE_KEYS } from './storage-keys.js';
+import { guessUserName } from './setup/user-name.js';
 import { STAGES, type WizardStage } from '../routes/(config)/stages.js';
 import type {
   DaemonAssistantFamily, DaemonWatchRoot, DaemonProject,
@@ -83,10 +86,23 @@ export interface RouterEntry {
   providers: string[];
   capabilities: string[];
   needsKey: boolean;
-  configured: boolean;
+  /** `null` when the key is set but could not be read (#285). */
+  configured: boolean | null;
+  keyError: string | null;
   draftKey: string;          // never sent until commit
   saveState: RouterSaveState;
   saveError: string;
+}
+
+/** How a router's key reads on its card (#285). */
+export function routerKeyStatus(r: RouterEntry): { label: string; tone: 'success' | 'mute' | 'warning' } {
+  if (!r.needsKey) return { label: 'no key needed', tone: 'mute' };
+  if (r.configured === null) {
+    return { label: `key unreadable: ${r.keyError ?? 'reason not given'}`, tone: 'warning' };
+  }
+  return r.configured
+    ? { label: 'configured ✓', tone: 'success' }
+    : { label: 'not configured', tone: 'mute' };
 }
 
 export interface InferenceSlice {
@@ -230,6 +246,7 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       const result = await api.setGatewayRouterKey(router.id, router.draftKey.trim());
       if (result.ok) {
         router.configured = result.data.configured;
+        router.keyError = null;
         router.draftKey = '';
         router.saveState = 'done';
       } else {
@@ -251,28 +268,28 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       .filter(r => (pending[r] ?? null) !== (current[r] ?? null))
       .map(r => ({ role: r, next: pending[r] ?? null, prev: current[r] ?? null }));
 
+    // A refused write fails the commit (#288) — it used to be logged and the
+    // stage marked done, with the role never assigned.
+    const refused: string[] = [];
     // Phase 1 — clear every OLD chain that's losing its role.
     // (Includes both "role unassigned" and "role moved to a different chain".)
     for (const c of changes) {
       if (c.prev) {
         const result = await api.setGatewayChainRole(c.prev, null);
-        if (!result.ok) {
-          console.warn('[assignments] clear old chain role failed', c.prev, result.error);
-        }
+        if (!result.ok) refused.push(`clearing ${c.role}: ${failureReason(result.error)}`);
       }
     }
     // Phase 2 — set every NEW chain to its role.
     for (const c of changes) {
       if (c.next) {
         const result = await api.setGatewayChainRole(c.next, c.role);
-        if (!result.ok) {
-          console.warn('[assignments] set new chain role failed', c.next, c.role, result.error);
-        }
+        if (!result.ok) refused.push(`assigning ${c.role}: ${failureReason(result.error)}`);
       }
     }
-    // Refresh state so `roleAssignments` reflects the freshly-written
-    // truth — the next mount reads the correct baseline for its diff.
+    // Refresh state so `roleAssignments` reflects the daemon's truth — after a
+    // refusal too, so the screen shows what actually stuck.
     await ws.refreshAssignments();
+    if (refused.length) throw new Error(`The daemon refused: ${refused.join('; ')}`);
   },
   done:        async (ws) => { await ws.setCompleted(); },
 };
@@ -351,12 +368,7 @@ export class WizardState {
     });
   }
 
-  preferences = $state<PreferencesData>({
-    displayName: '', contributeLearnings: true, reviewBeforeShare: true,
-    shareSchedule: 'weekly-saturday', downloadCollective: 'weekly',
-    correctionAggressiveness: 'balanced', digestCadence: 'daily',
-    nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
-  });
+  preferences = $state<PreferencesData>({ ...DEFAULT_PREFERENCES });
   assistants  = $state<AssistantsSlice>({ assistants: [], partStatus: {}, partErrors: {} });
   roots       = $state<RootsSlice>({ roots: [], newPath: '' });
   scan        = $state<ScanSlice>({ baseline: null, started: false, done: false });
@@ -742,7 +754,9 @@ export class WizardState {
     };
     this.libraries = { libs: [...data.libraries.libs] };
     this.instruments = { mcps: [...data.mcps] };
-    this.inference = {
+    // A failed router read leaves the list as it was (#286); the Providers
+    // screen re-reads on mount and shows the error.
+    if (data.routers) this.inference = {
       routers: data.routers.map(r => ({
         id: r.id,
         name: r.name,
@@ -750,6 +764,7 @@ export class WizardState {
         capabilities: r.capabilities,
         needsKey: r.needs_key,
         configured: r.configured,
+        keyError: r.key_error ?? null,
         draftKey: '',
         saveState: 'idle' as RouterSaveState,
         saveError: '',
@@ -764,8 +779,10 @@ export class WizardState {
    * its truth except where the user explicitly toggled.
    */
   async refreshInstruments(): Promise<void> {
-    const api = senseiApi(appState.port);
-    const fresh = await api.listInstruments();
+    const read = await senseiApi(appState.port).tryListInstruments();
+    // A failed read throws: the section shows why (#288), not "no instruments".
+    if (!read.ok) throw new Error(failureReason(read.error));
+    const fresh = read.data;
     const previous = new Map(this.instruments.mcps.map(m => [m.id, m.selected]));
     this.instruments = {
       mcps: fresh.mcps.map(m => ({
@@ -784,8 +801,10 @@ export class WizardState {
    * to avoid showing stale libs from the persistent DB.
    */
   async refreshLibraries(): Promise<void> {
-    const api = senseiApi(appState.port);
-    const fresh = await api.getLibs();
+    const read = await senseiApi(appState.port).tryGetLibs();
+    // A failed read throws: the section shows why (#288), not "no libraries".
+    if (!read.ok) throw new Error(failureReason(read.error));
+    const fresh = read.data;
 
     // Set of repo (folder) names scanned in this wizard run. Filter libs to those
     // touching at least one of these so we don't show the entire persistent DB.
@@ -824,19 +843,12 @@ export class WizardState {
    * mid-edit shouldn't wipe uncommitted picks.
    */
   async refreshAssignments(): Promise<void> {
-    const api = senseiApi(appState.port);
-    const fresh = await api.listGatewayChains();
-    const chains = fresh.chains;
-
-    // Daemon truth: fold role → chainId for the four supported roles.
-    const daemon: Record<SenseiRole, string | null> = {
-      inference: null, consolidation: null, embedding: null, voice: null,
-    };
-    for (const c of chains) {
-      if (c.role != null && daemon[c.role] === null) {
-        daemon[c.role] = c.id;
-      }
-    }
+    const read = await senseiApi(appState.port).tryListGatewayChains();
+    // A failed read throws (#288): every role read as unassigned.
+    if (!read.ok) throw new Error(failureReason(read.error));
+    const chains = read.data.chains;
+    // Daemon truth: role → chainId for the four supported roles.
+    const daemon = roleAssignments(chains);
     this.assignments = {
       chains,
       roleAssignments:    { ...daemon },
@@ -853,7 +865,10 @@ export class WizardState {
 
   async refreshInferenceRouters(): Promise<void> {
     const api = senseiApi(appState.port);
-    const fresh = await api.listGatewayRouters();
+    const read = await api.tryListGatewayRouters();
+    // A failed read is an error the Providers screen shows (#286), not "no routers".
+    if (!read.ok) throw new Error(failureReason(read.error));
+    const fresh = read.data;
     const previous = new Map(this.inference.routers.map(r => [r.id, r]));
     this.inference = {
       routers: fresh.routers.map(r => {
@@ -865,6 +880,7 @@ export class WizardState {
           capabilities: r.capabilities,
           needsKey: r.needs_key,
           configured: r.configured,
+        keyError: r.key_error ?? null,
           draftKey: prev?.draftKey ?? '',
           saveState: prev?.saveState ?? 'idle',
           saveError: prev?.saveError ?? '',
@@ -880,21 +896,6 @@ export class WizardState {
     const api = senseiApi(appState.port);
     await api.clearGatewayRouterKey(id);
     await this.refreshInferenceRouters();
-  }
-
-  /**
-   * Re-fetch projects from daemon, merging in current confirmation state.
-   * Called by the Projects page on mount because the daemon discovers projects
-   * during scan — the layout's initial hydrate may have run before that.
-   */
-  async refreshProjects(): Promise<void> {
-    const api = senseiApi(appState.port);
-    const fresh = await api.listProjects();
-    const previous = this.projects.confirmed;
-    this.projects = {
-      projects: fresh.map(p => ({ ...(p as unknown as DaemonProject), folders: ((p as unknown as DaemonProject).folders) ?? [] })),
-      confirmed: Object.fromEntries(fresh.map(p => [p.id, previous[p.id] ?? true])),
-    };
   }
 
   /**
@@ -926,44 +927,5 @@ export class WizardState {
   }
 }
 
-/** Best-effort username — async so it can call Tauri's homeDir().
- *  Each external boundary (localStorage, Tauri native, location) is
- *  wrapped separately so a failure in one source falls through to the
- *  next instead of aborting the whole guess. Failures are logged so
- *  they don't go silent. */
-async function guessUserName(): Promise<string> {
-  // localStorage boundary — can throw in Safari private mode or under
-  // quota pressure. typeof guard handles SSR/test envs where it's undefined.
-  if (typeof localStorage !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEYS.userName);
-      if (stored) return stored;
-    } catch (e) {
-      console.warn('guessUserName: localStorage read failed', e);
-    }
-  }
-
-  // Tauri native boundary — homeDir() can throw if the path plugin isn't
-  // registered, and the dynamic import can fail if the bundle is stale.
-  // Don't bail out of the guess on failure — fall through to the browser
-  // pathname heuristic.
-  if (hasTauri()) {
-    try {
-      const { homeDir } = await import('@tauri-apps/api/path');
-      const home = await homeDir();
-      const match = home.replace(/\/$/, '').match(/\/([^/]+)$/);
-      if (match) return match[1].charAt(0).toUpperCase() + match[1].slice(1);
-    } catch (e) {
-      console.warn('guessUserName: Tauri homeDir() failed', e);
-    }
-  }
-
-  // Browser fallback — pure string ops, can't throw.
-  const pathMatch = (typeof location !== 'undefined' ? location.pathname : '')
-    .match(/\/Users\/([^/]+)/);
-  if (pathMatch) return pathMatch[1].charAt(0).toUpperCase() + pathMatch[1].slice(1);
-
-  return '';
-}
 
 export const wizardState = new WizardState();

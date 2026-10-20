@@ -30,9 +30,10 @@
     /** Plain string for the common case; a snippet when the title needs markup. */
     title: string | Snippet;
     eyebrow?: string;
-    /** A kanji glyph. Mutually exclusive with `icon` — kanji wins if both are set. */
+    /** A kanji glyph. */
     kanji?: string;
-    /** A UnoCSS icon class (e.g. `i-solar-folder-linear`), for headers with no glyph. */
+    /** A UnoCSS icon class. With a kanji, it is that kanji's icon-mode mark
+     *  (#133); without one, it is the header's only mark. */
     icon?: string;
     description?: string;
     /**
@@ -68,7 +69,7 @@
     : ''}"
 >
   {#if kanji}
-    <Kanji char={kanji} size={s.kanji} />
+    <Kanji char={kanji} {icon} size={s.kanji} />
   {:else if icon}
     <span
       data-component="page-header-icon"

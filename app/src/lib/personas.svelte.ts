@@ -10,26 +10,19 @@
 // identity with its own credential and its own 8-hour expiry, so "sign in" is
 // per-persona, not global.
 //
-// ## Which browsing context, and why it differs by action
+// ## Where a sign-in happens (#300, decided 2026-10-20)
 //
-// The two cases pull opposite ways, which looks inconsistent until you see the
-// reason.
+// Always in the SYSTEM browser. It holds the user's GitHub session and every
+// second factor GitHub offers; the in-app private window this used to open for
+// connecting could not complete passkey, SMS or GitHub Mobile, so a passkey
+// user could never connect at all.
 //
-// **Renewing** an already-connected identity reuses the SYSTEM browser. Its live
-// GitHub session is exactly what lets the authorize redirect complete with no
-// prompt — measured at ~6 seconds, zero clicks. A fresh context here would turn
-// every renewal into a login form.
-//
-// **Connecting** a new identity, or re-authenticating a dead one, opens an
-// in-app `WebviewWindow` with `incognito: true` — a non-persistent data store,
-// no inherited cookies. This is the hazard already documented on the daemon's
-// `PersonaQuery.github_login`: a shared session answers as whoever is already
-// signed in, so connecting a second persona through it re-links the FIRST one
-// and reports success as the wrong person. The login hint only suggests an
-// account; it cannot force one.
-//
-// Those windows are per-persona-labelled, so two concurrent sign-ins get
-// separate windows instead of the second navigating the first.
+// The hazard that window existed for is real: a browser already signed in to
+// GitHub answers as THAT account. It is now caught where it can be caught for
+// certain — the daemon's account guard refuses a callback from an account other
+// than the one expected, or one that already belongs to another identity,
+// before anything is stored. The list records which account a sign-in expects
+// and its link, so the UI can say so and offer the link for a private window.
 
 /** One persona, exactly as `GET /api/auth/personas` reports it. */
 export interface PersonaWire {
@@ -41,29 +34,27 @@ export interface PersonaWire {
   forgeToken: { state: string; expiresAt: number | null };
   /** Decided by the daemon's `persona_action`. Never re-derived here. */
   action: 'connect' | 'signIn' | 'renew' | 'none' | string;
+  /** The machine's default identity: the one owning the global git email (#296). */
+  isDefault?: boolean;
 }
 
 export interface PersonaListDeps {
   /** Resolves `null` when the registry could not be read — never `[]`. */
-  fetchPersonas: () => Promise<{ personas: PersonaWire[] } | null>;
+  fetchPersonas: () => Promise<{ personas: PersonaWire[]; defaultError?: string | null } | null>;
   /** `POST /api/auth/signin`. `expectedLogin` is a hint GitHub uses to
    *  preselect an account; `null` when we have never learned one. */
   startSignIn: (persona: string, expectedLogin: string | null) => Promise<string | null>;
   /**
-   * Show the authorize page.
-   *
-   * `fresh` decides WHICH browsing context, and the two cases pull opposite
-   * ways:
-   *
-   * - **Renewing** the same account: reuse the session. The existing GitHub
-   *   login is precisely what lets the redirect complete with no prompt —
-   *   measured at ~6 seconds, no clicks. A fresh context would turn every
-   *   renewal into a login form.
-   * - **Connecting or re-authenticating**: a fresh context. A shared session
-   *   answers as whoever is already logged in, so connecting a second identity
-   *   silently re-links the first. The login hint is only a hint.
+   * Open the daemon's authorize link in the SYSTEM browser — for every kind of
+   * sign-in (#300, decided 2026-10-20). The in-app private window could not
+   * complete passkey, SMS or GitHub Mobile. A browser signed in to GitHub as
+   * someone else is caught by the daemon's account guard, and the UI offers the
+   * link to copy into a private window.
    */
-  openAuth: (url: string, opts: { fresh: boolean; label: string }) => Promise<void>;
+  openAuth: (url: string) => Promise<void>;
+  /** `POST /api/auth/keychain/approve` (#283). Resolves `null` when approved,
+   *  otherwise why not. */
+  approveKeychain: (persona: string) => Promise<string | null>;
 }
 
 export class PersonaList {
@@ -71,6 +62,15 @@ export class PersonaList {
   /** Non-null when a read or an attempt FAILED. Rendered instead of a list:
    *  "no identities" and "we could not ask" are different answers. */
   error = $state<string | null>(null);
+
+  /** Why no identity is the default, when none is (#296) — e.g. no global git
+   *  email, or one that two identities own. `null` when one is, or unknown. */
+  defaultError = $state<string | null>(null);
+
+  /** The sign-in in flight, for the UI: which identity, which GitHub account it
+   *  expects (`null` for a first connect), and the link to copy into a private
+   *  window when the browser is signed in as someone else (#300). */
+  pending = $state<{ label: string; expectedLogin: string | null; url: string } | null>(null);
 
   /**
    * Whether a read has SUCCEEDED at least once.
@@ -106,7 +106,9 @@ export class PersonaList {
    * `renew` is excluded too, because renewal is automatic and prompt-free.
    */
   get needsAttention(): boolean {
-    return this.personas.some((p) => p.action === 'signIn');
+    // `approve` too (#283): the session is there, but sync stays down until
+    // the user lets the daemon read it.
+    return this.personas.some((p) => p.action === 'signIn' || p.action === 'approve');
   }
 
   async load(): Promise<void> {
@@ -120,6 +122,7 @@ export class PersonaList {
       return;
     }
     this.personas = res.personas;
+    this.defaultError = res.defaultError ?? null;
     this.error = null;
     this.loaded = true;
   }
@@ -134,6 +137,8 @@ export class PersonaList {
         return 'Sign in again';
       case 'renew':
         return 'Renew';
+      case 'approve':
+        return 'Approve keychain access';
       default:
         return 'Sign in';
     }
@@ -142,6 +147,7 @@ export class PersonaList {
   /** One line describing where this persona stands. */
   describe(p: PersonaWire, now: number): string {
     if (!p.connected) return 'never signed in on this machine';
+    if (p.action === 'approve') return 'keychain access needs approval';
     const exp = p.forgeToken.expiresAt;
     if (p.forgeToken.state === 'dead') return 'credential expired';
     if (exp === null) return 'signed in — expiry not yet known';
@@ -174,6 +180,7 @@ export class PersonaList {
    */
   tone(p: PersonaWire, now: number): 'idle' | 'ok' | 'warn' | 'dead' {
     if (!p.connected) return 'idle';
+    if (p.action === 'approve') return 'warn';
     if (p.forgeToken.state === 'dead') return 'dead';
     const exp = p.forgeToken.expiresAt;
     if (exp === null) return 'idle';
@@ -182,8 +189,27 @@ export class PersonaList {
     return seconds < 3600 ? 'warn' : 'ok';
   }
 
+  /** The row's button (#283): approve the Keychain, or sign in. An approval
+   *  opens no browser — the daemon re-reads the session with the Keychain's
+   *  dialog allowed, and the user answers it there. */
+  async act(p: PersonaWire): Promise<void> {
+    if (p.action !== 'approve') return this.signIn(p);
+    if (this.#busy.has(p.label)) return;
+    this.#busy = new Set(this.#busy).add(p.label);
+    this.error = null;
+    try {
+      this.error = await this.#deps
+        .approveKeychain(p.sessionSlot ?? p.label)
+        .catch((e) => (e instanceof Error ? e.message : `could not approve ${p.label}`));
+    } finally {
+      const next = new Set(this.#busy);
+      next.delete(p.label);
+      this.#busy = next;
+    }
+  }
+
   /**
-   * Start a sign-in for one persona in its own fresh window.
+   * Start a sign-in for one persona, in the system browser (#300).
    *
    * Addressed by `sessionSlot` when there is one. The label is rewritten to the
    * verified GitHub login on sign-in and the slot is not, so signing in against
@@ -199,19 +225,14 @@ export class PersonaList {
         .startSignIn(p.sessionSlot ?? p.label, p.githubLogin)
         .catch(() => null);
       if (!url) {
+        this.pending = null;
         this.error = `could not start the sign-in for ${p.label}`;
         return;
       }
-      await this.#deps.openAuth(url, {
-        // Renewal is the same account and wants the session; anything else
-        // wants the user to choose. See `openAuth`.
-        fresh: p.action !== 'renew',
-        // Per-persona, so two concurrent sign-ins get separate windows instead
-        // of the second navigating the first.
-        label: `auth-${p.label.replace(/[^a-zA-Z0-9-]/g, '-')}`
-      });
+      this.pending = { label: p.label, expectedLogin: p.githubLogin, url };
+      await this.#deps.openAuth(url);
     } catch (e) {
-      this.error = e instanceof Error ? e.message : `could not open a window for ${p.label}`;
+      this.error = e instanceof Error ? e.message : `could not open your browser for ${p.label}`;
     } finally {
       const next = new Set(this.#busy);
       next.delete(p.label);
@@ -240,31 +261,19 @@ export const personaList = new PersonaList({
     // the dōjō will not build one.
     return res.ok ? (res.data.authorizeUrl ?? null) : null;
   },
-  openAuth: async (url, opts) => {
-    if (!opts.fresh) {
-      // The system browser, because it holds the GitHub session that makes a
-      // renewal prompt-free. The app's own webview has never logged in, so an
-      // in-app window would show a login form for a renewal that needs none.
-      const { openUrl } = await import('@tauri-apps/plugin-opener');
-      await openUrl(url);
-      return;
-    }
-    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-    const w = new WebviewWindow(opts.label, {
-      url,
-      // A non-persistent data store: no inherited cookies, so GitHub asks
-      // WHICH account instead of assuming the one already signed in.
-      incognito: true,
-      title: 'Sign in to GitHub',
-      width: 520,
-      height: 700,
-      center: true
-    });
-    // A window that fails to construct must not resolve as success — the caller
-    // records the failure and the UI offers the URL instead.
-    await new Promise<void>((resolve, reject) => {
-      void w.once('tauri://created', () => resolve());
-      void w.once('tauri://error', (e) => reject(new Error(String(e.payload))));
-    });
+  approveKeychain: async (persona) => {
+    const [{ senseiApi }, { appState }] = await Promise.all([
+      import('./api.js'),
+      import('./appstate.svelte.js')
+    ]);
+    const res = await senseiApi(appState.port).tryApproveKeychain(persona);
+    if (!res.ok) return res.error.message || 'the daemon did not answer';
+    return res.data.ok ? null : (res.data.error ?? 'keychain access was not approved');
+  },
+  openAuth: async (url) => {
+    // The system browser, for every sign-in (#300): it holds the user's GitHub
+    // session and every second factor GitHub offers.
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(url);
   }
 });

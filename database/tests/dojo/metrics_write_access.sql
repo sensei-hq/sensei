@@ -41,7 +41,7 @@ insert into dojo.billing_accounts (tenant_id, plan, status, period_start, period
   ('b0000000-0000-4000-8000-00000000013a', 'team', 'active', current_date - 1, current_date + 30);
 insert into dojo.tenant_share_policy (tenant_id, private_repos_shared) values ('b0000000-0000-4000-8000-00000000013a', true);
 
--- 1 T private (syncs for ola via the org policy) · 2 T public (ada elected it, ola has not) ·
+-- 1 T private (syncs for ola via the org policy) · 2 T public (ada elected it, ola opted out) ·
 -- 3 P public (ola's own) · 4 U public (not ola's) · 5 P, visibility never captured
 insert into dojo.repositories (id, tenant_id, repo_key, name, visibility, visibility_captured_at, provider) values
   ('91000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000013a', 'github.com/ztest-mw/priv', 'priv', 'private', now(), 'github'),
@@ -50,10 +50,13 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, visibility, visibi
   ('91000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-00000000013c', 'github.com/ztest-u/x',     'x',    'public',  now(), 'github'),
   ('91000000-0000-4000-8000-000000000005', 'b0000000-0000-4000-8000-00000000013b', 'github.com/ztest-ola/unk', 'unk',  null,      null,  'github');
 
--- ada has elected T's public repository: HER verdict syncs it, ola's does not.
+-- ada has elected T's public repository and ola has opted out of it: HER verdict
+-- syncs it, ola's does not. (Ola's absence alone would now elect it, #301.)
 insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected) values
   ('b0000000-0000-4000-8000-00000000013a', '91000000-0000-4000-8000-000000000002', 'user',
-   'a0000000-0000-4000-8000-000000000131', true);
+   'a0000000-0000-4000-8000-000000000131', true),
+  ('b0000000-0000-4000-8000-00000000013a', '91000000-0000-4000-8000-000000000002', 'user',
+   'a0000000-0000-4000-8000-000000000132', false);
 
 create temp table m as select id, key from sensei.metrics order by key limit 1;
 grant select on m to authenticated;

@@ -7,7 +7,8 @@
 
 	// The one shell (kit K2AppShell), phone through desktop. context "you" | "org".
 	// The nav groups and (screen-supplied) context header differ; everything else is
-	// identical. TopBar sits on top, then a NavPane + scrolling main, and below `md`
+	// identical. TopBar sits on top, then a NavPane + the screen (it scrolls its own
+	// body, #293), and below `md`
 	// a bottom TabBar. This shell owns the drawer open state (TopBar's hamburger
 	// toggles it, the NavPane backdrop / a nav selection closes it) so screens just
 	// pass nav + content. `children` is the main-column content (a screen opens
@@ -74,7 +75,8 @@
 			{onnav}
 			onclose={() => (navOpen = false)}
 		/>
-		<div class="flex-1 overflow-auto" style="min-width: 0">
+		<!-- Not a scroller: each screen is a Screen whose body scrolls (#293). -->
+		<div data-component="app-main" class="min-h-0 min-w-0 flex-1 overflow-hidden">
 			{#if children}{@render children()}{/if}
 		</div>
 	</div>

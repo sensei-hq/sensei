@@ -213,18 +213,6 @@ describe('buildAtlasPage', () => {
     expect(page.cap).toBe(SYMBOL_CAP);
   });
 
-  it('defaults the solution roll-up to zeros when absent', () => {
-    const page = buildAtlasPage({
-      repoId: 'x',
-      scopes: [],
-      communities: [],
-      callFlow: { moduleCount: 0, exportCount: 0, callCount: 0 },
-      graph: { nodes: [], edges: [] },
-      solution: null,
-    });
-    expect(page.solution).toEqual({ repos: 0, nodes: 0, edges: 0 });
-  });
-
   it('builds a production-only `code` view that excludes test-file nodes', () => {
     const page = buildAtlasPage({
       repoId: 'sensei',
@@ -240,7 +228,7 @@ describe('buildAtlasPage', () => {
         ],
         edges: [edge('e1', 'prod', 'helper'), edge('e2', 't1', 't2')],
       },
-      solution: null,
+      solution: { repos: 1, nodes: 4, edges: 2 },
     });
     // Full view keeps all 4; the code view drops both test nodes BEFORE the cap.
     expect(page.totalSymbols).toBe(4);

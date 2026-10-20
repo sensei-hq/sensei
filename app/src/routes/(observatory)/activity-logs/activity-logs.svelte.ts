@@ -8,7 +8,8 @@
 // Everything here is pure and unit-tested except `ActivityLogsView`, the tiny
 // mutable surface the search box and row toggles bind to.
 
-import type { LogRow, LogLevel } from '$lib/types.js';
+import type { LogRow, LogLevel, ScheduledTask } from '$lib/types.js';
+import { failureReason, type ApiResult } from '$lib/api.js';
 
 /** Known severity levels, most→least severe last for the picker order. */
 export const LEVELS: LogLevel[] = ['trace', 'debug', 'info', 'warn', 'error'];
@@ -196,4 +197,22 @@ export class ActivityLogsView {
   clear(): void {
     this.expandedId = null;
   }
+}
+
+/** The Logs page's data from its two reads. A failed read carries its error —
+ *  "could not read" — instead of an empty list that reads as "there is none". */
+export function logsPageData(
+  rows: ApiResult<LogRow[]>,
+  scheduled: ApiResult<{ tasks: ScheduledTask[] }>,
+  filters: LogFilters,
+) {
+  const logRows = rows.ok ? rows.data : [];
+  return {
+    rows: logRows,
+    rowsError: rows.ok ? null : `Could not read the log: ${failureReason(rows.error)}`,
+    filters,
+    capped: logRows.length >= filters.limit,
+    tasks: scheduled.ok ? scheduled.data.tasks : [],
+    tasksError: scheduled.ok ? null : `Could not read the background tasks: ${failureReason(scheduled.error)}`,
+  };
 }

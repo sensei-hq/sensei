@@ -8,13 +8,13 @@
  *
  * Loading is idempotent: `loadCatalog()` / `loadInsights()` short-circuit
  * on subsequent calls once loaded, and `refresh()` forces a re-fetch.
- * Session timelines are cached per session id so re-selecting a session
+ * Session replays are cached per session id so re-selecting a session
  * doesn't round-trip to the daemon.
  */
-import { senseiApi } from '$lib/api.js';
+import { failureReason, senseiApi } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
 import type {
-  McpToolManifest, SessionToolCall, ToolInsight, ToolSignal,
+  McpToolManifest, ToolInsight, ToolSignal,
   SessionReplayCall, McpServerRow, McpServerToolsManifest,
   ToolHealthSource,
 } from '$lib/types.js';
@@ -45,13 +45,17 @@ export function toolVerdict(callCount: number, errorCount: number): ToolVerdict 
 }
 
 // Loading lifecycle — 'idle' before first load, 'loading' during the
-// first fetch, 'ready' once populated, 'error' if the fetch threw. The
+// first fetch, 'ready' once populated, 'error' if a read failed (its reason
+// in the matching *Error, #288 — the fallback reads never failed, so this
+// state was unreachable and a daemon failure read as empty data). The
 // three main datasets each carry their own state so a signal fetch
 // failing doesn't hide manifest data.
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 let catalogStatus = $state<LoadStatus>('idle');
 let insightsStatus = $state<LoadStatus>('idle');
+let catalogError = $state<string | null>(null);
+let insightsError = $state<string | null>(null);
 
 let tools = $state<McpToolManifest[]>([]);
 let toolStats = $state<ToolStat[]>([]);
@@ -60,54 +64,38 @@ let toolInsights = $state<ToolInsight[]>([]);
 /** Where the current tool-signals response came from (cache vs derived). */
 let signalSource = $state<'cache' | 'derived' | null>(null);
 
-// Session timelines cache — keyed by session id so replay flips stay
-// instant after the first fetch. Cleared on refresh() alongside the
-// primary datasets.
-let sessionTimelines = $state<Record<string, SessionToolCall[]>>({});
-
 async function loadCatalog(force = false): Promise<void> {
   if (catalogStatus === 'loading') return;
   if (!force && catalogStatus === 'ready') return;
   catalogStatus = 'loading';
-  try {
-    const api = senseiApi(appState.port);
-    const [catalog, stats, signals] = await Promise.all([
-      api.mcpListTools(),
-      api.getToolUsage(),
-      api.getToolSignals(),
-    ]);
-    tools = catalog.tools;
-    toolStats = stats.tools ?? [];
-    toolSignals = signals.signals ?? [];
-    signalSource = signals.source ?? null;
-    catalogStatus = 'ready';
-  } catch {
+  const api = senseiApi(appState.port);
+  const [catalog, stats, signals] = await Promise.all([
+    api.tryMcpListTools(),
+    api.tryGetToolUsage(),
+    api.tryGetToolSignals(),
+  ]);
+  if (!catalog.ok || !stats.ok || !signals.ok) {
+    const failed = [catalog, stats, signals].find((r) => !r.ok);
+    catalogError = failed && !failed.ok ? failureReason(failed.error) : null;
     catalogStatus = 'error';
+    return;
   }
+  tools = catalog.data.tools;
+  toolStats = stats.data.tools ?? [];
+  toolSignals = signals.data.signals ?? [];
+  signalSource = signals.data.source ?? null;
+  catalogError = null;
+  catalogStatus = 'ready';
 }
 
 async function loadInsights(force = false): Promise<void> {
   if (insightsStatus === 'loading') return;
   if (!force && insightsStatus === 'ready') return;
   insightsStatus = 'loading';
-  try {
-    const api = senseiApi(appState.port);
-    const resp = await api.getToolInsights();
-    toolInsights = resp.insights ?? [];
-    insightsStatus = 'ready';
-  } catch {
-    insightsStatus = 'error';
-  }
-}
-
-async function loadSessionTimeline(sessionId: string, force = false): Promise<SessionToolCall[]> {
-  if (!force && sessionTimelines[sessionId]) {
-    return sessionTimelines[sessionId];
-  }
-  const api = senseiApi(appState.port);
-  const resp = await api.getSessionToolTimeline(sessionId, 200);
-  sessionTimelines = { ...sessionTimelines, [sessionId]: resp.calls };
-  return resp.calls;
+  const read = await senseiApi(appState.port).tryGetToolInsights();
+  toolInsights = read.ok ? read.data.insights ?? [] : [];
+  insightsError = read.ok ? null : failureReason(read.error);
+  insightsStatus = read.ok ? 'ready' : 'error';
 }
 
 // ── #84 T2 Slice C — Replay with #90 verdicts ───────────────────────────
@@ -127,15 +115,16 @@ let sessionReplays = $state<Record<string, ReplayCache>>({});
 async function loadSessionReplay(
   sessionId: string,
   opts: { force?: boolean; classify?: boolean } = {},
-): Promise<ReplayCache> {
+): Promise<{ replay: ReplayCache | null; error: string | null }> {
   if (!opts.force && sessionReplays[sessionId]) {
-    return sessionReplays[sessionId];
+    return { replay: sessionReplays[sessionId], error: null };
   }
-  const api = senseiApi(appState.port);
-  const resp = await api.getSessionReplay(sessionId, { classify: opts.classify });
-  const cache: ReplayCache = { calls: resp.calls, summary: resp.summary };
+  const read = await senseiApi(appState.port).tryGetSessionReplay(sessionId, { classify: opts.classify });
+  // A failed read is not cached: it is the session's error, not an empty replay (#288).
+  if (!read.ok) return { replay: null, error: failureReason(read.error) };
+  const cache: ReplayCache = { calls: read.data.calls, summary: read.data.summary };
   sessionReplays = { ...sessionReplays, [sessionId]: cache };
-  return cache;
+  return { replay: cache, error: null };
 }
 
 // ── Instruments · Health L1 — tool-health source grid ──────────────────
@@ -145,6 +134,7 @@ async function loadSessionReplay(
  *  L2 per-tool drill still reads tool-signals / tool-insights above. */
 let toolsHealth = $state<ToolHealthSource[]>([]);
 let toolsHealthStatus = $state<LoadStatus>('idle');
+let toolsHealthError = $state<string | null>(null);
 
 /** Load the L1 source grid. Idempotent — a second call short-circuits once
  *  ready unless `force` is set (mirrors loadCatalog / loadInsights). */
@@ -152,14 +142,10 @@ async function loadToolsHealth(force = false): Promise<void> {
   if (toolsHealthStatus === 'loading') return;
   if (!force && toolsHealthStatus === 'ready') return;
   toolsHealthStatus = 'loading';
-  try {
-    const api = senseiApi(appState.port);
-    const resp = await api.getToolsHealth();
-    toolsHealth = resp.sources ?? [];
-    toolsHealthStatus = 'ready';
-  } catch {
-    toolsHealthStatus = 'error';
-  }
+  const read = await senseiApi(appState.port).tryGetToolsHealth();
+  toolsHealth = read.ok ? read.data.sources ?? [] : [];
+  toolsHealthError = read.ok ? null : failureReason(read.error);
+  toolsHealthStatus = read.ok ? 'ready' : 'error';
 }
 
 /** Grid order — connected sources first, then by 14d call volume desc so
@@ -195,6 +181,9 @@ function toolsHealthKpis(): {
 let mcpServers = $state<McpServerRow[]>([]);
 let mcpServersStatus = $state<LoadStatus>('idle');
 let serverToolManifests = $state<Record<string, McpServerToolsManifest>>({});
+/** Why a server's tools could not be read, by server id (#288). Kept apart
+ *  from the manifests so a failed read is retried on the next expand. */
+let serverToolErrors = $state<Record<string, string>>({});
 
 /** Load the discovered MCP-servers list for a project (or user-scope only
  *  when no project id). Idempotent — a subsequent call returns cached rows
@@ -220,11 +209,15 @@ async function loadMcpServers(projectId?: string, force = false): Promise<McpSer
 async function loadServerTools(
   serverId: string,
   opts: { refresh?: boolean; probe?: boolean } = {},
-): Promise<McpServerToolsManifest> {
-  const api = senseiApi(appState.port);
-  const manifest = await api.getMcpServerTools(serverId, opts);
-  serverToolManifests = { ...serverToolManifests, [serverId]: manifest };
-  return manifest;
+): Promise<void> {
+  const read = await senseiApi(appState.port).tryGetMcpServerTools(serverId, opts);
+  const { [serverId]: _previous, ...others } = serverToolErrors;
+  if (read.ok) {
+    serverToolManifests = { ...serverToolManifests, [serverId]: read.data };
+    serverToolErrors = others;
+  } else {
+    serverToolErrors = { ...others, [serverId]: failureReason(read.error) };
+  }
 }
 
 /** Toggle a server's `enabled` flag. The row changes only once the daemon
@@ -245,16 +238,16 @@ async function refreshMcpServers(): Promise<string | null> {
   return null;
 }
 
-/** Force a fresh fetch of every catalog dataset. Session timelines
- *  are re-fetched lazily on next request rather than eagerly here.
+/** Force a fresh fetch of every catalog dataset. Session replays and server
+ *  tools are re-fetched lazily on next request rather than eagerly here.
  */
 async function refresh(): Promise<void> {
   catalogStatus = 'idle';
   insightsStatus = 'idle';
   toolsHealthStatus = 'idle';
-  sessionTimelines = {};
   sessionReplays = {};
   serverToolManifests = {};
+  serverToolErrors = {};
   mcpServersStatus = 'idle';
   await Promise.all([loadCatalog(true), loadInsights(true), loadToolsHealth(true)]);
 }
@@ -271,12 +264,14 @@ export const mcp = {
   get signalSource() { return signalSource; },
   get catalogStatus() { return catalogStatus; },
   get insightsStatus() { return insightsStatus; },
+  get catalogError() { return catalogError; },
+  get insightsError() { return insightsError; },
   /** Instruments · Health L1 — source grid rows, connected-first. */
   get toolsHealth() { return sortedToolsHealth(); },
   get toolsHealthStatus() { return toolsHealthStatus; },
+  get toolsHealthError() { return toolsHealthError; },
   /** Header KPIs derived from the L1 grid rows. */
   get toolsHealthKpis() { return toolsHealthKpis(); },
-  get sessionTimelines() { return sessionTimelines; },
   /** #84 T2 Slice C — cached Replay responses (calls + summary) by session id. */
   get sessionReplays() { return sessionReplays; },
   /** #84 T2 Slice A — discovered MCP servers list. */
@@ -284,6 +279,7 @@ export const mcp = {
   get mcpServersStatus() { return mcpServersStatus; },
   /** #84 T2 Slice B — cached tool manifests by server id. */
   get serverToolManifests() { return serverToolManifests; },
+  get serverToolErrors() { return serverToolErrors; },
   /** Look up a cached insight row by tool name (undefined if not present). */
   insightFor(toolName: string): ToolInsight | undefined {
     return toolInsights.find((i) => i.toolName === toolName);
@@ -291,7 +287,6 @@ export const mcp = {
   loadCatalog,
   loadInsights,
   loadToolsHealth,
-  loadSessionTimeline,
   loadSessionReplay,
   loadMcpServers,
   loadServerTools,

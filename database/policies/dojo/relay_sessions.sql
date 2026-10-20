@@ -67,10 +67,16 @@ grant update (membership_id, run_id, title, goal, status, progress_done, progres
 drop policy if exists relay_sessions_publish_own on dojo.relay_sessions;
 create policy relay_sessions_publish_own on dojo.relay_sessions
     for insert to authenticated
-    with check (dojo.owns_membership(membership_id) and dojo.owns_project_or_none(project_id));
+    with check (dojo.owns_membership(membership_id) and dojo.project_in_my_dojo_or_none(project_id));
 
 drop policy if exists relay_sessions_update_own on dojo.relay_sessions;
 create policy relay_sessions_update_own on dojo.relay_sessions
     for update to authenticated
     using (dojo.owns_membership(membership_id))
-    with check (dojo.owns_membership(membership_id) and dojo.owns_project_or_none(project_id));
+    with check (dojo.owns_membership(membership_id) and dojo.project_in_my_dojo_or_none(project_id));
+
+-- The per-owner predicate this replaced (#299: projects are shared, not owned).
+-- Dropped HERE, after the policies above stop referencing it — a drop among the
+-- functions would fail on that dependency, and `cascade` would silently take the
+-- policies with it.
+drop function if exists dojo.owns_project_or_none(uuid);

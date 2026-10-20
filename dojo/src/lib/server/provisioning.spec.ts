@@ -140,6 +140,71 @@ describe('ensureProvisioned — the personal dōjō', () => {
 	});
 });
 
+describe('ensureProvisioned — the personal dōjō is connected to its owner on the forge', () => {
+	// Without this, `register_repository` maps a personal repository
+	// (github.com/{login}/…) to no tenant at all: `no_connection` for every one,
+	// though the personal dōjō exists and its owner is in it (#301).
+	const personalConnections = (db: ReturnType<typeof fakeDojoDb>) => {
+		const personal = db.tables.tenants.rows.find((t) => t.origin === 'personal');
+		return db.tables.tenant_connections.rows.filter((c) => c.tenant_id === personal?.id);
+	};
+
+	it('connects the personal tenant to the signer\'s own forge account, verified', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		const [conn, ...more] = personalConnections(db);
+		expect(more).toHaveLength(0);
+		expect(conn).toMatchObject({
+			provider: 'github',
+			external_id: '4242', // the user's STABLE id, not the login
+			external_slug: 'devuser',
+			connected_by: PRINCIPAL
+		});
+		expect(conn?.verified_at).toBeTruthy();
+	});
+
+	it('connects a personal tenant that predates this, on the next pass, once', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		db.tables.tenant_connections.rows = db.tables.tenant_connections.rows.filter(
+			(c) => c.external_id !== '4242'
+		);
+		expect(personalConnections(db)).toHaveLength(0);
+		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(personalConnections(db)).toHaveLength(1);
+	});
+
+	it('follows a renamed login, so new repositories under it still map', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		await ensureProvisioned(db as never, PRINCIPAL, { ...FACTS, user: { ...FACTS.user, login: 'dev-new' } });
+		const conns = personalConnections(db);
+		expect(conns).toHaveLength(1);
+		expect(conns[0]).toMatchObject({ external_id: '4242', external_slug: 'dev-new' });
+	});
+
+	it('refuses, rather than re-points, an account already connected to another tenant', async () => {
+		const db = fakeDojoDb(
+			tables({
+				tenant_connections: {
+					rows: [{ id: 'c-x', tenant_id: 't-other', provider: 'github', external_id: '4242', external_slug: 'devuser' }],
+					uniques: []
+				}
+			})
+		);
+		await expect(ensureProvisioned(db as never, PRINCIPAL, FACTS)).rejects.toThrow(/connected to another tenant/);
+		expect(db.tables.tenant_connections.rows[0]).toMatchObject({ tenant_id: 't-other' });
+	});
+
+	it('connects nothing for a sign-in with no forge identity', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, null, { email: 'solo@example.com' });
+		expect(db.tables.tenants.rows.filter((t) => t.origin === 'personal')).toHaveLength(1);
+		expect(db.tables.tenant_connections.rows).toHaveLength(0);
+	});
+});
+
 describe('ensureProvisioned — org tenants and connections', () => {
 	it('creates one organization tenant per forge org, each with a verified connection', async () => {
 		const db = fakeDojoDb(tables());

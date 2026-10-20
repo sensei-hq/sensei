@@ -48,8 +48,8 @@ grant execute on function dojo.can_read_repository_metric(uuid, text, uuid, uuid
 comment on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) is
 'Row authorization for dojo.repository_metrics, per the access matrix ("Metrics",
 docs/spec/dojo/access-matrix.md): own user-scoped rows always; repo-scoped rows
-for anyone on a team owning a project with the repository, or that project''s
-owner; another person''s user-scoped rows for a TEAM LEAD of such a project; the
+for anyone on a team owning a project with the repository (projects have no owner,
+#299); another person''s user-scoped rows for a TEAM LEAD of such a project; the
 whole tenant for its admins. Composed from current_principal_id, on_team_of,
 leads_team_of and tenant_role_at_least, so the relationships have one definition.
 

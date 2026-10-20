@@ -5,7 +5,7 @@
  * eyeballed against live data. Run: `bun run test:inspect`.
  */
 import { test } from '../fixtures';
-import { navigateToScreen, DAEMON_URL } from '../helpers';
+import { navigateToScreen, DAEMON_URL, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -62,7 +62,7 @@ test.describe('inspect real project metrics', () => {
       for (const c of landing.cells) {
         console.log(`  ${(c.value ?? '').padEnd(11)} ${(c.key ?? '').padEnd(24)} moved=${c.moved}${c.delta ? '  ' + c.delta : ''}`);
       }
-      await tauriPage.screenshot({ path: `${DIR}/metrics-${name}.png` });
+      await shot(tauriPage, `${DIR}/metrics-${name}.png`);
 
       // ── Detail: drill into the first signal (a mover if any, else the first cell) ──
       const drillKey = landing.movers[0] ?? landing.cells[0]?.key;
@@ -77,7 +77,7 @@ test.describe('inspect real project metrics', () => {
           `document.querySelector('[data-component="signal-insight"]')?.textContent?.replace(/\\s+/g,' ').trim() ?? null`,
         )) as string | null;
         console.log(`[inspect] ${name} — detail(${drillKey}) insight: ${insight ?? '(none)'}`);
-        await tauriPage.screenshot({ path: `${DIR}/metrics-${name}-detail.png` });
+        await shot(tauriPage, `${DIR}/metrics-${name}-detail.png`);
       }
     });
   }

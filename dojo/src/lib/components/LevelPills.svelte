@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { LIB_LEVELS, type LibLevelId } from '$lib/library-data';
 
 	// The Org / Team / Project / Stack level selector (mockup LevelPills): a
@@ -21,8 +22,12 @@
 				: 'text-ink-mute font-normal'}"
 			style="padding: 2px 8px; border: none; cursor: pointer; font-family: inherit"
 		>
-			<span class="kanji text-xs {on ? 'text-accent' : 'text-ink-faint'}">{level.kanji}</span
-			>{level.label}
+			<KanjiToken
+				char={level.kanji}
+				size="inherit"
+				toneClass=""
+				class="text-xs {on ? 'text-accent' : 'text-ink-faint'}"
+			/>{level.label}
 		</button>
 	{/each}
 </div>

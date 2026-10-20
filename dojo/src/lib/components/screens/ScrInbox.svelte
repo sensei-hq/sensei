@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
 	import { SectionHead, SubTabs, InboxRow, EmptyState, Banner } from '$lib/components/kit';
 	import type { KitInbox, KitRun, KitNavItem } from '$lib/components/kit/types';
 	import { filterInbox } from '$lib/relay-map';
@@ -36,28 +37,33 @@
 	{#if needTotal > 0}<span class="mono text-accent text-xs">{needTotal} need you</span>{/if}
 {/snippet}
 
-<div class="flex flex-col p-4 gap-4 md:px-5 md:py-6">
-	<SectionHead eyebrow="You · in flight" title="Inbox" count={inbox.length} right={needBadge} />
-	<SubTabs tabs={FILTERS} active={filter} onPick={(id) => (filter = id)} />
-
-	{#if error}
-		<Banner tone="warning" title="Couldn't reach the dōjō">{error}</Banner>
-	{/if}
-
-	{#if !inbox.length}
-		<EmptyState kanji="空" title="Nothing in flight.">
-			Sessions you're running across your dōjōs show up here. When it's quiet, sensei stays quiet.
-		</EmptyState>
-	{:else if !shown.length}
-		<EmptyState kanji="空" title="Nothing here.">No session matches that view right now.</EmptyState>
-	{:else}
-		<div class="border-paper-edge overflow-hidden rounded-lg border">
-			{#each shown as row (row.run.id)}
-				<InboxRow {row} selected={row.run.id === selectedId} {onOpen} />
-			{/each}
+<Screen>
+	{#snippet header()}
+		<div class="flex flex-col gap-4 px-4 pt-4 md:px-5 md:pt-6">
+			<SectionHead eyebrow="You · in flight" title="Inbox" count={inbox.length} right={needBadge} />
+			<SubTabs tabs={FILTERS} active={filter} onPick={(id) => (filter = id)} />
 		</div>
-		<p class="mono text-ink-faint text-xs" style="line-height: 1.5">
-			Sorted by what waits on you — then stalled or blocked, then running, then finished.
-		</p>
-	{/if}
-</div>
+	{/snippet}
+	<div class="flex flex-col p-4 gap-4 md:px-5 md:py-6">
+		{#if error}
+			<Banner tone="warning" title="Couldn't reach the dōjō">{error}</Banner>
+		{/if}
+
+		{#if !inbox.length}
+			<EmptyState kanji="空" title="Nothing in flight.">
+				Sessions you're running across your dōjōs show up here. When it's quiet, sensei stays quiet.
+			</EmptyState>
+		{:else if !shown.length}
+			<EmptyState kanji="空" title="Nothing here.">No session matches that view right now.</EmptyState>
+		{:else}
+			<div class="border-paper-edge overflow-hidden rounded-lg border">
+				{#each shown as row (row.run.id)}
+					<InboxRow {row} selected={row.run.id === selectedId} {onOpen} />
+				{/each}
+			</div>
+			<p class="mono text-ink-faint text-xs" style="line-height: 1.5">
+				Sorted by what waits on you — then stalled or blocked, then running, then finished.
+			</p>
+		{/if}
+	</div>
+</Screen>
