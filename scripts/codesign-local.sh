@@ -31,7 +31,15 @@ if [[ -z "$identity" ]]; then
 fi
 
 for f in "$@"; do
-  codesign --sign "$identity" --identifier "dev.sensei.$(basename "$f")" \
-           --options runtime --force "$f"
+  name=$(basename "$f")
+  if [[ "$name" == *.app ]]; then
+    # A bundle (the e2e Sensei.app, #284): its own namespace, since
+    # `dev.sensei.sensei` is the CLI's and grants are keyed on identity.
+    name=$(tr '[:upper:]' '[:lower:]' <<<"${name%.app}")
+    id="dev.sensei.app.$name"
+  else
+    id="dev.sensei.$name"
+  fi
+  codesign --sign "$identity" --identifier "$id" --options runtime --force "$f"
 done
 echo "codesign-local: signed $# binary(ies) as '$identity'"

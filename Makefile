@@ -339,6 +339,9 @@ app-dev:
 # discoverable and not buried in TypeScript.
 app-e2e-build: install-debug
 	cd app && bunx tauri build --debug --features e2e-testing
+	# A stable identity, so the bundle's Screen Recording grant (the inspect
+	# harness's window capture needs it) can survive a rebuild (#284).
+	scripts/codesign-local.sh app/src-tauri/target/debug/bundle/macos/Sensei.app
 
 # Type-check SvelteKit sources.
 #
