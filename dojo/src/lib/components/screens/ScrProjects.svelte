@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
 	import { SectionHead, Btn, ProjectRow, EmptyState } from '$lib/components/kit';
 	import type { KitProject } from '$lib/components/kit/types';
 
@@ -27,28 +28,33 @@
 	} = $props();
 </script>
 
-<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-	<SectionHead {eyebrow} {title} count={projects.length}>
-		{#snippet right()}
-			<Btn size="sm" variant="ghost" icon="tuning-2">Filter</Btn>
-		{/snippet}
-	</SectionHead>
-
-	{#if error}
-		<EmptyState kanji="断" title="Couldn't load your projects.">
-			{error}. This is a read error, not an empty list — retry in a moment. Nothing has been hidden
-			or invented.
-		</EmptyState>
-	{:else if projects.length}
-		<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
-			{#each projects as p (p.id)}
-				<ProjectRow {p} onopen={onOpenProject} {showDojo} />
-			{/each}
+<Screen>
+	{#snippet header()}
+		<div class="px-4 pt-4 md:px-8 md:pt-8">
+			<SectionHead {eyebrow} {title} count={projects.length}>
+				{#snippet right()}
+					<Btn size="sm" variant="ghost" icon="tuning-2">Filter</Btn>
+				{/snippet}
+			</SectionHead>
 		</div>
-	{:else}
-		<EmptyState kanji="空" title="No projects yet.">
-			Projects appear here once you join a dōjō or sensei starts watching a repository on this
-			machine. Nothing is hidden — this is everything you touch.
-		</EmptyState>
-	{/if}
-</div>
+	{/snippet}
+	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+		{#if error}
+			<EmptyState kanji="断" title="Couldn't load your projects.">
+				{error}. This is a read error, not an empty list — retry in a moment. Nothing has been hidden
+				or invented.
+			</EmptyState>
+		{:else if projects.length}
+			<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
+				{#each projects as p (p.id)}
+					<ProjectRow {p} onopen={onOpenProject} {showDojo} />
+				{/each}
+			</div>
+		{:else}
+			<EmptyState kanji="空" title="No projects yet.">
+				Projects appear here once you join a dōjō or sensei starts watching a repository on this
+				machine. Nothing is hidden — this is everything you touch.
+			</EmptyState>
+		{/if}
+	</div>
+</Screen>

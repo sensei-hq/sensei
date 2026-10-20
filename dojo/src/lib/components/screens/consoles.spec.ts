@@ -97,7 +97,7 @@ describe('ScrTriage — scope-grouped, confidence-ranked candidate queue', () =>
 
 	it('uses the desktop 4px-grid rhythm with no inline spacing px on the wrapper', () => {
 		const { container } = render(ScrTriage, { props: { orgName: 'Acme Corp', groups, detail } });
-		const el = container.firstElementChild as HTMLElement;
+		const el = container.querySelector('[data-component="screen-body"]')!.firstElementChild as HTMLElement;
 		expect(el.className).toContain('p-8');
 		expect(el.className).toContain('gap-6');
 		expect(el.getAttribute('style') ?? '').not.toMatch(/padding:|gap:/);

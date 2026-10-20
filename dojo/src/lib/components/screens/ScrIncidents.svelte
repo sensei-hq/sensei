@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
 	import { SectionHead, Banner, Btn, Chip, ListSection, KanjiToken, EmptyState } from '$lib/components/kit';
 	import type { KitIncident, KitIncidentDetail } from '$lib/components/kit/types';
 	import { severityTone, stateToneClass } from '$lib/incidents-view';
@@ -46,60 +47,65 @@
 	}
 </script>
 
-<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-	<SectionHead eyebrow={orgName + ' · clients'} title="Incidents" count={incidents.length}>
-		{#snippet right()}
-			<Btn size="sm" icon="add-circle" onclick={report}>Report</Btn>
-		{/snippet}
-	</SectionHead>
+<Screen>
+	{#snippet header()}
+		<div class="px-4 pt-4 md:px-8 md:pt-8">
+			<SectionHead eyebrow={orgName + ' · clients'} title="Incidents" count={incidents.length}>
+				{#snippet right()}
+					<Btn size="sm" icon="add-circle" onclick={report}>Report</Btn>
+				{/snippet}
+			</SectionHead>
+		</div>
+	{/snippet}
+	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+		<Banner kanji="盾" tone="warning" title="Contain a near-leak fast.">
+			Leak-guard holds anything that looks like client source before it leaves. Log the containment,
+			set retention, and control client read-access here.
+		</Banner>
 
-	<Banner kanji="盾" tone="warning" title="Contain a near-leak fast.">
-		Leak-guard holds anything that looks like client source before it leaves. Log the containment,
-		set retention, and control client read-access here.
-	</Banner>
-
-	{#if !incidents.length}
-		<EmptyState kanji="盾" title="No incidents on record.">
-			Confidentiality containments land here. Nothing has needed leak-guard attention.
-		</EmptyState>
-	{:else}
-		<ListSection icon="shield-warning" title="Confidentiality incidents" count={incidents.length}>
-			{#each incidents as it (it.id)}
-				{@const sv = severityTone(it.severity)}
-				{@const st = stateToneClass(it.state)}
-				<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-					<KanjiToken char={it.kanji} size="lg" toneClass={sv.text} w={22} />
-					<div class="flex-1" style="min-width: 0">
-						<div class="text-ink text-sm">{it.title}</div>
-						<div class="mono text-ink-faint text-xs" style="margin-top: 1px">
-							{it.client} · {it.when}
+		{#if !incidents.length}
+			<EmptyState kanji="盾" title="No incidents on record.">
+				Confidentiality containments land here. Nothing has needed leak-guard attention.
+			</EmptyState>
+		{:else}
+			<ListSection icon="shield-warning" title="Confidentiality incidents" count={incidents.length}>
+				{#each incidents as it (it.id)}
+					{@const sv = severityTone(it.severity)}
+					{@const st = stateToneClass(it.state)}
+					<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
+						<KanjiToken char={it.kanji} size="lg" toneClass={sv.text} w={22} />
+						<div class="flex-1" style="min-width: 0">
+							<div class="text-ink text-sm">{it.title}</div>
+							<div class="mono text-ink-faint text-xs" style="margin-top: 1px">
+								{it.client} · {it.when}
+							</div>
 						</div>
+						<Chip toneClass={sv.text} softClass={sv.soft} edgeClass={sv.edge}>{it.severity}</Chip>
+						<span class="inline-flex items-center gap-1 text-xs {st}">
+							<span class="rounded-full" style="width: 6px; height: 6px; background: currentColor"></span
+							>{it.state}
+						</span>
+						<Btn size="sm" variant="ghost" icon="alt-arrow-right" onclick={() => onOpen?.(it)}>Open</Btn>
+						{#if onResolve && it.state !== 'resolved'}
+							<Btn size="sm" variant="ghost" icon="check-circle" onclick={() => onResolve?.(it)}>
+								Resolve
+							</Btn>
+						{/if}
+						{#if onDelete}
+							<Btn size="sm" variant="ghost" icon="trash-bin-trash" onclick={() => onDelete?.(it)}>
+								Delete
+							</Btn>
+						{/if}
 					</div>
-					<Chip toneClass={sv.text} softClass={sv.soft} edgeClass={sv.edge}>{it.severity}</Chip>
-					<span class="inline-flex items-center gap-1 text-xs {st}">
-						<span class="rounded-full" style="width: 6px; height: 6px; background: currentColor"></span
-						>{it.state}
-					</span>
-					<Btn size="sm" variant="ghost" icon="alt-arrow-right" onclick={() => onOpen?.(it)}>Open</Btn>
-					{#if onResolve && it.state !== 'resolved'}
-						<Btn size="sm" variant="ghost" icon="check-circle" onclick={() => onResolve?.(it)}>
-							Resolve
-						</Btn>
-					{/if}
-					{#if onDelete}
-						<Btn size="sm" variant="ghost" icon="trash-bin-trash" onclick={() => onDelete?.(it)}>
-							Delete
-						</Btn>
-					{/if}
-				</div>
-			{/each}
-		</ListSection>
-	{/if}
+				{/each}
+			</ListSection>
+		{/if}
 
-	<IncidentDetailPane {detail} onClose={onCloseDetail} />
+		<IncidentDetailPane {detail} onClose={onCloseDetail} />
 
-	<div class="flex flex-wrap gap-2">
-		<Chip icon="lock-keyhole" toneClass="text-ink-mute">Retention · 1 year</Chip>
-		<Chip icon="eye-closed" toneClass="text-ink-mute">Client read-access · off</Chip>
+		<div class="flex flex-wrap gap-2">
+			<Chip icon="lock-keyhole" toneClass="text-ink-mute">Retention · 1 year</Chip>
+			<Chip icon="eye-closed" toneClass="text-ink-mute">Client read-access · off</Chip>
+		</div>
 	</div>
-</div>
+</Screen>

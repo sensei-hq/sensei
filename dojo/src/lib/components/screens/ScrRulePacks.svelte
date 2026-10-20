@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
 	import { SectionHead, Btn, Icon, Chip, ListSection, RuleRow } from '$lib/components/kit';
 	import type { KitRulePack } from '$lib/components/kit/types';
 	import { createRulePacks } from '$lib/rulepacks-state.svelte';
@@ -39,34 +40,39 @@
 	}
 </script>
 
-<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-	<SectionHead
-		kanji="束" eyebrow="Adopt · not a library" title="Rule packs"
-		description="Packs are bundles of rules you adopt into your constitution. Adopting a pack adds its rules at the scope you choose. Open a pack to read its rules first — you can drop any single rule later, so a pack is a starting point, not a lock."
-	>
-		{#snippet right()}
-			<Btn size="sm" variant="ghost" icon="tuning-2">Browse all</Btn>
-		{/snippet}
-	</SectionHead>
+<Screen>
+	{#snippet header()}
+		<div class="px-4 pt-4 md:px-8 md:pt-8">
+			<SectionHead
+				kanji="束" eyebrow="Adopt · not a library" title="Rule packs"
+				description="Packs are bundles of rules you adopt into your constitution. Adopting a pack adds its rules at the scope you choose. Open a pack to read its rules first — you can drop any single rule later, so a pack is a starting point, not a lock."
+			>
+				{#snippet right()}
+					<Btn size="sm" variant="ghost" icon="tuning-2">Browse all</Btn>
+				{/snippet}
+			</SectionHead>
+		</div>
+	{/snippet}
+	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+		<ListSection
+			icon="check-circle"
+			iconToneClass="text-success"
+			title="Adopted"
+			count={packState.adopted.length}
+			countToneClass="text-success"
+		>
+			{#each packState.adopted as pack (pack.id)}
+				{@render packRow(pack)}
+			{/each}
+		</ListSection>
 
-	<ListSection
-		icon="check-circle"
-		iconToneClass="text-success"
-		title="Adopted"
-		count={packState.adopted.length}
-		countToneClass="text-success"
-	>
-		{#each packState.adopted as pack (pack.id)}
-			{@render packRow(pack)}
-		{/each}
-	</ListSection>
-
-	<ListSection icon="box" title="Available" count={packState.available.length}>
-		{#each packState.available as pack (pack.id)}
-			{@render packRow(pack)}
-		{/each}
-	</ListSection>
-</div>
+		<ListSection icon="box" title="Available" count={packState.available.length}>
+			{#each packState.available as pack (pack.id)}
+				{@render packRow(pack)}
+			{/each}
+		</ListSection>
+	</div>
+</Screen>
 
 {#snippet packRow(pack: KitRulePack)}
 	{@const open = expanded.has(pack.id)}

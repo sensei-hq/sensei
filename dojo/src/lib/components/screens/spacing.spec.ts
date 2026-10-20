@@ -14,9 +14,10 @@ import { projects, stance, ladder } from '$lib/components/kit/fixtures';
 // matches the `p-8` inside `md:p-8`, so it passed before *and* after the
 // conversion and proved nothing either way.
 
-/** The root wrapper element a screen renders into. */
+/** The content column a screen renders into — the first element of its
+ *  scroll body, under the shared Screen's fixed header (#293). */
 function root(container: HTMLElement): HTMLElement {
-	return container.firstElementChild as HTMLElement;
+	return container.querySelector('[data-component="screen-body"]')!.firstElementChild as HTMLElement;
 }
 
 const SCREENS = [

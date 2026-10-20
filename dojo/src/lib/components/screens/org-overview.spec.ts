@@ -75,7 +75,7 @@ describe('ScrOrgHome — jurisdiction projects + needs + stats', () => {
 		const { container } = render(ScrOrgHome, {
 			props: { orgName: 'Acme Corp', projects, needs, stats }
 		});
-		const el = container.firstElementChild as HTMLElement;
+		const el = container.querySelector('[data-component="screen-body"]')!.firstElementChild as HTMLElement;
 		expect(el.className).toMatch(/\bp-4\b/);
 		expect(el.className).toMatch(/\bgap-4\b/);
 		expect(el.className).toMatch(/\bmd:p-8\b/);
