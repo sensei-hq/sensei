@@ -41,6 +41,7 @@ export default defineConfig({
       '$lib': '/src/lib',
       // Mirrors svelte.config.js: the vocabulary shared with the dōjō (#133).
       '@sensei/glyphs': fileURLToPath(new URL('../packages/glyphs/index.js', import.meta.url)),
+      '@sensei/ui': fileURLToPath(new URL('../packages/ui/index.js', import.meta.url)),
       // SvelteKit generates `$app/*` modules at build time. Under Vitest
       // there's no SvelteKit runtime, so any component or hook that
       // imports `$app/navigation` fails Vite's resolution. Point it at a

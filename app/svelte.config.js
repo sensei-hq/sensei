@@ -10,6 +10,8 @@ const config = {
       '$lib': './src/lib',
       // Shared with the dōjō (#133); vite.config.ts lets the dev server read it.
       '@sensei/glyphs': '../packages/glyphs/index.js',
+      // Svelte components shared with the dōjō (#293).
+      '@sensei/ui': '../packages/ui/index.js',
     },
   },
   vitePlugin: {

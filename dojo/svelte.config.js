@@ -25,7 +25,9 @@ const config = {
 		alias: {
 			// The kanji vocabulary shared with the desktop app (#133); dev-server.ts
 			// lets the dev server read it.
-			'@sensei/glyphs': '../packages/glyphs/index.js'
+			'@sensei/glyphs': '../packages/glyphs/index.js',
+			// Svelte components shared with the desktop app (#293).
+			'@sensei/ui': '../packages/ui/index.js'
 		}
 	},
 	vitePlugin: {

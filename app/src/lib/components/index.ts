@@ -10,7 +10,8 @@ export { default as MetricCard } from './MetricCard.svelte';
 export { default as MetricSparkline } from './MetricSparkline.svelte';
 export { default as MoeReasoningPanel } from './MoeReasoningPanel.svelte';
 export { default as PageHeader } from './PageHeader.svelte';
-export { default as Screen } from './Screen.svelte';
+// The screen layout is shared with the dōjō (#293).
+export { Screen } from '@sensei/ui';
 export { default as ProgressCard } from './ProgressCard.svelte';
 export { default as ScreenState } from './ScreenState.svelte';
 export { default as UnreadProjectsNotice } from './UnreadProjectsNotice.svelte';

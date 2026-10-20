@@ -8,6 +8,6 @@ export const devServer = {
 	host: '127.0.0.1',
 	port: 5173,
 	strictPort: true,
-	// packages/glyphs is shared with the desktop app and sits outside this app (#133).
-	fs: { allow: ['.', '../packages/glyphs'] as string[] }
+	// packages/* is shared with the desktop app and sits outside this app (#133, #293).
+	fs: { allow: ['.', '../packages'] as string[] }
 } as const;

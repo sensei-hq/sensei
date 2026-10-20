@@ -14,7 +14,7 @@
   import { senseiApi } from '$lib/api.js';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Kanji from '$lib/components/Kanji.svelte';
-  import Screen from '$lib/components/Screen.svelte';
+  import { Screen } from '$lib/components';
   import {
     TrendChart,
     StreamChart,

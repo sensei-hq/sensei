@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Screen from './Screen.svelte';
+  import { Screen } from '@sensei/ui';
 
   let { withHeader = true, fill = false }: { withHeader?: boolean; fill?: boolean } = $props();
 </script>
