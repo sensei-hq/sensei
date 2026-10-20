@@ -13,6 +13,8 @@
  * (`proxy.value === value`) highlights the active route. */
 export interface NavLink {
   kanji: string;
+  /** The Solar Bold Duotone class shown in icon mode (#133). */
+  icon: string;
   text: string;
   href: string;
   value: string;
@@ -42,10 +44,11 @@ export interface NavOptions {
 
 const link = (
   kanji: string,
+  icon: string,
   text: string,
   href: string,
   extra: Partial<Pick<NavLink, "badge" | "alert">> = {},
-): NavLink => ({ kanji, text, href, value: href, ...extra });
+): NavLink => ({ kanji, icon, text, href, value: href, ...extra });
 
 // Badge counts and the Impact alert were hardcoded MOCK placeholders — a
 // fabricated "6 insights / 3 impact / alert" that lied about pending work when
@@ -70,17 +73,17 @@ export function buildNavItems({ projectCount }: NavOptions = {}): NavEntry[] {
     // Anchors — where every day starts (top-level).
     // Intake (the front door) lives in the project window now — a chunk of work
     // always starts IN a project, so it's a per-project section, not observatory-wide.
-    link("家", "Today", "/"),
-    link("場", "Projects", "/projects", { badge: projectCount }),
+    link("家", "i-solar-home-smile-bold-duotone", "Today", "/"),
+    link("場", "i-solar-folder-with-files-bold-duotone", "Projects", "/projects", { badge: projectCount }),
     // Needs you — the daily payoff: everything with a pending decision.
     {
       text: "Needs you",
       children: [
-        link("今", "Insights", "/insights"),
-        link("覚", "Memories", "/learnings"),
-        link("果", "Impact", "/impact"),
-        link("巻", "Traceability", "/traceability"),
-        link("贈", "Upgrades", "/upgrades"),
+        link("今", "i-solar-lightbulb-bolt-bold-duotone", "Insights", "/insights"),
+        link("覚", "i-solar-notebook-bookmark-bold-duotone", "Memories", "/learnings"),
+        link("果", "i-solar-graph-up-bold-duotone", "Impact", "/impact"),
+        link("巻", "i-solar-routing-2-bold-duotone", "Traceability", "/traceability"),
+        link("贈", "i-solar-gift-bold-duotone", "Upgrades", "/upgrades"),
       ],
     },
   ];
@@ -90,20 +93,20 @@ export function buildNavItems({ projectCount }: NavOptions = {}): NavEntry[] {
     entries.push({
       text: "Review",
       children: [
-        link("録", "Sessions", "/sessions"),
-        link("庫", "Libraries", "/libraries"),
-        link("統", "Consolidation", "/consolidation"),
-        link("具", "Instruments", "/instruments"),
-        link("診", "Logs", "/activity-logs"),
-        link("結", "Dōjō", "/dojo/connections"),
-        link("群", "Sharing", "/dojo/sharing"),
-        link("源", "Sources", "/knowledge-sources"),
-        link("送", "Share review", "/share-review"),
+        link("録", "i-solar-history-bold-duotone", "Sessions", "/sessions"),
+        link("庫", "i-solar-library-bold-duotone", "Libraries", "/libraries"),
+        link("統", "i-solar-layers-bold-duotone", "Consolidation", "/consolidation"),
+        link("具", "i-solar-ruler-pen-bold-duotone", "Instruments", "/instruments"),
+        link("診", "i-solar-clipboard-list-bold-duotone", "Logs", "/activity-logs"),
+        link("結", "i-solar-link-circle-bold-duotone", "Dōjō", "/dojo/connections"),
+        link("群", "i-solar-share-circle-bold-duotone", "Sharing", "/dojo/sharing"),
+        link("源", "i-solar-database-bold-duotone", "Sources", "/knowledge-sources"),
+        link("送", "i-solar-inbox-out-bold-duotone", "Share review", "/share-review"),
       ],
     });
     // Settings — visited when something needs changing.
     entries.push({ type: "separator" });
-    entries.push(link("調", "Settings", "/settings"));
+    entries.push(link("調", "i-solar-settings-bold-duotone", "Settings", "/settings"));
   }
 
   return entries;

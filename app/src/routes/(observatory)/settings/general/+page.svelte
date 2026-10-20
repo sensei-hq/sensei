@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, untrack } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import { PageHeader, Switch } from "$lib/components";
@@ -10,6 +10,7 @@
         fromPreferencesForm,
         toPreferencesForm,
     } from "../preferences-form.js";
+    import { GLYPH_OPTIONS, type GlyphMode } from "$lib/glyphs";
 
     // Static option lists for the preference pickers (label → wire value).
     const DIGEST_OPTIONS = [
@@ -41,7 +42,9 @@
         void prefs.nudgeOnRegression;
         void prefs.anonymizedTelemetry;
         void prefs.showWelcome;
-        if (!loading) void persist();
+        // Untracked: saving reads and writes appState.config, and tracking that
+        // made every save re-run this effect — an endless write loop.
+        if (!loading) untrack(() => void persist());
     });
 
     async function persist() {
@@ -52,18 +55,13 @@
         saveStatus = "saving";
         saveError = null;
         try {
-            const result = await senseiApi(appState.port).trySetConfig(
-                fromPreferencesForm(prefs),
-            );
-            if (result.ok) {
-                saveStatus = "saved";
-                saveTimer = setTimeout(() => {
-                    if (saveStatus === "saved") saveStatus = "idle";
-                }, 1500);
-            } else {
-                saveStatus = "error";
-                saveError = result.error.message;
-            }
+            // Through appState, so the cached config — which the rails read
+            // their glyph mode from (#133) — changes with the daemon's.
+            await appState.setConfigs(fromPreferencesForm(prefs));
+            saveStatus = "saved";
+            saveTimer = setTimeout(() => {
+                if (saveStatus === "saved") saveStatus = "idle";
+            }, 1500);
         } catch (e) {
             saveStatus = "error";
             saveError = (e as Error).message;
@@ -154,6 +152,26 @@
                             value={prefs.correctionAggressiveness}
                             onchange={(v) => {
                                 prefs.correctionAggressiveness = v as string;
+                                void persist();
+                            }}
+                        />
+                    </div>
+                </div>
+
+                <div class="row grid grid-cols-[1fr_auto] gap-6 items-center py-3">
+                    <div>
+                        <div class="text-sm text-ink">Glyphs</div>
+                        <div class="text-xs text-ink-mute mt-0.5">
+                            Kanji or icons beside each section, across the app.
+                        </div>
+                    </div>
+                    <div data-testid="pref-glyphs">
+                        <Select
+                            size="sm"
+                            items={GLYPH_OPTIONS}
+                            value={prefs.glyphs}
+                            onchange={(v) => {
+                                prefs.glyphs = v as GlyphMode;
                                 void persist();
                             }}
                         />

@@ -13,6 +13,8 @@
  * (`proxy.value === value`) highlights the active route. */
 export interface NavLink {
   kanji: string;
+  /** The Solar Bold Duotone class shown in icon mode (#133). */
+  icon: string;
   text: string;
   href: string;
   value: string;
@@ -32,8 +34,9 @@ export interface NavSeparator {
 
 export type NavEntry = NavLink | NavGroup | NavSeparator;
 
-const link = (kanji: string, text: string, href: string): NavLink => ({
+const link = (kanji: string, icon: string, text: string, href: string): NavLink => ({
   kanji,
+  icon,
   text,
   href,
   value: href,
@@ -50,17 +53,17 @@ export function buildNavItems(): NavEntry[] {
     {
       text: "You",
       children: [
-        link("名", "General", "/settings/general"),
-        link("連", "Assistants", "/settings/assistants"),
+        link("名", "i-solar-user-id-bold-duotone", "General", "/settings/general"),
+        link("連", "i-solar-chat-round-dots-bold-duotone", "Assistants", "/settings/assistants"),
       ],
     },
     // Sources — where code + docs come from.
     {
       text: "Sources",
       children: [
-        link("庵", "Roots", "/settings/roots"),
-        link("組", "Projects", "/settings/projects"),
-        link("書", "Libraries", "/settings/libraries"),
+        link("庵", "i-solar-folder-2-bold-duotone", "Roots", "/settings/roots"),
+        link("組", "i-solar-folder-open-bold-duotone", "Projects", "/settings/projects"),
+        link("書", "i-solar-book-bookmark-bold-duotone", "Libraries", "/settings/libraries"),
       ],
     },
     // Reasoning — models, chains, providers, and role assignments. Inference
@@ -70,9 +73,9 @@ export function buildNavItems(): NavEntry[] {
     {
       text: "Reasoning",
       children: [
-        link("器", "Instruments", "/settings/instruments"),
-        link("鍵", "Providers", "/settings/providers"),
-        link("想", "Inference", "/settings/inference"),
+        link("器", "i-solar-tuning-2-bold-duotone", "Instruments", "/settings/instruments"),
+        link("鍵", "i-solar-key-bold-duotone", "Providers", "/settings/providers"),
+        link("想", "i-solar-cpu-bolt-bold-duotone", "Inference", "/settings/inference"),
       ],
     },
     // Measurement — what sensei measures, and why a metric is not current.
@@ -82,7 +85,7 @@ export function buildNavItems(): NavEntry[] {
     // question and would be buried next to Inference.
     {
       text: "Measurement",
-      children: [link("測", "Metrics", "/settings/metrics")],
+      children: [link("測", "i-solar-chart-2-bold-duotone", "Metrics", "/settings/metrics")],
     },
     // Dōjō — the credential that reaches it, and what has been agreed. NOT the
     // connections editor: `/dojo/connections` already owns choosing WHICH dōjōs,
@@ -91,10 +94,10 @@ export function buildNavItems(): NavEntry[] {
     // it died (the sign-in overlay) or from a terminal.
     {
       text: "Dōjō",
-      children: [link("結", "Connection", "/settings/dojo")],
+      children: [link("結", "i-solar-link-round-bold-duotone", "Connection", "/settings/dojo")],
     },
     { type: "separator" },
-    link("拡", "Extensions", "/settings/extensions"),
+    link("拡", "i-solar-widget-add-bold-duotone", "Extensions", "/settings/extensions"),
   ];
 }
 

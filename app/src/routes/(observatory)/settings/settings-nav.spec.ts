@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { isSolarBoldDuotone } from "$lib/glyphs";
 import {
   buildNavItems,
   resolveActiveHref,
@@ -137,5 +139,21 @@ describe("settings resolveActiveHref", () => {
   it("returns empty string for an unknown route", () => {
     expect(resolveActiveHref("/nope")).toBe("");
     expect(resolveActiveHref("/settings")).toBe("");
+  });
+});
+
+// #133: every settings rail entry carries BOTH a kanji and an installed Solar
+// Bold Duotone icon, so neither mode can render an empty slot.
+describe("settings rail glyphs", () => {
+  const solar = new Set(
+    Object.keys(JSON.parse(readFileSync("node_modules/@iconify-json/solar/icons.json", "utf8")).icons),
+  );
+  it("gives every entry a kanji and a Solar Bold Duotone icon", () => {
+    const entries = allLinks(buildNavItems());
+    expect(entries.length).toBeGreaterThan(0);
+    for (const l of entries) {
+      expect(l.kanji, l.href).toMatch(/^\p{Script=Han}$/u);
+      expect(isSolarBoldDuotone(l.icon, solar), `${l.href}: ${l.icon}`).toBe(true);
+    }
   });
 });

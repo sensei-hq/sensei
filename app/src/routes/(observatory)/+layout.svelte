@@ -9,6 +9,7 @@
     import { senseiApi } from '$lib/api.js';
     import { openProjectWindow } from '$lib/stores/windows.svelte.js';
     import ObservatorySidebar from './ObservatorySidebar.svelte';
+    import { glyphMode } from '$lib/glyphs';
     import { buildNavItems } from './observatory-nav.js';
 
     let { children } = $props();
@@ -76,6 +77,7 @@
             port={appState.port}
             pathname={page.url.pathname}
             projectCount={appState.projectCount ?? undefined}
+            glyphs={glyphMode(appState.config)}
         />
 
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
