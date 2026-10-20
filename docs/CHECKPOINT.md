@@ -13,7 +13,8 @@
 
 **Remaining:**
 - #293 step 0 done: `Screen` in `packages/ui`, shared; app (522b8092) + dōjō (dcbd9459), neither shell scrolls. Next for #293: steps 1–2. Local-only dōjō verify user exists (admin role).
-- #301 (user): sign in → sync just works — auto-elect (decided), keep the subscription gate (decided); with #299, #300 (decided: Safari + account guard), #295, #282.
+- #301 (user): sign in → sync just works. Done on develop: personal tenants connect to their owner's forge account (f111fe41; all 34 personal repos were `no_connection`; needs a dōjō deploy + one sign-in). Next: auto-elect (decided; sensei-hq public repos refused only `not_elected_user`), keep the subscription gate (decided); #299, #300 (decided), #295, #282.
+- Display name prefilled from the system user name in Settings → General (7f919038, live: "" → "Jerry").
 - Keychain: a Team-ID-less senseid is partitioned by cdhash, so each daemon reinstall revokes approval (#283 comment). UI-only work uses `make app-e2e-bundle` (no daemon reinstall).
 - #298: project Instruments takes 11–28s (mcp-tool-stats pairs every tool call). `jerrythomas` connected (CLI sign-in); its sync denies all 22 repos `not_elected_user` until the user elects repos. #294/#295 filed.
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139).
