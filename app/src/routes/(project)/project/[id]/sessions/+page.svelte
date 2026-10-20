@@ -23,7 +23,8 @@
     MiniChart,
     SessionRow,
   } from '$lib/components/sessions';
-  import { SessionsDigestState } from '$lib/sessions-digest.svelte.js';
+  import { SessionsDigestState, sessionsFetcher } from '$lib/sessions-digest.svelte.js';
+  import ScreenState from '$lib/components/ScreenState.svelte';
   import {
     CHART_VARIANTS,
     SESSION_RANGES,
@@ -33,7 +34,6 @@
     type MiniMode,
     type SessionRange,
   } from '$lib/sessions-digest.js';
-  import { projectSessionsFetcher } from './project-sessions.js';
 
   let { data } = $props();
 
@@ -58,9 +58,10 @@
   const digest = $derived.by(
     () =>
       new SessionsDigestState(
-        projectSessionsFetcher(senseiApi(appState.port), data.projectId),
+        sessionsFetcher(senseiApi(appState.port), data.projectId),
         data.sessions,
         data.range as SessionRange,
+        data.error,
       ),
   );
 
@@ -140,6 +141,7 @@
       </div>
     </div>
 
+    {#if !digest.error}
     <!-- Right cluster — numbers at rest, mini chart when cycled; the cycler
          badge steps through numbers/trend/stream/constellation/bands/pulse.
          Pulse lives ONLY on the cycler, never in the chip group below. -->
@@ -175,10 +177,18 @@
         <Kanji char={MINI_GLYPH[digest.miniMode]} size="inherit" tone="inherit" class="text-sm text-accent leading-none" />
       </button>
     </div>
+    {/if}
   </header>
 
   <!-- ── Body ─────────────────────────────────────────────────────────── -->
   <div class="flex-1 min-h-0">
+    {#if digest.error}
+      <!-- The sessions could not be read (#288) — not a quiet week. Retry
+           re-reads the active range through the state. -->
+      <div class="p-6">
+        <ScreenState status="error" error={digest.error} onretry={() => void digest.retry()} />
+      </div>
+    {:else}
     <!-- Totals strip + quality tally — single project, so no "across N
          projects" split. -->
     <div class="flex items-baseline flex-wrap gap-x-4 gap-y-1 pt-4 pb-3 px-6 border-b border-paper-edge">
@@ -276,6 +286,7 @@
         </div>
       {/if}
     </section>
+    {/if}
   </div>
 </div>
 

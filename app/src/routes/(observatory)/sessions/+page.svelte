@@ -21,7 +21,8 @@
     MiniChart,
     SessionRow,
   } from '$lib/components/sessions';
-  import { SessionsDigestState } from '$lib/sessions-digest.svelte.js';
+  import { SessionsDigestState, sessionsFetcher } from '$lib/sessions-digest.svelte.js';
+  import ScreenState from '$lib/components/ScreenState.svelte';
   import {
     CHART_VARIANTS,
     SESSION_RANGES,
@@ -38,12 +39,10 @@
   // chips refetch through the api client thereafter. untrack makes the
   // one-time read of `data` explicit (see insights/+page.svelte).
   const digest = new SessionsDigestState(
-    (range) =>
-      senseiApi(appState.port)
-        .getSessionsDigest(range)
-        .then((d) => d.sessions),
+    sessionsFetcher(senseiApi(appState.port)),
     untrack(() => data.sessions),
     untrack(() => data.range as SessionRange),
+    untrack(() => data.error),
   );
 
   // Memoized slices so the header and the chart read one filtered source.
@@ -122,6 +121,7 @@
       </div>
     </div>
 
+    {#if !digest.error}
     <!-- Right cluster — numbers at rest, mini chart when cycled; the cycler
          badge steps through numbers/trend/stream/constellation/bands/pulse.
          Pulse lives ONLY on the cycler, never in the chip group below. -->
@@ -157,10 +157,18 @@
         <Kanji char={MINI_GLYPH[digest.miniMode]} size="inherit" tone="inherit" class="text-sm text-accent leading-none" />
       </button>
     </div>
+    {/if}
   </header>
 
   <!-- ── Scroll body ──────────────────────────────────────────────────── -->
   <div class="flex-1 overflow-auto min-h-0">
+    {#if digest.error}
+      <!-- The sessions could not be read (#288) — not a quiet week. Retry
+           re-reads the active range through the state. -->
+      <div class="p-6">
+        <ScreenState status="error" error={digest.error} onretry={() => void digest.retry()} />
+      </div>
+    {:else}
     <!-- Totals strip + quality tally -->
     <div class="flex items-baseline flex-wrap gap-x-4 gap-y-1 pt-4 pb-3 px-6 border-b border-paper-edge">
       <span class="text-sm text-ink">
@@ -258,6 +266,7 @@
         </div>
       {/if}
     </section>
+    {/if}
   </div>
 </div>
 

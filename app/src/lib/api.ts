@@ -762,19 +762,19 @@ export function senseiApi(port: number) {
       post<Record<string, unknown>>('/api/query', { q, repoId, projectId }, {}),
 
     // ── Sessions ─────────────────────────────────────────────────────────
-    getSessions: () =>
-      get<SessionData>('/api/sessions', { stats: null, sessions: [], toolUsage: [], benchmarkPairs: [] }),
+    /** Every captured session (#288: a failure is an error, not an empty list). */
+    tryGetSessions: () => tryGet<SessionData>('/api/sessions'),
 
     // Observatory · Sessions digest (Slot 6). Same `/api/sessions` handler,
     // now scoped by an optional `range` (7d|30d|90d) and/or `project`
-    // (name-or-uuid). Both are additive server-side. Fallback is the empty
-    // digest so a daemon hiccup renders the quiet state, never a broken screen.
-    getSessionsDigest: (range?: string, project?: string) => {
+    // (name-or-uuid). Both are additive server-side. A failure is an error,
+    // not the empty digest that read as a quiet week (#288).
+    tryGetSessionsDigest: (range?: string, project?: string) => {
       const p = new URLSearchParams();
       if (range) p.set('range', range);
       if (project) p.set('project', project);
       const qs = p.toString() ? `?${p.toString()}` : '';
-      return get<SessionsDigest>(`/api/sessions${qs}`, { sessions: [] });
+      return tryGet<SessionsDigest>(`/api/sessions${qs}`);
     },
 
     // ── Observatory · Logs (activity logs) ──────────────────────────────

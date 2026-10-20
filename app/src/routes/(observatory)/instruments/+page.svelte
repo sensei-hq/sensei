@@ -5,8 +5,10 @@
     import { senseiApi, readOutcome } from "$lib/api.js";
     import type { ObservatoryFtr } from "$lib/types.js";
     import { ftrReadLabel } from "$lib/ftr.js";
+    import { loadReplaySessions, type ReplaySession } from "./replay-sessions";
     import TabBar from "$lib/components/TabBar.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
+    import ScreenState from "$lib/components/ScreenState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
     import { Eyebrow, Kanji, PageHeader } from "$lib/components";
     import { Button, Select } from "@rokkit/ui";
@@ -20,7 +22,7 @@
     } from "$lib/types.js";
 
     type Tool = McpToolManifest;
-    type SessionRow = { id: string; task: string; startedAt: string; ftr?: number | null };
+    type SessionRow = ReplaySession;
 
     // All catalogue data lives on the mcp store — page is pure presentation.
     const tools = $derived(mcp.tools);
@@ -72,6 +74,12 @@
         used: 0, partial: 0, ignored: 0, total: 0,
     });
     let replayLoading = $state(false);
+    // Why the session list could not be read (#288).
+    let replayError = $state<string | null>(null);
+    // Whether the list has been read (successfully or not). The effects below
+    // re-run on every change to what they read, so "empty" cannot mean "not yet
+    // read" — an empty or failed read would re-fetch forever. Retry clears it.
+    let replayLoaded = $state(false);
     let selectedCall = $state<SessionReplayCall | null>(null);
 
     // Insights tab — the newer cached tool_insights table is loaded lazily
@@ -271,16 +279,12 @@
     // Load the session list once the Replay tab is first opened. Subsequent
     // tab switches skip the fetch since the list rarely changes mid-session.
     async function ensureReplaySessionsLoaded() {
-        if (replaySessions.length > 0) return;
+        if (replayLoaded || replayLoading) return;
         replayLoading = true;
-        const api = senseiApi(appState.port);
-        const data = await api.getSessions();
-        replaySessions = (data.sessions ?? []).map((s) => ({
-            id: s.id,
-            task: s.task,
-            startedAt: s.startedAt,
-            ftr: s.ftr,
-        }));
+        const read = await loadReplaySessions(senseiApi(appState.port));
+        replaySessions = read.sessions;
+        replayError = read.error;
+        replayLoaded = true;
         replayLoading = false;
     }
 
@@ -331,7 +335,7 @@
     // Runs at most once — re-fires only while waiting for the list to load.
     $effect(() => {
         if (honoredSessionParam || !sessionParam || tab !== 'replay') return;
-        if (replaySessions.length === 0) {
+        if (!replayLoaded) {
             void ensureReplaySessionsLoaded();
             return;
         }
@@ -672,6 +676,14 @@
              1fr | auto] grid (index / offset / tool name / dot+ms). -->
         {#if replayLoading && replaySessions.length === 0}
             <p class="text-sm text-ink-soft px-7 py-5">Loading sessions…</p>
+        {:else if replayError}
+            <div class="px-7 py-5">
+                <ScreenState
+                    status="error"
+                    error={replayError}
+                    onretry={() => { replayLoaded = false; void ensureReplaySessionsLoaded(); }}
+                />
+            </div>
         {:else if replaySessions.length === 0}
             <EmptyState
                 kanji="録"
