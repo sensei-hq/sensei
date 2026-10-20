@@ -11,11 +11,19 @@ import { toPreferencesForm } from './preferences-form';
 export type AssistantRow = { family: string; name: string; version?: string; configured: boolean };
 export type ExtensionRow = { name: string; kind: string; enabled: boolean };
 
-export async function readPreferences(api: {
-  tryGetConfig: () => Promise<ApiResult<Record<string, string>>>;
-}): Promise<{ prefs: PreferencesData | null; error: string | null }> {
+/** The saved preferences, with an empty display name filled from the system
+ *  user name (`guess`) — the default the setup wizard already applies.
+ *  `prefilled` says the name was guessed, not read, so the page can save it. */
+export async function readPreferences(
+  api: { tryGetConfig: () => Promise<ApiResult<Record<string, string>>> },
+  guess: () => Promise<string> = async () => '',
+): Promise<{ prefs: PreferencesData | null; error: string | null; prefilled: boolean }> {
   const { data, error } = readOutcome(await api.tryGetConfig());
-  return { prefs: data ? toPreferencesForm(data) : null, error };
+  if (!data) return { prefs: null, error, prefilled: false };
+  const prefs = toPreferencesForm(data);
+  if (prefs.displayName.trim()) return { prefs, error, prefilled: false };
+  const name = (await guess()).trim();
+  return name ? { prefs: { ...prefs, displayName: name }, error, prefilled: true } : { prefs, error, prefilled: false };
 }
 
 export async function readAssistants(api: {

@@ -11,6 +11,7 @@
         fromPreferencesForm,
     } from "../preferences-form.js";
     import { readPreferences } from "../settings-reads";
+    import { guessUserName } from "$lib/setup/user-name";
     import { GLYPH_OPTIONS, type GlyphMode } from "$lib/glyphs";
 
     // Static option lists for the preference pickers (label → wire value).
@@ -38,10 +39,13 @@
 
     async function load() {
         loading = true;
-        const read = await readPreferences(senseiApi(appState.port));
+        const read = await readPreferences(senseiApi(appState.port), guessUserName);
         loadError = read.error;
         if (read.prefs) prefs = read.prefs;
         loading = false;
+        // An empty display name defaults to the machine's user name, as setup
+        // does; saved once so the rest of the app greets the same name.
+        if (read.prefilled) await persist();
     }
     onMount(load);
 

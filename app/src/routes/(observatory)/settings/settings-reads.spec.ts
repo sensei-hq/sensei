@@ -15,7 +15,27 @@ describe('readPreferences', () => {
     expect([d.error, d.prefs?.showWelcome]).toEqual([null, saved.showWelcome]);
   });
   it('a failed read is an error and no form — never the defaults', async () => {
-    expect(await readPreferences({ tryGetConfig: async () => down })).toEqual({ prefs: null, error: 'Service Unavailable' });
+    expect(await readPreferences({ tryGetConfig: async () => down })).toEqual({ prefs: null, error: 'Service Unavailable', prefilled: false });
+  });
+
+  // The display name defaults to the machine's user name, as the setup wizard
+  // already does — Settings showed it empty when the wizard never saved one.
+  it('fills an empty display name from the system user name, and says so', async () => {
+    const d = await readPreferences({ tryGetConfig: async () => ok({}) }, async () => 'Jerry');
+    expect([d.prefs?.displayName, d.prefilled]).toEqual(['Jerry', true]);
+  });
+  it('never replaces a saved display name', async () => {
+    const d = await readPreferences({ tryGetConfig: async () => ok({ user_name: 'J. Thomas' }) }, async () => 'Jerry');
+    expect([d.prefs?.displayName, d.prefilled]).toEqual(['J. Thomas', false]);
+  });
+  it('leaves it empty when the system offers no name', async () => {
+    const d = await readPreferences({ tryGetConfig: async () => ok({}) }, async () => '');
+    expect([d.prefs?.displayName, d.prefilled]).toEqual(['', false]);
+  });
+  it('does not guess on a failed read', async () => {
+    let asked = false;
+    await readPreferences({ tryGetConfig: async () => down }, async () => ((asked = true), 'Jerry'));
+    expect(asked).toBe(false);
   });
 });
 

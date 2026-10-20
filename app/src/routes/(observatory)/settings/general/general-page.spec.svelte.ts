@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
 import Page from './+page.svelte';
+import { STORAGE_KEYS } from '$lib/storage-keys.js';
 
 // The page auto-saves its toggles from an $effect. Saving goes through
 // appState.setConfigs (#133), which reads appState.config — so the effect must
@@ -27,5 +28,27 @@ describe('Settings → General', () => {
     destroy = mountComponent(Page, {}).destroy;
     await new Promise((r) => setTimeout(r, 200));
     expect(puts.length).toBeLessThanOrEqual(1);
+  });
+
+  it('saves the system user name as the display name when none is set', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (k === STORAGE_KEYS.userName ? 'Jerry' : null),
+      setItem: () => {},
+      removeItem: () => {},
+    });
+    const puts: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT') puts.push(String(init.body));
+        return new Response(JSON.stringify({}), { status: 200 });
+      }),
+    );
+    const m = mountComponent(Page, {});
+    destroy = m.destroy;
+    await new Promise((r) => setTimeout(r, 200));
+    const field = m.container.querySelector('[data-testid="pref-display-name"]') as HTMLInputElement;
+    expect(field.value).toBe('Jerry');
+    expect(puts.some((b) => b.includes('"user_name"') && b.includes('Jerry'))).toBe(true);
   });
 });
