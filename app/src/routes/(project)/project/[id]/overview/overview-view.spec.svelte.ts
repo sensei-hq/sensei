@@ -9,6 +9,9 @@ import {
   relativeTime,
   sessionRows,
   projectVisibilityLabel,
+  hotspotRows,
+  patternSnapshot,
+  overviewPageData,
 } from './overview-view.svelte.js';
 import type {
   ProjectOverviewFolder,
@@ -213,5 +216,61 @@ describe('sessionRows', () => {
   it('passes the folder role through, including null (no chip)', () => {
     expect(sessionRows([session({ role: 'library' })], now)[0].role).toBe('library');
     expect(sessionRows([session({ role: null })], now)[0].role).toBeNull();
+  });
+});
+
+// #85: the overview shows where edits concentrate, and which patterns are in
+// use — both served by the daemon, neither shown until now.
+describe('hotspotRows', () => {
+  const h = (file_path: string, edit_count: number, correction_count = 0, folder = 'sensei') =>
+    ({ folder, file_path, edit_count, correction_count });
+
+  it('lists the most-edited files first, path relative to their repository', () => {
+    const rows = hotspotRows([
+      h('/Users/x/dev/sensei/docs/CHECKPOINT.md', 6, 5),
+      h('/Users/x/dev/sensei/app/src/lib/api.ts', 9, 1),
+    ]);
+    expect(rows).toEqual([
+      { path: 'app/src/lib/api.ts', repo: 'sensei', edits: 9, corrections: 1 },
+      { path: 'docs/CHECKPOINT.md', repo: 'sensei', edits: 6, corrections: 5 },
+    ]);
+  });
+
+  it('keeps the top five, and the full path when the repository is not in it', () => {
+    const many = Array.from({ length: 8 }, (_, i) => h(`/tmp/f${i}.ts`, i));
+    const rows = hotspotRows(many);
+    expect(rows).toHaveLength(5);
+    expect(rows[0]).toEqual({ path: '/tmp/f7.ts', repo: 'sensei', edits: 7, corrections: 0 });
+  });
+});
+
+describe('patternSnapshot', () => {
+  const pat = (name: string, instanceCount?: number) => ({ name, instanceCount });
+  it('counts followed and anti-patterns and names the three most-used of each', () => {
+    const snap = patternSnapshot({
+      followed: [pat('a', 1), pat('b', 9), pat('c', 4), pat('d', 6)],
+      antiPatterns: [pat('x'), pat('y', 2)],
+    });
+    expect(snap).toEqual({
+      followed: 4,
+      anti: 2,
+      topFollowed: ['b', 'd', 'c'],
+      topAnti: ['y', 'x'],
+    });
+  });
+});
+
+describe('overviewPageData', () => {
+  const ok = <T,>(data: T) => ({ ok: true as const, data });
+  const err = { ok: false as const, error: { status: 503, message: 'Service Unavailable' } };
+
+  it('carries each section, or why it could not be read — never a made-up default', () => {
+    const d = overviewPageData(err, ok({ hotspots: [] }), err);
+    expect(d.overview).toBeNull();
+    expect(d.overviewError).toBe('Service Unavailable');
+    expect(d.hotspots).toEqual([]);
+    expect(d.hotspotsError).toBeNull();
+    expect(d.patterns).toBeNull();
+    expect(d.patternsError).toBe('Service Unavailable');
   });
 });

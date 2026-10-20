@@ -11,8 +11,9 @@
     const dotStatus = (s: DriftStatus): 'ok' | 'warn' | 'fail' =>
         s === 'broken' ? 'fail' : s === 'drifted' ? 'warn' : 'ok';
 
-    // Doc-drift detector state — the button below runs the analyzer
-    // on-demand until the scheduled job lands (T3 Slice 2.3 full).
+    // Doc-drift detector state — the button below runs the analyzer on demand;
+    // the analyzer scheduler also enqueues ScanDocDrift whenever a project's
+    // analysis is due.
     const projectId = $derived(page.params.id ?? '');
     let scanning = $state(false);
     let lastSummary = $state<{ scannedDocs: number; newBroken: number; resolved: number } | null>(null);

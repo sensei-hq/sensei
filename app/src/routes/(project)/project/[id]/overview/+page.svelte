@@ -3,7 +3,7 @@
   import { senseiApi } from '$lib/api.js';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
-  import { Kanji, Eyebrow } from '$lib/components';
+  import { Kanji, Eyebrow, ScreenState } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import ProjPill from '../../../../(observatory)/projects/ProjPill.svelte';
   import {
@@ -13,20 +13,26 @@
     heroContent,
     statBlocks,
     sessionRows,
+    hotspotRows,
+    patternSnapshot,
     type StatBlock,
   } from './overview-view.svelte.js';
 
   let { data } = $props();
 
-  const project = $derived(data.overview.project);
-  const rec = $derived(data.overview.top_recommendation);
+  // Lazy: read only inside `{#if data.overview}` below — a failed read shows
+  // its error instead of an all-quiet default (#85).
+  const project = $derived(data.overview!.project);
+  const rec = $derived(data.overview?.top_recommendation ?? null);
 
   const ftr = $derived(ftrDisplay(project));
   const eyebrow = $derived(projectEyebrow(project));
   const repoChip = $derived(repoChipLabel(project.folders));
   const hero = $derived(heroContent(rec));
-  const stats = $derived(statBlocks(data.overview.stats));
-  const rows = $derived(sessionRows(data.overview.recentSessions));
+  const stats = $derived(statBlocks(data.overview!.stats));
+  const rows = $derived(sessionRows(data.overview!.recentSessions));
+  const hotspots = $derived(data.hotspots ? hotspotRows(data.hotspots) : []);
+  const patterns = $derived(data.patterns ? patternSnapshot(data.patterns) : null);
 
   const projectId = $derived(page.params.id ?? '');
 
@@ -83,6 +89,9 @@
 {/snippet}
 
 <div class="pt-8 px-10 pb-12 max-w-[900px]">
+  {#if !data.overview}
+    <ScreenState status="error" error={data.overviewError} onretry={() => invalidateAll()} />
+  {:else}
   <!-- Pane header — kanji · eyebrow (+ repo chip) · name · FTR·14d -->
   <header class="flex items-end gap-4 mb-6">
     <!-- The project's own mark: an identity, kanji in both modes (#133). -->
@@ -195,4 +204,57 @@
       <p class="text-sm text-ink-soft">No sessions recorded in this project yet.</p>
     {/if}
   </section>
+
+  <!-- Hotspots and patterns in use (#85) -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+    <section data-testid="overview-hotspots">
+      <div class="flex items-baseline gap-2 mb-3">
+        <Kanji char="燃" size="sm" tone="accent" />
+        <h2 class="display text-sm font-normal uppercase tracking-wide text-ink-soft m-0">
+          Hotspots · 7 days
+        </h2>
+      </div>
+      {#if data.hotspotsError}
+        <p class="text-sm text-danger m-0" data-overview-error>Could not read hotspots: {data.hotspotsError}</p>
+      {:else if hotspots.length === 0}
+        <p class="text-sm text-ink-soft m-0">No file edited more than once this week.</p>
+      {:else}
+        <ul class="list-none m-0 p-0">
+          {#each hotspots as h (h.repo + h.path)}
+            <li class="grid grid-cols-[1fr_auto] gap-3 items-baseline py-2 border-b border-paper-edge" data-hotspot={h.path}>
+              <span class="font-mono text-xs text-ink truncate" title={`${h.repo}/${h.path}`}>{h.path}</span>
+              <span class="font-mono text-xs text-ink-mute">{h.edits} edits{#if h.corrections > 0}<span class="text-warning"> · {h.corrections} corrected</span>{/if}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
+    <section data-testid="overview-patterns">
+      <div class="flex items-baseline gap-2 mb-3">
+        <Kanji char="紋" size="sm" tone="accent" />
+        <h2 class="display text-sm font-normal uppercase tracking-wide text-ink-soft m-0">
+          Patterns in use
+        </h2>
+      </div>
+      {#if data.patternsError}
+        <p class="text-sm text-danger m-0" data-overview-error>Could not read patterns: {data.patternsError}</p>
+      {:else if patterns && patterns.followed + patterns.anti > 0}
+        <a href={`/project/${projectId}/patterns`} class="block hover:bg-paper-soft rounded-md -mx-1 px-1 py-1">
+          <div class="text-sm text-ink" data-pattern-counts>
+            {patterns.followed} followed · <span class={patterns.anti > 0 ? 'text-warning' : ''}>{patterns.anti} anti-patterns</span>
+          </div>
+          {#if patterns.topFollowed.length > 0}
+            <div class="font-mono text-xs text-ink-mute mt-2 truncate">{patterns.topFollowed.join(' · ')}</div>
+          {/if}
+          {#if patterns.topAnti.length > 0}
+            <div class="font-mono text-xs text-warning mt-1 truncate">{patterns.topAnti.join(' · ')}</div>
+          {/if}
+        </a>
+      {:else}
+        <p class="text-sm text-ink-soft m-0">No patterns detected yet.</p>
+      {/if}
+    </section>
+  </div>
+  {/if}
 </div>

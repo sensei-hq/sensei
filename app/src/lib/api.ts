@@ -604,10 +604,9 @@ export function senseiApi(port: number) {
     tryGetProjectSchema: (id: string) =>
       tryGet<SchemaPayload>(`/api/projects/${enc(id)}/diagrams/schema`),
 
-    getProjectPatterns: (id: string) =>
-      get<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(
-        `/api/projects/${enc(id)}/patterns`, { followed: [], antiPatterns: [] }
-      ),
+    /** A failed read is an error, never "no patterns" (#85). */
+    tryGetProjectPatterns: (id: string) =>
+      tryGet<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(`/api/projects/${enc(id)}/patterns`),
 
     getProjectRecommendations: (id: string, status?: string) =>
       get<Recommendation[]>(
@@ -687,22 +686,10 @@ export function senseiApi(port: number) {
 
     // ── Project window · Overview (Slot 4) ──────────────────────────────
     // Server-assembled landing pane: header + top rec + stats + recent
-    // sessions in one call. Fallback is the all-quiet shape so a daemon
-    // hiccup renders the calm empty pane, never a broken screen.
-    getProjectOverview: (id: string) =>
-      get<ProjectOverview>(`/api/projects/${enc(id)}/overview`, {
-        project: {
-          id, name: '', kanji: '場', client: null, goal: null,
-          ftr: 0, warn: false, sessions7d: 0, folders: [],
-        },
-        top_recommendation: null,
-        stats: {
-          sessions7d: 0, sessions7dCorrected: 0,
-          memories: { total: 0, readyToShare: 0, toMerge: 0 },
-          docDrift: { open: 0, referencedDocs: 0 },
-        },
-        recentSessions: [],
-      }),
+    // sessions in one call. A failed read is an error the page shows, never an
+    // all-quiet default that reads as a calm project (#85).
+    tryGetProjectOverview: (id: string) =>
+      tryGet<ProjectOverview>(`/api/projects/${enc(id)}/overview`),
 
     // ── Observatory · Today (home screen) ───────────────────────────────
     // The daemon assembles the whole screen — greeting, maturity gate, hero
@@ -736,9 +723,10 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/ftr-daily?days=${days}`, { ftr_daily: [] }
       ),
 
-    getProjectHotspots: (id: string, days = 7) =>
-      get<{ hotspots: Array<{ folder: string; file_path: string; edit_count: number; correction_count: number }> }>(
-        `/api/projects/${enc(id)}/hotspots?days=${days}`, { hotspots: [] }
+    /** Where edits concentrated over the last `days` (#85). */
+    tryGetProjectHotspots: (id: string, days = 7) =>
+      tryGet<{ hotspots: Array<{ folder: string; file_path: string; edit_count: number; correction_count: number }> }>(
+        `/api/projects/${enc(id)}/hotspots?days=${days}`,
       ),
 
     getProjectQualitySignals: (id: string) =>

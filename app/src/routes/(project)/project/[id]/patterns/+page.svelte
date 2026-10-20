@@ -1,6 +1,7 @@
 <script lang="ts">
     import Kanji from '$lib/components/Kanji.svelte';
-    import { PageHeader } from '$lib/components';
+    import { PageHeader, ScreenState } from '$lib/components';
+    import { invalidateAll } from '$app/navigation';
     import type { PatternEntry } from '$lib/types.js';
 
     let { data } = $props();
@@ -105,6 +106,10 @@
 
 <PageHeader title="Patterns" />
 <div class="px-6 py-6">
+    {#if data.error}
+        <!-- A failed read is shown, never "no patterns" (#85). -->
+        <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+    {:else}
     {#if data.followed.length > 0}
         <section class="mb-5">
             <h3 class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wide">
@@ -131,6 +136,7 @@
     {/if}
     {#if data.followed.length === 0 && data.antiPatterns.length === 0}
         <p class="text-sm text-ink-soft">No patterns detected yet.</p>
+    {/if}
     {/if}
 </div>
 

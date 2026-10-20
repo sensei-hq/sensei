@@ -12,8 +12,11 @@ import type {
   ProjectOverviewTopRec,
   ProjectOverviewStats,
   ProjectOverviewSession,
+  ProjectOverview,
+  PatternEntry,
 } from '$lib/types.js';
 import { ftrPct } from '$lib/ftr.js';
+import type { ApiResult } from '$lib/api.js';
 
 // ── Header FTR chip ─────────────────────────────────────────────────────────
 
@@ -223,4 +226,83 @@ export function sessionRows(sessions: ProjectOverviewSession[], now: number = Da
       role: s.role,
     };
   });
+}
+
+/** One file where edits concentrated, as `GET /api/projects/{id}/hotspots` sends it. */
+export interface Hotspot {
+  folder: string;
+  file_path: string;
+  edit_count: number;
+  correction_count: number;
+}
+
+export interface HotspotRow {
+  path: string;
+  repo: string;
+  edits: number;
+  corrections: number;
+}
+
+/** The five most-edited files (#85), each path relative to its repository —
+ *  or whole, when the repository's name is not in it. */
+export function hotspotRows(hotspots: Hotspot[], limit = 5): HotspotRow[] {
+  return [...hotspots]
+    .sort((a, b) => b.edit_count - a.edit_count || b.correction_count - a.correction_count)
+    .slice(0, limit)
+    .map((h) => {
+      const marker = `/${h.folder}/`;
+      const at = h.file_path.lastIndexOf(marker);
+      return {
+        path: at >= 0 ? h.file_path.slice(at + marker.length) : h.file_path,
+        repo: h.folder,
+        edits: h.edit_count,
+        corrections: h.correction_count,
+      };
+    });
+}
+
+export interface PatternSnapshot {
+  followed: number;
+  anti: number;
+  topFollowed: string[];
+  topAnti: string[];
+}
+
+/** How many patterns are in use, and the three most-used of each kind (#85). */
+export function patternSnapshot(p: {
+  followed: Pick<PatternEntry, 'name' | 'instanceCount'>[];
+  antiPatterns: Pick<PatternEntry, 'name' | 'instanceCount'>[];
+}): PatternSnapshot {
+  const top = (list: Pick<PatternEntry, 'name' | 'instanceCount'>[]) =>
+    [...list]
+      .sort((a, b) => (b.instanceCount ?? 0) - (a.instanceCount ?? 0))
+      .slice(0, 3)
+      .map((x) => x.name);
+  return {
+    followed: p.followed.length,
+    anti: p.antiPatterns.length,
+    topFollowed: top(p.followed),
+    topAnti: top(p.antiPatterns),
+  };
+}
+
+type Read<T> = ApiResult<T>;
+const reason = (r: { ok: false; error: { status: number; message: string } }) =>
+  r.error.message || `HTTP ${r.error.status}`;
+
+/** The overview page's data: each section's payload, or why it could not be
+ *  read. A failed read is never replaced by an all-quiet default (#85). */
+export function overviewPageData(
+  overview: Read<ProjectOverview>,
+  hotspots: Read<{ hotspots: Hotspot[] }>,
+  patterns: Read<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>,
+) {
+  return {
+    overview: overview.ok ? overview.data : null,
+    overviewError: overview.ok ? null : reason(overview),
+    hotspots: hotspots.ok ? hotspots.data.hotspots : null,
+    hotspotsError: hotspots.ok ? null : reason(hotspots),
+    patterns: patterns.ok ? patterns.data : null,
+    patternsError: patterns.ok ? null : reason(patterns),
+  };
 }
