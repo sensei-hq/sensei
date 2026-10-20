@@ -45,6 +45,12 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryGetProjectFtr', call: () => api().tryGetProjectFtr('p1'), body: { ftr14d: 0.8 } },
   { name: 'tryGetProjectQualitySignals', call: () => api().tryGetProjectQualitySignals('p1'), body: { ftr_7d: 0.9 } },
   { name: 'tryListProjects', call: () => api().tryListProjects(), body: [] },
+  // #288 — Atlas.
+  { name: 'tryGetGraphNodes', call: () => api().tryGetGraphNodes('r'), body: { nodes: [], edges: [] } },
+  { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
+  { name: 'tryDetectCommunities', call: () => api().tryDetectCommunities('r'), body: { ok: true, communities: 2 } },
+  { name: 'tryGetCallFlow', call: () => api().tryGetCallFlow('r'), body: { moduleCount: 1 } },
+  { name: 'tryGetProjectGraph', call: () => api().tryGetProjectGraph('p1'), body: { repos: 1 } },
 ];
 
 describe('F8 · error-propagating loaders (no fabrication on failure)', () => {
@@ -95,6 +101,6 @@ describe('legacy fallback reads (#288)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
     const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(44);
+    expect(reads.length).toBeLessThanOrEqual(40);
   });
 });

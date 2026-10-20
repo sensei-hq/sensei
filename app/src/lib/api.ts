@@ -1,7 +1,7 @@
 import type {
   ServerProject,
   GraphSymbolNode, GraphCallEdge,
-  SolutionGraphResponse, SolutionAnalysis,
+  ProjectGraphResponse, SolutionAnalysis,
   FunctionMatch, CommunityInfo,
   LibEntry, SessionData, SessionsDigest,
   ProjectMemory, DriftItem, PatternEntry, Recommendation,
@@ -335,9 +335,6 @@ export function senseiApi(port: number) {
 
     removeProjectRepo: (projectId: string, repoId: string) =>
       del(`/api/projects/${enc(projectId)}/repos/${enc(repoId)}`),
-
-    getProjectGraph: (id: string) =>
-      get<SolutionGraphResponse | null>(`/api/projects/${enc(id)}/graph`, null),
 
     analyzeProject: (id: string) =>
       post<SolutionAnalysis | null>(`/api/projects/${enc(id)}/analyze`, {}, null),
@@ -745,11 +742,6 @@ export function senseiApi(port: number) {
       new EventSource(`${base}/api/index/progress`),
 
     // ── Graph ────────────────────────────────────────────────────────────
-    getGraphNodes: (repoId: string) =>
-      get<{ nodes: GraphSymbolNode[]; edges: GraphCallEdge[] }>(
-        `/api/graph/nodes?repoId=${enc(repoId)}`, { nodes: [], edges: [] },
-      ),
-
     /** Functions and methods whose name or signature contains `q`.
      *
      *  Result-based, unlike the `get(…, [])` it replaces: a picker that shows
@@ -758,16 +750,25 @@ export function senseiApi(port: number) {
     trySearchFunctions: (repoId: string, q: string) =>
       tryGet<FunctionMatch[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`),
 
-    getCommunities: (repoId: string) =>
-      get<CommunityInfo[]>(`/api/graph/communities/info?repoId=${enc(repoId)}`, []),
+    // Atlas (#288): each read is the daemon's answer or why it failed — never
+    // an empty graph, zero calls or a 0-repo roll-up standing in for a failure.
+    tryGetGraphNodes: (repoId: string) =>
+      tryGet<{ nodes: GraphSymbolNode[]; edges: GraphCallEdge[] }>(`/api/graph/nodes?repoId=${enc(repoId)}`),
 
-    detectCommunities: (repoId: string) =>
-      post<{ ok: boolean; communities: number }>('/api/graph/communities', { repoId }, { ok: false, communities: 0 }),
+    tryGetCommunities: (repoId: string) =>
+      tryGet<CommunityInfo[]>(`/api/graph/communities/info?repoId=${enc(repoId)}`),
 
-    getCallFlow: (repoId: string) =>
-      get<{ modules: CallFlowModule[]; calls: CallFlowCall[]; moduleCount: number; exportCount: number; callCount: number }>(
-        `/api/graph/call-flow?repoId=${enc(repoId)}`, { modules: [], calls: [], moduleCount: 0, exportCount: 0, callCount: 0 },
+    /** Refresh the repo's clustering, so the communities read after it is current. */
+    tryDetectCommunities: (repoId: string) =>
+      tryPost<{ ok: boolean; communities: number }>('/api/graph/communities', { repoId }),
+
+    tryGetCallFlow: (repoId: string) =>
+      tryGet<{ modules: CallFlowModule[]; calls: CallFlowCall[]; moduleCount: number; exportCount: number; callCount: number }>(
+        `/api/graph/call-flow?repoId=${enc(repoId)}`,
       ),
+
+    /** The project's solution roll-up across its repos. */
+    tryGetProjectGraph: (id: string) => tryGet<ProjectGraphResponse>(`/api/projects/${enc(id)}/graph`),
 
     // ── Libraries ────────────────────────────────────────────────────────
     getLibs: (params?: { repoId?: string; projectId?: string; shared?: boolean }) => {
@@ -1404,8 +1405,6 @@ export function senseiApi(port: number) {
     get addSolutionRepo() { return this.addProjectRepo; },
     /** @deprecated Use removeProjectRepo */
     get removeSolutionRepo() { return this.removeProjectRepo; },
-    /** @deprecated Use getProjectGraph */
-    get getSolutionGraph() { return this.getProjectGraph; },
     /** @deprecated Use analyzeProject */
     get analyzeSolution() { return this.analyzeProject; },
   };
