@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from './Icon.svelte';
 	import type { KitNavItem } from './types';
+	import { glyphs, navMark } from '$lib/glyphs.svelte';
 
 	// Mobile bottom tab bar (kit K2TabBar). Equal-width tabs, each an i-glyph icon
 	// or a kanji glyph + label, with an optional count badge. Presentational:
@@ -18,6 +19,7 @@
 >
 	{#each tabs as it (it.id)}
 		{@const on = active === it.id}
+		{@const mark = navMark(it, glyphs.mode)}
 		<button
 			type="button"
 			onclick={() => onnav?.(it.id)}
@@ -26,12 +28,10 @@
 				: 'text-ink-mute'}"
 			style="padding: 8px 4px 12px"
 		>
-			{#if it.icon}
-				<Icon name={it.icon} size={20} toneClass={on ? 'text-accent' : 'text-ink-mute'} />
+			{#if mark.kind === 'icon'}
+				<Icon name={mark.value} size={20} toneClass={on ? 'text-accent' : 'text-ink-mute'} />
 			{:else}
-				<span class="kanji {on ? 'text-accent' : 'text-ink-mute'}" style="font-size: 17px"
-					>{it.kanji}</span
-				>
+				<span class="kanji text-lg {on ? 'text-accent' : 'text-ink-mute'}">{mark.value}</span>
 			{/if}
 			<span class="text-xs {on ? 'font-semibold' : 'font-normal'}" style="white-space: nowrap"
 				>{it.label}</span

@@ -2,6 +2,7 @@
 	import Icon from './Icon.svelte';
 	import { dojoBuild } from '$lib/version';
 	import type { KitNavGroup, KitNavItem } from './types';
+	import { glyphs, navMark } from '$lib/glyphs.svelte';
 
 	// Left nav (kit K2NavPane) — grouped items + a version footer. Mobile-first:
 	// an off-canvas drawer under md (a backdrop dims + closes), a static sidebar at
@@ -55,6 +56,7 @@
 			<div class="flex flex-col gap-1">
 				{#each grp.items as it (it.id)}
 					{@const on = active === it.id}
+					{@const mark = navMark(it, glyphs.mode)}
 					<button
 						type="button"
 						onclick={() => select(it)}
@@ -65,10 +67,10 @@
 						style="grid-template-columns: auto 1fr auto; text-align: left; padding: 8px"
 					>
 						<span class="flex items-center justify-center" style="width: 16px">
-							{#if it.icon}
-								<Icon name={it.icon} size={17} toneClass={on ? 'text-accent' : 'text-ink-mute'} />
+							{#if mark.kind === 'icon'}
+								<Icon name={mark.value} size={17} toneClass={on ? 'text-accent' : 'text-ink-mute'} />
 							{:else}
-								<span class="kanji text-sm {on ? 'text-accent' : 'text-ink-mute'}">{it.kanji}</span>
+								<span class="kanji text-sm {on ? 'text-accent' : 'text-ink-mute'}">{mark.value}</span>
 							{/if}
 						</span>
 						<span class="truncate">{it.label}</span>

@@ -6,6 +6,7 @@
 	import { setContext, onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { colorMode, loadColorMode, setColorMode } from '$lib/theme.svelte';
+	import { glyphs, loadGlyphMode } from '$lib/glyphs.svelte';
 
 	let { children } = $props();
 
@@ -42,6 +43,8 @@
 	// Apply the persisted / system color mode client-side + follow OS changes.
 	onMount(() => {
 		setColorMode(loadColorMode());
+		// The persisted glyph choice (#133), icons unless it says kanji.
+		glyphs.mode = loadGlyphMode();
 		return colorMode.listen();
 	});
 

@@ -3,6 +3,7 @@
 	import { getInitials } from './initials';
 	import { createLogout } from './logout.svelte';
 	import { colorMode, setColorMode } from '$lib/theme.svelte';
+	import { GLYPH_OPTIONS, glyphs, setGlyphMode, type GlyphMode } from '$lib/glyphs.svelte';
 	import type { ColorMode } from '@rokkit/app';
 	import type { KitMe } from './types';
 
@@ -10,7 +11,8 @@
 	// opens a small popover (same trigger + backdrop pattern as OrgSwitcher; rokkit's
 	// Menu/Dropdown render their own trigger, so they can't wrap an avatar) with the
 	// theme mode switch (rokkit Toggle → system/light/dark, wired to the shared
-	// colorMode manager) and Log out (shared createLogout).
+	// colorMode manager), the glyph switch (icons or kanji, #133) and Log out
+	// (shared createLogout).
 	let { me }: { me?: KitMe } = $props();
 
 	let open = $state(false);
@@ -77,6 +79,17 @@
 					onchange={(v) => setColorMode(v as ColorMode)}
 					size="sm"
 					label="Theme"
+				/>
+			</div>
+
+			<div class="flex flex-col gap-2 px-4 pb-3">
+				<span class="text-ink-mute text-xs font-semibold uppercase" style="letter-spacing: 0.18em">Glyphs</span>
+				<Toggle
+					options={GLYPH_OPTIONS}
+					value={glyphs.mode}
+					onchange={(v) => setGlyphMode(v as GlyphMode)}
+					size="sm"
+					label="Glyphs"
 				/>
 			</div>
 

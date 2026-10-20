@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import TopBar from './TopBar.svelte';
 import NavPane from './NavPane.svelte';
 import TabBar from './TabBar.svelte';
+import AccountMenu from './AccountMenu.svelte';
 import OrgSwitcher from './OrgSwitcher.svelte';
 import AppShellHarness from './AppShell.harness.svelte';
 import { me, dojos, org, nav, tabs } from './fixtures';
+import { glyphs } from '$lib/glyphs.svelte';
 
 // The chrome mounts in both contexts ("you" personal + "org"), stays mobile-first
 // (a hamburger under md, an off-canvas NavPane drawer), and wires the switch /
@@ -156,5 +158,53 @@ describe('kit chrome — the one shell composes', () => {
 		});
 		const shell = container.firstElementChild!;
 		expect(shell.children.length).toBe(2); // TopBar · nav+main row — no tab bar
+	});
+});
+
+// #133: the nav and the tabs follow the dōjō glyph choice.
+describe('kit chrome — glyph mode', () => {
+	afterEach(() => {
+		cleanup();
+		glyphs.mode = 'icon';
+	});
+	const marked = [{ group: 'G', items: [{ id: 'inbox', label: 'Inbox', icon: 'inbox', kanji: '受' }] }];
+
+	it('shows the kanji in kanji mode and the icon in icon mode', () => {
+		glyphs.mode = 'kanji';
+		const k = render(NavPane, { groups: marked, active: 'inbox' });
+		expect(k.getByText('受')).toBeTruthy();
+		expect(k.container.querySelector('span.inbox')).toBeNull();
+		cleanup();
+
+		glyphs.mode = 'icon';
+		const i = render(NavPane, { groups: marked, active: 'inbox' });
+		expect(i.container.querySelector('span.inbox')).not.toBeNull();
+		expect(i.queryByText('受')).toBeNull();
+	});
+
+	it('applies to the bottom tabs too', () => {
+		glyphs.mode = 'kanji';
+		const t = render(TabBar, { tabs: marked[0].items, active: 'inbox' });
+		expect(t.getByText('受')).toBeTruthy();
+	});
+});
+
+// #133: the choice is made in the account menu, beside the colour mode.
+describe('kit chrome — AccountMenu glyphs', () => {
+	afterEach(() => {
+		cleanup();
+		glyphs.mode = 'icon';
+		vi.unstubAllGlobals();
+	});
+
+	it('offers Icons and Kanji, and picking one switches the mode', async () => {
+		const m = new Map<string, string>();
+		vi.stubGlobal('localStorage', { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) });
+		const { getByRole, getByText } = render(AccountMenu, { me });
+		await fireEvent.click(getByRole('button', { expanded: false }));
+		expect(getByText('Glyphs')).toBeTruthy();
+		await fireEvent.click(getByText('Kanji'));
+		expect(glyphs.mode).toBe('kanji');
+		expect(m.get('dojo-glyphs')).toBe('kanji');
 	});
 });
