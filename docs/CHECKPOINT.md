@@ -21,7 +21,7 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #299 per its plan comment (decided: one dōjō project per sensei project): daemon offers each repo's project (shared slug derivation with publish_run), dōjō `file_repository_project` security-definer RPC links dojo.repositories_in_projects. A release to ship #301/#300/#295 is the user's call. Then #293 steps 1–2. Also open: #132 step 3, #292, #106, #191, #201, #139.
+**Next command:** `/sensei:session refocus`, then #299's daemon layer: sync offers each repo's project (one slug/name derivation shared with publish_run; classification from the bound membership) — DB fn (20260dd9) + endpoint (13cf12f2) are done and live-verified locally. Then #302 (one keychain item per identity). A release to ship #301/#300/#296/#295 is the user's call. Then #293 steps 1–2.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
