@@ -16,11 +16,11 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #133 slice 2: project glyphs (`projectIcon`/`ProjectGlyph`,
-kanji fallback when an icon is missing) and `ROLES` in `$lib/setup/types.ts`, each with a both-values spec.
-Pattern: `$lib/glyphs` (`glyphMode`, `glyphFields`, `isSolarBoldDuotone`).
+**Next command:** `/sensei:session refocus`, then #133 slice 3: instruments, libraries and filter chips
+(each list gets an `icon`, a both-values spec, and renders via `glyphOf`/`glyphFields`). Then the dōjō nav.
 
 **Open questions:**
+- #133: project glyphs in icon mode. Keep each project's inferred kanji (recommended), or use one generic icon?
 - Run `make dev-signing-cert` once so local installs keep their keychain and folder grants. #282 (releases)
   needs an Apple Developer account.
 - #199: on headless Linux, an encrypted-file credential store, or stop publishing Linux daemon artifacts?
