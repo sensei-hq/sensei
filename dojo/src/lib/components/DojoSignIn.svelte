@@ -2,10 +2,6 @@
 	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { AuthProvider } from '@kavach/ui';
 	import { providers } from '$kavach/providers';
-	import { metrics } from '$lib/dojo-data';
-	import Spark from './Spark.svelte';
-
-	const m = metrics;
 
 	let selfHost = $state(false);
 	let selfHostUrl = $state('dojo.acme.internal');
@@ -28,12 +24,17 @@
 		}
 	}
 
-	const adoptionLift = $derived(Math.round(m.adoptionLift * 100));
+	// What sensei is, in three marks (mockup p-signin).
+	const FEATURES: [string, string, string][] = [
+		['観', 'Watches your sessions', 'locally · on this machine'],
+		['己', 'Your rules & guardrails', 'yours to set and edit'],
+		['盾', 'Nothing leaves', 'unless you choose to share']
+	];
 </script>
 
 <div class="bg-paper flex min-h-screen w-full flex-col md:h-screen md:flex-row md:overflow-hidden">
 	<!--
-		── left · welcome back + insight into the Dōjō ──
+		── left · what sensei is ──
 		Marketing/insight panel. On phones (<md) it's hidden so the sign-in form is
 		primary and never pushed off-screen; on md:+ it takes the fixed 57% split.
 		Gradient stays inline (paint/geometry the token system doesn't model — §1.8).
@@ -51,74 +52,46 @@
 			>
 		</div>
 
+		<!-- What sensei is (#132, mockup p-signin). It used to show "Acme Corp's"
+		     lesson counts and a "+11pp" lift from a fixture — invented numbers in
+		     front of every visitor, before sign-in (#241). -->
 		<div class="mt-12">
-			<div class="text-ink-mute mb-2 text-xs uppercase" style="letter-spacing: 0.2em">
-				Welcome back
+			<div class="text-ink-mute mb-2 text-xs font-semibold uppercase" style="letter-spacing: 0.2em">
+				先生 Sensei
 			</div>
 			<h1 class="display m-0 font-light text-3xl" style="letter-spacing: -0.02em; line-height: 1.08">
-				Your team kept<br />learning while<br />you were away.
+				A quiet companion<br />for your<br />AI-assisted work.
 			</h1>
 			<p class="text-ink-soft mt-4 max-w-[440px] text-sm" style="line-height: 1.6">
-				A snapshot of <b class="font-semibold">Acme Corp's</b> shared mind since your last visit — remembered
-				on this device. Sign in to step back in.
+				Sensei watches your coding sessions on this machine and surfaces the patterns you're too close to
+				see. Yours alone by default — a dōjō is optional, for when you want to share what you learn with a
+				team.
 			</p>
 		</div>
 
 		<div class="mt-8 grid grid-cols-3 gap-3">
-			<div class="bg-paper border-paper-edge rounded-xl border p-4">
-				<div class="mb-2 flex items-center justify-between">
-					<KanjiToken char="共" size="inherit" toneClass="" class="text-accent text-sm" />
-					<span class="text-accent"><Spark data={m.contribSpark} /></span>
+			{#each FEATURES as [kanji, title, sub] (kanji)}
+				<div class="bg-paper border-paper-edge rounded-lg border p-4">
+					<KanjiToken char={kanji} icon={null} size="inherit" toneClass="" class="text-accent text-xl" />
+					<div class="text-ink mt-2 text-sm font-semibold" style="line-height: 1.3">{title}</div>
+					<div class="text-ink-mute mt-1 text-xs">{sub}</div>
 				</div>
-				<div class="display text-ink font-light text-2xl" style="line-height: 1">
-					{m.contribWeek}
-				</div>
-				<div class="text-ink-mute mt-2 text-xs" style="line-height: 1.35">
-					lessons shared this week
-				</div>
-			</div>
-			<div class="bg-paper border-paper-edge rounded-xl border p-4">
-				<div class="mb-2 flex items-center justify-between">
-					<KanjiToken char="決" size="inherit" toneClass="" class="text-accent text-sm" />
-				</div>
-				<div class="display text-ink font-light text-2xl" style="line-height: 1">
-					{m.approvedWeek}
-				</div>
-				<div class="text-ink-mute mt-2 text-xs" style="line-height: 1.35">
-					approved &amp; distributed
-				</div>
-			</div>
-			<div class="bg-paper border-paper-edge rounded-xl border p-4">
-				<div class="mb-2 flex items-center justify-between">
-					<KanjiToken char="盾" size="inherit" toneClass="" class="text-accent text-sm" />
-				</div>
-				<div class="display text-ink font-light text-2xl" style="line-height: 1">
-					{m.dereferenced}
-				</div>
-				<div class="text-ink-mute mt-2 text-xs" style="line-height: 1.35">
-					anonymized from client work · 0 incidents
-				</div>
-			</div>
+			{/each}
 		</div>
 
-		<!-- latest approved teaching -->
-		<div class="bg-paper border-paper-edge mt-3 flex items-center gap-4 rounded-xl border p-4">
-			<KanjiToken char="守" size="inherit" toneClass="" class="text-accent text-xl" />
+		<div class="bg-paper border-paper-edge mt-3 flex items-center gap-3 rounded-lg border p-4">
+			<KanjiToken char="空" icon={null} size="inherit" toneClass="" class="text-ink-mute text-xl" />
 			<div class="min-w-0 flex-1">
-				<div class="text-ink-faint mb-1 font-semibold uppercase text-xs" style="letter-spacing: 0.12em">
-					Just published · Company
+				<div class="text-ink text-sm">Sign in and sensei picks up where you left off.</div>
+				<div class="text-ink-mute mt-1 text-xs">
+					No team, no setup required. <span class="italic">Still listening.</span>
 				</div>
-				<div class="text-ink text-sm">Never log refresh tokens, even at debug level</div>
-			</div>
-			<div class="text-right">
-				<div class="display text-success font-light text-xl">+{adoptionLift}pp</div>
-				<div class="text-ink-mute text-xs">first-try resolution</div>
 			</div>
 		</div>
 
 		<div class="flex-1"></div>
-		<div class="text-ink-faint mt-8 text-xs" style="line-height: 1.5">
-			Private to your org · governed · anonymized before anything leaves a client engagement.
+		<div class="text-ink-faint mt-6 text-xs" style="line-height: 1.5">
+			Local-first · yours by default · join or create a dōjō later only to share with a team.
 		</div>
 	</div>
 

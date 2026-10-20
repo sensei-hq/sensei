@@ -6,22 +6,6 @@
 // console screens. Kept in a plain module so it can be imported in SSR/prerender
 // and unit tests without any runtime dependency.
 
-export interface DojoMetrics {
-	contribWeek: number;
-	contribSpark: number[];
-	approvedWeek: number;
-	dereferenced: number;
-	adoptionLift: number;
-}
-
-export const metrics: DojoMetrics = {
-	contribWeek: 34,
-	contribSpark: [8, 11, 9, 14, 12, 18, 22],
-	approvedWeek: 12,
-	dereferenced: 47,
-	adoptionLift: 0.11
-};
-
 /** What a dōjō IS, derived from `dojo.tenants.origin` — the forge's own answer.
  *
  *  There was a fourth-way taxonomy here (Employer · Client · Community) and it
