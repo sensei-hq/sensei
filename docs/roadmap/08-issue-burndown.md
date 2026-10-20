@@ -134,7 +134,7 @@ The settings screen lists them as repositories.
   - ~~#85~~ **Closed 2026-10-20**: Overview hotspots and patterns in use; the overview/patterns reads fail as
     errors, not as an all-quiet project.
   - #287 (found via #85): **scope fixed and live.** Rework is placed by path inside the project's indexed repositories, each event counted once, and a re-derive replaces the `suggested` rows. This project went from 617 rows to 371, none outside it. Backfill now resets sessions by project. Open: the granularity decision (recommended: one "rework hotspots" pattern grouped by directory).
-  - #288 (found via #85): **in progress.** Fallback reads went 72 → 46. Today is converted and verified live; 24 dead methods are deleted; a ratchet spec caps the count. Next: the projects index and project layout, then Atlas and the remaining screens.
+  - #288 (found via #85): **in progress.** Fallback reads went 72 → 44. Today, the projects index and the project window are converted and verified live (fixed along the way: a fabricated 404 and a fabricated warning dot). 24 dead methods are deleted; a ratchet spec caps the count. Next: Atlas, then the remaining screens.
   - ~~#144~~ **Closed 2026-10-20**: a repo-less project (130 of 133 here; zero metric rows each) says why it has
     no metrics.
   - #149: **experiment run 2026-10-20, criterion not met** — without `parent_id` the >50-file giants grew
