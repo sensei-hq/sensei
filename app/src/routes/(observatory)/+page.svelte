@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Eyebrow, FtrStrip, Kanji } from '$lib/components';
+  import { invalidateAll } from '$app/navigation';
+  import { Eyebrow, FtrStrip, Kanji, ScreenState } from '$lib/components';
   import RecentSessions from './RecentSessions.svelte';
   import HeroKoan from './HeroKoan.svelte';
   import InsightCard from './InsightCard.svelte';
@@ -11,13 +12,20 @@
 
   // The daemon owns the maturity gate — the screen renders it, it does not
   // decide. Everything below switches presentation only, never copy.
+  // A read that failed is shown as a failure (#288): no Today → an error
+  // with retry, never the early state; no FTR → "unavailable", never "—".
   const home = $derived(data.today);
-  const mode = $derived(home.dataMaturity);
-  const chip = $derived(ftrChip(data.ftr));
-  const bars = $derived(ftrBars(data.ftr));
-  const greeting = $derived(greetingLine(home.greeting));
+  const mode = $derived(home?.dataMaturity ?? 'early');
+  const chip = $derived(data.ftr ? ftrChip(data.ftr) : null);
+  const bars = $derived(data.ftr ? ftrBars(data.ftr) : []);
+  const greeting = $derived(greetingLine(home?.greeting ?? ''));
 </script>
 
+{#if !home}
+  <div class="max-w-[1060px] mx-auto px-7 py-6 pb-16">
+    <ScreenState status="error" error={data.todayError} onretry={() => invalidateAll()} />
+  </div>
+{:else}
 <div class="max-w-[1060px] mx-auto px-7 py-6 pb-16" data-mode={mode}>
   <!-- Pinned greeting + FTR header -->
   <div class="flex items-start justify-between mb-8">
@@ -30,13 +38,13 @@
       <div>
         <p class="m-0 mb-1"><Eyebrow>First-Try-Right · 14d</Eyebrow></p>
         <div class="flex items-baseline gap-2 justify-end">
-          {#if chip.value === null}
+          {#if !chip}
+            <span data-ftr-error title={data.ftrError} class="text-sm text-danger">unavailable</span>
+          {:else if chip.value === null}
             <span class="display text-3xl font-normal text-ink-mute">—</span>
           {:else}
             <span
-              class="display text-3xl font-normal"
-              class:text-ink={mode === 'mature'}
-              class:text-ink-mute={mode === 'early'}
+              class={['display text-3xl font-normal', { 'text-ink': mode === 'mature', 'text-ink-mute': mode === 'early' }]}
             >{chip.value}</span>
             <span class="text-xs text-ink-soft">%</span>
             {#if chip.delta !== null}
@@ -47,7 +55,9 @@
           {/if}
         </div>
       </div>
-      <FtrStrip data={bars} width={168} height={56} dim={mode === 'early'} />
+      {#if data.ftr}
+        <FtrStrip data={bars} width={168} height={56} dim={mode === 'early'} />
+      {/if}
     </div>
   </div>
 
@@ -102,6 +112,7 @@
   <!-- Recent sessions — both modes -->
   <RecentSessions sessions={data.recentSessions} />
 </div>
+{/if}
 
 {#snippet sectionHead(title: string, href: string, linkText: string)}
   <div class="flex items-baseline justify-between mb-4">

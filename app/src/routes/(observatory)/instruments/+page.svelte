@@ -2,7 +2,9 @@
     import { onMount, untrack } from "svelte";
     import { page } from "$app/state";
     import { appState } from "$lib/appstate.svelte.js";
-    import { senseiApi } from "$lib/api.js";
+    import { senseiApi, readOutcome } from "$lib/api.js";
+    import type { ObservatoryFtr } from "$lib/types.js";
+    import { firstTryKpi } from "./health-kpis";
     import TabBar from "$lib/components/TabBar.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
@@ -35,7 +37,7 @@
     // Sourced from GET /api/observatory/ftr, page-local like the replay list.
     // null until the fetch resolves so the card shows "—" rather than a
     // fabricated 0%.
-    let holisticFtr = $state<number | null>(null);
+    let holisticFtr = $state<{ data: ObservatoryFtr | null; error: string | null } | null>(null);
     // null = L1 overview grid; a source = L2 per-tool drill for that card.
     let activeSource = $state<ToolHealthSource | null>(null);
     function openSource(source: ToolHealthSource) {
@@ -303,8 +305,7 @@
     async function ensureHolisticFtrLoaded() {
         if (holisticFtr != null) return;
         const api = senseiApi(appState.port);
-        const resp = await api.getObservatoryFtr();
-        holisticFtr = resp.ftr14d;
+        holisticFtr = readOutcome(await api.tryGetObservatoryFtr());
     }
 
     // Kick off session loading the first time Replay is visible; and load
@@ -908,7 +909,7 @@
             )}
             {@render KpiCard(
                 '一', 'first-try rate',
-                holisticFtr != null ? `${Math.round(holisticFtr * 100)}%` : '—',
+                firstTryKpi(holisticFtr),
                 'holistic · 14d',
             )}
         </div>

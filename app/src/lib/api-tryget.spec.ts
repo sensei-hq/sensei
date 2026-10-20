@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { senseiApi } from './api.js';
+import { senseiApi, failureReason, readOutcome } from './api.js';
 
 /**
  * F8 (mockup-drift-audit) — the no-fabrication guarantee at the API seam.
@@ -38,6 +38,9 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryGetCollectivePreferences', call: () => api().tryGetCollectivePreferences(), body: { destination: 'none' } },
   { name: 'tryGetProjectLibraries', call: () => api().tryGetProjectLibraries('p1'), body: { libraries: [] } },
   { name: 'tryGetProjectLibraryVersionConflicts', call: () => api().tryGetProjectLibraryVersionConflicts('p1'), body: { conflicts: [] } },
+  // #288 — Observatory · Today.
+  { name: 'tryGetObservatoryToday', call: () => api().tryGetObservatoryToday(), body: { dataMaturity: 'mature' } },
+  { name: 'tryGetObservatoryFtr', call: () => api().tryGetObservatoryFtr(), body: { ftr14d: 0.8 } },
 ];
 
 describe('F8 · error-propagating loaders (no fabrication on failure)', () => {
@@ -65,4 +68,17 @@ describe('F8 · error-propagating loaders (no fabrication on failure)', () => {
       });
     });
   }
+});
+
+describe('failureReason / readOutcome (#288)', () => {
+  it('names the failure: the status text, else the status', () => {
+    expect(failureReason({ status: 503, message: 'Service Unavailable' })).toBe('Service Unavailable');
+    expect(failureReason({ status: 502, message: '' })).toBe('HTTP 502');
+    expect(failureReason({ status: 0, message: 'ECONNREFUSED' })).toBe('ECONNREFUSED');
+  });
+
+  it('a read is its data, or why it could not be read — never both, never a default', () => {
+    expect(readOutcome({ ok: true, data: [] })).toEqual({ data: [], error: null });
+    expect(readOutcome({ ok: false, error: { status: 500, message: 'boom' } })).toEqual({ data: null, error: 'boom' });
+  });
 });

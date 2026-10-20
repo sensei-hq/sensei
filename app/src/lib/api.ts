@@ -50,6 +50,15 @@ export type ApiError = { status: number; message: string } | { status: 0; messag
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
+/** Why a read failed, for the screen to say: the status text, else the status. */
+export const failureReason = (error: ApiError): string => error.message || `HTTP ${error.status}`;
+
+/** A read as a loader hands it to its page: the data, or why it could not be
+ *  read — never a default standing in for the failure (#288). */
+export function readOutcome<T>(r: ApiResult<T>): { data: T | null; error: string | null } {
+  return r.ok ? { data: r.data, error: null } : { data: null, error: failureReason(r.error) };
+}
+
 /** The daemon's origin for a given port. The single source of truth for the
  *  loopback base URL, shared by `senseiApi` and any non-fetch consumer (e.g.
  *  an `<img src>` that streams bytes from the daemon, like a project icon). */
@@ -694,22 +703,12 @@ export function senseiApi(port: number) {
     // ── Observatory · Today (home screen) ───────────────────────────────
     // The daemon assembles the whole screen — greeting, maturity gate, hero
     // koan, insights, adopted lane, recent sessions. The screen renders it;
-    // it does not decide early-vs-mature. Fallback is the early state so a
-    // daemon hiccup degrades to "still listening", never a broken screen.
-    getObservatoryToday: () =>
-      get<ObservatoryToday>('/api/observatory/today', {
-        greeting: '',
-        today: '',
-        dataMaturity: 'early',
-        hero: { kanji: '観', koan: '', body: '', impact: null, action: null, source: '', noticed: '' },
-        insights: [],
-        adopted: [],
-        recentSessions: [],
-      }),
+    // it does not decide early-vs-mature. A failed read is an error the screen
+    // shows, never the early "still listening" state (#288).
+    tryGetObservatoryToday: () => tryGet<ObservatoryToday>('/api/observatory/today'),
 
-    // Holistic FTR headline (14d / prior / trend / 7d) → Today header chip.
-    getObservatoryFtr: () =>
-      get<ObservatoryFtr>('/api/observatory/ftr', { ftr14d: null, ftr14dPrev: null, ftrTrend: [], sessions7d: 0 }),
+    /** Holistic FTR headline (14d / prior / trend / 7d) → Today header chip. */
+    tryGetObservatoryFtr: () => tryGet<ObservatoryFtr>('/api/observatory/ftr'),
 
     // ── Observatory chart data ──────────────────────────────────────────
 
