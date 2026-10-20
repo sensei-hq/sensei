@@ -11,14 +11,14 @@
 - dbd 0.27.3 (2d77d771), rustls 0.23.46 (c11e19d2).
 
 **Remaining:**
-- #283: verify the approve round trip after the user clicks it (then close). #133 slice 1 done; then #284,
+- #283: verify the approve round trip after the user clicks it (then close). #133 slice 1 done; then #286,
   #286, #85, #144, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139).
 - #190 (wave 5): a `modules:` design cannot be imported until `project::survey` + `Workspace::load` land.
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then the next wave-3 item: #284 (blank inspect screenshots), then
-#286, #85, #144, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139).
+**Next command:** `/sensei:session refocus`, then #286 (the app's router list turns a failed read into "no
+routers": `listGatewayRouters` → `tryGet` + an error state in the wizard loader and Settings → Providers), then #85.
 
 **Open questions:**
 - #133: project glyphs in icon mode — keep each project's inferred kanji (recommended), or one generic icon?
@@ -33,6 +33,6 @@
 **Known-broken / pending:**
 - dōjō sync on this machine fails with "keychain access needs approval" until you click "Approve keychain
   access" (sign-in overlay or Settings → dōjō). Its GitHub token is also expired, so a sign-in follows.
-- #284: some inspect screenshots capture a blank webview.
+- #284: inspect captures stay blank until `make dev-signing-cert` + a one-time Screen Recording grant.
 - `/api/projects/{id}/icon` 404s for projects whose checkout is gone. Dependabot reports 0 alerts (#172).
 - The committed `database/design.dbml` is stale (pre-existing).

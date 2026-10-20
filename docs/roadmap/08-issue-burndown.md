@@ -122,7 +122,9 @@ The settings screen lists them as repositories.
   - ~~#135~~ **Closed 2026-10-19**: the menu item opens `/help`; the page lists only keys that are bound.
   - ~~#96~~ **Closed 2026-10-19**: next run, avg, last error, and a per-worker log tail (a
     `scheduled{worker}` span per pass; a row toggle). The page no longer shows `[]` for a failed read.
-  - #284 (found via #96): some inspect screenshots capture a blank webview.
+  - #284 (found via #96): blank inspect captures — **cause found** (Screen Recording grant lost per ad-hoc
+    rebuild); the harness reports blank/unpainted captures, the e2e bundle is signed stably. Closes after the user
+    runs `make dev-signing-cert` and grants Screen Recording once.
   - #283 (found via #96): **parts 1–3 live** — `running_since` + "running for", a per-pass limit that records
     "still running after Ns", and a daemon that never prompts (`NeedsApproval`; only sign-in/out and router-key
     saves may ask), and an "Approve keychain access" action. Open only for the user's click to be seen working.
