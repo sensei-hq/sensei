@@ -135,7 +135,8 @@ The settings screen lists them as repositories.
     errors, not as an all-quiet project.
   - #287 (found via #85): rework anti-patterns are one row per file, including files outside the project (618).
   - #288 (found via #85): 57 app reads still turn a failure into a default value.
-  - #144: on a project with no repository, say once that `scope=repo` metrics need git history.
+  - ~~#144~~ **Closed 2026-10-20**: a repo-less project (130 of 133 here; zero metric rows each) says why it has
+    no metrics.
   - #149: the community experiment (drop `parent_id` adjacency, measure).
   - #278: the verdict heuristic (`unknown`, and action tools by outcome).
 - **Dōjō:**

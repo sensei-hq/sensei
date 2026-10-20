@@ -4,7 +4,7 @@
 
 **Done:**
 - Wave 1: #271, #269. Wave 2 decided (#141, #230, #90 closed; #277, #278, deferred epic #279; #275).
-- Wave 3: #104, #185, #186, #153, #154, #177, #157, #280, #213, #135, #179, #181, #96, #285, #286, #85 closed;
+- Wave 3: #104, #185, #186, #153, #154, #177, #157, #280, #213, #135, #179, #181, #96, #285, #286, #85, #144 closed;
   #133 implementation complete (awaiting two decisions).
 - #283 live: `running_since` + "running for", a per-pass limit ("still running after Ns"), a daemon that never
   prompts for the keychain, and an "Approve keychain access" action.
@@ -17,8 +17,8 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #144 (a project with no repository says once that
-`scope=repo` metrics need git history), then #149, #278, #287, #288.
+**Next command:** `/sensei:session refocus`, then #149 (the community experiment: drop `parent_id` adjacency,
+measure), then #278, #287, #288, dōjō (#132, #106, #191), code health (#201, #139).
 
 **Open questions:**
 - #133: project glyphs in icon mode — keep each project's inferred kanji (recommended), or one generic icon?
