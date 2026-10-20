@@ -80,6 +80,9 @@
     // re-run on every change to what they read, so "empty" cannot mean "not yet
     // read" — an empty or failed read would re-fetch forever. Retry clears it.
     let replayLoaded = $state(false);
+    // Why the selected session's replay could not be read (#288) — not
+    // "No tool calls in this session."
+    let replayDetailError = $state<string | null>(null);
     let selectedCall = $state<SessionReplayCall | null>(null);
 
     // Insights tab — the newer cached tool_insights table is loaded lazily
@@ -104,7 +107,7 @@
     let serversError = $state<string | null>(null);
 
     const playgroundGroups = $derived(
-        buildPlaygroundGroups(tools, discoveredServers, mcp.serverToolManifests),
+        buildPlaygroundGroups(tools, discoveredServers, mcp.serverToolManifests, mcp.serverToolErrors),
     );
 
     // Search-filtered view of groups. Ql matches on tool name OR summary.
@@ -297,9 +300,12 @@
         // #84 T2 Slice C — Replay endpoint with #90 verdicts joined. First
         // open triggers `classify: true` so verdicts populate in one round-
         // trip; subsequent selects hit the cache.
-        const cache = await mcp.loadSessionReplay(sessionId, { classify: true });
-        sessionCalls = cache.calls;
-        sessionSummary = cache.summary;
+        const read = await mcp.loadSessionReplay(sessionId, { classify: true });
+        replayDetailError = read.error;
+        if (read.replay) {
+            sessionCalls = read.replay.calls;
+            sessionSummary = read.replay.summary;
+        }
         replayLoading = false;
     }
 
@@ -315,20 +321,29 @@
     // Kick off session loading the first time Replay is visible; and load
     // the tool_insights cache the first time Insights is visible. Playground
     // gets a lazy load of the discovered MCP servers panel.
+    //
+    // Depends on `tab` ONLY. Each load reads its own status before fetching, so
+    // a tracked call re-ran this effect on every status change — and a load
+    // that failed ('loading' → 'error', still not 'ready') re-fetched without
+    // end against a failing daemon. A failed read is retried from its error
+    // state's Retry, not by this effect.
     $effect(() => {
-        if (tab === 'playground') {
-            void mcp.loadMcpServers();
-        }
-        if (tab === 'replay') {
-            void ensureReplaySessionsLoaded();
-        }
-        if (tab === 'insights') {
-            // L1 grid + L2 drill data. loadCatalog (onMount) already primed
-            // toolStats/toolSignals for the L2 pane.
-            void mcp.loadToolsHealth();
-            void mcp.loadInsights();
-            void ensureHolisticFtrLoaded();
-        }
+        const current = tab;
+        untrack(() => {
+            if (current === 'playground') {
+                void mcp.loadMcpServers();
+            }
+            if (current === 'replay') {
+                void ensureReplaySessionsLoaded();
+            }
+            if (current === 'insights') {
+                // L1 grid + L2 drill data. loadCatalog (onMount) already primed
+                // toolStats/toolSignals for the L2 pane.
+                void mcp.loadToolsHealth();
+                void mcp.loadInsights();
+                void ensureHolisticFtrLoaded();
+            }
+        });
     });
 
     // Preselect the deep-linked session once the replay list is available.
@@ -416,6 +431,13 @@
 <div>
 
     {#if tab === "playground"}
+        {#if mcp.catalogError}
+            <!-- The tool catalog could not be read (#288) — sensei's own tools
+                 would otherwise just be missing from the rail. -->
+            <div class="px-7 pt-4">
+                <ScreenState status="error" error={`Could not read the tool catalog: ${mcp.catalogError}`} onretry={() => void mcp.loadCatalog(true)} />
+            </div>
+        {/if}
         <!-- #84 T2 Playground — matches docs/mockups/Sensei/lib/instruments-simple.jsx
              (InstrumentsPlaygroundSimple). Left rail: search + collapsible MCP
              groups → tools. Right: tool detail with inputs form + response
@@ -477,6 +499,9 @@
                         </div>
 
                         <!-- Tool lines -->
+                        {#if !collapsed && group.error}
+                            <p class="text-xs text-danger px-3 py-2 m-0" data-testid={`group-error-${group.id}`}>Could not read its tools: {group.error}</p>
+                        {/if}
                         {#if !collapsed}
                             <div>
                                 {#each group.tools as tool (tool.id)}
@@ -768,7 +793,9 @@
                                 <div class="text-xs uppercase tracking-wide text-ink-mute mb-2">
                                     timeline ({sessionCalls.length})
                                 </div>
-                                {#if sessionCalls.length === 0}
+                                {#if replayDetailError}
+                                    <p class="text-xs text-danger" data-testid="replay-detail-error">Could not read this session's tool calls: {replayDetailError}</p>
+                                {:else if sessionCalls.length === 0}
                                     <p class="text-xs text-ink-soft">No tool calls in this session.</p>
                                 {:else}
                                     {#each sessionCalls as call, i (call.callId)}
@@ -894,6 +921,8 @@
          the empty state can't flash during the first fetch. -->
     {#if mcp.toolsHealthStatus === 'loading' || mcp.toolsHealthStatus === 'idle'}
         <p class="text-sm text-ink-soft" data-testid="tool-health-loading">Loading tool sources…</p>
+    {:else if mcp.toolsHealthError}
+        <ScreenState status="error" error={mcp.toolsHealthError} onretry={() => void mcp.loadToolsHealth(true)} />
     {:else if toolsHealth.length === 0}
         <EmptyState
             kanji="健"
@@ -955,7 +984,13 @@
     <!-- Health body — matches instruments.jsx InstrumentsHealth. KPI
          row (4 cards) on top, then Signals grid, then per-tool usage
          table. Verdict split bar layers into each expanded row (Slice D). -->
-    {#if toolStats.length === 0}
+    {#if mcp.catalogError || mcp.insightsError}
+        <ScreenState
+            status="error"
+            error={mcp.catalogError ?? mcp.insightsError}
+            onretry={() => { void mcp.loadCatalog(true); void mcp.loadInsights(true); }}
+        />
+    {:else if toolStats.length === 0}
         <EmptyState
             kanji="健"
             title="No tool usage data yet"

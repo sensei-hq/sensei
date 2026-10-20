@@ -10,7 +10,7 @@ import type {
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   DojoMembership, DojoBindingSuggestion, DojoUpgradesResponse, CollectivePreferences,
   ShareReviewResponse, PublishBatchOutcome,
-  McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
+  McpToolManifest, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
@@ -666,28 +666,22 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/quality-signals`,
       ),
 
-    getToolUsage: () =>
-      get<{ tools: Array<{ tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string }> }>(
-        '/api/observatory/tool-usage', { tools: [] }
+    tryGetToolUsage: () =>
+      tryGet<{ tools: Array<{ tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string }> }>(
+        '/api/observatory/tool-usage',
       ),
 
-    getToolSignals: () =>
-      get<{ signals: ToolSignal[]; source?: 'cache' | 'derived' }>(
-        '/api/observatory/tool-signals', { signals: [] }
-      ),
+    tryGetToolSignals: () =>
+      tryGet<{ signals: ToolSignal[]; source?: 'cache' | 'derived' }>('/api/observatory/tool-signals'),
 
     // Cached per-tool snapshots (T2 Slice D) — full metrics + optional
     // signal card per tool. Populated by the AggregateToolInsights task.
-    getToolInsights: () =>
-      get<{ insights: ToolInsight[] }>(
-        '/api/observatory/tool-insights', { insights: [] }
-      ),
+    tryGetToolInsights: () => tryGet<{ insights: ToolInsight[] }>('/api/observatory/tool-insights'),
 
     // L1 source grid for Instruments · Health — one card per registered
     // source (builtin tool set or probed MCP server) with the share of
     // registered tools actually invoked in the last 14 days.
-    getToolsHealth: () =>
-      get<ToolsHealth>('/api/instruments/tools-health', { sources: [] }),
+    tryGetToolsHealth: () => tryGet<ToolsHealth>('/api/instruments/tools-health'),
 
     /** Where a library is used (#288: a failure is an error, not "unused"). */
     tryGetLibraryUsage: (id: string) =>
@@ -861,29 +855,19 @@ export function senseiApi(port: number) {
       ),
 
     // ── MCP Tool Proxy ────────────────────────────────────────────────
-    mcpListTools: () => get<{ tools: McpToolManifest[] }>('/api/mcp/tools', { tools: [] }),
+    tryMcpListTools: () => tryGet<{ tools: McpToolManifest[] }>('/api/mcp/tools'),
 
     mcpCallTool: (tool: string, params: Record<string, string>) =>
       post<Record<string, unknown>>('/api/mcp/call', { tool, params }, {}),
 
-    // Session tool-call timeline for the Instruments Replay tab.
-    getSessionToolTimeline: (sessionId: string, limit = 200) =>
-      get<SessionToolTimeline>(
-        `/api/sessions/${enc(sessionId)}/tool-timeline?limit=${limit}`,
-        { sessionId, calls: [], count: 0 },
-      ),
-
     // #84 T2 Slice C — Replay timeline with #90 verdicts joined + session
     // summary. Set `classify: true` to run the classifier before the read
     // (idempotent — safe on every open) so verdicts populate on first view.
-    getSessionReplay: (sessionId: string, opts: { limit?: number; classify?: boolean } = {}) => {
+    tryGetSessionReplay: (sessionId: string, opts: { limit?: number; classify?: boolean } = {}) => {
       const p = new URLSearchParams();
       p.set('limit', String(opts.limit ?? 200));
       if (opts.classify) p.set('classify', 'true');
-      return get<SessionReplayResponse>(
-        `/api/sessions/${enc(sessionId)}/replay?${p.toString()}`,
-        { sessionId, calls: [], count: 0, summary: { used: 0, partial: 0, ignored: 0, total: 0 }, classified: 0 },
-      );
+      return tryGet<SessionReplayResponse>(`/api/sessions/${enc(sessionId)}/replay?${p.toString()}`);
     },
 
     // #84 T2 Slice A — discovered MCP servers (Claude / Cursor / Zed configs).
@@ -901,7 +885,7 @@ export function senseiApi(port: number) {
     // #84 T2 Slice B — cached tool manifest per server. `?refresh=true`
     // forces a re-probe; `?probe=false` returns stale-badged cache without
     // spawning.
-    getMcpServerTools: (
+    tryGetMcpServerTools: (
       serverId: string,
       opts: { refresh?: boolean; probe?: boolean } = {},
     ) => {
@@ -909,15 +893,7 @@ export function senseiApi(port: number) {
       if (opts.refresh) p.set('refresh', 'true');
       if (opts.probe === false) p.set('probe', 'false');
       const qs = p.toString() ? `?${p.toString()}` : '';
-      return get<McpServerToolsManifest>(
-        `/api/instruments/mcp-servers/${enc(serverId)}/tools${qs}`,
-        {
-          id: '', server_id: serverId, tools: [], tool_count: 0,
-          probed_at: '', ttl_seconds: 900, error: null,
-          protocol_version: null, server_name: null, server_version: null,
-          age_seconds: 0,
-        },
-      );
+      return tryGet<McpServerToolsManifest>(`/api/instruments/mcp-servers/${enc(serverId)}/tools${qs}`);
     },
 
     // ── Marketplace ──────────────────────────────────────────────────

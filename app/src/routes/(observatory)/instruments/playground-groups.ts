@@ -25,6 +25,9 @@ export type PlaygroundGroup = {
   source: 'sensei' | 'discovered';
   serverId?: string;
   tools: PlaygroundTool[];
+  /** Why a discovered server's tools are not shown: the read failed, or the
+   *  daemon's probe did (#288). null when there is nothing to say. */
+  error?: string | null;
 };
 
 /** The fields of a discovered server this model reads. */
@@ -33,8 +36,9 @@ export type DiscoveredServer = { id: string; acp_family: string; mcp_key: string
 /** The tool shape of sensei's own catalog this model reads. */
 export type SenseiTool = { name: string; kind?: string; summary: string };
 
-/** A cached manifest, as probed from the server: its tools are untyped JSON. */
-export type ServerManifest = { tools?: unknown[] };
+/** A cached manifest, as probed from the server: its tools are untyped JSON,
+ *  and `error` is the probe's failure when it had one. */
+export type ServerManifest = { tools?: unknown[]; error?: string | null };
 
 /** A manifest entry this rail can show: one with a string name. */
 function namedTool(t: unknown): t is { name: string; description?: unknown } {
@@ -68,6 +72,7 @@ export function buildPlaygroundGroups(
   senseiTools: SenseiTool[],
   servers: DiscoveredServer[],
   manifests: Record<string, ServerManifest | undefined>,
+  readErrors: Record<string, string | undefined> = {},
 ): PlaygroundGroup[] {
   const groups: PlaygroundGroup[] = [
     {
@@ -106,6 +111,7 @@ export function buildPlaygroundGroups(
       source: 'discovered',
       serverId: server.id,
       tools,
+      error: readErrors[server.id] ?? manifests[server.id]?.error ?? null,
     });
   }
   return groups;

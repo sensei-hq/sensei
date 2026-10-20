@@ -75,6 +75,14 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryGetInstalledItems', call: () => api().tryGetInstalledItems(), body: [] },
   { name: 'tryListGatewayChains', call: () => api().tryListGatewayChains(), body: { chains: [] } },
   { name: 'tryProvisionStatus', call: () => api().tryProvisionStatus(), body: { models: [] } },
+  // #288 — the Instruments store.
+  { name: 'tryMcpListTools', call: () => api().tryMcpListTools(), body: { tools: [] } },
+  { name: 'tryGetToolUsage', call: () => api().tryGetToolUsage(), body: { tools: [] } },
+  { name: 'tryGetToolSignals', call: () => api().tryGetToolSignals(), body: { signals: [] } },
+  { name: 'tryGetToolInsights', call: () => api().tryGetToolInsights(), body: { insights: [] } },
+  { name: 'tryGetToolsHealth', call: () => api().tryGetToolsHealth(), body: { sources: [] } },
+  { name: 'tryGetSessionReplay', call: () => api().tryGetSessionReplay('s1'), body: { calls: [] } },
+  { name: 'tryGetMcpServerTools', call: () => api().tryGetMcpServerTools('srv'), body: { tools: [] } },
   // #288 — Atlas.
   { name: 'tryGetGraphNodes', call: () => api().tryGetGraphNodes('r'), body: { nodes: [], edges: [] } },
   { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
@@ -131,6 +139,6 @@ describe('legacy fallback reads (#288)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
     const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(21);
+    expect(reads.length).toBeLessThanOrEqual(13);
   });
 });
