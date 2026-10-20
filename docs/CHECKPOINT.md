@@ -4,24 +4,25 @@
 
 **Done:**
 - Wave 1: #271, #269. Wave 2 decided (#141, #230, #90 closed; #277, #278, deferred epic #279; #275).
-- Wave 3: #104, #185, #186, #153, #154, #177, #157, #280, #213, #135, #179, #181, #96 closed.
+- Wave 3: #104, #185, #186, #153, #154, #177, #157, #280, #213, #135, #179, #181, #96, #285 closed.
 - #283 live: `running_since` + "running for", a per-pass limit ("still running after Ns"), a daemon that never
   prompts for the keychain, and an "Approve keychain access" action.
 - dbd 0.27.3 (2d77d771), rustls 0.23.46 (c11e19d2).
 
 **Remaining:**
-- #283: verify the approve round trip after the user clicks it (then close). #285 next, then the rest of wave 3
-  (#85, #132, #106, #191, #199, #201, #139, #144, #149, #278, #133) and waves 4–10.
+- #283: verify the approve round trip after the user clicks it (then close). Next in wave 3: #133, then #284,
+  #286, #85, #144, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139).
 - #190 (wave 5): a `modules:` design cannot be imported until `project::survey` + `Workspace::load` land.
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #285: router-key reads report `unreadable: <reason>`
-rather than "no key" (`gateway_routers.rs`, `gateway_init.rs`).
+**Next command:** `/sensei:session refocus`, then #133 (the kanji ↔ icon display mode): read the issue and
+its 2026-10-19 scope note before planning.
 
 **Open questions:**
 - Run `make dev-signing-cert` once so local installs keep their keychain and folder grants. #282 (releases)
   needs an Apple Developer account.
+- #199: on headless Linux, an encrypted-file credential store, or stop publishing Linux daemon artifacts?
 - #194: drop the 145k/day `task_started`/`task_completed` rows from `public.logs`?
 - The orphaned Cloudflare build trigger fails every develop push. Delete it in the dashboard?
 - 8 CodeQL `rust/cleartext-logging` alerts in test files need triage.

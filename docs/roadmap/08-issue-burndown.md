@@ -122,7 +122,9 @@ The settings screen lists them as repositories.
   - #283 (found via #96): **parts 1–3 live** — `running_since` + "running for", a per-pass limit that records
     "still running after Ns", and a daemon that never prompts (`NeedsApproval`; only sign-in/out and router-key
     saves may ask), and an "Approve keychain access" action. Open only for the user's click to be seen working.
-  - #285 (found via #283): router-key reads turn a keychain refusal into "no key".
+  - ~~#285~~ **Closed 2026-10-20**: `KeyStanding` replaces `has_key`; a withheld router key reads
+    `configured: null` + `key_error`, and image generation answers 503 "unreadable", not 400 "not configured".
+  - #286 (found via #285): the app's router list turns a failed read into "no routers".
   - #85: Overview hotspots and patterns-in-use.
   - #144: on a project with no repository, say once that `scope=repo` metrics need git history.
   - #149: the community experiment (drop `parent_id` adjacency, measure).
@@ -132,7 +134,8 @@ The settings screen lists them as repositories.
   - #106: last fixture imports, plus a vitest guard.
   - #191: kavach 1.2.0.
 - **Code health:**
-  - #199: `has_key` reports `Unavailable`.
+  - #199: `has_key` part done via #285. Left: Linux roundtrip tests in CI, and a decision on headless Linux
+    (an encrypted-file store, or stop publishing Linux daemon artifacts).
   - #201: 6 `languages::fqn` call sites.
   - #139: rokkit material/frosted focus guard (upstream rokkit).
 
