@@ -6,13 +6,19 @@
  * Run: `bun run test:inspect -- screen-shell`.
  */
 import { expect, test } from '../fixtures';
-import { DAEMON_URL, navigateToScreen } from '../helpers';
+import { DAEMON_URL } from '../helpers';
 
 /** Project-scoped screens on `Screen`; grows as screens move (#293). */
 const PROJECT_SCREENS = [
   'traceability', 'instruments', 'libraries', 'memories',
   'diagrams/cycles', 'diagrams/layers', 'diagrams/neighbourhood', 'diagrams/schema', 'diagrams/structure', 'diagrams/world',
   'overview', 'about', 'patterns', 'impact', 'intake', 'metrics', 'sessions', 'atlas',
+];
+
+/** Observatory screens on `Screen`, by path; grows as screens move (#293). */
+const OBSERVATORY_SCREENS = [
+  ...['assistants', 'dojo', 'extensions', 'general', 'inference', 'instruments', 'libraries', 'metrics', 'projects', 'providers', 'roots']
+    .map((s) => `/settings/${s}`),
 ];
 
 type Probe = { fills: boolean; mainScrolls: boolean; headerMoved: number; bodyScrolled: number; fill: boolean } | null;
@@ -23,6 +29,39 @@ const expected = (fill: boolean) => ({ fills: true, mainScrolls: false, headerMo
 
 /** A body not yet probed: the screen just navigated to, not the one before it. */
 const FRESH_BODY = '[data-component="screen-body"]:not([data-probed])';
+
+type Page = { evaluate: (script: string) => Promise<unknown> };
+
+/** Navigate and wait for the new screen's body to be in the DOM. The identities
+ *  dialog (#283) is modal and holds navigation while a credential needs
+ *  approval, so it is closed first — it can open at any point, once the
+ *  personas load. */
+async function openScreen(page: Page, route: string) {
+  await page.evaluate(
+    `document.querySelector('[data-component="sign-in-overlay"] footer button')?.click()`,
+  );
+  // Navigated ONCE and not awaited: re-issuing restarts a slow loader, and
+  // awaiting the navigation inside evaluate trips the harness's 30s call limit
+  // on a screen whose load is slower than that (project Instruments, #298).
+  await page.evaluate(`(() => {
+    const a = document.createElement('a');
+    a.href = ${JSON.stringify(route)};
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  })()`);
+  for (const until = Date.now() + 120_000; Date.now() < until; ) {
+    // A page busy mounting (atlas lays its graph out on the main thread) cannot
+    // answer; that is "not yet", not a failure.
+    const mounted = await page.evaluate(`!!document.querySelector('${FRESH_BODY}')`).catch(() => false);
+    if (mounted) return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  const where = await page.evaluate(
+    `JSON.stringify({ at: location.pathname, bodies: document.querySelectorAll('[data-component="screen-body"]').length, probed: document.querySelectorAll('[data-probed]').length, dialog: !!document.querySelector('[role="dialog"], dialog[open]') })`,
+  );
+  throw new Error(`${route} never mounted a new screen body within 120s: ${where}`);
+}
 
 const PROBE = `(() => {
   const body = document.querySelector('[data-component="screen-body"]:not([data-probed])');
@@ -51,7 +90,7 @@ const PROBE = `(() => {
 })()`;
 
 test('screens on the shared layout keep the header fixed over one scroll body', async ({ tauriPage }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(600_000);
   const projects: { id: string; name: string }[] = await (await fetch(`${DAEMON_URL}/api/projects`)).json();
   const sensei = projects.find((p) => p.name === 'sensei');
   test.skip(!sensei, 'no sensei project on this daemon');
@@ -62,12 +101,16 @@ test('screens on the shared layout keep the header fixed over one scroll body', 
   ).json();
   const screens = [...PROJECT_SCREENS, ...metrics.metrics.slice(0, 1).map((m) => `metrics/${m.metric}`)];
   for (const screen of screens) {
-    await navigateToScreen(tauriPage, `/project/${sensei!.id}/${screen}`, FRESH_BODY, 30_000);
+    await openScreen(tauriPage, `/project/${sensei!.id}/${screen}`);
     results[screen] = (await tauriPage.evaluate(PROBE)) as Probe;
+  }
+  for (const path of OBSERVATORY_SCREENS) {
+    await openScreen(tauriPage, path);
+    results[path] = (await tauriPage.evaluate(PROBE)) as Probe;
   }
   console.log(`\n[inspect] screen shell ${JSON.stringify(results)}`);
   expect(screens.length).toBeGreaterThan(PROJECT_SCREENS.length);
-  for (const screen of screens) {
+  for (const screen of [...screens, ...OBSERVATORY_SCREENS]) {
     expect(results[screen], screen).toEqual(expected(results[screen]?.fill ?? false));
   }
   // The two list-and-detail screens are the fill ones.

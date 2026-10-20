@@ -9,7 +9,8 @@
 
 <div class="flex h-full min-h-0" data-component="settings-shell">
     <SettingsSidebar pathname={page.url.pathname} glyphs={glyphMode(appState.config)} />
-    <div class="flex-1 overflow-auto">
+    <!-- Each settings page is a Screen and owns its one scroll (#293). -->
+    <div class="flex-1 min-w-0 min-h-0">
         {@render children()}
     </div>
 </div>

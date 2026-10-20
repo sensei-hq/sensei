@@ -1,7 +1,7 @@
 <script lang="ts">
     import { railIcon } from "../settings-nav";
   import { onMount } from 'svelte';
-  import { PageHeader } from '$lib/components';
+  import { PageHeader, Screen } from '$lib/components';
   import RootsSection from '$lib/components/settings/RootsSection.svelte';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
@@ -15,10 +15,14 @@
   });
 </script>
 
-<PageHeader kanji="庵" icon={railIcon("/settings/roots")} eyebrow="Settings" title="Roots" />
-<div class="max-w-[820px] mx-auto px-12 pt-8 pb-16">
-  {#if failure}
-    <p class="text-sm text-warning mb-4" data-testid="roots-load-error">{failure}</p>
-  {/if}
-  <RootsSection />
-</div>
+<Screen>
+    {#snippet header()}
+    <PageHeader kanji="庵" icon={railIcon("/settings/roots")} eyebrow="Settings" title="Roots" />
+    {/snippet}
+    <div class="max-w-[820px] mx-auto px-12 pt-8 pb-16">
+      {#if failure}
+        <p class="text-sm text-warning mb-4" data-testid="roots-load-error">{failure}</p>
+      {/if}
+      <RootsSection />
+    </div>
+</Screen>
