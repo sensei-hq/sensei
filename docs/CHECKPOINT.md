@@ -19,10 +19,9 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #132 step 3 (dōjō screens vs mockups), #292 once decided, dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
+**Next command:** `/sensei:session refocus`, then #132 step 3 (dōjō screens vs mockups), #292 (markdown LanguageAdapter — decided), dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
 
 **Open questions:**
-- #292: how markdown enters indexer v2. A LanguageAdapter emitting `doc` nodes and references (recommended), docs out of the graph, or drift left off?
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
 - #149: communities — Leiden/Louvain (recommended, measured the same way) or hierarchy grouping?
 - #133: project glyphs in icon mode — keep each project's inferred kanji (recommended), or one generic icon?
