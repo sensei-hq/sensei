@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { Button } from '@rokkit/ui';
 	import { relativeAge } from '$lib/triage/view';
 	import { replyToGate, DojoApiError, type RelayGate } from '$lib/relay-data';
@@ -96,9 +97,7 @@
 	style="padding: 12px 16px"
 >
 	<div class="flex items-start gap-3">
-		<span
-			class="kanji text-accent flex-shrink-0 text-center text-xl" style="width: 24px; line-height: 1.1">要</span
-		>
+		<KanjiToken char="要" size="xl" w={24} />
 		<div class="flex-1" style="min-width: 0">
 			<div class="text-ink text-sm font-medium" style="line-height: 1.5">{prompt}</div>
 			<div class="flex items-center gap-2" style="margin-top: 4px">
@@ -153,7 +152,7 @@
 		<!-- Approval: Approve / Decline → { verdict: 'approve' | 'deny' }. -->
 		<div class="flex flex-wrap items-center gap-2" style="margin-top: 10px">
 			<Button variant="primary" size="sm" onclick={() => send({ verdict: 'approve' })} disabled={busy}>
-				<span class="kanji text-xs">許</span>
+				<KanjiToken char="許" size="inherit" toneClass="" class="text-xs" />
 				{busy ? 'Sending…' : 'Approve'}
 			</Button>
 			<Button
@@ -185,7 +184,7 @@
 				onclick={() => send({ text: freeText })}
 				disabled={busy || freeText.trim() === ''}
 			>
-				<span class="kanji text-xs">送</span>
+				<KanjiToken char="送" size="inherit" toneClass="" class="text-xs" />
 				{busy ? 'Sending…' : 'Send'}
 			</Button>
 		</div>

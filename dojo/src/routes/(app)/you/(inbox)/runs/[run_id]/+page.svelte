@@ -161,7 +161,7 @@
 				class="bg-warning-soft border-warning-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"
 				style="padding: 12px 16px"
 			>
-				<span class="kanji text-warning">検</span>
+				<KanjiToken char="検" size="inherit" toneClass="" class="text-warning" />
 				<span
 					>Live relay is unavailable.
 					<span class="mono text-ink-mute text-xs">{data.error}</span></span

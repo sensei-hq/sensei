@@ -1,8 +1,8 @@
 // The dōjō's kanji/icon choice (#133) — the same preference as the app's
 // Settings → General → Glyphs. The dōjō is a separate web app with no reach into
 // the daemon's config, so the choice lives in the browser, as the colour mode
-// does (theme.svelte.ts). The default is icons: what the dōjō nav has always
-// shown, so nothing changes until someone picks kanji.
+// does (theme.svelte.ts). The default is kanji, as in the app: every dōjō mark
+// follows the choice, so a default of icons would turn all of them into icons.
 
 import type { KitNavItem } from './components/kit/types';
 
@@ -17,12 +17,12 @@ export const GLYPH_OPTIONS: { label: string; value: GlyphMode }[] = [
 ];
 
 /** The current choice; components read `glyphs.mode`. */
-export const glyphs = $state<{ mode: GlyphMode }>({ mode: 'icon' });
+export const glyphs = $state<{ mode: GlyphMode }>({ mode: 'kanji' });
 
-/** The persisted choice, icons unless it says kanji. */
+/** The persisted choice, kanji unless it says icon. */
 export function loadGlyphMode(): GlyphMode {
-	if (typeof localStorage === 'undefined') return 'icon';
-	return localStorage.getItem(KEY) === 'kanji' ? 'kanji' : 'icon';
+	if (typeof localStorage === 'undefined') return 'kanji';
+	return localStorage.getItem(KEY) === 'icon' ? 'icon' : 'kanji';
 }
 
 /** Set and persist the choice. */

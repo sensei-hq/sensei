@@ -165,7 +165,7 @@ describe('kit chrome — the one shell composes', () => {
 describe('kit chrome — glyph mode', () => {
 	afterEach(() => {
 		cleanup();
-		glyphs.mode = 'icon';
+		glyphs.mode = 'kanji';
 	});
 	const marked = [{ group: 'G', items: [{ id: 'inbox', label: 'Inbox', icon: 'inbox', kanji: '受' }] }];
 
@@ -197,14 +197,14 @@ describe('kit chrome — AccountMenu glyphs', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('offers Icons and Kanji, and picking one switches the mode', async () => {
+	it('offers Icons and Kanji, and picking Icons switches from the kanji default', async () => {
 		const m = new Map<string, string>();
 		vi.stubGlobal('localStorage', { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) });
 		const { getByRole, getByText } = render(AccountMenu, { me });
 		await fireEvent.click(getByRole('button', { expanded: false }));
 		expect(getByText('Glyphs')).toBeTruthy();
-		await fireEvent.click(getByText('Kanji'));
-		expect(glyphs.mode).toBe('kanji');
-		expect(m.get('dojo-glyphs')).toBe('kanji');
+		await fireEvent.click(getByText('Icons'));
+		expect(glyphs.mode).toBe('icon');
+		expect(m.get('dojo-glyphs')).toBe('icon');
 	});
 });

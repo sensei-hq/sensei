@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	// The invite-accept result page (F3b). On success the loader redirects into the
 	// joined dōjō, so this renders only when the redemption was rejected — showing
 	// the honest reason (wrong email / expired / used / unknown), never a fake join.
@@ -11,7 +12,7 @@
 	<div
 		class="border-paper-edge bg-paper-soft flex max-w-md flex-col items-center rounded-lg border p-8 text-center gap-3"
 	>
-		<span class="kanji text-ink-faint text-4xl">封</span>
+		<KanjiToken char="封" size="inherit" toneClass="" class="text-ink-faint text-4xl" />
 		<div class="display text-ink text-lg">This invite couldn't be accepted.</div>
 		{#if data.error}
 			<div class="text-ink-soft text-sm">{data.error}</div>

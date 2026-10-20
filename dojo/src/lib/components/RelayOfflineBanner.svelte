@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { Button } from '@rokkit/ui';
 
 	// Relay P4.5 — the calm connectivity banner for a run's detail. Purely
@@ -34,7 +35,7 @@
 			class="bg-warning-soft border-warning-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"
 			style="padding: 12px 16px; margin-top: 16px"
 		>
-			<span class="kanji text-warning">検</span>
+			<KanjiToken char="検" size="inherit" toneClass="" class="text-warning" />
 			<span>
 				You're offline — sensei is holding your guidance here.
 				{#if queued > 0}
@@ -51,7 +52,7 @@
 			class="bg-warning-soft border-warning-edge text-ink-soft flex flex-wrap items-center gap-2 rounded-xl border text-sm"
 			style="padding: 12px 16px; margin-top: 16px"
 		>
-			<span class="kanji text-warning">検</span>
+			<KanjiToken char="検" size="inherit" toneClass="" class="text-warning" />
 			<span style="flex: 1; min-width: 0">
 				You're back online.
 				{#if queued > 0}
@@ -63,7 +64,7 @@
 			</span>
 			{#if queued > 0}
 				<Button variant="primary" size="sm" onclick={onSend} disabled={flushing}>
-					<span class="kanji text-xs">送</span>
+					<KanjiToken char="送" size="inherit" toneClass="" class="text-xs" />
 					{flushing ? 'Sending…' : 'Send queued'}
 				</Button>
 			{/if}

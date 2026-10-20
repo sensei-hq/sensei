@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from './KanjiToken.svelte';
 	import { Toggle } from '@rokkit/ui';
 	import { getInitials } from './initials';
 	import { createLogout } from './logout.svelte';
@@ -100,7 +101,7 @@
 				disabled={logout.busy}
 				class="border-paper-edge text-ink-soft hover:text-ink flex w-full cursor-pointer items-center gap-2 border-t bg-transparent px-4 py-3 text-left text-sm"
 			>
-				<span class="kanji text-ink-mute text-xs" aria-hidden="true">出</span> Log out
+				<KanjiToken char="出" size="inherit" toneClass="" class="text-ink-mute text-xs" /> Log out
 			</button>
 		</div>
 	{/if}

@@ -3,7 +3,8 @@ import { loadGlyphMode, navMark, setGlyphMode, glyphs } from './glyphs.svelte';
 
 // #133: the dōjō honours the same kanji/icon choice as the app. It is a separate
 // web app, so the choice lives in the browser (like its colour mode); the
-// default is icons — what the dōjō nav has always shown.
+// default is kanji, as in the app — every dōjō mark follows the choice now, so
+// a default of icons would turn all of them into icons for every user.
 describe('dōjō glyph mode', () => {
 	// An in-memory store: Node's own experimental localStorage global shadows
 	// jsdom's here and has no clear().
@@ -16,12 +17,12 @@ describe('dōjō glyph mode', () => {
 	});
 	afterEach(() => vi.unstubAllGlobals());
 
-	it('defaults to icons and reads a persisted choice', () => {
-		expect(loadGlyphMode()).toBe('icon');
-		localStorage.setItem('dojo-glyphs', 'kanji');
+	it('defaults to kanji and reads a persisted choice', () => {
 		expect(loadGlyphMode()).toBe('kanji');
-		localStorage.setItem('dojo-glyphs', 'emoji');
+		localStorage.setItem('dojo-glyphs', 'icon');
 		expect(loadGlyphMode()).toBe('icon');
+		localStorage.setItem('dojo-glyphs', 'emoji');
+		expect(loadGlyphMode()).toBe('kanji');
 	});
 
 	it('persists a choice and exposes it', () => {

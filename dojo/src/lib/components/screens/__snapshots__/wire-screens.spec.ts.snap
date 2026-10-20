@@ -69,12 +69,14 @@ exports[`ScrEngagements — wired engagements > matches the rendered engagements
       class="flex items-start gap-3 rounded-lg border bg-accent-soft border-accent-soft"
       style="padding: 12px 16px"
     >
+      <!---->
       <span
         class="kanji inline-block flex-shrink-0 text-accent"
         style="font-size: 17px; line-height: 1;"
       >
         盾
       </span>
+      
       <!---->
        
       <div
@@ -146,12 +148,14 @@ exports[`ScrEngagements — wired engagements > matches the rendered engagements
           class="border-paper-edge flex items-center gap-4 border-b"
           style="padding: 12px 16px"
         >
+          <!---->
           <span
             class="kanji inline-block flex-shrink-0 text-accent"
             style="font-size: 17px; line-height: 1; width: 22px; text-align: center;"
           >
             客
           </span>
+          
           <!---->
            
           <div

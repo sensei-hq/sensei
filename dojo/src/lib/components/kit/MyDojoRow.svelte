@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from './KanjiToken.svelte';
 	import Chip from './Chip.svelte';
 	import RoleTag from './RoleTag.svelte';
 	import { kindTone } from './vocab';
@@ -18,10 +19,8 @@
 	class="border-paper-edge flex w-full cursor-pointer items-center gap-4 border-b bg-transparent text-left"
 	style="padding: 16px"
 >
-	<span
-		class="kanji flex-shrink-0 text-center {kind.text}"
-		style="font-size: 26px; line-height: 1; width: 34px">{dojo.kanji}</span
-	>
+	<!-- A dōjō's own mark: an identity, kanji in both modes (#133). -->
+	<KanjiToken char={dojo.kanji} icon={null} size="2xl" toneClass={kind.text} w={34} />
 	<div class="flex-1" style="min-width: 0">
 		<div class="flex items-center gap-2">
 			<span class="text-ink text-base font-medium">{dojo.name}</span>

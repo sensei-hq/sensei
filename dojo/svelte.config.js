@@ -21,7 +21,12 @@ const adapter = onCloudflare ? adapterCloudflare() : adapterAuto();
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	kit: {
-		adapter
+		adapter,
+		alias: {
+			// The kanji vocabulary shared with the desktop app (#133); dev-server.ts
+			// lets the dev server read it.
+			'@sensei/glyphs': '../packages/glyphs/index.js'
+		}
 	},
 	vitePlugin: {
 		dynamicCompileOptions: ({ filename }) =>

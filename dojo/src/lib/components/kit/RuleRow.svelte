@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from './KanjiToken.svelte';
 	import Icon from './Icon.svelte';
 	import Chip from './Chip.svelte';
 	import type { KitRule } from './types';
@@ -41,10 +42,7 @@
 			{included ? '✓' : ''}
 		</button>
 	{:else}
-		<span
-			class="kanji text-ink-mute flex-shrink-0 text-center"
-			style="font-size: 13px; width: 16px">{rule.kanji}</span
-		>
+		<KanjiToken char={rule.kanji} size="sm" toneClass="text-ink-mute" w={16} />
 	{/if}
 	<span
 		class="text-ink flex-1 text-sm"

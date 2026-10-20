@@ -43,7 +43,7 @@
 	// Apply the persisted / system color mode client-side + follow OS changes.
 	onMount(() => {
 		setColorMode(loadColorMode());
-		// The persisted glyph choice (#133), icons unless it says kanji.
+		// The persisted glyph choice (#133), kanji unless it says icon.
 		glyphs.mode = loadGlyphMode();
 		return colorMode.listen();
 	});

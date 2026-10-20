@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { AuthProvider } from '@kavach/ui';
 	import { providers } from '$kavach/providers';
 	import { metrics } from '$lib/dojo-data';
@@ -42,7 +43,7 @@
 		style="background: linear-gradient(160deg, var(--accent-soft) 0%, var(--paper-soft) 60%)"
 	>
 		<div class="flex items-center gap-3">
-			<span class="kanji text-accent text-2xl" style="line-height: 1">結</span>
+			<KanjiToken char="結" icon={null} size="inherit" toneClass="" class="text-accent text-2xl" />
 			<span class="display text-xl" style="letter-spacing: -0.01em">Dōjō</span>
 			<span
 				class="mono bg-paper border-paper-edge text-ink-mute rounded-full border px-2 py-1 text-xs"
@@ -66,7 +67,7 @@
 		<div class="mt-8 grid grid-cols-3 gap-3">
 			<div class="bg-paper border-paper-edge rounded-xl border p-4">
 				<div class="mb-2 flex items-center justify-between">
-					<span class="kanji text-accent text-sm">共</span>
+					<KanjiToken char="共" size="inherit" toneClass="" class="text-accent text-sm" />
 					<span class="text-accent"><Spark data={m.contribSpark} /></span>
 				</div>
 				<div class="display text-ink font-light text-2xl" style="line-height: 1">
@@ -78,7 +79,7 @@
 			</div>
 			<div class="bg-paper border-paper-edge rounded-xl border p-4">
 				<div class="mb-2 flex items-center justify-between">
-					<span class="kanji text-accent text-sm">決</span>
+					<KanjiToken char="決" size="inherit" toneClass="" class="text-accent text-sm" />
 				</div>
 				<div class="display text-ink font-light text-2xl" style="line-height: 1">
 					{m.approvedWeek}
@@ -89,7 +90,7 @@
 			</div>
 			<div class="bg-paper border-paper-edge rounded-xl border p-4">
 				<div class="mb-2 flex items-center justify-between">
-					<span class="kanji text-accent text-sm">盾</span>
+					<KanjiToken char="盾" size="inherit" toneClass="" class="text-accent text-sm" />
 				</div>
 				<div class="display text-ink font-light text-2xl" style="line-height: 1">
 					{m.dereferenced}
@@ -102,7 +103,7 @@
 
 		<!-- latest approved teaching -->
 		<div class="bg-paper border-paper-edge mt-3 flex items-center gap-4 rounded-xl border p-4">
-			<span class="kanji text-accent text-xl">守</span>
+			<KanjiToken char="守" size="inherit" toneClass="" class="text-accent text-xl" />
 			<div class="min-w-0 flex-1">
 				<div class="text-ink-faint mb-1 font-semibold uppercase text-xs" style="letter-spacing: 0.12em">
 					Just published · Company
@@ -164,7 +165,7 @@
 						onclick={() => (selfHost = true)}
 						class="text-ink-soft flex w-full cursor-pointer items-center justify-center gap-2 border-none bg-transparent text-sm"
 					>
-						<span class="kanji text-ink-mute text-sm">基</span>
+						<KanjiToken char="基" size="inherit" toneClass="" class="text-ink-mute text-sm" />
 						Connecting to a self-hosted Dōjō?
 						<span class="text-accent">Enter its URL →</span>
 					</button>

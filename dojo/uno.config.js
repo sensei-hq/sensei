@@ -1,6 +1,7 @@
 import { defineConfig } from 'unocss';
 import { presetRokkit } from '@rokkit/unocss';
 import config from './rokkit.config.js';
+import { contentInclude } from '../packages/glyphs/uno-content.js';
 
 // presetRokkit already includes extractorSvelte, transformerDirectives and
 // transformerVariantGroup. No manual icon safelist is needed: the dojo2 kit's
@@ -17,6 +18,9 @@ import config from './rokkit.config.js';
 // (docs/mockups/Zen-Sumi Design System/colors_and_type.css).
 export default defineConfig({
 	presets: [presetRokkit(config)],
+	// `.js`/`.ts` too: the shared glyph vocabulary's icon classes live in
+	// packages/glyphs/index.js (#133).
+	content: { pipeline: { include: contentInclude } },
 	// kavach's AuthProvider renders `i-auth-{provider}` icon classes (github ·
 	// magic · email). They live in node_modules (unscanned), so alias each to a
 	// real icon and safelist so UnoCSS generates them: GitHub → the brand logo,

@@ -4,4 +4,10 @@
 // local membership names; `strictPort` fails loudly instead of drifting to 5174,
 // which would be just as unreachable and say less. A browser on `localhost` still
 // reaches it.
-export const devServer = { host: '127.0.0.1', port: 5173, strictPort: true } as const;
+export const devServer = {
+	host: '127.0.0.1',
+	port: 5173,
+	strictPort: true,
+	// packages/glyphs is shared with the desktop app and sits outside this app (#133).
+	fs: { allow: ['.', '../packages/glyphs'] as string[] }
+} as const;

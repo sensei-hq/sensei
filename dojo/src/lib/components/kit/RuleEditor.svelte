@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from './KanjiToken.svelte';
 	import { untrack } from 'svelte';
 	import Icon from './Icon.svelte';
 	import Btn from './Btn.svelte';
@@ -100,7 +101,7 @@
 								: 'bg-paper-mute border-paper-edge text-ink-soft'}"
 							style="padding: 8px 12px"
 						>
-							<span class="kanji" style="font-size: 14px">{f.kanji}</span>{f.label}
+							<KanjiToken char={f.kanji} size="sm" toneClass="" />{f.label}
 						</button>
 					{/each}
 				</div>
