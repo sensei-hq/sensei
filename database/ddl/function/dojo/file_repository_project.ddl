@@ -10,14 +10,15 @@ drop function if exists dojo.file_repository_project(uuid, text, text, dojo.proj
 -- (`upsertProjectFromRun`) and `dojo.repositories_in_projects` by nothing, so a
 -- repository that synced never appeared under any project.
 --
--- The project is the CALLER's, keyed `(user_id, slug)` — the same row a relay
--- run for that project writes, so the two paths converge on one project.
+-- The project is ONE SHARED item in the repository's dōjō, keyed
+-- `(tenant_id, slug)` (#299): every member who syncs the same project converges
+-- on the one row. A personal dōjō's projects live in it — they are the projects
+-- under the owner's own GitHub account, never under an org.
 --
--- Its classification follows WHERE THE REPOSITORY LIVES: a repository in the
--- caller's personal dōjō files a tenant-less `personal` project (as a relay run
--- files one); anywhere else, the caller's membership kind there — employer →
--- `company`, client → `client`, community → `community` — in that tenant. Not
--- the caller's say-so: the tenant and the membership are already known here. The link is one project per
+-- Its classification is set when the project is first filed and follows where
+-- it lives: a personal dōjō files `personal`; an org dōjō files by the filer's
+-- membership kind there (employer → `company`, client, community). A later
+-- filing by another member does not re-classify it. The link is one project per
 -- repository per tenant (the table's unique key): filing a repository under a
 -- different project MOVES it.
 --
@@ -61,13 +62,10 @@ begin
       join dojo.memberships m on m.tenant_id = t.id and m.user_id = v_me
      where t.id = v_tenant;
 
-    insert into dojo.projects as p (user_id, tenant_id, slug, name, classification)
-    values (v_me,
-            case when v_class = 'personal' then null else v_tenant end,
-            p_slug, p_name, v_class)
-    on conflict on constraint projects_user_slug_unique
-        do update set name = excluded.name, tenant_id = excluded.tenant_id,
-                      classification = excluded.classification, updated_at = now()
+    insert into dojo.projects as p (tenant_id, slug, name, classification)
+    values (v_tenant, p_slug, p_name, v_class)
+    on conflict on constraint projects_tenant_slug_unique
+        do update set name = excluded.name, updated_at = now()
     returning p.id into v_project;
 
     insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id)
@@ -82,8 +80,7 @@ revoke all on function dojo.file_repository_project(uuid, text, text) from publi
 grant execute on function dojo.file_repository_project(uuid, text, text) to authenticated;
 
 comment on function dojo.file_repository_project(uuid, text, text) is
-'File a synced repository under the caller''s project (#299): upsert the
-(user_id, slug) project a relay run would write — classified by where the
-repository lives — and link the repository to it
+'File a synced repository under its shared project (#299): find or create the
+(tenant_id, slug) project in the repository''s dōjō and link the repository to it
 (one project per repository per tenant — a re-file moves it). Refuses a caller
 who is not a member of the repository''s tenant.';

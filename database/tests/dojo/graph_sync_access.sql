@@ -66,8 +66,8 @@ insert into dojo.repository_graph_branches (repository_id, tenant_id, branch, is
 
 -- ola is on team X, which owns project P holding repository 1; eve is
 -- on no team, so she reads nothing.
-insert into dojo.projects (id, user_id, tenant_id, slug, name) values
-  ('c0000000-0000-4000-8000-0000000000b1', 'a0000000-0000-4000-8000-000000000141',
+insert into dojo.projects (id, tenant_id, slug, name) values
+  ('c0000000-0000-4000-8000-0000000000b1',
    'b0000000-0000-4000-8000-00000000014a', 'ztest-gs-p', 'project P');
 insert into dojo.teams (id, tenant_id, name) values
   ('d0000000-0000-4000-8000-0000000000b1', 'b0000000-0000-4000-8000-00000000014a', 'ztest gs team X');

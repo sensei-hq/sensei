@@ -53,7 +53,8 @@ block purely to no-op on the daemon, where the `dojo` schema does not exist.
 | `dojo/projects.sql` | `dojo.current_principal_id` |
 
 `dojo/projects.sql` moved here from its table DDL when the policy stopped
-comparing to `auth.uid()` directly: `projects.user_id` holds a **principal** id,
-not a login id, so the old predicate matched nothing — invisibly, since the
+comparing to `auth.uid()` directly: the column it read held a **principal** id,
+not a login id, so the old predicate matched nothing (since #299 projects have no
+owner column at all) — invisibly, since the
 Worker bypasses RLS as `service_role`. See `dojo.current_principal_id` and
 `database/tests/dojo/rls_principal_grain.sql`.
