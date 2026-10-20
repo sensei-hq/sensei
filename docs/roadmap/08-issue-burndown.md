@@ -134,13 +134,14 @@ The settings screen lists them as repositories.
   - ~~#85~~ **Closed 2026-10-20**: Overview hotspots and patterns in use; the overview/patterns reads fail as
     errors, not as an all-quiet project.
   - #287 (found via #85): **scope fixed and live.** Rework is placed by path inside the project's indexed repositories, each event counted once, and a re-derive replaces the `suggested` rows. This project went from 617 rows to 371, none outside it. Backfill now resets sessions by project. Open: the granularity decision (recommended: one "rework hotspots" pattern grouped by directory).
-  - #288 (found via #85): **in progress.** Fallback reads went 72 → 44. Today, the projects index and the project window are converted and verified live (fixed along the way: a fabricated 404 and a fabricated warning dot). 24 dead methods are deleted; a ratchet spec caps the count. Next: Atlas, then the remaining screens.
+  - #288 (found via #85): **in progress.** Fallback reads went 72 → 40. Today, the projects index, the project window and Atlas are converted and verified live (fixed along the way: a fabricated 404 and a fabricated warning dot). 24 dead methods are deleted; a ratchet spec caps the count. Next: Impact and Traceability.
   - ~~#144~~ **Closed 2026-10-20**: a repo-less project (130 of 133 here; zero metric rows each) says why it has
     no metrics.
   - #149: **experiment run 2026-10-20, criterion not met** — without `parent_id` the >50-file giants grew
     (22,484 → 24,258 nodes); they are dense call/reference cores. Reverted. Awaiting a decision: Leiden/Louvain
     (recommended) or hierarchy grouping.
   - #278: **both defects fixed and live** (`unknown`; action tools by outcome). Open to re-measure after #289.
+  - #290 (found via #288): no graph node has `kind = 'file'` any more. Atlas modules and exports read 0, and `rework_density` has written no row since 2026-10-07.
   - #289 (found via #278): 26% of assistant events are duplicates (non-idempotent staging import, now fixed).
     Removing the existing 167,932 awaits the user's OK.
 - **Dōjō:**
