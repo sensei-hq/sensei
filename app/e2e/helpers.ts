@@ -413,3 +413,19 @@ export async function shot(
   }
   return result;
 }
+
+/** Close the sign-in overlay if it opened itself (an identity needing the
+ *  user, e.g. #283's keychain approval): it is modal and covers the page. */
+export async function dismissSignIn(tauriPage: TauriPageLike) {
+  const state = await tauriPage.evaluate(`(function () {
+    var b = document.querySelector('[data-component="sign-in-overlay"] footer button');
+    if (!b) return 'absent';
+    b.click(); return 'closed';
+  })()`);
+  console.log(`[inspect] sign-in overlay: ${state}`);
+  await expect
+    .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-component="sign-in-overlay"]')`), {
+      timeout: 5_000,
+    })
+    .toBe(false);
+}

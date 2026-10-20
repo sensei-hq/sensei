@@ -8,7 +8,7 @@
  * Run: `bun run test:inspect -- glyphs`.
  */
 import { expect, test } from '../fixtures';
-import { DAEMON_URL, navigateToScreen, shot } from '../helpers';
+import { DAEMON_URL, dismissSignIn, navigateToScreen, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -34,21 +34,6 @@ type Page = {
   waitForSelector: (s: string, t?: number) => Promise<void>;
 };
 
-/** Close the sign-in overlay if it opened itself (an identity needing the
- *  user, e.g. #283's keychain approval): it is modal and covers the page. */
-async function dismissSignIn(tauriPage: Page) {
-  const state = await tauriPage.evaluate(`(function () {
-    var b = document.querySelector('[data-component="sign-in-overlay"] footer button');
-    if (!b) return 'absent';
-    b.click(); return 'closed';
-  })()`);
-  console.log(`[inspect] sign-in overlay: ${state}`);
-  await expect
-    .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-component="sign-in-overlay"]')`), {
-      timeout: 5_000,
-    })
-    .toBe(false);
-}
 
 async function choose(tauriPage: Page, label: string) {
   await tauriPage.evaluate(
