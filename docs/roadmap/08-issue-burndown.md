@@ -113,8 +113,9 @@ The settings screen lists them as repositories.
   - ~~#213~~ **Closed 2026-10-19**: commit-msg and `--stdin` scanning, the right line number, and the
     self-test in every commit.
 - **App:**
-  - #133: **slices 1–2 live** (the `ui.glyphs` switch, both rails, `ROLES`, the default project mark). Left:
-    instruments/libraries/filter chips, the dōjō nav; a decision on project glyphs in icon mode. Solar Bold Duotone icons beside every kanji, one preference,
+  - #133: **slices 1–3a live** (the `ui.glyphs` switch, both rails, `ROLES`, the default project mark, the
+    Instruments screen; `Kanji` takes `icon`+`mode`). Left: replay verdicts, libraries, other filter chips,
+    `PageHeader` kanji, the dōjō nav; a decision on project glyphs in icon mode. Solar Bold Duotone icons beside every kanji, one preference,
     `fields` derived in one place, across the app and the dōjō (scope expanded 2026-10-19).
   - ~~#135~~ **Closed 2026-10-19**: the menu item opens `/help`; the page lists only keys that are bound.
   - ~~#96~~ **Closed 2026-10-19**: next run, avg, last error, and a per-worker log tail (a
