@@ -1,6 +1,7 @@
 <script lang="ts">
     import { page } from '$app/state';
     import { Kanji, Eyebrow } from '$lib/components';
+    import { emptyMetricsNotice } from '$lib/metrics/empty-notice';
     import {
         buildSignals,
         familyLookup,
@@ -47,11 +48,14 @@
             Couldn’t load metrics — {data.error}
         </div>
     {:else if signals.length === 0}
+        <!-- Why there are none: not computed yet, or no repository to compute from (#144). -->
+        {@const empty = emptyMetricsNotice(data.project?.repos_count)}
         <div
             data-component="metrics-empty"
+            data-empty-kind={empty.kind}
             class="bg-paper-soft border border-paper-edge rounded-lg px-4 py-6 text-sm text-ink-mute"
         >
-            No metrics have been computed for this project yet.
+            {empty.text}
         </div>
     {:else}
         <!-- Header names the screen; the card below carries the reading. Per the
