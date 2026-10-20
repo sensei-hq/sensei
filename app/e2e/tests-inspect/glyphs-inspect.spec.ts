@@ -111,6 +111,22 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
       expect(kanji).toBe(0);
     }
 
+    // Slice 4: a mark with no icon of its own takes the vocabulary's (録 on
+    // /sessions); a project's own mark stays kanji on its overview.
+    await navigateToScreen(tauriPage, '/sessions', '[data-component="glyph-icon"]', 20_000);
+    const sessionMarks = (await tauriPage.evaluate(painted('[data-component="glyph-icon"]'))) as { cls: string; painted: boolean }[];
+    console.log(`[inspect] /sessions: ${sessionMarks.map((m) => m.cls.split(' ')[0]).join(' ')}`);
+    expect(sessionMarks.some((m) => m.cls.includes('i-solar-history-bold-duotone') && m.painted)).toBe(true);
+
+    const projects: { id: string; icon?: { kind?: string; value?: string } }[] = await (await fetch(`${DAEMON_URL}/api/projects`)).json();
+    const kanjiProject = projects.find((p) => p.icon?.kind === 'kanji' && p.icon.value);
+    if (kanjiProject) {
+      await navigateToScreen(tauriPage, `/project/${kanjiProject.id}/overview`, '[data-component="kanji"]', 20_000);
+      const marks = (await tauriPage.evaluate(`Array.from(document.querySelectorAll('[data-component="kanji"]')).map((e) => e.textContent)`)) as string[];
+      console.log(`[inspect] project ${kanjiProject.icon!.value} overview kanji: ${marks.join(' ')}`);
+      expect(marks).toContain(kanjiProject.icon!.value);
+    }
+
     await navigateToScreen(tauriPage, '/settings/general', '[data-testid="pref-glyphs"]', 20_000);
 
     await choose(tauriPage, 'Kanji');

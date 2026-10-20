@@ -97,3 +97,19 @@ describe('Kanji under a provided glyph mode', () => {
     expect(m.container.querySelector('[data-component="kanji"]')?.textContent).toBe('名');
   });
 });
+
+// #133: a mark with no icon of its own takes the vocabulary's; an identity
+// mark passes icon={null} and stays kanji.
+describe('Kanji and the glyph vocabulary', () => {
+  it('takes the icon from the vocabulary when none is given', () => {
+    const m = mountComponent(Kanji, { char: '録', mode: 'icon' });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-component="glyph-icon"]')?.className).toContain('i-solar-history-bold-duotone');
+  });
+
+  it('keeps the kanji when told the mark is an identity', () => {
+    const m = mountComponent(Kanji, { char: '書', mode: 'icon', icon: null });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-component="kanji"]')?.textContent).toBe('書');
+  });
+});

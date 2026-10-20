@@ -85,7 +85,8 @@
 <div class="pt-8 px-10 pb-12 max-w-[900px]">
   <!-- Pane header — kanji · eyebrow (+ repo chip) · name · FTR·14d -->
   <header class="flex items-end gap-4 mb-6">
-    <Kanji char={project.kanji} size="4xl" tone="accent" />
+    <!-- The project's own mark: an identity, kanji in both modes (#133). -->
+    <Kanji char={project.kanji} icon={null} size="4xl" tone="accent" />
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2 mb-1">
         <Eyebrow>{eyebrow}</Eyebrow>

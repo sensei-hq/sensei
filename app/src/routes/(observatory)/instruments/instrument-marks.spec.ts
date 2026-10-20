@@ -39,7 +39,7 @@ describe('instrument marks', () => {
     const [sensei, claude, unknown] = groups;
     expect(isSolarBoldDuotone(sensei.icon ?? '', solar)).toBe(true);
     expect(claude.kanji).toBe('書');
-    expect(claude.icon).toBeUndefined();
+    expect(claude.icon, 'an identity: never the vocabulary icon').toBeNull();
     expect(isSolarBoldDuotone(unknown.icon ?? '', solar)).toBe(true);
   });
 });

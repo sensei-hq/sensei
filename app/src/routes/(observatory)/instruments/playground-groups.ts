@@ -17,8 +17,9 @@ export type PlaygroundTool = {
 export type PlaygroundGroup = {
   id: string;
   kanji: string;
-  /** Icon-mode mark (#133); absent for an assistant's own mark. */
-  icon?: string;
+  /** Icon-mode mark (#133); `null` for an assistant's own mark, an identity
+   *  that stays kanji in both modes. */
+  icon?: string | null;
   name: string;
   installed: boolean;
   source: 'sensei' | 'discovered';
@@ -99,7 +100,7 @@ export function buildPlaygroundGroups(
     groups.push({
       id: server.id,
       kanji: family?.kanji ?? UNKNOWN_KANJI,
-      icon: family ? undefined : UNKNOWN_ICON,
+      icon: family ? null : UNKNOWN_ICON,
       name: server.mcp_key,
       installed: server.enabled,
       source: 'discovered',

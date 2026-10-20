@@ -3,6 +3,7 @@
   type Tone = 'accent' | 'muted' | 'watermark' | 'success' | 'warning';
 
   import { useGlyphMode, type GlyphMode } from '$lib/glyphs';
+  import { iconForKanji } from '$lib/glyph-vocabulary';
 
   let {
     char,
@@ -10,11 +11,20 @@
     tone = 'accent',
     icon,
     mode: modeProp,
-  }: { char: string; size?: Size; tone?: Tone; icon?: string; mode?: GlyphMode } = $props();
+  }: {
+    char: string;
+    size?: Size;
+    tone?: Tone;
+    /** Icon-mode mark. Omitted: the vocabulary's icon for `char`. `null`: an
+     *  identity mark that stays kanji in both modes (#133). */
+    icon?: string | null;
+    mode?: GlyphMode;
+  } = $props();
 
   // The provided mode (#133) unless the caller says otherwise.
   const provided = useGlyphMode();
   const mode = $derived(modeProp ?? provided());
+  const resolved = $derived(icon === null ? undefined : (icon ?? iconForKanji(char)));
 
   const sizeClass = $derived(
     ({
@@ -43,9 +53,9 @@
   );
 </script>
 
-{#if mode === 'icon' && icon}
+{#if mode === 'icon' && resolved}
   <!-- #133: the icon that stands for this kanji, at the same size and tone. -->
-  <span data-component="glyph-icon" class="{icon} {sizeClass} {toneClass}" aria-hidden="true"></span>
+  <span data-component="glyph-icon" class="{resolved} {sizeClass} {toneClass}" aria-hidden="true"></span>
 {:else}
   <span
     data-component="kanji"
