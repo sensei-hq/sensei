@@ -13,11 +13,13 @@
   dojo.sensei-hq.com once (backfills the personal connection), then a sync pass → check `sensei-hq/sensei` is filed
   under organization/sensei-hq and personal repos under the personal dōjō.
 - #299 S3 done on develop (99cddc18): the relay payload names a project by slug + constitution only.
-- #302 (one keychain item per identity), #293 steps 1–2, #294, #297, #298.
+- #302 done on develop (17302c40), debug daemon installed: one keychain item per identity. Needs one approval
+  (two prompts this once) → verify `credentials.jerrythomas` present, old items gone; then close.
+- #293 steps 1–2, #294, #297, #298.
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #302 (one keychain item per identity).
+**Next command:** after `sensei auth approve`: check the keychain migration (#302) and the sync (#301/#299); then #293 steps 1–2.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
