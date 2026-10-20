@@ -131,7 +131,10 @@ The settings screen lists them as repositories.
   - ~~#285~~ **Closed 2026-10-20**: `KeyStanding` replaces `has_key`; a withheld router key reads
     `configured: null` + `key_error`, and image generation answers 503 "unreadable", not 400 "not configured".
   - ~~#286~~ **Closed 2026-10-20**: `tryListGatewayRouters`; a failed read is the Providers error state.
-  - #85: Overview hotspots and patterns-in-use.
+  - ~~#85~~ **Closed 2026-10-20**: Overview hotspots and patterns in use; the overview/patterns reads fail as
+    errors, not as an all-quiet project.
+  - #287 (found via #85): rework anti-patterns are one row per file, including files outside the project (618).
+  - #288 (found via #85): 57 app reads still turn a failure into a default value.
   - #144: on a project with no repository, say once that `scope=repo` metrics need git history.
   - #149: the community experiment (drop `parent_id` adjacency, measure).
   - #278: the verdict heuristic (`unknown`, and action tools by outcome).
