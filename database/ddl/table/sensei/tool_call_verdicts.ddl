@@ -20,12 +20,17 @@ set search_path to sensei, extensions;
 --                  path / same URL) but doesn't cite the response text.
 --   * 'ignored' — next event is UserPromptSubmit / Stop / unrelated tool
 --                  call → the assistant didn't build on this response.
+--   * 'unknown' — no response was captured, so nothing can be judged (#278);
+--                  kept out of the ignored share.
+-- Action tools (Bash, Edit, Write, …) are judged by OUTCOME, not quotation
+-- (#278): completed and proceeded on → used; re-run on the same target →
+-- partial; interrupted → ignored.
 create table if not exists tool_call_verdicts (
   id             bigserial   primary key
 , session_id     text        not null
 , event_id       bigint      not null unique   -- FK-less by design: assistant_events lives in activity schema and rotates on prune; verdicts orphan naturally
 , tool_name      text
-, verdict        text        not null check (verdict in ('used', 'partial', 'ignored'))
+, verdict        text        not null check (verdict in ('used', 'partial', 'ignored', 'unknown'))
 , confidence     real        not null default 1.0
 , reason         text
 , classified_at  timestamptz not null default now()

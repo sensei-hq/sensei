@@ -944,19 +944,24 @@ impl PgStore {
         let mut used = 0i64;
         let mut partial = 0i64;
         let mut ignored = 0i64;
+        let mut unknown = 0i64;
         for (v, n) in rows {
             match v.as_str() {
                 "used" => used = n,
                 "partial" => partial = n,
                 "ignored" => ignored = n,
+                "unknown" => unknown = n,
                 _ => {}
             }
         }
+        // `unknown` (no response captured, #278) is reported but kept out of
+        // the judged total, so it never inflates the ignored share.
         let total = used + partial + ignored;
         Ok(serde_json::json!({
             "used":    used,
             "partial": partial,
             "ignored": ignored,
+            "unknown": unknown,
             "total":   total,
         }))
     }
