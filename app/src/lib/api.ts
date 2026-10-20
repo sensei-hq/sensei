@@ -61,6 +61,13 @@ export interface RecommendationPreview {
 /** Why a read failed, for the screen to say: the status text, else the status. */
 export const failureReason = (error: ApiError): string => error.message || `HTTP ${error.status}`;
 
+/** A read's data, or — for a caller that cannot go on without it — a throw
+ *  naming what could not be read (#288). */
+export function dataOrThrow<T>(read: ApiResult<T>, what: string): T {
+  if (!read.ok) throw new Error(`reading the ${what} failed: ${failureReason(read.error)}`);
+  return read.data;
+}
+
 /** A read as a loader hands it to its page: the data, or why it could not be
  *  read — never a default standing in for the failure (#288). */
 export function readOutcome<T>(r: ApiResult<T>): { data: T | null; error: string | null } {
@@ -273,22 +280,8 @@ export function senseiApi(port: number) {
      *  settings screen must tell "you have no roots" from "the daemon is down". */
     tryGetScanRoots: () => tryGet<DaemonWatchRoot[]>('/api/scan/roots'),
 
-    getScanRoots: () =>
-      get<Array<{ path: string; created_at: string | null; repos_found: number; scanned: boolean }>>(
-        '/api/scan/roots', [],
-      ),
 
     // ── Repos (individual git repos) ────────────────────────────────────
-    getRepos: async () => {
-      const repos = await get<ServerProject[]>('/api/repos', []);
-      return repos.map(p => ({
-        ...p,
-        repoId: p.repo_id,
-        indexedAt: p.indexed_at,
-        lastError: p.last_error,
-        partiallyIndexed: false,
-      }));
-    },
 
     registerRepo: (repoId: string, name: string, path: string) =>
       post('/api/repos', { repoId, name, path }, { ok: false }),
@@ -695,9 +688,11 @@ export function senseiApi(port: number) {
         '/api/index', { repoId, repoPath, force }, { ok: false, queued: false, taskId: -1 },
       ),
 
-    getIndexStatus: () =>
-      get<{ queue: { pending: number; blocked: number; running: number; completed: number }; repos: Record<string, { total: number; pending: number; running: number }> }>(
-        '/api/index/status', { queue: { pending: 0, blocked: 0, running: 0, completed: 0 }, repos: {} },
+    /** The index task queue (#288: a failure is an error — it used to read as an
+     *  idle queue, which the scan's done poller took for "finished"). */
+    tryGetIndexStatus: () =>
+      tryGet<{ queue: { pending: number; blocked: number; running: number; completed: number }; repos: Record<string, { total: number; pending: number; running: number }> }>(
+        '/api/index/status',
       ),
 
     /** Subscribe to index progress via SSE. Returns an EventSource. */
@@ -1322,8 +1317,6 @@ export function senseiApi(port: number) {
     stop: () => post('/stop', {}, {}),
 
     // ── Deprecated aliases (migration: solution→project, project→repo) ──
-    /** @deprecated Use getRepos */
-    get getProjects() { return this.getRepos; },
     /** @deprecated Use registerRepo */
     get registerProject() { return this.registerRepo; },
     /** @deprecated Use addRepoTag */

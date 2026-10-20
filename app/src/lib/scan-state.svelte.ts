@@ -6,7 +6,7 @@
 
 import { ReactiveStageContext } from './stage.svelte.js';
 import { EventManager } from './events.js';
-import { senseiApi } from './api.js';
+import { senseiApi, dataOrThrow, type ApiResult } from './api.js';
 import { appState } from './appstate.svelte.js';
 import type { ScanProject, ScanProjectFolder, ScanFolderEvent, ActivityEvent, StateEvent } from './types.js';
 
@@ -326,7 +326,9 @@ export class ScanState {
 
       // 3. Trigger scanFolder for roots that haven't produced any repos
       //    yet. Parallel — a slow root shouldn't block siblings.
-      const roots = await api.getScanRoots();
+      // A failed read throws into this.error (#288) — it read as "no roots",
+      // so nothing was scanned and the poller could call the scan done.
+      const roots = dataOrThrow(await api.tryGetScanRoots(), 'roots');
       this.rootCount = roots.length;
       const pending = roots.filter((r) => !r.scanned);
       await Promise.all(pending.map((r) => api.scanFolder(r.path)));
@@ -347,7 +349,7 @@ export class ScanState {
    * folder_update SSE event.
    */
   async #hydrate(api: ReturnType<typeof senseiApi>): Promise<void> {
-    const projects = (await api.listProjects()) as unknown as Array<{
+    const projects = dataOrThrow(await api.tryListProjects(), 'projects') as unknown as Array<{
       id: string;
       name: string;
       folders?: Array<{
@@ -425,20 +427,12 @@ export class ScanState {
     let idlePolls = 0;
     this.#pollTimeout = setTimeout(() => {
       this.#pollTimer = setInterval(async () => {
-        try {
-          const s = await api.getIndexStatus();
-          this.daemonReachable = true;
-          if (s.queue.pending === 0 && s.queue.running === 0) {
-            idlePolls++;
-            if (idlePolls >= 2) {
-              this.status = 'done';
-              if (this.#pollTimer) { clearInterval(this.#pollTimer); this.#pollTimer = null; }
-            }
-          } else {
-            idlePolls = 0;
-          }
-        } catch {
-          this.daemonReachable = false;
+        const step = pollStep(await api.tryGetIndexStatus(), idlePolls);
+        this.daemonReachable = step.reachable;
+        idlePolls = step.idlePolls;
+        if (step.done) {
+          this.status = 'done';
+          if (this.#pollTimer) { clearInterval(this.#pollTimer); this.#pollTimer = null; }
         }
       }, 1500);
     }, 1500);
@@ -446,3 +440,21 @@ export class ScanState {
 }
 
 export const scanState = new ScanState();
+
+type IndexStatus = { queue: { pending: number; running: number } };
+
+/**
+ * One tick of the scan's done poller. Two consecutive idle reads mean done; a
+ * busy queue resets the count; a failed read is the daemon unreachable — never
+ * idle, never done. (It used to fall back to an empty queue, so a daemon that
+ * stopped answering mid-scan read as reachable AND idle, #288.)
+ */
+export function pollStep(
+  read: ApiResult<IndexStatus>,
+  idlePolls: number,
+): { reachable: boolean; idlePolls: number; done: boolean } {
+  if (!read.ok) return { reachable: false, idlePolls: 0, done: false };
+  const idle = read.data.queue.pending === 0 && read.data.queue.running === 0;
+  const count = idle ? idlePolls + 1 : 0;
+  return { reachable: true, idlePolls: count, done: count >= 2 };
+}

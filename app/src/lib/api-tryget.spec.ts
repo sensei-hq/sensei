@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { senseiApi, failureReason, readOutcome } from './api.js';
+import { senseiApi, failureReason, readOutcome, dataOrThrow } from './api.js';
 
 /**
  * F8 (mockup-drift-audit) — the no-fabrication guarantee at the API seam.
@@ -86,6 +86,9 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   // #288 — the setup wizard.
   { name: 'tryDetectAssistantFamilies', call: () => api().tryDetectAssistantFamilies(), body: [] },
   { name: 'tryListInstruments', call: () => api().tryListInstruments(), body: { total: 0, mcps: [], stack: [] } },
+  // #288 — scan state.
+  { name: 'tryGetIndexStatus', call: () => api().tryGetIndexStatus(), body: { queue: { pending: 0 } } },
+  { name: 'tryGetScanRoots', call: () => api().tryGetScanRoots(), body: [] },
   // #288 — Atlas.
   { name: 'tryGetGraphNodes', call: () => api().tryGetGraphNodes('r'), body: { nodes: [], edges: [] } },
   { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
@@ -142,6 +145,16 @@ describe('legacy fallback reads (#288)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
     const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(9);
+    expect(reads.length).toBeLessThanOrEqual(6);
+  });
+});
+
+describe('dataOrThrow (#288)', () => {
+  it('is the data of a read that landed', () => {
+    expect(dataOrThrow({ ok: true, data: [1] }, 'roots')).toEqual([1]);
+  });
+  it('throws a read that failed, naming what could not be read', () => {
+    expect(() => dataOrThrow({ ok: false, error: { status: 503, message: 'Service Unavailable' } }, 'roots'))
+      .toThrow('reading the roots failed: Service Unavailable');
   });
 });

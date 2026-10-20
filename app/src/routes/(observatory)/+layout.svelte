@@ -6,7 +6,7 @@
     import { shortcuts } from '@rokkit/actions';
     import { CommandPalette } from '@rokkit/ui';
     import { appState } from '$lib/appstate.svelte.js';
-    import { senseiApi } from '$lib/api.js';
+    import { senseiApi, failureReason } from '$lib/api.js';
     import { openProjectWindow } from '$lib/stores/windows.svelte.js';
     import ObservatorySidebar from './ObservatorySidebar.svelte';
     import { glyphMode } from '$lib/glyphs';
@@ -46,20 +46,22 @@
             await appState.load();
             // Cache the project count once for the rail badge (projects rarely change).
             await appState.loadProjectCount();
-            try {
-                const projects = await senseiApi(appState.port).listProjects();
-                unregisterProjects = commands.registerMany(
-                    projects.map((p) => ({
-                        id: `project.open:${p.id}`,
-                        label: `Open project · ${p.name}`,
-                        group: 'Projects',
-                        keywords: p.client ? [p.client] : undefined,
-                        run: () => { void openProjectWindow(p.id, p.name); },
-                    })),
-                );
-            } catch (e) {
-                console.error('[observatory] project command load failed', e);
+            // A failed read registers no project commands and says why in the
+            // log — the palette offers actions, it asserts nothing (#288).
+            const read = await senseiApi(appState.port).tryListProjects();
+            if (!read.ok) {
+                console.error('[observatory] project command load failed', failureReason(read.error));
+                return;
             }
+            unregisterProjects = commands.registerMany(
+                read.data.map((p) => ({
+                    id: `project.open:${p.id}`,
+                    label: `Open project · ${p.name}`,
+                    group: 'Projects',
+                    keywords: p.client ? [p.client] : undefined,
+                    run: () => { void openProjectWindow(p.id, p.name); },
+                })),
+            );
         })();
 
         return () => {

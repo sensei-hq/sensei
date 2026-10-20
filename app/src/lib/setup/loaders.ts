@@ -4,7 +4,7 @@
  * Config table uses jsonb — values are native JSON objects, not strings.
  */
 
-import { senseiApi, failureReason, type ApiResult } from '$lib/api.js';
+import { senseiApi, failureReason, dataOrThrow } from '$lib/api.js';
 import { DEFAULT_PREFERENCES } from './preferences.js';
 import { glyphMode } from '$lib/glyphs';
 import type { AssistantFamily, LibEntry } from '$lib/types.js';
@@ -99,12 +99,6 @@ export function mapLibraries(libs: LibEntry[], config: Record<string, unknown>):
   }));
 }
 
-/** A wizard read's data, or a rejection naming what could not be read. */
-function need<T>(read: ApiResult<T>, what: string): T {
-  if (!read.ok) throw new Error(`wizard: reading the ${what} failed: ${failureReason(read.error)}`);
-  return read.data;
-}
-
 /** Fetch all wizard data from daemon in parallel. */
 export async function loadWizardData(port: number): Promise<WizardLoadData> {
   const api = senseiApi(port);
@@ -126,11 +120,11 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
   const config = configRead.data;
   // Each of these seeds a wizard stage: an empty fallback read as "none" and
   // was then committed as the user's answer (#288). A failed read rejects.
-  const families = need(familiesRead, 'assistants');
-  const roots = need(rootsRead, 'roots');
-  const projects = need(projectsRead, 'projects');
-  const libs = need(libsRead, 'libraries');
-  const instruments = need(instrumentsRead, 'instruments');
+  const families = dataOrThrow(familiesRead, 'assistants');
+  const roots = dataOrThrow(rootsRead, 'roots');
+  const projects = dataOrThrow(projectsRead, 'projects');
+  const libs = dataOrThrow(libsRead, 'libraries');
+  const instruments = dataOrThrow(instrumentsRead, 'instruments');
 
   return {
     completion: extractCompletion(config),
