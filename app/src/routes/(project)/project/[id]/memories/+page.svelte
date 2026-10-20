@@ -5,11 +5,11 @@
     import { senseiApi } from '$lib/api.js';
     import { invalidateAll } from '$app/navigation';
     import { page } from '$app/state';
-    import { SvelteSet } from 'svelte/reactivity';
     import type { MemoryShareBatch } from '$lib/types.js';
     import {
         ProjectMemoriesState,
         SCOPE_LADDER,
+        type BatchDecision,
         type ScopeRung,
     } from './memories-state.svelte.js';
     import MemoryChip from './MemoryChip.svelte';
@@ -17,111 +17,26 @@
 
     let { data } = $props();
 
-    // Screen state — ready-to-share derivations, chip semantics, and the
-    // generalise / widen state machines all live here (pure, tested). The effect
-    // keeps it synced with the load, including re-fetches after a mutation.
+    // Presentation only. ProjectMemoriesState holds the screen's state and runs
+    // its actions; the load is +page.ts. The effect keeps the state synced with
+    // the load, including the re-read after a write.
     const memState = new ProjectMemoriesState();
     $effect(() => memState.setMemories(data.memories));
 
-    // Working set of memory ids the user has ticked for the next share batch.
-    // Cleared after a successful create so the same UI state doesn't linger.
-    let selected = new SvelteSet<string>();
-    let creating = $state(false);
-    let deciding = $state<Record<string, boolean>>({});
-    // Memory Anatomy drawer — id of the row whose What/Because/Consequence
-    // is expanded on the right. Only one row can be open at a time.
-    let openedMemoryId = $state<string | null>(null);
-
+    const api = $derived(senseiApi(appState.port));
     const projectId = $derived(page.params.id ?? '');
-
-    function toggle(memoryId: string) {
-        if (selected.has(memoryId)) selected.delete(memoryId);
-        else selected.add(memoryId);
-    }
-
-    // Hero "review next batch" — stage every generalised (ready) memory into the
-    // batch selection so the user can propose it through the existing flow.
-    function reviewNextBatch() {
-        selected.clear();
-        for (const m of memState.ready) selected.add(m.id);
-    }
-
-    async function proposeBatch() {
-        if (selected.size === 0 || !projectId) return;
-        creating = true;
-        try {
-            await senseiApi(appState.port).createMemoryShareBatch(
-                projectId,
-                Array.from(selected),
-            );
-            selected.clear();
-            await invalidateAll();
-        } finally {
-            creating = false;
-        }
-    }
-
-    async function decide(batchId: string, status: 'approved' | 'rejected' | 'withdrawn') {
-        if (!projectId) return;
-        deciding = { ...deciding, [batchId]: true };
-        try {
-            await senseiApi(appState.port).decideMemoryShareBatch(projectId, batchId, status);
-            await invalidateAll();
-        } finally {
-            deciding = { ...deciding, [batchId]: false };
-        }
-    }
-
-    function generaliseMessage(status: number): string {
-        if (status === 503) return "couldn't generalise this right now — the model was unavailable. try again.";
-        if (status === 422) return 'this memory has no content to generalise.';
-        return "couldn't generalise this right now. try again.";
-    }
-
-    // Rewrite a memory stack-agnostic. Immediate-feedback rule: the model takes
-    // 1–4s, so show a loading label. On 503 the daemon degrades honestly — surface
-    // the error, keep the original. On success re-fetch so the chip flips to yes.
-    async function generalise(id: string) {
-        memState.startGeneralise(id);
-        const res = await senseiApi(appState.port).generaliseMemory(id);
-        if (res.ok) {
-            await invalidateAll();
-            memState.finishGeneralise(id);
-        } else {
-            memState.failGeneralise(id, generaliseMessage(res.error.status));
-        }
-    }
-
-    function widenMessage(status: number): string {
-        if (status === 409) return "this memory isn't promotable yet.";
-        return "couldn't widen this right now. try again.";
-    }
-
-    // Widen up the scope ladder. project → user proceeds immediately; org /
-    // collective are governed, so chooseScope stages the confirmation note first.
-    function pickScope(id: string, rung: ScopeRung) {
-        if (memState.chooseScope(rung) === 'proceed') widen(id, rung.scope);
-    }
-
-    function confirmWiden(id: string) {
-        if (memState.pendingScope) widen(id, memState.pendingScope);
-    }
-
-    async function widen(id: string, scope: string) {
-        memState.startPromote(id);
-        const res = await senseiApi(appState.port).promoteMemory(id, { gov_scope: scope });
-        if (res.ok) {
-            memState.finishPromote(id);
-            await invalidateAll();
-        } else {
-            memState.failPromote(id, widenMessage(res.error.status));
-        }
-    }
-
     const proposedBatches: MemoryShareBatch[] = $derived(data.proposedBatches);
-    const openedMemory = $derived(
-        openedMemoryId ? memState.memories.find((m) => m.id === openedMemoryId) ?? null : null,
-    );
+    const selected = $derived(memState.selected);
+    const openedMemory = $derived(memState.openedMemory);
+
+    const toggle = (id: string) => memState.toggleSelected(id);
+    const reviewNextBatch = () => memState.reviewNextBatch();
+    const proposeBatch = () => memState.proposeBatch(api, projectId, invalidateAll);
+    const decide = (batchId: string, status: BatchDecision) =>
+        memState.decide(api, projectId, batchId, status, invalidateAll);
+    const generalise = (id: string) => memState.generalise(api, id, invalidateAll);
+    const pickScope = (id: string, rung: ScopeRung) => memState.pickScope(api, id, rung, invalidateAll);
+    const confirmWiden = (id: string) => memState.confirmWiden(api, id, invalidateAll);
 </script>
 
 <Screen>
@@ -178,7 +93,7 @@
                             <Button
                                 variant="primary"
                                 size="sm"
-                                disabled={deciding[batch.id]}
+                                disabled={memState.isDeciding(batch.id)}
                                 data-testid={`batch-approve-${batch.id}`}
                                 onclick={() => decide(batch.id, 'approved')}
                             >Approve</Button>
@@ -186,10 +101,13 @@
                                 variant="secondary"
                                 style="outline"
                                 size="sm"
-                                disabled={deciding[batch.id]}
+                                disabled={memState.isDeciding(batch.id)}
                                 data-testid={`batch-reject-${batch.id}`}
                                 onclick={() => decide(batch.id, 'rejected')}
                             >Reject</Button>
+                            {#if memState.decideError(batch.id)}
+                                <span class="text-xs text-danger" data-testid={`batch-error-${batch.id}`}>{memState.decideError(batch.id)}</span>
+                            {/if}
                         </li>
                     {/each}
                 </ul>
@@ -204,21 +122,24 @@
                 </span>
                 <span class="text-xs text-ink-faint font-mono">{memState.countLabel}</span>
             </div>
-            <div class="flex items-center justify-end mb-3">
+            <div class="flex items-center justify-end gap-3 mb-3">
+                {#if memState.batchError}
+                    <span class="text-xs text-danger" data-testid="propose-batch-error">{memState.batchError}</span>
+                {/if}
                 <Button
                     variant="primary"
                     size="sm"
-                    disabled={selected.size === 0 || creating}
+                    disabled={selected.size === 0 || memState.creating}
                     data-testid="propose-batch-button"
                     onclick={proposeBatch}
-                >{creating ? 'Proposing…' : 'Propose batch'}</Button>
+                >{memState.creating ? 'Proposing…' : 'Propose batch'}</Button>
             </div>
 
             <div class="grid gap-6" class:grid-cols-1={!openedMemory} class:grid-cols-[280px_1fr]={openedMemory}>
                 <ul class="list-none m-0 p-0" data-testid="memories-list">
                     {#each memState.memories as m (m.id)}
                         {@const checked = selected.has(m.id)}
-                        {@const opened = openedMemoryId === m.id}
+                        {@const opened = memState.openedMemoryId === m.id}
                         {@const chip = memState.chipFor(m)}
                         <li class="memory-row flex items-center gap-3 py-2 border-b border-paper-edge text-sm"
                             class:bg-paper-mute={opened}
@@ -240,7 +161,7 @@
                                 type="button"
                                 class="flex-1 text-left bg-transparent border-none cursor-pointer text-inherit px-0"
                                 data-testid={`memory-open-${m.id}`}
-                                onclick={() => (openedMemoryId = opened ? null : m.id)}
+                                onclick={() => (memState.openedMemoryId = opened ? null : m.id)}
                             >{m.title || m.name}</button>
                             <MemoryChip tone={chip.tone} label={chip.label} />
                             <span class="opacity-50 text-xs">{m.type}</span>
@@ -270,7 +191,7 @@
                                 type="button"
                                 class="text-xs text-ink-soft normal-case tracking-normal bg-transparent border-none cursor-pointer"
                                 data-testid="memory-anatomy-close"
-                                onclick={() => (openedMemoryId = null)}
+                                onclick={() => (memState.openedMemoryId = null)}
                             >close</button>
                         </div>
 

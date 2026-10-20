@@ -38,7 +38,23 @@ test('project instruments and memories show the daemon reads', async ({ tauriPag
     rows: document.querySelectorAll('.memory-row').length,
   })`)) as { error: string | null; rows: number };
 
-  console.log(`\n[inspect] instruments ${JSON.stringify(inst)} (daemon ${tools} tools, ${used} used); memories ${JSON.stringify(mem)} (daemon ${memories})`);
+  // #293: selecting a memory and opening its drawer run through the screen's
+  // state now. Read-only — nothing is proposed.
+  const interacted = mem.rows > 0
+    ? (await tauriPage.evaluate(`(async () => {
+        const row = document.querySelector('.memory-row');
+        row.querySelector('input[type="checkbox"]').click();
+        row.querySelector('[data-testid^="memory-open-"]').click();
+        await new Promise((r) => setTimeout(r, 300));
+        return {
+          selected: document.body.textContent.includes('1 selected'),
+          drawer: document.body.textContent.includes('What:'),
+        };
+      })()`)) as { selected: boolean; drawer: boolean }
+    : { selected: true, drawer: true };
+
+  console.log(`\n[inspect] instruments ${JSON.stringify(inst)} (daemon ${tools} tools, ${used} used); memories ${JSON.stringify(mem)} (daemon ${memories}) ${JSON.stringify(interacted)}`);
+  expect(interacted).toEqual({ selected: true, drawer: true });
   expect([inst.error, mem.error]).toEqual([null, null]);
   expect(inst.tools).toBe(String(tools));
   // #291: the "Tools used" bubbles — one per tool the daemon reports.

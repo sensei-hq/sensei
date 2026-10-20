@@ -459,18 +459,13 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/memory-batches${status ? `?status=${enc(status)}` : ''}`,
       ),
 
-    createMemoryShareBatch: (id: string, memoryIds: string[], note?: string) =>
-      post<{ id: string }>(
-        `/api/projects/${enc(id)}/memory-batches`,
-        { memory_ids: memoryIds, note },
-        { id: '' },
-      ),
+    /** Propose a share batch — its id, or why it was not created. */
+    tryCreateMemoryShareBatch: (id: string, memoryIds: string[], note?: string) =>
+      tryPost<{ id: string }>(`/api/projects/${enc(id)}/memory-batches`, { memory_ids: memoryIds, note }),
 
-    decideMemoryShareBatch: (id: string, batchId: string, status: 'approved' | 'rejected' | 'withdrawn', note?: string) =>
-      put(
-        `/api/projects/${enc(id)}/memory-batches/${enc(batchId)}`,
-        { status, note },
-      ),
+    /** Approve, reject or withdraw a share batch — or why the daemon refused. */
+    tryDecideMemoryShareBatch: (id: string, batchId: string, status: 'approved' | 'rejected' | 'withdrawn', note?: string) =>
+      tryPut(`/api/projects/${enc(id)}/memory-batches/${enc(batchId)}`, { status, note }),
 
     // Impact verdicts (manual log) — user-logged retrospectives about
     // shipped changes. Independent of the automatic recommendation
