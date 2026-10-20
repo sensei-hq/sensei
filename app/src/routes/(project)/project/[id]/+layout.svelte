@@ -52,7 +52,7 @@
             ftrError={data.ftrError}
         />
 
-        <main data-component="project-main" data-section={section} class="flex-1 overflow-y-auto">
+        <main data-component="project-main" data-section={section} class="flex-1 min-w-0 min-h-0 overflow-hidden">
             {@render children()}
         </main>
     </div>

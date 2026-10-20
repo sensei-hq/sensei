@@ -82,8 +82,8 @@
             glyphs={glyphMode(appState.config)}
         />
 
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <main data-component="observatory-main" class="flex-1 overflow-auto" tabindex="0">
+        <!-- Not a scroller: each screen's body is, and takes focus itself (#245, #293). -->
+        <main data-component="observatory-main" class="flex-1 min-w-0 min-h-0 overflow-hidden">
             {@render children()}
         </main>
     </div>

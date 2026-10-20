@@ -4,7 +4,8 @@
   import type { ProxyItem } from '@rokkit/states';
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
   import { invalidateAll } from '$app/navigation';
-  import { Eyebrow, ScreenState } from '$lib/components';
+  import { PageHeader, Screen, ScreenState } from '$lib/components';
+  import { railIcon } from '../observatory-nav';
   import { projectStatus, type EnrichedProject } from './buckets.js';
   import { projectsView, type ProjectFilter, type ProjectView } from './projects-view.svelte.js';
   import ProjectCard from './ProjectCard.svelte';
@@ -63,79 +64,75 @@
   ];
 </script>
 
-<div data-component="projects-page" class="w-full h-full flex flex-col bg-paper overflow-hidden">
-  <!-- Header -->
-  <div class="pt-5 pb-4 px-7 border-b border-paper-edge flex items-center gap-5">
-    <Kanji char="場" size="inherit" tone="inherit" class="text-2xl text-accent" />
-    <div>
-      <p class="m-0 mb-0.5"><Eyebrow>Projects</Eyebrow></p>
-      <h1 class="display text-xl font-normal m-0">All the places you work.</h1>
-    </div>
-    <span class="flex-1"></span>
-    <span class="font-mono text-xs text-ink-soft py-1 px-2 border border-paper-edge rounded">
-      ⌘K to jump
-    </span>
-  </div>
+<Screen data-component="projects-page">
+  {#snippet header()}
+    <div class="bg-paper">
+      <PageHeader kanji="場" icon={railIcon('/projects')} eyebrow="Projects" title="All the places you work.">
+        {#snippet right()}
+          <span class="font-mono text-xs text-ink-soft py-1 px-2 border border-paper-edge rounded">
+            ⌘K to jump
+          </span>
+        {/snippet}
+      </PageHeader>
+      <!-- Filter chips + view toggle + search -->
+      {#if !data.error}
+      <div class="py-3 px-7 gap-4 border-b border-paper-edge flex items-center">
+        <Toggle
+          options={filterOptions}
+          value={projectsView.filter}
+          onchange={(v: unknown) => projectsView.setFilter(v as ProjectFilter)}
+          label="filter projects by status"
+        >
+          {#snippet itemContent(proxy: ProxyItem)}
+            <Kanji char={proxy.get('kanji')} icon={null} size="inherit" tone="inherit" class="text-xs" />
+            <span>{proxy.label}</span>
+            <!-- Inherit the option's text colour (rokkit sets a contrast-correct colour
+                 per selected/unselected state) instead of a hardcoded text-ink-mute,
+                 which failed contrast on the SELECTED pill's background (a11y). -->
+            <span class="font-mono text-xs">{proxy.get('count')}</span>
+          {/snippet}
+        </Toggle>
+        <span class="flex-1"></span>
 
-  <!-- Filter chips + view toggle + search -->
-  {#if !data.error}
-  <div class="py-3 px-7 gap-4 border-b border-paper-edge flex items-center">
-    <Toggle
-      options={filterOptions}
-      value={projectsView.filter}
-      onchange={(v: unknown) => projectsView.setFilter(v as ProjectFilter)}
-      label="filter projects by status"
-    >
-      {#snippet itemContent(proxy: ProxyItem)}
-        <Kanji char={proxy.get('kanji')} icon={null} size="inherit" tone="inherit" class="text-xs" />
-        <span>{proxy.label}</span>
-        <!-- Inherit the option's text colour (rokkit sets a contrast-correct colour
-             per selected/unselected state) instead of a hardcoded text-ink-mute,
-             which failed contrast on the SELECTED pill's background (a11y). -->
-        <span class="font-mono text-xs">{proxy.get('count')}</span>
-      {/snippet}
-    </Toggle>
-    <span class="flex-1"></span>
+        <!-- View switcher: grid 田 / list ≣ -->
+        <Toggle
+          options={viewOptions}
+          value={projectsView.view}
+          onchange={(v: unknown) => projectsView.setView(v as ProjectView)}
+          label="switch between grid and list"
+        >
+          {#snippet itemContent(proxy: ProxyItem)}
+            <span class="{proxy.get('icon')} text-base" aria-hidden="true"></span>
+          {/snippet}
+        </Toggle>
 
-    <!-- View switcher: grid 田 / list ≣ -->
-    <Toggle
-      options={viewOptions}
-      value={projectsView.view}
-      onchange={(v: unknown) => projectsView.setView(v as ProjectView)}
-      label="switch between grid and list"
-    >
-      {#snippet itemContent(proxy: ProxyItem)}
-        <span class="{proxy.get('icon')} text-base" aria-hidden="true"></span>
-      {/snippet}
-    </Toggle>
+        <div class="flex items-center bg-paper-soft border border-paper-edge rounded gap-2 py-1 px-2 min-w-[260px]">
+          <Kanji char="探" size="inherit" tone="inherit" class="text-xs text-ink-soft" />
+          <input
+            type="text"
+            bind:value={projectsView.query}
+            placeholder="search projects or clients…"
+            aria-label="search projects"
+            class="border-none outline-none bg-transparent text-sm flex-1 text-ink placeholder:text-ink-faint"
+          />
+          {#if projectsView.query}
+            <button
+              type="button"
+              onclick={() => projectsView.clearQuery()}
+              class="text-xs text-ink-faint hover:text-ink"
+              aria-label="clear search"
+            >×</button>
+          {/if}
+        </div>
+        <span class="font-mono text-xs text-ink-soft whitespace-nowrap">
+          {filtered.length} of {counts.all}
+        </span>
+      </div>
 
-    <div class="flex items-center bg-paper-soft border border-paper-edge rounded gap-2 py-1 px-2 min-w-[260px]">
-      <Kanji char="探" size="inherit" tone="inherit" class="text-xs text-ink-soft" />
-      <input
-        type="text"
-        bind:value={projectsView.query}
-        placeholder="search projects or clients…"
-        aria-label="search projects"
-        class="border-none outline-none bg-transparent text-sm flex-1 text-ink placeholder:text-ink-faint"
-      />
-      {#if projectsView.query}
-        <button
-          type="button"
-          onclick={() => projectsView.clearQuery()}
-          class="text-xs text-ink-faint hover:text-ink"
-          aria-label="clear search"
-        >×</button>
       {/if}
     </div>
-    <span class="font-mono text-xs text-ink-soft whitespace-nowrap">
-      {filtered.length} of {counts.all}
-    </span>
-  </div>
-
-  {/if}
-
-  <!-- Body -->
-  <main class="flex-1 overflow-auto pt-5 pb-6 px-7">
+  {/snippet}
+  <div class="bg-paper min-h-full pt-5 pb-6 px-7">
     {#if data.error}
       <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
     {:else if counts.all === 0}
@@ -159,5 +156,5 @@
         {/each}
       </div>
     {/if}
-  </main>
-</div>
+  </div>
+</Screen>

@@ -19,9 +19,13 @@
   {#if header}
     <div data-component="screen-header" class="shrink-0">{@render header()}</div>
   {/if}
+  <!-- The scroll body takes focus so the keyboard can scroll it (#245). A fill
+       body does not scroll; its panes do. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div
     data-component="screen-body"
     data-fill={fill || undefined}
+    tabindex={fill ? undefined : 0}
     class="flex-1 min-h-0 {fill ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}"
   >{@render children()}</div>
 </div>

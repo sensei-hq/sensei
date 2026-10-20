@@ -3,7 +3,7 @@
     import { railIcon } from "../observatory-nav";
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
-  import { PageHeader, ScreenState } from '$lib/components';
+  import { PageHeader, Screen, ScreenState } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
@@ -153,41 +153,43 @@
   {/if}
 {/snippet}
 
-<div class="flex flex-col h-full">
-  <PageHeader
-    size="lg"
-    kanji="今" icon={railIcon("/insights")}
-    eyebrow="Observatory · Insights"
-    title="What needs you, what's working, what's quiet."
-    description="Sorted by immediacy. Most days you only need the first column."
-  >
-    {#snippet right()}
-      <div class="flex gap-5 pl-5 border-l border-paper-edge">
-        {@render stat(board.counts.now, 'now', 'now')}
-        {@render stat(board.counts.soon, 'soon', 'soon')}
-        {@render stat(board.counts.settled, 'settled', 'settled')}
-      </div>
-    {/snippet}
-  </PageHeader>
-
-  <div class="py-3 px-6 border-b border-paper-edge shrink-0">
-    <ProjectFilterStrip
-      projects={board.projects}
-      selectedId={board.selectedProjectId}
-      onSelect={selectProject}
-    />
-  </div>
-
-  {#if board.actionError}
-    <div
-      role="alert"
-      class="flex items-center gap-2 py-2 px-6 bg-danger-soft border-b border-paper-edge shrink-0"
+<!-- Three columns that each scroll, under a fixed header (#293). -->
+<Screen fill>
+  {#snippet header()}
+    <PageHeader
+      size="lg"
+      kanji="今" icon={railIcon("/insights")}
+      eyebrow="Observatory · Insights"
+      title="What needs you, what's working, what's quiet."
+      description="Sorted by immediacy. Most days you only need the first column."
     >
-      <Kanji char="警" size="inherit" tone="inherit" class="text-xs text-danger" />
-      <span class="text-xs text-danger">{board.actionError}</span>
-    </div>
-  {/if}
+      {#snippet right()}
+        <div class="flex gap-5 pl-5 border-l border-paper-edge">
+          {@render stat(board.counts.now, 'now', 'now')}
+          {@render stat(board.counts.soon, 'soon', 'soon')}
+          {@render stat(board.counts.settled, 'settled', 'settled')}
+        </div>
+      {/snippet}
+    </PageHeader>
 
+    <div class="py-3 px-6 border-b border-paper-edge shrink-0">
+      <ProjectFilterStrip
+        projects={board.projects}
+        selectedId={board.selectedProjectId}
+        onSelect={selectProject}
+      />
+    </div>
+
+    {#if board.actionError}
+      <div
+        role="alert"
+        class="flex items-center gap-2 py-2 px-6 bg-danger-soft border-b border-paper-edge shrink-0"
+      >
+        <Kanji char="警" size="inherit" tone="inherit" class="text-xs text-danger" />
+        <span class="text-xs text-danger">{board.actionError}</span>
+      </div>
+    {/if}
+  {/snippet}
   {#if board.loadError}
     <!-- The board could not be read (#288) — not three quiet columns. Retry
          re-reads the current scope through the state, which owns the board. -->
@@ -201,4 +203,4 @@
     {@render columnShell('settled', '定', 'Settled', 'battle-tested · low-noise reference', board.settled.count, settledBody)}
   </div>
   {/if}
-</div>
+</Screen>

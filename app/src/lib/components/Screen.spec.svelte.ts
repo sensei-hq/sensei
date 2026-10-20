@@ -66,4 +66,16 @@ describe('Screen — one fixed header over one scroll body (#293)', () => {
     expect(screen.dataset.extra).toBe('x');
     expect(screen.dataset.component).toBe('screen');
   });
+
+  it('lets the keyboard reach the scroll body, as #245 required of the old scroller', () => {
+    const m = mountComponent(ScreenHarness, {});
+    cleanup.push(m.destroy);
+    expect(part(m.container, 'screen-body')!.getAttribute('tabindex')).toBe('0');
+  });
+
+  it('in fill mode leaves focus to the panes that scroll', () => {
+    const m = mountComponent(ScreenHarness, { fill: true });
+    cleanup.push(m.destroy);
+    expect(part(m.container, 'screen-body')!.hasAttribute('tabindex')).toBe(false);
+  });
 });

@@ -14,6 +14,7 @@ export const KANJI_ICONS = {
   '器': 'i-solar-tuning-2-bold-duotone',
   '連': 'i-solar-link-round-bold-duotone',
   '結': 'i-solar-link-circle-bold-duotone',
+  '統': 'i-solar-layers-bold-duotone',
   '観': 'i-solar-eye-bold-duotone',
   '録': 'i-solar-history-bold-duotone',
   '作': 'i-solar-bolt-bold-duotone',

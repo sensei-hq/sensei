@@ -21,6 +21,7 @@ const OBSERVATORY_SCREENS = [
     .map((s) => `/settings/${s}`),
   '/dojo/connections', '/dojo/sharing', '/help', '/knowledge-sources', '/libraries', '/traceability', '/upgrades',
   '/', '/impact', '/learnings', '/share-review',
+  '/activity-logs', '/consolidation', '/insights', '/instruments', '/projects', '/sessions',
 ];
 
 type Probe = { fills: boolean; mainScrolls: boolean; headerMoved: number; bodyScrolled: number; fill: boolean } | null;

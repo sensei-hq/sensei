@@ -12,6 +12,7 @@
   import { senseiApi } from '$lib/api.js';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Kanji from '$lib/components/Kanji.svelte';
+  import Screen from '$lib/components/Screen.svelte';
   import {
     TrendChart,
     StreamChart,
@@ -84,84 +85,84 @@
   }
 </script>
 
-<div class="w-full h-full flex flex-col bg-paper overflow-hidden">
-  <!-- ── Hero ─────────────────────────────────────────────────────────── -->
-  <header class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge shrink-0">
-    <Kanji char="録" size="3xl" />
-    <div class="flex-1 min-w-0">
-      <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">Observatory · Sessions</div>
-      <h1 class="display text-xl font-normal m-0 text-ink">The shape of your week.</h1>
-      <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[720px]">
-        A retrospective. Then one quiet chart — drawn the way you want to read it.
-      </p>
-      <!-- Range chips — each refetches /api/sessions?range= -->
-      <div class="flex items-center gap-2 mt-3" data-testid="range-chips">
-        <span class="text-xs uppercase tracking-[0.14em] text-ink-faint">range</span>
-        {#each SESSION_RANGES as r (r)}
-          {@const on = digest.range === r}
-          <button
-            type="button"
-            class="py-1 px-2 text-xs rounded-full cursor-pointer border"
-            class:bg-ink={on}
-            class:text-paper={on}
-            class:border-ink={on}
-            class:bg-transparent={!on}
-            class:text-ink-soft={!on}
-            class:border-paper-edge={!on}
-            data-testid={`range-${r}`}
-            aria-pressed={on}
-            onclick={() => digest.setRange(r)}
-          >
-            {RANGE_LABEL[r]}
-          </button>
-        {/each}
-        {#if digest.loading}
-          <span class="text-xs text-ink-faint">updating…</span>
-        {/if}
+<Screen>
+  {#snippet header()}
+    <!-- ── Hero ─────────────────────────────────────────────────────────── -->
+    <header class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge bg-paper">
+      <Kanji char="録" size="3xl" />
+      <div class="flex-1 min-w-0">
+        <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">Observatory · Sessions</div>
+        <h1 class="display text-xl font-normal m-0 text-ink">The shape of your week.</h1>
+        <p class="text-sm text-ink-soft leading-normal mt-1 mb-0 max-w-[720px]">
+          A retrospective. Then one quiet chart — drawn the way you want to read it.
+        </p>
+        <!-- Range chips — each refetches /api/sessions?range= -->
+        <div class="flex items-center gap-2 mt-3" data-testid="range-chips">
+          <span class="text-xs uppercase tracking-[0.14em] text-ink-faint">range</span>
+          {#each SESSION_RANGES as r (r)}
+            {@const on = digest.range === r}
+            <button
+              type="button"
+              class="py-1 px-2 text-xs rounded-full cursor-pointer border"
+              class:bg-ink={on}
+              class:text-paper={on}
+              class:border-ink={on}
+              class:bg-transparent={!on}
+              class:text-ink-soft={!on}
+              class:border-paper-edge={!on}
+              data-testid={`range-${r}`}
+              aria-pressed={on}
+              onclick={() => digest.setRange(r)}
+            >
+              {RANGE_LABEL[r]}
+            </button>
+          {/each}
+          {#if digest.loading}
+            <span class="text-xs text-ink-faint">updating…</span>
+          {/if}
+        </div>
       </div>
-    </div>
 
-    {#if !digest.error}
-    <!-- Right cluster — numbers at rest, mini chart when cycled; the cycler
-         badge steps through numbers/trend/stream/constellation/bands/pulse.
-         Pulse lives ONLY on the cycler, never in the chip group below. -->
-    <div class="flex items-center gap-3 pl-5 border-l border-paper-edge shrink-0">
-      {#if digest.miniMode === 'numbers'}
-        <div class="flex gap-4" data-testid="mini-numbers">
-          {@render stat('bg-success', totals.good, 'first-try')}
-          {@render stat('bg-warning', totals.bad, 'corrected')}
-          {@render stat('bg-accent', totals.ugly, 'abandoned')}
-          <div class="w-px bg-paper-edge"></div>
-          <div class="text-center min-w-[56px]">
-            <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{medianLabel}</div>
-            <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">median</div>
+      {#if !digest.error}
+      <!-- Right cluster — numbers at rest, mini chart when cycled; the cycler
+           badge steps through numbers/trend/stream/constellation/bands/pulse.
+           Pulse lives ONLY on the cycler, never in the chip group below. -->
+      <div class="flex items-center gap-3 pl-5 border-l border-paper-edge shrink-0">
+        {#if digest.miniMode === 'numbers'}
+          <div class="flex gap-4" data-testid="mini-numbers">
+            {@render stat('bg-success', totals.good, 'first-try')}
+            {@render stat('bg-warning', totals.bad, 'corrected')}
+            {@render stat('bg-accent', totals.ugly, 'abandoned')}
+            <div class="w-px bg-paper-edge"></div>
+            <div class="text-center min-w-[56px]">
+              <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{medianLabel}</div>
+              <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">median</div>
+            </div>
           </div>
-        </div>
-      {:else}
-        <div class="flex items-center gap-3" data-testid="mini-view">
-          <MiniChart mode={miniChartMode} {buckets} sessions={enriched} {days} />
-          <div class="min-w-[56px]">
-            <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{totals.count}</div>
-            <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">sessions</div>
+        {:else}
+          <div class="flex items-center gap-3" data-testid="mini-view">
+            <MiniChart mode={miniChartMode} {buckets} sessions={enriched} {days} />
+            <div class="min-w-[56px]">
+              <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{totals.count}</div>
+              <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">sessions</div>
+            </div>
           </div>
-        </div>
+        {/if}
+        <button
+          type="button"
+          class="mini-cycler w-8 h-8 rounded-full bg-paper-soft border border-paper-edge inline-flex items-center justify-center cursor-pointer"
+          title={`viewing ${digest.miniMode} · click to cycle`}
+          data-testid="mini-cycler"
+          data-mode={digest.miniMode}
+          onclick={() => digest.cycleMiniMode()}
+        >
+          <Kanji char={MINI_GLYPH[digest.miniMode]} size="inherit" tone="inherit" class="text-sm text-accent leading-none" />
+        </button>
+      </div>
       {/if}
-      <button
-        type="button"
-        class="mini-cycler w-8 h-8 rounded-full bg-paper-soft border border-paper-edge inline-flex items-center justify-center cursor-pointer"
-        title={`viewing ${digest.miniMode} · click to cycle`}
-        data-testid="mini-cycler"
-        data-mode={digest.miniMode}
-        onclick={() => digest.cycleMiniMode()}
-      >
-        <Kanji char={MINI_GLYPH[digest.miniMode]} size="inherit" tone="inherit" class="text-sm text-accent leading-none" />
-      </button>
-    </div>
-    {/if}
-  </header>
-
-  <!-- ── Scroll body ──────────────────────────────────────────────────── -->
-  <div class="flex-1 overflow-auto min-h-0">
+    </header>
+  {/snippet}
+  <div class="bg-paper min-h-full">
     {#if digest.error}
       <!-- The sessions could not be read (#288) — not a quiet week. Retry
            re-reads the active range through the state. -->
@@ -268,7 +269,7 @@
     </section>
     {/if}
   </div>
-</div>
+</Screen>
 
 {#snippet stat(dotClass: string, n: number, label: string)}
   <div class="text-center min-w-[56px]">
