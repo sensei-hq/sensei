@@ -7,7 +7,6 @@
   #133 implementation complete (awaiting two decisions).
 - #283 live: `running_since` + "running for", a per-pass limit ("still running after Ns"), a daemon that never
   prompts for the keychain, and an "Approve keychain access" action.
-- #291 closed: "Tools used" moved to project Instruments (24 tools live).
 - #290 closed: files counted where declarations are (Atlas 2,096 modules / 11,823 exports; rework_density back).
 - #288 closed: no fallback reads remain (72 → 0, `get` deleted, guarded); every screen verified live.
 - #287 closed: rework placed by path, once per event; Patterns folds it into one "rework hotspots" (618 → 2).
