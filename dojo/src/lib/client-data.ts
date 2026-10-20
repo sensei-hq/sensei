@@ -389,10 +389,12 @@ export async function listClientAuditLedger(
 	return data.entries ?? [];
 }
 
-/** One project row (mirrors the server `ProjectRow`). `slug` is the dereferenced
- *  project identity (the drill-in key). */
+/** One project row (mirrors the server `ProjectRow`): a shared project in one
+ *  dōjō (#299). `slug` is unique within that dōjō; `id` is the drill-in key. */
 export interface ProjectRow {
 	id: string;
+	/** The dōjō the project lives in. */
+	tenant_id: string;
 	slug: string;
 	name: string;
 	classification: string;
@@ -407,9 +409,9 @@ export async function listProjects(tenantKey: string, opts: DojoCallOpts = {}): 
 	return data.projects ?? [];
 }
 
-/** `GET /v1/you/projects` — the caller's projects across EVERY dōjō they belong
- *  to (user-primary). Backs the personal `/you/projects` list. Not tenant-scoped
- *  — authorized by the JWT + a `user_id` filter server-side. Honest-empty on a
+/** `GET /v1/you/projects` — every project the caller may read, across every
+ *  dōjō they belong to. Backs the personal `/you/projects` list. Not
+ *  tenant-scoped — the server reads with the caller's JWT and RLS decides (#299). Honest-empty on a
  *  missing key; a non-2xx throws `ClientApiError` (never []-as-success). */
 export async function listUserProjects(opts: DojoCallOpts = {}): Promise<ProjectRow[]> {
 	const data = await getJson<{ projects?: ProjectRow[] }>(youUrl('/projects'), opts);
@@ -587,16 +589,16 @@ export async function acceptInvite(
 	return sendJson(youUrl('/invites/accept'), 'POST', { token }, opts);
 }
 
-/** `GET /v1/you/projects/{slug}/constitution` — the daemon-resolved constitution
- *  for one of the caller's projects (F4 drill-in). `slug` may contain slashes (a
- *  dereferenced identity); each segment is encoded, slashes preserved, to match
- *  the route's rest param. `null` when none is federated yet (honest-empty). */
-export async function getUserProjectConstitution(
-	slug: string,
+/** `GET /v1/you/projects/{id}/constitution` — the daemon-resolved constitution
+ *  for one project (F4 drill-in), by project id: a slug is unique only within one
+ *  dōjō (#299). `null` when none is federated yet or the caller cannot read the
+ *  project (honest-empty). */
+export async function getProjectConstitution(
+	projectId: string,
 	opts: DojoCallOpts = {}
 ): Promise<RelayConstitution | null> {
 	const data = await getJson<{ constitution?: RelayConstitution | null }>(
-		youUrl(`/projects/${encodeTenant(slug)}/constitution`),
+		youUrl(`/projects/${encodeURIComponent(projectId)}/constitution`),
 		opts
 	);
 	return data.constitution ?? null;

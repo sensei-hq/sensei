@@ -14,7 +14,7 @@ import {
 	listIncidents,
 	listProjects,
 	listUserProjects,
-	getUserProjectConstitution,
+	getProjectConstitution,
 	listContributions,
 	adoptContribution,
 	createDojo,
@@ -74,16 +74,17 @@ describe('listProjects / listUserProjects — tenant vs user-wide reads', () => 
 		expect(await listUserProjects({ fetch: fn })).toEqual([]);
 	});
 
-	it('getUserProjectConstitution GETs the per-project constitution path (slug slashes preserved)', async () => {
+	it('getProjectConstitution GETs the per-project constitution path, by project id (#299)', async () => {
+		// By id: a slug is unique only within one dōjō.
 		const constitution = { rules: [], conflicts: [], locks: 0 };
 		const { fn, calls } = fakeFetch(200, { constitution });
-		expect(await getUserProjectConstitution('acme/ledger', { fetch: fn })).toEqual(constitution);
-		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/projects/acme/ledger/constitution`);
+		expect(await getProjectConstitution('proj-1', { fetch: fn })).toEqual(constitution);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/projects/proj-1/constitution`);
 	});
 
-	it('getUserProjectConstitution returns null when none is federated (honest-empty)', async () => {
+	it('getProjectConstitution returns null when none is federated (honest-empty)', async () => {
 		const { fn } = fakeFetch(200, { constitution: null });
-		expect(await getUserProjectConstitution('s', { fetch: fn })).toBeNull();
+		expect(await getProjectConstitution('proj-1', { fetch: fn })).toBeNull();
 	});
 
 	it('listContributions GETs /v1/you/contributions and unwraps { mine, downstream }', async () => {
