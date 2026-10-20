@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
 // #293: every observatory and project screen lays out through `Screen` — one
 // header that stays in place over one scroll body — instead of improvising its
@@ -17,23 +17,26 @@ function pages(dir: string): string[] {
 }
 
 const NOT_YET = new Set([
-		'(observatory)/+page.svelte',
 		'(observatory)/activity-logs/+page.svelte',
 		'(observatory)/consolidation/+page.svelte',
-		'(observatory)/impact/+page.svelte',
 		'(observatory)/insights/+page.svelte',
 		'(observatory)/instruments/+page.svelte',
-		'(observatory)/learnings/+page.svelte',
 		'(observatory)/projects/+page.svelte',
 		'(observatory)/sessions/+page.svelte',
-		'(observatory)/share-review/+page.svelte',
 ]);
 
 const source = (page: string) => readFileSync(join(ROOT, page), 'utf8');
 // A page with no markup only redirects (its `+page.ts` throws); it is not a screen.
 const hasMarkup = (page: string) => source(page).replace(/<script[\s\S]*?<\/script>/, '').trim() !== '';
 const all = GROUPS.flatMap((g) => pages(join(ROOT, g))).filter(hasMarkup).sort();
-const usesScreen = (page: string) => /<Screen[\s>]/.test(source(page));
+// A page that renders a co-located `…Screen.svelte` lays out through whatever
+// that component renders, so the component is read too.
+const usesScreen = (page: string) => {
+	const own = source(page);
+	const delegate = own.match(/import \w+ from '\.\/(\w+Screen\.svelte)'/);
+	const rendered = delegate ? own + source(join(dirname(page), delegate[1])) : own;
+	return /<Screen[\s>]/.test(rendered);
+};
 
 describe('screens use the shared Screen layout (#293)', () => {
 	it('every screen not listed as pending uses Screen', () => {

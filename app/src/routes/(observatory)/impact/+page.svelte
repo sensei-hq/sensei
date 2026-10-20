@@ -1,7 +1,8 @@
 <script lang="ts">
     import Kanji from '$lib/components/Kanji.svelte';
   import { invalidateAll } from '$app/navigation';
-  import { EmptyState, Eyebrow, MoeReasoningPanel, ScreenState, UnreadProjectsNotice } from '$lib/components';
+  import { EmptyState, MoeReasoningPanel, PageHeader, Screen, ScreenState, UnreadProjectsNotice } from '$lib/components';
+  import { railIcon } from '../observatory-nav';
   import {
     formatDeltaPct,
     pct,
@@ -36,43 +37,45 @@
   const openVm = $derived(open ? meta(open.verdict) : null);
 </script>
 
-{#if data.error}
-<div class="p-8">
-  <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
-</div>
-{:else}
-<div class="flex flex-col h-full" data-impact-total={data.total}>
-  <!-- Header — kanji + eyebrow + title + description + 4 verdict counts -->
-  <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
-    <Kanji char="果" size="inherit" tone="inherit" class="text-3xl text-accent leading-none" />
-    <div class="flex-1 min-w-0">
-      <p class="m-0 mb-1"><Eyebrow>Observatory · Change impact</Eyebrow></p>
-      <h1 class="display text-xl font-normal m-0">Did sensei's advice actually work?</h1>
-      <p class="text-sm text-ink-mute mt-1 mb-0 max-w-[720px] leading-relaxed">
-        Each accepted recommendation gets a measurement window. FTR baseline
-        vs current is compared. The MOE panel writes the reasoning.
-      </p>
+<!-- List beside detail: each column scrolls itself, under a fixed header (#293). -->
+<Screen fill data-impact-total={data.error ? undefined : data.total}>
+  {#snippet header()}
+    <PageHeader
+      kanji="果"
+      icon={railIcon('/impact')}
+      eyebrow="Observatory · Change impact"
+      title="Did sensei's advice actually work?"
+      description="Each accepted recommendation gets a measurement window. FTR baseline vs current is compared. The MOE panel writes the reasoning."
+    >
+      {#snippet right()}
+        {#if !data.error}
+          <div class="flex gap-5 pl-5 border-l border-paper-edge">
+            <div class="text-center">
+              <div class="font-mono text-lg font-light text-success">{buckets.positive.length}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">positive</div>
+            </div>
+            <div class="text-center">
+              <div class="font-mono text-lg font-light text-ink">{buckets.neutral.length}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">neutral</div>
+            </div>
+            <div class="text-center">
+              <div class="font-mono text-lg font-light text-warning">{buckets.negative.length}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">negative</div>
+            </div>
+            <div class="text-center">
+              <div class="font-mono text-lg font-light text-ink-soft">{buckets.pending.length}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">pending</div>
+            </div>
+          </div>
+        {/if}
+      {/snippet}
+    </PageHeader>
+  {/snippet}
+  {#if data.error}
+    <div class="p-8">
+      <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
     </div>
-    <div class="flex gap-5 pl-5 border-l border-paper-edge">
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-success">{buckets.positive.length}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">positive</div>
-      </div>
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-ink">{buckets.neutral.length}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">neutral</div>
-      </div>
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-warning">{buckets.negative.length}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">negative</div>
-      </div>
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-ink-soft">{buckets.pending.length}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">pending</div>
-      </div>
-    </div>
-  </div>
-
+  {:else}
   {#if data.unread.length > 0}
     <div class="px-6 pt-4"><UnreadProjectsNotice unread={data.unread} /></div>
   {/if}
@@ -200,5 +203,5 @@
       </main>
     </div>
   {/if}
-</div>
-{/if}
+  {/if}
+</Screen>

@@ -1,7 +1,7 @@
 <script lang="ts">
     import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
-  import { PageHeader, EmptyState, ScreenState } from '$lib/components';
+  import { PageHeader, Screen, EmptyState, ScreenState } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import { typePill, attributionSummary, type ChipClasses } from '$lib/dojo-artifacts.js';
   import type { ShareReviewBatch, ShareReviewItem, PublishBatchOutcome } from '$lib/types.js';
@@ -140,132 +140,136 @@
   </section>
 {/snippet}
 
-<PageHeader
-  eyebrow="Observatory · Share review"
-  kanji="送" icon={railIcon("/share-review")}
-  title="Ready to share."
-  description="Lessons that generalised cleanly enough to leave this machine, scoped and attributed by origin. Review what's about to go, then publish. Held items stay back until the confidentiality gate clears — client work always leaves with its source dropped."
-/>
+<Screen>
+    {#snippet header()}
+    <PageHeader
+      eyebrow="Observatory · Share review"
+      kanji="送" icon={railIcon("/share-review")}
+      title="Ready to share."
+      description="Lessons that generalised cleanly enough to leave this machine, scoped and attributed by origin. Review what's about to go, then publish. Held items stay back until the confidentiality gate clears — client work always leaves with its source dropped."
+    />
+    {/snippet}
 
-<div class="max-w-[1060px] mx-auto px-7 pb-10" data-share-review>
-  {#if loadError}
-    <ScreenState status="error" error={loadError} {onretry} />
-  {:else}
-  {#if actions.error}
-    <p class="text-xs text-danger mb-3" data-share-error>{actions.error}</p>
-  {/if}
-
-  {#if actions.outcome}
-    {@render travelBanner(actions.outcome)}
-  {/if}
-
-  {#if !batch}
-    {#if actions.outcome}
-      <EmptyState
-        kanji="送"
-        title="batch sent"
-        description="Your batch has left for the Dōjō. New lessons will queue here as they generalise cleanly enough to share."
-      />
-    {:else}
-      <EmptyState
-        kanji="送"
-        title="nothing queued to share"
-        description="Nothing is shareable by default. Lessons appear here once they've generalised past the confidence bar and an upstream batch is approved."
-      />
-    {/if}
-  {:else}
-    <!-- Destination / cadence bar — the batch header the spec calls for. -->
-    <div
-      class="flex flex-wrap items-center gap-3 bg-paper-soft border border-paper-edge rounded-lg px-4 py-3 mb-2"
-      data-policy-bar
-      data-batch={batch.batch_id}
-    >
-      <Kanji char="規" size="inherit" tone="inherit" class="text-sm text-ink-mute" />
-      <span class="text-xs text-ink-soft">Destination</span>
-      {#if unbound}
-        <span class="font-mono text-xs px-2 py-0.5 rounded-full bg-warning-soft text-warning" data-unbound
-          >unbound — nothing can leave</span
-        >
+    <div class="max-w-[1060px] mx-auto px-7 pb-10" data-share-review>
+      {#if loadError}
+        <ScreenState status="error" error={loadError} {onretry} />
       {:else}
-        {#each dests as d, i (i)}
-          <span
-            class="inline-flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded-full bg-accent-soft text-accent"
-            data-destination
+      {#if actions.error}
+        <p class="text-xs text-danger mb-3" data-share-error>{actions.error}</p>
+      {/if}
+
+      {#if actions.outcome}
+        {@render travelBanner(actions.outcome)}
+      {/if}
+
+      {#if !batch}
+        {#if actions.outcome}
+          <EmptyState
+            kanji="送"
+            title="batch sent"
+            description="Your batch has left for the Dōjō. New lessons will queue here as they generalise cleanly enough to share."
+          />
+        {:else}
+          <EmptyState
+            kanji="送"
+            title="nothing queued to share"
+            description="Nothing is shareable by default. Lessons appear here once they've generalised past the confidence bar and an upstream batch is approved."
+          />
+        {/if}
+      {:else}
+        <!-- Destination / cadence bar — the batch header the spec calls for. -->
+        <div
+          class="flex flex-wrap items-center gap-3 bg-paper-soft border border-paper-edge rounded-lg px-4 py-3 mb-2"
+          data-policy-bar
+          data-batch={batch.batch_id}
+        >
+          <Kanji char="規" size="inherit" tone="inherit" class="text-sm text-ink-mute" />
+          <span class="text-xs text-ink-soft">Destination</span>
+          {#if unbound}
+            <span class="font-mono text-xs px-2 py-0.5 rounded-full bg-warning-soft text-warning" data-unbound
+              >unbound — nothing can leave</span
+            >
+          {:else}
+            {#each dests as d, i (i)}
+              <span
+                class="inline-flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded-full bg-accent-soft text-accent"
+                data-destination
+              >
+                <Kanji char="結" size="inherit" tone="inherit" class="" />{d}
+              </span>
+            {/each}
+          {/if}
+          <span class="font-mono text-xs px-2 py-0.5 rounded-full bg-paper-mute text-ink-mute" data-cadence
+            >{batch.cadence}</span
           >
-            <Kanji char="結" size="inherit" tone="inherit" class="" />{d}
-          </span>
-        {/each}
-      {/if}
-      <span class="font-mono text-xs px-2 py-0.5 rounded-full bg-paper-mute text-ink-mute" data-cadence
-        >{batch.cadence}</span
-      >
-      {#if when}
-        <span class="font-mono text-xs text-ink-faint" data-next-batch>next batch {when}</span>
-      {/if}
-      <span class="flex-1"></span>
-      <span class="font-mono text-xs text-ink-soft" data-shippable-count>{nShip} to ship</span>
-      {#if nHeld > 0}
-        <span class="font-mono text-xs text-warning" data-held-count>{nHeld} held</span>
-      {/if}
-    </div>
-    <p class="text-xs text-ink-soft mb-4 leading-normal">
-      Your org's policy is the floor — an item can be stricter, never looser. Nothing leaves without
-      passing through here.
-    </p>
-
-    <!-- Publish action — a large batch asks for confirmation first. -->
-    <div class="flex flex-wrap items-center gap-2 mb-6">
-      {#if confirming}
-        <span class="text-xs text-ink-soft" data-confirm-prompt>
-          Publish {nShip} items to your Dōjō? A maintainer approves before distribution.
-        </span>
-        <Button
-          variant="primary"
-          size="sm"
-          data-action="confirm-publish"
-          onclick={onPublish}
-          disabled={actions.busy}
-        >Confirm</Button>
-        <Button
-          variant="secondary"
-          style="outline"
-          size="sm"
-          data-action="cancel-publish"
-          onclick={() => (confirming = false)}
-        >Cancel</Button>
-      {:else}
-        <Button
-          variant="primary"
-          size="sm"
-          data-action="publish"
-          onclick={onPublish}
-          disabled={!canPublish}
-        >
-          <Kanji char="共" size="inherit" tone="inherit" class="" />{publishButtonLabel(nShip)}
-        </Button>
-      {/if}
-    </div>
-
-    <!-- Lane 1 · about to ship -->
-    {#if grouped.shippable.length > 0}
-      <section class="mb-8" data-lane="shippable">
-        {#each grouped.shippable as item (item.memory_id)}
-          {@render itemRow(item, false)}
-        {/each}
-      </section>
-    {/if}
-
-    <!-- Lane 2 · held back — shown, never publishable -->
-    {#if grouped.held.length > 0}
-      <section data-held-section>
-        <div class="text-xs uppercase tracking-wide text-ink-faint font-semibold mb-2">
-          Held — won't ship this batch
+          {#if when}
+            <span class="font-mono text-xs text-ink-faint" data-next-batch>next batch {when}</span>
+          {/if}
+          <span class="flex-1"></span>
+          <span class="font-mono text-xs text-ink-soft" data-shippable-count>{nShip} to ship</span>
+          {#if nHeld > 0}
+            <span class="font-mono text-xs text-warning" data-held-count>{nHeld} held</span>
+          {/if}
         </div>
-        {#each grouped.held as item (item.memory_id)}
-          {@render itemRow(item, true)}
-        {/each}
-      </section>
-    {/if}
-  {/if}
-  {/if}
-</div>
+        <p class="text-xs text-ink-soft mb-4 leading-normal">
+          Your org's policy is the floor — an item can be stricter, never looser. Nothing leaves without
+          passing through here.
+        </p>
+
+        <!-- Publish action — a large batch asks for confirmation first. -->
+        <div class="flex flex-wrap items-center gap-2 mb-6">
+          {#if confirming}
+            <span class="text-xs text-ink-soft" data-confirm-prompt>
+              Publish {nShip} items to your Dōjō? A maintainer approves before distribution.
+            </span>
+            <Button
+              variant="primary"
+              size="sm"
+              data-action="confirm-publish"
+              onclick={onPublish}
+              disabled={actions.busy}
+            >Confirm</Button>
+            <Button
+              variant="secondary"
+              style="outline"
+              size="sm"
+              data-action="cancel-publish"
+              onclick={() => (confirming = false)}
+            >Cancel</Button>
+          {:else}
+            <Button
+              variant="primary"
+              size="sm"
+              data-action="publish"
+              onclick={onPublish}
+              disabled={!canPublish}
+            >
+              <Kanji char="共" size="inherit" tone="inherit" class="" />{publishButtonLabel(nShip)}
+            </Button>
+          {/if}
+        </div>
+
+        <!-- Lane 1 · about to ship -->
+        {#if grouped.shippable.length > 0}
+          <section class="mb-8" data-lane="shippable">
+            {#each grouped.shippable as item (item.memory_id)}
+              {@render itemRow(item, false)}
+            {/each}
+          </section>
+        {/if}
+
+        <!-- Lane 2 · held back — shown, never publishable -->
+        {#if grouped.held.length > 0}
+          <section data-held-section>
+            <div class="text-xs uppercase tracking-wide text-ink-faint font-semibold mb-2">
+              Held — won't ship this batch
+            </div>
+            {#each grouped.held as item (item.memory_id)}
+              {@render itemRow(item, true)}
+            {/each}
+          </section>
+        {/if}
+      {/if}
+      {/if}
+    </div>
+</Screen>
