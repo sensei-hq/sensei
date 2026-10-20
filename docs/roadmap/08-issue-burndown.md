@@ -130,7 +130,7 @@ The settings screen lists them as repositories.
     saves may ask), and an "Approve keychain access" action. Open only for the user's click to be seen working.
   - ~~#285~~ **Closed 2026-10-20**: `KeyStanding` replaces `has_key`; a withheld router key reads
     `configured: null` + `key_error`, and image generation answers 503 "unreadable", not 400 "not configured".
-  - #286 (found via #285): the app's router list turns a failed read into "no routers".
+  - ~~#286~~ **Closed 2026-10-20**: `tryListGatewayRouters`; a failed read is the Providers error state.
   - #85: Overview hotspots and patterns-in-use.
   - #144: on a project with no repository, say once that `scope=repo` metrics need git history.
   - #149: the community experiment (drop `parent_id` adjacency, measure).
