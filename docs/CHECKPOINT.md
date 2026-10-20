@@ -16,9 +16,9 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #133's last slice: the dōjō nav (`dojo/src/lib/nav.ts`)
-carries icons and honours the glyph preference (how the dōjō learns it: a dōjō-side preference, since it is a
-separate web app). Read the dōjō layout and its settings first.
+**Next command:** `/sensei:session refocus`, then #133 D2: move `app/src/lib/glyph-vocabulary.ts` into a shared
+`packages/glyphs` (pattern: `packages/sumi-palette`), point the app at it, then route the dōjō's `class="kanji"`
+marks through a kit glyph that reads `glyphs.mode` (dōjō) and the shared vocabulary.
 
 **Open questions:**
 - #133: project glyphs in icon mode. Keep each project's inferred kanji (recommended), or use one generic icon?
