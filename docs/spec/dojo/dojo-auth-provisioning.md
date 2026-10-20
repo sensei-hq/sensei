@@ -1079,7 +1079,7 @@ redirect table.
 - **F8 — RESOLVED, and it inverts the concern.** The daemon does receive
   `provider_token` from the exchange and **persists it to the OS keychain**
   (`dojo_client/session.rs::store_provider_token`, keyed
-  `provider_token.<persona>`), already reports `canReadOrgs` in
+  `credentials.<persona>` with the dōjō session — one item per persona since #302), already reports `canReadOrgs` in
   `/api/auth/status`, and already uses it (`github_verified_emails`). A
   `provider_refresh_token` slot exists too.
 

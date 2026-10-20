@@ -373,7 +373,7 @@ impl PgStore {
 /// A persona's forge-token standing, as the scheduled check needs it.
 ///
 /// Keyed on `session_slot` rather than the persona LABEL: the Keychain account
-/// is `provider_token.<session_slot>`, and `link_persona_identity` rewrites
+/// is `credentials.<session_slot>`, and `link_persona_identity` rewrites
 /// `label` to the verified GitHub login — so a user who signed in as `default`
 /// ends up labelled `sensei-hq-org` while the credential still lives at
 /// `.default`. Reading the label here would look for a slot that does not exist,

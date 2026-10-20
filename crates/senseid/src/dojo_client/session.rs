@@ -11,14 +11,15 @@
 //! stored one is a credential at rest with no upside — it is cheaper to refresh
 //! than to protect.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::gateway_keys::{keychain_get, keychain_set};
+use crate::gateway_keys::{KeychainError, keychain_get, keychain_set};
 
 /// Keychain service namespace, matching `com.sensei.gateway.router.*`.
 const KEYCHAIN_SERVICE: &str = "com.sensei.supabase";
 
-/// The account slot for a persona's session.
+/// The pre-#302 slot for a persona's dōjō refresh token, read only to migrate
+/// it into the persona's [`Credentials`].
 ///
 /// PER PERSONA, not one per install. A single slot meant signing in as a second
 /// identity silently EVICTED the first — observed live: signing in as
@@ -30,11 +31,9 @@ fn account_for(persona: &str) -> String {
     format!("refresh_token.{}", persona.to_lowercase())
 }
 
-/// Slot for the PROVIDER token (GitHub's), kept apart from Supabase's.
-///
-/// A separate secret with a different lifetime and blast radius: it can read the
-/// user's repositories and organisations, so it gets its own slot rather than
-/// being bundled — revoking one should not require discarding the other.
+/// The pre-#302 slot for the PROVIDER token (GitHub's). Read only to migrate it
+/// into the persona's [`Credentials`], where it stays a field of its own:
+/// revoking the dōjō session still keeps it ([`clear_refresh_token`]).
 fn provider_account_for(persona: &str) -> String {
     format!("provider_token.{}", persona.to_lowercase())
 }
@@ -45,12 +44,12 @@ pub fn store_provider_token(
     persona: &str,
     token: &str,
 ) -> Result<(), crate::gateway_keys::KeychainError> {
-    keychain_set(KEYCHAIN_SERVICE, &provider_account_for(persona), token)
+    update_credentials_with(&Keychain, persona, |c| c.provider_token = Some(token.to_string()))
 }
 
 /// The GitHub token for a persona, if the sign-in captured one.
 pub fn load_provider_token(persona: &str) -> Result<String, crate::gateway_keys::KeychainError> {
-    keychain_get(KEYCHAIN_SERVICE, &provider_account_for(persona))
+    load_credentials(persona)?.provider_token.ok_or(KeychainError::NotFound)
 }
 
 /// Slot for GitHub's own refresh token, when the OAuth App issues expiring ones.
@@ -154,33 +153,151 @@ pub fn store_refresh_token(
     persona: &str,
     token: &str,
 ) -> Result<(), crate::gateway_keys::KeychainError> {
-    keychain_set(KEYCHAIN_SERVICE, &account_for(persona), token)
+    update_credentials_with(&Keychain, persona, |c| c.refresh_token = Some(token.to_string()))
 }
 
 /// The single un-namespaced slot used before sessions became per-persona.
 const LEGACY_ACCOUNT: &str = "refresh_token";
 
 /// Read the stored refresh token, if this persona has signed in.
-///
-/// Falls back to the pre-persona slot ONCE and migrates it forward. Without this
-/// the rename would strand an existing session in the Keychain: unreachable by
-/// the daemon, invisible in the UI, and impossible to sign out of — a credential
-/// left behind with no way to revoke it.
 pub fn load_refresh_token(persona: &str) -> Result<String, crate::gateway_keys::KeychainError> {
-    match keychain_get(KEYCHAIN_SERVICE, &account_for(persona)) {
-        Err(crate::gateway_keys::KeychainError::NotFound) => {
-            let legacy = keychain_get(KEYCHAIN_SERVICE, LEGACY_ACCOUNT)?;
-            // Move it under the persona, then drop the old slot so the migration
-            // happens once and no orphan credential lingers.
-            keychain_set(KEYCHAIN_SERVICE, &account_for(persona), &legacy)?;
-            if let Err(e) = delete_one(LEGACY_ACCOUNT) {
-                tracing::warn!(persona, error = %e, "could not remove the pre-persona session slot");
-            }
-            tracing::info!(persona, "migrated a pre-persona Supabase session into its own slot");
-            Ok(legacy)
-        }
-        other => other,
+    load_credentials(persona)?.refresh_token.ok_or(KeychainError::NotFound)
+}
+
+/// Everything a persona's sign-in stored, as ONE keychain item (#302).
+///
+/// Each keychain item carries its own access list, so a persona kept as two
+/// items asked for approval twice. One item means one prompt, and one
+/// "Always Allow" covers everything sync reads.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Credentials {
+    /// The dōjō (Supabase) refresh token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<String>,
+    /// GitHub's token, when the sign-in captured one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_token: Option<String>,
+}
+
+impl Credentials {
+    fn is_empty(&self) -> bool {
+        self.refresh_token.is_none() && self.provider_token.is_none()
     }
+}
+
+/// The account holding a persona's [`Credentials`].
+fn credentials_account_for(persona: &str) -> String {
+    format!("credentials.{}", persona.to_lowercase())
+}
+
+/// The keychain, as the session code sees it — a seam so the migration and its
+/// never-drop-a-credential rules are testable without one.
+trait SlotStore {
+    fn get(&self, account: &str) -> Result<String, KeychainError>;
+    fn set(&self, account: &str, secret: &str) -> Result<(), KeychainError>;
+    fn delete(&self, account: &str) -> Result<(), KeychainError>;
+}
+
+/// The OS keychain under [`KEYCHAIN_SERVICE`].
+struct Keychain;
+
+impl SlotStore for Keychain {
+    fn get(&self, account: &str) -> Result<String, KeychainError> {
+        keychain_get(KEYCHAIN_SERVICE, account)
+    }
+    fn set(&self, account: &str, secret: &str) -> Result<(), KeychainError> {
+        keychain_set(KEYCHAIN_SERVICE, account, secret)
+    }
+    fn delete(&self, account: &str) -> Result<(), KeychainError> {
+        delete_one(account)
+    }
+}
+
+/// A persona's credentials — one keychain read.
+pub fn load_credentials(persona: &str) -> Result<Credentials, KeychainError> {
+    load_credentials_with(&Keychain, persona)
+}
+
+/// `Ok(None)` for a missing item; any other failure is the caller's to see.
+fn read_optional(store: &impl SlotStore, account: &str) -> Result<Option<String>, KeychainError> {
+    match store.get(account) {
+        Ok(v) => Ok(Some(v)),
+        Err(KeychainError::NotFound) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Read the combined item, migrating the old per-token items into it the first
+/// time. `NotFound` only when nothing at all is stored.
+///
+/// The migration never drops a credential it could not read: any old item that
+/// fails to read fails the whole load and nothing is written or deleted. The old
+/// items go only after the combined one is written; a failed write leaves them
+/// in place and the next read tries again.
+fn load_credentials_with(
+    store: &impl SlotStore,
+    persona: &str,
+) -> Result<Credentials, KeychainError> {
+    let account = credentials_account_for(persona);
+    if let Some(json) = read_optional(store, &account)? {
+        return serde_json::from_str(&json).map_err(|e| {
+            KeychainError::Store(format!("{account} is not a credentials record: {e}"))
+        });
+    }
+    let refresh_token = match read_optional(store, &account_for(persona))? {
+        Some(t) => Some(t),
+        None => read_optional(store, LEGACY_ACCOUNT)?,
+    };
+    let provider_token = read_optional(store, &provider_account_for(persona))?;
+    let creds = Credentials { refresh_token, provider_token };
+    if creds.is_empty() {
+        return Err(KeychainError::NotFound);
+    }
+    match write_credentials(store, persona, &creds) {
+        Ok(()) => {
+            for old in
+                [account_for(persona), LEGACY_ACCOUNT.to_string(), provider_account_for(persona)]
+            {
+                if let Err(e) = store.delete(&old) {
+                    tracing::warn!(persona, account = %old, error = %e, "could not remove a migrated keychain item");
+                }
+            }
+            tracing::info!(persona, "moved the persona's keychain items into one");
+        }
+        Err(e) => {
+            tracing::warn!(persona, error = %e, "could not write the combined keychain item; the old ones stay");
+        }
+    }
+    Ok(creds)
+}
+
+fn write_credentials(
+    store: &impl SlotStore,
+    persona: &str,
+    creds: &Credentials,
+) -> Result<(), KeychainError> {
+    let json = serde_json::to_string(creds).map_err(|e| KeychainError::Store(e.to_string()))?;
+    store.set(&credentials_account_for(persona), &json)
+}
+
+/// Change one field of a persona's credentials and write them back. A record
+/// that cannot be read is NOT overwritten — that would drop whichever credential
+/// was unreadable.
+fn update_credentials_with(
+    store: &impl SlotStore,
+    persona: &str,
+    change: impl FnOnce(&mut Credentials),
+) -> Result<(), KeychainError> {
+    let mut creds = match load_credentials_with(store, persona) {
+        Ok(c) => c,
+        Err(KeychainError::NotFound) => Credentials::default(),
+        Err(e) => return Err(e),
+    };
+    change(&mut creds);
+    if creds.is_empty() {
+        return store.delete(&credentials_account_for(persona));
+    }
+    write_credentials(store, persona, &creds)
 }
 
 /// The SUPABASE slots that must go when a session is rejected or signed out.
@@ -200,6 +317,7 @@ fn refresh_accounts_for(persona: &str) -> Vec<String> {
 /// nothing about GitHub's token, so only an explicit sign-out takes those.
 fn session_accounts_for(persona: &str) -> Vec<String> {
     let mut all = refresh_accounts_for(persona);
+    all.push(credentials_account_for(persona));
     all.push(provider_account_for(persona));
     all.push(provider_refresh_account_for(persona));
     all
@@ -252,7 +370,15 @@ fn delete_each(
 /// different lifetime, and the dōjō rejecting our session is no evidence about
 /// GitHub's token. [`clear_session`] is the one that takes everything.
 pub fn clear_refresh_token(persona: &str) -> Result<(), crate::gateway_keys::KeychainError> {
-    clear_refresh_token_with(persona, delete_one)
+    clear_refresh_token_in(&Keychain, persona)
+}
+
+/// [`clear_refresh_token`] against a given store: the old slots go, and the
+/// combined record keeps GitHub's token without the rejected one.
+fn clear_refresh_token_in(store: &impl SlotStore, persona: &str) -> Result<(), KeychainError> {
+    let old = clear_refresh_token_with(persona, |a| store.delete(a));
+    let record = update_credentials_with(store, persona, |c| c.refresh_token = None);
+    old.and(record)
 }
 
 /// [`clear_refresh_token`] with the deleter handed in — see [`clear_session_with`].
@@ -490,6 +616,168 @@ mod tests {
         // to remove. A missing item must not be an error.
         assert!(discard_provider_refresh_token(persona).is_ok());
         let _ = clear_session(persona);
+    }
+
+    // ── one keychain item per persona (#302) ──────────────────────────
+
+    /// An in-memory keychain that counts reads and can refuse some of them.
+    #[derive(Default)]
+    struct MemStore {
+        items: std::cell::RefCell<std::collections::BTreeMap<String, String>>,
+        reads: std::cell::RefCell<Vec<String>>,
+        unreadable: Vec<String>,
+        refuse_writes: bool,
+    }
+
+    impl MemStore {
+        fn with(items: &[(&str, &str)]) -> Self {
+            let s = Self::default();
+            for (k, v) in items {
+                s.items.borrow_mut().insert(k.to_string(), v.to_string());
+            }
+            s
+        }
+        fn has(&self, account: &str) -> bool {
+            self.items.borrow().contains_key(account)
+        }
+        fn accounts(&self) -> Vec<String> {
+            self.items.borrow().keys().cloned().collect()
+        }
+    }
+
+    impl SlotStore for MemStore {
+        fn get(&self, account: &str) -> Result<String, crate::gateway_keys::KeychainError> {
+            self.reads.borrow_mut().push(account.to_string());
+            if self.unreadable.iter().any(|a| a == account) {
+                return Err(crate::gateway_keys::KeychainError::NeedsApproval);
+            }
+            self.items
+                .borrow()
+                .get(account)
+                .cloned()
+                .ok_or(crate::gateway_keys::KeychainError::NotFound)
+        }
+        fn set(
+            &self,
+            account: &str,
+            secret: &str,
+        ) -> Result<(), crate::gateway_keys::KeychainError> {
+            if self.refuse_writes {
+                return Err(crate::gateway_keys::KeychainError::NeedsApproval);
+            }
+            self.items.borrow_mut().insert(account.to_string(), secret.to_string());
+            Ok(())
+        }
+        fn delete(&self, account: &str) -> Result<(), crate::gateway_keys::KeychainError> {
+            self.items.borrow_mut().remove(account);
+            Ok(())
+        }
+    }
+
+    fn old_items(slot: &str) -> MemStore {
+        MemStore::with(&[
+            (&account_for(slot), "sb_refresh"),
+            (&provider_account_for(slot), "gho_token"),
+        ])
+    }
+
+    #[test]
+    fn a_persona_with_old_items_is_migrated_into_one() {
+        let store = old_items("p");
+        let c = load_credentials_with(&store, "p").expect("readable");
+        assert_eq!(c.refresh_token.as_deref(), Some("sb_refresh"));
+        assert_eq!(c.provider_token.as_deref(), Some("gho_token"));
+        assert_eq!(store.accounts(), vec![credentials_account_for("p")], "the old items are gone");
+    }
+
+    #[test]
+    fn approving_a_migrated_persona_reads_exactly_one_item() {
+        // The prompt count IS the read count: each item has its own ACL.
+        let store = old_items("p");
+        load_credentials_with(&store, "p").expect("migrates");
+        store.reads.borrow_mut().clear();
+
+        let c = load_credentials_with(&store, "p").expect("readable");
+        assert_eq!(*store.reads.borrow(), vec![credentials_account_for("p")]);
+        assert_eq!(c.provider_token.as_deref(), Some("gho_token"), "and keeps working");
+    }
+
+    #[test]
+    fn an_unreadable_old_item_is_never_dropped() {
+        let mut store = old_items("p");
+        store.unreadable = vec![provider_account_for("p")];
+        assert!(load_credentials_with(&store, "p").is_err(), "the failure is surfaced");
+        assert!(store.has(&account_for("p")) && store.has(&provider_account_for("p")));
+        assert!(!store.has(&credentials_account_for("p")), "nothing half-migrated");
+    }
+
+    #[test]
+    fn a_failed_combined_write_keeps_the_old_items_and_still_reads() {
+        let mut store = old_items("p");
+        store.refuse_writes = true;
+        let c = load_credentials_with(&store, "p").expect("the read itself succeeded");
+        assert_eq!(c.refresh_token.as_deref(), Some("sb_refresh"));
+        assert!(store.has(&account_for("p")) && store.has(&provider_account_for("p")));
+    }
+
+    #[test]
+    fn the_pre_persona_slot_is_migrated_too() {
+        let store = MemStore::with(&[(LEGACY_ACCOUNT, "sb_old")]);
+        let c = load_credentials_with(&store, "p").expect("readable");
+        assert_eq!(c.refresh_token.as_deref(), Some("sb_old"));
+        assert!(c.provider_token.is_none());
+        assert_eq!(store.accounts(), vec![credentials_account_for("p")]);
+    }
+
+    #[test]
+    fn a_persona_that_never_signed_in_has_nothing() {
+        let store = MemStore::default();
+        assert!(matches!(
+            load_credentials_with(&store, "p"),
+            Err(crate::gateway_keys::KeychainError::NotFound)
+        ));
+        assert!(store.accounts().is_empty(), "and nothing is written");
+    }
+
+    #[test]
+    fn a_rotated_dojo_token_keeps_the_github_token() {
+        let store = old_items("p");
+        update_credentials_with(&store, "p", |c| c.refresh_token = Some("sb_rotated".into()))
+            .expect("written");
+        let c = load_credentials_with(&store, "p").unwrap();
+        assert_eq!(c.refresh_token.as_deref(), Some("sb_rotated"));
+        assert_eq!(c.provider_token.as_deref(), Some("gho_token"));
+    }
+
+    #[test]
+    fn a_record_that_cannot_be_read_is_not_overwritten() {
+        // Writing over it would drop whichever credential we could not see.
+        let mut store =
+            MemStore::with(&[(&credentials_account_for("p"), r#"{"provider_token":"gho"}"#)]);
+        store.unreadable = vec![credentials_account_for("p")];
+        assert!(
+            update_credentials_with(&store, "p", |c| c.refresh_token = Some("x".into())).is_err()
+        );
+        assert_eq!(
+            store.items.borrow()[&credentials_account_for("p")],
+            r#"{"provider_token":"gho"}"#
+        );
+    }
+
+    #[test]
+    fn a_rejected_dojo_session_keeps_the_github_token_in_the_record() {
+        let store = old_items("p");
+        clear_refresh_token_in(&store, "p").expect("cleared");
+        let c = load_credentials_with(&store, "p").unwrap();
+        assert!(c.refresh_token.is_none(), "the rejected token is gone");
+        assert_eq!(c.provider_token.as_deref(), Some("gho_token"), "GitHub's is untouched");
+    }
+
+    #[test]
+    fn signing_out_also_takes_the_combined_record() {
+        let mut seen = Vec::new();
+        clear_session_with("p", recording_deleter(&mut seen, &[])).expect("ok");
+        assert!(seen.contains(&credentials_account_for("p")), "{seen:?}");
     }
 
     #[test]

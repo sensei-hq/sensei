@@ -1069,23 +1069,18 @@ fn action_name(
     }
 }
 
-/// What approving a persona's Keychain items came to (#283). The refresh token
+/// What approving a persona's Keychain item came to (#283). The refresh token
 /// is the session; the GitHub token is optional, since a sign-in may not have
-/// captured one.
+/// captured one. One read, so one prompt (#302).
 fn approval(
-    refresh: Result<String, crate::gateway_keys::KeychainError>,
-    provider: Result<String, crate::gateway_keys::KeychainError>,
+    read: Result<session::Credentials, crate::gateway_keys::KeychainError>,
 ) -> Result<(), String> {
     use crate::gateway_keys::KeychainError;
-    match refresh {
-        Ok(_) => {}
-        Err(KeychainError::NotFound) => {
-            return Err("no stored session for this persona — sign in".into());
+    match read {
+        Ok(c) if c.refresh_token.is_some() => Ok(()),
+        Ok(_) | Err(KeychainError::NotFound) => {
+            Err("no stored session for this persona — sign in".into())
         }
-        Err(e) => return Err(e.to_string()),
-    }
-    match provider {
-        Ok(_) | Err(KeychainError::NotFound) => Ok(()),
         Err(e) => Err(e.to_string()),
     }
 }
@@ -1104,9 +1099,7 @@ pub(crate) async fn approve_keychain(
     };
     let who = persona.clone();
     let read = tokio::task::spawn_blocking(move || {
-        crate::gateway_keys::allow_prompt(|| {
-            approval(session::load_refresh_token(&who), session::load_provider_token(&who))
-        })
+        crate::gateway_keys::allow_prompt(|| approval(session::load_credentials(&who)))
     })
     .await
     .unwrap_or_else(|e| Err(format!("keychain read panicked: {e}")));
@@ -1654,21 +1647,21 @@ mod tests {
     #[test]
     fn approving_needs_the_session_and_tolerates_no_github_token() {
         use crate::gateway_keys::KeychainError;
-        assert_eq!(approval(Ok("rt".into()), Ok("gho".into())), Ok(()));
-        assert_eq!(approval(Ok("rt".into()), Err(KeychainError::NotFound)), Ok(()));
-        assert!(
-            approval(Err(KeychainError::NotFound), Ok("gho".into()))
-                .unwrap_err()
-                .contains("sign in")
-        );
+        use session::Credentials;
+        let creds = |rt: Option<&str>, gho: Option<&str>| {
+            Ok(Credentials {
+                refresh_token: rt.map(Into::into),
+                provider_token: gho.map(Into::into),
+            })
+        };
+        assert_eq!(approval(creds(Some("rt"), Some("gho"))), Ok(()));
+        assert_eq!(approval(creds(Some("rt"), None)), Ok(()));
+        assert!(approval(creds(None, Some("gho"))).unwrap_err().contains("sign in"));
+        assert!(approval(Err(KeychainError::NotFound)).unwrap_err().contains("sign in"));
         assert_eq!(
-            approval(Ok("rt".into()), Err(KeychainError::NeedsApproval)),
+            approval(Err(KeychainError::NeedsApproval)),
             Err("keychain access needs approval".into()),
             "declined at the dialog is still a refusal"
-        );
-        assert_eq!(
-            approval(Err(KeychainError::NeedsApproval), Ok("gho".into())),
-            Err("keychain access needs approval".into())
         );
     }
 
