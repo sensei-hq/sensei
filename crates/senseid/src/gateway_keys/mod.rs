@@ -106,6 +106,10 @@ thread_local! {
 }
 
 /// Whether the current thread may prompt — false outside [`allow_prompt`].
+///
+/// Only the macOS keychain path can prompt, so only it (and the tests) read
+/// this; elsewhere it would be dead code, which Linux CI's clippy rejects.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn prompting_allowed() -> bool {
     PROMPT_ALLOWED.get()
 }
