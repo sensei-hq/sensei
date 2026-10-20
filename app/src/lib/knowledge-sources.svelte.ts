@@ -8,7 +8,7 @@
  * testable with a hand-rolled mock and never reaches for a global.
  */
 
-import type { SenseiApi } from './api.js';
+import { failureReason, type SenseiApi } from './api.js';
 import type { KnowledgeSource } from './types.js';
 
 /** Hosts allowed to use plain http — everything else must be https. Mirrors
@@ -51,8 +51,10 @@ export class KnowledgeSourcesState {
   async load(api: SenseiApi): Promise<void> {
     this.loading = true;
     this.error = null;
-    const { sources } = await api.listKnowledgeSources();
-    this.sources = sources;
+    // A failed read is an error (#288) — it used to fold into "no sources".
+    const read = await api.tryListKnowledgeSources();
+    this.sources = read.ok ? read.data.sources : [];
+    this.error = read.ok ? null : failureReason(read.error);
     this.loading = false;
   }
 

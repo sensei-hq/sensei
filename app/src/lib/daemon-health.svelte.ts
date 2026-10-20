@@ -41,8 +41,10 @@ export class DaemonHealth {
       import('./api.js'),
       import('./appstate.svelte.js'),
     ]);
-    const payload = await senseiApi(appState.port).getHealth();
-    this.apply(payload as { daemonDbMode?: DaemonDbMode });
+    // A /health that cannot be read leaves the mode unknown (no banner) — never
+    // a mode read from a default (#288).
+    const read = await senseiApi(appState.port).tryGetHealth();
+    this.apply(read.ok ? (read.data as { daemonDbMode?: DaemonDbMode }) : {});
     // Degraded is a transient cold-boot recovery window. Once the daemon reports
     // a working pool there's nothing left to watch, so stop — /health runs a full
     // component probe (spawns psql/pg_isready/brew), too heavy to poll forever.

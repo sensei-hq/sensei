@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '@rokkit/ui';
-  import { PageHeader } from '$lib/components';
+  import { invalidateAll } from '$app/navigation';
+  import { PageHeader, ScreenState } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { IntakeState } from './intake.svelte.js';
@@ -20,14 +21,20 @@
   //
   // Re-creating also clears `chunk`/`rec`/`phase`, which is what you want: a
   // half-typed description belongs to the project it was typed for.
-  const intake = $derived.by(() => new IntakeState(data.guide, data.projectId));
+  // No guide means it could not be read (#288): the page shows that error,
+  // and there is no intake to drive.
+  const intake = $derived.by(() => (data.guide ? new IntakeState(data.guide, data.projectId) : null));
 
-  function recommend(): void { void intake.recommend(api); }
-  function confirm(): void { void intake.confirm(api); }
+  function recommend(): void { if (intake) void intake.recommend(api); }
+  function confirm(): void { if (intake) void intake.confirm(api); }
 </script>
 
 <div class="flex flex-col gap-3 p-4 max-w-2xl" data-testid="intake">
   <PageHeader kanji="門" icon="i-solar-login-3-bold-duotone" eyebrow="This project" title="Intake" description="Start a chunk of work in this project" size="lg" />
+
+  {#if !intake}
+    <ScreenState status="error" error={data.guideError} onretry={() => invalidateAll()} />
+  {:else}
 
   {#if intake.phase !== 'recorded'}
     <section class="flex flex-col gap-2">
@@ -97,5 +104,6 @@
         </div>
       {/if}
     </section>
+  {/if}
   {/if}
 </div>

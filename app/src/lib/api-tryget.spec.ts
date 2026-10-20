@@ -89,6 +89,12 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   // #288 — scan state.
   { name: 'tryGetIndexStatus', call: () => api().tryGetIndexStatus(), body: { queue: { pending: 0 } } },
   { name: 'tryGetScanRoots', call: () => api().tryGetScanRoots(), body: [] },
+  // #288 — the last five.
+  { name: 'tryGetHealth', call: () => api().tryGetHealth(), body: { daemonDbMode: 'full' } },
+  { name: 'tryGetProjectTools', call: () => api().tryGetProjectTools('p1'), body: { tools: [], count: 0 } },
+  { name: 'tryGetIntakeGuide', call: () => api().tryGetIntakeGuide(), body: { frame: '', axes: [], playbooks: [] } },
+  { name: 'tryListMemories', call: () => api().tryListMemories({ status: 'active' }), body: { memories: [] } },
+  { name: 'tryListKnowledgeSources', call: () => api().tryListKnowledgeSources(), body: { sources: [] } },
   // #288 — Atlas.
   { name: 'tryGetGraphNodes', call: () => api().tryGetGraphNodes('r'), body: { nodes: [], edges: [] } },
   { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
@@ -137,15 +143,15 @@ describe('failureReason / readOutcome (#288)', () => {
   });
 });
 
-// #288: reads that turn a failure into a default are being moved to `tryGet`,
-// screen by screen. A ratchet: the count only goes down, and at 0 the legacy
-// `get` itself goes. Lower it as screens convert; never raise it.
-describe('legacy fallback reads (#288)', () => {
-  it('no new get<T>(path, fallback) read is added', async () => {
+// #288: every read is the daemon's answer or an ApiResult error. The legacy
+// `get(path, fallback)` — which turned any failure into a default — is gone,
+// and must not come back: a read that can fail returns `tryGet`'s result.
+describe('no fallback reads (#288)', () => {
+  it('api.ts has no get(path, fallback) — neither the helper nor a read through it', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
-    const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(5);
+    expect(src).not.toMatch(/function get</);
+    expect(src.split('\n').filter((l) => /\bget</.test(l))).toEqual([]);
   });
 });
 

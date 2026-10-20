@@ -6,6 +6,7 @@
     import ActiveList  from './ActiveList.svelte';
     import ArchiveList from './ArchiveList.svelte';
     import MemoryDetail from './MemoryDetail.svelte';
+    import { ScreenState } from '$lib/components';
 
     type Tab = 'triage' | 'active' | 'archive';
     let tab = $state<Tab>('triage');
@@ -49,7 +50,18 @@
 
     <div class="layout">
         <section class="list" data-testid={`list-${tab}`}>
-            {#if tab === 'triage'}<TriageList />
+            {#if memoryState.listError}
+                <!-- The lists could not be read or refreshed (#288) — not an empty tab.
+                     After a failed refresh the last lists still show below it. -->
+                <ScreenState
+                    status="error"
+                    error={memoryState.listError}
+                    onretry={() => void memoryState.load(appState.activeProjectId ?? undefined)}
+                />
+            {/if}
+            {#if memoryState.listError && memoryState.triageCount + memoryState.activeCount + memoryState.archiveCount === 0}
+                <!-- Nothing read: no empty tab to show beside the error. -->
+            {:else if tab === 'triage'}<TriageList />
             {:else if tab === 'active'}<ActiveList />
             {:else}<ArchiveList />{/if}
         </section>

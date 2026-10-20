@@ -83,23 +83,9 @@ export const apiBase = (port: number): string => `http://127.0.0.1:${port}`;
 export function senseiApi(port: number) {
   const base = apiBase(port);
 
-  // Legacy fallback-returning helpers — kept for callers that pre-date
-  // the Result-based `tryGet`/`tryPost` etc. New code should use the
-  // try-prefixed variants so errors flow through ApiResult instead of
-  // being absorbed into a sentinel value. The console.warn here keeps
-  // failures observable until the migration finishes.
-  async function get<T>(path: string, fallback: T): Promise<T> {
-    try {
-      const res = await fetch(`${base}${path}`);
-      if (res.ok) return await res.json() as T;
-      console.warn('[api] GET non-ok; using fallback', { path, status: res.status, statusText: res.statusText });
-      return fallback;
-    } catch (e) {
-      console.warn('[api] GET failed; using fallback', { path }, e);
-      return fallback;
-    }
-  }
-
+  // Every read is `tryGet`: the daemon's answer or an ApiResult error (#288).
+  // The write helpers below without a `try` prefix are legacy — they fold a
+  // failure into a sentinel value; new code uses the try- variants.
   async function post<T>(path: string, body: unknown, fallback: T): Promise<T> {
     try {
       const res = await fetch(`${base}${path}`, {
@@ -274,7 +260,7 @@ export function senseiApi(port: number) {
       ),
 
     // ── Health ────────────────────────────────────────────────────────────
-    getHealth: () => get<Record<string, unknown>>('/health', {}),
+    tryGetHealth: () => tryGet<Record<string, unknown>>('/health'),
 
     /** Every watch root, paused ones included (#247). Result-based: the
      *  settings screen must tell "you have no roots" from "the daemon is down". */
@@ -405,11 +391,8 @@ export function senseiApi(port: number) {
 
     // Per-tool usage breakdown (which tools the ACPs invoked) — the tool-usage
     // bubble view. Honest-empty ({tools:[]}) on a fetch error, never fabricated.
-    getProjectTools: (id: string) =>
-      get<{ tools: ToolUsage[]; count: number }>(`/api/projects/${enc(id)}/tools`, {
-        tools: [],
-        count: 0,
-      }),
+    /** Per-tool usage for a project (#288: a failure is an error, not "no tools"). */
+    tryGetProjectTools: (id: string) => tryGet<{ tools: ToolUsage[]; count: number }>(`/api/projects/${enc(id)}/tools`),
 
     tryGetProjectRepos: (id: string) =>
       tryGet<{ repos: Array<{ id: string; name: string; path: string; kind: string; role?: string }> }>(
@@ -617,10 +600,9 @@ export function senseiApi(port: number) {
       tryGet<InsightsBoard>(`/api/insights${project ? `?project=${enc(project)}` : ''}`),
 
     // ── Front door · Intake ─────────────────────────────────────────────
-    // The guide (frame + axis prompts + catalog) for the intake screen.
-    // Fallback is the empty guide so a daemon hiccup renders the quiet state.
-    getIntakeGuide: () =>
-      get<IntakeGuide>('/api/playbook/guide', { frame: '', axes: [], playbooks: [] }),
+    // The guide (frame + axis prompts + catalog) for the intake screen. A
+    // failure is an error the screen shows, not an empty guide (#288).
+    tryGetIntakeGuide: () => tryGet<IntakeGuide>('/api/playbook/guide'),
 
     // Classify + recommend a playbook. `{ chunk, preview: true }` previews
     // (no row written); `{ lifecycle, intent, risk, confirm: true }` records
@@ -1045,10 +1027,11 @@ export function senseiApi(port: number) {
       ),
 
     // ── Knowledge plane ──────────────────────────────────────────────────
-    listMemories: (q: { status?: string; scope?: string; project_id?: string; limit?: number } = {}) => {
+    /** Memories by status/scope/project (#288: a failure is an error, not an empty tab). */
+    tryListMemories: (q: { status?: string; scope?: string; project_id?: string; limit?: number } = {}) => {
       const p = new URLSearchParams();
       for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
-      return get<MemoryListResponse>(`/api/knowledge/memories?${p.toString()}`, { memories: [] });
+      return tryGet<MemoryListResponse>(`/api/knowledge/memories?${p.toString()}`);
     },
 
     getMemoryDetail: (id: string) =>
@@ -1166,8 +1149,8 @@ export function senseiApi(port: number) {
       ),
 
     // ── Knowledge plane — federation sources ─────────────────────────────
-    listKnowledgeSources: () =>
-      get<{ sources: KnowledgeSource[] }>('/api/knowledge/sources', { sources: [] }),
+    /** Registered knowledge sources (#288: a failure is an error, not "none"). */
+    tryListKnowledgeSources: () => tryGet<{ sources: KnowledgeSource[] }>('/api/knowledge/sources'),
 
     createKnowledgeSource: (body: NewKnowledgeSourceBody) =>
       tryPost<KnowledgeSource>('/api/knowledge/sources', body),

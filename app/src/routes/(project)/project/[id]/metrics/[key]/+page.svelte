@@ -237,7 +237,11 @@
                             </div>
                         {/if}
 
-                        {#if selected.family === 'tool' && data.tools.length}
+                        {#if selected.family === 'tool' && data.toolsError}
+                            <p class="text-xs text-danger m-0" data-testid="tools-error">
+                                Could not read which tools were used: {data.toolsError}
+                            </p>
+                        {:else if selected.family === 'tool' && data.tools.length}
                             <!-- Tool metrics: which tools the ACPs actually used,
                                  as bubbles sized by call count (Pass 2c) — the
                                  answer a single unused-count line can't give. -->

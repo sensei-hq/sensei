@@ -16,9 +16,12 @@ const challengeMock    = vi.fn();
 const archiveMock      = vi.fn();
 const dismissMock      = vi.fn();
 
-vi.mock('./api.js', () => ({
+vi.mock('./api.js', async (importOriginal) => ({
+    failureReason: ((await importOriginal()) as typeof import('./api.js')).failureReason,
     senseiApi: (_port: number) => ({
-        listMemories:    listMemoriesMock,
+        // A bare `{ memories }` is a read that landed; an ApiResult passes as is.
+        tryListMemories: (...args: unknown[]) =>
+            Promise.resolve(listMemoriesMock(...args)).then((r: { ok?: boolean }) => ('ok' in (r ?? {}) ? r : { ok: true, data: r })),
         acceptProposal:  acceptMock,
         rejectProposal:  rejectMock,
         getMemoryDetail: detailMock,
@@ -271,5 +274,20 @@ describe('memoryUsageStrip', () => {
     it('pluralizes a single load as "time"', () => {
         expect(memoryUsageStrip({ loaded_last_7d: 1, followed_last_7d: 0, skipped_last_7d: 0 }).loaded)
             .toBe('loaded 1 time');
+    });
+
+    // #288: a list that could not be read is an error — not an empty tab.
+    it('a failed load is listError, with no memories shown', async () => {
+        listMemoriesMock.mockResolvedValue({ ok: false, error: { status: 503, message: 'Service Unavailable' } });
+        await memoryState.load('proj-1');
+        expect([memoryState.listError, memoryState.triageCount, memoryState.activeCount]).toEqual(['Service Unavailable', 0, 0]);
+    });
+
+    it('a refresh that fails after an action keeps the list and says so', async () => {
+        memoryState.active = [mockMemory({ id: 'm-k', status: 'active' })];
+        reinforceMock.mockResolvedValue({ ok: true, data: { id: 'm-k' } });
+        listMemoriesMock.mockResolvedValue({ ok: false, error: { status: 503, message: 'Service Unavailable' } });
+        await memoryState.reinforce('m-k');
+        expect([memoryState.active.map((m) => m.id), memoryState.listError]).toEqual([['m-k'], 'Service Unavailable']);
     });
 });

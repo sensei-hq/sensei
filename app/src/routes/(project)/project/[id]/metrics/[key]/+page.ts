@@ -1,5 +1,5 @@
 import type { PageLoad } from './$types.js';
-import { senseiApi } from '$lib/api.js';
+import { senseiApi, failureReason } from '$lib/api.js';
 import { appState } from '$lib/appstate.svelte.js';
 import type { MetricSeriesPoint, MetricsNarrative, ToolUsage } from '$lib/metrics/metric-view.js';
 import type { Recommendation } from '$lib/types.js';
@@ -28,8 +28,9 @@ export const load: PageLoad = async ({ params, url }) => {
         // /metrics succeeds) surfaces as recommendationsError → an error STATE,
         // never "No action items yet" masking a failure (fail-closed governance).
         api.tryGetProjectRecommendations(params.id, 'pending'),
-        // Per-tool usage for the tool-usage bubble view (honest-empty on failure).
-        api.getProjectTools(params.id),
+        // Per-tool usage for the tool-usage bubble view. A failed read is
+        // toolsError (#288), not "no tools used".
+        api.tryGetProjectTools(params.id),
     ]);
 
     const empty = {
@@ -46,6 +47,7 @@ export const load: PageLoad = async ({ params, url }) => {
         recommendations: [] as Recommendation[],
         recommendationsError: null as string | null,
         tools: [] as ToolUsage[],
+        toolsError: null as string | null,
     };
     if (!metricsRes.ok) return { ...empty, error: metricsRes.error.message };
 
@@ -101,7 +103,8 @@ export const load: PageLoad = async ({ params, url }) => {
         dailySeriesError,
         recommendations,
         recommendationsError,
-        tools: toolsRes.tools ?? [],
+        tools: toolsRes.ok ? toolsRes.data.tools ?? [] : [],
+        toolsError: toolsRes.ok ? null : failureReason(toolsRes.error),
         error: null,
     };
 };
