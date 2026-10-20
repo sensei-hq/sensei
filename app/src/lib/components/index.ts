@@ -12,6 +12,7 @@ export { default as MoeReasoningPanel } from './MoeReasoningPanel.svelte';
 export { default as PageHeader } from './PageHeader.svelte';
 export { default as ProgressCard } from './ProgressCard.svelte';
 export { default as ScreenState } from './ScreenState.svelte';
+export { default as UnreadProjectsNotice } from './UnreadProjectsNotice.svelte';
 export { default as Spinner } from './Spinner.svelte';
 export { default as StatusDisc } from './StatusDisc.svelte';
 export { default as StatusDot } from './StatusDot.svelte';

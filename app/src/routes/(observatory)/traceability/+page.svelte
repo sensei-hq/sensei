@@ -1,6 +1,7 @@
 <script lang="ts">
     import { railIcon } from "../observatory-nav";
-  import { PageHeader, EmptyState } from '$lib/components';
+  import { invalidateAll } from '$app/navigation';
+  import { PageHeader, EmptyState, ScreenState, UnreadProjectsNotice } from '$lib/components';
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
   import {
     driftChipClasses,
@@ -54,7 +55,13 @@
   description="Every doc-to-symbol link, checked nightly. Drift surfaces here before someone reads a stale doc and writes the wrong thing."
 />
 
+{#if !data.rollup || !data.groups}
+<div class="max-w-[1060px] mx-auto px-7 pb-10">
+  <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+</div>
+{:else}
 <div class="max-w-[1060px] mx-auto px-7 pb-10" data-traceability-total={data.rollup.total}>
+  <UnreadProjectsNotice unread={data.unread} />
   {#if data.rollup.total === 0}
     <EmptyState
       kanji="巻"
@@ -68,3 +75,4 @@
     {/each}
   {/if}
 </div>
+{/if}

@@ -4,7 +4,7 @@
   import { senseiApi } from '$lib/api.js';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
-  import { EmptyState, MoeReasoningPanel } from '$lib/components';
+  import { EmptyState, MoeReasoningPanel, ScreenState } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import {
     formatDeltaPct,
@@ -72,6 +72,9 @@
 
 <div class="px-6 py-6">
   <h2 class="text-xl font-normal m-0 mb-1">Impact</h2>
+  {#if data.error}
+    <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+  {:else}
   <p class="text-sm text-ink-mute m-0 mb-5 max-w-[640px] leading-relaxed">
     Each accepted recommendation gets a measurement window. FTR baseline vs
     current tells you whether it worked. The MOE panel writes the reasoning.
@@ -294,4 +297,5 @@
       <p class="text-sm text-ink-soft">No impact entries yet.</p>
     {/if}
   </section>
+  {/if}
 </div>

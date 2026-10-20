@@ -47,6 +47,40 @@ export interface ImpactRow {
   reasoning: ImpactReasoning | null;
 }
 
+/** One row of `GET /api/projects/{id}/impact` as the daemon sends it: a rec
+ *  that carries a reasoning trace or a non-pending verdict. `reasoning` is
+ *  `null` when the rec has no trace; `modelsUsed` lists the models that ran. */
+export interface ProjectImpactWire {
+  id: string;
+  title: string;
+  actionType: string;
+  status: string;
+  verdict: string;
+  baselineFtr: number | null;
+  currentFtr: number | null;
+  ftrDelta: number | null;
+  props: Record<string, unknown>;
+  reasoning: ImpactReasoning | null;
+}
+
+/** A wire row as the shared `ImpactRow`, labelled with its project — one
+ *  mapping for the observatory-wide list and the project tab. */
+export function toImpactRow(r: ProjectImpactWire, project: { id: string; name: string }): ImpactRow {
+  return {
+    id: r.id,
+    projectId: project.id,
+    projectName: project.name,
+    title: r.title,
+    status: r.status,
+    actionType: r.actionType ?? null,
+    verdict: (r.verdict ?? 'pending') as ImpactVerdict,
+    baselineFtr: r.baselineFtr,
+    currentFtr: r.currentFtr,
+    ftrDelta: r.ftrDelta,
+    reasoning: r.reasoning,
+  };
+}
+
 export interface ImpactBuckets {
   positive: ImpactRow[];
   neutral: ImpactRow[];

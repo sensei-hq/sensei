@@ -46,6 +46,7 @@ export default defineConfig({
       // imports `$app/navigation` fails Vite's resolution. Point it at a
       // local stub that lives outside src/ — see tests/stubs/app-navigation.ts.
       '$app/navigation': fileURLToPath(new URL('./tests/stubs/app-navigation.ts', import.meta.url)),
+      '$app/state': fileURLToPath(new URL('./tests/stubs/app-state.ts', import.meta.url)),
     },
   },
 });

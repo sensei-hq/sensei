@@ -1,24 +1,29 @@
 <script lang="ts">
     import Kanji from '$lib/components/Kanji.svelte';
-  import { EmptyState, Eyebrow, MoeReasoningPanel } from '$lib/components';
+  import { invalidateAll } from '$app/navigation';
+  import { EmptyState, Eyebrow, MoeReasoningPanel, ScreenState, UnreadProjectsNotice } from '$lib/components';
   import {
     formatDeltaPct,
     pct,
     verdictMeta as meta,
     verdictToneClass as toneClass,
+    bucketImpact,
     type ImpactRow,
   } from '$lib/impact.js';
 
   let { data } = $props();
 
+  // No buckets means the read failed (#288): the page shows that error.
+  const buckets = $derived(data.buckets ?? bucketImpact([]));
+
   // Flatten buckets into a single ordered feed for the aside list.
   // Order — negative first (loudest to act on), then positive, neutral,
   // pending. Within each bucket the buckets already sort by |ftrDelta|.
   const flat = $derived<ImpactRow[]>([
-    ...data.buckets.negative,
-    ...data.buckets.positive,
-    ...data.buckets.neutral,
-    ...data.buckets.pending,
+    ...buckets.negative,
+    ...buckets.positive,
+    ...buckets.neutral,
+    ...buckets.pending,
   ]);
 
   // The picked-row id — null until the user clicks a row, at which point
@@ -31,6 +36,11 @@
   const openVm = $derived(open ? meta(open.verdict) : null);
 </script>
 
+{#if data.error}
+<div class="p-8">
+  <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+</div>
+{:else}
 <div class="flex flex-col h-full" data-impact-total={data.total}>
   <!-- Header — kanji + eyebrow + title + description + 4 verdict counts -->
   <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
@@ -45,24 +55,27 @@
     </div>
     <div class="flex gap-5 pl-5 border-l border-paper-edge">
       <div class="text-center">
-        <div class="font-mono text-lg font-light text-success">{data.buckets.positive.length}</div>
+        <div class="font-mono text-lg font-light text-success">{buckets.positive.length}</div>
         <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">positive</div>
       </div>
       <div class="text-center">
-        <div class="font-mono text-lg font-light text-ink">{data.buckets.neutral.length}</div>
+        <div class="font-mono text-lg font-light text-ink">{buckets.neutral.length}</div>
         <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">neutral</div>
       </div>
       <div class="text-center">
-        <div class="font-mono text-lg font-light text-warning">{data.buckets.negative.length}</div>
+        <div class="font-mono text-lg font-light text-warning">{buckets.negative.length}</div>
         <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">negative</div>
       </div>
       <div class="text-center">
-        <div class="font-mono text-lg font-light text-ink-soft">{data.buckets.pending.length}</div>
+        <div class="font-mono text-lg font-light text-ink-soft">{buckets.pending.length}</div>
         <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">pending</div>
       </div>
     </div>
   </div>
 
+  {#if data.unread.length > 0}
+    <div class="px-6 pt-4"><UnreadProjectsNotice unread={data.unread} /></div>
+  {/if}
   {#if data.total === 0 || !open}
     <div class="p-6">
       <EmptyState
@@ -188,3 +201,4 @@
     </div>
   {/if}
 </div>
+{/if}

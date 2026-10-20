@@ -45,6 +45,11 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryGetProjectFtr', call: () => api().tryGetProjectFtr('p1'), body: { ftr14d: 0.8 } },
   { name: 'tryGetProjectQualitySignals', call: () => api().tryGetProjectQualitySignals('p1'), body: { ftr_7d: 0.9 } },
   { name: 'tryListProjects', call: () => api().tryListProjects(), body: [] },
+  // #288 — Impact and Traceability.
+  { name: 'tryGetProjectImpact', call: () => api().tryGetProjectImpact('p1'), body: [] },
+  { name: 'tryListImpactVerdicts', call: () => api().tryListImpactVerdicts('p1'), body: { verdicts: [] } },
+  { name: 'tryGetProjectDrift', call: () => api().tryGetProjectDrift('p1'), body: { items: [], total: 0 } },
+  { name: 'tryScanProjectDrift', call: () => api().tryScanProjectDrift('p1'), body: { scannedDocs: 2 } },
   // #288 — Atlas.
   { name: 'tryGetGraphNodes', call: () => api().tryGetGraphNodes('r'), body: { nodes: [], edges: [] } },
   { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
@@ -101,6 +106,6 @@ describe('legacy fallback reads (#288)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
     const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(40);
+    expect(reads.length).toBeLessThanOrEqual(37);
   });
 });

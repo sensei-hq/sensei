@@ -40,6 +40,7 @@ import type {
   DaySessions, DrilldownSession, ToolUsage,
 } from './metrics/metric-view.js';
 import type { ProjectHealth } from './metrics/health-radar.js';
+import type { ProjectImpactWire } from './impact.js';
 
 export type { DaySessions, DrilldownSession, ToolUsage };
 
@@ -491,11 +492,22 @@ export function senseiApi(port: number) {
     // Impact verdicts (manual log) — user-logged retrospectives about
     // shipped changes. Independent of the automatic recommendation
     // verdicts on /api/projects/{id}/impact.
-    listImpactVerdicts: (id: string, verdict?: string) =>
-      get<{ verdicts: ImpactVerdictEntry[] }>(
+    /** The user-logged impact log (T3 Slice 3), optionally one verdict. */
+    tryListImpactVerdicts: (id: string, verdict?: string) =>
+      tryGet<{ verdicts: ImpactVerdictEntry[] }>(
         `/api/projects/${enc(id)}/impact-verdicts${verdict ? `?verdict=${enc(verdict)}` : ''}`,
-        { verdicts: [] },
       ),
+
+    /** A project's measured recommendations (#288: a failure is an error, not []). */
+    tryGetProjectImpact: (id: string) => tryGet<ProjectImpactWire[]>(`/api/projects/${enc(id)}/impact`),
+
+    /** Run the doc-drift detector now; resolves to what the scan found. */
+    tryScanProjectDrift: (id: string) =>
+      tryPost<{ scannedDocs: number; newBroken: number; resolved: number }>(`/api/projects/${enc(id)}/drift/scan`, {}),
+
+    /** A project's doc-drift items with their counts (#288: a failure is an error). */
+    tryGetProjectDrift: (id: string) =>
+      tryGet<{ items: DriftItem[]; total: number; drifted: number; broken: number }>(`/api/projects/${enc(id)}/drift`),
 
     createImpactVerdict: (id: string, title: string, note?: string, sessionId?: string) =>
       post<{ id: string }>(
@@ -514,30 +526,6 @@ export function senseiApi(port: number) {
     // consensus for recommendations that carry a reasoning trace or a
     // non-pending verdict. Distinct from the manual `listImpactVerdicts`
     // retrospectives above.
-    getProjectImpact: (id: string) =>
-      get<Array<{
-        id: string; title: string; actionType: string; status: string;
-        verdict: string; baselineFtr: number | null; currentFtr: number | null;
-        ftrDelta: number | null;
-        props: Record<string, unknown>;
-        // Honest reasoning JSON — `null` when the rec has no trace, otherwise
-        // `{headline, body, modelsUsed: string[], suggestedRevision}`. One
-        // FTR-delta verdict, so no fabricated consensus tally or per-model
-        // roles/notes; `modelsUsed` lists the models that actually ran. Legacy
-        // `{conclusion}`-shape traces are shimmed on the daemon side.
-        reasoning: {
-          headline: string | null;
-          body: string | null;
-          modelsUsed: string[];
-          suggestedRevision: string | null;
-        } | null;
-      }>>(`/api/projects/${enc(id)}/impact`, []),
-
-    getProjectDrift: (id: string) =>
-      get<{ items: DriftItem[]; total: number; drifted: number; broken: number }>(
-        `/api/projects/${enc(id)}/drift`, { items: [], total: 0, drifted: 0, broken: 0 }
-      ),
-
     /** #205 — the Structure diagram payload.
      *
      *  Result-based deliberately. This screen must tell "no edges here" apart

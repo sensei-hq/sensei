@@ -1,7 +1,7 @@
 <script lang="ts">
-    import { PageHeader, StatusDot } from '$lib/components';
+    import { PageHeader, ScreenState, StatusDot } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
-    import { senseiApi } from '$lib/api.js';
+    import { senseiApi, failureReason } from '$lib/api.js';
     import { invalidateAll } from '$app/navigation';
     import { page } from '$app/state';
 
@@ -17,23 +17,22 @@
     const projectId = $derived(page.params.id ?? '');
     let scanning = $state(false);
     let lastSummary = $state<{ scannedDocs: number; newBroken: number; resolved: number } | null>(null);
+    // A scan that failed is said so (#288) — it used to end with nothing shown.
+    let scanError = $state<string | null>(null);
 
     async function scan() {
         if (!projectId) return;
         scanning = true;
         lastSummary = null;
-        try {
-            const res = await fetch(`http://127.0.0.1:${appState.port}/api/projects/${encodeURIComponent(projectId)}/drift/scan`, { method: 'POST' });
-            if (res.ok) {
-                lastSummary = await res.json();
-                await invalidateAll();
-            }
-        } finally {
-            scanning = false;
+        scanError = null;
+        const res = await senseiApi(appState.port).tryScanProjectDrift(projectId);
+        if (res.ok) {
+            lastSummary = res.data;
+            await invalidateAll();
+        } else {
+            scanError = failureReason(res.error);
         }
-        // Keep senseiApi import referenced so tree-shaking doesn't drop it
-        // if this file ever re-adds a wrapper.
-        void senseiApi;
+        scanning = false;
     }
 
     // Expandable-row state — only one row shows its expected-vs-actual diff
@@ -44,11 +43,13 @@
 <PageHeader title="Traceability">
     {#snippet right()}
         <div class="text-sm text-ink-mute flex items-center gap-3">
-            <span>{data.total} tracked</span>
-            <span> · </span>
-            <span class="text-warning">{data.drifted} drifted</span>
-            <span> · </span>
-            <span class="text-danger">{data.broken} broken</span>
+            {#if !data.error}
+                <span>{data.total} tracked</span>
+                <span> · </span>
+                <span class="text-warning">{data.drifted} drifted</span>
+                <span> · </span>
+                <span class="text-danger">{data.broken} broken</span>
+            {/if}
             <button
                 type="button"
                 class="px-3 py-1 rounded-md text-xs border border-paper-edge bg-transparent text-ink cursor-pointer"
@@ -60,6 +61,12 @@
     {/snippet}
 </PageHeader>
 <div class="px-6 py-6">
+    {#if scanError}
+        <div class="mb-4 text-xs text-danger" data-testid="drift-scan-error">The scan failed: {scanError}</div>
+    {/if}
+    {#if data.error}
+        <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+    {:else}
     {#if lastSummary}
         <div class="mb-4 text-xs text-ink-soft" data-testid="drift-scan-summary">
             Scanned {lastSummary.scannedDocs} docs · added {lastSummary.newBroken} broken · resolved {lastSummary.resolved}.
@@ -110,6 +117,7 @@
                 </li>
             {/each}
         </ul>
+    {/if}
     {/if}
 </div>
 
