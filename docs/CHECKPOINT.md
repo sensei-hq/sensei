@@ -13,7 +13,7 @@
 
 **Remaining:**
 - #293 step 0 done: `Screen` in `packages/ui`, shared; app (522b8092) + dōjō (dcbd9459), neither shell scrolls. Next for #293: steps 1–2. Local-only dōjō verify user exists (admin role).
-- #301 (user): sign in → sync just works. Done on develop: personal tenants connect to their owner's forge account (f111fe41; all 34 personal repos were `no_connection`; needs a dōjō deploy + one sign-in). Next: auto-elect (decided; sensei-hq public repos refused only `not_elected_user`), keep the subscription gate (decided); #299, #300 (decided), #295, #282.
+- #301 (user): sign in → sync just works. Done on develop: personal tenants connect to their owner's forge account (f111fe41; all 34 personal repos were `no_connection`; needs a dōjō deploy + one sign-in). Auto-elect done (2d92a632; local: 31 of the user's repos sync incl. sensei-hq/sensei). Both need a release + dōjō deploy. Subscription gate kept (decided). Next: #299, #300 (decided), #295, #282.
 - Keychain: a Team-ID-less senseid is partitioned by cdhash, so each daemon reinstall revokes approval (#283 comment). UI-only work uses `make app-e2e-bundle` (no daemon reinstall).
 - #298: project Instruments takes 11–28s (mcp-tool-stats pairs every tool call through session_tool_calls). Display name now prefilled from the system user name (7f919038).
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139).
@@ -21,7 +21,7 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #301: auto-elect a connected identity's repositories (dōjō `all_my_repositories` election default → opt-out), then #300 (Safari + account guard), #299 (projects from sync), #295; then #293 steps 1–2. Also open: #132 step 3, #292, #106, #191, #201, #139.
+**Next command:** `/sensei:session refocus`, then #301's rest: #300 (Safari + account guard, decided), #299 (projects from sync — needs the per-project vs per-repo rule), #295 (status leads with the keychain); a release to ship #301 to the dōjō is the user's call. Then #293 steps 1–2. Also open: #132 step 3, #292, #106, #191, #201, #139.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
