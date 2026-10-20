@@ -1,19 +1,9 @@
 import type { PreferencesData } from '$lib/setup/contracts.js';
+import { GLYPHS_KEY, glyphMode } from '$lib/glyphs';
+import { DEFAULT_PREFERENCES } from '$lib/setup/preferences.js';
 
-/** Defaults kept in one place so a missing / corrupt config value renders
- *  the same form the wizard would. */
-export const DEFAULT_PREFERENCES: PreferencesData = {
-  displayName: '',
-  contributeLearnings: true,
-  reviewBeforeShare: true,
-  shareSchedule: 'weekly-saturday',
-  downloadCollective: 'weekly',
-  correctionAggressiveness: 'balanced',
-  digestCadence: 'daily',
-  nudgeOnRegression: true,
-  anonymizedTelemetry: false,
-  showWelcome: true,
-};
+/** Re-exported: the defaults live in `$lib/setup/preferences`, shared with the wizard. */
+export { DEFAULT_PREFERENCES };
 
 /** Pure: parse the daemon's config map into a preferences form. The wizard
  *  writes prefs as a JSON blob under `setup.preferences` PLUS a plain
@@ -26,6 +16,8 @@ export function toPreferencesForm(config: Record<string, string>): PreferencesDa
   // `user_name` is authoritative for displayName when both exist — the
   // wizard writes it as the ground truth for downstream greeters.
   if (config['user_name']) merged.displayName = config['user_name'];
+  // Its own key (#133), so the rails read it without parsing this blob.
+  merged.glyphs = glyphMode(config);
   return merged;
 }
 
@@ -37,6 +29,7 @@ export function fromPreferencesForm(form: PreferencesData): Record<string, strin
   return {
     'setup.preferences': JSON.stringify(form),
     'user_name': form.displayName,
+    [GLYPHS_KEY]: form.glyphs,
   };
 }
 

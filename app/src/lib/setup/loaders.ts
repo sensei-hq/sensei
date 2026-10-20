@@ -5,6 +5,8 @@
  */
 
 import { senseiApi } from '$lib/api.js';
+import { DEFAULT_PREFERENCES } from './preferences.js';
+import { glyphMode } from '$lib/glyphs';
 import type { AssistantFamily, LibEntry } from '$lib/types.js';
 import type { DaemonAssistantFamily, DaemonLibEntry, PreferencesData, WizardLoadData } from './contracts.js';
 
@@ -13,12 +15,6 @@ const STAGES = [
   'projects', 'libraries', 'instruments', 'inference', 'assignments', 'done',
 ];
 
-const PREF_DEFAULTS: PreferencesData = {
-  displayName: '', contributeLearnings: true, reviewBeforeShare: true,
-  shareSchedule: 'weekly-saturday', downloadCollective: 'weekly',
-  correctionAggressiveness: 'balanced', digestCadence: 'daily',
-  nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
-};
 
 /** Parse setup.* config keys into a completion map. */
 export function extractCompletion(config: Record<string, unknown>): Record<string, 'pending' | 'done'> {
@@ -40,10 +36,13 @@ export function extractSetupComplete(config: Record<string, unknown>): boolean {
 /** Parse the setup.preferences config key into PreferencesData. */
 export function extractPreferences(config: Record<string, unknown>): PreferencesData {
   const stored = config['setup.preferences'];
-  if (stored && typeof stored === 'object') {
-    return { ...PREF_DEFAULTS, ...(stored as Partial<PreferencesData>) };
-  }
-  return { ...PREF_DEFAULTS };
+  const merged: PreferencesData =
+    stored && typeof stored === 'object'
+      ? { ...DEFAULT_PREFERENCES, ...(stored as Partial<PreferencesData>) }
+      : { ...DEFAULT_PREFERENCES };
+  // Its own key (#133), read the same way Settings → General reads it.
+  merged.glyphs = glyphMode(config as Record<string, string>);
+  return merged;
 }
 
 /** Map daemon AssistantFamily[] to app DaemonAssistantFamily[]. */

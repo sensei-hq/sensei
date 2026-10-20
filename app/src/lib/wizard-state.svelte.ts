@@ -10,6 +10,7 @@
  */
 
 import { senseiApi, type ApiResult } from './api.js';
+import { DEFAULT_PREFERENCES } from './setup/preferences.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
 import { healthState } from './health-state.svelte.js';
@@ -365,12 +366,7 @@ export class WizardState {
     });
   }
 
-  preferences = $state<PreferencesData>({
-    displayName: '', contributeLearnings: true, reviewBeforeShare: true,
-    shareSchedule: 'weekly-saturday', downloadCollective: 'weekly',
-    correctionAggressiveness: 'balanced', digestCadence: 'daily',
-    nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
-  });
+  preferences = $state<PreferencesData>({ ...DEFAULT_PREFERENCES });
   assistants  = $state<AssistantsSlice>({ assistants: [], partStatus: {}, partErrors: {} });
   roots       = $state<RootsSlice>({ roots: [], newPath: '' });
   scan        = $state<ScanSlice>({ baseline: null, started: false, done: false });

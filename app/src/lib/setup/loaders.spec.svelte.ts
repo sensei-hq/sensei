@@ -42,6 +42,13 @@ describe('extractCompletion', () => {
 });
 
 describe('extractPreferences', () => {
+  // #133: the glyph mode lives under its own key; the wizard must read it the
+  // way Settings does, or the two would disagree about one preference.
+  it('reads the glyph mode from ui.glyphs, kanji by default', () => {
+    expect(extractPreferences({}).glyphs).toBe('kanji');
+    expect(extractPreferences({ 'ui.glyphs': 'icon' }).glyphs).toBe('icon');
+  });
+
   it('returns defaults when no config key', () => {
     const result = extractPreferences({});
     expect(result.displayName).toBe('');

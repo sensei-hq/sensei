@@ -97,6 +97,7 @@ export function mockPreferences(overrides: Partial<PreferencesData> = {}): Prefe
     shareSchedule: 'weekly-saturday', downloadCollective: 'weekly',
     correctionAggressiveness: 'balanced', digestCadence: 'daily',
     nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
+    glyphs: 'kanji',
     ...overrides,
   };
 }

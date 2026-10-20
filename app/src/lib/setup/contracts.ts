@@ -161,6 +161,8 @@ export interface PreferencesData {
   nudgeOnRegression: boolean;
   anonymizedTelemetry: boolean;
   showWelcome: boolean;
+  /** Kanji or icons across the app (#133). Stored as `ui.glyphs`. */
+  glyphs: import('$lib/glyphs').GlyphMode;
 }
 
 /** Bundle returned by layout load — assembled from parallel daemon fetches. */

@@ -54,3 +54,13 @@ describe('fromPreferencesForm', () => {
     expect(round).toEqual({ ...DEFAULT_PREFERENCES, displayName: 'ada' });
   });
 });
+
+// #133: the kanji/icon switch is stored under its own key, so the rails can read
+// it from the config without parsing the preferences blob.
+describe('glyphs preference', () => {
+  it('reads and writes ui.glyphs, kanji by default', () => {
+    expect(toPreferencesForm({}).glyphs).toBe('kanji');
+    expect(toPreferencesForm({ 'ui.glyphs': 'icon' }).glyphs).toBe('icon');
+    expect(fromPreferencesForm({ ...DEFAULT_PREFERENCES, glyphs: 'icon' })['ui.glyphs']).toBe('icon');
+  });
+});
