@@ -32,17 +32,23 @@ const LIST = {
   ]
 };
 
-function harness(payload: unknown, url: string | null = 'https://github.test/authorize') {
+function harness(
+  payload: unknown,
+  url: string | null = 'https://github.test/authorize',
+  approved: string | null = null
+) {
   const opened: Array<{ url: string; fresh: boolean; label: string }> = [];
   const startSignIn = vi.fn(async () => url);
+  const approveKeychain = vi.fn(async () => approved);
   const list = new PersonaList({
     fetchPersonas: vi.fn(async () => (payload === null ? null : (payload as never))),
     startSignIn,
+    approveKeychain,
     openAuth: vi.fn(async (u: string, opts: { fresh: boolean; label: string }) => {
       opened.push({ url: u, ...opts });
     })
   });
-  return { list, opened, startSignIn };
+  return { list, opened, startSignIn, approveKeychain };
 }
 
 describe('PersonaList.load', () => {
@@ -173,6 +179,7 @@ describe('PersonaList.signIn', () => {
         await gate;
         return 'https://github.test/a';
       },
+      approveKeychain: async () => null,
       openAuth: async () => {}
     });
     await slow.load();
@@ -284,5 +291,54 @@ describe('PersonaList.tone', () => {
     await list.load();
     const unknown = { ...list.personas[0], forgeToken: { state: 'active', expiresAt: null } };
     expect(list.tone(unknown, 0)).toBe('idle');
+  });
+});
+
+// #283: the daemon never prompts for the Keychain, so a session it holds but
+// cannot read after a rebuild waits for the user's click. That click is an
+// approval, not a sign-in: no browser, no OAuth round trip.
+describe('PersonaList approve', () => {
+  const withheld = { ...LIST.personas[0], action: 'approve' };
+
+  it('opens the overlay unasked: sync is down until it is done', async () => {
+    const { list } = harness({ personas: [withheld] });
+    await list.load();
+    expect(list.needsAttention).toBe(true);
+  });
+
+  it('says what it is and what the button does', async () => {
+    const { list } = harness({ personas: [withheld] });
+    await list.load();
+    const p = list.personas[0];
+    expect(list.actionLabel(p)).toBe('Approve keychain access');
+    expect(list.describe(p, 0)).toBe('keychain access needs approval');
+    expect(list.tone(p, 0)).toBe('warn');
+  });
+
+  it('approves the slot instead of starting a sign-in', async () => {
+    const { list, startSignIn, approveKeychain, opened } = harness({ personas: [withheld] });
+    await list.load();
+    await list.act(list.personas[0]);
+    expect(approveKeychain).toHaveBeenCalledWith('default');
+    expect(startSignIn).not.toHaveBeenCalled();
+    expect(opened).toEqual([]);
+    expect(list.error).toBeNull();
+  });
+
+  it('a declined or failed approval says why', async () => {
+    const { list } = harness({ personas: [withheld] }, null, 'keychain access needs approval');
+    await list.load();
+    await list.act(list.personas[0]);
+    expect(list.error).toBe('keychain access needs approval');
+  });
+
+  it('any other action is still a sign-in', async () => {
+    const { list, startSignIn, approveKeychain } = harness({
+      personas: [{ ...LIST.personas[0], action: 'signIn' }]
+    });
+    await list.load();
+    await list.act(list.personas[0]);
+    expect(startSignIn).toHaveBeenCalled();
+    expect(approveKeychain).not.toHaveBeenCalled();
   });
 });

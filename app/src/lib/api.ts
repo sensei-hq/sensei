@@ -241,6 +241,14 @@ export function senseiApi(port: number) {
         {},
       ),
 
+    /** Let the daemon read a persona's stored session, with the Keychain's
+     *  dialog allowed — the user clicked, so it has someone to answer it (#283). */
+    tryApproveKeychain: (persona: string) =>
+      tryPost<{ ok: boolean; error?: string }>(
+        `/api/auth/keychain/approve?persona=${encodeURIComponent(persona)}`,
+        {},
+      ),
+
     // ── Health ────────────────────────────────────────────────────────────
     getHealth: () => get<Record<string, unknown>>('/health', {}),
 

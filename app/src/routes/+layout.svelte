@@ -32,8 +32,8 @@
         dismissed = true;
     }
 
-    async function signIn(p: Parameters<typeof personaList.signIn>[0]) {
-        await personaList.signIn(p);
+    async function signIn(p: Parameters<typeof personaList.act>[0]) {
+        await personaList.act(p);
         // Re-read rather than assume: the standing changes only once the daemon
         // has observed the new credential, and reporting success from the click
         // is how a failed sign-in looks like a successful one.

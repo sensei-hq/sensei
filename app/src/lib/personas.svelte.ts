@@ -64,6 +64,9 @@ export interface PersonaListDeps {
    *   silently re-links the first. The login hint is only a hint.
    */
   openAuth: (url: string, opts: { fresh: boolean; label: string }) => Promise<void>;
+  /** `POST /api/auth/keychain/approve` (#283). Resolves `null` when approved,
+   *  otherwise why not. */
+  approveKeychain: (persona: string) => Promise<string | null>;
 }
 
 export class PersonaList {
@@ -106,7 +109,9 @@ export class PersonaList {
    * `renew` is excluded too, because renewal is automatic and prompt-free.
    */
   get needsAttention(): boolean {
-    return this.personas.some((p) => p.action === 'signIn');
+    // `approve` too (#283): the session is there, but sync stays down until
+    // the user lets the daemon read it.
+    return this.personas.some((p) => p.action === 'signIn' || p.action === 'approve');
   }
 
   async load(): Promise<void> {
@@ -134,6 +139,8 @@ export class PersonaList {
         return 'Sign in again';
       case 'renew':
         return 'Renew';
+      case 'approve':
+        return 'Approve keychain access';
       default:
         return 'Sign in';
     }
@@ -142,6 +149,7 @@ export class PersonaList {
   /** One line describing where this persona stands. */
   describe(p: PersonaWire, now: number): string {
     if (!p.connected) return 'never signed in on this machine';
+    if (p.action === 'approve') return 'keychain access needs approval';
     const exp = p.forgeToken.expiresAt;
     if (p.forgeToken.state === 'dead') return 'credential expired';
     if (exp === null) return 'signed in — expiry not yet known';
@@ -174,12 +182,32 @@ export class PersonaList {
    */
   tone(p: PersonaWire, now: number): 'idle' | 'ok' | 'warn' | 'dead' {
     if (!p.connected) return 'idle';
+    if (p.action === 'approve') return 'warn';
     if (p.forgeToken.state === 'dead') return 'dead';
     const exp = p.forgeToken.expiresAt;
     if (exp === null) return 'idle';
     const seconds = exp - now;
     if (seconds <= 0) return 'dead';
     return seconds < 3600 ? 'warn' : 'ok';
+  }
+
+  /** The row's button (#283): approve the Keychain, or sign in. An approval
+   *  opens no browser — the daemon re-reads the session with the Keychain's
+   *  dialog allowed, and the user answers it there. */
+  async act(p: PersonaWire): Promise<void> {
+    if (p.action !== 'approve') return this.signIn(p);
+    if (this.#busy.has(p.label)) return;
+    this.#busy = new Set(this.#busy).add(p.label);
+    this.error = null;
+    try {
+      this.error = await this.#deps
+        .approveKeychain(p.sessionSlot ?? p.label)
+        .catch((e) => (e instanceof Error ? e.message : `could not approve ${p.label}`));
+    } finally {
+      const next = new Set(this.#busy);
+      next.delete(p.label);
+      this.#busy = next;
+    }
   }
 
   /**
@@ -239,6 +267,15 @@ export const personaList = new PersonaList({
     // A 200 is not proof of a URL — the daemon answers `{ok:false, error}` when
     // the dōjō will not build one.
     return res.ok ? (res.data.authorizeUrl ?? null) : null;
+  },
+  approveKeychain: async (persona) => {
+    const [{ senseiApi }, { appState }] = await Promise.all([
+      import('./api.js'),
+      import('./appstate.svelte.js')
+    ]);
+    const res = await senseiApi(appState.port).tryApproveKeychain(persona);
+    if (!res.ok) return res.error.message || 'the daemon did not answer';
+    return res.data.ok ? null : (res.data.error ?? 'keychain access was not approved');
   },
   openAuth: async (url, opts) => {
     if (!opts.fresh) {

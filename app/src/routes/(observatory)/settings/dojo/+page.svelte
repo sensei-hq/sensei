@@ -88,7 +88,7 @@
                 class="text-xs px-3 py-1.5 rounded-md border border-paper-edge text-ink
                        hover:bg-paper-soft cursor-pointer disabled:opacity-50"
                 disabled={personaList.isBusy(p)}
-                onclick={() => personaList.signIn(p)}
+                onclick={async () => { await personaList.act(p); await personaList.load(); }}
               >
                 {personaList.actionLabel(p)}
               </button>
