@@ -9,7 +9,7 @@
 // mutable surface the search box and row toggles bind to.
 
 import type { LogRow, LogLevel, ScheduledTask } from '$lib/types.js';
-import type { ApiResult } from '$lib/api.js';
+import { failureReason, type ApiResult } from '$lib/api.js';
 
 /** Known severity levels, most→least severe last for the picker order. */
 export const LEVELS: LogLevel[] = ['trace', 'debug', 'info', 'warn', 'error'];
@@ -206,15 +206,13 @@ export function logsPageData(
   scheduled: ApiResult<{ tasks: ScheduledTask[] }>,
   filters: LogFilters,
 ) {
-  const why = (r: { ok: false; error: { status: number; message: string } }) =>
-    r.error.message || `HTTP ${r.error.status}`;
   const logRows = rows.ok ? rows.data : [];
   return {
     rows: logRows,
-    rowsError: rows.ok ? null : `Could not read the log: ${why(rows)}`,
+    rowsError: rows.ok ? null : `Could not read the log: ${failureReason(rows.error)}`,
     filters,
     capped: logRows.length >= filters.limit,
     tasks: scheduled.ok ? scheduled.data.tasks : [],
-    tasksError: scheduled.ok ? null : `Could not read the background tasks: ${why(scheduled)}`,
+    tasksError: scheduled.ok ? null : `Could not read the background tasks: ${failureReason(scheduled.error)}`,
   };
 }

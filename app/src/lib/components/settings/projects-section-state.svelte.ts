@@ -10,7 +10,7 @@
 //
 // A failed load is an error state. `api.listProjects` turned any failure into
 // `[]`, which read as "no projects" — a fabricated empty.
-import type { ApiResult } from '$lib/api.js';
+import { failureReason, type ApiResult } from '$lib/api.js';
 import type { DaemonProject, DaemonProjectFolder } from '$lib/setup/contracts.js';
 import { ROLES } from '$lib/setup/types.js';
 import type { GlyphMode } from '$lib/glyphs';
@@ -101,7 +101,7 @@ export class ProjectsSectionState {
       this.projects = res.data.map((p) => ({ ...p, folders: p.folders ?? [] }));
       this.error = null;
     } else {
-      this.error = `Could not load projects: ${res.error.message || `HTTP ${res.error.status}`}`;
+      this.error = `Could not load projects: ${failureReason(res.error)}`;
     }
     this.loading = false;
   }
@@ -118,7 +118,7 @@ export class ProjectsSectionState {
     const res = await api.tryUpdateProject(projectId, { name: next });
     if (!res.ok) {
       target.name = previous;
-      this.renameError = `Could not rename ${previous}: ${res.error.message || `HTTP ${res.error.status}`}`;
+      this.renameError = `Could not rename ${previous}: ${failureReason(res.error)}`;
     }
   }
 
@@ -133,7 +133,7 @@ export class ProjectsSectionState {
     const res = await api.tryUpdateFolder(folderId, { role: target.role });
     if (!res.ok) {
       target.role = previous;
-      this.roleError = `Could not save the role for ${target.name}: ${res.error.message || `HTTP ${res.error.status}`}`;
+      this.roleError = `Could not save the role for ${target.name}: ${failureReason(res.error)}`;
     }
   }
 }

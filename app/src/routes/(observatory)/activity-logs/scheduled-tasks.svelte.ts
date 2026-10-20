@@ -6,7 +6,7 @@
 
 import type { ScheduledTask } from '$lib/types.js';
 import { relativeTime } from './activity-logs.svelte.js';
-import type { ApiResult } from '$lib/api.js';
+import { failureReason, type ApiResult } from '$lib/api.js';
 
 /** Muted placeholder for a field the daemon hasn't recorded yet. */
 export const EM_DASH = '—';
@@ -151,7 +151,7 @@ export class TaskLog {
       this.lines = res.data.lines;
     } else {
       this.lines = [];
-      this.error = `Could not read the log: ${res.error.message || `HTTP ${res.error.status}`}`;
+      this.error = `Could not read the log: ${failureReason(res.error)}`;
     }
   }
 }

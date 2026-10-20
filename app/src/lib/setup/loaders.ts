@@ -4,7 +4,7 @@
  * Config table uses jsonb — values are native JSON objects, not strings.
  */
 
-import { senseiApi } from '$lib/api.js';
+import { senseiApi, failureReason } from '$lib/api.js';
 import { DEFAULT_PREFERENCES } from './preferences.js';
 import { glyphMode } from '$lib/glyphs';
 import type { AssistantFamily, LibEntry } from '$lib/types.js';
@@ -129,6 +129,6 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     libraries: { total: libs.total, libs: mapLibraries(libs.libs, config) },
     mcps: instruments.mcps,
     routers: routers.ok ? routers.data.routers : null,
-    routersError: routers.ok ? null : routers.error.message || `HTTP ${routers.error.status}`,
+    routersError: routers.ok ? null : failureReason(routers.error),
   };
 }

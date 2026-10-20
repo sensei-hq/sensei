@@ -16,7 +16,7 @@ import type {
   PatternEntry,
 } from '$lib/types.js';
 import { ftrPct } from '$lib/ftr.js';
-import type { ApiResult } from '$lib/api.js';
+import { readOutcome, type ApiResult } from '$lib/api.js';
 
 // ── Header FTR chip ─────────────────────────────────────────────────────────
 
@@ -287,8 +287,6 @@ export function patternSnapshot(p: {
 }
 
 type Read<T> = ApiResult<T>;
-const reason = (r: { ok: false; error: { status: number; message: string } }) =>
-  r.error.message || `HTTP ${r.error.status}`;
 
 /** The overview page's data: each section's payload, or why it could not be
  *  read. A failed read is never replaced by an all-quiet default (#85). */
@@ -297,12 +295,15 @@ export function overviewPageData(
   hotspots: Read<{ hotspots: Hotspot[] }>,
   patterns: Read<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>,
 ) {
+  const o = readOutcome(overview);
+  const h = readOutcome(hotspots);
+  const p = readOutcome(patterns);
   return {
-    overview: overview.ok ? overview.data : null,
-    overviewError: overview.ok ? null : reason(overview),
-    hotspots: hotspots.ok ? hotspots.data.hotspots : null,
-    hotspotsError: hotspots.ok ? null : reason(hotspots),
-    patterns: patterns.ok ? patterns.data : null,
-    patternsError: patterns.ok ? null : reason(patterns),
+    overview: o.data,
+    overviewError: o.error,
+    hotspots: h.data?.hotspots ?? null,
+    hotspotsError: h.error,
+    patterns: p.data,
+    patternsError: p.error,
   };
 }

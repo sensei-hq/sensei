@@ -9,7 +9,7 @@
  * objects; status persists via commitStage; active flips on route change.
  */
 
-import { senseiApi, type ApiResult } from './api.js';
+import { senseiApi, failureReason, type ApiResult } from './api.js';
 import { DEFAULT_PREFERENCES } from './setup/preferences.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
@@ -868,7 +868,7 @@ export class WizardState {
     const api = senseiApi(appState.port);
     const read = await api.tryListGatewayRouters();
     // A failed read is an error the Providers screen shows (#286), not "no routers".
-    if (!read.ok) throw new Error(read.error.message || `HTTP ${read.error.status}`);
+    if (!read.ok) throw new Error(failureReason(read.error));
     const fresh = read.data;
     const previous = new Map(this.inference.routers.map(r => [r.id, r]));
     this.inference = {
