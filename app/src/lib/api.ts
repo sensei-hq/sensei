@@ -448,40 +448,33 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/library-version-conflicts`,
       ),
 
-    getProjectInstruments: (id: string) =>
-      get<{ tools: Array<{ id: string; name: string; kind: string; scope: 'global' | 'project'; enabled: boolean }> }>(
-        `/api/projects/${enc(id)}/instruments`, { tools: [] }
+    tryGetProjectInstruments: (id: string) =>
+      tryGet<{ tools: Array<{ id: string; name: string; kind: string; scope: 'global' | 'project'; enabled: boolean }> }>(
+        `/api/projects/${enc(id)}/instruments`,
       ),
 
     // Per-project MCP tool aggregation — calls / errors / avg duration / FTR
     // scoped to the project. Returns EVERY manifest tool with usage overlaid
     // (zero-call rows included) so the UI can render the full catalogue.
-    getProjectMcpToolStats: (id: string) =>
-      get<{ tools: ProjectMcpToolStat[] }>(
-        `/api/projects/${enc(id)}/mcp-tool-stats`, { tools: [] }
-      ),
+    tryGetProjectMcpToolStats: (id: string) =>
+      tryGet<{ tools: ProjectMcpToolStat[] }>(`/api/projects/${enc(id)}/mcp-tool-stats`),
 
     // Services (MCP servers, inference providers) with per-project scope
     // resolved (scoped > global > default true).
-    listProjectServices: (id: string) =>
-      get<{ services: ProjectService[] }>(
-        `/api/projects/${enc(id)}/services`, { services: [] }
-      ),
+    tryListProjectServices: (id: string) =>
+      tryGet<{ services: ProjectService[] }>(`/api/projects/${enc(id)}/services`),
 
     setProjectServiceScope: (id: string, serviceId: string, enabled: boolean) =>
       put(`/api/projects/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
 
-    getProjectMemories: (id: string) =>
-      get<{ active: ProjectMemory[]; total: number }>(
-        `/api/projects/${enc(id)}/memories`, { active: [], total: 0 }
-      ),
+    tryGetProjectMemories: (id: string) =>
+      tryGet<{ active: ProjectMemory[]; total: number }>(`/api/projects/${enc(id)}/memories`),
 
     // Memory share batches — the proposal / review / verdict lifecycle for
     // grouping memories before federating them out to a hive-mind.
-    listMemoryShareBatches: (id: string, status?: string) =>
-      get<{ batches: MemoryShareBatch[] }>(
+    tryListMemoryShareBatches: (id: string, status?: string) =>
+      tryGet<{ batches: MemoryShareBatch[] }>(
         `/api/projects/${enc(id)}/memory-batches${status ? `?status=${enc(status)}` : ''}`,
-        { batches: [] },
       ),
 
     createMemoryShareBatch: (id: string, memoryIds: string[], note?: string) =>

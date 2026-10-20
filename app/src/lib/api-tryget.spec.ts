@@ -61,6 +61,12 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   // #288 — Sessions.
   { name: 'tryGetSessionsDigest', call: () => api().tryGetSessionsDigest('7d', 'p1'), body: { sessions: [] } },
   { name: 'tryGetSessions', call: () => api().tryGetSessions(), body: { stats: null, sessions: [] } },
+  // #288 — project Instruments and Memories.
+  { name: 'tryGetProjectInstruments', call: () => api().tryGetProjectInstruments('p1'), body: { tools: [] } },
+  { name: 'tryGetProjectMcpToolStats', call: () => api().tryGetProjectMcpToolStats('p1'), body: { tools: [] } },
+  { name: 'tryListProjectServices', call: () => api().tryListProjectServices('p1'), body: { services: [] } },
+  { name: 'tryGetProjectMemories', call: () => api().tryGetProjectMemories('p1'), body: { active: [], total: 0 } },
+  { name: 'tryListMemoryShareBatches', call: () => api().tryListMemoryShareBatches('p1', 'proposed'), body: { batches: [] } },
   // #288 — Atlas.
   { name: 'tryGetGraphNodes', call: () => api().tryGetGraphNodes('r'), body: { nodes: [], edges: [] } },
   { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
@@ -117,6 +123,6 @@ describe('legacy fallback reads (#288)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
     const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(31);
+    expect(reads.length).toBeLessThanOrEqual(26);
   });
 });

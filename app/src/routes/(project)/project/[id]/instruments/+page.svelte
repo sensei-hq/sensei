@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { PageHeader } from '$lib/components';
+    import { PageHeader, ScreenState } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
     import { invalidateAll } from '$app/navigation';
@@ -58,13 +58,18 @@
 
 <PageHeader title="Instruments">
     {#snippet right()}
-        <span class="text-sm text-ink-mute">
-            {stats.length} tools · {fmtInt(totalCalls)} calls · {fmtInt(totalErrors)} errors
-        </span>
+        {#if !data.error}
+            <span class="text-sm text-ink-mute">
+                {stats.length} tools · {fmtInt(totalCalls)} calls · {fmtInt(totalErrors)} errors
+            </span>
+        {/if}
     {/snippet}
 </PageHeader>
 
 <div class="px-6 py-6">
+    {#if data.error}
+        <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+    {:else}
     <!-- Services (MCP servers, inference providers) — per-project toggle. -->
     {#if services.length > 0}
         <section class="mb-8">
@@ -173,6 +178,7 @@
                 {/each}
             </ul>
         </section>
+    {/if}
     {/if}
 </div>
 
