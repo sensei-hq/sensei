@@ -119,8 +119,10 @@ The settings screen lists them as repositories.
   - ~~#96~~ **Closed 2026-10-19**: next run, avg, last error, and a per-worker log tail (a
     `scheduled{worker}` span per pass; a row toggle). The page no longer shows `[]` for a failed read.
   - #284 (found via #96): some inspect screenshots capture a blank webview.
-  - #283 (found via #96): a pass blocked on a keychain prompt stops its worker silently — no time limit,
-    no "running since".
+  - #283 (found via #96): **parts 1–3 live** — `running_since` + "running for", a per-pass limit that records
+    "still running after Ns", and a daemon that never prompts (`NeedsApproval`; only sign-in/out and router-key
+    saves may ask). Remaining: a user-initiated "approve keychain access" action.
+  - #285 (found via #283): router-key reads turn a keychain refusal into "no key".
   - #85: Overview hotspots and patterns-in-use.
   - #144: on a project with no repository, say once that `scope=repo` metrics need git history.
   - #149: the community experiment (drop `parent_id` adjacency, measure).

@@ -25,7 +25,9 @@
 - After waves 0–8: the full re-index (wave 9), which restores the 130 projects whose checkouts are
   gone. Then language parity for Java, C# and Python (wave 10, #275, blocked first by #276).
 
-**Next command:** `/sensei:session refocus`, then #283 (a pass blocked on a keychain prompt: a time limit plus "running since"). #187 still needs `make test-app-e2e-cold`. #194 waits on a live failure.
+**Next command:** `/sensei:session refocus`, then #283's last piece: `POST /api/auth/keychain/approve` (re-read the
+persona's stored session inside `gateway_keys::allow_prompt`), plus an "Approve keychain access" button where the
+app shows the forge standing. Then #285.
 
 **Open questions:**
 - Run `make dev-signing-cert` once (asks for your login password) so local installs keep their keychain and folder grants. #282 needs an Apple Developer account for releases.
@@ -34,6 +36,8 @@
 - 8 CodeQL `rust/cleartext-logging` alerts in test files need triage.
 
 **Known-broken / pending:**
+- dōjō sync fails with "keychain access needs approval" on this machine until the approve action lands, or you
+  sign in again (a sign-in may prompt). `make dev-signing-cert` keeps it from recurring after each rebuild.
 - `/api/projects/{id}/icon` 404s for projects whose checkout is gone. The glyph falls back to kanji.
 - Dependabot reports 0 alerts although the lockfiles are vulnerable (#172).
 - The committed `database/design.dbml` is stale (pre-existing).
