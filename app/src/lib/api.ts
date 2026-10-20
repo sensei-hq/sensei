@@ -734,14 +734,6 @@ export function senseiApi(port: number) {
     tryGetProjectGraph: (id: string) => tryGet<ProjectGraphResponse>(`/api/projects/${enc(id)}/graph`),
 
     // ── Libraries ────────────────────────────────────────────────────────
-    getLibs: (params?: { repoId?: string; projectId?: string; shared?: boolean }) => {
-      const qs = new URLSearchParams();
-      if (params?.repoId) qs.set('repoId', params.repoId);
-      if (params?.projectId) qs.set('projectId', params.projectId);
-      if (params?.shared) qs.set('shared', 'true');
-      return get<{ total: number; libs: LibEntry[] }>(`/api/libs?${qs}`, { total: 0, libs: [] });
-    },
-
     /** Every detected library (#288: a failure is an error, not an empty index). */
     tryGetLibs: (params?: { repoId?: string; projectId?: string; shared?: boolean }) => {
       const qs = new URLSearchParams();
@@ -920,7 +912,8 @@ export function senseiApi(port: number) {
     /** Detected assistants (#288: a failure is an error, not "none detected"). */
     tryDetectAssistants: () => tryGet<import('./types').AssistantStatus[]>('/api/assistants/detect'),
 
-    detectAssistantFamilies: () => get<import('./types').AssistantFamily[]>('/api/assistants/families', []),
+    /** Assistant families the daemon detects (#288: a failure is an error). */
+    tryDetectAssistantFamilies: () => tryGet<import('./types').AssistantFamily[]>('/api/assistants/families'),
 
     configureAssistants: (assistants: string[]) =>
       post<import('./types').AssistantConfigureResult>('/api/assistants/configure', { acps: assistants }, { configured: [], skipped: [], errors: [] }),
@@ -929,11 +922,8 @@ export function senseiApi(port: number) {
       post<import('./types').AssistantRemoveResult>('/api/assistants/remove', { acps: assistants }, { assistants_removed: [], errors: [] }),
 
     // ── Instruments (MCP registry — setup wizard Instruments stage) ───────
-    listInstruments: () =>
-      get<{ total: number; mcps: import('./setup/contracts').DaemonMcpEntry[]; stack: string[] }>(
-        '/api/instruments',
-        { total: 0, mcps: [], stack: [] },
-      ),
+    tryListInstruments: () =>
+      tryGet<{ total: number; mcps: import('./setup/contracts').DaemonMcpEntry[]; stack: string[] }>('/api/instruments'),
 
     // ── Installer ───────────────────────────────────────────────────────
     installAll: (assistants: string[], scope = 'global') =>
@@ -993,12 +983,6 @@ export function senseiApi(port: number) {
     // Model Assignments — chains carry an optional `role` column; a
     // chain-with-a-role IS the role assignment. Utility chains
     // (consensus-* / classify) stay null and never surface in the picker.
-    listGatewayChains: () =>
-      get<{ chains: import('./setup/contracts').DaemonChain[] }>(
-        '/api/gateway/chains',
-        { chains: [] },
-      ),
-
     /** The gateway's fallback chains (#288: a failure is an error, not "no chains"). */
     tryListGatewayChains: () => tryGet<{ chains: import('./setup/contracts').DaemonChain[] }>('/api/gateway/chains'),
 

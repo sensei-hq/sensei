@@ -4,7 +4,7 @@
  * Config table uses jsonb — values are native JSON objects, not strings.
  */
 
-import { senseiApi, failureReason } from '$lib/api.js';
+import { senseiApi, failureReason, type ApiResult } from '$lib/api.js';
 import { DEFAULT_PREFERENCES } from './preferences.js';
 import { glyphMode } from '$lib/glyphs';
 import type { AssistantFamily, LibEntry } from '$lib/types.js';
@@ -99,18 +99,24 @@ export function mapLibraries(libs: LibEntry[], config: Record<string, unknown>):
   }));
 }
 
+/** A wizard read's data, or a rejection naming what could not be read. */
+function need<T>(read: ApiResult<T>, what: string): T {
+  if (!read.ok) throw new Error(`wizard: reading the ${what} failed: ${failureReason(read.error)}`);
+  return read.data;
+}
+
 /** Fetch all wizard data from daemon in parallel. */
 export async function loadWizardData(port: number): Promise<WizardLoadData> {
   const api = senseiApi(port);
-  const [configRead, families, roots, projects, libs, instruments, routers] = await Promise.all([
+  const [configRead, familiesRead, rootsRead, projectsRead, libsRead, instrumentsRead, routers] = await Promise.all([
     // Error-propagating: the config says whether setup is complete, and a
     // fallback `{}` reads as "incomplete" — sending a set-up user back to setup.
     api.tryGetConfig(),
-    api.detectAssistantFamilies(),
-    api.getScanRoots(),
-    api.listProjects(),
-    api.getLibs(),
-    api.listInstruments(),
+    api.tryDetectAssistantFamilies(),
+    api.tryGetScanRoots(),
+    api.tryListProjects(),
+    api.tryGetLibs(),
+    api.tryListInstruments(),
     api.tryListGatewayRouters(),
   ]);
 
@@ -118,6 +124,13 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     throw new Error(`wizard: reading the daemon config failed (${configRead.error.status}): ${configRead.error.message}`);
   }
   const config = configRead.data;
+  // Each of these seeds a wizard stage: an empty fallback read as "none" and
+  // was then committed as the user's answer (#288). A failed read rejects.
+  const families = need(familiesRead, 'assistants');
+  const roots = need(rootsRead, 'roots');
+  const projects = need(projectsRead, 'projects');
+  const libs = need(libsRead, 'libraries');
+  const instruments = need(instrumentsRead, 'instruments');
 
   return {
     completion: extractCompletion(config),

@@ -83,6 +83,9 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryGetToolsHealth', call: () => api().tryGetToolsHealth(), body: { sources: [] } },
   { name: 'tryGetSessionReplay', call: () => api().tryGetSessionReplay('s1'), body: { calls: [] } },
   { name: 'tryGetMcpServerTools', call: () => api().tryGetMcpServerTools('srv'), body: { tools: [] } },
+  // #288 — the setup wizard.
+  { name: 'tryDetectAssistantFamilies', call: () => api().tryDetectAssistantFamilies(), body: [] },
+  { name: 'tryListInstruments', call: () => api().tryListInstruments(), body: { total: 0, mcps: [], stack: [] } },
   // #288 — Atlas.
   { name: 'tryGetGraphNodes', call: () => api().tryGetGraphNodes('r'), body: { nodes: [], edges: [] } },
   { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
@@ -139,6 +142,6 @@ describe('legacy fallback reads (#288)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
     const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(13);
+    expect(reads.length).toBeLessThanOrEqual(9);
   });
 });

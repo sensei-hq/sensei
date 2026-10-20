@@ -192,3 +192,31 @@ describe('loadWizardData — a router read that fails', () => {
     expect(data.mcps).toEqual([]);
   });
 });
+
+// #288: every read the wizard loads is the daemon's answer or a rejection
+// naming it — an empty fallback read as "no assistants / roots / projects /
+// libraries / instruments" and seeded the wizard with it.
+describe('loadWizardData — any other read that fails', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  for (const [path, what] of [
+    ['/api/assistants/families', 'assistants'],
+    ['/api/scan/roots', 'roots'],
+    ['/api/projects', 'projects'],
+    ['/api/libs', 'libraries'],
+    ['/api/instruments', 'instruments'],
+  ] as const) {
+    it(`rejects when ${path} fails, naming the ${what}`, async () => {
+      vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+        const p = new URL(String(input), 'http://localhost').pathname;
+        if (p === path) return new Response('boom', { status: 503, statusText: 'Service Unavailable' });
+        const body = p === '/api/config' ? {}
+          : p === '/api/libs' ? { total: 0, libs: [] }
+          : p === '/api/instruments' ? { mcps: [] }
+          : p === '/api/gateway/routers' ? { routers: [] }
+          : [];
+        return new Response(JSON.stringify(body), { status: 200 });
+      }));
+      await expect(loadWizardData(7744)).rejects.toThrow(new RegExp(`${what}.*Service Unavailable`));
+    });
+  }
+});

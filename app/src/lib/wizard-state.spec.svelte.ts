@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WizardState, routerKeyStatus } from './wizard-state.svelte.js';
 import { scanState } from './scan-state.svelte.js';
 import { mockWizardLoadData, mockWatchRoot, mockRouter } from './setup/mock-contracts.js';
@@ -561,5 +561,36 @@ describe('WizardState', () => {
       expect(r.saveState).toBe('idle');
       expect(r.saveError).toBe('');
     });
+  });
+});
+
+// #288: a refresh that cannot read the daemon throws — its Settings section
+// shows the reason (those catch branches were unreachable behind fallbacks) —
+// and a role assignment the daemon refused is a failed commit, not a done one.
+describe('WizardState — reads and writes that fail', () => {
+  const failing = (status = 503) =>
+    vi.fn(async () => new Response('boom', { status, statusText: 'Service Unavailable' }));
+  afterEach(() => vi.unstubAllGlobals());
+
+  for (const method of ['refreshLibraries', 'refreshInstruments', 'refreshAssignments'] as const) {
+    it(`${method} throws the daemon's reason`, async () => {
+      vi.stubGlobal('fetch', failing());
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData());
+      await expect(ws[method]()).rejects.toThrow(/Service Unavailable/);
+    });
+  }
+
+  it('the assignments commit fails when the daemon refuses a role', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+      const p = new URL(String(input), 'http://localhost').pathname;
+      if (init?.method === 'PUT') return new Response('conflict', { status: 409, statusText: 'Conflict' });
+      if (p === '/api/gateway/chains') return new Response(JSON.stringify({ chains: [] }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+    const ws = new WizardState();
+    ws.hydrate(mockWizardLoadData());
+    ws.assignments.pendingAssignments.inference = 'chain-x';
+    await expect(ws.commitStage('assignments')).rejects.toThrow(/inference/);
   });
 });

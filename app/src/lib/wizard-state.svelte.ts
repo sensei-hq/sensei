@@ -267,28 +267,28 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       .filter(r => (pending[r] ?? null) !== (current[r] ?? null))
       .map(r => ({ role: r, next: pending[r] ?? null, prev: current[r] ?? null }));
 
+    // A refused write fails the commit (#288) — it used to be logged and the
+    // stage marked done, with the role never assigned.
+    const refused: string[] = [];
     // Phase 1 — clear every OLD chain that's losing its role.
     // (Includes both "role unassigned" and "role moved to a different chain".)
     for (const c of changes) {
       if (c.prev) {
         const result = await api.setGatewayChainRole(c.prev, null);
-        if (!result.ok) {
-          console.warn('[assignments] clear old chain role failed', c.prev, result.error);
-        }
+        if (!result.ok) refused.push(`clearing ${c.role}: ${failureReason(result.error)}`);
       }
     }
     // Phase 2 — set every NEW chain to its role.
     for (const c of changes) {
       if (c.next) {
         const result = await api.setGatewayChainRole(c.next, c.role);
-        if (!result.ok) {
-          console.warn('[assignments] set new chain role failed', c.next, c.role, result.error);
-        }
+        if (!result.ok) refused.push(`assigning ${c.role}: ${failureReason(result.error)}`);
       }
     }
-    // Refresh state so `roleAssignments` reflects the freshly-written
-    // truth — the next mount reads the correct baseline for its diff.
+    // Refresh state so `roleAssignments` reflects the daemon's truth — after a
+    // refusal too, so the screen shows what actually stuck.
     await ws.refreshAssignments();
+    if (refused.length) throw new Error(`The daemon refused: ${refused.join('; ')}`);
   },
   done:        async (ws) => { await ws.setCompleted(); },
 };
@@ -778,8 +778,10 @@ export class WizardState {
    * its truth except where the user explicitly toggled.
    */
   async refreshInstruments(): Promise<void> {
-    const api = senseiApi(appState.port);
-    const fresh = await api.listInstruments();
+    const read = await senseiApi(appState.port).tryListInstruments();
+    // A failed read throws: the section shows why (#288), not "no instruments".
+    if (!read.ok) throw new Error(failureReason(read.error));
+    const fresh = read.data;
     const previous = new Map(this.instruments.mcps.map(m => [m.id, m.selected]));
     this.instruments = {
       mcps: fresh.mcps.map(m => ({
@@ -798,8 +800,10 @@ export class WizardState {
    * to avoid showing stale libs from the persistent DB.
    */
   async refreshLibraries(): Promise<void> {
-    const api = senseiApi(appState.port);
-    const fresh = await api.getLibs();
+    const read = await senseiApi(appState.port).tryGetLibs();
+    // A failed read throws: the section shows why (#288), not "no libraries".
+    if (!read.ok) throw new Error(failureReason(read.error));
+    const fresh = read.data;
 
     // Set of repo (folder) names scanned in this wizard run. Filter libs to those
     // touching at least one of these so we don't show the entire persistent DB.
@@ -838,9 +842,10 @@ export class WizardState {
    * mid-edit shouldn't wipe uncommitted picks.
    */
   async refreshAssignments(): Promise<void> {
-    const api = senseiApi(appState.port);
-    const fresh = await api.listGatewayChains();
-    const chains = fresh.chains;
+    const read = await senseiApi(appState.port).tryListGatewayChains();
+    // A failed read throws (#288): every role read as unassigned.
+    if (!read.ok) throw new Error(failureReason(read.error));
+    const chains = read.data.chains;
     // Daemon truth: role → chainId for the four supported roles.
     const daemon = roleAssignments(chains);
     this.assignments = {
@@ -890,21 +895,6 @@ export class WizardState {
     const api = senseiApi(appState.port);
     await api.clearGatewayRouterKey(id);
     await this.refreshInferenceRouters();
-  }
-
-  /**
-   * Re-fetch projects from daemon, merging in current confirmation state.
-   * Called by the Projects page on mount because the daemon discovers projects
-   * during scan — the layout's initial hydrate may have run before that.
-   */
-  async refreshProjects(): Promise<void> {
-    const api = senseiApi(appState.port);
-    const fresh = await api.listProjects();
-    const previous = this.projects.confirmed;
-    this.projects = {
-      projects: fresh.map(p => ({ ...(p as unknown as DaemonProject), folders: ((p as unknown as DaemonProject).folders) ?? [] })),
-      confirmed: Object.fromEntries(fresh.map(p => [p.id, previous[p.id] ?? true])),
-    };
   }
 
   /**
