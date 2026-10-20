@@ -158,14 +158,15 @@ describe('registerRepositories', () => {
 
 	// #299 (decided: one dōjō project per sensei project): the daemon sends each
 	// repository's sensei project, and a mapped repository is filed under it.
-	const PROJECT = { slug: 'sensei', name: 'sensei', classification: 'company' as const };
+	const PROJECT = { slug: 'sensei', name: 'sensei' };
 
 	it('files a mapped repository under the project the daemon sent', async () => {
 		const { db, calls } = rpcDb(filed);
 		const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api', project: PROJECT }]);
 		expect(calls[1]).toEqual({
 			fn: 'file_repository_project',
-			args: { p_repository_id: 'r-github.com/acme/api', p_slug: 'sensei', p_name: 'sensei', p_classification: 'company' }
+			// No classification: the database derives it from where the repository lives.
+			args: { p_repository_id: 'r-github.com/acme/api', p_slug: 'sensei', p_name: 'sensei' }
 		});
 		expect(out.mapped[0]).toMatchObject({ repo_key: 'github.com/acme/api', project_id: 'p-sensei' });
 	});

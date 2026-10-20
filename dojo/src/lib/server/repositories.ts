@@ -33,12 +33,12 @@ export interface RepoInput {
 	project?: RepoProject | null;
 }
 
-/** A sensei project, as the daemon sends it: the same slug/name/classification a
- *  relay run carries, so the two paths file the same `(user_id, slug)` row. */
+/** A sensei project, as the daemon sends it: the slug and name a relay run
+ *  carries, so the two paths file the same `(user_id, slug)` row. No
+ *  classification — the database derives it from where the repository lives. */
 export interface RepoProject {
 	slug: string;
 	name: string;
-	classification: 'company' | 'client' | 'personal' | 'community';
 }
 
 /** A repository that resolved to a tenant. */
@@ -191,8 +191,7 @@ export async function registerRepositories(db: DojoClient, repos: RepoInput[]): 
 			const filed = await db.rpc('file_repository_project', {
 				p_repository_id: entry.repo_id,
 				p_slug: repo.project.slug,
-				p_name: repo.project.name,
-				p_classification: repo.project.classification
+				p_name: repo.project.name
 			});
 			if (filed.error) entry.project_error = filed.error.message;
 			else entry.project_id = filed.data as string;

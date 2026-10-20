@@ -156,10 +156,21 @@ describe('upsertProjectFromRun', () => {
 		expect(captured.payload).toMatchObject({ user_id: 'u1', tenant_id: 't1', slug: 'acme/ledger', name: 'ledger', classification: 'company' });
 		expect(captured.conflict).toEqual({ onConflict: 'user_id,slug' });
 	});
-	it('stores a personal project tenant-less (tenant_id null)', async () => {
+	it('a personal run writes no tenant or classification, so a project sync filed in a tenant is not demoted (#299)', async () => {
+		// The relay files an unbound project as `personal`. Sync files the same
+		// (user_id, slug) project in the tenant its repository lives in. Writing
+		// `personal`/null on conflict would drop it out of that tenant's Projects;
+		// omitting both leaves an existing row alone, and a NEW row still gets the
+		// column defaults — classification `personal`, no tenant.
 		const { db, captured } = makeUpsertDb(null);
 		await upsertProjectFromRun(db, CALLER, { slug: 's', name: 'n', classification: 'personal', phase: 'watch' });
-		expect(captured.payload?.tenant_id).toBeNull();
+		expect(captured.payload).not.toHaveProperty('tenant_id');
+		expect(captured.payload).not.toHaveProperty('classification');
+	});
+	it('a run bound to a tenant still writes its tenant and classification', async () => {
+		const { db, captured } = makeUpsertDb(null);
+		await upsertProjectFromRun(db, CALLER, { slug: 's', name: 'n', classification: 'client', phase: 'watch' });
+		expect(captured.payload).toMatchObject({ tenant_id: 't1', classification: 'client' });
 	});
 	it('does NOT write phase (insert-only via the column default; a dojo advance is not clobbered)', async () => {
 		const { db, captured } = makeUpsertDb(null);

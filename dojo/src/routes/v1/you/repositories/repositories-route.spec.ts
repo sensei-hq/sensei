@@ -93,13 +93,13 @@ describe('POST /v1/you/repositories', () => {
 	// #299: each repository's sensei project reaches registerRepositories. Dropping
 	// it here is how a synced repository would silently never show a project.
 	it('passes each repository\'s project through', async () => {
-		const project = { slug: 'sensei', name: 'sensei', classification: 'company' };
+		const project = { slug: 'sensei', name: 'sensei' };
 		await register.POST(post({ repos: [{ repo_key: 'github.com/acme/api', project }] }));
 		expect(mocks.registerRepositories.mock.calls[0][1][0].project).toEqual(project);
 	});
 
 	it('400s on a malformed project rather than dropping it', async () => {
-		for (const project of [{ slug: '', name: 'x', classification: 'company' }, { slug: 's', name: 'n', classification: 'galaxy' }]) {
+		for (const project of [{ slug: '', name: 'x' }, { slug: 's' }, 'sensei']) {
 			const res = await register.POST(post({ repos: [{ repo_key: 'github.com/acme/api', project }] }));
 			expect(res.status).toBe(400);
 		}

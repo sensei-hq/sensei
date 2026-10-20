@@ -109,7 +109,8 @@ export interface RunProjectInput {
  * carries it) — the write side of the projects screens. The OWNER is the
  * authenticated caller (`user_id`/`tenant_id` are never taken from the payload); a
  * `personal` project is tenant-less so an unbound run fanned out to several dōjōs
- * still resolves to one `unique(user_id, slug)` row. `phase` is intentionally NOT
+ * still resolves to one `unique(user_id, slug)` row — and a personal run never
+ * demotes a project the sync filed in a tenant (#299). `phase` is intentionally NOT
  * written: on insert the column default (`watch`) applies, and on conflict the
  * existing phase is left untouched — a later dōjō-side advance (watch→notice→adopt)
  * is never clobbered by a run heartbeat. Throws AdminError(500) on a DB error; the
@@ -123,13 +124,19 @@ export async function upsertProjectFromRun(
 	const nowIso = new Date().toISOString();
 	const row: Record<string, unknown> = {
 		user_id: caller.userId,
-		tenant_id: p.classification === 'personal' ? null : caller.tenantId,
 		slug: p.slug,
 		name: p.name,
-		classification: p.classification,
 		last_run_at: nowIso,
 		updated_at: nowIso
 	};
+	// A `personal` run (a project bound to no dōjō) writes neither: a NEW row gets
+	// the column defaults — classification `personal`, no tenant — and an existing
+	// row the sync filed in its repository's tenant (#299) is not demoted out of
+	// that tenant's Projects by a later run.
+	if (p.classification !== 'personal') {
+		row.tenant_id = caller.tenantId;
+		row.classification = p.classification;
+	}
 	// Write the constitution only when the daemon federated one — omitting the key
 	// leaves any existing resolution untouched on conflict (never nulled), the same
 	// preserve-on-conflict discipline as `phase`.

@@ -22,19 +22,16 @@ import {
 /** Accept only well-formed entries. A repo with no key has no identity, and
  *  registering it under a derived one would invent the very thing `repo_key`
  *  exists to make machine- and user-independent. */
-const CLASSIFICATIONS = ['company', 'client', 'personal', 'community'] as const;
-
 /** A repository's sensei project (#299). Malformed is a 400, never dropped:
  *  dropping it is how a synced repository would silently show no project. */
 function parseProject(raw: unknown, repoKey: string): RepoProject {
 	const p = (raw ?? {}) as Record<string, unknown>;
 	const slug = typeof p.slug === 'string' ? p.slug.trim() : '';
 	const name = typeof p.name === 'string' ? p.name.trim() : '';
-	const classification = p.classification as RepoProject['classification'];
-	if (!slug || !name || !CLASSIFICATIONS.includes(classification)) {
-		throw new AdminError(400, `the project sent for ${repoKey} needs a slug, a name and a classification (${CLASSIFICATIONS.join(' | ')})`);
+	if (!slug || !name) {
+		throw new AdminError(400, `the project sent for ${repoKey} needs a slug and a name`);
 	}
-	return { slug, name, classification };
+	return { slug, name };
 }
 
 function parseRepos(body: Record<string, unknown>): RepoInput[] {
