@@ -4,7 +4,8 @@
 
 **Done:**
 - Wave 1: #271, #269. Wave 2 decided (#141, #230, #90 closed; #277, #278, deferred epic #279; #275).
-- Wave 3: #104, #185, #186, #153, #154, #177, #157, #280, #213, #135, #179, #181, #96, #285 closed.
+- Wave 3: #104, #185, #186, #153, #154, #177, #157, #280, #213, #135, #179, #181, #96, #285 closed;
+  #133 implementation complete (awaiting two decisions).
 - #283 live: `running_since` + "running for", a per-pass limit ("still running after Ns"), a daemon that never
   prompts for the keychain, and an "Approve keychain access" action.
 - dbd 0.27.3 (2d77d771), rustls 0.23.46 (c11e19d2).
@@ -16,12 +17,12 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #133 D2: move `app/src/lib/glyph-vocabulary.ts` into a shared
-`packages/glyphs` (pattern: `packages/sumi-palette`), point the app at it, then route the dōjō's `class="kanji"`
-marks through a kit glyph that reads `glyphs.mode` (dōjō) and the shared vocabulary.
+**Next command:** `/sensei:session refocus`, then the next wave-3 item: #284 (blank inspect screenshots), then
+#286, #85, #144, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139).
 
 **Open questions:**
-- #133: project glyphs in icon mode. Keep each project's inferred kanji (recommended), or use one generic icon?
+- #133: project glyphs in icon mode — keep each project's inferred kanji (recommended), or one generic icon?
+- #133: the dōjō glyph default — kanji (recommended, shipped on develop) or icons?
 - Run `make dev-signing-cert` once so local installs keep their keychain and folder grants. #282 (releases)
   needs an Apple Developer account.
 - #199: on headless Linux, an encrypted-file credential store, or stop publishing Linux daemon artifacts?

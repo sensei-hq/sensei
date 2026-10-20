@@ -115,8 +115,9 @@ The settings screen lists them as repositories.
 - **App:**
   - #133: **slices 1–3b live** (the `ui.glyphs` switch by context, both rails, `ROLES`, the default project
     mark, Instruments, all 22 screen headers, a 106-kanji vocabulary, every mark through `<Kanji>`). The app
-    is complete; the dōjō nav/tabs follow a `dojo-glyphs` choice (D1). Left: D2 — a shared `packages/glyphs`
-    vocabulary for the dōjō's other kanji marks; a decision on project glyphs in icon mode. Solar Bold Duotone icons beside every kanji, one preference,
+    is complete; the dōjō follows a `dojo-glyphs` choice everywhere, from the shared `packages/glyphs`
+    vocabulary (140 kanji). **Implementation complete**; open on two decisions: the dōjō default (kanji, as
+    shipped on develop, or icons) and project glyphs in icon mode. Solar Bold Duotone icons beside every kanji, one preference,
     `fields` derived in one place, across the app and the dōjō (scope expanded 2026-10-19).
   - ~~#135~~ **Closed 2026-10-19**: the menu item opens `/help`; the page lists only keys that are bound.
   - ~~#96~~ **Closed 2026-10-19**: next run, avg, last error, and a per-worker log tail (a
