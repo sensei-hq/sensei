@@ -153,6 +153,12 @@ pub fn describe(standing: &Standing, now: i64) -> String {
     }
 }
 
+/// `?persona=…` when one is named; nothing, so the daemon resolves the default
+/// identity (#296), when not.
+pub fn persona_query(persona: Option<&str>) -> String {
+    persona.map(|p| format!("?persona={p}")).unwrap_or_default()
+}
+
 /// One identity's line for `sensei auth status` with no `--persona` (#295).
 ///
 /// Leads with the DAEMON's verdict (`action` from `/api/auth/personas`): whether
@@ -182,9 +188,10 @@ pub fn persona_line(p: &Value, now: i64) -> String {
             describe(&standing, now)
         }
     };
+    let mark = if p["isDefault"].as_bool() == Some(true) { " (default)" } else { "" };
     match p["githubLogin"].as_str() {
-        Some(login) if login != label => format!("{label} ({login}) — {state}"),
-        _ => format!("{label} — {state}"),
+        Some(login) if login != label => format!("{label} ({login}){mark} — {state}"),
+        _ => format!("{label}{mark} — {state}"),
     }
 }
 
@@ -232,11 +239,12 @@ pub fn run_list() -> i32 {
 
 /// `sensei auth approve --persona X`: what the app's "Approve keychain access"
 /// does (#283). The macOS Keychain shows its prompt; choose Always Allow.
-pub fn run_approve(persona: &str) -> i32 {
+pub fn run_approve(persona: Option<&str>) -> i32 {
     let base = crate::daemon_url();
-    println!("approving keychain access for {persona} — answer the macOS prompt with Always Allow");
+    let who = persona.unwrap_or("the default identity");
+    println!("approving keychain access for {who} — answer the macOS prompt with Always Allow");
     let answer: Value = match crate::client_with_timeout(180)
-        .post(format!("{base}/api/auth/keychain/approve?persona={persona}"))
+        .post(format!("{base}/api/auth/keychain/approve{}", persona_query(persona)))
         .send()
         .and_then(reqwest::blocking::Response::json)
     {
@@ -247,7 +255,8 @@ pub fn run_approve(persona: &str) -> i32 {
         }
     };
     if answer["ok"].as_bool() == Some(true) {
-        println!("approved — the next sync pass can read {persona}'s session");
+        let who = answer["persona"].as_str().unwrap_or(who);
+        println!("approved — the next sync pass can read {who}'s session");
         0
     } else {
         eprintln!(
@@ -264,10 +273,10 @@ pub fn run_approve(persona: &str) -> i32 {
 /// deliberately returns a URL instead of opening one — it may be running
 /// headless, and a service that pops a window is a service that cannot run on a
 /// build box. The CLI is invoked by a person, so it is the right place.
-pub fn run(action: AuthAction, persona: &str) -> i32 {
+pub fn run(action: AuthAction, persona: Option<&str>) -> i32 {
     let base = crate::daemon_url();
     let status: Value = match crate::client_with_timeout(45)
-        .get(format!("{base}/api/auth/status?persona={persona}"))
+        .get(format!("{base}/api/auth/status{}", persona_query(persona)))
         .send()
         .and_then(reqwest::blocking::Response::json)
     {
@@ -294,7 +303,7 @@ pub fn run(action: AuthAction, persona: &str) -> i32 {
     }
 
     let started: Value = match crate::client_with_timeout(45)
-        .post(format!("{base}/api/auth/signin?persona={persona}"))
+        .post(format!("{base}/api/auth/signin{}", persona_query(persona)))
         .send()
         .and_then(reqwest::blocking::Response::json)
     {
@@ -339,6 +348,23 @@ fn open_url(url: &str) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
+mod persona_query_tests {
+    use super::persona_query;
+
+    // #296: with no --persona the daemon resolves the DEFAULT identity, so the
+    // CLI must not send the literal `default` slot.
+    #[test]
+    fn no_persona_sends_none() {
+        assert_eq!(persona_query(None), "");
+    }
+
+    #[test]
+    fn a_named_persona_is_sent() {
+        assert_eq!(persona_query(Some("jerrythomas")), "?persona=jerrythomas");
+    }
+}
+
+#[cfg(test)]
 mod persona_list_tests {
     use super::*;
     use serde_json::json;
@@ -375,6 +401,19 @@ mod persona_list_tests {
         let line = persona_line(&persona("joelthomas8847", false, "connect", None), NOW);
         assert!(line.contains("never signed in on this machine"), "{line}");
         assert!(line.contains("sensei auth renew --persona joelthomas8847"), "{line}");
+    }
+
+    #[test]
+    fn the_default_identity_is_marked() {
+        let mut p = persona("jerrythomas", true, "none", Some(NOW + 9_000));
+        p["isDefault"] = json!(true);
+        assert!(
+            persona_line(&p, NOW).starts_with("jerrythomas (default) —"),
+            "{}",
+            persona_line(&p, NOW)
+        );
+        let other = persona("sensei-hq-org", true, "none", Some(NOW + 9_000));
+        assert!(!persona_line(&other, NOW).contains("(default)"));
     }
 
     #[test]

@@ -80,6 +80,10 @@ export function readOutcome<T>(r: ApiResult<T>): { data: T | null; error: string
 export const apiBase = (port: number): string => `http://127.0.0.1:${port}`;
 
 /** Create a typed API client for the sensei Rust daemon. */
+/** `?persona=…` when one is named; nothing, so the daemon resolves the default
+ *  identity (#296), when not. */
+const personaQuery = (persona?: string) => (persona ? `?persona=${encodeURIComponent(persona)}` : '');
+
 export function senseiApi(port: number) {
   const base = apiBase(port);
 
@@ -231,12 +235,15 @@ export function senseiApi(port: number) {
     // NOT collapse into a fallback body: `{}` is indistinguishable from a
     // daemon reporting a shape we do not understand, and either way the caller
     // would be told something about a credential we never asked about.
-    tryGetAuthStatus: (persona = 'default') =>
-      tryGet<Record<string, unknown>>(`/api/auth/status?persona=${encodeURIComponent(persona)}`),
+    // No persona named → the daemon resolves the DEFAULT identity (#296), the
+    // one owning the global git email; never the literal `default` slot.
+    tryGetAuthStatus: (persona?: string) =>
+      tryGet<Record<string, unknown>>(`/api/auth/status${personaQuery(persona)}`),
 
     /** Every identity and what each one needs. Result-based: a failed read must
      *  not become `[]`, which reads as "you have no identities". */
-    tryGetPersonas: () => tryGet<{ personas: PersonaWire[] }>('/api/auth/personas'),
+    tryGetPersonas: () =>
+      tryGet<{ personas: PersonaWire[]; default?: string | null; defaultError?: string | null }>('/api/auth/personas'),
 
     /** Begin the PKCE flow. The daemon returns a URL rather than opening one —
      *  it may be headless — so the caller owns the browser.
@@ -244,10 +251,10 @@ export function senseiApi(port: number) {
      *  `expectedLogin` is passed through to GitHub so it preselects the right
      *  account. Without it a browser already signed in to another account
      *  quietly re-links THAT one — a success as the wrong person. */
-    tryStartSignIn: (persona = 'default', expectedLogin: string | null = null) =>
+    tryStartSignIn: (persona?: string, expectedLogin: string | null = null) =>
       tryPost<{ authorizeUrl?: string }>(
-        `/api/auth/signin?persona=${encodeURIComponent(persona)}` +
-          (expectedLogin ? `&github_login=${encodeURIComponent(expectedLogin)}` : ''),
+        `/api/auth/signin${personaQuery(persona)}` +
+          (expectedLogin ? `${persona ? '&' : '?'}github_login=${encodeURIComponent(expectedLogin)}` : ''),
         {},
       ),
 

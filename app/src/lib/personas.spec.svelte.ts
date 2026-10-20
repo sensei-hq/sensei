@@ -53,6 +53,17 @@ function harness(
 }
 
 describe('PersonaList.load', () => {
+  it('keeps which identity is the default, and why there is none when there is none (#296)', async () => {
+    const { list } = harness({ ...LIST, personas: LIST.personas.map((p, i) => ({ ...p, isDefault: i === 0 })) });
+    await list.load();
+    expect(list.personas.map((p) => p.isDefault)).toEqual([true, false]);
+    expect(list.defaultError).toBeNull();
+
+    const unresolved = harness({ ...LIST, defaultError: 'no default identity: git has no global user.email' });
+    await unresolved.list.load();
+    expect(unresolved.list.defaultError).toMatch(/no global user.email/);
+  });
+
   it('keeps the daemon-supplied action rather than deciding for itself', async () => {
     const { list } = harness(LIST);
     await list.load();

@@ -79,7 +79,13 @@
                 data-tone={personaList.tone(p, now)}
               >
                 <div>
-                  <div class="text-sm text-ink">{p.label}</div>
+                  <div class="text-sm text-ink">
+                    {p.label}
+                    {#if p.isDefault}
+                      <!-- #296: the identity owning the global git email. -->
+                      <span class="ml-1 text-xs text-ink-mute" data-default-persona>default</span>
+                    {/if}
+                  </div>
                   <!-- `describe` is PersonaList's, not this screen's: the overlay
                        shows the same sentence, and a second copy would drift. -->
                   <div class="text-xs mt-0.5 {toneClass(personaList.tone(p, now))}" data-standing>
@@ -97,6 +103,9 @@
                     {personaList.actionLabel(p)}
                   </button>
                 {/if}
+        {#if personaList.defaultError}
+          <p class="text-xs text-ink-mute mt-3 mb-0" data-default-error>{personaList.defaultError}</p>
+        {/if}
         <div class="mt-3"><SignInPending pending={personaList.pending} /></div>
               </div>
             {/each}

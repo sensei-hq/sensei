@@ -164,3 +164,27 @@ describe('dataOrThrow (#288)', () => {
       .toThrow('reading the roots failed: Service Unavailable');
   });
 });
+
+// #296: with no persona named, the daemon resolves the DEFAULT identity (the
+// one owning the global git email). Sending the literal `default` slot would
+// address whoever first signed in without naming one.
+describe('auth requests leave the default to the daemon (#296)', () => {
+  const urls = async (call: () => Promise<unknown>) => {
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => { seen.push(String(u)); return okResponse({}); }));
+    await call();
+    return seen;
+  };
+  it('a status with no persona names none', async () => {
+    const [u] = await urls(() => api().tryGetAuthStatus());
+    expect(u).toMatch(/\/api\/auth\/status$/);
+  });
+  it('a sign-in with no persona names none', async () => {
+    const [u] = await urls(() => api().tryStartSignIn());
+    expect(u).toMatch(/\/api\/auth\/signin$/);
+  });
+  it('a named persona is passed through, with its expected login', async () => {
+    const [u] = await urls(() => api().tryStartSignIn('jerrythomas', 'jerrythomas'));
+    expect(u).toMatch(/\/api\/auth\/signin\?persona=jerrythomas&github_login=jerrythomas$/);
+  });
+});

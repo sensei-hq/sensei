@@ -53,6 +53,19 @@ pub fn read_git_user(dir: &Path) -> GitUser {
     GitUser { name, email, source }
 }
 
+/// The GLOBAL git email (`~/.gitconfig`) — the machine's own identity, which
+/// picks the default persona (#296). Read with `--global` so a repo override in
+/// the daemon's working directory can never stand in for it.
+pub fn read_global_git_email() -> Option<String> {
+    let out =
+        Command::new("git").args(["config", "--global", "--get", "user.email"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let email = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!email.is_empty()).then_some(email)
+}
+
 /// Run `git config --show-origin --get <key>` in `dir` and parse the resulting
 /// `origin\tvalue` line. `None` when git fails, exits non-zero (key unset), or
 /// produces empty output.

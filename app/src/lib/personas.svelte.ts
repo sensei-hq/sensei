@@ -34,11 +34,13 @@ export interface PersonaWire {
   forgeToken: { state: string; expiresAt: number | null };
   /** Decided by the daemon's `persona_action`. Never re-derived here. */
   action: 'connect' | 'signIn' | 'renew' | 'none' | string;
+  /** The machine's default identity: the one owning the global git email (#296). */
+  isDefault?: boolean;
 }
 
 export interface PersonaListDeps {
   /** Resolves `null` when the registry could not be read — never `[]`. */
-  fetchPersonas: () => Promise<{ personas: PersonaWire[] } | null>;
+  fetchPersonas: () => Promise<{ personas: PersonaWire[]; defaultError?: string | null } | null>;
   /** `POST /api/auth/signin`. `expectedLogin` is a hint GitHub uses to
    *  preselect an account; `null` when we have never learned one. */
   startSignIn: (persona: string, expectedLogin: string | null) => Promise<string | null>;
@@ -60,6 +62,10 @@ export class PersonaList {
   /** Non-null when a read or an attempt FAILED. Rendered instead of a list:
    *  "no identities" and "we could not ask" are different answers. */
   error = $state<string | null>(null);
+
+  /** Why no identity is the default, when none is (#296) — e.g. no global git
+   *  email, or one that two identities own. `null` when one is, or unknown. */
+  defaultError = $state<string | null>(null);
 
   /** The sign-in in flight, for the UI: which identity, which GitHub account it
    *  expects (`null` for a first connect), and the link to copy into a private
@@ -116,6 +122,7 @@ export class PersonaList {
       return;
     }
     this.personas = res.personas;
+    this.defaultError = res.defaultError ?? null;
     this.error = null;
     this.loaded = true;
   }

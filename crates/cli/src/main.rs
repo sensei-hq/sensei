@@ -44,7 +44,8 @@ enum Commands {
 
         /// Which persona's credential. Personas keep separate identities, and
         /// each has its own token with its own expiry. Without it, `status` lists
-        /// every identity; `renew` and `approve` use the `default` slot.
+        /// every identity; `renew` and `approve` address the default identity —
+        /// the one owning the global git email.
         #[arg(long)]
         persona: Option<String>,
     },
@@ -254,8 +255,9 @@ fn main() -> ExitCode {
             let code = match (act, persona.as_deref()) {
                 // Every identity, not just the `default` slot (#295).
                 (auth::AuthAction::Status, None) => auth::run_list(),
-                (auth::AuthAction::Approve, p) => auth::run_approve(p.unwrap_or("default")),
-                (act, p) => auth::run(act, p.unwrap_or("default")),
+                // No --persona: the daemon resolves the default identity (#296).
+                (auth::AuthAction::Approve, p) => auth::run_approve(p),
+                (act, p) => auth::run(act, p),
             };
             std::process::exit(code);
         }

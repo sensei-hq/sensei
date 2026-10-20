@@ -393,6 +393,25 @@ impl PgStore {
     /// Ordered so the connected ones come first: they are the rows a user is
     /// most likely to be looking for, and an inferred persona they have never
     /// heard of should not head the list.
+    /// The identities that own `email` (#296): `(label, session_slot)`.
+    /// Case-insensitive, current aliases only.
+    pub async fn personas_owning_email(
+        &self,
+        email: &str,
+    ) -> Result<Vec<(String, Option<String>)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT DISTINCT p.label, p.session_slot \
+               FROM sensei.personas p \
+               JOIN sensei.persona_emails pe ON pe.persona_id = p.id \
+              WHERE pe.removed_at IS NULL AND lower(pe.email) = lower($1) \
+              ORDER BY p.label",
+        )
+        .bind(email)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("personas_owning_email: {e}"))
+    }
+
     /// The keychain slot of the identity verified as this GitHub account, if one
     /// on this machine is (#300). `None` when no identity holds the account, or
     /// one does but has never signed in here.
@@ -736,5 +755,52 @@ mod session_slot_of_github_account_tests {
         seed(&pg, &label, None, id).await;
         assert_eq!(pg.session_slot_of_github_account(id).await.unwrap(), None);
         cleanup(&pg, &label).await;
+    }
+}
+
+#[cfg(test)]
+mod personas_owning_email_tests {
+    use super::*;
+
+    // #296: the default identity is the one owning the global git email.
+    async fn seed(pg: &PgStore, label: &str, email: &str, removed: bool) {
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.personas (id, label) VALUES (gen_random_uuid(), $1) RETURNING id",
+        )
+        .bind(label)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.persona_emails (persona_id, email, source, removed_at) \
+             VALUES ($1, $2, 'git', CASE WHEN $3 THEN now() END)",
+        )
+        .bind(id)
+        .bind(email)
+        .bind(removed)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+    async fn cleanup(pg: &PgStore, label: &str) {
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE label = $1")
+            .bind(label)
+            .execute(pg.pool())
+            .await
+            .ok();
+    }
+
+    #[tokio::test]
+    async fn finds_the_owner_case_insensitively_and_ignores_removed_aliases() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let tag = uuid::Uuid::new_v4();
+        let (owner, former) = (format!("ztest-poe-a-{tag}"), format!("ztest-poe-b-{tag}"));
+        let email = format!("ztest-{tag}@example.com");
+        seed(&pg, &owner, &email, false).await;
+        seed(&pg, &former, &email, true).await;
+        let got = pg.personas_owning_email(&email.to_uppercase()).await.unwrap();
+        assert_eq!(got, vec![(owner.clone(), None)]);
+        cleanup(&pg, &owner).await;
+        cleanup(&pg, &former).await;
     }
 }
