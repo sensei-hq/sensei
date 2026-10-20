@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
 	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	// The invite-accept result page (F3b). On success the loader redirects into the
 	// joined dōjō, so this renders only when the redemption was rejected — showing
@@ -8,19 +9,21 @@
 
 <svelte:head><title>Accept invite · Dōjō</title></svelte:head>
 
-<div class="flex flex-col items-center justify-center p-8 gap-6" style="min-height: 60vh">
-	<div
-		class="border-paper-edge bg-paper-soft flex max-w-md flex-col items-center rounded-lg border p-8 text-center gap-3"
-	>
-		<KanjiToken char="封" size="inherit" toneClass="" class="text-ink-faint text-4xl" />
-		<div class="display text-ink text-lg">This invite couldn't be accepted.</div>
-		{#if data.error}
-			<div class="text-ink-soft text-sm">{data.error}</div>
-		{/if}
-		<a
-			href={data.back}
-			class="bg-primary text-on-primary mt-2 rounded-lg px-4 py-2 text-sm font-medium no-underline"
-			>Back to your dōjōs</a
+<Screen>
+	<div class="flex min-h-full flex-col items-center justify-center p-8 gap-6">
+		<div
+			class="border-paper-edge bg-paper-soft flex max-w-md flex-col items-center rounded-lg border p-8 text-center gap-3"
 		>
+			<KanjiToken char="封" size="inherit" toneClass="" class="text-ink-faint text-4xl" />
+			<div class="display text-ink text-lg">This invite couldn't be accepted.</div>
+			{#if data.error}
+				<div class="text-ink-soft text-sm">{data.error}</div>
+			{/if}
+			<a
+				href={data.back}
+				class="bg-primary text-on-primary mt-2 rounded-lg px-4 py-2 text-sm font-medium no-underline"
+				>Back to your dōjōs</a
+			>
+		</div>
 	</div>
-</div>
+</Screen>

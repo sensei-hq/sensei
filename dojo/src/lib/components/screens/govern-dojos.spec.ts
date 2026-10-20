@@ -152,6 +152,29 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 		expect(queryByText('Organization')).toBeNull();
 	});
 
+	it('offers Sync from GitHub in its own header, so the route renders only the screen (#293)', async () => {
+		const onSyncGithub = vi.fn();
+		const { getByText, container } = render(ScrMyDojos, { props: { dojos, onSyncGithub } });
+		const header = container.querySelector('[data-component="screen-header"]')!;
+		const button = getByText('Sync from GitHub');
+		expect(header.contains(button)).toBe(true);
+		await fireEvent.click(button);
+		expect(onSyncGithub).toHaveBeenCalled();
+	});
+
+	it('shows the sync in flight and what it came to', () => {
+		const { getByText } = render(ScrMyDojos, {
+			props: { dojos, onSyncGithub: vi.fn(), syncing: true, syncMessage: '2 dōjōs synced' }
+		});
+		expect((getByText('Syncing…').closest('button') as HTMLButtonElement).disabled).toBe(true);
+		expect(getByText('2 dōjōs synced')).toBeTruthy();
+	});
+
+	it('offers no sync without a handler', () => {
+		const { queryByText } = render(ScrMyDojos, { props: { dojos } });
+		expect(queryByText('Sync from GitHub')).toBeNull();
+	});
+
 	it('fires onCreateOrJoin from the empty-state affordance', async () => {
 		const onCreateOrJoin = vi.fn();
 		const { getByText } = render(ScrMyDojos, { props: { dojos: [], onCreateOrJoin } });

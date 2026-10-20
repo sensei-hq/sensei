@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Screen } from '@sensei/ui';
+	import { Button } from '@rokkit/ui';
 	import { SectionHead, Btn, ListSection, MyDojoRow, EmptyState } from '$lib/components/kit';
 	import type { KitDojo } from '$lib/components/kit/types';
 	import { groupDojos } from '$lib/personal-view';
@@ -14,11 +15,20 @@
 	let {
 		dojos = [],
 		onOpen,
-		onCreateOrJoin
+		onCreateOrJoin,
+		onSyncGithub,
+		syncing = false,
+		syncMessage = null
 	}: {
 		dojos?: KitDojo[];
 		onOpen?: (dojo: KitDojo) => void;
 		onCreateOrJoin?: () => void;
+		/** Re-read the memberships from GitHub; offered only when given. */
+		onSyncGithub?: () => void;
+		/** A sync is in flight. */
+		syncing?: boolean;
+		/** What the last sync came to, said beside the button. */
+		syncMessage?: string | null;
 	} = $props();
 
 	const groups = $derived(groupDojos(dojos));
@@ -43,7 +53,15 @@
 				{description}
 			>
 				{#snippet right()}
-					<Btn size="sm" icon="add-circle" onclick={onCreateOrJoin}>Create or join</Btn>
+					<div class="flex items-center gap-3">
+						{#if syncMessage}<span class="text-ink-mute text-xs">{syncMessage}</span>{/if}
+						{#if onSyncGithub}
+							<Button style="outline" size="sm" onclick={onSyncGithub} disabled={syncing}>
+								{syncing ? 'Syncing…' : 'Sync from GitHub'}
+							</Button>
+						{/if}
+						<Btn size="sm" icon="add-circle" onclick={onCreateOrJoin}>Create or join</Btn>
+					</div>
 				{/snippet}
 			</SectionHead>
 		</div>

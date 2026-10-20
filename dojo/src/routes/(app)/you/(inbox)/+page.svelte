@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
 	import { EmptyState } from '$lib/components/kit';
 
 	// The /you index is the RIGHT panel of the two-panel inbox when no run is open —
@@ -9,8 +10,10 @@
 
 <svelte:head><title>Inbox · Dōjō</title></svelte:head>
 
-<div class="flex h-full items-center justify-center p-8">
-	<EmptyState kanji="継" title="Select a session">
-		Pick a run on the left to see its plan, activity, and anything that needs you.
-	</EmptyState>
-</div>
+<Screen>
+	<div class="flex h-full items-center justify-center p-8">
+		<EmptyState kanji="継" title="Select a session">
+			Pick a run on the left to see its plan, activity, and anything that needs you.
+		</EmptyState>
+	</div>
+</Screen>

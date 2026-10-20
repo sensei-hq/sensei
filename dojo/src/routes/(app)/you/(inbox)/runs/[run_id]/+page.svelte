@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
 	import { onMount } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import {
@@ -96,141 +97,147 @@
 <svelte:head><title>{data.run?.title ?? 'Run'} · Dōjō</title></svelte:head>
 
 {#if data.noMembership}
-	<div class="flex h-full w-full flex-col overflow-hidden">
+	<Screen>
 		<DojoJoinEmpty what="relay runs" />
-	</div>
+	</Screen>
 {:else}
-	<div class="flex flex-col gap-5 p-6">
-		<button
-			type="button"
-			onclick={back}
-			class="text-ink-mute inline-flex cursor-pointer items-center gap-1 self-start bg-transparent text-sm md:hidden"
-		>
-			<Icon name="alt-arrow-left" size={15} toneClass="text-ink-mute" /> Back to inbox
-		</button>
+	<!-- Identity, status and tabs stay in place; the plan and activity scroll (#293). -->
+	<Screen>
+		{#snippet header()}
+			<div class="flex flex-col gap-5 px-6 pt-6 pb-4">
+				<button
+					type="button"
+					onclick={back}
+					class="text-ink-mute inline-flex cursor-pointer items-center gap-1 self-start bg-transparent text-sm md:hidden"
+				>
+					<Icon name="alt-arrow-left" size={15} toneClass="text-ink-mute" /> Back to inbox
+				</button>
 
-		<!-- Header: session identity + a real meta line + live status (mockup RunDetail). -->
-		<div class="flex items-baseline gap-3">
-			<KanjiToken char="観" size="lg" toneClass={headTone} />
-			<div style="min-width: 0; flex: 1">
-				<div
-					class="text-ink-mute text-xs font-semibold uppercase"
-					style="letter-spacing: 0.18em"
-				>
-					Session · {sessionId}
+				<!-- Header: session identity + a real meta line + live status (mockup RunDetail). -->
+				<div class="flex items-baseline gap-3">
+					<KanjiToken char="観" size="lg" toneClass={headTone} />
+					<div style="min-width: 0; flex: 1">
+						<div
+							class="text-ink-mute text-xs font-semibold uppercase"
+							style="letter-spacing: 0.18em"
+						>
+							Session · {sessionId}
+						</div>
+						<h2
+							class="display text-ink text-xl font-normal"
+							style="letter-spacing: -0.015em; margin: 2px 0 0; line-height: 1.1"
+						>
+							{data.run?.title ?? 'Run'}
+						</h2>
+						{#if metaBits.length}
+							<div class="mono text-ink-mute text-xs" style="margin-top: 3px">
+								{metaBits.join(' · ')}
+							</div>
+						{/if}
+					</div>
+					{#if data.run}<RelayStatusBadge status={data.run.status} />{/if}
 				</div>
-				<h2
-					class="display text-ink text-xl font-normal"
-					style="letter-spacing: -0.015em; margin: 2px 0 0; line-height: 1.1"
-				>
-					{data.run?.title ?? 'Run'}
-				</h2>
-				{#if metaBits.length}
-					<div class="mono text-ink-mute text-xs" style="margin-top: 3px">
-						{metaBits.join(' · ')}
+
+				{#if goal}
+					<p class="text-ink-soft text-sm" style="line-height: 1.55; margin: 0; max-width: 560px">
+						{goal}
+					</p>
+				{/if}
+
+				{#if total > 0}
+					<div style="max-width: 560px">
+						<div class="mb-2 flex items-center justify-between">
+							<span class="mono text-ink-soft text-xs"
+								>Phase {progress.stage} of {progress.stages}{progress.stageName
+									? ` · ${progress.stageName}`
+									: ''}</span
+							>
+							<span class="mono text-ink-soft text-xs"
+								>{progress.done}/{progress.total} tasks · {progress.pct}%</span
+							>
+						</div>
+						<PlanBar pct={progress.pct} tone={needsYou ? 'bg-accent' : 'bg-ink'} />
 					</div>
 				{/if}
-			</div>
-			{#if data.run}<RelayStatusBadge status={data.run.status} />{/if}
-		</div>
 
-		{#if goal}
-			<p class="text-ink-soft text-sm" style="line-height: 1.55; margin: 0; max-width: 560px">
-				{goal}
-			</p>
-		{/if}
-
-		{#if total > 0}
-			<div style="max-width: 560px">
-				<div class="mb-2 flex items-center justify-between">
-					<span class="mono text-ink-soft text-xs"
-						>Phase {progress.stage} of {progress.stages}{progress.stageName
-							? ` · ${progress.stageName}`
-							: ''}</span
-					>
-					<span class="mono text-ink-soft text-xs"
-						>{progress.done}/{progress.total} tasks · {progress.pct}%</span
-					>
-				</div>
-				<PlanBar pct={progress.pct} tone={needsYou ? 'bg-accent' : 'bg-ink'} />
-			</div>
-		{/if}
-
-		{#if data.error}
-			<div
-				class="bg-warning-soft border-warning-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"
-				style="padding: 12px 16px"
-			>
-				<KanjiToken char="検" size="inherit" toneClass="" class="text-warning" />
-				<span
-					>Live relay is unavailable.
-					<span class="mono text-ink-mute text-xs">{data.error}</span></span
-				>
-			</div>
-		{/if}
-
-		<!-- Two tabs (mockup): Needs you · Plan. -->
-		<div class="border-paper-edge border-b" style="padding-bottom: 12px">
-			<SubTabs tabs={TABS} active={tab} onPick={pickTab} />
-		</div>
-
-		{#if tab === 'needs'}
-			{#if data.gates.length > 0}
-				<div class="flex flex-col gap-3">
-					{#each data.gates as g (g.id)}
-						<RelayGateCard
-							gate={g}
-							tenantKey={requireTenant(data.tenantKey)}
-							accessToken={data.accessToken}
-							onReplied={() => invalidateAll()}
-							runHrefBase="/you/runs/"
-						/>
-					{/each}
-				</div>
-			{:else}
-				<EmptyState kanji="静" title="Nothing waits on you.">
-					sensei keeps going and surfaces only what it can't decide alone.
-				</EmptyState>
-			{/if}
-		{:else if total > 0}
-			<ListSection
-				icon="layers-minimalistic"
-				iconToneClass="text-ink-mute"
-				title="Plan"
-				count={`${progress.stages} phases · ${progress.total} tasks`}
-			>
-				{#if goal}
+				{#if data.error}
 					<div
-						class="border-paper-edge mono text-ink-mute border-b text-xs"
+						class="bg-warning-soft border-warning-edge text-ink-soft flex items-center gap-2 rounded-xl border text-sm"
 						style="padding: 12px 16px"
 					>
-						Goal · {goal}
+						<KanjiToken char="検" size="inherit" toneClass="" class="text-warning" />
+						<span
+							>Live relay is unavailable.
+							<span class="mono text-ink-mute text-xs">{data.error}</span></span
+						>
 					</div>
 				{/if}
-				<PlanOutline {plan} {selectedId} {onSelect} />
-			</ListSection>
-		{:else}
-			<EmptyState kanji="継" title="No outline yet.">
-				The run hasn't published its plan. When it does, its phases and tasks appear here.
-			</EmptyState>
-		{/if}
 
-		<!-- Activity + Conversation (mockup RunDetail footer grid). -->
-		<div class="grid grid-cols-1 items-start gap-4 md:grid-cols-2">
-			<ListSection icon="history" iconToneClass="text-ink-mute" title="Activity">
-				{#if activity.length > 0}
-					<RunActivity feed={activity} />
-				{:else}
-					<div class="text-ink-mute text-sm" style="padding: 12px 16px">
-						No activity yet — the run hasn't published events.
-					</div>
-				{/if}
-			</ListSection>
-			<ListSection icon="chat-round-line" iconToneClass="text-ink-mute" title="Conversation">
-				<div class="text-ink-mute text-sm" style="padding: 12px 16px">
-					Nothing said in this session yet.
+				<!-- Two tabs (mockup): Needs you · Plan. -->
+				<div class="border-paper-edge border-b" style="padding-bottom: 12px">
+					<SubTabs tabs={TABS} active={tab} onPick={pickTab} />
 				</div>
-			</ListSection>
+			</div>
+		{/snippet}
+		<div class="flex flex-col gap-5 px-6 pb-6">
+			{#if tab === 'needs'}
+				{#if data.gates.length > 0}
+					<div class="flex flex-col gap-3">
+						{#each data.gates as g (g.id)}
+							<RelayGateCard
+								gate={g}
+								tenantKey={requireTenant(data.tenantKey)}
+								accessToken={data.accessToken}
+								onReplied={() => invalidateAll()}
+								runHrefBase="/you/runs/"
+							/>
+						{/each}
+					</div>
+				{:else}
+					<EmptyState kanji="静" title="Nothing waits on you.">
+						sensei keeps going and surfaces only what it can't decide alone.
+					</EmptyState>
+				{/if}
+			{:else if total > 0}
+				<ListSection
+					icon="layers-minimalistic"
+					iconToneClass="text-ink-mute"
+					title="Plan"
+					count={`${progress.stages} phases · ${progress.total} tasks`}
+				>
+					{#if goal}
+						<div
+							class="border-paper-edge mono text-ink-mute border-b text-xs"
+							style="padding: 12px 16px"
+						>
+							Goal · {goal}
+						</div>
+					{/if}
+					<PlanOutline {plan} {selectedId} {onSelect} />
+				</ListSection>
+			{:else}
+				<EmptyState kanji="継" title="No outline yet.">
+					The run hasn't published its plan. When it does, its phases and tasks appear here.
+				</EmptyState>
+			{/if}
+
+			<!-- Activity + Conversation (mockup RunDetail footer grid). -->
+			<div class="grid grid-cols-1 items-start gap-4 md:grid-cols-2">
+				<ListSection icon="history" iconToneClass="text-ink-mute" title="Activity">
+					{#if activity.length > 0}
+						<RunActivity feed={activity} />
+					{:else}
+						<div class="text-ink-mute text-sm" style="padding: 12px 16px">
+							No activity yet — the run hasn't published events.
+						</div>
+					{/if}
+				</ListSection>
+				<ListSection icon="chat-round-line" iconToneClass="text-ink-mute" title="Conversation">
+					<div class="text-ink-mute text-sm" style="padding: 12px 16px">
+						Nothing said in this session yet.
+					</div>
+				</ListSection>
+			</div>
 		</div>
-	</div>
+	</Screen>
 {/if}

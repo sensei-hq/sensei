@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
 	import { SectionHead, EmptyState, Banner, Btn } from '$lib/components/kit';
 	import { invalidateAll } from '$app/navigation';
 	import { Toggle } from '@rokkit/ui';
@@ -24,27 +25,28 @@
 
 <!-- Sticky header (section head + filter tabs) never scrolls; the card list below
      is the only scrolling region of the rail. -->
-<div class="flex h-full min-h-0 flex-col">
-	<div class="shrink-0 px-5 pb-4 pt-6">
-		<SectionHead eyebrow={m.inbox_eyebrow()} title={m.inbox_title()} count={st.sessions.length}>
-			{#snippet right()}
-				{#if st.needsCount > 0}
-					<span class="mono text-accent text-xs">{m.inbox_needs_badge({ count: st.needsCount })}</span>
-				{/if}
-			{/snippet}
-		</SectionHead>
-		<div class="mt-4">
-			<Toggle
-				options={FILTERS}
-				value={st.filter}
-				onchange={(v) => st.setFilter(v as RelayFilter)}
-				size="sm"
-				label={m.inbox_title()}
-			/>
+<Screen>
+	{#snippet header()}
+		<div class="px-5 pb-4 pt-6">
+			<SectionHead eyebrow={m.inbox_eyebrow()} title={m.inbox_title()} count={st.sessions.length}>
+				{#snippet right()}
+					{#if st.needsCount > 0}
+						<span class="mono text-accent text-xs">{m.inbox_needs_badge({ count: st.needsCount })}</span>
+					{/if}
+				{/snippet}
+			</SectionHead>
+			<div class="mt-4">
+				<Toggle
+					options={FILTERS}
+					value={st.filter}
+					onchange={(v) => st.setFilter(v as RelayFilter)}
+					size="sm"
+					label={m.inbox_title()}
+				/>
+			</div>
 		</div>
-	</div>
-
-	<div class="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+	{/snippet}
+	<div class="px-5 pb-6">
 		{#if st.status === 'loading'}
 			<div class="space-y-2" data-inbox-loading aria-busy="true" aria-label={m.inbox_loading()}>
 				{#each [0, 1, 2] as i (i)}
@@ -85,4 +87,4 @@
 			{/if}
 		{/if}
 	</div>
-</div>
+</Screen>
