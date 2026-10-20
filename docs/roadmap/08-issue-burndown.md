@@ -149,7 +149,8 @@ The settings screen lists them as repositories.
   - #289 (found via #278): 26% of assistant events are duplicates (non-idempotent staging import, now fixed).
     Removing the existing 167,932 awaits the user's OK.
 - **Dōjō:**
-  - #132: steps 1–2 done. No literal `font-size` remains in the dōjō (a spec guards it); sign-in verified at 13/11px. Remaining: step 3, comparing each screen with its mockup.
+  - #132: steps 1–2 done. No literal `font-size` remains in the dōjō (a spec guards it); sign-in verified at 13/11px. Step 3 (mockup compare) started: the sign-in left pane now follows the mockup, replacing an "Acme Corp" fixture (#241). The right pane's extra password form and placeholder remain.
+  - **Screen structure audit (user, 2026-10-20):** every screen keeps presentation | state | load/save apart, uses the shared sticky-header + scroll shell, and uses rokkit components before any custom duplicate. App-wide audits of app/ and dojo/ are running; their findings become the work list.
   - #106: last fixture imports, plus a vitest guard.
   - #191: kavach 1.2.0.
 - **Code health:**
