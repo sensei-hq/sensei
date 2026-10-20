@@ -140,7 +140,9 @@ The settings screen lists them as repositories.
   - #149: **experiment run 2026-10-20, criterion not met** — without `parent_id` the >50-file giants grew
     (22,484 → 24,258 nodes); they are dense call/reference cores. Reverted. Awaiting a decision: Leiden/Louvain
     (recommended) or hierarchy grouping.
-  - #278: the verdict heuristic (`unknown`, and action tools by outcome).
+  - #278: **both defects fixed and live** (`unknown`; action tools by outcome). Open to re-measure after #289.
+  - #289 (found via #278): 26% of assistant events are duplicates (non-idempotent staging import, now fixed).
+    Removing the existing 167,932 awaits the user's OK.
 - **Dōjō:**
   - #132: 16 inline font sizes.
   - #106: last fixture imports, plus a vitest guard.
