@@ -13,6 +13,7 @@
 import type { ApiResult } from '$lib/api.js';
 import type { DaemonProject, DaemonProjectFolder } from '$lib/setup/contracts.js';
 import { ROLES } from '$lib/setup/types.js';
+import type { GlyphMode } from '$lib/glyphs';
 
 /** Folder kinds that are a repository of their own. */
 const REPOSITORY_KINDS = new Set(['git', 'subtree']);
@@ -135,4 +136,16 @@ export class ProjectsSectionState {
       this.roleError = `Could not save the role for ${target.name}: ${res.error.message || `HTTP ${res.error.status}`}`;
     }
   }
+}
+
+/** The role picker's items for a glyph mode (#133). */
+export function roleOptions(mode: GlyphMode): { label: string; value: string; icon?: string }[] {
+  return [
+    { label: 'Unassigned', value: '' },
+    ...ROLES.map((r) =>
+      mode === 'icon'
+        ? { label: r.label, value: r.id, icon: r.icon }
+        : { label: `${r.kanji} ${r.label}`, value: r.id },
+    ),
+  ];
 }

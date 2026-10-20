@@ -9,9 +9,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ROLES } from '$lib/setup/types.js';
+import { isSolarBoldDuotone } from '$lib/glyphs';
 import type { DaemonProject, DaemonProjectFolder } from '$lib/setup/contracts.js';
 import {
   derivedRoles,
+  roleOptions,
   matchesSearch,
   partitionProjects,
   ProjectsSectionState,
@@ -122,6 +124,31 @@ describe('ROLES', () => {
     );
     const stored = [...ddl.matchAll(/'([a-z]+)'/g)].map((m) => m[1]).sort();
     expect(ROLES.map((r) => r.id).sort()).toEqual(stored);
+  });
+});
+
+// #133: each role carries a kanji AND an installed Solar Bold Duotone icon.
+describe('ROLES glyphs', () => {
+  const solar = new Set(
+    Object.keys(JSON.parse(readFileSync('node_modules/@iconify-json/solar/icons.json', 'utf8')).icons),
+  );
+  it('gives every role a kanji and a Solar Bold Duotone icon', () => {
+    for (const r of ROLES) {
+      expect(r.kanji, r.id).toMatch(/^\p{Script=Han}$/u);
+      expect(isSolarBoldDuotone(r.icon, solar), `${r.id}: ${r.icon}`).toBe(true);
+    }
+  });
+});
+
+describe('roleOptions', () => {
+  it('prefixes the kanji in kanji mode and hands the icon to the Select in icon mode', () => {
+    const k = roleOptions('kanji');
+    expect(k[0]).toEqual({ label: 'Unassigned', value: '' });
+    expect(k[1]).toEqual({ label: '後 Backend', value: 'backend' });
+    const i = roleOptions('icon');
+    expect(i[0]).toEqual({ label: 'Unassigned', value: '' });
+    expect(i[1]).toEqual({ label: 'Backend', value: 'backend', icon: 'i-solar-server-bold-duotone' });
+    expect(i).toHaveLength(ROLES.length + 1);
   });
 });
 

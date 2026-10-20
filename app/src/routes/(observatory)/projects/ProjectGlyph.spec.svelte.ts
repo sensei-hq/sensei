@@ -40,4 +40,13 @@ describe('ProjectGlyph', () => {
     expect(img(m)).toBeNull();
     expect(kanji(m)?.textContent).toBe('場');
   });
+
+  // #133: icon mode's default project mark.
+  it('renders the Solar icon for an icon mark', () => {
+    const m = mount({ kind: 'icon', cls: 'i-solar-folder-with-files-bold-duotone', glyph: '場' });
+    const icon = m.container.querySelector('[data-project-icon]');
+    expect(icon?.className).toContain('i-solar-folder-with-files-bold-duotone');
+    expect(kanji(m)).toBeNull();
+    expect(img(m)).toBeNull();
+  });
 });

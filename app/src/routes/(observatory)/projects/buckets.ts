@@ -1,3 +1,4 @@
+import type { GlyphMode } from '$lib/glyphs';
 import type { ProjectListItem } from '$lib/types.js';
 
 /** One row in the segmented Projects list — a project enriched with the
@@ -95,7 +96,11 @@ export const DEFAULT_GLYPH = '場';
  *  `<img>` fails to load (a broken image is worse than a glyph). */
 export type ProjectIcon =
   | { kind: 'image'; src: string; glyph: string }
-  | { kind: 'kanji'; glyph: string };
+  | { kind: 'kanji'; glyph: string }
+  | { kind: 'icon'; cls: string; glyph: string };
+
+/** The default project mark in icon mode (#133) — the Projects rail's icon. */
+export const PROJECT_ICON = 'i-solar-folder-with-files-bold-duotone';
 
 /** Pure: does a stored icon value already point somewhere the browser can load
  *  directly? An author/About-form icon may be an absolute URL or a data URI;
@@ -111,7 +116,11 @@ function isDirectUrl(value: string): boolean {
  *  it with a kanji fallback on load error). Otherwise fall back to the kanji
  *  glyph on the icon, and finally to 場 (place). `base` is the daemon origin
  *  (e.g. `apiBase(port)`); it defaults to '' so tests read a bare route path. */
-export function projectIcon(p: Pick<EnrichedProject, 'id' | 'icon'>, base = ''): ProjectIcon {
+export function projectIcon(
+  p: Pick<EnrichedProject, 'id' | 'icon'>,
+  base = '',
+  mode: GlyphMode = 'kanji',
+): ProjectIcon {
   const icon = p.icon;
   if (icon && icon.kind === 'image' && icon.value) {
     const src = isDirectUrl(icon.value)
@@ -120,6 +129,8 @@ export function projectIcon(p: Pick<EnrichedProject, 'id' | 'icon'>, base = ''):
     return { kind: 'image', src, glyph: DEFAULT_GLYPH };
   }
   if (icon && icon.kind === 'kanji' && icon.value) return { kind: 'kanji', glyph: icon.value };
+  // Only the default mark has an icon to stand for it (#133).
+  if (mode === 'icon') return { kind: 'icon', cls: PROJECT_ICON, glyph: DEFAULT_GLYPH };
   return { kind: 'kanji', glyph: DEFAULT_GLYPH };
 }
 

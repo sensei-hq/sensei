@@ -9,6 +9,8 @@
  * Rail layout mirrors docs/mockups/Sensei/lib/observatory.jsx (~L247-323).
  */
 
+import { PROJECT_ICON } from "./projects/buckets";
+
 /** A navigable rail entry. `value` mirrors `href` so List's value-match
  * (`proxy.value === value`) highlights the active route. */
 export interface NavLink {
@@ -74,7 +76,7 @@ export function buildNavItems({ projectCount }: NavOptions = {}): NavEntry[] {
     // Intake (the front door) lives in the project window now — a chunk of work
     // always starts IN a project, so it's a per-project section, not observatory-wide.
     link("家", "i-solar-home-smile-bold-duotone", "Today", "/"),
-    link("場", "i-solar-folder-with-files-bold-duotone", "Projects", "/projects", { badge: projectCount }),
+    link("場", PROJECT_ICON, "Projects", "/projects", { badge: projectCount }),
     // Needs you — the daily payoff: everything with a pending decision.
     {
       text: "Needs you",

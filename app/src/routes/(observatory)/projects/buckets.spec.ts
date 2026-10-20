@@ -5,8 +5,7 @@ import {
   projectIcon,
   lastSessionLabel,
   isWarning,
-  type EnrichedProject,
-} from './buckets.js';
+  type EnrichedProject, PROJECT_ICON } from './buckets.js';
 
 const p = (over: Partial<EnrichedProject> = {}): EnrichedProject => ({
   id: 'p',
@@ -139,6 +138,23 @@ describe('projectIcon', () => {
 
   it('falls back to 場 for a null icon', () => {
     expect(projectIcon(p({ icon: null }))).toEqual({ kind: 'kanji', glyph: '場' });
+  });
+
+  // #133: in icon mode only the DEFAULT mark becomes an icon. A logo is the
+  // project's own identity and a chosen kanji has no icon to stand for it, so
+  // both stay as they are.
+  it('shows the project icon for the default mark in icon mode only', () => {
+    expect(projectIcon(p({ icon: null }), '', 'icon')).toEqual({
+      kind: 'icon',
+      cls: PROJECT_ICON,
+      glyph: '場',
+    });
+    expect(projectIcon(p({ icon: { kind: 'kanji', value: '禅' } }), '', 'icon')).toEqual({
+      kind: 'kanji',
+      glyph: '禅',
+    });
+    expect(projectIcon(p({ icon: { kind: 'image', value: 'http://x/y.png' } }), '', 'icon').kind).toBe('image');
+    expect(projectIcon(p({ icon: null }), '', 'kanji')).toEqual({ kind: 'kanji', glyph: '場' });
   });
 
   it('falls back to 場 for an image icon with no value', () => {

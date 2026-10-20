@@ -8,6 +8,7 @@
   import { projectStatus, projectIcon, lastSessionLabel } from './buckets.js';
   import { ftrPct } from '$lib/ftr.js';
   import { apiBase } from '$lib/api.js';
+  import { glyphMode } from '$lib/glyphs';
   import { appState } from '$lib/appstate.svelte.js';
   import ProjPill from './ProjPill.svelte';
   import ProjectDot from './ProjectDot.svelte';
@@ -23,7 +24,7 @@
 
   const status = $derived(projectStatus(p));
   // Image icons resolve to the daemon's serve route; kanji icons stay glyphs.
-  const icon = $derived(projectIcon(p, apiBase(appState.port)));
+  const icon = $derived(projectIcon(p, apiBase(appState.port), glyphMode(appState.config)));
   // Bare percentage number for the stat cell, or "—" when there's no FTR data
   // (honest no-data; never a fabricated 0).
   const ftrStat = $derived<number | string>(ftrPct(p.ftr14d) ?? '—');

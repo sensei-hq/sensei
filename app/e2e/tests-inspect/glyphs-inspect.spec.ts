@@ -16,6 +16,12 @@ const DIR = '/tmp/sensei-shots';
 const storedGlyphs = async () =>
   (await (await fetch(`${DAEMON_URL}/api/config`)).json())['ui.glyphs'] as string | undefined;
 
+/** Every element matching \`sel\`: its class and whether it paints. */
+const painted = (sel: string) => `Array.from(document.querySelectorAll('${sel}')).map((e) => {
+  const s = getComputedStyle(e); const r = e.getBoundingClientRect();
+  return { cls: e.className, painted: r.width > 0 && r.height > 0 && ((s.maskImage || s.webkitMaskImage || '') + '').includes('svg') };
+})`;
+
 /** Every settings-rail icon on screen: its class and whether it paints. */
 const RAIL_ICONS = `Array.from(document.querySelectorAll('[data-component="settings-sidebar"] [data-item-icon]')).map((e) => {
   const s = getComputedStyle(e); const r = e.getBoundingClientRect();
@@ -75,6 +81,23 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
     expect(icons.every((i) => /^i-solar-.+-bold-duotone$/.test(i.cls))).toBe(true);
     expect(unpainted).toEqual([]);
     expect((await tauriPage.evaluate(RAIL_KANJI)) as string[]).toEqual([]);
+
+    // Slice 2: the derived-role chips on Settings → Projects. (Project glyphs:
+    // every live project carries an inferred kanji or a logo, which stay as
+    // they are in icon mode — see #133.)
+    for (const [route, ready, sel] of [
+      ['/settings/projects', '[data-role-icon]', '[data-role-icon]'],
+    ] as const) {
+      // Bounded, so a miss fails here instead of running out the test clock
+      // and skipping the `finally` that restores the preference.
+      await navigateToScreen(tauriPage, route, ready, 20_000);
+      const marks = (await tauriPage.evaluate(painted(sel))) as { cls: string; painted: boolean }[];
+      const bad = marks.filter((m) => !m.painted).map((m) => m.cls);
+      console.log(`[inspect] ${route}: ${marks.length} icon marks; unpainted: ${bad.join(', ') || 'none'}`);
+      expect(marks.length).toBeGreaterThan(0);
+      expect(bad).toEqual([]);
+    }
+    await navigateToScreen(tauriPage, '/settings/general', '[data-testid="pref-glyphs"]', 20_000);
 
     await choose(tauriPage, 'Kanji');
     await tauriPage.waitForSelector('[data-component="settings-sidebar"] [data-item-icon-literal]', 10_000);

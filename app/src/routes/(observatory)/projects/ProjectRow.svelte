@@ -8,6 +8,7 @@
   import { projectStatus, projectIcon, lastSessionLabel } from './buckets.js';
   import { ftrPctLabel } from '$lib/ftr.js';
   import { apiBase } from '$lib/api.js';
+  import { glyphMode } from '$lib/glyphs';
   import { appState } from '$lib/appstate.svelte.js';
   import ProjPill from './ProjPill.svelte';
   import ProjectDot from './ProjectDot.svelte';
@@ -25,7 +26,7 @@
 
   const status = $derived(projectStatus(p));
   // Image icons resolve to the daemon's serve route; kanji icons stay glyphs.
-  const icon = $derived(projectIcon(p, apiBase(appState.port)));
+  const icon = $derived(projectIcon(p, apiBase(appState.port), glyphMode(appState.config)));
   // "NN%" or the "—" no-data marker (never a fabricated 0%).
   const ftrLabel = $derived(ftrPctLabel(p.ftr14d));
 </script>

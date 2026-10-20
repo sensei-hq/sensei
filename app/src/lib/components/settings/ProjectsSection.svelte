@@ -3,6 +3,7 @@
   // a rename, and the error states live in projects-section-state.svelte.ts.
   import { Select } from '@rokkit/ui';
   import { apiBase } from '$lib/api.js';
+  import { glyphMode, glyphOf } from '$lib/glyphs';
   import { appState } from '$lib/appstate.svelte.js';
   import { ScreenState } from '$lib/components';
   import { ROLES } from '$lib/setup/types.js';
@@ -13,15 +14,14 @@
     repositoriesOf,
     type ProjectsApi,
     type ProjectsSectionState,
+    roleOptions,
   } from './projects-section-state.svelte.js';
 
   let { state, api }: { state: ProjectsSectionState; api: ProjectsApi } = $props();
 
-  // Each role with its kanji, so the picker shows the mark it applies.
-  const roleOptions = [
-    { label: 'Unassigned', value: '' },
-    ...ROLES.map((r) => ({ label: `${r.kanji} ${r.label}`, value: r.id })),
-  ];
+  // Each role with its mark, kanji or icon (#133), so the picker shows the mark it applies.
+  const glyphs = $derived(glyphMode(appState.config));
+  const roleItems = $derived(roleOptions(glyphs));
   const roleById = new Map(ROLES.map((r) => [r.id, r]));
 </script>
 
@@ -30,7 +30,7 @@
   <div class="rounded-lg p-4 border border-paper-edge bg-paper-mute" data-testid={`project-card-${project.id}`}>
     <div class="flex items-center gap-3">
       <div class="w-10 h-10 flex items-center justify-center rounded-full bg-paper-soft border border-paper-edge kanji text-2xl text-accent">
-        <ProjectGlyph icon={projectIcon(project, apiBase(appState.port))} />
+        <ProjectGlyph icon={projectIcon(project, apiBase(appState.port), glyphMode(appState.config))} />
       </div>
       <div class="min-w-0 flex-1">
         <input
@@ -56,14 +56,18 @@
               {#if derived.length > 0}
                 <div class="flex flex-wrap gap-x-2 text-xs text-ink-mute mt-0.5" data-derived-roles={derived.join(' ')} title="Inferred from its packages' manifests">
                   {#each derived as id (id)}
-                    <span><span class="kanji text-accent">{roleById.get(id)?.kanji}</span> {roleById.get(id)?.label}</span>
+                    {@const role = roleById.get(id)}
+                    {#if role}
+                      {@const mark = glyphOf(role, glyphs)}
+                      <span>{#if mark.kind === 'icon'}<span class="{mark.value} text-accent align-[-2px]" data-role-icon aria-hidden="true"></span>{:else}<span class="kanji text-accent">{mark.value}</span>{/if} {role.label}</span>
+                    {/if}
                   {/each}
                 </div>
               {/if}
             </div>
             <Select
               size="sm"
-              items={roleOptions}
+              items={roleItems}
               value={repo.role ?? ''}
               onchange={(v) => state.setRole(api, repo.id, v as string)}
             />
