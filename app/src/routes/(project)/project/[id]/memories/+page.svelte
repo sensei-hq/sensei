@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
     import { PageHeader, EmptyState, Eyebrow } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
@@ -134,7 +135,7 @@
             data-testid="ready-to-share-hero"
         >
             <div class="flex items-start gap-4">
-                <span class="kanji text-2xl text-success">送</span>
+                <Kanji char="送" size="inherit" tone="inherit" class="text-2xl text-success" />
                 <div class="flex-1 min-w-0">
                     <div class="mb-1"><Eyebrow tone="text-success">{h.eyebrow}</Eyebrow></div>
                     <h2 class="display text-lg font-normal m-0 text-ink">{h.headline}</h2>

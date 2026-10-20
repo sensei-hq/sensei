@@ -86,7 +86,7 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
     // every live project carries an inferred kanji or a logo, which stay as
     // they are in icon mode — see #133.)
     for (const [route, ready, sel] of [
-      ['/settings/projects', '[data-role-icon]', '[data-role-icon]'],
+      ['/settings/projects', '[data-derived-roles] [data-component="glyph-icon"]', '[data-derived-roles] [data-component="glyph-icon"]'],
       // Slice 3: the Instruments tabs, hero, groups and kind marks.
       ['/instruments', '[data-component="glyph-icon"]', '[data-component="glyph-icon"]'],
     ] as const) {
@@ -109,6 +109,18 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
       expect(marks).toHaveLength(1);
       expect(marks[0].painted).toBe(true);
       expect(kanji).toBe(0);
+    }
+
+    // Slice 4b: screens whose marks were bare kanji spans now paint icons in
+    // their main content (outside the header and rails).
+    const MAIN = '[data-component="observatory-main"] [data-component="glyph-icon"]';
+    for (const route of ['/impact', '/activity-logs', '/consolidation', '/projects']) {
+      await navigateToScreen(tauriPage, route, MAIN, 20_000);
+      const marks = (await tauriPage.evaluate(painted(MAIN))) as { cls: string; painted: boolean }[];
+      const bad = marks.filter((m) => !m.painted).map((m) => m.cls);
+      console.log(`[inspect] main ${route}: ${marks.length} icons; unpainted: ${bad.join(', ') || 'none'}`);
+      expect(marks.length).toBeGreaterThan(0);
+      expect(bad).toEqual([]);
     }
 
     // Slice 4: a mark with no icon of its own takes the vocabulary's (録 on

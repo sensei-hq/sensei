@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { Toggle } from '@rokkit/ui';
   import type { ProxyItem } from '@rokkit/states';
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
@@ -61,7 +62,7 @@
 <div data-component="projects-page" class="w-full h-full flex flex-col bg-paper overflow-hidden">
   <!-- Header -->
   <div class="pt-5 pb-4 px-7 border-b border-paper-edge flex items-center gap-5">
-    <span class="kanji text-2xl text-accent">場</span>
+    <Kanji char="場" size="inherit" tone="inherit" class="text-2xl text-accent" />
     <div>
       <p class="m-0 mb-0.5"><Eyebrow>Projects</Eyebrow></p>
       <h1 class="display text-xl font-normal m-0">All the places you work.</h1>
@@ -81,7 +82,7 @@
       label="filter projects by status"
     >
       {#snippet itemContent(proxy: ProxyItem)}
-        <span class="kanji text-xs">{proxy.get('kanji')}</span>
+        <Kanji char={proxy.get('kanji')} icon={null} size="inherit" tone="inherit" class="text-xs" />
         <span>{proxy.label}</span>
         <!-- Inherit the option's text colour (rokkit sets a contrast-correct colour
              per selected/unselected state) instead of a hardcoded text-ink-mute,
@@ -104,7 +105,7 @@
     </Toggle>
 
     <div class="flex items-center bg-paper-soft border border-paper-edge rounded gap-2 py-1 px-2 min-w-[260px]">
-      <span class="kanji text-xs text-ink-soft">探</span>
+      <Kanji char="探" size="inherit" tone="inherit" class="text-xs text-ink-soft" />
       <input
         type="text"
         bind:value={projectsView.query}

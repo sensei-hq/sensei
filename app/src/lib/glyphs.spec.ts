@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
-import { GLYPH_OPTIONS, GLYPHS_KEY, glyphFields, glyphMode, glyphOf, isSolarBoldDuotone } from './glyphs';
+import { GLYPH_OPTIONS, GLYPHS_KEY, glyphFields, glyphMode, isSolarBoldDuotone } from './glyphs';
 
 // #133: one preference switches the whole app between kanji and icons, and
 // `fields` is derived from it here alone — no component decides for itself.
@@ -36,19 +36,5 @@ describe('isSolarBoldDuotone', () => {
     expect(isSolarBoldDuotone('i-solar-home-smile-linear', solar)).toBe(false);
     expect(isSolarBoldDuotone('i-solar-no-such-thing-bold-duotone', solar)).toBe(false);
     expect(isSolarBoldDuotone('家', solar)).toBe(false);
-  });
-});
-
-// #133: for marks rendered outside a rokkit List (role chips, project glyphs),
-// the same rule in one function — and a missing icon falls back to the kanji,
-// never to an empty slot.
-describe('glyphOf', () => {
-  const both = { kanji: '後', icon: 'i-solar-server-bold-duotone' };
-  it('picks the kanji or the icon by mode', () => {
-    expect(glyphOf(both, 'kanji')).toEqual({ kind: 'kanji', value: '後' });
-    expect(glyphOf(both, 'icon')).toEqual({ kind: 'icon', value: 'i-solar-server-bold-duotone' });
-  });
-  it('falls back to the kanji when there is no icon', () => {
-    expect(glyphOf({ kanji: '禅' }, 'icon')).toEqual({ kind: 'kanji', value: '禅' });
   });
 });

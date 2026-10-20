@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { onMount } from 'svelte';
   import { wizardState, routerKeyStatus } from '$lib/wizard-state.svelte.js';
   import { appState } from '$lib/appstate.svelte.js';
@@ -51,7 +52,7 @@
 
   {#if loading}
     <div data-testid="inference-loading" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
-      <span class="kanji text-4xl text-accent opacity-20 block mb-4">想</span>
+      <Kanji char="想" size="inherit" tone="inherit" class="text-4xl text-accent opacity-20 block mb-4" />
       <p class="text-sm text-ink-soft">Loading routers…</p>
     </div>
   {:else if error}

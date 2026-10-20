@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { Eyebrow } from '$lib/components';
   import { insightToneClasses } from './today-view.svelte.js';
   import type { ObservatoryInsight } from '$lib/types.js';
@@ -19,7 +20,7 @@
   data-tone={insight.tone}
   class="grid grid-cols-[auto_1fr_auto] items-start gap-3 py-3 px-4 border-b border-paper-edge text-left text-inherit hover:bg-paper-soft"
 >
-  <span class="kanji text-xl w-6 leading-none {tone.glyph}">{insight.kanji}</span>
+  <Kanji char={insight.kanji} size="inherit" tone="inherit" class="text-xl w-6 leading-none {tone.glyph}" />
   <div>
     <p class="m-0 mb-1"><Eyebrow>{insight.label}</Eyebrow></p>
     <p class="text-sm text-ink-mute leading-snug m-0">{insight.text}</p>

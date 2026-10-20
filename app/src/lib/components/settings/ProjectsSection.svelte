@@ -1,9 +1,10 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   // Settings · Projects (#271). Presentation only: what to list, saving a role or
   // a rename, and the error states live in projects-section-state.svelte.ts.
   import { Select } from '@rokkit/ui';
   import { apiBase } from '$lib/api.js';
-  import { glyphMode, glyphOf } from '$lib/glyphs';
+  import { glyphMode } from '$lib/glyphs';
   import { appState } from '$lib/appstate.svelte.js';
   import { ScreenState } from '$lib/components';
   import { ROLES } from '$lib/setup/types.js';
@@ -58,8 +59,7 @@
                   {#each derived as id (id)}
                     {@const role = roleById.get(id)}
                     {#if role}
-                      {@const mark = glyphOf(role, glyphs)}
-                      <span>{#if mark.kind === 'icon'}<span class="{mark.value} text-accent align-[-2px]" data-role-icon aria-hidden="true"></span>{:else}<span class="kanji text-accent">{mark.value}</span>{/if} {role.label}</span>
+                      <span><Kanji char={role.kanji} icon={role.icon} size="inherit" tone="inherit" class="text-accent align-[-2px]" /> {role.label}</span>
                     {/if}
                   {/each}
                 </div>

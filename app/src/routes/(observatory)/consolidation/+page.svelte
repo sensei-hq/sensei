@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { invalidateAll } from '$app/navigation';
   import { EmptyState, Eyebrow, ScreenState } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
@@ -59,7 +60,7 @@
 <div class="flex flex-col h-full" data-consolidation-status={ruleset?.status ?? 'none'}>
   <!-- Hero — kanji + eyebrow + title + description + count minis -->
   <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
-    <span class="kanji text-4xl text-accent leading-none">結</span>
+    <Kanji char="結" size="inherit" tone="inherit" class="text-4xl text-accent leading-none" />
     <div class="flex-1 min-w-0">
       <p class="m-0 mb-1"><Eyebrow>Governance · Ruleset consolidation</Eyebrow></p>
       <h1 class="display text-xl font-normal m-0 text-ink">
@@ -147,7 +148,7 @@
           <span class="text-xs uppercase tracking-wider text-accent font-medium">
             {meta?.approvable ? 'Proposed merged ruleset' : 'Merged ruleset'}
           </span>
-          <span class="kanji text-sm text-accent">新</span>
+          <Kanji char="新" size="inherit" tone="inherit" class="text-sm text-accent" />
         </div>
 
         <div class="bg-paper-soft border border-accent rounded-lg py-3 px-4 mb-5">

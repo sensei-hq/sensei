@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
   import { PageHeader, EmptyState, ScreenState } from '$lib/components';
   import { Button } from '@rokkit/ui';
@@ -80,7 +81,7 @@
   >
     <div class="flex items-center gap-2 mb-2">
       <span class="inline-flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded-full {pill.bg} {pill.text}">
-        <span class="kanji">{pill.kanji}</span>
+        <Kanji char={pill.kanji} size="inherit" tone="inherit" class="" />
         <span class="uppercase tracking-wide">{pill.label}</span>
       </span>
       {@render chip(shareStateChip(item.state))}
@@ -117,7 +118,7 @@
     class="border border-paper-edge bg-paper-soft rounded-lg p-4 mb-6"
   >
     <div class="flex items-baseline gap-3 mb-2">
-      <span class="kanji text-lg text-accent">旅</span>
+      <Kanji char="旅" size="inherit" tone="inherit" class="text-lg text-accent" />
       <h2 class="display text-lg font-normal m-0">Where your batch went</h2>
       <span class="font-mono text-xs text-ink-soft" data-outcome-summary>{outcomeSummary(outcome)}</span>
     </div>
@@ -179,7 +180,7 @@
       data-policy-bar
       data-batch={batch.batch_id}
     >
-      <span class="kanji text-sm text-ink-mute">規</span>
+      <Kanji char="規" size="inherit" tone="inherit" class="text-sm text-ink-mute" />
       <span class="text-xs text-ink-soft">Destination</span>
       {#if unbound}
         <span class="font-mono text-xs px-2 py-0.5 rounded-full bg-warning-soft text-warning" data-unbound
@@ -191,7 +192,7 @@
             class="inline-flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded-full bg-accent-soft text-accent"
             data-destination
           >
-            <span class="kanji">結</span>{d}
+            <Kanji char="結" size="inherit" tone="inherit" class="" />{d}
           </span>
         {/each}
       {/if}
@@ -240,7 +241,7 @@
           onclick={onPublish}
           disabled={!canPublish}
         >
-          <span class="kanji">共</span>{publishButtonLabel(nShip)}
+          <Kanji char="共" size="inherit" tone="inherit" class="" />{publishButtonLabel(nShip)}
         </Button>
       {/if}
     </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { onMount } from 'svelte';
   import { wizardState } from '$lib/wizard-state.svelte.js';
   import Switch from '$lib/components/Switch.svelte';
@@ -30,7 +31,7 @@
 
   {#if loading}
     <div data-testid="libraries-loading" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
-      <span class="kanji text-4xl text-accent opacity-20 block mb-4">書</span>
+      <Kanji char="書" size="inherit" tone="inherit" class="text-4xl text-accent opacity-20 block mb-4" />
       <p class="text-sm text-ink-soft">Loading libraries…</p>
     </div>
   {:else if error}
@@ -40,7 +41,7 @@
     </div>
   {:else if libs.length === 0}
     <div data-testid="libraries-empty" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
-      <span class="kanji text-4xl text-accent opacity-20 block mb-4">書</span>
+      <Kanji char="書" size="inherit" tone="inherit" class="text-4xl text-accent opacity-20 block mb-4" />
       <p class="text-sm text-ink-soft">No libraries detected yet. Run the scan stage first.</p>
     </div>
   {:else}

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
@@ -59,7 +60,7 @@
     <!-- header: type pill · state chip · dereferenced badge · received-at -->
     <div class="flex items-center gap-2 mb-2">
       <span class="inline-flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded-full {pill.bg} {pill.text}">
-        <span class="kanji">{pill.kanji}</span>
+        <Kanji char={pill.kanji} size="inherit" tone="inherit" class="" />
         <span class="uppercase tracking-wide">{pill.label}</span>
       </span>
       {@render chip(stateChip(up.state))}
@@ -129,7 +130,7 @@
     <!-- typed descriptor + project mono -->
     <div class="flex items-center gap-2 mb-1">
       <span class="inline-flex items-center gap-1 text-xs {toneClass(kind)}">
-        <span class="kanji text-xs">{meta.kanji}</span>
+        <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xs" />
         <span class="uppercase tracking-wide">{meta.title}</span>
       </span>
       <span class="flex-1"></span>
@@ -168,7 +169,7 @@
     <section class="mb-8" data-upgrade-bucket={kind}>
       <!-- bucket header mirrors the mockup: big kanji + title + count + sub -->
       <div class="flex items-baseline gap-3 mb-1">
-        <span class="kanji text-xl {toneClass(kind)}">{meta.kanji}</span>
+        <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xl {toneClass(kind)}" />
         <h2 class="display text-lg font-normal m-0">{meta.title}</h2>
         <span class="font-mono text-xs {toneClass(kind)}">{items.length}</span>
       </div>

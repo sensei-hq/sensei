@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
     const pillars = [
         { kanji: "観", title: "Observe", sub: "FTR · turns · corrections" },
         { kanji: "師", title: "Teach", sub: "patterns · rules · skills" },
@@ -8,7 +9,7 @@
 
 <div class="max-w-[680px] mt-2.5">
     <div class="text-xs text-ink-soft tracking-wide uppercase mb-2">
-        <span class="kanji text-accent mr-1.5 opacity-80">礼</span>· Welcome
+        <Kanji char="礼" size="inherit" tone="inherit" class="text-accent mr-1.5 opacity-80" />· Welcome
     </div>
     <h1
         class="display text-4xl font-light leading-[1.08] m-0 mb-8 tracking-tight"
@@ -33,9 +34,7 @@
     >
         {#each pillars as pillar}
             <div>
-                <div class="kanji text-2xl text-accent mb-2">
-                    {pillar.kanji}
-                </div>
+                <Kanji char={pillar.kanji} size="inherit" tone="inherit" class="block text-2xl text-accent mb-2" />
                 <div class="display text-xl">{pillar.title}</div>
                 <div class="text-xs text-ink-soft mt-1">{pillar.sub}</div>
             </div>

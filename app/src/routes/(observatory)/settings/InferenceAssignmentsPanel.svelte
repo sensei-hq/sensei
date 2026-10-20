@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { onMount } from 'svelte';
   import { Select } from '@rokkit/ui';
   import { appState } from '$lib/appstate.svelte.js';
@@ -156,7 +157,7 @@
         {@const options = optionsFor(role)}
         {@const status = saveStatus[role]}
         <div class="grid grid-cols-[28px_1fr_auto] gap-3 py-4 items-start" data-testid={`inference-role-${role}`}>
-          <span class="kanji text-xl text-accent leading-none mt-1">{meta.kanji}</span>
+          <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xl text-accent leading-none mt-1" />
           <div class="min-w-0">
             <div class="text-sm text-ink font-medium">{meta.label}</div>
             <div class="text-xs text-ink-soft mt-0.5">{meta.hint}</div>

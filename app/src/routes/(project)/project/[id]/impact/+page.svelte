@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import { invalidateAll } from '$app/navigation';
@@ -122,7 +123,7 @@
             onclick={() => (selectedId = v.id)}
           >
             <div class="flex items-center gap-2 mb-1">
-              <span class="kanji text-sm {toneClass(vm.tone)}">{vm.glyph}</span>
+              <Kanji char={vm.glyph} size="inherit" tone="inherit" class="text-sm {toneClass(vm.tone)}" />
               <span class="text-xs uppercase tracking-wider {toneClass(vm.tone)}">{v.verdict}</span>
               <span class="flex-1"></span>
               <span
@@ -164,7 +165,7 @@
               class:bg-paper-mute={selectedVm.tone === 'ink'}
               class:border-paper-edge={selectedVm.tone === 'ink'}
             >
-              <span class="kanji text-sm {toneClass(selectedVm.tone)}">{selectedVm.glyph}</span>
+              <Kanji char={selectedVm.glyph} size="inherit" tone="inherit" class="text-sm {toneClass(selectedVm.tone)}" />
               <span class="text-xs uppercase tracking-wider font-medium {toneClass(selectedVm.tone)}">
                 {selectedVm.label}
               </span>

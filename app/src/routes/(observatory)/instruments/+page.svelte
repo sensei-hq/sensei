@@ -423,7 +423,7 @@
             <aside class="bg-paper-soft border-r border-paper-edge flex flex-col overflow-hidden">
                 <!-- Search box -->
                 <div class="flex items-center gap-2 py-3 px-3 border-b border-paper-edge">
-                    <span class="kanji text-xs text-ink-mute">探</span>
+                    <Kanji char="探" size="inherit" tone="inherit" class="text-xs text-ink-mute" />
                     <input
                         type="text"
                         class="border-none outline-none bg-transparent text-sm text-ink flex-1"
@@ -801,7 +801,7 @@
                                             <div class="font-mono text-sm text-ink">{call.toolName}</div>
                                         </div>
                                         <span class="inline-flex items-center gap-1 py-1 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide {kindColor}">
-                                            <span class="kanji text-xs">{kindGlyph}</span>
+                                            <Kanji char={kindGlyph} size="inherit" tone="inherit" class="text-xs" />
                                             {call.verdict ?? (call.success === false ? 'error' : 'query')}
                                         </span>
                                     </div>
@@ -866,7 +866,7 @@
 {#snippet KpiCard(kanji: string, label: string, value: string, hint: string)}
     <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
         <div class="flex items-center gap-1 mb-1">
-            <span class="kanji text-sm text-accent">{kanji}</span>
+            <Kanji char={kanji} size="inherit" tone="inherit" class="text-sm text-accent" />
             <span class="text-xs uppercase tracking-wide text-ink-mute">{label}</span>
         </div>
         <div class="display text-xl" style='font-feature-settings: "tnum";'>{value}</div>
@@ -961,7 +961,7 @@
         <div class="grid grid-cols-4 gap-3 mb-5">
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
-                    <span class="kanji text-sm text-accent">計</span>
+                    <Kanji char="計" size="inherit" tone="inherit" class="text-sm text-accent" />
                     <span class="text-xs uppercase tracking-wide text-ink-mute">total calls</span>
                 </div>
                 <div class="display text-xl" style='font-feature-settings: "tnum";'>{totalCalls.toLocaleString()}</div>
@@ -969,7 +969,7 @@
             </div>
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
-                    <span class="kanji text-sm text-accent">誤</span>
+                    <Kanji char="誤" size="inherit" tone="inherit" class="text-sm text-accent" />
                     <span class="text-xs uppercase tracking-wide text-ink-mute">errors</span>
                 </div>
                 <div class="display text-xl" style='font-feature-settings: "tnum";' class:text-warning={totalErrors > 0}>
@@ -981,7 +981,7 @@
             </div>
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
-                    <span class="kanji text-sm text-accent">警</span>
+                    <Kanji char="警" size="inherit" tone="inherit" class="text-sm text-accent" />
                     <span class="text-xs uppercase tracking-wide text-ink-mute">signals</span>
                 </div>
                 <div class="display text-xl" style='font-feature-settings: "tnum";' class:text-warning={warnTools > 0}>
@@ -993,7 +993,7 @@
             </div>
             <div class="py-3 px-3 bg-paper-soft border border-paper-edge rounded-md">
                 <div class="flex items-center gap-1 mb-1">
-                    <span class="kanji text-sm text-accent">眠</span>
+                    <Kanji char="眠" size="inherit" tone="inherit" class="text-sm text-accent" />
                     <span class="text-xs uppercase tracking-wide text-ink-mute">dormant</span>
                 </div>
                 <div class="display text-xl" style='font-feature-settings: "tnum";' class:text-warning={dormantTools > 0}>

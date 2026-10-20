@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
     import { PageHeader } from '$lib/components';
     import type { PatternEntry } from '$lib/types.js';
 
@@ -44,11 +45,12 @@
             onclick={() => toggle(p.id)}
         >
             <!-- kanji marker: 紋 for pattern, 禁 for anti-pattern -->
-            <span
-                class="kanji text-base w-5 text-center"
-                class:text-accent={!anti}
-                class:text-warning={anti}
-            >{anti ? '禁' : '紋'}</span>
+            <Kanji
+                char={anti ? '禁' : '紋'}
+                size="inherit"
+                tone="inherit"
+                class="text-base w-5 text-center {anti ? 'text-warning' : 'text-accent'}"
+            />
             <div class="flex-1 min-w-0">
                 <p class="m-0 text-sm text-ink truncate">{p.name}</p>
                 <p class="m-0 mt-0.5 text-xs text-ink-soft flex items-center gap-2">

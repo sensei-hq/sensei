@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
     import { railIcon } from "../observatory-nav";
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
@@ -67,12 +68,12 @@
     data-count={count}
   >
     <div class="flex items-baseline gap-2 pt-4 pb-3 px-5 border-b border-paper-edge">
-      <span
-        class="kanji text-xl leading-none"
-        class:text-accent={tone === 'now'}
-        class:text-warning={tone === 'soon'}
-        class:text-success={tone === 'settled'}
-      >{kanji}</span>
+      <Kanji
+        char={kanji}
+        size="xl"
+        tone="inherit"
+        class={tone === 'now' ? 'text-accent' : tone === 'soon' ? 'text-warning' : tone === 'settled' ? 'text-success' : ''}
+      />
       <div class="flex-1 min-w-0">
         <div class="text-sm text-ink font-medium">{title}</div>
         <div class="text-xs text-ink-soft mt-0.5">{sub}</div>
@@ -182,7 +183,7 @@
       role="alert"
       class="flex items-center gap-2 py-2 px-6 bg-danger-soft border-b border-paper-edge shrink-0"
     >
-      <span class="kanji text-xs text-danger">警</span>
+      <Kanji char="警" size="inherit" tone="inherit" class="text-xs text-danger" />
       <span class="text-xs text-danger">{board.actionError}</span>
     </div>
   {/if}

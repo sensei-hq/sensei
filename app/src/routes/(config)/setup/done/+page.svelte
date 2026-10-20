@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { wizardState, familyIsConfigured } from '$lib/wizard-state.svelte.js';
 
   const assistantsConfigured = $derived(
@@ -66,7 +67,7 @@
   >
     {#each summary as s}
       <div class="flex items-start gap-3 bg-paper-mute border border-paper-edge rounded-md p-4">
-        <span class="kanji text-2xl text-accent leading-none mt-1">{s.kanji}</span>
+        <Kanji char={s.kanji} size="inherit" tone="inherit" class="text-2xl text-accent leading-none mt-1" />
         <div class="min-w-0">
           <div class="text-sm text-ink font-medium">{s.label}</div>
           <div class="text-xs text-ink-soft mt-0.5">{s.sub}</div>
@@ -86,7 +87,7 @@
       { kanji: '静', label: 'Local', sub: 'nothing leaves your machine' },
     ] as s}
       <div>
-        <div class="kanji text-2xl text-accent mb-2">{s.kanji}</div>
+        <Kanji char={s.kanji} size="inherit" tone="inherit" class="block text-2xl text-accent mb-2" />
         <div class="display text-base">{s.label}</div>
         <div class="text-xs text-ink-soft mt-1">{s.sub}</div>
       </div>

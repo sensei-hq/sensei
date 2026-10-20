@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { Select } from '@rokkit/ui';
@@ -146,7 +147,7 @@
 <div class="flex flex-col h-full" data-screen="atlas" data-atlas-repo={data.repoId}>
   <!-- Header -->
   <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
-    <span class="kanji text-3xl text-accent leading-none">図</span>
+    <Kanji char="図" size="inherit" tone="inherit" class="text-3xl text-accent leading-none" />
     <div class="flex-1 min-w-0">
       <p class="m-0 mb-1"><Eyebrow>This project · Atlas</Eyebrow></p>
       <h1 class="display text-xl font-normal m-0">Code graph</h1>

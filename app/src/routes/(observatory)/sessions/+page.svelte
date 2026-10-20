@@ -154,7 +154,7 @@
         data-mode={digest.miniMode}
         onclick={() => digest.cycleMiniMode()}
       >
-        <span class="kanji text-sm text-accent leading-none">{MINI_GLYPH[digest.miniMode]}</span>
+        <Kanji char={MINI_GLYPH[digest.miniMode]} size="inherit" tone="inherit" class="text-sm text-accent leading-none" />
       </button>
     </div>
   </header>
@@ -181,7 +181,7 @@
     <!-- Chart frame — chip group selects the full chart area -->
     <section class="pt-5 pb-4 px-6">
       <div class="flex items-baseline gap-3 mb-3 pb-2 border-b border-paper-edge">
-        <span class="kanji text-base text-accent">{CHIP_META[digest.chart].kanji}</span>
+        <Kanji char={CHIP_META[digest.chart].kanji} size="inherit" tone="inherit" class="text-base text-accent" />
         <h2 class="display text-base font-normal m-0 text-ink capitalize">Sessions · {digest.chart}</h2>
         <span class="text-xs text-ink-mute">· {CHIP_META[digest.chart].sub}</span>
         <span class="flex-1"></span>
@@ -238,7 +238,7 @@
     <!-- Session list -->
     <section class="pb-8 px-6">
       <div class="flex items-baseline gap-3 mb-2 pb-2 border-b border-paper-edge">
-        <span class="kanji text-base text-accent">刻</span>
+        <Kanji char="刻" size="inherit" tone="inherit" class="text-base text-accent" />
         <h2 class="display text-base font-normal m-0 text-ink">Sessions</h2>
         <span class="text-xs text-ink-mute">· newest first, click to replay</span>
         <span class="flex-1"></span>

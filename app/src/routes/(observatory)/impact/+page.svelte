@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { EmptyState, Eyebrow, MoeReasoningPanel } from '$lib/components';
   import {
     formatDeltaPct,
@@ -33,7 +34,7 @@
 <div class="flex flex-col h-full" data-impact-total={data.total}>
   <!-- Header — kanji + eyebrow + title + description + 4 verdict counts -->
   <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
-    <span class="kanji text-3xl text-accent leading-none">果</span>
+    <Kanji char="果" size="inherit" tone="inherit" class="text-3xl text-accent leading-none" />
     <div class="flex-1 min-w-0">
       <p class="m-0 mb-1"><Eyebrow>Observatory · Change impact</Eyebrow></p>
       <h1 class="display text-xl font-normal m-0">Did sensei's advice actually work?</h1>
@@ -87,7 +88,7 @@
             onclick={() => (openId = r.id)}
           >
             <div class="flex items-center gap-2">
-              <span class="kanji text-sm {toneClass(vm.tone)}">{vm.glyph}</span>
+              <Kanji char={vm.glyph} size="inherit" tone="inherit" class="text-sm {toneClass(vm.tone)}" />
               <span class="text-xs uppercase tracking-wider {toneClass(vm.tone)}">{r.verdict}</span>
               <span class="flex-1"></span>
               <span
@@ -136,7 +137,7 @@
               class:border-warning={openVm.tone === 'warning'}
               class:border-paper-edge={openVm.tone === 'ink'}
             >
-              <span class="kanji text-sm {toneClass(openVm.tone)}">{openVm.glyph}</span>
+              <Kanji char={openVm.glyph} size="inherit" tone="inherit" class="text-sm {toneClass(openVm.tone)}" />
               <span class="text-xs uppercase tracking-wider font-medium {toneClass(openVm.tone)}">
                 {openVm.label}
               </span>

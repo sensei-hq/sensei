@@ -41,16 +41,6 @@ export function isSolarBoldDuotone(icon: string, solar: Set<string>): boolean {
   return m !== null && solar.has(m[1]);
 }
 
-/** One mark, resolved for a mode (#133). */
-export type Glyph = { kind: 'kanji' | 'icon'; value: string };
-
-/** The mark to show for an entry outside a rokkit List. */
-export function glyphOf(entry: { kanji: string; icon?: string }, mode: GlyphMode): Glyph {
-  return mode === 'icon' && entry.icon
-    ? { kind: 'icon', value: entry.icon }
-    : { kind: 'kanji', value: entry.kanji };
-}
-
 const GLYPH_CONTEXT = Symbol('glyph-mode');
 
 /** Provide the glyph mode to every component below (#133). The root layout

@@ -114,6 +114,7 @@ export const KANJI_ICONS: Record<string, string> = {
   '表': 'i-solar-database-bold-duotone',
   '聴': 'i-solar-headphones-round-bold-duotone',
   '源': 'i-solar-database-bold-duotone',
+  '難': 'i-solar-sad-circle-bold-duotone',
 };
 
 /** Marks that are identities, not vocabulary: an assistant's own kanji. They

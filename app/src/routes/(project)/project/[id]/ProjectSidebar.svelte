@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
     import { page } from '$app/state';
     import { Eyebrow } from '$lib/components';
     import { ftrPctLabel } from '$lib/ftr.js';
@@ -96,7 +97,7 @@
                 class="proj-nav-item flex items-center gap-2.5 px-4 py-2 no-underline text-inherit text-sm transition-colors duration-fast"
                 class:active
             >
-                <span class="kanji w-4 text-center" aria-hidden="true">{section.kanji}</span>
+                <Kanji char={section.kanji} size="inherit" tone="inherit" class="w-4 text-center" />
                 <span>{section.label}</span>
             </a>
         {/each}
