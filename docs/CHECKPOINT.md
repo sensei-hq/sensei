@@ -16,9 +16,8 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #133 slice 3b: `PageHeader` (it already takes `icon`; give it
-`mode` and pass each screen's icon), the replay verdicts (用/部/無) and libraries — via `<Kanji icon mode>`.
-Then the dōjō nav.
+**Next command:** `/sensei:session refocus`, then #133 slice 4: the remaining inline kanji — `rg -n 'class="kanji'
+app/src` — each list gains an `icon` and renders via `<Kanji icon>` (the mode comes from context). Then the dōjō nav.
 
 **Open questions:**
 - #133: project glyphs in icon mode. Keep each project's inferred kanji (recommended), or use one generic icon?
