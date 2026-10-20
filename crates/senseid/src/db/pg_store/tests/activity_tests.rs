@@ -1011,12 +1011,13 @@ async fn importing_the_same_staged_event_twice_keeps_one_row() {
     s.execute_raw("CALL staging.import_assistant_events()").await.unwrap();
     s.execute_raw("CALL staging.import_assistant_events()").await.unwrap();
 
-    let (n,): (i64,) =
-        sqlx_core::query_as::query_as("SELECT count(*) FROM activity.assistant_events WHERE session_id = $1")
-            .bind(&session)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
+    let (n,): (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM activity.assistant_events WHERE session_id = $1",
+    )
+    .bind(&session)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     for sql in [
         "DELETE FROM staging.assistant_events WHERE session_id = $1",
         "DELETE FROM activity.assistant_events WHERE session_id = $1",
