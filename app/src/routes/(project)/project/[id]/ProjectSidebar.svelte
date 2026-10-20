@@ -2,7 +2,7 @@
     import Kanji from '$lib/components/Kanji.svelte';
     import { page } from '$app/state';
     import { Eyebrow } from '$lib/components';
-    import { ftrPctLabel } from '$lib/ftr.js';
+    import { ftrReadLabel } from '$lib/ftr.js';
     import MetricSparkline from '$lib/components/MetricSparkline.svelte';
     import ProjectGlyph from '../../../(observatory)/projects/ProjectGlyph.svelte';
     import type { ProjectIcon } from '../../../(observatory)/projects/buckets.js';
@@ -26,6 +26,8 @@
         ftr14dPrev?: number | null;
         ftrTrend?: number[];
         sessions7d?: number | null;
+        /** Why the FTR could not be read, or null — then the value says "unavailable" (#288). */
+        ftrError?: string | null;
     }
     let {
         projectId,
@@ -36,6 +38,7 @@
         ftr14dPrev = null,
         ftrTrend = [],
         sessions7d = null,
+        ftrError = null,
     }: Props = $props();
 
     // FTR leads the Health readout below (a spark + delta), matching the mock; the
@@ -113,7 +116,8 @@
             <span
                 data-ftr-value
                 class="display text-2xl font-light leading-none tabular-nums {band === 'warning' ? 'text-warning' : 'text-ink'}"
-                >{ftrPctLabel(ftr14d)}</span
+                title={ftrError}
+                >{ftrReadLabel({ data: { ftr14d }, error: ftrError })}</span
             >
             {#if ftrTrend.length}
                 <MetricSparkline series={ftrTrend} tone={sparkTone} />

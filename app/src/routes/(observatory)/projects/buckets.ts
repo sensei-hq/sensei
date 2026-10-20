@@ -1,10 +1,11 @@
 import type { GlyphMode } from '$lib/glyphs';
 import type { ProjectListItem } from '$lib/types.js';
+import { failureReason, type ApiResult } from '$lib/api.js';
 
 /** One row in the segmented Projects list — a project enriched with the
  *  signals shown on its card (FTR%, 7-day sessions, warning dot) plus the
  *  list-endpoint aggregates the card/row render (repos/libs/last-session/
- *  vision). Counts are normalized to numbers in `+page.ts` so the pure
+ *  vision). Counts are normalized to numbers by `baseProject` so the pure
  *  components never have to reach for a fallback. */
 export interface EnrichedProject extends ProjectListItem {
   /** 14-day FTR, 0..1 — null when the project has no analyzed sessions in the
@@ -18,6 +19,36 @@ export interface EnrichedProject extends ProjectListItem {
   libs_count: number;
   last_session_at: string | null;
   vision: string | null;
+  /** Why the card's quality reads (FTR, signals) failed, or null (#288). The
+   *  card then says "unavailable" — not a blank rate, not a made-up warning. */
+  readError: string | null;
+}
+
+/** A project's card from the list payload alone, before any quality read. */
+export function baseProject(p: ProjectListItem): EnrichedProject {
+  return {
+    ...p,
+    ftr14d: null,
+    sessions7d: p.sessions7d ?? 0,
+    warn: false,
+    repos_count: p.repos_count ?? 0,
+    libs_count: p.libs_count ?? 0,
+    last_session_at: p.last_session_at ?? null,
+    vision: p.vision ?? null,
+    readError: null,
+  };
+}
+
+/** The card with its quality reads applied: the rate and the warning, or —
+ *  when either read failed — the reason, and neither (#288). */
+export function withQuality(
+  base: EnrichedProject,
+  ftr: ApiResult<{ ftr14d: number | null }>,
+  signals: ApiResult<{ open_drift_count: number; ftr_7d: number }>,
+): EnrichedProject {
+  if (!ftr.ok) return { ...base, readError: failureReason(ftr.error) };
+  if (!signals.ok) return { ...base, readError: failureReason(signals.error) };
+  return { ...base, ftr14d: ftr.data.ftr14d, warn: isWarning(signals.data, base.sessions7d) };
 }
 
 /** The three mutually-exclusive buckets the screen surfaces. A project

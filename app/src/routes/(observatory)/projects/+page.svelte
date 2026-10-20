@@ -3,7 +3,8 @@
   import { Toggle } from '@rokkit/ui';
   import type { ProxyItem } from '@rokkit/states';
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
-  import { Eyebrow } from '$lib/components';
+  import { invalidateAll } from '$app/navigation';
+  import { Eyebrow, ScreenState } from '$lib/components';
   import { projectStatus, type EnrichedProject } from './buckets.js';
   import { projectsView, type ProjectFilter, type ProjectView } from './projects-view.svelte.js';
   import ProjectCard from './ProjectCard.svelte';
@@ -11,17 +12,20 @@
 
   let { data } = $props();
 
+  // No buckets means the list could not be read (#288): the page shows that
+  // error, never an empty index.
+  const buckets = $derived(data.buckets ?? { active: [], dormant: [], archived: [] });
   const allProjects = $derived<EnrichedProject[]>([
-    ...data.buckets.active,
-    ...data.buckets.dormant,
-    ...data.buckets.archived,
+    ...buckets.active,
+    ...buckets.dormant,
+    ...buckets.archived,
   ]);
 
   const counts = $derived({
     all:      allProjects.length,
-    active:   data.buckets.active.length,
-    dormant:  data.buckets.dormant.length,
-    archived: data.buckets.archived.length,
+    active:   buckets.active.length,
+    dormant:  buckets.dormant.length,
+    archived: buckets.archived.length,
   });
 
   // Buckets arrive pre-ordered (active by FTR, then dormant, then archived),
@@ -74,6 +78,7 @@
   </div>
 
   <!-- Filter chips + view toggle + search -->
+  {#if !data.error}
   <div class="py-3 px-7 gap-4 border-b border-paper-edge flex items-center">
     <Toggle
       options={filterOptions}
@@ -127,9 +132,13 @@
     </span>
   </div>
 
+  {/if}
+
   <!-- Body -->
   <main class="flex-1 overflow-auto pt-5 pb-6 px-7">
-    {#if counts.all === 0}
+    {#if data.error}
+      <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+    {:else if counts.all === 0}
       <p class="text-sm text-ink-soft opacity-70 py-6 text-center">
         No projects yet. Set up a project to get started.
       </p>

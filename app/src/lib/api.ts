@@ -324,7 +324,9 @@ export function senseiApi(port: number) {
     /** Error-propagating reads/writes for Settings · Projects (#271): a failed
      *  load is an error state, never an empty list, and a role save that fails
      *  is rolled back and reported rather than silently kept on screen. */
-    tryListProjects: () => tryGet<DaemonProject[]>('/api/projects'),
+    // One read of the list, typed as the wire carries it: the settings and
+    // setup view (`DaemonProject`) and the projects-index view (`ProjectListItem`).
+    tryListProjects: () => tryGet<Array<DaemonProject & ProjectListItem>>('/api/projects'),
     tryUpdateFolder: (id: string, patch: { role?: string | null }) =>
       tryPut(`/api/folders/${enc(id)}`, patch),
 
@@ -341,11 +343,10 @@ export function senseiApi(port: number) {
       post<SolutionAnalysis | null>(`/api/projects/${enc(id)}/analyze`, {}, null),
 
     // ── Project detail (new multi-window endpoints) ───────────────────
-    getProjectFtr: (id: string) =>
-      get<{ ftr14d: number | null; ftr14dPrev: number | null; ftrTrend: number[]; sessions7d: number }>(
+    /** A project's FTR headline (14d / prior / trend / 7d). */
+    tryGetProjectFtr: (id: string) =>
+      tryGet<{ ftr14d: number | null; ftr14dPrev: number | null; ftrTrend: number[]; sessions7d: number }>(
         `/api/projects/${enc(id)}/ftr`,
-        // Fallback on a fetch error is honest no-data (null), never a fabricated 0%.
-        { ftr14d: null, ftr14dPrev: null, ftrTrend: [], sessions7d: 0 }
       ),
 
     // ── Project metrics (registry-driven) ─────────────────────────────
@@ -695,10 +696,9 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/hotspots?days=${days}`,
       ),
 
-    getProjectQualitySignals: (id: string) =>
-      get<{ ftr_7d: number; pattern_compliance: number | null; open_drift_count: number; test_pass_rate: number | null }>(
+    tryGetProjectQualitySignals: (id: string) =>
+      tryGet<{ ftr_7d: number; pattern_compliance: number | null; open_drift_count: number; test_pass_rate: number | null }>(
         `/api/projects/${enc(id)}/quality-signals`,
-        { ftr_7d: 0, pattern_compliance: null, open_drift_count: 0, test_pass_rate: null }
       ),
 
     getToolUsage: () =>

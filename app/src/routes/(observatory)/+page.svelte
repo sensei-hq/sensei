@@ -6,6 +6,7 @@
   import InsightCard from './InsightCard.svelte';
   import AdoptedCard from './AdoptedCard.svelte';
   import { ftrChip, ftrBars, greetingLine } from './today-view.svelte.js';
+  import { FTR_UNAVAILABLE } from '$lib/ftr.js';
   import type { PageData } from './$types.js';
 
   let { data }: { data: PageData } = $props();
@@ -39,7 +40,7 @@
         <p class="m-0 mb-1"><Eyebrow>First-Try-Right · 14d</Eyebrow></p>
         <div class="flex items-baseline gap-2 justify-end">
           {#if !chip}
-            <span data-ftr-error title={data.ftrError} class="text-sm text-danger">unavailable</span>
+            <span data-ftr-error title={data.ftrError} class="text-sm text-danger">{FTR_UNAVAILABLE}</span>
           {:else if chip.value === null}
             <span class="display text-3xl font-normal text-ink-mute">—</span>
           {:else}

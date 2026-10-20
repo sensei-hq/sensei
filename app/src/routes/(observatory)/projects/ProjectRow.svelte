@@ -6,7 +6,7 @@
   // lines. Presentational only.
   import type { EnrichedProject } from './buckets.js';
   import { projectStatus, projectIcon, lastSessionLabel } from './buckets.js';
-  import { ftrPctLabel } from '$lib/ftr.js';
+  import { ftrPctLabel, FTR_UNAVAILABLE } from '$lib/ftr.js';
   import { apiBase } from '$lib/api.js';
   import { glyphMode } from '$lib/glyphs';
   import { appState } from '$lib/appstate.svelte.js';
@@ -64,7 +64,12 @@
   <!-- col 3 — signal -->
   <div class="font-mono text-xs text-right tabular-nums whitespace-nowrap">
     {#if status === 'active'}
-      <span class:text-warning={p.warn} class:text-ink-soft={!p.warn}>{ftrLabel} ftr</span>
+      {#if p.readError}
+        <!-- The quality reads failed (#288): said so, never a blank rate. -->
+        <span data-ftr-unavailable title={p.readError} class="text-danger">{FTR_UNAVAILABLE} ftr</span>
+      {:else}
+        <span class={p.warn ? 'text-warning' : 'text-ink-soft'}>{ftrLabel} ftr</span>
+      {/if}
     {:else}
       <span class="text-ink-faint">last · {lastSessionLabel(p.last_session_at)}</span>
     {/if}

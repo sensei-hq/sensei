@@ -41,6 +41,10 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   // #288 — Observatory · Today.
   { name: 'tryGetObservatoryToday', call: () => api().tryGetObservatoryToday(), body: { dataMaturity: 'mature' } },
   { name: 'tryGetObservatoryFtr', call: () => api().tryGetObservatoryFtr(), body: { ftr14d: 0.8 } },
+  // #288 — projects index and project layout.
+  { name: 'tryGetProjectFtr', call: () => api().tryGetProjectFtr('p1'), body: { ftr14d: 0.8 } },
+  { name: 'tryGetProjectQualitySignals', call: () => api().tryGetProjectQualitySignals('p1'), body: { ftr_7d: 0.9 } },
+  { name: 'tryListProjects', call: () => api().tryListProjects(), body: [] },
 ];
 
 describe('F8 · error-propagating loaders (no fabrication on failure)', () => {
@@ -91,6 +95,6 @@ describe('legacy fallback reads (#288)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
     const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(46);
+    expect(reads.length).toBeLessThanOrEqual(44);
   });
 });

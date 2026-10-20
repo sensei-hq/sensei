@@ -12,6 +12,7 @@
     ftr14d = 0.9,
     sessions7d = 4,
     warn = false,
+    readError = null,
     repos_count = 3,
     libs_count = 12,
     last_session_at = null,
@@ -26,6 +27,7 @@
     ftr14d?: number;
     sessions7d?: number;
     warn?: boolean;
+    readError?: string | null;
     repos_count?: number;
     libs_count?: number;
     last_session_at?: string | null;
@@ -44,6 +46,7 @@
     ftr14d,
     sessions7d,
     warn,
+    readError,
     repos_count,
     libs_count,
     last_session_at,

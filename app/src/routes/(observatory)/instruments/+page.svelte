@@ -4,7 +4,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi, readOutcome } from "$lib/api.js";
     import type { ObservatoryFtr } from "$lib/types.js";
-    import { firstTryKpi } from "./health-kpis";
+    import { ftrReadLabel } from "$lib/ftr.js";
     import TabBar from "$lib/components/TabBar.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
@@ -909,7 +909,7 @@
             )}
             {@render KpiCard(
                 '一', 'first-try rate',
-                firstTryKpi(holisticFtr),
+                ftrReadLabel(holisticFtr),
                 'holistic · 14d',
             )}
         </div>

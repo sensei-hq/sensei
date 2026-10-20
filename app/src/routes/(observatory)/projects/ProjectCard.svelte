@@ -6,7 +6,7 @@
   // derivation is a pure helper from buckets.ts.
   import type { EnrichedProject } from './buckets.js';
   import { projectStatus, projectIcon, lastSessionLabel } from './buckets.js';
-  import { ftrPct } from '$lib/ftr.js';
+  import { ftrPct, FTR_UNAVAILABLE } from '$lib/ftr.js';
   import { apiBase } from '$lib/api.js';
   import { glyphMode } from '$lib/glyphs';
   import { appState } from '$lib/appstate.svelte.js';
@@ -71,7 +71,15 @@
   <!-- Stat grid -->
   {#if status === 'active'}
     <div class="grid grid-cols-3 gap-2 pt-2 border-t border-paper-edge">
-      {@render stat('ftr', ftrStat, p.warn ? 'warn' : 'default')}
+      {#if p.readError}
+        <!-- The quality reads failed (#288): said so, never a blank rate. -->
+        <div data-ftr-unavailable title={p.readError} class="flex flex-col h-full">
+          <div class="text-xs uppercase tracking-[0.08em] text-ink-mute leading-tight">ftr</div>
+          <div class="text-xs text-danger mt-auto leading-tight">{FTR_UNAVAILABLE}</div>
+        </div>
+      {:else}
+        {@render stat('ftr', ftrStat, p.warn ? 'warn' : 'default')}
+      {/if}
       {@render stat('repos', p.repos_count, 'default')}
       {@render stat('libs', p.libs_count, 'default')}
     </div>

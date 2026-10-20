@@ -49,6 +49,7 @@
             ftr14dPrev={data.ftrMetrics?.ftr14dPrev ?? null}
             ftrTrend={data.ftrMetrics?.ftrTrend ?? []}
             sessions7d={data.ftrMetrics?.sessions7d ?? null}
+            ftrError={data.ftrError}
         />
 
         <main data-component="project-main" data-section={section} class="flex-1 overflow-y-auto">
