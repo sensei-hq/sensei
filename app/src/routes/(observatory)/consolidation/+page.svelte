@@ -12,6 +12,7 @@
     diffStats,
     type ConsolidatedRuleset,
   } from './consolidation-view.js';
+  import { ConsolidationState } from './consolidation-state.svelte.js';
 
   let { data } = $props();
 
@@ -22,40 +23,11 @@
   // scope, resolved daemon-side), so the "rules on disk" delta is omitted.
   const stats = $derived(ruleset ? diffStats(ruleset, null) : []);
 
-  // Action lifecycle — idle while nothing runs, then a per-action busy flag so
-  // the buttons show activity within ~1s (immediate-feedback rule) and can't be
-  // double-fired. `notice` carries the last skip/error message honestly.
-  let busy = $state<'consolidate' | 'approve' | null>(null);
-  let notice = $state<string | null>(null);
-
-  async function consolidate() {
-    busy = 'consolidate';
-    notice = null;
-    const res = await senseiApi(appState.port).consolidateRules();
-    busy = null;
-    if (!res.ok) {
-      notice = res.error.message || 'consolidation failed — try again';
-      return;
-    }
-    if ('skipped' in res.data && res.data.skipped) {
-      notice = res.data.reason;
-      return;
-    }
-    await invalidateAll();
-  }
-
-  async function approve() {
-    if (!ruleset) return;
-    busy = 'approve';
-    notice = null;
-    const res = await senseiApi(appState.port).approveConsolidatedRuleset(ruleset.id);
-    busy = null;
-    if (!res.ok) {
-      notice = res.error.message || 'approval failed — try again';
-      return;
-    }
-    await invalidateAll();
-  }
+  // The actions and their busy / notice state live in ConsolidationState.
+  const cs = new ConsolidationState();
+  const api = $derived(senseiApi(appState.port));
+  const consolidate = () => cs.consolidate(api, invalidateAll);
+  const approve = () => (ruleset ? cs.approve(api, ruleset.id, invalidateAll) : undefined);
 </script>
 
 <Screen data-consolidation-status={ruleset?.status ?? 'none'}>
@@ -100,13 +72,13 @@
         type="button"
         class="zs-btn zs-btn-primary"
         data-action="consolidate"
-        disabled={busy !== null}
+        disabled={cs.busy !== null}
         onclick={consolidate}
       >
-        {busy === 'consolidate' ? 'consolidating…' : 'consolidate now'}
+        {cs.busy === 'consolidate' ? 'consolidating…' : 'consolidate now'}
       </button>
-      {#if notice}
-        <p class="text-sm text-ink-soft italic m-0" data-notice>{notice}</p>
+      {#if cs.notice}
+        <p class="text-sm text-ink-soft italic m-0" data-notice>{cs.notice}</p>
       {/if}
     </div>
   {:else}
@@ -168,24 +140,24 @@
               type="button"
               class="zs-btn zs-btn-primary"
               data-action="approve"
-              disabled={busy !== null}
+              disabled={cs.busy !== null}
               onclick={approve}
             >
-              {busy === 'approve' ? 'approving…' : 'approve · merge & keep'}
+              {cs.busy === 'approve' ? 'approving…' : 'approve · merge & keep'}
             </button>
           {/if}
           <button
             type="button"
             class="zs-btn zs-btn-secondary"
             data-action="consolidate"
-            disabled={busy !== null}
+            disabled={cs.busy !== null}
             onclick={consolidate}
           >
-            {busy === 'consolidate' ? 'consolidating…' : 're-consolidate'}
+            {cs.busy === 'consolidate' ? 'consolidating…' : 're-consolidate'}
           </button>
           <span class="flex-1"></span>
-          {#if notice}
-            <span class="text-sm text-ink-soft italic" data-notice>{notice}</span>
+          {#if cs.notice}
+            <span class="text-sm text-ink-soft italic" data-notice>{cs.notice}</span>
           {/if}
         </div>
       </div>
