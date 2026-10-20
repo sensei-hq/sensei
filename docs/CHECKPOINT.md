@@ -7,8 +7,7 @@
   #133 implementation complete (awaiting two decisions).
 - #283 live: `running_since` + "running for", a per-pass limit ("still running after Ns"), a daemon that never
   prompts for the keychain, and an "Approve keychain access" action.
-- #287 scope live (fcb71823, 2228a97a): rework placed by path in the project's indexed repos, once per event;
-  617 → 371 rows here, none outside. Backfill resets by project_id (12 projects had reset nothing).
+- #287 closed: rework placed by path, once per event; Patterns folds it into one "rework hotspots" (618 → 2).
 
 **Remaining:**
 - #283: verify the approve round trip after the user clicks it (then close). #133 slice 1 done; then #286,
@@ -21,8 +20,6 @@
 dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
 
 **Open questions:**
-- #287 granularity: serve rework as one "rework hotspots" pattern grouped by directory (recommended), keeping
-  per-file rows as the signal behind `rework_density` and the per-file recommendations?
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
 - #149: communities — Leiden/Louvain (recommended, measured the same way) or hierarchy grouping?
 - #133: project glyphs in icon mode — keep each project's inferred kanji (recommended), or one generic icon?
@@ -34,7 +31,7 @@ dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's de
 - The orphaned Cloudflare build trigger fails every develop push: delete it? 8 CodeQL test-file alerts to triage.
 
 **Known-broken / pending:**
-- dōjō sync on this machine fails with "keychain access needs approval" until you click "Approve keychain
-  access" (sign-in overlay or Settings → dōjō). Its GitHub token is also expired, so a sign-in follows.
+- dōjō sync still fails with "keychain access needs approval": senseid is signed ad hoc, so each rebuild drops
+  the grant (#283). `make dev-signing-cert` → reinstall → Approve, Always Allow. A GitHub sign-in follows.
 - #284: inspect captures stay blank until `make dev-signing-cert` + a one-time Screen Recording grant.
 - `/api/projects/{id}/icon` 404s for projects whose checkout is gone. `database/design.dbml` is stale.

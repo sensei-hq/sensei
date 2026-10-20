@@ -127,13 +127,15 @@ The settings screen lists them as repositories.
     runs `make dev-signing-cert` and grants Screen Recording once.
   - #283 (found via #96): **parts 1–3 live** — `running_since` + "running for", a per-pass limit that records
     "still running after Ns", and a daemon that never prompts (`NeedsApproval`; only sign-in/out and router-key
-    saves may ask), and an "Approve keychain access" action. Open only for the user's click to be seen working.
+    saves may ask), and an "Approve keychain access" action. Approved by the user 2026-10-20, but it does not
+    stick: `senseid` is signed ad hoc, so each rebuild drops the grant. Needs `make dev-signing-cert` (the user's),
+    a reinstall, then "Always Allow". Also to do: the approve endpoint should log its outcome.
   - ~~#285~~ **Closed 2026-10-20**: `KeyStanding` replaces `has_key`; a withheld router key reads
     `configured: null` + `key_error`, and image generation answers 503 "unreadable", not 400 "not configured".
   - ~~#286~~ **Closed 2026-10-20**: `tryListGatewayRouters`; a failed read is the Providers error state.
   - ~~#85~~ **Closed 2026-10-20**: Overview hotspots and patterns in use; the overview/patterns reads fail as
     errors, not as an all-quiet project.
-  - #287 (found via #85): **scope fixed and live.** Rework is placed by path inside the project's indexed repositories, each event counted once, and a re-derive replaces the `suggested` rows. This project went from 617 rows to 371, none outside it. Backfill now resets sessions by project. Open: the granularity decision (recommended: one "rework hotspots" pattern grouped by directory).
+  - ~~#287~~ **Closed 2026-10-20**: rework is placed by path inside the project's repositories and counted once per event (617 → 371 rows, none outside). The Patterns view folds the unreviewed rows into one "rework hotspots" anti-pattern, grouped by directory and ranked by peak re-edits (618 anti-patterns → 2 live).
   - #288 (found via #85): **in progress.** Fallback reads went 72 → 5. Today, the projects index, the project window, Atlas, Impact, Traceability, Upgrades, Insights, Sessions, project Instruments and Memories, Libraries, Settings, the Instruments store, the setup wizard and scan state are converted and verified live. Fixed along the way: a fabricated 404, a fabricated warning dot, a silent scan failure, and an Accept that could mark a rec done without writing its artifact, and a Settings page that could save defaults over the user's settings, and a scan marked done because the daemon stopped answering. 24 dead methods are deleted; a ratchet spec caps the count. Next, the last five: health, the metric-detail tool read, intake, and knowledge memories and sources.
   - ~~#144~~ **Closed 2026-10-20**: a repo-less project (130 of 133 here; zero metric rows each) says why it has
     no metrics.
