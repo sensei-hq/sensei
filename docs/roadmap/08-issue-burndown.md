@@ -145,11 +145,11 @@ The settings screen lists them as repositories.
     (recommended) or hierarchy grouping.
   - #278: **both defects fixed and live** (`unknown`; action tools by outcome). Open to re-measure after #289.
   - ~~#290~~ **Closed 2026-10-20**: a file is where declarations are. Atlas shows 2,096 modules and 11,823 exports (was 0 / 0), and `rework_density` is written again (371/2096 = 0.177, its first row since 2026-10-07). Traceability says "no documents indexed" instead of "no drift".
-  - #292 (found via #290): indexer v2 has no markdown adapter, so doc drift never scans a document.
+  - #292 (found via #290): indexer v2 has no markdown adapter, so doc drift never scans a document. **Decision open:** a markdown LanguageAdapter emitting `doc` nodes and references (recommended), docs kept out of the graph, or leave drift off.
   - #289 (found via #278): 26% of assistant events are duplicates (non-idempotent staging import, now fixed).
     Removing the existing 167,932 awaits the user's OK.
 - **Dōjō:**
-  - #132: 16 inline font sizes.
+  - #132: steps 1–2 done. No literal `font-size` remains in the dōjō (a spec guards it); sign-in verified at 13/11px. Remaining: step 3, comparing each screen with its mockup.
   - #106: last fixture imports, plus a vitest guard.
   - #191: kavach 1.2.0.
 - **Code health:**

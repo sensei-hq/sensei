@@ -19,21 +19,21 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #292 (markdown adapter for indexer v2), dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
+**Next command:** `/sensei:session refocus`, then #132 step 3 (dōjō screens vs mockups), #292 once decided, dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
 
 **Open questions:**
+- #292: how markdown enters indexer v2. A LanguageAdapter emitting `doc` nodes and references (recommended), docs out of the graph, or drift left off?
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
 - #149: communities — Leiden/Louvain (recommended, measured the same way) or hierarchy grouping?
 - #133: project glyphs in icon mode — keep each project's inferred kanji (recommended), or one generic icon?
 - #133: the dōjō glyph default — kanji (recommended, shipped on develop) or icons?
-- Run `make dev-signing-cert` once so local installs keep their keychain and folder grants. #282 (releases)
-  needs an Apple Developer account.
+- #282 (releases) needs an Apple Developer account.
 - #199: on headless Linux, an encrypted-file credential store, or stop publishing Linux daemon artifacts?
 - #194: drop the 145k/day `task_started`/`task_completed` rows from `public.logs`?
 - The orphaned Cloudflare build trigger fails every develop push: delete it? 8 CodeQL test-file alerts to triage.
 
 **Known-broken / pending:**
-- dōjō sync still fails with "keychain access needs approval": senseid is signed ad hoc, so each rebuild drops
-  the grant (#283). `make dev-signing-cert` → reinstall → Approve, Always Allow. A GitHub sign-in follows.
+- dōjō sync still fails with "keychain access needs approval" (#283): senseid is now signed with `sensei-dev`;
+  click Approve keychain access → Always Allow once. A GitHub sign-in follows.
 - #284: inspect captures stay blank until `make dev-signing-cert` + a one-time Screen Recording grant.
 - `/api/projects/{id}/icon` 404s for projects whose checkout is gone. `database/design.dbml` is stale.
