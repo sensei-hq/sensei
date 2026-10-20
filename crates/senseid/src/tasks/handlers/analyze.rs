@@ -787,7 +787,7 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
 
 /// Rework/churn anti-pattern name for a file.
 fn churn_pattern_name(file: &str) -> String {
-    format!("rework: {file}")
+    format!("{}{file}", crate::rework_hotspots::REWORK_PREFIX)
 }
 
 /// Churn confidence from the max re-edits in a single session (caps at 10).

@@ -728,6 +728,9 @@ export interface PatternEntry {
   ftrDelta?: number | null;
   /** How many code sites carry this pattern (or the anti-pattern). */
   instanceCount?: number;
+  /** For the folded "rework hotspots" anti-pattern (#287): its files, grouped
+   *  by top-level directory, largest group first. */
+  groups?: Array<{ directory: string; files: string[] }>;
 }
 
 export interface Recommendation {

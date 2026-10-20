@@ -93,6 +93,25 @@
                     </div>
                 {/if}
 
+                {#if p.groups?.length}
+                    <div>
+                        <span class="text-xs uppercase tracking-wide opacity-60">Files by directory</span>
+                        <ul class="list-none m-0 mt-1 p-0 flex flex-col gap-2">
+                            {#each p.groups as g (g.directory)}
+                                <li data-testid={`pattern-group-${g.directory}`}>
+                                    <span class="text-xs font-mono text-ink">{g.directory}</span>
+                                    <span class="text-xs font-mono text-ink-faint ml-1">{g.files.length}</span>
+                                    <ul class="list-none m-0 mt-0.5 p-0 pl-3">
+                                        {#each g.files as file (file)}
+                                            <li class="text-xs font-mono text-ink-soft break-all">{file}</li>
+                                        {/each}
+                                    </ul>
+                                </li>
+                            {/each}
+                        </ul>
+                    </div>
+                {/if}
+
                 {#if p.example}
                     <div>
                         <span class="text-xs uppercase tracking-wide opacity-60">Example</span>

@@ -45,6 +45,7 @@ pub mod ranking;
 pub mod relay_drivers;
 pub mod resolution;
 mod review;
+mod rework_hotspots;
 pub mod run_limits;
 pub mod run_watchdog;
 pub mod runs;

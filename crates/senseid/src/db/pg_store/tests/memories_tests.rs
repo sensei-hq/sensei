@@ -1498,3 +1498,51 @@ async fn repositories_for_project_lists_repos_primary_first() {
         .await
         .ok();
 }
+
+/// #287: the Patterns view folds the unreviewed `rework: <file>` rows into one
+/// "rework hotspots" anti-pattern; a rework row the user promoted, and every
+/// other pattern, still reads as itself. The per-file rows stay in the table.
+#[tokio::test]
+async fn project_patterns_fold_unreviewed_rework_into_hotspots() {
+    let s = pg_store().await;
+    let suffix = format!("rework_fold_{}", uuid::Uuid::new_v4());
+    let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let none = serde_json::json!([]);
+    for name in ["rework: crates/a.rs", "rework: docs/b.md"] {
+        s.upsert_pattern(&proj_id, Some(&fid), name, true, Some(0.6), &none).await.unwrap();
+    }
+    let kept = s
+        .upsert_pattern(&proj_id, Some(&fid), "rework: crates/kept.rs", true, Some(0.9), &none)
+        .await
+        .unwrap();
+    s.promote_pattern(&kept, "rule").await.unwrap();
+    s.upsert_pattern(&proj_id, Some(&fid), "correction-prone", true, Some(0.5), &none)
+        .await
+        .unwrap();
+
+    let view = s.get_project_patterns(&proj_id).await.unwrap();
+    let mut anti: Vec<(String, i64)> = view["antiPatterns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (p["name"].as_str().unwrap().to_string(), p["instanceCount"].as_i64().unwrap_or(-1))
+        })
+        .collect();
+    anti.sort();
+
+    sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE project_id = $1")
+        .bind(proj_id)
+        .execute(s.pool())
+        .await
+        .ok();
+    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        .bind(proj_id)
+        .execute(s.pool())
+        .await
+        .ok();
+
+    let names: Vec<&str> = anti.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, vec!["correction-prone", "rework hotspots", "rework: crates/kept.rs"]);
+    assert_eq!(anti.iter().find(|(n, _)| n == "rework hotspots").unwrap().1, 2);
+}

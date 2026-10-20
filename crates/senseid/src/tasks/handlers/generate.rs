@@ -119,11 +119,6 @@ fn first_principle(instances: &serde_json::Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// The file a `rework: <file>` churn pattern points at.
-fn rework_file(name: &str) -> Option<&str> {
-    name.strip_prefix("rework: ").map(str::trim)
-}
-
 /// Max single-session re-edits recorded on a churn pattern's instances
 /// (L1 writes `[{file, max_session_edits, total_edits}]`). 0 if absent.
 fn rework_max_edits(instances: &serde_json::Value) -> i64 {
@@ -199,7 +194,7 @@ pub(crate) fn plan_artifacts(patterns: &[PatternRow]) -> Vec<Planned> {
                 if rework_max_edits(&p.instances) < REWORK_REC_MIN_EDITS {
                     continue;
                 }
-                let file = rework_file(other).unwrap_or(other);
+                let file = crate::rework_hotspots::rework_file(other).unwrap_or(other);
                 out.push(Planned::Recommendation {
                     source_pattern: p.id,
                     title: format!("High rework: {file}"),

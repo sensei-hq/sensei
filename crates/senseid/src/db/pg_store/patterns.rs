@@ -1391,9 +1391,21 @@ impl PgStore {
                 "enforcement":   enforcement,
             })
         };
+        // Unreviewed rework rows fold into one "rework hotspots" anti-pattern
+        // (#287) — one row per file flooded the view. A promoted one reads as
+        // itself: the user reviewed that file.
+        let (rework, anti): (Vec<_>, Vec<_>) = anti.into_iter().partition(|r| {
+            r.4 == "suggested" && crate::rework_hotspots::rework_file(&r.1).is_some()
+        });
+        let files: Vec<(String, Option<f64>)> = rework
+            .iter()
+            .filter_map(|r| crate::rework_hotspots::rework_file(&r.1).map(|f| (f.to_string(), r.5)))
+            .collect();
+        let mut anti_patterns: Vec<serde_json::Value> = anti.into_iter().map(map_row).collect();
+        anti_patterns.extend(crate::rework_hotspots::hotspots(&files));
         Ok(serde_json::json!({
             "followed": followed.into_iter().map(map_row).collect::<Vec<_>>(),
-            "antiPatterns": anti.into_iter().map(map_row).collect::<Vec<_>>(),
+            "antiPatterns": anti_patterns,
         }))
     }
 
