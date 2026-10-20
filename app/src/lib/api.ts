@@ -301,7 +301,6 @@ export function senseiApi(port: number) {
       del(`/api/repos/${enc(repoId)}/tags/${enc(tag)}`),
 
     // ── Projects (groups of 1+ repos) ───────────────────────────────────
-    listProjects: () => get<ProjectListItem[]>('/api/projects', []),
 
     createProject: (project: object) =>
       post<{ ok: boolean; id?: string }>('/api/projects', project, { ok: false }),

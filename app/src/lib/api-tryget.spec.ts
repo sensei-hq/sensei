@@ -145,7 +145,7 @@ describe('legacy fallback reads (#288)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
     const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(6);
+    expect(reads.length).toBeLessThanOrEqual(5);
   });
 });
 
