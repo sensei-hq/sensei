@@ -1322,8 +1322,6 @@ export function senseiApi(port: number) {
     get addProjectTag() { return this.addRepoTag; },
     /** @deprecated Use removeRepoTag */
     get removeProjectTag() { return this.removeRepoTag; },
-    /** @deprecated Use listProjects */
-    get listSolutions() { return this.listProjects; },
     /** @deprecated Use createProject */
     get createSolution() { return this.createProject; },
     /** @deprecated Use updateProject */
