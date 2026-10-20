@@ -168,21 +168,22 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
 /// Separate from the cycle so the cycle is reachable in a test: token resolution
 /// needs the real Keychain, and everything after it does not.
 async fn persona_token(persona: &str) -> Result<String, String> {
-    match live_access_token(persona).await {
-        Ok(t) => Ok(t),
-        Err(e) => {
-            // Distinguished rather than collapsed: "sign in again" is worth
-            // saying out loud, a network blip is not worth saying at all.
-            let needs_sign_in = e.needs_sign_in();
-            Err(match e {
-                AuthError::SignedOut => "no stored session".to_string(),
-                AuthError::Rejected(d) => format!("session rejected, sign in again: {d}"),
-                AuthError::Unreachable(d) if !needs_sign_in => {
-                    format!("dōjō unreachable, session kept: {d}")
-                }
-                AuthError::Unreachable(d) => d,
-            })
+    live_access_token(persona).await.map_err(token_failure)
+}
+
+/// Why a persona has no usable token, as the pass reports it. Distinguished
+/// rather than collapsed: "sign in again" is worth saying out loud, a network
+/// blip is not worth saying at all.
+fn token_failure(e: AuthError) -> String {
+    let needs_sign_in = e.needs_sign_in();
+    match e {
+        AuthError::SignedOut => "no stored session".to_string(),
+        AuthError::Rejected(d) => format!("session rejected, sign in again: {d}"),
+        AuthError::Unreachable(d) if !needs_sign_in => {
+            format!("dōjō unreachable, session kept: {d}")
         }
+        AuthError::Unreachable(d) => d,
+        AuthError::CredentialUnreadable(d) => format!("stored session unreadable: {d}"),
     }
 }
 
@@ -1010,6 +1011,16 @@ async fn recapture_and_replan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #283: a Keychain that would not answer is said as itself — the dōjō
+    /// was never asked, so "dōjō unreachable" would send the user the wrong way.
+    #[test]
+    fn an_unreadable_credential_is_not_reported_as_the_dojo() {
+        let why =
+            token_failure(AuthError::CredentialUnreadable("keychain access needs approval".into()));
+        assert!(why.contains("keychain access needs approval"), "{why}");
+        assert!(!why.contains("dōjō unreachable"), "{why}");
+    }
 
     // ── graph_outcome: a checkout push's sync state (#225) ──────────────────
 

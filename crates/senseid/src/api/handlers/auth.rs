@@ -582,6 +582,10 @@ pub(crate) enum AuthError {
     /// The dōjō could not be reached, or failed — or the stored session could
     /// not be read (#283). Transient: the stored session was left alone.
     Unreachable(String),
+    /// The stored session could not be read — the Keychain declined without
+    /// asking (#283). The session is still there; nothing was cleared, and
+    /// signing in again is not what it needs.
+    CredentialUnreadable(String),
 }
 
 /// The detail, so callers can report the cause without destructuring.
@@ -592,7 +596,9 @@ impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SignedOut => write!(f, "no stored session"),
-            Self::Rejected(d) | Self::Unreachable(d) => write!(f, "{d}"),
+            Self::Rejected(d) | Self::Unreachable(d) | Self::CredentialUnreadable(d) => {
+                write!(f, "{d}")
+            }
         }
     }
 }
@@ -601,6 +607,18 @@ impl AuthError {
     /// Whether the user has to sign in again, as opposed to just waiting.
     pub(crate) fn needs_sign_in(&self) -> bool {
         matches!(self, Self::SignedOut | Self::Rejected(_))
+    }
+}
+
+/// What `GET /api/auth/status` says went wrong, one line per kind of failure.
+fn status_error(e: &AuthError) -> &'static str {
+    match e {
+        AuthError::SignedOut => "no stored session — sign in",
+        AuthError::Rejected(_) => "stored session was rejected — sign in again",
+        AuthError::Unreachable(_) => "could not reach dōjō — the stored session was left alone",
+        AuthError::CredentialUnreadable(_) => {
+            "could not read the stored session — the keychain needs approval"
+        }
     }
 }
 
@@ -632,7 +650,7 @@ fn stored_session(
 ) -> Result<String, AuthError> {
     read.map_err(|e| match e {
         crate::gateway_keys::KeychainError::NotFound => AuthError::SignedOut,
-        other => AuthError::Unreachable(format!("stored session unreadable: {other}")),
+        other => AuthError::CredentialUnreadable(other.to_string()),
     })
 }
 
@@ -750,11 +768,8 @@ pub(crate) async fn status(
                 "dojo": dojo_url(),
             }));
         }
-        Err(e @ (AuthError::Rejected(_) | AuthError::Unreachable(_))) => {
-            let detail = match &e {
-                AuthError::Rejected(d) | AuthError::Unreachable(d) => d.clone(),
-                AuthError::SignedOut => unreachable!("handled above"),
-            };
+        Err(e) => {
+            let detail = e.to_string();
             return Json(serde_json::json!({
                 "signedIn": false,
                 "persona": p.persona,
@@ -764,11 +779,7 @@ pub(crate) async fn status(
                 // a GoTrue 504 — telling a signed-in user to re-authenticate
                 // over an outage that had nothing to do with their credential.
                 "needsSignIn": e.needs_sign_in(),
-                "error": if e.needs_sign_in() {
-                    "stored session was rejected — sign in again"
-                } else {
-                    "could not reach dōjō — the stored session was left alone"
-                },
+                "error": status_error(&e),
                 "detail": detail,
                 "dojo": dojo_url(),
             }));
@@ -1317,7 +1328,7 @@ mod tests {
         use crate::gateway_keys::KeychainError;
         assert!(matches!(stored_session(Err(KeychainError::NotFound)), Err(AuthError::SignedOut)));
         match stored_session(Err(KeychainError::NeedsApproval)) {
-            Err(e @ AuthError::Unreachable(_)) => {
+            Err(e @ AuthError::CredentialUnreadable(_)) => {
                 assert!(e.to_string().contains("needs approval"), "{e}");
                 assert!(!e.needs_sign_in());
             }
