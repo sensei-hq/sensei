@@ -63,7 +63,9 @@ use crate::db::pg_store::sync::SyncMark;
 use crate::dojo::memberships::NewConnection;
 use crate::dojo_client::dojo_auth;
 use crate::dojo_client::settings::dojo_url;
-use crate::dojo_client::user_plane::{self, HttpUserPlane, MyMembership, RepoInput, UserPlane};
+use crate::dojo_client::user_plane::{
+    self, HttpUserPlane, MyMembership, RepoInput, RepoProjectInput, UserPlane,
+};
 
 /// How many repositories one pass will offer for registration at a time.
 ///
@@ -349,6 +351,8 @@ async fn plan_persona(
             repo_key: &r.repo_key,
             remote_url: r.remote_url.as_deref(),
             name: &r.name,
+            // The repository's sensei project, so the dōjō files it there (#299).
+            project: r.project.as_ref().map(|p| RepoProjectInput { slug: &p.slug, name: &p.name }),
         })
         .collect();
 
@@ -374,6 +378,12 @@ async fn plan_persona(
         }
     };
     for m in &registered.mapped {
+        // Filing under the project failed though the registration stood (#299):
+        // said, so a project that never appears in the dōjō has a reason on record.
+        if let Some(e) = &m.project_error {
+            tracing::warn!(persona, repo = m.repo_key, error = %e,
+                           "dojo_sync: the dōjō could not file this repository under its project");
+        }
         match uuid::Uuid::parse_str(&m.tenant_id) {
             // Store what the dōjō said, never a guess: an unparseable tenant id
             // is a bug on one side or the other, and writing a placeholder would
@@ -1303,6 +1313,7 @@ mod tests {
         }
         fn allowed(repo_key: &str) -> MappedRepo {
             MappedRepo {
+                project_error: None,
                 repo_key: repo_key.into(),
                 tenant: "organization/acme".into(),
                 tenant_id: "11111111-1111-1111-1111-111111111111".into(),
@@ -1394,6 +1405,7 @@ mod tests {
 
     fn mapped(repo_key: &str, tenant_id: &str) -> MappedRepo {
         MappedRepo {
+            project_error: None,
             repo_key: repo_key.to_string(),
             tenant: "organization/ztest".to_string(),
             tenant_id: tenant_id.to_string(),
@@ -2403,6 +2415,7 @@ mod tests {
         fn plan_tracking(repo_key: &str, branches: &[&str]) -> SyncPlan {
             SyncPlan {
                 allowed: vec![MappedRepo {
+                    project_error: None,
                     repo_key: repo_key.into(),
                     tenant: "organization/acme".into(),
                     tenant_id: "t".into(),

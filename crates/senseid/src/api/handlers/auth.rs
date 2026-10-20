@@ -1363,10 +1363,8 @@ mod default_persona_tests {
 
     #[test]
     fn the_identity_owning_the_global_email_is_the_default() {
-        let got = resolve_default(
-            Some("dev@example.com"),
-            &[owner("jerrythomas", Some("jerrythomas"))],
-        );
+        let got =
+            resolve_default(Some("dev@example.com"), &[owner("jerrythomas", Some("jerrythomas"))]);
         assert_eq!(
             got,
             Ok(DefaultPersona { label: "jerrythomas".into(), slot: "jerrythomas".into() })
