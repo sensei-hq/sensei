@@ -87,6 +87,8 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
     // they are in icon mode — see #133.)
     for (const [route, ready, sel] of [
       ['/settings/projects', '[data-role-icon]', '[data-role-icon]'],
+      // Slice 3: the Instruments tabs, hero, groups and kind marks.
+      ['/instruments', '[data-component="glyph-icon"]', '[data-component="glyph-icon"]'],
     ] as const) {
       // Bounded, so a miss fails here instead of running out the test clock
       // and skipping the `finally` that restores the preference.

@@ -55,3 +55,29 @@ describe('Kanji', () => {
     for (const re of expected) expect(el.className).toMatch(re);
   });
 });
+
+// #133: the same mark in icon mode — the icon when there is one, at the same
+// size and tone; the kanji when there is not, never an empty slot.
+describe('Kanji in icon mode', () => {
+  it('renders the icon instead of the kanji', () => {
+    const m = mountComponent(Kanji, { char: '具', icon: 'i-solar-test-tube-bold-duotone', mode: 'icon', size: 'sm' });
+    cleanup.push(m.destroy);
+    const el = m.container.querySelector('[data-component="glyph-icon"]') as HTMLElement;
+    expect(el.className).toContain('i-solar-test-tube-bold-duotone');
+    expect(el.className).toContain('text-sm');
+    expect(el.className).toContain('text-accent');
+    expect(m.container.querySelector('[data-component="kanji"]')).toBeNull();
+  });
+
+  it('keeps the kanji in kanji mode, and when there is no icon', () => {
+    for (const props of [
+      { char: '具', icon: 'i-solar-test-tube-bold-duotone', mode: 'kanji' as const },
+      { char: '禅', mode: 'icon' as const },
+    ]) {
+      const m = mountComponent(Kanji, props);
+      cleanup.push(m.destroy);
+      expect(m.container.querySelector('[data-component="kanji"]')?.textContent).toBe(props.char);
+      expect(m.container.querySelector('[data-component="glyph-icon"]')).toBeNull();
+    }
+  });
+});

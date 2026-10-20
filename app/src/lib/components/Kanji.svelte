@@ -2,11 +2,15 @@
   type Size = 'xs' | 'sm' | 'base' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | 'screen';
   type Tone = 'accent' | 'muted' | 'watermark' | 'success' | 'warning';
 
+  import type { GlyphMode } from '$lib/glyphs';
+
   let {
     char,
     size = 'base',
     tone = 'accent',
-  }: { char: string; size?: Size; tone?: Tone } = $props();
+    icon,
+    mode = 'kanji',
+  }: { char: string; size?: Size; tone?: Tone; icon?: string; mode?: GlyphMode } = $props();
 
   const sizeClass = $derived(
     ({
@@ -35,7 +39,12 @@
   );
 </script>
 
-<span
-  data-component="kanji"
-  class="kanji leading-none {sizeClass} {toneClass}"
->{char}</span>
+{#if mode === 'icon' && icon}
+  <!-- #133: the icon that stands for this kanji, at the same size and tone. -->
+  <span data-component="glyph-icon" class="{icon} {sizeClass} {toneClass}" aria-hidden="true"></span>
+{:else}
+  <span
+    data-component="kanji"
+    class="kanji leading-none {sizeClass} {toneClass}"
+  >{char}</span>
+{/if}

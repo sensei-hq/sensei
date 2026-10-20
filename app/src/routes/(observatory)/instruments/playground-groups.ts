@@ -17,6 +17,8 @@ export type PlaygroundTool = {
 export type PlaygroundGroup = {
   id: string;
   kanji: string;
+  /** Icon-mode mark (#133); absent for an assistant's own mark. */
+  icon?: string;
   name: string;
   installed: boolean;
   source: 'sensei' | 'discovered';
@@ -46,6 +48,10 @@ const FAMILIES: Array<{ family: string; label: string; kanji: string }> = [
   { family: 'zed', label: 'Zed', kanji: '禅' },
 ];
 const UNKNOWN_KANJI = '器';
+/** Icon-mode marks (#133). The assistants keep their kanji: they are
+ *  identities, and Solar has no logo for them. */
+const SENSEI_ICON = 'i-solar-ruler-pen-bold-duotone';
+const UNKNOWN_ICON = 'i-solar-plug-circle-bold-duotone';
 
 /** Third-party catalogs rarely declare a kind: a mutating verb is an action,
  *  a getter / list / search a query. */
@@ -66,6 +72,7 @@ export function buildPlaygroundGroups(
     {
       id: 'sensei',
       kanji: '具',
+      icon: SENSEI_ICON,
       name: 'Sensei',
       installed: true,
       source: 'sensei',
@@ -88,9 +95,11 @@ export function buildPlaygroundGroups(
         kind: inferKind(t.name, undefined),
         summary: typeof t.description === 'string' ? t.description : '',
       }));
+    const family = FAMILIES.find((f) => f.family === server.acp_family);
     groups.push({
       id: server.id,
-      kanji: FAMILIES.find((f) => f.family === server.acp_family)?.kanji ?? UNKNOWN_KANJI,
+      kanji: family?.kanji ?? UNKNOWN_KANJI,
+      icon: family ? undefined : UNKNOWN_ICON,
       name: server.mcp_key,
       installed: server.enabled,
       source: 'discovered',

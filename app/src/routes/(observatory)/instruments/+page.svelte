@@ -6,10 +6,12 @@
     import TabBar from "$lib/components/TabBar.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
-    import { Eyebrow, PageHeader } from "$lib/components";
+    import { Eyebrow, Kanji, PageHeader } from "$lib/components";
     import { Button, Select } from "@rokkit/ui";
     import { mcp, toolVerdict } from "$lib/state/mcp.svelte.js";
     import { buildPlaygroundGroups, serversByFamily, type PlaygroundTool } from "./playground-groups.js";
+    import { INSTRUMENT_TABS, kindMark } from "./instrument-marks";
+    import { glyphMode } from "$lib/glyphs";
     import ToolHealthCard from "./ToolHealthCard.svelte";
     import type {
         McpToolManifest, SessionToolCall, SessionReplayCall, ToolHealthSource,
@@ -175,23 +177,13 @@
     });
 
     // Custom tab set matching the mockup (docs/mockups/Sensei/lib/instruments.jsx).
-    // Each tab has a kanji glyph + label + one-line hint. The third tab is
-    // named "Health" (renamed from Insights per the mockup) — it's a
-    // toolset-health surface, not the Observatory's top-level Insights view.
-    // 'insights' is kept as the historical id so bookmarks / e2e testids
-    // don't churn; the visible label is "Health".
-    const instrumentTabs: Array<{ id: string; kanji: string; label: string; hint: string }> = [
-        { id: 'playground', kanji: '具', label: 'Playground', hint: 'what can these instruments do?' },
-        { id: 'replay',     kanji: '録', label: 'Replay',     hint: 'what did the assistant do?' },
-        { id: 'insights',   kanji: '健', label: 'Health',     hint: 'what should we change?' },
-    ];
-
-    // Kind chips carry a kanji glyph per the mockup (全 all, 作 actions, 問 queries).
-    const kindChips: Array<{ id: 'all' | 'query' | 'action'; label: string; kanji: string }> = [
-        { id: 'all',    label: 'All',     kanji: '全' },
-        { id: 'action', label: 'Actions', kanji: '作' },
-        { id: 'query',  label: 'Queries', kanji: '問' },
-    ];
+    // Tabs and kind marks carry a kanji AND an icon (#133); the data lives in
+    // instrument-marks.ts. The third tab is labelled "Health" — 'insights' is
+    // kept as its id so bookmarks / e2e testids don't churn.
+    const instrumentTabs = INSTRUMENT_TABS;
+    const glyphs = $derived(glyphMode(appState.config));
+    const kindTone = (kind: PlaygroundTool['kind']) =>
+        kind === 'action' ? 'accent' : kind === 'query' ? 'success' : 'muted';
 
     // Playground search — narrows the visible tool list on top of the kind
     // filter. Applied client-side so filter changes are instant.
@@ -382,7 +374,7 @@
      scrolls. -->
 <div class="sticky top-0 z-20 bg-paper">
     <div class="flex items-end gap-4 pt-5 pb-4 px-7 border-b border-paper-edge" data-testid="instruments-hero">
-        <div class="kanji text-4xl text-accent leading-none">{currentTab.kanji}</div>
+        <Kanji char={currentTab.kanji} icon={currentTab.icon} mode={glyphs} size="4xl" />
         <div class="flex-1 min-w-0">
             <div class="text-xs uppercase tracking-[0.18em] text-ink-mute mb-1">
                 Instruments · {currentTab.label}
@@ -406,7 +398,7 @@
                 data-testid={`instrument-tab-${t.id}`}
                 onclick={() => (tab = t.id)}
             >
-                <span class="kanji text-sm" class:text-accent={on} class:text-ink-mute={!on}>{t.kanji}</span>
+                <Kanji char={t.kanji} icon={t.icon} mode={glyphs} size="sm" tone={on ? 'accent' : 'muted'} />
                 <span class="display text-sm">{t.label}</span>
             </button>
         {/each}
@@ -460,7 +452,7 @@
                                     class="font-mono text-xs text-ink-mute transition-transform duration-fast"
                                     style="transform: {collapsed ? 'none' : 'rotate(90deg)'};"
                                 >▶</span>
-                                <span class="kanji text-sm text-accent">{group.kanji}</span>
+                                <Kanji char={group.kanji} icon={group.icon} mode={glyphs} size="sm" />
                                 <span class="text-sm truncate">{group.name}</span>
                                 <span></span>
                                 <span class="font-mono text-xs text-ink-faint">{group.tools.length}</span>
@@ -485,7 +477,7 @@
                                 {#each group.tools as tool (tool.id)}
                                     {@const active = focusedTool?.id === tool.id}
                                     {@const isAction = tool.kind === 'action'}
-                                    {@const kindGlyph = isAction ? '作' : tool.kind === 'query' ? '問' : '·'}
+                                    {@const mark = kindMark(tool.kind)}
                                     <button
                                         class="w-full grid grid-cols-[32px_14px_1fr] gap-1 py-1 pl-1 pr-3 text-left bg-transparent border-none cursor-pointer"
                                         style="border-left: {active ? '2px solid var(--accent)' : '2px solid transparent'};"
@@ -494,12 +486,7 @@
                                         data-tool-kind={tool.kind}
                                     >
                                         <span></span>
-                                        <span
-                                            class="kanji text-xs"
-                                            class:text-accent={isAction}
-                                            class:text-success={tool.kind === 'query'}
-                                            class:text-ink-mute={tool.kind === 'other'}
-                                        >{kindGlyph}</span>
+                                        <Kanji char={mark.kanji} icon={mark.icon} mode={glyphs} size="xs" tone={kindTone(tool.kind)} />
                                         <span
                                             class="font-mono text-xs truncate"
                                             class:text-ink={active}
@@ -572,13 +559,13 @@
                     {@const isAction = tool.kind === 'action'}
                     {@const kindColor = isAction ? 'accent' : tool.kind === 'query' ? 'success' : 'ink-mute'}
                     {@const kindLabel = isAction ? 'action' : tool.kind === 'query' ? 'query' : 'call'}
-                    {@const kindGlyph = isAction ? '作' : tool.kind === 'query' ? '問' : '·'}
+                    {@const mark = kindMark(tool.kind)}
                     {@const kindHint = isAction ? 'performs an operation' : 'returns information'}
 
                     <!-- Heading -->
                     <div class="mb-4">
                         <div class="flex items-center flex-wrap gap-2 mb-2">
-                            <span class="font-mono text-xs text-ink-mute">{group.kanji} {group.name.toLowerCase()}</span>
+                            <span class="inline-flex items-center gap-1 font-mono text-xs text-ink-mute"><Kanji char={group.kanji} icon={group.icon} mode={glyphs} size="xs" tone="muted" /> {group.name.toLowerCase()}</span>
                             <span class="text-xs text-ink-faint">·</span>
                             <span
                                 class="inline-flex items-center gap-1 py-1 px-2 text-xs bg-paper-soft border border-paper-edge rounded uppercase tracking-wide"
@@ -586,7 +573,7 @@
                                 class:text-success={tool.kind === 'query'}
                                 class:text-ink-mute={tool.kind === 'other'}
                             >
-                                <span class="kanji text-xs">{kindGlyph}</span>
+                                <Kanji char={mark.kanji} icon={mark.icon} mode={glyphs} size="xs" tone={kindTone(tool.kind)} />
                                 {kindLabel}
                             </span>
                         </div>
