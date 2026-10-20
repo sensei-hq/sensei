@@ -113,7 +113,8 @@ The settings screen lists them as repositories.
   - ~~#213~~ **Closed 2026-10-19**: commit-msg and `--stdin` scanning, the right line number, and the
     self-test in every commit.
 - **App:**
-  - #133: the kanji ↔ icon display mode. Solar Bold Duotone icons beside every kanji, one preference,
+  - #133: **slice 1 live** (the `ui.glyphs` switch, Settings → General, both rails in Solar Bold Duotone). Left:
+    project glyphs, `ROLES`, instruments/libraries/filter chips, the dōjō nav. The kanji ↔ icon display mode. Solar Bold Duotone icons beside every kanji, one preference,
     `fields` derived in one place, across the app and the dōjō (scope expanded 2026-10-19).
   - ~~#135~~ **Closed 2026-10-19**: the menu item opens `/help`; the page lists only keys that are bound.
   - ~~#96~~ **Closed 2026-10-19**: next run, avg, last error, and a per-worker log tail (a

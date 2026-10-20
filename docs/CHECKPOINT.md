@@ -10,14 +10,15 @@
 - dbd 0.27.3 (2d77d771), rustls 0.23.46 (c11e19d2).
 
 **Remaining:**
-- #283: verify the approve round trip after the user clicks it (then close). Next in wave 3: #133, then #284,
+- #283: verify the approve round trip after the user clicks it (then close). #133 slice 1 done; then #284,
   #286, #85, #144, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139).
 - #190 (wave 5): a `modules:` design cannot be imported until `project::survey` + `Workspace::load` land.
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #133 (the kanji ↔ icon display mode): read the issue and
-its 2026-10-19 scope note before planning.
+**Next command:** `/sensei:session refocus`, then #133 slice 2: project glyphs (`projectIcon`/`ProjectGlyph`,
+kanji fallback when an icon is missing) and `ROLES` in `$lib/setup/types.ts`, each with a both-values spec.
+Pattern: `$lib/glyphs` (`glyphMode`, `glyphFields`, `isSolarBoldDuotone`).
 
 **Open questions:**
 - Run `make dev-signing-cert` once so local installs keep their keychain and folder grants. #282 (releases)
