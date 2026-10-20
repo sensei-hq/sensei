@@ -35,7 +35,8 @@ import {
 	type ForgeFacts,
 	type ForgeOrg,
 	type ForgeProvider,
-	type ForgeRepoFacts
+	type ForgeRepoFacts,
+	type ForgeUser
 } from './forge-github';
 import { forgeRefFromRepoKey } from './repo-mapping';
 
@@ -463,6 +464,63 @@ async function ensurePersonalTenant(
 }
 
 /**
+ * Connect the personal dōjō to its owner's own forge account (#301).
+ *
+ * `register_repository` files a repository under the tenant its forge owner is
+ * connected to. Org tenants get that connection when they are provisioned; a
+ * personal tenant had none, so every `github.com/{login}/…` repository mapped
+ * to no tenant (`no_connection`) although the personal dōjō exists and its owner
+ * is in it. One mapping path for both, rather than a personal special case.
+ *
+ * Keyed on the account's STABLE id, as an org's is. Run on every pass: it
+ * connects a personal tenant created before this existed, and it follows a
+ * renamed login so new repositories under the new name still map.
+ */
+async function ensurePersonalConnection(
+	db: DojoClient,
+	principalId: string,
+	tenantId: string,
+	provider: ForgeProvider,
+	user: ForgeUser
+): Promise<void> {
+	const now = new Date().toISOString();
+	const found = await db
+		.from('tenant_connections')
+		.select('id, tenant_id, external_slug')
+		.eq('provider', provider)
+		.eq('external_id', user.id)
+		.maybeSingle();
+	if (found.error) throw new AdminError(500, found.error.message);
+
+	const conn = found.data as { id: string; tenant_id: string; external_slug: string } | null;
+	if (conn) {
+		// The account is this person's own, proven by their token this pass; it
+		// cannot belong to another tenant unless the data is wrong. Say so rather
+		// than re-point it or carry on as if connected.
+		if (conn.tenant_id !== tenantId) {
+			throw new AdminError(409, `forge account ${provider}:${user.id} is connected to another tenant`);
+		}
+		const { error } = await db
+			.from('tenant_connections')
+			.update({ external_slug: user.login, verified_at: now })
+			.eq('id', conn.id);
+		if (error) throw new AdminError(500, error.message);
+		return;
+	}
+
+	const { error } = await db.from('tenant_connections').insert({
+		tenant_id: tenantId,
+		provider,
+		external_id: user.id,
+		external_slug: user.login,
+		connected_by: principalId,
+		verified_at: now
+	});
+	// A concurrent pass connected it first: the same row this would have written.
+	if (error && (error as { code?: string }).code !== '23505') throw new AdminError(500, error.message);
+}
+
+/**
  * The tenant for one forge org, created with its connection if this org has
  * never been seen.
  *
@@ -805,6 +863,7 @@ export async function ensureProvisioned(
 		facts.user.name?.trim() || facts.user.login,
 		authenticatedVia
 	);
+	if (personal) await ensurePersonalConnection(db, principalId, personal.id, facts.provider, facts.user);
 
 	const tenants: ProvisionedTenant[] = [];
 	for (const org of facts.orgs) {
