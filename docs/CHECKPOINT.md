@@ -13,7 +13,7 @@
 
 **Remaining:**
 - #293 step 0 done: `Screen` in `packages/ui`, shared; app (522b8092) + dōjō (dcbd9459), neither shell scrolls. Next for #293: steps 1–2. Local-only dōjō verify user exists (admin role).
-- #301 (user): sign in → sync just works. Done on develop: personal tenants connect to their owner's forge account (f111fe41; all 34 personal repos were `no_connection`; needs a dōjō deploy + one sign-in). Auto-elect done (2d92a632; local: 31 of the user's repos sync incl. sensei-hq/sensei). Both need a release + dōjō deploy. Subscription gate kept (decided). #300 done on develop (1a132009, 5d776bee; live check at next daemon install). #295 closed (06482d85, live). Next: #299, #300 (decided), #295, #282.
+- #301 (user): sign in → sync just works. Done on develop: personal tenants connect to their owner's forge account (f111fe41; all 34 personal repos were `no_connection`; needs a dōjō deploy + one sign-in). Auto-elect done (2d92a632; local: 31 of the user's repos sync incl. sensei-hq/sensei). Both need a release + dōjō deploy. Subscription gate kept (decided). #300 done on develop (1a132009, 5d776bee; live check at next daemon install). #295 closed (06482d85, live). #296 default identity = owner of the global git email (e341e26c; endpoint live check waits on a daemon install). Next: #299, #300 (decided), #295, #282.
 - Keychain: a Team-ID-less senseid is partitioned by cdhash, so each daemon reinstall revokes approval (#283 comment). UI-only work uses `make app-e2e-bundle` (no daemon reinstall).
 - #298: project Instruments takes 11–28s (mcp-tool-stats pairs every tool call through session_tool_calls). Display name now prefilled from the system user name (7f919038).
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139).
