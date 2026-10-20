@@ -24,6 +24,8 @@ use serde_json::Value;
 /// What `sensei auth` was asked to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthAction {
+    /// Let the daemon read the stored session (#283): the macOS Keychain asks once.
+    Approve,
     /// Report the standing and exit. Never opens a browser.
     Status,
     /// Start the authorize flow now, whatever the standing.
@@ -113,7 +115,7 @@ pub fn standing_of(body: &Value) -> Standing {
 /// direct instruction and always acts.
 pub fn should_authorize(action: AuthAction, standing: &Standing) -> bool {
     match action {
-        AuthAction::Status => false,
+        AuthAction::Status | AuthAction::Approve => false,
         AuthAction::Renew => true,
         AuthAction::RenewIfNeeded => {
             matches!(standing, Standing::Dead | Standing::SignedOut | Standing::RenewalDue { .. })
@@ -148,6 +150,111 @@ pub fn describe(standing: &Standing, now: i64) -> String {
             format!("forge token is healthy ({})", left(expires_at))
         }
         Standing::Unreadable(why) => format!("could not read the forge token standing: {why}"),
+    }
+}
+
+/// One identity's line for `sensei auth status` with no `--persona` (#295).
+///
+/// Leads with the DAEMON's verdict (`action` from `/api/auth/personas`): whether
+/// it can read the stored session is what sync needs, and the token's expiry
+/// says nothing about that — "healthy" beside an unreadable session is how this
+/// command misled a user. Each problem names the command that fixes it.
+pub fn persona_line(p: &Value, now: i64) -> String {
+    let label = p["label"].as_str().unwrap_or("?");
+    let slot = p["sessionSlot"].as_str().unwrap_or(label);
+    let state = match p["action"].as_str().unwrap_or("") {
+        "approve" => format!(
+            "keychain access needs approval — sync is stopped. Run `sensei auth approve --persona {slot}`"
+        ),
+        "connect" => {
+            format!("never signed in on this machine. Run `sensei auth renew --persona {label}`")
+        }
+        "signIn" => {
+            format!("credential expired — sign in again: `sensei auth renew --persona {slot}`")
+        }
+        _ => {
+            let expires_at = p["forgeToken"]["expiresAt"].as_i64();
+            let standing = if p["forgeToken"]["state"].as_str() == Some("dead") {
+                Standing::Dead
+            } else {
+                Standing::Healthy { expires_at }
+            };
+            describe(&standing, now)
+        }
+    };
+    match p["githubLogin"].as_str() {
+        Some(login) if login != label => format!("{label} ({login}) — {state}"),
+        _ => format!("{label} — {state}"),
+    }
+}
+
+/// Whether any CONNECTED identity needs the user. A never-connected one does
+/// not: sensei infers several from commit authorship, and failing the status for
+/// each would make every fresh install look broken.
+pub fn any_needs_you(list: &Value) -> bool {
+    list["personas"].as_array().is_some_and(|ps| {
+        ps.iter().any(|p| {
+            p["connected"].as_bool() == Some(true)
+                && matches!(p["action"].as_str(), Some("approve" | "signIn"))
+        })
+    })
+}
+
+/// `sensei auth status` with no `--persona`: every identity, one line each.
+/// Exits non-zero when a connected identity needs the user, or the daemon could
+/// not be asked.
+pub fn run_list() -> i32 {
+    let base = crate::daemon_url();
+    let list: Value = match crate::client_with_timeout(45)
+        .get(format!("{base}/api/auth/personas"))
+        .send()
+        .and_then(reqwest::blocking::Response::json)
+    {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("could not reach the daemon at {base}: {e}");
+            return 1;
+        }
+    };
+    let now = chrono::Utc::now().timestamp();
+    let Some(personas) = list["personas"].as_array() else {
+        eprintln!("the daemon did not return an identity list");
+        return 1;
+    };
+    if personas.is_empty() {
+        println!("no identities yet — sensei infers them from commit authorship as you work");
+    }
+    for p in personas {
+        println!("{}", persona_line(p, now));
+    }
+    i32::from(any_needs_you(&list))
+}
+
+/// `sensei auth approve --persona X`: what the app's "Approve keychain access"
+/// does (#283). The macOS Keychain shows its prompt; choose Always Allow.
+pub fn run_approve(persona: &str) -> i32 {
+    let base = crate::daemon_url();
+    println!("approving keychain access for {persona} — answer the macOS prompt with Always Allow");
+    let answer: Value = match crate::client_with_timeout(180)
+        .post(format!("{base}/api/auth/keychain/approve?persona={persona}"))
+        .send()
+        .and_then(reqwest::blocking::Response::json)
+    {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("could not reach the daemon at {base}: {e}");
+            return 1;
+        }
+    };
+    if answer["ok"].as_bool() == Some(true) {
+        println!("approved — the next sync pass can read {persona}'s session");
+        0
+    } else {
+        eprintln!(
+            "not approved: {}",
+            answer["error"].as_str().unwrap_or("the daemon gave no reason")
+        );
+        1
     }
 }
 
@@ -228,6 +335,63 @@ fn open_url(url: &str) -> std::io::Result<()> {
     match ok {
         true => Ok(()),
         false => Err(std::io::Error::other(format!("{program} exited non-zero"))),
+    }
+}
+
+#[cfg(test)]
+mod persona_list_tests {
+    use super::*;
+    use serde_json::json;
+
+    // #295: `sensei auth status` read one slot, `default`, so on a machine with
+    // several identities it reported one — and reported "healthy" for a token
+    // while the daemon could not read the session sync needs. It now lists every
+    // identity and leads with the daemon's own verdict.
+    const NOW: i64 = 1_792_500_000;
+
+    fn persona(label: &str, connected: bool, action: &str, exp: Option<i64>) -> serde_json::Value {
+        json!({ "label": label, "githubLogin": label, "sessionSlot": if connected { Some(label) } else { None },
+                "connected": connected, "action": action,
+                "forgeToken": { "state": "active", "expiresAt": exp } })
+    }
+
+    #[test]
+    fn a_session_the_keychain_withholds_never_reads_as_healthy() {
+        let line = persona_line(&persona("jerrythomas", true, "approve", Some(NOW + 20_000)), NOW);
+        assert!(line.contains("keychain access needs approval"), "{line}");
+        assert!(line.contains("sensei auth approve --persona jerrythomas"), "{line}");
+        assert!(!line.contains("healthy"), "{line}");
+    }
+
+    #[test]
+    fn a_readable_session_shows_the_token_time_left() {
+        let line = persona_line(&persona("jerrythomas", true, "none", Some(NOW + 20_160)), NOW);
+        assert!(line.starts_with("jerrythomas"), "{line}");
+        assert!(line.contains("5.6 hours left"), "{line}");
+    }
+
+    #[test]
+    fn a_never_connected_identity_says_so_and_how() {
+        let line = persona_line(&persona("joelthomas8847", false, "connect", None), NOW);
+        assert!(line.contains("never signed in on this machine"), "{line}");
+        assert!(line.contains("sensei auth renew --persona joelthomas8847"), "{line}");
+    }
+
+    #[test]
+    fn a_dead_session_asks_for_a_sign_in() {
+        let line = persona_line(&persona("sensei-hq-org", true, "signIn", None), NOW);
+        assert!(line.contains("sign in again"), "{line}");
+    }
+
+    #[test]
+    fn only_a_connected_identity_that_needs_the_user_fails_the_status() {
+        let list = json!({ "personas": [
+            persona("ok", true, "none", Some(NOW + 9_000)),
+            persona("never", false, "connect", None)
+        ]});
+        assert!(!any_needs_you(&list));
+        let list = json!({ "personas": [persona("held", true, "approve", None)] });
+        assert!(any_needs_you(&list));
     }
 }
 

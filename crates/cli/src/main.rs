@@ -38,14 +38,15 @@ struct Cli {
 enum Commands {
     /// Forge credential — show its standing, or renew it in the browser
     Auth {
-        /// status | renew | renew-if-needed  (default: status)
+        /// status | renew | renew-if-needed | approve  (default: status)
         #[arg(default_value = "status")]
         action: String,
 
         /// Which persona's credential. Personas keep separate identities, and
-        /// each has its own token with its own expiry.
-        #[arg(long, default_value = "default")]
-        persona: String,
+        /// each has its own token with its own expiry. Without it, `status` lists
+        /// every identity; `renew` and `approve` use the `default` slot.
+        #[arg(long)]
+        persona: Option<String>,
     },
 
     /// Initialize sensei — sets up MCP, commands, skills, agents, mindsets
@@ -242,12 +243,21 @@ fn main() -> ExitCode {
                 "status" => auth::AuthAction::Status,
                 "renew" => auth::AuthAction::Renew,
                 "renew-if-needed" => auth::AuthAction::RenewIfNeeded,
+                "approve" => auth::AuthAction::Approve,
                 other => {
-                    eprintln!("unknown action `{other}` — use status, renew, or renew-if-needed");
+                    eprintln!(
+                        "unknown action `{other}` — use status, renew, renew-if-needed, or approve"
+                    );
                     std::process::exit(2);
                 }
             };
-            std::process::exit(auth::run(act, &persona));
+            let code = match (act, persona.as_deref()) {
+                // Every identity, not just the `default` slot (#295).
+                (auth::AuthAction::Status, None) => auth::run_list(),
+                (auth::AuthAction::Approve, p) => auth::run_approve(p.unwrap_or("default")),
+                (act, p) => auth::run(act, p.unwrap_or("default")),
+            };
+            std::process::exit(code);
         }
         Some(Commands::Init { scope, acp, recommended }) => {
             init(scope.as_deref(), acp.as_deref(), recommended);
