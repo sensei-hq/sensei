@@ -21,7 +21,7 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #293 step 0: the dōjō shell: `kit/AppShell` + a sticky `SectionHead` with one scroll body, then the inbox/Relay/run panes onto `Screen` (guard `app/src/routes/screen-shell.spec.ts`; `make app-e2e-bundle` then `bun run test:inspect -- screen-shell`), then the dōjō shell; #132 step 3 (dōjō vs mockups), #292 (markdown LanguageAdapter — decided), dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
+**Next command:** `/sensei:session refocus`, then #293 step 0 for the dōjō: a shared screen shell (sticky `SectionHead` over one scroll body, `kit/AppShell` main non-scrolling), then the inbox/Relay/run panes; then #293 steps 1–2 (separation, rokkit). UI builds: `make app-e2e-bundle`. Also open: #132 step 3, #292, #106, #191, #201, #139; #278 after #289's dedupe.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
