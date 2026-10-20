@@ -843,6 +843,32 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Remove a project's unreviewed rework rows before a re-derive writes the
+    /// current set (#287) — the upsert alone never removes a file that stopped
+    /// qualifying, so rows from an earlier, wrong derive lingered. Only
+    /// `suggested` rows: one a user promoted stays. `folders` scopes it the way
+    /// the derive is scoped.
+    pub async fn prune_suggested_rework(
+        &self,
+        project_id: &uuid::Uuid,
+        folders: Option<&[uuid::Uuid]>,
+    ) -> Result<u64, String> {
+        let done = sqlx_core::query::query(
+            "DELETE FROM inference.detected_patterns
+              WHERE project_id = $1
+                AND is_anti_pattern
+                AND name LIKE 'rework: %'
+                AND lifecycle = 'suggested'
+                AND ($2::uuid[] IS NULL OR folder_id = ANY($2))",
+        )
+        .bind(project_id)
+        .bind(folders.map(<[uuid::Uuid]>::to_vec))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(done.rows_affected())
+    }
+
     pub async fn promote_pattern(&self, id: &uuid::Uuid, lifecycle: &str) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE inference.detected_patterns SET lifecycle = $2::sensei.pattern_lifecycle, modified_at = now() WHERE id = $1"

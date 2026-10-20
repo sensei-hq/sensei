@@ -1119,19 +1119,32 @@ impl PgStore {
         folders: Option<&[uuid::Uuid]>,
     ) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
         let rows: Vec<(uuid::Uuid, String, i64, i64)> = sqlx_core::query_as::query_as(
-            "WITH per_session AS (
-                 SELECT s.folder_id,
-                        ae.payload->'tool_input'->>'file_path' AS file,
-                        ae.session_id,
-                        count(*) AS edits
+            // #287: only files INSIDE the session's folder (an absolute path
+            // under it, made relative; a relative path is already inside) —
+            // edits to `~/.claude/…` were filed as the project's rework. And each
+            // edit EVENT once: duplicated events (#289) multiplied the counts.
+            "WITH edits AS (
+                 SELECT DISTINCT s.folder_id, ae.session_id, ae.ts,
+                        ae.payload->'tool_input'->>'file_path' AS path,
+                        f.abs_path
                  FROM activity.assistant_events ae
                  JOIN activity.sessions s ON s.client_session_id = ae.session_id
+                 JOIN sensei.folders f ON f.id = s.folder_id
                  WHERE s.project_id = $1
                    AND ($3::uuid[] IS NULL OR s.folder_id = ANY($3))
                    AND ae.event_type = 'PostToolUse'
                    AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
                    AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
-                 GROUP BY s.folder_id, ae.payload->'tool_input'->>'file_path', ae.session_id
+             ), in_folder AS (
+                 SELECT folder_id, session_id,
+                        CASE WHEN left(path, 1) <> '/' THEN path
+                             ELSE substr(path, length(abs_path) + 2) END AS file
+                   FROM edits
+                  WHERE left(path, 1) <> '/' OR starts_with(path, abs_path || '/')
+             ), per_session AS (
+                 SELECT folder_id, file, session_id, count(*) AS edits
+                   FROM in_folder
+                  GROUP BY folder_id, file, session_id
              )
              SELECT folder_id, file,
                     max(edits)::bigint AS max_session_edits,

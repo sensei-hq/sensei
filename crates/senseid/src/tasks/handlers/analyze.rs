@@ -830,6 +830,10 @@ pub async fn derive_signals(
 ) -> Result<u32, String> {
     let mut count = 0u32;
 
+    // Rework rows are replaced, not accumulated: a file that stopped qualifying
+    // (or never belonged to the project) must not linger (#287).
+    ctx.pg().prune_suggested_rework(project_id, affected).await?;
+
     // 1. Re-edit churn anti-patterns (file-scoped). Patterns are project-scoped
     //    now (#82): the ON CONFLICT key is (project_id, name, is_anti_pattern),
     //    so if the same churned file surfaces from two folders in this project
@@ -1497,6 +1501,92 @@ mod tests {
             .execute(pool)
             .await
             .ok();
+    }
+
+    /// #287: rework counts edits to files INSIDE the session's folder, each
+    /// event once, and a re-derive replaces the unreviewed rework rows. Live,
+    /// edits to `~/.claude/…` memory files were filed as this project's
+    /// anti-patterns, and duplicated events (#289) multiplied the counts.
+    #[tokio::test]
+    async fn rework_counts_only_files_in_the_folder_once_per_event() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let pid = pg
+            .create_project(&format!("_test:rw-{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let root = pg
+            .add_watch_root(
+                &format!("/_test/rw-root-{}", uuid::Uuid::new_v4()),
+                "t",
+                &serde_json::json!([]),
+            )
+            .await
+            .unwrap();
+        let abs = format!("/_test/rw-{}", uuid::Uuid::new_v4());
+        let fid =
+            crate::tasks::test_support::seed_repo_folder(pg, &root, "rw-repo", &abs).await.unwrap();
+        let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+
+        async fn edit(pg: &crate::db::pg_store::PgStore, csid: &str, fp: &str, ts: i64) {
+            let payload = serde_json::json!({ "tool_input": {"file_path": fp} });
+            pg.insert_hook_event(&HookEventRow {
+                session_id: csid,
+                assistant_family: "claude",
+                event_type: "PostToolUse",
+                tool_name: Some("Edit"),
+                cwd: None,
+                ts,
+                success: None,
+                payload: &payload,
+            })
+            .await
+            .unwrap();
+        }
+        for ts in [1100, 1200, 1300, 1400, 1500] {
+            // Each in-folder edit stored twice, as the duplicated events were.
+            edit(pg, &csid, &format!("{abs}/src/a.rs"), ts).await;
+            edit(pg, &csid, &format!("{abs}/src/a.rs"), ts).await;
+            edit(pg, &csid, "/Users/x/.claude/memory/MEMORY.md", ts + 1).await;
+        }
+        // An unreviewed rework row from an earlier, wrong derive.
+        pg.upsert_pattern(
+            &pid,
+            Some(&fid),
+            "rework: /old/out.rs",
+            true,
+            Some(0.5),
+            &serde_json::json!([]),
+        )
+        .await
+        .unwrap();
+
+        derive_signals(&ctx, &pid, None).await.unwrap();
+
+        let rework: Vec<(String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT name, instances->0->>'max_session_edits' FROM inference.detected_patterns
+              WHERE project_id = $1 AND name LIKE 'rework: %' ORDER BY name",
+        )
+        .bind(pid)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+
+        for sql in [
+            "DELETE FROM inference.detected_patterns WHERE project_id = $1",
+            "DELETE FROM activity.sessions WHERE id = $1",
+        ] {
+            let id = if sql.contains("sessions") { sid } else { pid };
+            sqlx_core::query::query(sql).bind(id).execute(pg.pool()).await.ok();
+        }
+        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
+            .bind(&csid)
+            .execute(pg.pool())
+            .await
+            .ok();
+
+        assert_eq!(rework, vec![("rework: src/a.rs".to_string(), Some("5".to_string()))]);
     }
 
     #[tokio::test]
