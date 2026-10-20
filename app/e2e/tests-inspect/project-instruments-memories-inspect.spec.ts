@@ -19,6 +19,7 @@ test('project instruments and memories show the daemon reads', async ({ tauriPag
   const id = sensei!.id;
   const tools = (await (await fetch(`${DAEMON_URL}/api/projects/${id}/mcp-tool-stats`)).json()).tools.length;
   const memories = (await (await fetch(`${DAEMON_URL}/api/projects/${id}/memories`)).json()).active.length;
+  const used = (await (await fetch(`${DAEMON_URL}/api/projects/${id}/tools`)).json()).tools.length;
 
   await navigateTo(tauriPage, `/project/${id}/instruments`);
   await expect.poll(() => tauriPage.evaluate(sectionIs('instruments')), { timeout: 30_000 }).toBe(true);
@@ -26,7 +27,8 @@ test('project instruments and memories show the daemon reads', async ({ tauriPag
   const inst = (await tauriPage.evaluate(`({
     error: document.querySelector('[data-screen-state="error"]')?.textContent?.trim() ?? null,
     tools: document.querySelector('[data-component="project-main"]')?.textContent?.match(/(\\d+) tools/)?.[1] ?? null,
-  })`)) as { error: string | null; tools: string | null };
+    used: document.querySelectorAll('[data-testid="tools-used"] [data-tool]').length,
+  })`)) as { error: string | null; tools: string | null; used: number };
 
   await navigateTo(tauriPage, `/project/${id}/memories`);
   await expect.poll(() => tauriPage.evaluate(sectionIs('memories')), { timeout: 30_000 }).toBe(true);
@@ -36,8 +38,10 @@ test('project instruments and memories show the daemon reads', async ({ tauriPag
     rows: document.querySelectorAll('.memory-row').length,
   })`)) as { error: string | null; rows: number };
 
-  console.log(`\n[inspect] instruments ${JSON.stringify(inst)} (daemon ${tools} tools); memories ${JSON.stringify(mem)} (daemon ${memories})`);
+  console.log(`\n[inspect] instruments ${JSON.stringify(inst)} (daemon ${tools} tools, ${used} used); memories ${JSON.stringify(mem)} (daemon ${memories})`);
   expect([inst.error, mem.error]).toEqual([null, null]);
   expect(inst.tools).toBe(String(tools));
+  // #291: the "Tools used" bubbles — one per tool the daemon reports.
+  expect(inst.used).toBe(used);
   expect(mem.rows).toBe(memories);
 });
