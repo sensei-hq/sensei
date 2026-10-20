@@ -832,8 +832,9 @@ export function senseiApi(port: number) {
     // ── MCP Tool Proxy ────────────────────────────────────────────────
     tryMcpListTools: () => tryGet<{ tools: McpToolManifest[] }>('/api/mcp/tools'),
 
-    mcpCallTool: (tool: string, params: Record<string, string>) =>
-      post<Record<string, unknown>>('/api/mcp/call', { tool, params }, {}),
+    /** Call a tool from the Playground — its answer, or why there is none. */
+    tryMcpCallTool: (tool: string, params: Record<string, string>) =>
+      tryPost<Record<string, unknown>>('/api/mcp/call', { tool, params }),
 
     // #84 T2 Slice C — Replay timeline with #90 verdicts joined + session
     // summary. Set `classify: true` to run the classifier before the read

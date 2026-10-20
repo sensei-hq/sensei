@@ -4,12 +4,14 @@
  * of +page.svelte so a spec can check every entry carries both.
  */
 
+import type { InstrumentsTab } from './instruments-view';
+
 /** A mark: the kanji, and the icon that stands for it in icon mode when there
  *  is one (none falls back to the kanji). */
 export type Mark = { kanji: string; icon?: string };
 
 /** The three tabs. The third is labelled Health (its id predates the label). */
-export const INSTRUMENT_TABS: Array<{ id: string; kanji: string; icon: string; label: string; hint: string }> = [
+export const INSTRUMENT_TABS: Array<{ id: InstrumentsTab; kanji: string; icon: string; label: string; hint: string }> = [
   { id: 'playground', kanji: '具', icon: 'i-solar-test-tube-bold-duotone', label: 'Playground', hint: 'what can these instruments do?' },
   { id: 'replay', kanji: '録', icon: 'i-solar-play-stream-bold-duotone', label: 'Replay', hint: 'what did the assistant do?' },
   { id: 'insights', kanji: '健', icon: 'i-solar-heart-pulse-bold-duotone', label: 'Health', hint: 'what should we change?' },
