@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
 import Kanji from './Kanji.svelte';
+import KanjiHarness from './Kanji.harness.svelte';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
@@ -79,5 +80,20 @@ describe('Kanji in icon mode', () => {
       expect(m.container.querySelector('[data-component="kanji"]')?.textContent).toBe(props.char);
       expect(m.container.querySelector('[data-component="glyph-icon"]')).toBeNull();
     }
+  });
+});
+
+// #133: with no mode prop, a mark follows the mode the layout provides.
+describe('Kanji under a provided glyph mode', () => {
+  it('shows the icon when the provided mode is icon', () => {
+    const m = mountComponent(KanjiHarness, { char: '名', icon: 'i-solar-user-id-bold-duotone', glyphs: 'icon' });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-component="glyph-icon"]')?.className).toContain('i-solar-user-id-bold-duotone');
+  });
+
+  it('shows the kanji when the provided mode is kanji', () => {
+    const m = mountComponent(KanjiHarness, { char: '名', icon: 'i-solar-user-id-bold-duotone', glyphs: 'kanji' });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-component="kanji"]')?.textContent).toBe('名');
   });
 });

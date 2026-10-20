@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../observatory-nav";
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
@@ -16,7 +17,7 @@
     const api = () => senseiApi(appState.port);
 </script>
 
-<PageHeader kanji="連" eyebrow="Federation" title="Knowledge sources" />
+<PageHeader kanji="連" icon={railIcon("/knowledge-sources")} eyebrow="Federation" title="Knowledge sources" />
 <div class="max-w-[960px] mx-auto px-12 pt-8 pb-16">
 
     <!-- Add a source -->

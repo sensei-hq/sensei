@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../../observatory-nav";
   import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
@@ -58,7 +59,7 @@
 
 <PageHeader
   eyebrow="Observatory · Collective"
-  kanji="群"
+  kanji="群" icon={railIcon("/dojo/sharing")}
   title="What your sensei shares, and toward whom."
   description="Choose where anonymized insight goes, how often batches are prepared, and which categories may leave. Only the generalized rewrite of a learning is shared — never the original text of a memory. File paths, project, client and person names are stripped from everything that goes, and anything that still looks identifying is held back instead of sent. Review each batch before it leaves."
 />

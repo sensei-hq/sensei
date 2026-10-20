@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../observatory-nav";
   import { PageHeader, EmptyState } from '$lib/components';
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
   import {
@@ -48,7 +49,7 @@
 
 <PageHeader
   eyebrow="Observatory · Document traceability"
-  kanji="巻"
+  kanji="巻" icon={railIcon("/traceability")}
   title="Where the docs and the code disagree."
   description="Every doc-to-symbol link, checked nightly. Drift surfaces here before someone reads a stale doc and writes the wrong thing."
 />

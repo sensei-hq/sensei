@@ -114,14 +114,19 @@ export function buildNavItems({ projectCount }: NavOptions = {}): NavEntry[] {
   return entries;
 }
 
-/** Flatten every link href from the rail. */
-function allHrefs(): string[] {
-  const out: string[] = [];
+/** Flatten every link from the rail. */
+function allLinks(): NavLink[] {
+  const out: NavLink[] = [];
   for (const e of buildNavItems()) {
-    if ("href" in e) out.push(e.href);
-    else if ("children" in e) for (const c of e.children) out.push(c.href);
+    if ("href" in e) out.push(e);
+    else if ("children" in e) out.push(...e.children);
   }
   return out;
+}
+
+/** Flatten every link href from the rail. */
+function allHrefs(): string[] {
+  return allLinks().map((l) => l.href);
 }
 
 /**
@@ -141,4 +146,9 @@ export function resolveActiveHref(pathname: string): string {
       best = href;
   }
   return best;
+}
+
+/** The icon of the rail entry at `href` (#133), for that screen's header. */
+export function railIcon(href: string): string | undefined {
+  return allLinks().find((l) => l.href === href)?.icon;
 }

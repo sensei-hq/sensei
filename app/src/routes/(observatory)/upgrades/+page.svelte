@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
@@ -183,7 +184,7 @@
 
 <PageHeader
   eyebrow="Observatory · Upgrades"
-  kanji="贈"
+  kanji="贈" icon={railIcon("/upgrades")}
   title="Upgrades waiting for your call."
   description="Practice arriving from your Dōjō, and candidate skills, agents, rules and lints your own analyzer is asking for. Review each, then apply it or set it aside."
 />

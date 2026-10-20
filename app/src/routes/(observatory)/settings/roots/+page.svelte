@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../settings-nav";
   import { onMount } from 'svelte';
   import { PageHeader } from '$lib/components';
   import RootsSection from '$lib/components/settings/RootsSection.svelte';
@@ -14,7 +15,7 @@
   });
 </script>
 
-<PageHeader kanji="庵" eyebrow="Settings" title="Roots" />
+<PageHeader kanji="庵" icon={railIcon("/settings/roots")} eyebrow="Settings" title="Roots" />
 <div class="max-w-[820px] mx-auto px-12 pt-8 pb-16">
   {#if failure}
     <p class="text-sm text-warning mb-4" data-testid="roots-load-error">{failure}</p>

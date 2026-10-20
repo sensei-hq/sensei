@@ -20,7 +20,7 @@
     });
 </script>
 
-<PageHeader kanji={question.kanji} title="Cycles" description={question.question} />
+<PageHeader kanji={question.kanji} icon={question.icon} title="Cycles" description={question.question} />
 
 <div class="flex flex-col gap-4 p-4" data-testid="cycles-screen">
     <Toolbar

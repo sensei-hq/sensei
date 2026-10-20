@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../observatory-nav";
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
   import { PageHeader } from '$lib/components';
@@ -154,7 +155,7 @@
 <div class="flex flex-col h-full">
   <PageHeader
     size="lg"
-    kanji="今"
+    kanji="今" icon={railIcon("/insights")}
     eyebrow="Observatory · Insights"
     title="What needs you, what's working, what's quiet."
     description="Sorted by immediacy. Most days you only need the first column."

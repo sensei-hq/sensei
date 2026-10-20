@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { DIAGRAM_VIEWS } from "../diagrams-nav";
     import { StructureDiagram, BundleControl } from '@rokkit/graph';
     import { Toolbar } from '@rokkit/ui';
     import { PageHeader } from '$lib/components';
@@ -21,7 +22,7 @@
     });
 </script>
 
-<PageHeader kanji="構" title="Structure" description={data.project?.name ?? data.projectId} />
+<PageHeader kanji="構" icon={DIAGRAM_VIEWS[0].icon} title="Structure" description={data.project?.name ?? data.projectId} />
 
 <div class="flex flex-col gap-4 p-4" data-testid="structure-screen">
     <div class="flex flex-wrap items-center gap-4">

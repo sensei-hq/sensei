@@ -8,6 +8,7 @@
     import { healthState } from "$lib/health-state.svelte.js";
     import { daemonHealth } from "$lib/daemon-health.svelte.js";
     import { forgeAuth } from "$lib/forge-auth.svelte.js";
+    import { glyphMode, setGlyphMode } from "$lib/glyphs";
     import { personaList } from "$lib/personas.svelte.js";
     import { DaemonStatusBanner, SignInOverlay } from "$lib/components";
 
@@ -16,6 +17,9 @@
     // The overlay is opened by need, and closable. An expired credential stops
     // syncing but does not stop sensei, so blocking the app behind it would be
     // out of proportion.
+    // The glyph preference, for every mark below (#133).
+    setGlyphMode(() => glyphMode(appState.config));
+
     let dismissed = $state(false);
     // Asked for explicitly, from View → Identities…. Kept separate from the
     // automatic path so opening it by hand is not undone by `dismissed`, and so

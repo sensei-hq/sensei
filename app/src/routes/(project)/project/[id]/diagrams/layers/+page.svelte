@@ -23,7 +23,7 @@
     });
 </script>
 
-<PageHeader kanji={question.kanji} title="Layers" description={question.question} />
+<PageHeader kanji={question.kanji} icon={question.icon} title="Layers" description={question.question} />
 
 <div class="flex flex-col gap-4 p-4" data-testid="layers-screen">
     <div class="flex flex-wrap items-center gap-4">

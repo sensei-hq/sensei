@@ -3,7 +3,7 @@
     import { SHORTCUTS } from '$lib/shortcuts.js';
 </script>
 
-<PageHeader kanji="助" eyebrow="Sensei" title="Help" size="lg" />
+<PageHeader kanji="助" icon="i-solar-question-circle-bold-duotone" eyebrow="Sensei" title="Help" size="lg" />
 <div class="max-w-[640px] px-8 pt-8 pb-16">
 
     <section class="mb-7">

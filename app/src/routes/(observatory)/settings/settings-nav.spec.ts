@@ -4,6 +4,7 @@ import { isSolarBoldDuotone } from "$lib/glyphs";
 import {
   buildNavItems,
   resolveActiveHref,
+  railIcon,
   type NavGroup,
   type NavLink,
 } from "./settings-nav";
@@ -155,5 +156,14 @@ describe("settings rail glyphs", () => {
       expect(l.kanji, l.href).toMatch(/^\p{Script=Han}$/u);
       expect(isSolarBoldDuotone(l.icon, solar), `${l.href}: ${l.icon}`).toBe(true);
     }
+  });
+});
+
+// #133: a screen's header takes its icon from its rail entry, so the two
+// cannot drift apart.
+describe("railIcon", () => {
+  it("returns the rail entry's icon, or undefined off the rail", () => {
+    expect(railIcon("/settings/general")).toBe("i-solar-user-id-bold-duotone");
+    expect(railIcon("/no/such/route")).toBeUndefined();
   });
 });

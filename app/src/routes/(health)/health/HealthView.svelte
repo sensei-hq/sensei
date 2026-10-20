@@ -91,7 +91,7 @@
     <!-- Right column · hero, ledger -->
     <div class="flex flex-col gap-5 min-w-0">
       <!-- Nested in the right column, which already pads: no chrome, compact glyph. -->
-      <PageHeader kanji="支" eyebrow="foundation" size="sm" bordered={false} padded={false}>
+      <PageHeader kanji="支" icon="i-solar-pulse-2-bold-duotone" eyebrow="foundation" size="sm" bordered={false} padded={false}>
         {#snippet title()}{state.display.heroTitle}{/snippet}
         {#snippet right()}<StatusDisc status={heroDiscStatus} size={32} />{/snippet}
       </PageHeader>

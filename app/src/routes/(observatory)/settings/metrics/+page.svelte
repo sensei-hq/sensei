@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../settings-nav";
   import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
@@ -40,7 +41,7 @@
 
 <PageHeader
   eyebrow="Settings"
-  kanji="測"
+  kanji="測" icon={railIcon("/settings/metrics")}
   title="Metrics"
   description="Which metrics compute for which repository, how far each has got, and when one is not current, why. Switching a metric off is a cost decision that applies to everyone sharing the repository, so it is recorded by the dōjō that owns it — not here."
 />

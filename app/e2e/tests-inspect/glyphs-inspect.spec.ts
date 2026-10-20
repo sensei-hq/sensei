@@ -99,6 +99,18 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
       expect(marks.length).toBeGreaterThan(0);
       expect(bad).toEqual([]);
     }
+    // Slice 3b: each screen's header shows its icon, painted, and no kanji.
+    const HEADER = '[data-component="page-header"]';
+    for (const route of ['/settings/general', '/settings/providers', '/insights', '/libraries', '/upgrades', '/help', '/knowledge-sources']) {
+      await navigateToScreen(tauriPage, route, `${HEADER} [data-component="glyph-icon"]`, 20_000);
+      const marks = (await tauriPage.evaluate(painted(`${HEADER} [data-component="glyph-icon"]`))) as { cls: string; painted: boolean }[];
+      const kanji = (await tauriPage.evaluate(`document.querySelectorAll('${HEADER} [data-component="kanji"]').length`)) as number;
+      console.log(`[inspect] header ${route}: ${marks.map((m) => m.cls).join(' ')} painted=${marks.every((m) => m.painted)} kanji=${kanji}`);
+      expect(marks).toHaveLength(1);
+      expect(marks[0].painted).toBe(true);
+      expect(kanji).toBe(0);
+    }
+
     await navigateToScreen(tauriPage, '/settings/general', '[data-testid="pref-glyphs"]', 20_000);
 
     await choose(tauriPage, 'Kanji');

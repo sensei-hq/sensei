@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../settings-nav";
     import { onMount, untrack } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
@@ -69,7 +70,7 @@
     }
 </script>
 
-<PageHeader kanji="名" eyebrow="Settings" title="General" />
+<PageHeader kanji="名" icon={railIcon("/settings/general")} eyebrow="Settings" title="General" />
 <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16">
     {#if loading}
         <p class="text-sm text-ink-soft leading-normal">Loading…</p>

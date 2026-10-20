@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../../observatory-nav";
   import { invalidateAll } from '$app/navigation';
   import { PageHeader, EmptyState, Kanji, ScreenState } from '$lib/components';
   import type { DojoMembership } from '$lib/types.js';
@@ -65,7 +66,7 @@
 
 <PageHeader
   eyebrow="Observatory · Dōjō connections"
-  kanji="連"
+  kanji="連" icon={railIcon("/dojo/connections")}
   title="Where your sensei meets the team's Dōjō."
   description="Every company, client, or community Dōjō you belong to joins here when you sign in — share what you learn and receive what the team already knows. You can belong to several at once."
 >

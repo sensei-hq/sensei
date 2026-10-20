@@ -55,7 +55,7 @@
     );
 </script>
 
-<PageHeader kanji={question.kanji} title="World" description={question.question} />
+<PageHeader kanji={question.kanji} icon={question.icon} title="World" description={question.question} />
 
 <div class="flex flex-col gap-4 p-4" data-testid="world-screen">
     <div class="flex flex-wrap items-center gap-4">

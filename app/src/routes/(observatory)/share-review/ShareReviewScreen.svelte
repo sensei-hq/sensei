@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../observatory-nav";
   import { PageHeader, EmptyState, ScreenState } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import { typePill, attributionSummary, type ChipClasses } from '$lib/dojo-artifacts.js';
@@ -140,7 +141,7 @@
 
 <PageHeader
   eyebrow="Observatory · Share review"
-  kanji="送"
+  kanji="送" icon={railIcon("/share-review")}
   title="Ready to share."
   description="Lessons that generalised cleanly enough to leave this machine, scoped and attributed by origin. Review what's about to go, then publish. Held items stay back until the confidentiality gate clears — client work always leaves with its source dropped."
 />

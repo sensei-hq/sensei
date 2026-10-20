@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../settings-nav";
   import { invalidateAll } from '$app/navigation';
   import { PageHeader, ScreenState } from '$lib/components';
   import { personaList } from '$lib/personas.svelte.js';
@@ -42,7 +43,7 @@
 
 <PageHeader
   eyebrow="Settings"
-  kanji="結"
+  kanji="結" icon={railIcon("/settings/dojo")}
   title="Dōjō"
   description="The credential that reaches your dōjō, and what has been agreed with it. A forge token lasts about eight hours and renews itself silently; this is where you can see one running out before it does."
 />

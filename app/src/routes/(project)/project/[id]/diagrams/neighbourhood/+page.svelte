@@ -37,7 +37,7 @@
     );
 </script>
 
-<PageHeader kanji={question.kanji} title="Neighbourhood" description={question.question} />
+<PageHeader kanji={question.kanji} icon={question.icon} title="Neighbourhood" description={question.question} />
 
 <div class="flex flex-col gap-4 p-4" data-testid="neighbourhood-screen">
     <div class="flex flex-wrap items-start gap-4">

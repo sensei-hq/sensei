@@ -37,7 +37,7 @@
     const input = $derived(view.graphInput);
 </script>
 
-<PageHeader kanji={question.kanji} title="Schema" description={question.question} />
+<PageHeader kanji={question.kanji} icon={question.icon} title="Schema" description={question.question} />
 
 <div class="flex flex-col gap-4 p-4" data-testid="schema-screen">
     {#if view.view === 'loading'}

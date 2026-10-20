@@ -2,15 +2,19 @@
   type Size = 'xs' | 'sm' | 'base' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | 'screen';
   type Tone = 'accent' | 'muted' | 'watermark' | 'success' | 'warning';
 
-  import type { GlyphMode } from '$lib/glyphs';
+  import { useGlyphMode, type GlyphMode } from '$lib/glyphs';
 
   let {
     char,
     size = 'base',
     tone = 'accent',
     icon,
-    mode = 'kanji',
+    mode: modeProp,
   }: { char: string; size?: Size; tone?: Tone; icon?: string; mode?: GlyphMode } = $props();
+
+  // The provided mode (#133) unless the caller says otherwise.
+  const provided = useGlyphMode();
+  const mode = $derived(modeProp ?? provided());
 
   const sizeClass = $derived(
     ({

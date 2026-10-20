@@ -1,10 +1,11 @@
 <script lang="ts">
+    import { railIcon } from "../settings-nav";
     import { PageHeader } from "$lib/components";
     import InferenceAssignmentsPanel from "../InferenceAssignmentsPanel.svelte";
     import LocalModelsPanel from "../LocalModelsPanel.svelte";
 </script>
 
-<PageHeader kanji="想" eyebrow="Settings" title="Inference" />
+<PageHeader kanji="想" icon={railIcon("/settings/inference")} eyebrow="Settings" title="Inference" />
 <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16 flex flex-col gap-5">
     <InferenceAssignmentsPanel />
     <LocalModelsPanel />

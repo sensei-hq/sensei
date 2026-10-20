@@ -17,6 +17,8 @@ export interface DiagramView {
    *  answers, so a reader can tell two pictures of one graph apart. */
   question: string;
   kanji: string;
+  /** The Solar Bold Duotone class shown in icon mode (#133). */
+  icon: string;
 }
 
 export const DIAGRAM_VIEWS: DiagramView[] = [
@@ -25,36 +27,42 @@ export const DIAGRAM_VIEWS: DiagramView[] = [
     label: 'Structure',
     question: 'What is here, and what touches what',
     kanji: '構',
+    icon: 'i-solar-structure-bold-duotone',
   },
   {
     id: 'layers',
     label: 'Layers',
     question: 'Do these calls flow downward',
     kanji: '層',
+    icon: 'i-solar-layers-minimalistic-bold-duotone',
   },
   {
     id: 'world',
     label: 'World',
     question: 'How much is here, and where it sits',
     kanji: '界',
+    icon: 'i-solar-global-bold-duotone',
   },
   {
     id: 'cycles',
     label: 'Cycles',
     question: 'What depends on itself, and where to cut',
     kanji: '環',
+    icon: 'i-solar-refresh-circle-bold-duotone',
   },
   {
     id: 'neighbourhood',
     label: 'Neighbourhood',
     question: 'What calls this, and what does it call',
     kanji: '隣',
+    icon: 'i-solar-map-point-bold-duotone',
   },
   {
     id: 'schema',
     label: 'Schema',
     question: 'Which tables exist, and how their keys connect them',
     kanji: '表',
+    icon: 'i-solar-database-bold-duotone',
   },
 ];
 

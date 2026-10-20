@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../observatory-nav";
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
@@ -55,7 +56,7 @@
     );
 </script>
 
-<PageHeader kanji="書" eyebrow="Libraries" title="Libraries" />
+<PageHeader kanji="書" icon={railIcon("/libraries")} eyebrow="Libraries" title="Libraries" />
 <div class="max-w-[960px] mx-auto px-12 pt-8 pb-16">
 
     <!-- Search -->

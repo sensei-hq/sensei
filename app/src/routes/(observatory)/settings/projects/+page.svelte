@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../settings-nav";
   import { onMount } from 'svelte';
   import { PageHeader } from '$lib/components';
   import ProjectsSection from '$lib/components/settings/ProjectsSection.svelte';
@@ -16,7 +17,7 @@
 </script>
 
 <div class="sticky top-0 z-10 bg-paper" data-testid="settings-projects-header">
-  <PageHeader kanji="組" eyebrow="Settings" title="Projects" />
+  <PageHeader kanji="組" icon={railIcon("/settings/projects")} eyebrow="Settings" title="Projects" />
   <div class="max-w-[820px] mx-auto px-12 pb-3">
     <input
       type="search"

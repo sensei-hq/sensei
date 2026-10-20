@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { railIcon } from "../settings-nav";
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
@@ -27,7 +28,7 @@
     });
 </script>
 
-<PageHeader kanji="連" eyebrow="Settings" title="Assistants" />
+<PageHeader kanji="連" icon={railIcon("/settings/assistants")} eyebrow="Settings" title="Assistants" />
 <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16" data-testid="settings-assistants">
     {#if loading}
         <p class="text-sm text-ink-soft leading-normal">Loading…</p>

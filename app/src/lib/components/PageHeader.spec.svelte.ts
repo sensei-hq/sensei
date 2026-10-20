@@ -136,6 +136,22 @@ describe('PageHeader', () => {
     expect(root(both).querySelector('[data-component="page-header-icon"]')).toBeNull();
   });
 
+  // #133: a header with both shows the icon in icon mode — the screen's mark
+  // follows the glyph preference.
+  it('shows the icon instead of the kanji in icon mode', () => {
+    const m = mountComponent(PageHeaderHarness, {
+      title: 'X',
+      kanji: '名',
+      icon: 'i-solar-user-id-bold-duotone',
+      glyphs: 'icon',
+    });
+    cleanup.push(m.destroy);
+    expect(root(m).querySelector('[data-component="glyph-icon"]')?.className).toContain(
+      'i-solar-user-id-bold-duotone',
+    );
+    expect(root(m).querySelector('[data-component="kanji"]')).toBeNull();
+  });
+
   it('drops its own padding when nested in a container that already pads', () => {
     const padded = mountComponent(PageHeaderHarness, { title: 'X' });
     cleanup.push(padded.destroy);
