@@ -17,7 +17,7 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #288 (in progress, 25 fallback reads left: Settings next), #290 (no 'file'/'doc' nodes),
+**Next command:** `/sensei:session refocus`, then #288 (in progress, 21 fallback reads left: mcp store next), #290 (no 'file'/'doc' nodes),
 dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
 
 **Open questions:**
