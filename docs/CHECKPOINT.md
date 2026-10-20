@@ -32,12 +32,10 @@ dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's de
   needs an Apple Developer account.
 - #199: on headless Linux, an encrypted-file credential store, or stop publishing Linux daemon artifacts?
 - #194: drop the 145k/day `task_started`/`task_completed` rows from `public.logs`?
-- The orphaned Cloudflare build trigger fails every develop push. Delete it in the dashboard?
-- 8 CodeQL `rust/cleartext-logging` alerts in test files need triage.
+- The orphaned Cloudflare build trigger fails every develop push: delete it? 8 CodeQL test-file alerts to triage.
 
 **Known-broken / pending:**
 - dōjō sync on this machine fails with "keychain access needs approval" until you click "Approve keychain
   access" (sign-in overlay or Settings → dōjō). Its GitHub token is also expired, so a sign-in follows.
 - #284: inspect captures stay blank until `make dev-signing-cert` + a one-time Screen Recording grant.
-- `/api/projects/{id}/icon` 404s for projects whose checkout is gone. Dependabot reports 0 alerts (#172).
-- The committed `database/design.dbml` is stale (pre-existing).
+- `/api/projects/{id}/icon` 404s for projects whose checkout is gone. `database/design.dbml` is stale.
