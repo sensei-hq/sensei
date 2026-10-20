@@ -13,13 +13,14 @@
 - #287 closed: rework placed by path, once per event; Patterns folds it into one "rework hotspots" (618 → 2).
 
 **Remaining:**
+- #293: `Screen` landed (430937ad); traceability is on it and verified live. 47 app screens + dōjō to go.
 - #283: the approve round trip needs a stable signing identity first (see Open questions), then close.
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139).
 - #190 (wave 5): a `modules:` design cannot be imported until `project::survey` + `Workspace::load` land.
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then the screen-structure audit findings (separation · shared shell · rokkit first), #132 step 3 (dōjō vs mockups), #292 (markdown LanguageAdapter — decided), dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
+**Next command:** `/sensei:session refocus`, then #293 step 0: move the 47 pending app screens onto `Screen` (guard `app/src/routes/screen-shell.spec.ts`, live probe `bun run test:inspect -- screen-shell`), then the dōjō shell; #132 step 3 (dōjō vs mockups), #292 (markdown LanguageAdapter — decided), dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
