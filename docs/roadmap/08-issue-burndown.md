@@ -121,7 +121,7 @@ The settings screen lists them as repositories.
   - #284 (found via #96): some inspect screenshots capture a blank webview.
   - #283 (found via #96): **parts 1–3 live** — `running_since` + "running for", a per-pass limit that records
     "still running after Ns", and a daemon that never prompts (`NeedsApproval`; only sign-in/out and router-key
-    saves may ask). Remaining: a user-initiated "approve keychain access" action.
+    saves may ask), and an "Approve keychain access" action. Open only for the user's click to be seen working.
   - #285 (found via #283): router-key reads turn a keychain refusal into "no key".
   - #85: Overview hotspots and patterns-in-use.
   - #144: on a project with no repository, say once that `scope=repo` metrics need git history.
