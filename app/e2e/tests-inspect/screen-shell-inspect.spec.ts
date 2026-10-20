@@ -1,6 +1,6 @@
 /**
- * #293 against the REAL app: a screen on the shared `Screen` layout fills its
- * window's <main>, <main> itself never scrolls, and the header stays in place
+ * #293 against the REAL app: a screen on the shared `Screen` layout reaches the
+ * bottom of its window's <main> (a layout may keep tabs above it), <main> itself never scrolls, and the header stays in place
  * while the body scrolls. The body is made taller than the window first, so the
  * probe holds even for a screen with little data.
  * Run: `bun run test:inspect -- screen-shell`.
@@ -9,7 +9,10 @@ import { expect, test } from '../fixtures';
 import { DAEMON_URL, navigateToScreen } from '../helpers';
 
 /** Project-scoped screens on `Screen`; grows as screens move (#293). */
-const PROJECT_SCREENS = ['traceability'];
+const PROJECT_SCREENS = [
+  'traceability', 'instruments', 'libraries', 'memories',
+  'diagrams/cycles', 'diagrams/layers', 'diagrams/neighbourhood', 'diagrams/schema', 'diagrams/structure', 'diagrams/world',
+];
 
 type Probe = { fills: boolean; mainScrolls: boolean; headerMoved: number; bodyScrolled: number } | null;
 
@@ -25,7 +28,7 @@ const PROBE = `(() => {
   const before = header.getBoundingClientRect().top;
   body.scrollTop = 1500;
   const out = {
-    fills: Math.abs(screen.getBoundingClientRect().height - main.clientHeight) <= 1,
+    fills: Math.abs(screen.getBoundingClientRect().bottom - main.getBoundingClientRect().bottom) <= 1,
     mainScrolls: main.scrollHeight > main.clientHeight + 1,
     headerMoved: header.getBoundingClientRect().top - before,
     bodyScrolled: body.scrollTop,

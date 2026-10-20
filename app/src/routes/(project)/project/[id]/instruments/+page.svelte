@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { PageHeader, ScreenState } from '$lib/components';
+    import { PageHeader, Screen, ScreenState } from '$lib/components';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
     import { invalidateAll } from '$app/navigation';
@@ -57,147 +57,151 @@
     }
 </script>
 
-<PageHeader title="Instruments">
-    {#snippet right()}
-        {#if !data.error}
-            <span class="text-sm text-ink-mute">
-                {stats.length} tools · {fmtInt(totalCalls)} calls · {fmtInt(totalErrors)} errors
-            </span>
-        {/if}
+<Screen>
+    {#snippet header()}
+    <PageHeader title="Instruments">
+        {#snippet right()}
+            {#if !data.error}
+                <span class="text-sm text-ink-mute">
+                    {stats.length} tools · {fmtInt(totalCalls)} calls · {fmtInt(totalErrors)} errors
+                </span>
+            {/if}
+        {/snippet}
+    </PageHeader>
     {/snippet}
-</PageHeader>
 
-<div class="px-6 py-6">
-    {#if data.error}
-        <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
-    {:else}
-    <!-- Services (MCP servers, inference providers) — per-project toggle. -->
-    {#if services.length > 0}
-        <section class="mb-8">
-            <h3 class="text-sm font-medium m-0 mb-3">Services</h3>
-            <ul class="list-none m-0 p-0 flex flex-col gap-1">
-                {#each services as service (service.id)}
-                    <li class="flex items-center gap-3 py-2 px-2 rounded-md border border-paper-edge">
-                        <div class="flex-1 min-w-0">
-                            <div class="text-sm font-medium text-ink truncate">{service.displayName}</div>
-                            <div class="text-xs text-ink-soft truncate">
-                                <span class="font-mono">{service.name}</span>
-                                <span class="opacity-60"> · {service.protocol} · {service.kind}</span>
-                                {#if service.publisher} · {service.publisher}{/if}
+    <div class="px-6 py-6">
+        {#if data.error}
+            <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+        {:else}
+        <!-- Services (MCP servers, inference providers) — per-project toggle. -->
+        {#if services.length > 0}
+            <section class="mb-8">
+                <h3 class="text-sm font-medium m-0 mb-3">Services</h3>
+                <ul class="list-none m-0 p-0 flex flex-col gap-1">
+                    {#each services as service (service.id)}
+                        <li class="flex items-center gap-3 py-2 px-2 rounded-md border border-paper-edge">
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm font-medium text-ink truncate">{service.displayName}</div>
+                                <div class="text-xs text-ink-soft truncate">
+                                    <span class="font-mono">{service.name}</span>
+                                    <span class="opacity-60"> · {service.protocol} · {service.kind}</span>
+                                    {#if service.publisher} · {service.publisher}{/if}
+                                </div>
                             </div>
-                        </div>
-                        {#if service.toolsCount > 0}
-                            <span class="text-xs text-ink-soft">{service.toolsCount} tool{service.toolsCount === 1 ? '' : 's'}</span>
-                        {/if}
-                        <button
-                            type="button"
-                            class="toggle text-xs px-3 py-1 rounded-full border cursor-pointer"
-                            class:enabled={service.enabledForProject}
-                            disabled={toggling[service.id]}
-                            aria-pressed={service.enabledForProject}
-                            data-testid={`service-toggle-${service.name}`}
-                            onclick={() => toggleService(service)}
-                        >{service.enabledForProject ? 'On' : 'Off'}</button>
-                    </li>
-                {/each}
-            </ul>
-        </section>
-    {/if}
-
-    <!-- Which tools the assistants used, built-ins included, sized by calls
-         (#291 — it hung off the retired unused_tools metric and could not be
-         reached). Its own read: a failure here does not blank the page. -->
-    <section class="mb-8">
-        <h3 class="text-sm font-medium m-0 mb-3">Tools used</h3>
-        {#if data.toolUsageError}
-            <p class="text-xs text-danger m-0" data-testid="tools-used-error">
-                Could not read which tools were used: {data.toolUsageError}
-            </p>
-        {:else if data.toolUsage.length > 0}
-            <div data-testid="tools-used"><ToolBubbles tools={data.toolUsage} /></div>
-        {:else}
-            <p class="text-xs text-ink-soft m-0">No tool calls captured for this project yet.</p>
+                            {#if service.toolsCount > 0}
+                                <span class="text-xs text-ink-soft">{service.toolsCount} tool{service.toolsCount === 1 ? '' : 's'}</span>
+                            {/if}
+                            <button
+                                type="button"
+                                class="toggle text-xs px-3 py-1 rounded-full border cursor-pointer"
+                                class:enabled={service.enabledForProject}
+                                disabled={toggling[service.id]}
+                                aria-pressed={service.enabledForProject}
+                                data-testid={`service-toggle-${service.name}`}
+                                onclick={() => toggleService(service)}
+                            >{service.enabledForProject ? 'On' : 'Off'}</button>
+                        </li>
+                    {/each}
+                </ul>
+            </section>
         {/if}
-    </section>
 
-    <!-- MCP tool aggregation — the new lens per T2 Slice F. -->
-    <section class="mb-8">
-        <h3 class="text-sm font-medium m-0 mb-3">MCP tools</h3>
+        <!-- Which tools the assistants used, built-ins included, sized by calls
+             (#291 — it hung off the retired unused_tools metric and could not be
+             reached). Its own read: a failure here does not blank the page. -->
+        <section class="mb-8">
+            <h3 class="text-sm font-medium m-0 mb-3">Tools used</h3>
+            {#if data.toolUsageError}
+                <p class="text-xs text-danger m-0" data-testid="tools-used-error">
+                    Could not read which tools were used: {data.toolUsageError}
+                </p>
+            {:else if data.toolUsage.length > 0}
+                <div data-testid="tools-used"><ToolBubbles tools={data.toolUsage} /></div>
+            {:else}
+                <p class="text-xs text-ink-soft m-0">No tool calls captured for this project yet.</p>
+            {/if}
+        </section>
 
-        <div class="flex gap-2 mb-3" role="tablist" aria-label="Tool kind filter">
-            {#each kindChips as chip}
-                {@const active = kindFilter === chip.id}
-                <button
-                    class="px-3 py-1 rounded-full border text-xs cursor-pointer transition-colors duration-fast"
-                    class:bg-primary={active}
-                    class:text-on-primary={active}
-                    class:border-primary={active}
-                    class:bg-transparent={!active}
-                    class:text-ink-soft={!active}
-                    class:border-paper-edge={!active}
-                    role="tab"
-                    aria-selected={active}
-                    onclick={() => (kindFilter = chip.id)}
-                >{chip.label}</button>
-            {/each}
-        </div>
+        <!-- MCP tool aggregation — the new lens per T2 Slice F. -->
+        <section class="mb-8">
+            <h3 class="text-sm font-medium m-0 mb-3">MCP tools</h3>
 
-        {#if visibleStats.length === 0}
-            <p class="text-sm text-ink-soft">No tools match this filter.</p>
-        {:else}
-            <div class="grid grid-cols-[1fr_60px_60px_80px_80px_100px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
-                <span>Tool</span>
-                <span class="text-right">Calls</span>
-                <span class="text-right">Errors</span>
-                <span class="text-right">Avg</span>
-                <span class="text-right">FTR</span>
-                <span class="text-right">Last used</span>
+            <div class="flex gap-2 mb-3" role="tablist" aria-label="Tool kind filter">
+                {#each kindChips as chip}
+                    {@const active = kindFilter === chip.id}
+                    <button
+                        class="px-3 py-1 rounded-full border text-xs cursor-pointer transition-colors duration-fast"
+                        class:bg-primary={active}
+                        class:text-on-primary={active}
+                        class:border-primary={active}
+                        class:bg-transparent={!active}
+                        class:text-ink-soft={!active}
+                        class:border-paper-edge={!active}
+                        role="tab"
+                        aria-selected={active}
+                        onclick={() => (kindFilter = chip.id)}
+                    >{chip.label}</button>
+                {/each}
             </div>
-            {#each visibleStats as t (t.id)}
-                <div class="grid grid-cols-[1fr_60px_60px_80px_80px_100px] gap-3 px-3 py-2 border-b border-paper-edge text-sm items-center">
-                    <div class="min-w-0">
-                        <div class="font-mono text-xs truncate">{t.name}</div>
-                        <div class="text-xs text-ink-soft truncate">{t.summary}</div>
-                    </div>
-                    <span class="text-right font-mono text-xs">{fmtInt(t.calls)}</span>
-                    <span class="text-right font-mono text-xs" class:text-danger={t.errors > 0}>
-                        {fmtInt(t.errors)}
-                    </span>
-                    <span class="text-right font-mono text-xs opacity-70">{fmtMs(t.avgDurationMs)}</span>
-                    <span class="text-right font-mono text-xs"
-                        class:text-success={t.ftr != null && t.ftr >= 0.8}
-                        class:text-warning={t.ftr != null && t.ftr < 0.5}>
-                        {fmtPct(t.ftr)}
-                    </span>
-                    <span class="text-right text-xs text-ink-soft">
-                        {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleDateString() : '—'}
-                    </span>
-                </div>
-            {/each}
-        {/if}
-    </section>
 
-    <!-- Extensions (skills / commands / agents) — historical, still shown. -->
-    {#if data.tools.length > 0}
-        <section>
-            <h3 class="text-sm font-medium m-0 mb-3">Extensions</h3>
-            <ul class="list-none m-0 p-0">
-                {#each data.tools as tool (tool.id)}
-                    <li class="tool-row flex items-center gap-2.5 py-2 border-b border-paper-edge text-sm">
-                        <span class="font-semibold flex-1">{tool.name}</span>
-                        <span class="opacity-50 text-xs">{tool.kind}</span>
-                        <span class="scope-badge text-xs px-1.5 py-px rounded-md font-mono"
-                              class:global={tool.scope === "global"}
-                              class:proj={tool.scope === "project"}>
-                            [{tool.scope}]
+            {#if visibleStats.length === 0}
+                <p class="text-sm text-ink-soft">No tools match this filter.</p>
+            {:else}
+                <div class="grid grid-cols-[1fr_60px_60px_80px_80px_100px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
+                    <span>Tool</span>
+                    <span class="text-right">Calls</span>
+                    <span class="text-right">Errors</span>
+                    <span class="text-right">Avg</span>
+                    <span class="text-right">FTR</span>
+                    <span class="text-right">Last used</span>
+                </div>
+                {#each visibleStats as t (t.id)}
+                    <div class="grid grid-cols-[1fr_60px_60px_80px_80px_100px] gap-3 px-3 py-2 border-b border-paper-edge text-sm items-center">
+                        <div class="min-w-0">
+                            <div class="font-mono text-xs truncate">{t.name}</div>
+                            <div class="text-xs text-ink-soft truncate">{t.summary}</div>
+                        </div>
+                        <span class="text-right font-mono text-xs">{fmtInt(t.calls)}</span>
+                        <span class="text-right font-mono text-xs" class:text-danger={t.errors > 0}>
+                            {fmtInt(t.errors)}
                         </span>
-                    </li>
+                        <span class="text-right font-mono text-xs opacity-70">{fmtMs(t.avgDurationMs)}</span>
+                        <span class="text-right font-mono text-xs"
+                            class:text-success={t.ftr != null && t.ftr >= 0.8}
+                            class:text-warning={t.ftr != null && t.ftr < 0.5}>
+                            {fmtPct(t.ftr)}
+                        </span>
+                        <span class="text-right text-xs text-ink-soft">
+                            {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleDateString() : '—'}
+                        </span>
+                    </div>
                 {/each}
-            </ul>
+            {/if}
         </section>
-    {/if}
-    {/if}
-</div>
+
+        <!-- Extensions (skills / commands / agents) — historical, still shown. -->
+        {#if data.tools.length > 0}
+            <section>
+                <h3 class="text-sm font-medium m-0 mb-3">Extensions</h3>
+                <ul class="list-none m-0 p-0">
+                    {#each data.tools as tool (tool.id)}
+                        <li class="tool-row flex items-center gap-2.5 py-2 border-b border-paper-edge text-sm">
+                            <span class="font-semibold flex-1">{tool.name}</span>
+                            <span class="opacity-50 text-xs">{tool.kind}</span>
+                            <span class="scope-badge text-xs px-1.5 py-px rounded-md font-mono"
+                                  class:global={tool.scope === "global"}
+                                  class:proj={tool.scope === "project"}>
+                                [{tool.scope}]
+                            </span>
+                        </li>
+                    {/each}
+                </ul>
+            </section>
+        {/if}
+        {/if}
+    </div>
+</Screen>
 
 <style>
     .tool-row:last-child {
