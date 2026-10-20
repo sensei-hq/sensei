@@ -12,7 +12,7 @@
 - #287 closed: rework placed by path, once per event; Patterns folds it into one "rework hotspots" (618 → 2).
 
 **Remaining:**
-- #293: 42 of 48 app screens on `Screen`, 41 probed live (acf1521f); settings layout no longer scrolls. Left: activity-logs, consolidation, insights, instruments, projects, sessions; then dōjō.
+- #293 step 0 (app) done: all 48 screens on `Screen`, window `<main>`s no longer scroll, 47 probed live (522b8092). Next: the dōjō shell.
 - Keychain: a Team-ID-less senseid is partitioned by cdhash, so each daemon reinstall revokes approval (#283 comment). UI-only work uses `make app-e2e-bundle` (no daemon reinstall).
 - #298: project Instruments takes 11–28s (mcp-tool-stats pairs every tool call). `jerrythomas` connected (CLI sign-in); its sync denies all 22 repos `not_elected_user` until the user elects repos. #294/#295 filed.
 - #283: the approve round trip needs a stable signing identity first (see Open questions), then close.
@@ -21,7 +21,7 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #293 step 0: move the last 6 observatory screens (activity-logs, consolidation, insights, instruments, projects, sessions), then make the observatory `<main>` non-scrolling onto `Screen` (guard `app/src/routes/screen-shell.spec.ts`; `make app-e2e-bundle` then `bun run test:inspect -- screen-shell`), then the dōjō shell; #132 step 3 (dōjō vs mockups), #292 (markdown LanguageAdapter — decided), dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
+**Next command:** `/sensei:session refocus`, then #293 step 0: the dōjō shell: `kit/AppShell` + a sticky `SectionHead` with one scroll body, then the inbox/Relay/run panes onto `Screen` (guard `app/src/routes/screen-shell.spec.ts`; `make app-e2e-bundle` then `bun run test:inspect -- screen-shell`), then the dōjō shell; #132 step 3 (dōjō vs mockups), #292 (markdown LanguageAdapter — decided), dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
