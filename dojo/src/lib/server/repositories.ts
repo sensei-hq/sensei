@@ -28,6 +28,17 @@ export interface RepoInput {
 	repo_key: string;
 	remote_url?: string | null;
 	name?: string | null;
+	/** The sensei project this repository belongs to, as the daemon names it — a
+	 *  mapped repository is filed under it (#299). Absent: file nothing. */
+	project?: RepoProject | null;
+}
+
+/** A sensei project, as the daemon sends it: the same slug/name/classification a
+ *  relay run carries, so the two paths file the same `(user_id, slug)` row. */
+export interface RepoProject {
+	slug: string;
+	name: string;
+	classification: 'company' | 'client' | 'personal' | 'community';
 }
 
 /** A repository that resolved to a tenant. */
@@ -41,6 +52,10 @@ export interface MappedRepo {
 	 *  invalidate. */
 	tenant_id: string;
 	repo_id: string;
+	/** The project the repository was filed under (#299), when one was sent. */
+	project_id?: string;
+	/** Why filing it under its project failed — the registration still stands. */
+	project_error?: string;
 }
 
 /**
@@ -163,12 +178,26 @@ export async function registerRepositories(db: DojoClient, repos: RepoInput[]): 
 			unmapped.push({ repo_key: repoKey, reason: row.reason });
 			continue;
 		}
-		mapped.push({
+		const entry: MappedRepo = {
 			repo_key: repoKey,
 			tenant: row.tenant_key as string,
 			tenant_id: row.tenant_id as string,
 			repo_id: row.repository_id as string
-		});
+		};
+		if (repo.project) {
+			// File it under its sensei project (#299). A failure is reported on the
+			// repository, not thrown: the registration DID happen, and the daemon
+			// logs the reason rather than losing both.
+			const filed = await db.rpc('file_repository_project', {
+				p_repository_id: entry.repo_id,
+				p_slug: repo.project.slug,
+				p_name: repo.project.name,
+				p_classification: repo.project.classification
+			});
+			if (filed.error) entry.project_error = filed.error.message;
+			else entry.project_id = filed.data as string;
+		}
+		mapped.push(entry);
 	}
 
 	return { mapped, unmapped };
