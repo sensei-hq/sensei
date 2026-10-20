@@ -133,7 +133,7 @@ The settings screen lists them as repositories.
   - ~~#286~~ **Closed 2026-10-20**: `tryListGatewayRouters`; a failed read is the Providers error state.
   - ~~#85~~ **Closed 2026-10-20**: Overview hotspots and patterns in use; the overview/patterns reads fail as
     errors, not as an all-quiet project.
-  - #287 (found via #85): rework anti-patterns are one row per file, including files outside the project (618).
+  - #287 (found via #85): **scope fixed and live.** Rework is placed by path inside the project's indexed repositories, each event counted once, and a re-derive replaces the `suggested` rows. This project went from 617 rows to 371, none outside it. Backfill now resets sessions by project. Open: the granularity decision (recommended: one "rework hotspots" pattern grouped by directory).
   - #288 (found via #85): 57 app reads still turn a failure into a default value.
   - ~~#144~~ **Closed 2026-10-20**: a repo-less project (130 of 133 here; zero metric rows each) says why it has
     no metrics.
