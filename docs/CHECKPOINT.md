@@ -17,10 +17,11 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #149 (the community experiment: drop `parent_id` adjacency,
-measure), then #278, #287, #288, dōjō (#132, #106, #191), code health (#201, #139).
+**Next command:** `/sensei:session refocus`, then #278 (the verdict heuristic: `unknown`, and action tools by
+outcome), then #287, #288, dōjō (#132, #106, #191), code health (#201, #139).
 
 **Open questions:**
+- #149: communities — Leiden/Louvain (recommended, measured the same way) or hierarchy grouping?
 - #133: project glyphs in icon mode — keep each project's inferred kanji (recommended), or one generic icon?
 - #133: the dōjō glyph default — kanji (recommended, shipped on develop) or icons?
 - Run `make dev-signing-cert` once so local installs keep their keychain and folder grants. #282 (releases)

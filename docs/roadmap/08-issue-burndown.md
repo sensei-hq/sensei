@@ -137,7 +137,9 @@ The settings screen lists them as repositories.
   - #288 (found via #85): 57 app reads still turn a failure into a default value.
   - ~~#144~~ **Closed 2026-10-20**: a repo-less project (130 of 133 here; zero metric rows each) says why it has
     no metrics.
-  - #149: the community experiment (drop `parent_id` adjacency, measure).
+  - #149: **experiment run 2026-10-20, criterion not met** — without `parent_id` the >50-file giants grew
+    (22,484 → 24,258 nodes); they are dense call/reference cores. Reverted. Awaiting a decision: Leiden/Louvain
+    (recommended) or hierarchy grouping.
   - #278: the verdict heuristic (`unknown`, and action tools by outcome).
 - **Dōjō:**
   - #132: 16 inline font sizes.
