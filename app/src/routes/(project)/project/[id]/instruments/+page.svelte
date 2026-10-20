@@ -5,6 +5,7 @@
     import { invalidateAll } from '$app/navigation';
     import { page } from '$app/state';
     import type { ProjectMcpToolStat, ProjectService } from '$lib/types.js';
+    import ToolBubbles from './ToolBubbles.svelte';
 
     let { data } = $props();
     const projectId = $derived(page.params.id ?? '');
@@ -102,6 +103,22 @@
             </ul>
         </section>
     {/if}
+
+    <!-- Which tools the assistants used, built-ins included, sized by calls
+         (#291 — it hung off the retired unused_tools metric and could not be
+         reached). Its own read: a failure here does not blank the page. -->
+    <section class="mb-8">
+        <h3 class="text-sm font-medium m-0 mb-3">Tools used</h3>
+        {#if data.toolUsageError}
+            <p class="text-xs text-danger m-0" data-testid="tools-used-error">
+                Could not read which tools were used: {data.toolUsageError}
+            </p>
+        {:else if data.toolUsage.length > 0}
+            <div data-testid="tools-used"><ToolBubbles tools={data.toolUsage} /></div>
+        {:else}
+            <p class="text-xs text-ink-soft m-0">No tool calls captured for this project yet.</p>
+        {/if}
+    </section>
 
     <!-- MCP tool aggregation — the new lens per T2 Slice F. -->
     <section class="mb-8">

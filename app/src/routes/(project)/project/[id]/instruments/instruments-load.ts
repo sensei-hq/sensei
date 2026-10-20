@@ -1,5 +1,6 @@
 import { readOutcome, type ApiResult } from '$lib/api.js';
 import type { ProjectMcpToolStat, ProjectService } from '$lib/types.js';
+import type { ToolUsage } from '$lib/metrics/metric-view.js';
 
 type Extension = { id: string; name: string; kind: string; scope: 'global' | 'project'; enabled: boolean };
 
@@ -8,6 +9,7 @@ export interface InstrumentsApi {
   tryGetProjectInstruments: (id: string) => Promise<ApiResult<{ tools: Extension[] }>>;
   tryGetProjectMcpToolStats: (id: string) => Promise<ApiResult<{ tools: ProjectMcpToolStat[] }>>;
   tryListProjectServices: (id: string) => Promise<ApiResult<{ services: ProjectService[] }>>;
+  tryGetProjectTools: (id: string) => Promise<ApiResult<{ tools: ToolUsage[] }>>;
 }
 
 /**
@@ -17,16 +19,21 @@ export interface InstrumentsApi {
  * "0 tools · 0 calls" an empty default made of it.
  */
 export async function loadProjectInstruments(api: InstrumentsApi, id: string) {
-  const [ext, mcp, services] = await Promise.all([
+  const [ext, mcp, services, usage] = await Promise.all([
     api.tryGetProjectInstruments(id),
     api.tryGetProjectMcpToolStats(id),
     api.tryListProjectServices(id),
+    api.tryGetProjectTools(id),
   ]);
-  const [e, m, s] = [readOutcome(ext), readOutcome(mcp), readOutcome(services)];
+  const [e, m, s, u] = [readOutcome(ext), readOutcome(mcp), readOutcome(services), readOutcome(usage)];
   return {
     tools: e.data?.tools ?? [],
     mcpToolStats: m.data?.tools ?? [],
     services: s.data?.services ?? [],
+    // Which tools the assistants used, built-ins included (#291) — its own
+    // read and its own error, so a failure here does not blank the page.
+    toolUsage: u.data?.tools ?? [],
+    toolUsageError: u.error,
     error: e.error ?? m.error ?? s.error,
   };
 }
