@@ -1,7 +1,7 @@
 <script lang="ts">
     import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, EmptyState, ScreenState, UnreadProjectsNotice } from '$lib/components';
+  import { PageHeader, Screen, EmptyState, ScreenState, UnreadProjectsNotice } from '$lib/components';
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
   import {
     driftChipClasses,
@@ -48,38 +48,42 @@
   </section>
 {/snippet}
 
-<PageHeader
-  eyebrow="Observatory · Document traceability"
-  kanji="巻" icon={railIcon("/traceability")}
-  title="Where the docs and the code disagree."
-  description="Every doc-to-symbol link, checked nightly. Drift surfaces here before someone reads a stale doc and writes the wrong thing."
-/>
+<Screen>
+    {#snippet header()}
+    <PageHeader
+      eyebrow="Observatory · Document traceability"
+      kanji="巻" icon={railIcon("/traceability")}
+      title="Where the docs and the code disagree."
+      description="Every doc-to-symbol link, checked nightly. Drift surfaces here before someone reads a stale doc and writes the wrong thing."
+    />
+    {/snippet}
 
-{#if !data.rollup || !data.groups}
-<div class="max-w-[1060px] mx-auto px-7 pb-10">
-  <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
-</div>
-{:else}
-<div class="max-w-[1060px] mx-auto px-7 pb-10" data-traceability-total={data.rollup.total}>
-  <UnreadProjectsNotice unread={data.unread} />
-  {#if data.rollup.total === 0 && data.indexedDocs === 0}
-    <!-- Nothing to check (#290): no document is indexed in any project. -->
-    <EmptyState
-      kanji="巻"
-      title="no documents indexed"
-      description="Drift is checked against indexed documents, and sensei does not index markdown yet — so nothing has been checked. This is not a clean bill of health."
-    />
-  {:else if data.rollup.total === 0}
-    <EmptyState
-      kanji="巻"
-      title="no drift detected"
-      description="Doc-to-code references are all resolving. Broken or drifted mentions will surface here once a project's next scan finds one."
-    />
-  {:else}
-    <p class="text-sm text-ink-soft mb-6" data-traceability-rollup>{rollupHeadline(data.rollup)}</p>
-    {#each data.groups as g (g.projectId)}
-      {@render group(g)}
-    {/each}
-  {/if}
-</div>
-{/if}
+    {#if !data.rollup || !data.groups}
+    <div class="max-w-[1060px] mx-auto px-7 pb-10">
+      <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+    </div>
+    {:else}
+    <div class="max-w-[1060px] mx-auto px-7 pb-10" data-traceability-total={data.rollup.total}>
+      <UnreadProjectsNotice unread={data.unread} />
+      {#if data.rollup.total === 0 && data.indexedDocs === 0}
+        <!-- Nothing to check (#290): no document is indexed in any project. -->
+        <EmptyState
+          kanji="巻"
+          title="no documents indexed"
+          description="Drift is checked against indexed documents, and sensei does not index markdown yet — so nothing has been checked. This is not a clean bill of health."
+        />
+      {:else if data.rollup.total === 0}
+        <EmptyState
+          kanji="巻"
+          title="no drift detected"
+          description="Doc-to-code references are all resolving. Broken or drifted mentions will surface here once a project's next scan finds one."
+        />
+      {:else}
+        <p class="text-sm text-ink-soft mb-6" data-traceability-rollup>{rollupHeadline(data.rollup)}</p>
+        {#each data.groups as g (g.projectId)}
+          {@render group(g)}
+        {/each}
+      {/if}
+    </div>
+    {/if}
+</Screen>

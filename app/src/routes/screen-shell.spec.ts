@@ -20,20 +20,13 @@ const NOT_YET = new Set([
 		'(observatory)/+page.svelte',
 		'(observatory)/activity-logs/+page.svelte',
 		'(observatory)/consolidation/+page.svelte',
-		'(observatory)/dojo/connections/+page.svelte',
-		'(observatory)/dojo/sharing/+page.svelte',
-		'(observatory)/help/+page.svelte',
 		'(observatory)/impact/+page.svelte',
 		'(observatory)/insights/+page.svelte',
 		'(observatory)/instruments/+page.svelte',
-		'(observatory)/knowledge-sources/+page.svelte',
 		'(observatory)/learnings/+page.svelte',
-		'(observatory)/libraries/+page.svelte',
 		'(observatory)/projects/+page.svelte',
 		'(observatory)/sessions/+page.svelte',
 		'(observatory)/share-review/+page.svelte',
-		'(observatory)/traceability/+page.svelte',
-		'(observatory)/upgrades/+page.svelte',
 ]);
 
 const source = (page: string) => readFileSync(join(ROOT, page), 'utf8');

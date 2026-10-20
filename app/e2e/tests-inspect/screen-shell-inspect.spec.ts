@@ -19,6 +19,7 @@ const PROJECT_SCREENS = [
 const OBSERVATORY_SCREENS = [
   ...['assistants', 'dojo', 'extensions', 'general', 'inference', 'instruments', 'libraries', 'metrics', 'projects', 'providers', 'roots']
     .map((s) => `/settings/${s}`),
+  '/dojo/connections', '/dojo/sharing', '/help', '/knowledge-sources', '/libraries', '/traceability', '/upgrades',
 ];
 
 type Probe = { fills: boolean; mainScrolls: boolean; headerMoved: number; bodyScrolled: number; fill: boolean } | null;
