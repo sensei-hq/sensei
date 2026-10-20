@@ -72,7 +72,14 @@
             Scanned {lastSummary.scannedDocs} docs · added {lastSummary.newBroken} broken · resolved {lastSummary.resolved}.
         </div>
     {/if}
-    {#if data.driftItems.length === 0}
+    {#if data.driftItems.length === 0 && data.indexedDocs === 0}
+        <!-- Nothing to check (#290): no document is indexed, so an empty list is
+             not "no drift". Markdown has no indexer adapter yet. -->
+        <p class="text-sm text-ink-soft" data-testid="drift-no-docs">
+            No documents are indexed for this project, so nothing has been checked for drift — sensei does not
+            index markdown yet.
+        </p>
+    {:else if data.driftItems.length === 0}
         <p class="text-sm text-ink-soft">No drift signals yet. Run a scan to check for stale doc references.</p>
     {:else}
         <ul class="list-none m-0 p-0" data-testid="drift-list">

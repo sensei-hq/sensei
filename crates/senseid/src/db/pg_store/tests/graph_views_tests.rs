@@ -875,3 +875,73 @@ async fn only_rows_provably_the_persons_are_pushable_user_metrics() {
         "pushed + held = every user row in play: the window and the count see one population"
     );
 }
+
+/// #290: a project's file count is the distinct files its nodes sit in. It
+/// counted `kind = 'file'` nodes, which the indexer no longer writes — 0 files,
+/// so `rework_density` had no denominator and stopped being written.
+#[tokio::test]
+async fn project_file_count_is_the_distinct_files_its_declarations_sit_in() {
+    let s = pg_store().await;
+    let suffix = format!("filecount_{}", uuid::Uuid::new_v4());
+    let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+    s.seed_node(&fid, "function", "a", "src/lib.rs", None, None, Some(1), Some(3)).await.unwrap();
+    s.seed_node(&fid, "struct", "B", "src/lib.rs", None, None, Some(5), Some(9)).await.unwrap();
+    s.seed_node(&fid, "function", "c", "src/other.rs", None, None, Some(1), Some(2)).await.unwrap();
+
+    let count = s.churn_project_file_count(&pid).await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .ok();
+    assert_eq!(count, 2, "two files, whatever their nodes' kinds");
+}
+
+/// #290: the scoped node read carries `is_exported` — Atlas's export count read
+/// a field the query never selected, so it was 0 for every repository.
+#[tokio::test]
+async fn scoped_nodes_carry_is_exported() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("exported_{}", uuid::Uuid::new_v4())).await;
+    let id = s
+        .seed_node(&fid, "function", "run", "src/a.rs", None, None, Some(1), Some(3))
+        .await
+        .unwrap();
+    sqlx_core::query::query("UPDATE sensei.nodes SET is_exported = true WHERE id = $1")
+        .bind(id)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    let nodes = s.get_nodes_scoped(&[fid]).await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+        .bind(fid)
+        .execute(s.pool())
+        .await
+        .ok();
+    assert_eq!(nodes.iter().find(|n| n["name"] == "run").unwrap()["is_exported"], true);
+}
+
+/// #290: the drift read says how many documents the project has indexed, so a
+/// screen can tell "no drift" from "no documents to check" — markdown has no
+/// indexer adapter, so every live project has 0 and its drift is never scanned.
+#[tokio::test]
+async fn project_drift_reports_the_indexed_documents() {
+    let s = pg_store().await;
+    let (pid, fid) =
+        create_test_project_and_folder(&s, &format!("docs_{}", uuid::Uuid::new_v4())).await;
+    let before = s.get_project_drift(&pid).await.unwrap()["indexedDocs"].clone();
+    s.seed_node(&fid, "doc", "Design", "docs/design.md", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    let after = s.get_project_drift(&pid).await.unwrap()["indexedDocs"].clone();
+
+    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .ok();
+    assert_eq!((before, after), (serde_json::json!(0), serde_json::json!(1)));
+}

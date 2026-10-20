@@ -62,7 +62,14 @@
 {:else}
 <div class="max-w-[1060px] mx-auto px-7 pb-10" data-traceability-total={data.rollup.total}>
   <UnreadProjectsNotice unread={data.unread} />
-  {#if data.rollup.total === 0}
+  {#if data.rollup.total === 0 && data.indexedDocs === 0}
+    <!-- Nothing to check (#290): no document is indexed in any project. -->
+    <EmptyState
+      kanji="巻"
+      title="no documents indexed"
+      description="Drift is checked against indexed documents, and sensei does not index markdown yet — so nothing has been checked. This is not a clean bill of health."
+    />
+  {:else if data.rollup.total === 0}
     <EmptyState
       kanji="巻"
       title="no drift detected"

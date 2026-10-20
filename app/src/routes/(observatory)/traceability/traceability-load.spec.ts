@@ -5,7 +5,7 @@ import type { DriftItem } from '$lib/types.js';
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const down = { ok: false as const, error: { status: 503, message: 'Service Unavailable' } };
 const item = (id: string, status: string) => ({ id, status, detail: id }) as unknown as DriftItem;
-const drift = (items: DriftItem[]) => ok({ items, total: items.length, drifted: items.length, broken: 0 });
+const drift = (items: DriftItem[]) => ok({ items, total: items.length, drifted: items.length, broken: 0, indexedDocs: 2 });
 
 const api = (over: Partial<DriftApi> = {}): DriftApi => ({
   tryListProjects: async () => ok([{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }]),
@@ -18,7 +18,7 @@ const api = (over: Partial<DriftApi> = {}): DriftApi => ({
 describe('loadDriftAcross', () => {
   it('groups every project\'s drift', async () => {
     const d = await loadDriftAcross(api());
-    expect([d.error, d.rollup?.total, d.groups?.map((g) => g.projectName), d.unread]).toEqual([null, 2, ['alpha', 'beta'], []]);
+    expect([d.error, d.rollup?.total, d.groups?.map((g) => g.projectName), d.unread, d.indexedDocs]).toEqual([null, 2, ['alpha', 'beta'], [], 4]);
   });
   it('a failed list read is the page\'s error', async () => {
     const d = await loadDriftAcross(api({ tryListProjects: async () => down }));

@@ -483,7 +483,7 @@ export function senseiApi(port: number) {
 
     /** A project's doc-drift items with their counts (#288: a failure is an error). */
     tryGetProjectDrift: (id: string) =>
-      tryGet<{ items: DriftItem[]; total: number; drifted: number; broken: number }>(`/api/projects/${enc(id)}/drift`),
+      tryGet<{ items: DriftItem[]; total: number; drifted: number; broken: number; indexedDocs?: number }>(`/api/projects/${enc(id)}/drift`),
 
     createImpactVerdict: (id: string, title: string, note?: string, sessionId?: string) =>
       post<{ id: string }>(

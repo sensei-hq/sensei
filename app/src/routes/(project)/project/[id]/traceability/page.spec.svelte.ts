@@ -30,4 +30,14 @@ describe('Project traceability /+page — a failed read', () => {
     );
     vi.unstubAllGlobals();
   });
+
+  // #290: with no documents indexed, an empty list is "nothing checked".
+  it('says no documents are indexed, rather than "no drift signals yet"', () => {
+    const m = mountComponent(Page, {
+      data: { project: { id: 'p1', name: 'p' }, driftItems: [], total: 0, drifted: 0, broken: 0, indexedDocs: 0, error: null } as unknown as PageData,
+    });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-testid="drift-no-docs"]')?.textContent).toContain('No documents are indexed');
+    expect(m.container.textContent).not.toContain('No drift signals yet');
+  });
 });
