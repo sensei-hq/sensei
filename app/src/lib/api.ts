@@ -689,9 +689,10 @@ export function senseiApi(port: number) {
     getToolsHealth: () =>
       get<ToolsHealth>('/api/instruments/tools-health', { sources: [] }),
 
-    getLibraryUsage: (id: string) =>
-      get<{ usage: Array<{ library_name: string; folder: string; version_used: string | null; import_count: number }> }>(
-        `/api/libs/${enc(id)}/usage`, { usage: [] }
+    /** Where a library is used (#288: a failure is an error, not "unused"). */
+    tryGetLibraryUsage: (id: string) =>
+      tryGet<{ usage: Array<{ library_name: string; folder: string; version_used: string | null; import_count: number }> }>(
+        `/api/libs/${enc(id)}/usage`,
       ),
 
     // ── Indexing ─────────────────────────────────────────────────────────
@@ -745,6 +746,15 @@ export function senseiApi(port: number) {
       if (params?.projectId) qs.set('projectId', params.projectId);
       if (params?.shared) qs.set('shared', 'true');
       return get<{ total: number; libs: LibEntry[] }>(`/api/libs?${qs}`, { total: 0, libs: [] });
+    },
+
+    /** Every detected library (#288: a failure is an error, not an empty index). */
+    tryGetLibs: (params?: { repoId?: string; projectId?: string; shared?: boolean }) => {
+      const qs = new URLSearchParams();
+      if (params?.repoId) qs.set('repoId', params.repoId);
+      if (params?.projectId) qs.set('projectId', params.projectId);
+      if (params?.shared) qs.set('shared', 'true');
+      return tryGet<{ total: number; libs: LibEntry[] }>(`/api/libs?${qs}`);
     },
 
     indexLib: (libName: string, url: string, version?: string) =>
