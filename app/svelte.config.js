@@ -8,6 +8,8 @@ const config = {
     }),
     alias: {
       '$lib': './src/lib',
+      // Shared with the dōjō (#133); vite.config.ts lets the dev server read it.
+      '@sensei/glyphs': '../packages/glyphs/index.js',
     },
   },
   vitePlugin: {

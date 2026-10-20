@@ -113,6 +113,8 @@ export default defineConfig(({ command }) => ({
   server: {
     port: 5173,
     strictPort: true,
+    // packages/glyphs is shared with the dōjō and sits outside this app (#133).
+    fs: { allow: ['.', '../packages/glyphs'] },
     host: host || false,
     hmr: host ? { protocol: 'ws', host, port: 5183 } : undefined,
   },
