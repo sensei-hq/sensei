@@ -144,7 +144,8 @@ The settings screen lists them as repositories.
     (22,484 → 24,258 nodes); they are dense call/reference cores. Reverted. Awaiting a decision: Leiden/Louvain
     (recommended) or hierarchy grouping.
   - #278: **both defects fixed and live** (`unknown`; action tools by outcome). Open to re-measure after #289.
-  - #290 (found via #288): no graph node has `kind = 'file'` any more. Atlas modules and exports read 0, and `rework_density` has written no row since 2026-10-07. Doc drift has never scanned a document (no `doc` nodes).
+  - ~~#290~~ **Closed 2026-10-20**: a file is where declarations are. Atlas shows 2,096 modules and 11,823 exports (was 0 / 0), and `rework_density` is written again (371/2096 = 0.177, its first row since 2026-10-07). Traceability says "no documents indexed" instead of "no drift".
+  - #292 (found via #290): indexer v2 has no markdown adapter, so doc drift never scans a document.
   - #289 (found via #278): 26% of assistant events are duplicates (non-idempotent staging import, now fixed).
     Removing the existing 167,932 awaits the user's OK.
 - **Dōjō:**
