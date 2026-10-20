@@ -15,6 +15,66 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-20
+
+### Added
+
+- **Sign in once and your repositories sync** (#301). A connected identity's
+  repositories are shared by default; turning one off still holds. A personal
+  dōjō is now connected to its owner's GitHub account, so repositories under
+  that account map to it (they were refused as `no_connection`). Private
+  repositories in an organisation still need that organisation's subscription.
+- **Synced repositories appear under their dōjō project** (#299). The daemon
+  sends each repository's sensei project; the dōjō files it, and lists the
+  projects you can read in every dōjō you belong to.
+- **The default identity follows your global git email** (#296). With no
+  persona named, the app, the CLI and the daemon use the identity that owns
+  `git config --global user.email` — not whichever signed in first. No email,
+  no owner or two owners is an error that says so.
+- **`sensei auth status` lists every identity** (#295), leading with whether
+  the daemon can read its session, and **`sensei auth approve`** does what the
+  app's Approve button does.
+- **One screen layout** (#293): every app and dōjō screen keeps its header in
+  place while only its content scrolls (a shared `Screen` in `packages/ui`).
+- **Kanji or icons** for every mark in the app and the dōjō (#133).
+- **Background tasks** show their next run, average pass, last error and log
+  (#96); **Settings → Projects** lists repositories and saves roles (#271).
+- **Rework hotspots**: unreviewed rework shows as one anti-pattern, ranked by
+  peak re-edits (#287).
+- **Token usage per turn** (`activity.turn_usage`), counted once across hook and
+  transcript, with session totals derived from it (#280).
+
+### Changed
+
+- **BREAKING (dōjō data)**: `dojo.projects` is the shared project, keyed
+  `(tenant_id, slug)` with no owner (#299). Read follows repository access; only
+  the sync creates a project, and a relay run attaches to one. Existing project
+  rows are dropped when the release reconciles the schema; the sync refiles them.
+- **Sign-in opens your browser** (#300), naming the GitHub account to use and
+  offering the link for a private window. The daemon refuses a callback from any
+  other account, or one held by another identity, before storing anything. The
+  in-app window could not complete passkey, SMS or GitHub Mobile.
+- The release workflow reconciles the dōjō schema with `--allow-destructive`
+  until v1 (the dōjō is pre-v1).
+- Reading an assistant's history is on unless turned off (#280).
+
+### Fixed
+
+- No screen shows a failed read as an empty one: the remaining fallback reads
+  are gone (#288).
+- Settings → General fills an empty display name from the system user name.
+- Files are counted where declarations are, so the Atlas and `rework_density`
+  work again (#290); "Tools used" moved to project Instruments (#291).
+- An unreadable keychain is reported as itself, with an Approve action (#283);
+  a router key the keychain withholds is unreadable, not unset (#285).
+- Transcripts over 64 MB are streamed instead of skipped; token columns are
+  bigint (#280).
+- The daemon records why it exited before binding (#179); the essential backup
+  fails when a table does not export (#181).
+- The dōjō inbox shows a relay outage as an error (#104); its dev server binds
+  IPv4 so a local daemon can reach it (#185).
+- rustls 0.23.46 (RUSTSEC-2026-0346..0349); dbd 0.27.3.
+
 ## [0.14.0] — 2026-10-18
 
 ### Added
