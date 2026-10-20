@@ -30,7 +30,10 @@ use crate::dojo_client::{dojo_auth, pkce, session};
 /// it, which is the honest behaviour — the abandoned flow's code is then
 /// unusable, and that is what we want rather than keeping stale verifiers alive.
 /// The in-flight (persona, verifier) pair.
-static PENDING_VERIFIER: Mutex<Option<(String, String)>> = Mutex::new(None);
+/// The sign-in in flight: (persona slot, PKCE verifier, the GitHub login it is
+/// expected to come back as — `None` for a first connect). The expected login
+/// is what lets the callback refuse the wrong account (#300).
+static PENDING_VERIFIER: Mutex<Option<(String, String, Option<String>)>> = Mutex::new(None);
 
 /// Which persona a sign-in is for. Defaults to the label the user is most likely
 /// to mean on a single-identity install.
@@ -90,7 +93,7 @@ pub(crate) async fn signin(Query(p): Query<PersonaQuery>) -> Json<serde_json::Va
     // leave a stale pending flow behind a failed start, and the NEXT callback —
     // possibly from a different attempt — would try to use it.
     *PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some((p.persona.clone(), verifier));
+        Some((p.persona.clone(), verifier, p.github_login.clone()));
     Json(serde_json::json!({
         "authorizeUrl": url,
         "callback": callback_url(),
@@ -102,6 +105,39 @@ pub(crate) async fn signin(Query(p): Query<PersonaQuery>) -> Json<serde_json::Va
         "expectedLogin": p.github_login,
         "hint": "if the browser is already signed in to another GitHub account, use a private window",
     }))
+}
+
+/// May the GitHub account a sign-in came back as be stored under `slot` (#300)?
+///
+/// Two refusals, each naming what to do:
+/// * the sign-in expected a login (renewing a known identity) and another
+///   account answered — the browser was signed in to GitHub as someone else;
+/// * the account already belongs to ANOTHER identity on this machine. Linking it
+///   would re-point that identity's slot here (`resolve_persona_for_identity`
+///   finds it by GitHub id), silently moving a working identity.
+pub(crate) fn account_guard(
+    slot: &str,
+    expected_login: Option<&str>,
+    login: &str,
+    owner_slot: Option<&str>,
+) -> Result<(), String> {
+    if let Some(expected) = expected_login
+        && !expected.eq_ignore_ascii_case(login)
+    {
+        return Err(format!(
+            "this sign-in was for {expected}, but GitHub answered as {login}. Sign in to GitHub \
+             as {expected} in your browser (a private window works), then try again."
+        ));
+    }
+    if let Some(owner) = owner_slot
+        && owner != slot
+    {
+        return Err(format!(
+            "{login} is already connected on this machine as another identity. Use that \
+             identity, or sign in to GitHub as a different account for this one."
+        ));
+    }
+    Ok(())
 }
 
 /// What the browser should be told at the end of the redirect.
@@ -276,7 +312,7 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
     let Some(code) = q.code else {
         return serde_json::json!({ "ok": false, "error": "no code in callback" });
     };
-    let Some((persona, verifier)) =
+    let Some((persona, verifier, expected_login)) =
         PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()).take()
     else {
         return serde_json::json!({
@@ -287,6 +323,24 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
 
     match dojo_auth::exchange(&dojo_url(), &code, &verifier).await {
         Ok(tokens) => {
+            // #300: the sign-in ran in the system browser, which may be signed in
+            // to GitHub as someone else. Decide BEFORE anything is stored: a
+            // wrong account must not land in this identity's keychain slot, nor
+            // re-point another identity's slot here.
+            if let Some((login, gh_id)) = tokens.user.as_ref().and_then(github_identity) {
+                let owner = match state.pg.session_slot_of_github_account(gh_id).await {
+                    Ok(owner) => owner,
+                    // Fail closed: not knowing who holds the account is not
+                    // permission to store it.
+                    Err(e) => return serde_json::json!({ "ok": false, "error": e }),
+                };
+                if let Err(e) =
+                    account_guard(&persona, expected_login.as_deref(), login, owner.as_deref())
+                {
+                    tracing::warn!(persona, login, "sign-in refused: {e}");
+                    return serde_json::json!({ "ok": false, "error": e });
+                }
+            }
             // Blocking keychain write off the async runtime, as gateway_keys
             // documents.
             let refresh = tokens.refresh_token.clone();
@@ -1205,6 +1259,50 @@ async fn github_verified_emails(provider_token: &str) -> VerifiedEmails {
         })
         .unwrap_or_default();
     VerifiedEmails { emails, status: Some(status), expiry_header }
+}
+
+#[cfg(test)]
+mod account_guard_tests {
+    use super::account_guard;
+
+    // #300: a sign-in now opens the system browser, which may already be signed
+    // in to GitHub as someone else. The guard is what keeps the wrong account
+    // from being stored under this identity.
+
+    #[test]
+    fn the_expected_account_is_accepted() {
+        assert_eq!(account_guard("jerrythomas", Some("jerrythomas"), "jerrythomas", None), Ok(()));
+    }
+
+    #[test]
+    fn logins_compare_without_case() {
+        assert_eq!(account_guard("jerrythomas", Some("JerryThomas"), "jerrythomas", None), Ok(()));
+    }
+
+    #[test]
+    fn a_different_account_than_expected_is_refused_and_names_both() {
+        let err = account_guard("default", Some("sensei-hq-org"), "jerrythomas", None).unwrap_err();
+        assert!(err.contains("jerrythomas") && err.contains("sensei-hq-org"), "{err}");
+    }
+
+    #[test]
+    fn a_first_connect_accepts_an_account_no_identity_holds() {
+        assert_eq!(account_guard("joelthomas8847", None, "joelthomas8847", None), Ok(()));
+    }
+
+    #[test]
+    fn an_account_already_held_by_another_identity_is_refused() {
+        // Without this, resolve_persona_for_identity finds the account's persona
+        // by GitHub id and link_persona_identity re-points ITS slot here.
+        let err =
+            account_guard("joelthomas8847", None, "jerrythomas", Some("jerrythomas")).unwrap_err();
+        assert!(err.contains("jerrythomas"), "{err}");
+    }
+
+    #[test]
+    fn renewing_the_identity_that_holds_the_account_is_accepted() {
+        assert_eq!(account_guard("jerrythomas", None, "jerrythomas", Some("jerrythomas")), Ok(()));
+    }
 }
 
 #[cfg(test)]

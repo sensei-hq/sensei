@@ -393,6 +393,23 @@ impl PgStore {
     /// Ordered so the connected ones come first: they are the rows a user is
     /// most likely to be looking for, and an inferred persona they have never
     /// heard of should not head the list.
+    /// The keychain slot of the identity verified as this GitHub account, if one
+    /// on this machine is (#300). `None` when no identity holds the account, or
+    /// one does but has never signed in here.
+    pub async fn session_slot_of_github_account(
+        &self,
+        github_user_id: i64,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT session_slot FROM sensei.personas WHERE github_user_id = $1",
+        )
+        .bind(github_user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("session_slot_of_github_account: {e}"))?;
+        Ok(row.and_then(|(slot,)| slot))
+    }
+
     pub async fn persona_rows(&self) -> Result<Vec<PersonaRow>, String> {
         type Row = (
             String,
@@ -663,5 +680,61 @@ mod forge_token_observe_tests {
             "a call we could not make must not change what we believe"
         );
         cleanup(&pg, &slot).await;
+    }
+}
+
+#[cfg(test)]
+mod session_slot_of_github_account_tests {
+    use super::*;
+
+    // #300's account guard asks: which identity on this machine holds this
+    // GitHub account? A wrong answer either refuses a renewal or lets a sign-in
+    // re-point another identity's slot.
+    async fn seed(pg: &PgStore, label: &str, slot: Option<&str>, gh_id: i64) {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.personas (id, label, session_slot, github_user_id, verified_at) \
+             VALUES (gen_random_uuid(), $1, $2, $3, now())",
+        )
+        .bind(label)
+        .bind(slot)
+        .bind(gh_id)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+    async fn cleanup(pg: &PgStore, label: &str) {
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE label = $1")
+            .bind(label)
+            .execute(pg.pool())
+            .await
+            .ok();
+    }
+    fn fresh_id() -> i64 {
+        // Far above any real GitHub id, and unique per run.
+        9_000_000_000 + (uuid::Uuid::new_v4().as_u128() % 1_000_000_000) as i64
+    }
+
+    #[tokio::test]
+    async fn names_the_slot_of_the_identity_that_holds_the_account() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (label, id) = (format!("ztest-ssga-{}", uuid::Uuid::new_v4()), fresh_id());
+        seed(&pg, &label, Some(&label), id).await;
+        assert_eq!(pg.session_slot_of_github_account(id).await.unwrap(), Some(label.clone()));
+        cleanup(&pg, &label).await;
+    }
+
+    #[tokio::test]
+    async fn an_account_no_identity_holds_has_no_slot() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        assert_eq!(pg.session_slot_of_github_account(fresh_id()).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_holder_that_never_signed_in_here_has_no_slot() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (label, id) = (format!("ztest-ssga-{}", uuid::Uuid::new_v4()), fresh_id());
+        seed(&pg, &label, None, id).await;
+        assert_eq!(pg.session_slot_of_github_account(id).await.unwrap(), None);
+        cleanup(&pg, &label).await;
     }
 }
