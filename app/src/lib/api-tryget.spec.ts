@@ -56,6 +56,8 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryMaterializeRecommendation', call: () => api().tryMaterializeRecommendation('p1', 'r1', {}), body: { ok: true } },
   { name: 'tryAcceptProjectRecommendation', call: () => api().tryAcceptProjectRecommendation('p1', 'r1'), body: { ok: true } },
   { name: 'tryRejectProjectRecommendation', call: () => api().tryRejectProjectRecommendation('p1', 'r1'), body: { ok: true } },
+  // #288 — Insights.
+  { name: 'tryGetInsights', call: () => api().tryGetInsights('p1'), body: { counts: { now: 0 } } },
   // #288 — Atlas.
   { name: 'tryGetGraphNodes', call: () => api().tryGetGraphNodes('r'), body: { nodes: [], edges: [] } },
   { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
@@ -112,6 +114,6 @@ describe('legacy fallback reads (#288)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
     const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(34);
+    expect(reads.length).toBeLessThanOrEqual(33);
   });
 });

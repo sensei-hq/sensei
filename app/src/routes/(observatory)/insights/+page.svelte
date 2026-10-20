@@ -3,7 +3,7 @@
     import { railIcon } from "../observatory-nav";
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
-  import { PageHeader } from '$lib/components';
+  import { PageHeader, ScreenState } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
@@ -20,7 +20,7 @@
   const api = senseiApi(appState.port);
   // Seed the state once from the loaded board; the state owns every refetch
   // and optimistic update thereafter. untrack makes the one-time read explicit.
-  const board = new InsightsBoardState(untrack(() => data.board));
+  const board = new InsightsBoardState(untrack(() => data.board), untrack(() => data.error));
 
   function selectProject(id: string | null): void {
     void board.selectProject(api, id);
@@ -188,9 +188,17 @@
     </div>
   {/if}
 
+  {#if board.loadError}
+    <!-- The board could not be read (#288) — not three quiet columns. Retry
+         re-reads the current scope through the state, which owns the board. -->
+    <div class="p-8">
+      <ScreenState status="error" error={board.loadError} onretry={() => void board.retry(api)} />
+    </div>
+  {:else}
   <div class="grid grid-cols-3 flex-1 min-h-0" data-triage-grid>
     {@render columnShell('now', '今', 'Now', 'violations · high-impact · this week', board.now.count, nowBody)}
     {@render columnShell('soon', '近', 'Soon', 'emerging patterns · worth a look', board.soon.count, soonBody)}
     {@render columnShell('settled', '定', 'Settled', 'battle-tested · low-noise reference', board.settled.count, settledBody)}
   </div>
+  {/if}
 </div>

@@ -602,18 +602,6 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`,
       ),
 
-    // Gap 1 fix — expose the accept/reject flow so MeasureVerdicts has
-    // work to measure. Each returns { ok } on success or 409 CONFLICT if
-    // the rec was already decided.
-    acceptProjectRecommendation: (id: string, recId: string) =>
-      post<{ ok: boolean }>(
-        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/accept`, {}, { ok: false },
-      ),
-    rejectProjectRecommendation: (id: string, recId: string) =>
-      post<{ ok: boolean }>(
-        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/reject`, {}, { ok: false },
-      ),
-
     // P-A: rule-class accept that MATERIALIZES a governance rule (spec 2026-08-20).
     // `preview` renders what would be written (no write); `materialize` accepts +
     // writes the rule at the chosen scope/enforcement (defaults: project / recommended).
@@ -626,6 +614,9 @@ export function senseiApi(port: number) {
       tryPost<{ ok: boolean; materialized?: unknown }>(
         `/api/projects/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts,
       ),
+    // The accept/reject flow that gives MeasureVerdicts work to measure. Each
+    // resolves { ok } on success, or an error — 409 CONFLICT when the rec was
+    // already decided.
     tryAcceptProjectRecommendation: (id: string, recId: string) =>
       tryPost<{ ok: boolean }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/accept`, {}),
     tryRejectProjectRecommendation: (id: string, recId: string) =>
@@ -635,14 +626,10 @@ export function senseiApi(port: number) {
     // corrections pre-bucketed into Now / Soon / Settled. `project` scopes
     // all three columns to one project (name-or-uuid). Fallback is the empty
     // board so a daemon hiccup renders the quiet-state, never a broken screen.
-    getInsights: (project?: string) =>
-      get<InsightsBoard>(
-        `/api/insights${project ? `?project=${enc(project)}` : ''}`,
-        {
-          counts: { now: 0, soon: 0, settled: 0 },
-          projects: [], recommendations: [], memories: [], patterns: [], corrections: [],
-        },
-      ),
+    /** The cross-project triage board, or one project's (#288: a failure is
+     *  an error, never the all-quiet empty board). */
+    tryGetInsights: (project?: string) =>
+      tryGet<InsightsBoard>(`/api/insights${project ? `?project=${enc(project)}` : ''}`),
 
     // ── Front door · Intake ─────────────────────────────────────────────
     // The guide (frame + axis prompts + catalog) for the intake screen.
