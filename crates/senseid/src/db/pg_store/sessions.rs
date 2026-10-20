@@ -1109,41 +1109,48 @@ impl PgStore {
     /// "result needed follow-ups" signal. Returns `(folder_id, file,
     /// max_session_edits, total_edits)` only for files whose busiest single
     /// session reaches `min_session_edits`.
-    /// `folders = Some(ids)` scopes derivation to just those folders (incremental
-    /// re-derive — only folders touched by newly-enriched sessions); `None` =
-    /// the whole project (full refresh / on-demand).
+    ///
+    /// Whole project, always (#287). A file is placed by its own path: under the
+    /// innermost repository root of the project that contains it, reported
+    /// relative to that root — most sessions carry a project but no folder, so
+    /// the session cannot place it. A path under none (`~/.claude/…`) is not the
+    /// project's. A relative path stays with its session's folder, when it has
+    /// one. Each edit event counts once, so duplicated events (#289) don't.
     pub async fn get_file_churn_stats(
         &self,
         project_id: &uuid::Uuid,
         min_session_edits: i64,
-        folders: Option<&[uuid::Uuid]>,
     ) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
         let rows: Vec<(uuid::Uuid, String, i64, i64)> = sqlx_core::query_as::query_as(
-            // #287: only files INSIDE the session's folder (an absolute path
-            // under it, made relative; a relative path is already inside) —
-            // edits to `~/.claude/…` were filed as the project's rework. And each
-            // edit EVENT once: duplicated events (#289) multiplied the counts.
-            "WITH edits AS (
-                 SELECT DISTINCT s.folder_id, ae.session_id, ae.ts,
-                        ae.payload->'tool_input'->>'file_path' AS path,
-                        f.abs_path
-                 FROM activity.assistant_events ae
-                 JOIN activity.sessions s ON s.client_session_id = ae.session_id
-                 JOIN sensei.folders f ON f.id = s.folder_id
-                 WHERE s.project_id = $1
-                   AND ($3::uuid[] IS NULL OR s.folder_id = ANY($3))
-                   AND ae.event_type = 'PostToolUse'
-                   AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
-                   AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
-             ), in_folder AS (
-                 SELECT folder_id, session_id,
-                        CASE WHEN left(path, 1) <> '/' THEN path
-                             ELSE substr(path, length(abs_path) + 2) END AS file
+            "WITH roots AS (
+                 SELECT DISTINCT ON (f.repository_id) f.id AS folder_id, f.abs_path
+                   FROM sensei.folders f
+                   JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+                  WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL
+                  ORDER BY f.repository_id, length(f.abs_path) ASC
+             ), edits AS (
+                 SELECT DISTINCT s.folder_id AS session_folder, ae.session_id, ae.ts,
+                        ae.payload->'tool_input'->>'file_path' AS path
+                   FROM activity.assistant_events ae
+                   JOIN activity.sessions s ON s.client_session_id = ae.session_id
+                  WHERE s.project_id = $1
+                    AND ae.event_type = 'PostToolUse'
+                    AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
+                    AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
+             ), placed AS (
+                 (SELECT DISTINCT ON (e.session_id, e.ts, e.path)
+                         r.folder_id, e.session_id,
+                         substr(e.path, length(r.abs_path) + 2) AS file
+                    FROM edits e
+                    JOIN roots r ON starts_with(e.path, r.abs_path || '/')
+                   ORDER BY e.session_id, e.ts, e.path, length(r.abs_path) DESC)
+                 UNION ALL
+                 SELECT session_folder, session_id, path
                    FROM edits
-                  WHERE left(path, 1) <> '/' OR starts_with(path, abs_path || '/')
+                  WHERE left(path, 1) <> '/' AND session_folder IS NOT NULL
              ), per_session AS (
                  SELECT folder_id, file, session_id, count(*) AS edits
-                   FROM in_folder
+                   FROM placed
                   GROUP BY folder_id, file, session_id
              )
              SELECT folder_id, file,
@@ -1155,7 +1162,6 @@ impl PgStore {
         )
         .bind(project_id)
         .bind(min_session_edits)
-        .bind(folders.map(<[uuid::Uuid]>::to_vec))
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

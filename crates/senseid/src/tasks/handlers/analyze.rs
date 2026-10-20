@@ -820,9 +820,9 @@ fn prompt_snippet(prompt: &str) -> String {
 /// These become F4 (#69) recommendations/teachings. Idempotent (upsert by
 /// folder+name). Returns the number of pattern rows written.
 ///
-/// `affected = Some(folders)` re-derives only those folders (the incremental
-/// path — patterns are folder aggregates, so untouched folders keep theirs);
-/// `None` re-derives the whole project (full / on-demand).
+/// `affected = Some(folders)` re-derives the prompt signals of only those
+/// folders (the incremental path); `None` re-derives the whole project (full /
+/// on-demand). Rework is always derived for the whole project.
 pub async fn derive_signals(
     ctx: &TaskContext,
     project_id: &uuid::Uuid,
@@ -831,15 +831,17 @@ pub async fn derive_signals(
     let mut count = 0u32;
 
     // Rework rows are replaced, not accumulated: a file that stopped qualifying
-    // (or never belonged to the project) must not linger (#287).
-    ctx.pg().prune_suggested_rework(project_id, affected).await?;
+    // (or never belonged to the project) must not linger. Derived for the whole
+    // project whatever `affected` says — a file is placed by its path, not by
+    // its session's folder, which most sessions lack (#287).
+    ctx.pg().prune_suggested_rework(project_id).await?;
 
     // 1. Re-edit churn anti-patterns (file-scoped). Patterns are project-scoped
     //    now (#82): the ON CONFLICT key is (project_id, name, is_anti_pattern),
     //    so if the same churned file surfaces from two folders in this project
     //    the two rows collapse into one. `folder_id` stays as the locus pointer.
     for (folder_id, file, max_edits, total_edits) in
-        ctx.pg().get_file_churn_stats(project_id, CHURN_MIN_EDITS, affected).await?
+        ctx.pg().get_file_churn_stats(project_id, CHURN_MIN_EDITS).await?
     {
         let instances = serde_json::json!([{
             "file": file, "max_session_edits": max_edits, "total_edits": total_edits
@@ -1503,10 +1505,11 @@ mod tests {
             .ok();
     }
 
-    /// #287: rework counts edits to files INSIDE the session's folder, each
-    /// event once, and a re-derive replaces the unreviewed rework rows. Live,
-    /// edits to `~/.claude/…` memory files were filed as this project's
-    /// anti-patterns, and duplicated events (#289) multiplied the counts.
+    /// #287: rework counts edits to files inside the project's repositories —
+    /// placed by path in the innermost one, relative to it — each event once,
+    /// and a re-derive replaces the unreviewed rework rows. Live, edits to
+    /// `~/.claude/…` memory files were filed as this project's anti-patterns,
+    /// and duplicated events (#289) multiplied the counts.
     #[tokio::test]
     async fn rework_counts_only_files_in_the_folder_once_per_event() {
         let ctx = make_ctx().await;
@@ -1528,6 +1531,28 @@ mod tests {
             crate::tasks::test_support::seed_repo_folder(pg, &root, "rw-repo", &abs).await.unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        pg.link_project_repository_for_folder(&fid, &pid).await.unwrap();
+        // Most live sessions carry a project but no folder: the file's own path
+        // has to place it.
+        sqlx_core::query::query("UPDATE activity.sessions SET folder_id = NULL WHERE id = $1")
+            .bind(sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        // A repository nested inside the first, in the same project.
+        let nested = format!("{abs}/vendor/lib");
+        let lib = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            &format!("rw-lib-{}", uuid::Uuid::new_v4()),
+            &nested,
+        )
+        .await
+        .unwrap();
+        pg.link_project_repository_for_folder(&lib, &pid).await.unwrap();
+        // A session that does have its folder, editing by relative path.
+        let csid2 = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let sid2 = pg.record_session_event(&csid2, &fid, Some(&pid), "claude", true).await.unwrap();
 
         async fn edit(pg: &crate::db::pg_store::PgStore, csid: &str, fp: &str, ts: i64) {
             let payload = serde_json::json!({ "tool_input": {"file_path": fp} });
@@ -1549,6 +1574,9 @@ mod tests {
             edit(pg, &csid, &format!("{abs}/src/a.rs"), ts).await;
             edit(pg, &csid, &format!("{abs}/src/a.rs"), ts).await;
             edit(pg, &csid, "/Users/x/.claude/memory/MEMORY.md", ts + 1).await;
+            edit(pg, &csid, &format!("{nested}/x.rs"), ts + 2).await;
+            edit(pg, &csid2, "src/b.rs", ts).await;
+            edit(pg, &csid2, "src/b.rs", ts).await;
         }
         // An unreviewed rework row from an earlier, wrong derive.
         pg.upsert_pattern(
@@ -1564,8 +1592,8 @@ mod tests {
 
         derive_signals(&ctx, &pid, None).await.unwrap();
 
-        let rework: Vec<(String, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT name, instances->0->>'max_session_edits' FROM inference.detected_patterns
+        let rework: Vec<(String, Option<String>, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT name, instances->0->>'max_session_edits', folder_id FROM inference.detected_patterns
               WHERE project_id = $1 AND name LIKE 'rework: %' ORDER BY name",
         )
         .bind(pid)
@@ -1577,16 +1605,28 @@ mod tests {
             "DELETE FROM inference.detected_patterns WHERE project_id = $1",
             "DELETE FROM activity.sessions WHERE id = $1",
         ] {
-            let id = if sql.contains("sessions") { sid } else { pid };
-            sqlx_core::query::query(sql).bind(id).execute(pg.pool()).await.ok();
+            let ids = if sql.contains("sessions") { vec![sid, sid2] } else { vec![pid] };
+            for id in ids {
+                sqlx_core::query::query(sql).bind(id).execute(pg.pool()).await.ok();
+            }
         }
-        sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
-            .bind(&csid)
-            .execute(pg.pool())
-            .await
-            .ok();
+        for c in [&csid, &csid2] {
+            sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
+                .bind(c)
+                .execute(pg.pool())
+                .await
+                .ok();
+        }
 
-        assert_eq!(rework, vec![("rework: src/a.rs".to_string(), Some("5".to_string()))]);
+        let five = Some("5".to_string());
+        assert_eq!(
+            rework,
+            vec![
+                ("rework: src/a.rs".to_string(), five.clone(), Some(fid)),
+                ("rework: src/b.rs".to_string(), five.clone(), Some(fid)),
+                ("rework: x.rs".to_string(), five, Some(lib)),
+            ]
+        );
     }
 
     #[tokio::test]
