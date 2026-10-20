@@ -3,11 +3,12 @@
 // The identity list behind the sign-in overlay.
 //
 // Two properties carry the weight. First, each row's action comes from the
-// DAEMON, never re-derived here. Second, the browsing context is chosen by what
-// the action IS: renewal reuses the session (that is what makes it prompt-free),
-// while connecting or re-authenticating demands a fresh one, because a shared
-// session answers as whoever is already logged in and would re-link the wrong
-// account while reporting success.
+// DAEMON, never re-derived here. Second (#300, decided 2026-10-20): every
+// sign-in opens the SYSTEM browser — the in-app window could not complete
+// passkey, SMS or GitHub Mobile — and the wrong account is caught by the
+// daemon's guard, not by a private window. So the list records which account a
+// sign-in expects and the link, for the UI to show and to copy into a private
+// window.
 import { describe, it, expect, vi } from 'vitest';
 import { PersonaList } from './personas.svelte.js';
 
@@ -37,15 +38,15 @@ function harness(
   url: string | null = 'https://github.test/authorize',
   approved: string | null = null
 ) {
-  const opened: Array<{ url: string; fresh: boolean; label: string }> = [];
+  const opened: string[] = [];
   const startSignIn = vi.fn(async () => url);
   const approveKeychain = vi.fn(async () => approved);
   const list = new PersonaList({
     fetchPersonas: vi.fn(async () => (payload === null ? null : (payload as never))),
     startSignIn,
     approveKeychain,
-    openAuth: vi.fn(async (u: string, opts: { fresh: boolean; label: string }) => {
-      opened.push({ url: u, ...opts });
+    openAuth: vi.fn(async (u: string) => {
+      opened.push(u);
     })
   });
   return { list, opened, startSignIn, approveKeychain };
@@ -96,46 +97,36 @@ describe('PersonaList.load', () => {
 });
 
 describe('PersonaList.signIn', () => {
-  it('CONNECTING a new identity opens a fresh context', async () => {
-    // The system browser answers as whoever is already signed in to GitHub, so
-    // connecting a second identity through it re-links the first — and reports
-    // success, as the wrong person. A fresh context forces the real choice.
+  it('opens the system browser with the daemon\'s link, for every kind of sign-in', async () => {
     const { list, opened } = harness(LIST);
     await list.load();
-    await list.signIn(list.personas[1]); // action: 'connect'
-    expect(opened).toHaveLength(1);
-    expect(opened[0].fresh).toBe(true);
-  });
-
-  it('RENEWING reuses the session, because that is what makes it silent', async () => {
-    // The opposite case, and it looks inconsistent until you see why: renewal
-    // is the SAME account, and the existing browser session is exactly what
-    // lets GitHub redirect straight through with no prompt. A fresh context
-    // here would turn a silent 6-second renewal into a login form every time.
-    const { list, opened } = harness(LIST);
-    await list.load();
+    await list.signIn(list.personas[1]); // connect
     await list.signIn({ ...list.personas[0], action: 'renew' });
-    expect(opened[0].fresh).toBe(false);
-  });
-
-  it('signing in again after a death also forces the account choice', async () => {
-    // The credential is gone and we are re-authenticating. The login hint is
-    // only a hint — GitHub may answer as a different signed-in account — so the
-    // safe direction is to make the user pick.
-    const { list, opened } = harness(LIST);
-    await list.load();
     await list.signIn({ ...list.personas[0], action: 'signIn' });
-    expect(opened[0].fresh).toBe(true);
+    expect(opened).toEqual([
+      'https://github.test/authorize',
+      'https://github.test/authorize',
+      'https://github.test/authorize'
+    ]);
   });
 
-  it('gives each persona its own window so two sign-ins cannot share one', async () => {
-    // A single reused label would have the second sign-in navigate the first
-    // window, and whichever callback landed last would win.
-    const { list, opened } = harness(LIST);
+  it('records the sign-in in flight: which identity, which account, and the link', async () => {
+    // What the UI shows ("sign in to GitHub as …") and what Copy link copies.
+    const { list } = harness(LIST);
     await list.load();
     await list.signIn(list.personas[0]);
+    expect(list.pending).toEqual({
+      label: 'sensei-hq-org',
+      expectedLogin: 'sensei-hq-org',
+      url: 'https://github.test/authorize'
+    });
+  });
+
+  it('a first connect expects no particular account', async () => {
+    const { list } = harness(LIST);
+    await list.load();
     await list.signIn(list.personas[1]);
-    expect(new Set(opened.map((o) => o.label)).size).toBe(2);
+    expect(list.pending).toMatchObject({ label: 'devuser', expectedLogin: null });
   });
 
   it('asks for the persona by its KEYCHAIN SLOT, not its display label', async () => {
@@ -163,6 +154,7 @@ describe('PersonaList.signIn', () => {
     await list.signIn(list.personas[0]);
     expect(opened).toHaveLength(0);
     expect(list.error).toMatch(/could not start/i);
+    expect(list.pending).toBeNull();
   });
 
   it('marks the row busy while its own sign-in is in flight, and no others', async () => {

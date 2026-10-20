@@ -124,5 +124,6 @@
     describe={(p) => personaList.describe(p, Math.floor(Date.now() / 1000))}
     onSignIn={signIn}
     onClose={closeOverlay}
+    pending={personaList.pending}
 />
 {@render children()}

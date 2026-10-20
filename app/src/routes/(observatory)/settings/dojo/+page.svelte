@@ -1,7 +1,7 @@
 <script lang="ts">
     import { railIcon } from "../settings-nav";
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen, ScreenState } from '$lib/components';
+  import { PageHeader, Screen, ScreenState, SignInPending } from "$lib/components";
   import { personaList } from '$lib/personas.svelte.js';
   import {
     agreementLine,
@@ -97,6 +97,7 @@
                     {personaList.actionLabel(p)}
                   </button>
                 {/if}
+        <div class="mt-3"><SignInPending pending={personaList.pending} /></div>
               </div>
             {/each}
           </div>
