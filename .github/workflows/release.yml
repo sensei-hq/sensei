@@ -414,36 +414,25 @@ jobs:
         # Which tool applies a change depends on whether the project is RELEASED,
         # so this branches rather than needing a manual edit at the cutover.
         #
-        # Pre-release (today): `reconcile`. Verified that `dbd deploy` against an
-        # existing database reports "N entities applied" and does NOT apply column
-        # changes — a deploy-only job would report success on every release while
-        # applying nothing.
+        # Pre-release (today): `reconcile --allow-destructive`, unattended — the
+        # user's decision (2026-10-20): the dōjō has not released v1, so its data
+        # is expendable and a schema reshape may drop columns and rows. The plan
+        # step above records exactly what was dropped in this job's log.
         #
-        # Post-release (after `dbd release` is run once): `reconcile` is DISABLED
-        # and errors out. Changes travel as the snapshot `make bump` committed,
-        # and the deploy step below migrates v(n) → v(n+1) from it. Verified:
-        # snapshot then deploy reports "Migrated v1 → v2 — 1 migrated" and the
-        # change lands; deploy WITHOUT the snapshot applies nothing.
+        # Reconcile is all-or-nothing: without `--allow-destructive`, one DROP
+        # anywhere refused the whole plan (creates included), and every reshape
+        # needed an attended run. The dōjō is pre-v1, so that gate cost a manual
+        # step per release for data nobody keeps.
         #
-        # Either way: no --allow-destructive and no --prune. Automation gets the
-        # safe subset; a drop or a rename stays a deliberate manual act.
+        # AT V1 THIS CHANGES — on the user's explicit request, not before: drop the
+        # reconcile and let `dbd deploy` migrate from the committed snapshot
+        # (`dbd release` disables reconcile; changes then travel as `make bump`
+        # snapshots). Verified earlier: snapshot then deploy reports "Migrated
+        # v1 → v2 — 1 migrated"; deploy WITHOUT the snapshot applies nothing.
         #
-        # RECONCILE IS ALL-OR-NOTHING, which is the thing to know here. It does
-        # not apply the additive part of a plan and skip the rest: one DROP
-        # anywhere and it refuses the whole plan, creates included. Measured
-        # 2026-09-28 against the production dojo — 7 creates and 5 column adds
-        # were held back by 5 constraint drops.
-        #
-        # That is correct behaviour and this job does NOT work around it. Those 5
-        # drops were safe only because all three tables happened to be EMPTY, and
-        # "is there data in it" is a judgement a human makes once, not a property
-        # automation can assume. So the pre-release branch turns the refusal into
-        # an instruction instead of a cryptic exit code.
-        #
-        # THREE STATES, and only the middle one needs a human:
-        #   fresh database  - every entity is a CREATE, nothing to drop, passes
-        #   existing + drop - fails HERE with the command to run attended
-        #   released        - reconcile is disabled; changes travel as snapshots
+        # Ordering: the policies step below runs AFTER reconcile, so a reshape
+        # that drops a column old policies reference needs an apply.before hook
+        # to clear them first (see apply/before/dojo_projects_shared.sql, #299).
         working-directory: database
         run: |
           if grep -qE '^[[:space:]]*released:[[:space:]]*true' design.yaml; then
@@ -451,21 +440,7 @@ jobs:
             dbd migrate --status
             exit 0
           fi
-
-          set +e
-          dbd reconcile --scope dojo 2>&1 | tee reconcile.log
-          rc=${PIPESTATUS[0]}
-          set -e
-          [ "$rc" -eq 0 ] && exit 0
-
-          if grep -q 'allow-destructive' reconcile.log; then
-            echo "::error::Pre-release schema drift includes a DROP, so reconcile refused the WHOLE plan - the additive part included. Automation will not drop from production. Review the plan and apply it attended:"
-            echo "::error::  cd database && dbd reconcile --dry-run --scope dojo --verbose   # read every DROP"
-            echo "::error::  # confirm the affected tables are empty or the data is expendable, then:"
-            echo "::error::  cd database && dbd reconcile --scope dojo --allow-destructive"
-            echo "::error::Re-run this job afterwards; it passes once 'dbd diff --scope dojo' is clean."
-          fi
-          exit "$rc"
+          dbd reconcile --scope dojo --allow-destructive
 
       - name: Apply seed data, policies and after-scripts
         # Pre-release, reconcile handled the schema and this runs the import phase
