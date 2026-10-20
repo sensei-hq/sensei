@@ -3,8 +3,7 @@
 **Slice:** issue burndown (docs/roadmap/08-issue-burndown.md). Waves 1 and 2 done; wave 3 in progress.
 
 **Done:**
-- Wave 1: #271, #269. Wave 2 decided (#141, #230, #90 closed; #277, #278, deferred epic #279; #275).
-- Wave 3: #104, #185, #186, #153, #154, #177, #157, #280, #213, #135, #179, #181, #96, #285, #286, #85, #144 closed;
+- Waves 1–2 done (see burndown). Wave 3: #104, #185, #186, #153, #154, #177, #157, #280, #213, #135, #179, #181, #96, #285, #286, #85, #144 closed;
   #133 implementation complete (awaiting two decisions).
 - #283 live: `running_since` + "running for", a per-pass limit ("still running after Ns"), a daemon that never
   prompts for the keychain, and an "Approve keychain access" action.
