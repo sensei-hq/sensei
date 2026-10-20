@@ -1,12 +1,11 @@
 import type {
-  ServerProject, ProjectSummary, GraphData, GraphNode, GraphEdge,
+  ServerProject,
   GraphSymbolNode, GraphCallEdge,
-  SolutionGraphResponse, SolutionAnalysis, InferredRole,
-  IndexQueueStatus, DirtyStatus, IndexError,
-  FunctionMatch, CallNeighbour, TypeDetail, CommunityInfo, DocDrift,
-  LibEntry, LibDoc, DepVersion, SessionData, SessionsDigest,
+  SolutionGraphResponse, SolutionAnalysis,
+  FunctionMatch, CommunityInfo,
+  LibEntry, SessionData, SessionsDigest,
   ProjectMemory, DriftItem, PatternEntry, Recommendation,
-  ProjectSession, CallFlowModule, CallFlowCall,
+  CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   DojoMembership, DojoBindingSuggestion, DojoUpgradesResponse, CollectivePreferences,
@@ -261,17 +260,6 @@ export function senseiApi(port: number) {
     // ── Health ────────────────────────────────────────────────────────────
     getHealth: () => get<Record<string, unknown>>('/health', {}),
 
-    getComponents: () =>
-      get<{ components: Array<{ id: string; name: string; version: string | null; status: string; icon: string }> }>(
-        '/api/health/components', { components: [] },
-      ),
-
-    // ── Scan suggestions ─────────────────────────────────────────────────
-    getScanSuggestions: () =>
-      get<Array<{ name: string; strategy: string; repo_ids: string[] }>>(
-        '/api/scan/suggestions', [],
-      ),
-
     /** Every watch root, paused ones included (#247). Result-based: the
      *  settings screen must tell "you have no roots" from "the daemon is down". */
     tryGetScanRoots: () => tryGet<DaemonWatchRoot[]>('/api/scan/roots'),
@@ -292,9 +280,6 @@ export function senseiApi(port: number) {
         partiallyIndexed: false,
       }));
     },
-
-    getRepoSummary: (repoId: string) =>
-      get<ProjectSummary | null>(`/api/repos/${enc(repoId)}/summary`, null),
 
     registerRepo: (repoId: string, name: string, path: string) =>
       post('/api/repos', { repoId, name, path }, { ok: false }),
@@ -351,9 +336,6 @@ export function senseiApi(port: number) {
 
     getProjectGraph: (id: string) =>
       get<SolutionGraphResponse | null>(`/api/projects/${enc(id)}/graph`, null),
-
-    getProjectRoles: (id: string) =>
-      get<InferredRole[]>(`/api/projects/${enc(id)}/roles`, []),
 
     analyzeProject: (id: string) =>
       post<SolutionAnalysis | null>(`/api/projects/${enc(id)}/analyze`, {}, null),
@@ -688,11 +670,6 @@ export function senseiApi(port: number) {
     recommendPlaybook: (body: Record<string, unknown>) =>
       tryPost<PlaybookRecommendation>('/api/playbook/recommend', body),
 
-    getProjectSessions: (id: string, limit = 50) =>
-      get<{ sessions: ProjectSession[] }>(
-        `/api/projects/${enc(id)}/sessions?limit=${limit}`, { sessions: [] }
-      ),
-
     // ── Project window · Overview (Slot 4) ──────────────────────────────
     // Server-assembled landing pane: header + top rec + stats + recent
     // sessions in one call. A failed read is an error the page shows, never an
@@ -712,16 +689,6 @@ export function senseiApi(port: number) {
 
     // ── Observatory chart data ──────────────────────────────────────────
 
-    getHolisticFtrDaily: (days = 14) =>
-      get<{ ftr_daily: Array<{ day: string; ftr_rate: number; session_count: number }> }>(
-        `/api/observatory/ftr-daily?days=${days}`, { ftr_daily: [] }
-      ),
-
-    getProjectFtrDaily: (id: string, days = 14) =>
-      get<{ ftr_daily: Array<{ day: string; ftr_rate: number; session_count: number }> }>(
-        `/api/projects/${enc(id)}/ftr-daily?days=${days}`, { ftr_daily: [] }
-      ),
-
     /** Where edits concentrated over the last `days` (#85). */
     tryGetProjectHotspots: (id: string, days = 7) =>
       tryGet<{ hotspots: Array<{ folder: string; file_path: string; edit_count: number; correction_count: number }> }>(
@@ -732,11 +699,6 @@ export function senseiApi(port: number) {
       get<{ ftr_7d: number; pattern_compliance: number | null; open_drift_count: number; test_pass_rate: number | null }>(
         `/api/projects/${enc(id)}/quality-signals`,
         { ftr_7d: 0, pattern_compliance: null, open_drift_count: 0, test_pass_rate: null }
-      ),
-
-    getProjectTeachings: (id: string, limit = 10) =>
-      get<{ teachings: Array<{ id: string; name: string; family: string | null; instance_count: number; modified_at: string }> }>(
-        `/api/projects/${enc(id)}/teachings?limit=${limit}`, { teachings: [] }
       ),
 
     getToolUsage: () =>
@@ -778,29 +740,11 @@ export function senseiApi(port: number) {
         '/api/index/status', { queue: { pending: 0, blocked: 0, running: 0, completed: 0 }, repos: {} },
       ),
 
-    getIndexDirty: () => get<DirtyStatus[]>('/api/index/dirty', []),
-
-    getIndexErrors: (repoId?: string) =>
-      get<IndexError[]>(repoId ? `/api/index/errors/${enc(repoId)}` : '/api/index/errors', []),
-
     /** Subscribe to index progress via SSE. Returns an EventSource. */
     subscribeIndexProgress: (): EventSource =>
       new EventSource(`${base}/api/index/progress`),
 
     // ── Graph ────────────────────────────────────────────────────────────
-    /** Legacy — returns graph data in old format for existing UI. */
-    getGraph: async (repoId: string, _repoPath?: string) => {
-      const { nodes, edges } = await get<{ nodes: GraphNode[]; edges: GraphEdge[] }>(
-        `/api/graph/nodes?repoId=${enc(repoId)}`, { nodes: [], edges: [] },
-      );
-      return {
-        summary: { totalSymbols: nodes.length, totalEdges: edges.length, communities: 0 },
-        communities: [] as GraphData['communities'],
-        godNodes: [] as GraphData['godNodes'],
-        rationale: [] as GraphData['rationale'],
-      } satisfies GraphData;
-    },
-
     getGraphNodes: (repoId: string) =>
       get<{ nodes: GraphSymbolNode[]; edges: GraphCallEdge[] }>(
         `/api/graph/nodes?repoId=${enc(repoId)}`, { nodes: [], edges: [] },
@@ -814,23 +758,6 @@ export function senseiApi(port: number) {
     trySearchFunctions: (repoId: string, q: string) =>
       tryGet<FunctionMatch[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`),
 
-    searchTypes: (repoId: string, q: string) =>
-      get<TypeDetail[]>(`/api/graph/types?repoId=${enc(repoId)}&q=${enc(q)}`, []),
-
-    // `CallNeighbour`, not `FunctionDetail` — see the type. These return
-    // `file_path`/`line_start` and carry the placement verdict; the old
-    // annotation described a different endpoint's shape entirely.
-    getCallers: (repoId: string, name: string) =>
-      get<CallNeighbour[]>(`/api/graph/callers?repoId=${enc(repoId)}&name=${enc(name)}`, []),
-
-    getCallees: (repoId: string, name: string) =>
-      get<CallNeighbour[]>(`/api/graph/callees?repoId=${enc(repoId)}&name=${enc(name)}`, []),
-
-    getFilesByTag: (repoId: string, tag: string) =>
-      get<Array<{ id: string; path: string; tags: string }>>(
-        `/api/graph/files?repoId=${enc(repoId)}&tag=${enc(tag)}`, [],
-      ),
-
     getCommunities: (repoId: string) =>
       get<CommunityInfo[]>(`/api/graph/communities/info?repoId=${enc(repoId)}`, []),
 
@@ -841,9 +768,6 @@ export function senseiApi(port: number) {
       get<{ modules: CallFlowModule[]; calls: CallFlowCall[]; moduleCount: number; exportCount: number; callCount: number }>(
         `/api/graph/call-flow?repoId=${enc(repoId)}`, { modules: [], calls: [], moduleCount: 0, exportCount: 0, callCount: 0 },
       ),
-
-    getDocDrift: (repoId: string) =>
-      get<DocDrift[]>(`/api/graph/doc-drift?repoId=${enc(repoId)}`, []),
 
     // ── Libraries ────────────────────────────────────────────────────────
     getLibs: (params?: { repoId?: string; projectId?: string; shared?: boolean }) => {
@@ -856,15 +780,6 @@ export function senseiApi(port: number) {
 
     indexLib: (libName: string, url: string, version?: string) =>
       post('/api/libs/index', { libName, url, version }, { ok: false }),
-
-    getLibDocs: (name: string) =>
-      get<LibDoc[]>(`/api/libs/${enc(name)}/docs`, []),
-
-    searchLibDocs: (q: string) =>
-      get<LibDoc[]>(`/api/libs/docs?q=${enc(q)}`, []),
-
-    getDepVersions: (repoId: string) =>
-      get<DepVersion[]>(`/api/libs/versions?repoId=${enc(repoId)}`, []),
 
     // ── Unified Query ────────────────────────────────────────────────────
     query: (q: string, repoId?: string, projectId?: string) =>
@@ -885,9 +800,6 @@ export function senseiApi(port: number) {
       const qs = p.toString() ? `?${p.toString()}` : '';
       return get<SessionsDigest>(`/api/sessions${qs}`, { sessions: [] });
     },
-
-    getMetrics: (project: string) =>
-      get<Record<string, unknown>>(`/api/metrics/${encodeURIComponent(project)}`, {}),
 
     // ── Observatory · Logs (activity logs) ──────────────────────────────
     // Structured daemon/cli/mcp/app log rows for the Logs screen. All filters
@@ -1036,9 +948,6 @@ export function senseiApi(port: number) {
     // ── Config (user preferences) ──────────────────────────────────────
     getConfig: () => get<Record<string, string>>('/api/config', {}),
 
-    getConfigKey: (key: string) =>
-      get<{ key: string; value: string | null }>(`/api/config/${enc(key)}`, { key, value: null }),
-
     setConfig: (config: Record<string, string>) =>
       put('/api/config', config),
 
@@ -1088,9 +997,6 @@ export function senseiApi(port: number) {
 
     removeItem: (name: string, kind: string) =>
       post<{ ok: boolean }>('/api/install/item/remove', { name, kind }, { ok: false }),
-
-    getCatalog: () =>
-      get<import('./types').MarketplaceCatalog>('/api/install/catalog', { version: null, items: [] }),
 
     getInstalledItems: () =>
       get<import('./types').InstalledItem[]>('/api/install/installed', []),
@@ -1147,15 +1053,6 @@ export function senseiApi(port: number) {
         `/api/gateway/chains/${enc(id)}/role`,
         { role },
       ),
-
-    /** Chain-model editing — available picker source. Returns models
-     *  with matching capability, reachable via `models_in_router`,
-     *  minus the ones already in this chain. */
-    listAvailableChainModels: (chainId: string) =>
-      get<{ models: Array<{
-        modelId: string; modelName: string; fullName: string;
-        routerId: string; routerName: string;
-      }>}>(`/api/gateway/chains/${enc(chainId)}/available-models`, { models: [] }),
 
     /** Append a (model, router) pair to the end of a chain's ordered
      *  list. Returns the new member id + assigned sequence order. */
@@ -1222,14 +1119,6 @@ export function senseiApi(port: number) {
 
     getMemoryDetail: (id: string) =>
       tryGet<MemoryDetail>(`/api/knowledge/memories/${encodeURIComponent(id)}`),
-
-    getLayeredContext: (project_id: string, opts: { limit?: number; tags?: string[] } = {}) => {
-      const p = new URLSearchParams({ project_id });
-      if (opts.limit !== undefined) p.set('limit', String(opts.limit));
-      if (opts.tags?.length) p.set('tags', opts.tags.join(','));
-      return get<ContextResponse>(`/api/knowledge/context?${p.toString()}`,
-                                   { version: '', memories: [], cache_until: '' });
-    },
 
     proposeMemory: (body: ProposalCreateBody) =>
       tryPost<{ id: string; status: 'proposed' }>('/api/knowledge/proposals', body),
@@ -1497,8 +1386,6 @@ export function senseiApi(port: number) {
     // ── Deprecated aliases (migration: solution→project, project→repo) ──
     /** @deprecated Use getRepos */
     get getProjects() { return this.getRepos; },
-    /** @deprecated Use getRepoSummary */
-    get getProjectSummary() { return this.getRepoSummary; },
     /** @deprecated Use registerRepo */
     get registerProject() { return this.registerRepo; },
     /** @deprecated Use addRepoTag */
@@ -1519,8 +1406,6 @@ export function senseiApi(port: number) {
     get removeSolutionRepo() { return this.removeProjectRepo; },
     /** @deprecated Use getProjectGraph */
     get getSolutionGraph() { return this.getProjectGraph; },
-    /** @deprecated Use getProjectRoles */
-    get getSolutionRoles() { return this.getProjectRoles; },
     /** @deprecated Use analyzeProject */
     get analyzeSolution() { return this.analyzeProject; },
   };

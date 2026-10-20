@@ -82,3 +82,15 @@ describe('failureReason / readOutcome (#288)', () => {
     expect(readOutcome({ ok: false, error: { status: 500, message: 'boom' } })).toEqual({ data: null, error: 'boom' });
   });
 });
+
+// #288: reads that turn a failure into a default are being moved to `tryGet`,
+// screen by screen. A ratchet: the count only goes down, and at 0 the legacy
+// `get` itself goes. Lower it as screens convert; never raise it.
+describe('legacy fallback reads (#288)', () => {
+  it('no new get<T>(path, fallback) read is added', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/lib/api.ts', 'utf8');
+    const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
+    expect(reads.length).toBeLessThanOrEqual(46);
+  });
+});
