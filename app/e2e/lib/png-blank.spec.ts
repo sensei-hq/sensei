@@ -53,11 +53,11 @@ describe('isUniformPng over a band of rows', () => {
     expect(isUniformPng(framed)).toBe(false);
     expect(isUniformPng(framed, { top: 0.2, bottom: 0.8 })).toBe(true);
   });
-  it('tells a real unpainted page from a real painted one', () => {
-    const bad = '/tmp/sensei-shots/settings-projects-search.png';
-    const good = '/tmp/sensei-shots/settings-projects.png';
-    if (!existsSync(bad) || !existsSync(good)) return;
-    expect(isUniformPng(readFileSync(bad), PAGE_BAND)).toBe(true);
-    expect(isUniformPng(readFileSync(good), PAGE_BAND)).toBe(false);
+  it('PAGE_BAND looks past a painted title bar to the page under it', () => {
+    // 50 rows: a varied title bar in the top 6%, then the page area.
+    const titled = (page: (x: number, y: number) => number[]) =>
+      png(8, 50, (x, y) => (y < 3 ? [x * 30, 0, 0, 255] : page(x, y)));
+    expect(isUniformPng(titled(() => [40, 40, 40, 255]), PAGE_BAND)).toBe(true);
+    expect(isUniformPng(titled((x, y) => (y === 20 && x === 4 ? [200, 0, 0, 255] : [40, 40, 40, 255])), PAGE_BAND)).toBe(false);
   });
 });
