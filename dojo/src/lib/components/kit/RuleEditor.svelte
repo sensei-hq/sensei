@@ -116,7 +116,7 @@
 					: 'bg-paper-mute border-paper-edge'}"
 				style="padding: 12px 16px"
 			>
-				<span class={hard ? 'text-accent' : 'text-ink-faint'} style="font-size: 16px">★</span>
+				<span class="text-base {hard ? 'text-accent' : 'text-ink-faint'}">★</span>
 				<div class="flex-1">
 					<div class="text-ink text-sm font-medium">Non-negotiable</div>
 					<div class="mono text-ink-mute text-xs">

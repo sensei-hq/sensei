@@ -37,5 +37,5 @@
 		>
 	{/if}
 	<RoleTag role={dojo.role} />
-	<span class="text-ink-faint" style="font-size: 18px" aria-hidden="true">→</span>
+	<span class="text-ink-faint text-lg" aria-hidden="true">→</span>
 </button>

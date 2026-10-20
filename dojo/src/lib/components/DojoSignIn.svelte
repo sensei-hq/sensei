@@ -135,7 +135,7 @@
 			<!-- Sign-in providers — kavach's AuthProvider renders each from the config
 			     (github OAuth with read:org scopes · magic-link email); one component,
 			     no per-provider code. -->
-			<div class="signin-auth flex flex-col gap-3">
+			<div class="signin-auth flex flex-col gap-3 text-sm">
 				{#each providers as provider (provider.name)}
 					<AuthProvider
 						{...provider}
@@ -221,7 +221,7 @@
 		gap: 0.5rem;
 		border-radius: 0.5rem;
 		padding: 0.75rem 1rem;
-		font-size: 0.875rem;
+		font-size: inherit; /* the container's text-sm (#132) */
 		font-weight: 500;
 		cursor: pointer;
 		border: 1px solid var(--paper-edge);
@@ -258,7 +258,7 @@
 		border: 1px solid var(--paper-edge);
 		border-radius: 0.5rem;
 		padding: 0.75rem;
-		font-size: 0.875rem;
+		font-size: inherit; /* the container's text-sm (#132) */
 		margin-bottom: 0.5rem;
 	}
 </style>

@@ -34,10 +34,9 @@
 			onclick={() => onToggle(rule)}
 			aria-pressed={included}
 			aria-label={included ? 'Exclude rule' : 'Include rule'}
-			class="flex-shrink-0 cursor-pointer rounded-sm border text-center {included
+			class="inline-flex h-4 w-4 flex-shrink-0 cursor-pointer items-center justify-center rounded-sm border text-xs leading-none {included
 				? 'bg-accent border-accent text-on-primary'
 				: 'border-ink-faint bg-transparent'}"
-			style="width: 16px; height: 16px; font-size: 11px; line-height: 14px"
 		>
 			{included ? '✓' : ''}
 		</button>
@@ -65,7 +64,7 @@
 	{/if}
 	{#if rule.hard}
 		<span class="text-accent inline-flex items-center gap-1 whitespace-nowrap text-xs">
-			<span style="font-size: 12px">★</span>non-negotiable
+			<span>★</span>non-negotiable
 		</span>
 	{/if}
 	{#if onEdit}
