@@ -6,7 +6,7 @@
  * Run: `bun run test:inspect -- metrics-history`.
  */
 import { expect, test } from '../fixtures';
-import { DAEMON_URL, navigateToScreen } from '../helpers';
+import { DAEMON_URL, navigateToScreen, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -37,7 +37,7 @@ test('metrics name the assistants whose history is not read', async ({ tauriPage
     await expect(tauriPage.locator(NOTICE)).toBeVisible({ timeout: 20_000 });
     const text = await tauriPage.locator(NOTICE).innerText();
     console.log(`\n[inspect] metrics notice: ${text}`);
-    await tauriPage.screenshot({ path: `${DIR}/metrics-history-off.png` });
+    await shot(tauriPage, `${DIR}/metrics-history-off.png`);
     expect(text).toContain('Zed');
     expect(text).toContain('its token, cost and session metrics are not updating');
 

@@ -6,7 +6,7 @@
  * list. Captures /tmp/sensei-shots/settings-projects*.png. Run: `bun run test:inspect`.
  */
 import { expect, test } from '../fixtures';
-import { DAEMON_URL, navigateToScreen } from '../helpers';
+import { DAEMON_URL, navigateToScreen, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -44,7 +44,7 @@ test('settings · projects lists repositories, not folders', async ({ tauriPage 
   )) as string | null;
   console.log(`\n[inspect] settings/projects — placed: ${shown.length}, unplaced: ${unplaced}`);
   for (const s of shown) console.log(`[inspect]   ${s.id}: ${s.count} (${s.repos} repository rows)`);
-  await tauriPage.screenshot({ path: `${DIR}/settings-projects.png` });
+  await shot(tauriPage, `${DIR}/settings-projects.png`);
 
   expect(shown.map((s) => s.id).sort()).toEqual([...placedIds].sort());
   for (const s of shown) {
@@ -74,7 +74,7 @@ test('settings · projects lists repositories, not folders', async ({ tauriPage 
   await tauriPage.evaluate(
     `document.querySelector('[data-derived-roles]')?.closest('[data-testid^="project-card-"]')?.scrollIntoView({ block: 'center' })`,
   );
-  await tauriPage.screenshot({ path: `${DIR}/settings-projects-derived.png` });
+  await shot(tauriPage, `${DIR}/settings-projects-derived.png`);
 
   if (projects.length > placedIds.length) {
     expect(unplaced).toContain(String(projects.length - placedIds.length));
@@ -89,7 +89,7 @@ test('settings · projects lists repositories, not folders', async ({ tauriPage 
       `document.querySelectorAll('[data-placed] [data-testid^="project-card-"]').length`,
     )) as number;
     console.log(`[inspect]   search "${first.name}" → ${after} card(s)`);
-    await tauriPage.screenshot({ path: `${DIR}/settings-projects-search.png` });
+    await shot(tauriPage, `${DIR}/settings-projects-search.png`);
     expect(after).toBeGreaterThanOrEqual(1);
     expect(after).toBeLessThanOrEqual(placedIds.length);
   }

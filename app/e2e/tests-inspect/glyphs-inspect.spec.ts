@@ -8,7 +8,7 @@
  * Run: `bun run test:inspect -- glyphs`.
  */
 import { expect, test } from '../fixtures';
-import { DAEMON_URL, navigateToScreen } from '../helpers';
+import { DAEMON_URL, navigateToScreen, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -76,7 +76,7 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
     const icons = (await tauriPage.evaluate(RAIL_ICONS)) as { cls: string; painted: boolean }[];
     const unpainted = icons.filter((i) => !i.painted).map((i) => i.cls);
     console.log(`\n[inspect] icon mode: ${icons.length} rail icons; unpainted: ${unpainted.join(', ') || 'none'}`);
-    await tauriPage.screenshot({ path: `${DIR}/glyphs-icon.png` });
+    await shot(tauriPage, `${DIR}/glyphs-icon.png`);
     expect(icons.length).toBe(11);
     expect(icons.every((i) => /^i-solar-.+-bold-duotone$/.test(i.cls))).toBe(true);
     expect(unpainted).toEqual([]);

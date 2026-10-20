@@ -7,7 +7,7 @@
  * Named zz- so it runs after the daemon is warm.
  */
 import { test } from '../fixtures';
-import { navigateTo } from '../helpers';
+import { navigateTo, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -22,13 +22,13 @@ test.describe('rail + new screens', () => {
     // one appearance.
     await navigateTo(tauriPage, '/');
     await settle();
-    await tauriPage.screenshot({ path: `${DIR}/rail.png` });
+    await shot(tauriPage, `${DIR}/rail.png`);
 
     // The three new screens (stub pages — PageHeader + EmptyState).
     for (const route of ['impact', 'traceability', 'upgrades']) {
       await navigateTo(tauriPage, `/${route}`);
       await settle();
-      await tauriPage.screenshot({ path: `${DIR}/${route}.png` });
+      await shot(tauriPage, `${DIR}/${route}.png`);
     }
   });
 });

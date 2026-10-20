@@ -5,7 +5,7 @@
  * Named zz- so it runs last (after the daemon is warm).
  */
 import { test } from '../fixtures';
-import { navigateTo } from '../helpers';
+import { navigateTo, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -19,11 +19,11 @@ test.describe('verification screenshots', () => {
     // so we can see the wordmark + ledger.
     await navigateTo(tauriPage, '/health?auto=false');
     await settle(2500);
-    await tauriPage.screenshot({ path: `${DIR}/health.png` });
+    await shot(tauriPage, `${DIR}/health.png`);
 
     // Observatory (root) — the sidebar rail with the logo wordmark.
     await navigateTo(tauriPage, '/');
     await settle(2500);
-    await tauriPage.screenshot({ path: `${DIR}/observatory.png` });
+    await shot(tauriPage, `${DIR}/observatory.png`);
   });
 });

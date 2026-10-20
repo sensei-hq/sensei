@@ -6,7 +6,7 @@
  * Run: `bun run test:inspect -- task-log`.
  */
 import { expect, test } from '../fixtures';
-import { DAEMON_URL, navigateToScreen } from '../helpers';
+import { DAEMON_URL, navigateToScreen, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -33,7 +33,7 @@ test('a task row opens the worker log tail', async ({ tauriPage }) => {
   await expect(pre).toBeVisible({ timeout: 20_000 });
   const lines = (await pre.innerText()).split('\n').filter(Boolean);
   console.log(`\n[inspect] ${worker}: ${lines.length} lines; last: ${lines.at(-1)?.slice(0, 160)}`);
-  await tauriPage.screenshot({ path: `${DIR}/task-log.png` });
+  await shot(tauriPage, `${DIR}/task-log.png`);
   expect(lines.length).toBeGreaterThan(0);
   for (const l of lines) expect(l).toContain(`worker="${worker}"`);
 });
