@@ -137,7 +137,7 @@ The settings screen lists them as repositories.
     errors, not as an all-quiet project.
   - ~~#287~~ **Closed 2026-10-20**: rework is placed by path inside the project's repositories and counted once per event (617 → 371 rows, none outside). The Patterns view folds the unreviewed rows into one "rework hotspots" anti-pattern, grouped by directory and ranked by peak re-edits (618 anti-patterns → 2 live).
   - ~~#288~~ **Closed 2026-10-20**: every app read is the daemon's answer or an error the screen shows. 72 `get(path, fallback)` reads → 0, the legacy `get` is deleted, and a spec guards it. Found and fixed along the way: a fabricated 404, a fabricated warning dot, an Accept that skipped its artifact, Settings saving defaults over the user's settings, a scan marked done by a silent daemon, a refused role committed as done, and three endless re-fetch loops. Each screen was verified live.
-  - #291 (found via #288): the metric detail's "Tools used" view is unreachable, because no registered metric has the `tool` family.
+  - ~~#291~~ **Closed 2026-10-20**: "Tools used" moved to project Instruments (its metric, `unused_tools`, was retired). Live: 24 tools = daemon.
   - ~~#144~~ **Closed 2026-10-20**: a repo-less project (130 of 133 here; zero metric rows each) says why it has
     no metrics.
   - #149: **experiment run 2026-10-20, criterion not met** — without `parent_id` the >50-file giants grew
