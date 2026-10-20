@@ -10,6 +10,7 @@
  */
 
 import { senseiApi, failureReason, type ApiResult } from './api.js';
+import { roleAssignments } from './setup/role-meta.js';
 import { DEFAULT_PREFERENCES } from './setup/preferences.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
@@ -840,16 +841,8 @@ export class WizardState {
     const api = senseiApi(appState.port);
     const fresh = await api.listGatewayChains();
     const chains = fresh.chains;
-
-    // Daemon truth: fold role → chainId for the four supported roles.
-    const daemon: Record<SenseiRole, string | null> = {
-      inference: null, consolidation: null, embedding: null, voice: null,
-    };
-    for (const c of chains) {
-      if (c.role != null && daemon[c.role] === null) {
-        daemon[c.role] = c.id;
-      }
-    }
+    // Daemon truth: role → chainId for the four supported roles.
+    const daemon = roleAssignments(chains);
     this.assignments = {
       chains,
       roleAssignments:    { ...daemon },

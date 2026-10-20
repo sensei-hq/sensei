@@ -925,8 +925,6 @@ export function senseiApi(port: number) {
       post('/api/marketplace/install', { target, marketplacePath, item, scope }, { ok: false }),
 
     // ── Config (user preferences) ──────────────────────────────────────
-    getConfig: () => get<Record<string, string>>('/api/config', {}),
-
     setConfig: (config: Record<string, string>) =>
       put('/api/config', config),
 
@@ -943,7 +941,8 @@ export function senseiApi(port: number) {
     deleteConfig: (key: string) => del(`/api/config/${enc(key)}`),
 
     // ── Assistants ────────────────────────────────────────────────────────
-    detectAssistants: () => get<import('./types').AssistantStatus[]>('/api/assistants/detect', []),
+    /** Detected assistants (#288: a failure is an error, not "none detected"). */
+    tryDetectAssistants: () => tryGet<import('./types').AssistantStatus[]>('/api/assistants/detect'),
 
     detectAssistantFamilies: () => get<import('./types').AssistantFamily[]>('/api/assistants/families', []),
 
@@ -977,8 +976,8 @@ export function senseiApi(port: number) {
     removeItem: (name: string, kind: string) =>
       post<{ ok: boolean }>('/api/install/item/remove', { name, kind }, { ok: false }),
 
-    getInstalledItems: () =>
-      get<import('./types').InstalledItem[]>('/api/install/installed', []),
+    /** Installed skills and commands (#288: a failure is an error, not "none installed"). */
+    tryGetInstalledItems: () => tryGet<import('./types').InstalledItem[]>('/api/install/installed'),
 
     /** Toggle a skill or command. The daemon moves the .md file between
      *  `~/.claude/<kind>s/` and its `disabled/` sibling — Claude Code
@@ -1023,6 +1022,9 @@ export function senseiApi(port: number) {
         '/api/gateway/chains',
         { chains: [] },
       ),
+
+    /** The gateway's fallback chains (#288: a failure is an error, not "no chains"). */
+    tryListGatewayChains: () => tryGet<{ chains: import('./setup/contracts').DaemonChain[] }>('/api/gateway/chains'),
 
     /** Assign or clear a chain's sensei inference role. Pass `null` to
      *  unassign. Returns error status codes: 400 unknown role, 404
@@ -1075,10 +1077,9 @@ export function senseiApi(port: number) {
     // The provisionable catalog with each model's current phase. Fallback is
     // the empty list so a daemon hiccup (or a non-embedded build) renders the
     // quiet state, never a broken panel; the UI can poll unconditionally.
-    provisionStatus: () =>
-      get<{ models: ProvisionModel[] }>(
-        '/api/gateway/models/provision/status', { models: [] },
-      ),
+    /** Local model catalog with each model's pull phase (#288: a failure is an
+     *  error, not an empty catalog). */
+    tryProvisionStatus: () => tryGet<{ models: ProvisionModel[] }>('/api/gateway/models/provision/status'),
 
     // Begin (or join) an on-demand pull of a local model, returning its initial
     // phase. `tryPost` so failures propagate: a 501 (embedded provisioning not

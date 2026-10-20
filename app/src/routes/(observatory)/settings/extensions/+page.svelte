@@ -3,7 +3,8 @@
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
-    import { PageHeader } from "$lib/components";
+    import { PageHeader, ScreenState } from "$lib/components";
+    import { readExtensions } from "../settings-reads";
 
     type Extension = { name: string; kind: string; enabled: boolean };
 
@@ -13,15 +14,17 @@
     let extBusy = $state<Record<string, boolean>>({});
     let loading = $state(true);
 
-    onMount(async () => {
-        const raw = await senseiApi(appState.port).getInstalledItems();
-        extensions = (raw as any[]).map((i) => ({
-            name: i.name,
-            kind: i.kind ?? "unknown",
-            enabled: i.enabled ?? true,
-        }));
+    // Why the installed extensions could not be read (#288) — not "none installed".
+    let loadError = $state<string | null>(null);
+
+    async function load() {
+        loading = true;
+        const read = await readExtensions(senseiApi(appState.port));
+        extensions = read.extensions;
+        loadError = read.error;
         loading = false;
-    });
+    }
+    onMount(load);
 
     async function toggleExtension(ext: Extension, next: boolean): Promise<void> {
         const key = `${ext.kind}::${ext.name}`;
@@ -40,13 +43,9 @@
                     ext.name,
                     result.error,
                 );
-                // Refetch so the checkbox reflects daemon truth after a failure.
-                const fresh = await api.getInstalledItems();
-                extensions = (fresh as any[]).map((i) => ({
-                    name: i.name,
-                    kind: i.kind ?? "unknown",
-                    enabled: i.enabled ?? true,
-                }));
+                // Re-read so the checkbox reflects daemon truth after a failure —
+                // or, if that read fails too, the page says so.
+                await load();
                 return;
             }
             // Optimistic update — daemon confirmed the move.
@@ -66,6 +65,8 @@
 <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16" data-testid="settings-extensions">
     {#if loading}
         <p class="text-sm text-ink-soft leading-normal">Loading…</p>
+    {:else if loadError}
+        <ScreenState status="error" error={loadError} onretry={() => void load()} />
     {:else}
         <div
             class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"

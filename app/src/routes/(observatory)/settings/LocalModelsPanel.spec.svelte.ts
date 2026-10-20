@@ -25,15 +25,17 @@ const model = (over: Partial<ProvisionModel> = {}): ProvisionModel => ({
   ...over,
 });
 
-// Build a controller whose api returns the given fixtures from provisionStatus,
+// Build a controller whose api returns the given fixtures from tryProvisionStatus,
 // then load() so the panel's onMount populates the same rows synchronously
 // after a tick.
+const okRead = <T,>(data: T) => ({ ok: true as const, data });
+
 function fixtureController(
   models: ProvisionModel[],
   provisionModel?: SenseiApi['provisionModel'],
 ): LocalModels {
   const api = {
-    provisionStatus: vi.fn().mockResolvedValue({ models }),
+    tryProvisionStatus: vi.fn().mockResolvedValue(okRead({ models })),
     provisionModel:
       provisionModel ??
       vi.fn().mockResolvedValue(
@@ -146,5 +148,19 @@ describe('LocalModelsPanel', () => {
     const notice = m.container.querySelector('[data-testid="local-models-notice"]') as HTMLElement;
     expect(notice).toBeTruthy();
     expect(notice.textContent).toMatch(/aren.t available in this build/i);
+  });
+});
+
+// #288: a status read that failed is said so, with a retry — not
+// "No local models configured."
+describe('LocalModelsPanel — a failed status read', () => {
+  it('shows the error in place of the empty line', async () => {
+    const api = {
+      tryProvisionStatus: vi.fn().mockResolvedValue({ ok: false, error: { status: 503, message: 'Service Unavailable' } }),
+      provisionModel: vi.fn(),
+    } as unknown as SenseiApi;
+    const m = await mountLoaded(new LocalModels(api, noPoll));
+    expect(m.container.querySelector('[data-screen-state="error"]')?.textContent).toContain('Service Unavailable');
+    expect(m.container.querySelector('[data-testid="local-models-empty"]')).toBeNull();
   });
 });

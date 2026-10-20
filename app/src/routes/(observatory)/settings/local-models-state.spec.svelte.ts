@@ -11,6 +11,8 @@ import {
 
 // ── phaseDisplay ────────────────────────────────────────────────────────────
 
+const okRead = <T,>(data: T) => ({ ok: true as const, data });
+
 describe('phaseDisplay', () => {
   it('absent -> "not pulled", muted, no progress, actionable, not in flight', () => {
     expect(phaseDisplay({ phase: 'absent' })).toEqual({
@@ -95,7 +97,7 @@ const model = (over: Partial<ProvisionModel> = {}): ProvisionModel => ({
 // A hand-rolled api mock — only the two provisioning methods are exercised.
 function mockApi(overrides: Partial<SenseiApi> = {}): SenseiApi {
   return {
-    provisionStatus: vi.fn().mockResolvedValue({ models: [model()] }),
+    tryProvisionStatus: vi.fn().mockResolvedValue(okRead({ models: [model()] })),
     provisionModel: vi.fn().mockResolvedValue(
       { ok: true, data: { model: 'gemma2:2b', phase: { phase: 'queued' } } } as ApiResult<{
         model: string; phase: ProvisionPhase;
@@ -113,10 +115,10 @@ const timer: Timer = {
 
 describe('LocalModels.load', () => {
   it('fetches status, populates models, clears loading', async () => {
-    const provisionStatus = vi.fn().mockResolvedValue({ models: [model({ phase: { phase: 'ready' } })] });
-    const c = new LocalModels(mockApi({ provisionStatus }), timer);
+    const tryProvisionStatus = vi.fn().mockResolvedValue(okRead({ models: [model({ phase: { phase: 'ready' } })] }));
+    const c = new LocalModels(mockApi({ tryProvisionStatus }), timer);
     await c.load();
-    expect(provisionStatus).toHaveBeenCalledOnce();
+    expect(tryProvisionStatus).toHaveBeenCalledOnce();
     expect(c.models).toHaveLength(1);
     expect(c.models[0].phase).toEqual({ phase: 'ready' });
     expect(c.loading).toBe(false);
@@ -129,8 +131,8 @@ describe('LocalModels.pull', () => {
     const provisionModel = vi.fn().mockResolvedValue({
       ok: true, data: { model: 'gemma2:2b', phase: { phase: 'queued' } },
     });
-    const provisionStatus = vi.fn().mockResolvedValue({ models: [model({ phase: { phase: 'absent' } })] });
-    const c = new LocalModels(mockApi({ provisionModel, provisionStatus }), timer);
+    const tryProvisionStatus = vi.fn().mockResolvedValue(okRead({ models: [model({ phase: { phase: 'absent' } })] }));
+    const c = new LocalModels(mockApi({ provisionModel, tryProvisionStatus }), timer);
     await c.load();
 
     await c.pull('gemma2:2b');
@@ -146,8 +148,8 @@ describe('LocalModels.pull', () => {
     const provisionModel = vi.fn().mockResolvedValue({
       ok: false, error: { status: 501, message: 'embedded provisioning not available in this build' },
     });
-    const provisionStatus = vi.fn().mockResolvedValue({ models: [model({ phase: { phase: 'absent' } })] });
-    const c = new LocalModels(mockApi({ provisionModel, provisionStatus }), timer);
+    const tryProvisionStatus = vi.fn().mockResolvedValue(okRead({ models: [model({ phase: { phase: 'absent' } })] }));
+    const c = new LocalModels(mockApi({ provisionModel, tryProvisionStatus }), timer);
     await c.load();
 
     await c.pull('gemma2:2b');
@@ -178,15 +180,15 @@ describe('LocalModels polling lifecycle', () => {
   it('polls while a model is in flight and stops when all settle', async () => {
     // Sequence: pull -> queued (in flight); poll1 -> downloading (in flight);
     // poll2 -> ready (settles, poll stops).
-    const provisionStatus = vi
+    const tryProvisionStatus = vi
       .fn()
-      .mockResolvedValueOnce({ models: [model({ phase: { phase: 'absent' } })] }) // load
-      .mockResolvedValueOnce({ models: [model({ phase: { phase: 'downloading', done: 1, total: 2 } })] })
-      .mockResolvedValueOnce({ models: [model({ phase: { phase: 'ready' } })] });
+      .mockResolvedValueOnce(okRead({ models: [model({ phase: { phase: 'absent' } })] })) // load
+      .mockResolvedValueOnce(okRead({ models: [model({ phase: { phase: 'downloading', done: 1, total: 2 } })] }))
+      .mockResolvedValueOnce(okRead({ models: [model({ phase: { phase: 'ready' } })] }));
     const provisionModel = vi.fn().mockResolvedValue({
       ok: true, data: { model: 'gemma2:2b', phase: { phase: 'queued' } },
     });
-    const c = new LocalModels(mockApi({ provisionStatus, provisionModel }), timer);
+    const c = new LocalModels(mockApi({ tryProvisionStatus, provisionModel }), timer);
 
     await c.load();
     await c.pull('gemma2:2b');
@@ -194,65 +196,86 @@ describe('LocalModels polling lifecycle', () => {
 
     // First poll tick.
     await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-    expect(provisionStatus).toHaveBeenCalledTimes(2); // load + poll1
+    expect(tryProvisionStatus).toHaveBeenCalledTimes(2); // load + poll1
     expect(c.models[0].phase).toMatchObject({ phase: 'downloading' });
     expect(c.anyInFlight).toBe(true);
 
     // Second poll tick -> ready.
     await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
-    expect(provisionStatus).toHaveBeenCalledTimes(3);
+    expect(tryProvisionStatus).toHaveBeenCalledTimes(3);
     expect(c.models[0].phase).toEqual({ phase: 'ready' });
     expect(c.anyInFlight).toBe(false);
 
     // No further polls once settled.
     await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 3);
-    expect(provisionStatus).toHaveBeenCalledTimes(3);
+    expect(tryProvisionStatus).toHaveBeenCalledTimes(3);
     c.dispose();
   });
 
   it('dispose() stops the poll timer — no fetch after disposal', async () => {
-    const provisionStatus = vi
+    const tryProvisionStatus = vi
       .fn()
-      .mockResolvedValue({ models: [model({ phase: { phase: 'downloading', done: 1, total: 4 } })] });
-    const c = new LocalModels(mockApi({ provisionStatus }), timer);
+      .mockResolvedValue(okRead({ models: [model({ phase: { phase: 'downloading', done: 1, total: 4 } })] }));
+    const c = new LocalModels(mockApi({ tryProvisionStatus }), timer);
     await c.load(); // in flight -> schedules a poll
     expect(c.anyInFlight).toBe(true);
 
     c.dispose();
     await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 3);
     // Only the initial load fetched; the disposed timer never fired.
-    expect(provisionStatus).toHaveBeenCalledTimes(1);
+    expect(tryProvisionStatus).toHaveBeenCalledTimes(1);
   });
 
   it('does not schedule overlapping polls (a single timer at a time)', async () => {
     // A slow status fetch that outlasts the interval must not stack polls.
     // Hold the pending poll's resolver in an object so TS doesn't narrow it to
     // `never` (the assignment lives inside the mock closure).
-    const hang: { resolve: ((v: { models: ProvisionModel[] }) => void) | null } = { resolve: null };
-    const provisionStatus = vi
+    const hang: { resolve: ((v: ApiResult<{ models: ProvisionModel[] }>) => void) | null } = { resolve: null };
+    const tryProvisionStatus = vi
       .fn()
       // load resolves immediately, in flight.
-      .mockResolvedValueOnce({ models: [model({ phase: { phase: 'downloading', done: 1, total: 4 } })] })
+      .mockResolvedValueOnce(okRead({ models: [model({ phase: { phase: 'downloading', done: 1, total: 4 } })] }))
       // first poll hangs until we resolve it.
       .mockImplementationOnce(
-        () => new Promise<{ models: ProvisionModel[] }>((r) => { hang.resolve = r; }),
+        () => new Promise<ApiResult<{ models: ProvisionModel[] }>>((r) => { hang.resolve = r; }),
       )
-      .mockResolvedValue({ models: [model({ phase: { phase: 'ready' } })] });
-    const c = new LocalModels(mockApi({ provisionStatus }), timer);
+      .mockResolvedValue(okRead({ models: [model({ phase: { phase: 'ready' } })] }));
+    const c = new LocalModels(mockApi({ tryProvisionStatus }), timer);
 
     await c.load();
     await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS); // poll1 starts, hangs
-    expect(provisionStatus).toHaveBeenCalledTimes(2);
+    expect(tryProvisionStatus).toHaveBeenCalledTimes(2);
 
     // Advance well past another interval while poll1 is still pending — no new poll.
     await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2);
-    expect(provisionStatus).toHaveBeenCalledTimes(2);
+    expect(tryProvisionStatus).toHaveBeenCalledTimes(2);
 
     // Let poll1 finish (ready) — poll stops, still exactly 2 calls.
-    hang.resolve?.({ models: [model({ phase: { phase: 'ready' } })] });
+    hang.resolve?.(okRead({ models: [model({ phase: { phase: 'ready' } })] }));
     await vi.advanceTimersByTimeAsync(0);
-    expect(provisionStatus).toHaveBeenCalledTimes(2);
+    expect(tryProvisionStatus).toHaveBeenCalledTimes(2);
     expect(c.anyInFlight).toBe(false);
+    c.dispose();
+  });
+});
+
+// #288: a status read that failed is said so — not an empty model list.
+describe('LocalModels — a failed status read', () => {
+  const down = { ok: false as const, error: { status: 503, message: 'Service Unavailable' } };
+
+  it('load() sets the error and keeps no models', async () => {
+    const c = new LocalModels(mockApi({ tryProvisionStatus: vi.fn().mockResolvedValue(down) }), { set: () => 0, clear: () => {} } as never);
+    await c.load();
+    expect([c.error, c.models, c.loading]).toEqual(['Service Unavailable', [], false]);
+    c.dispose();
+  });
+
+  it('a load that succeeds after a failure clears the error', async () => {
+    const tryProvisionStatus = vi.fn().mockResolvedValueOnce(down).mockResolvedValueOnce(okRead({ models: [model()] }));
+    const c = new LocalModels(mockApi({ tryProvisionStatus }), { set: () => 0, clear: () => {} } as never);
+    await c.load();
+    await c.load();
+    expect([c.error, c.models.length]).toEqual([null, 1]);
     c.dispose();
   });
 });

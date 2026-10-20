@@ -9,7 +9,7 @@
 // the `kernel::ProvisionPhase` serde shape, so an unrecognised phase degrades to
 // a neutral label rather than crashing.
 
-import type { SenseiApi } from '$lib/api.js';
+import { failureReason, type SenseiApi } from '$lib/api.js';
 import type { ProvisionModel, ProvisionPhase } from '$lib/types.js';
 
 /** Semantic tone a phase label renders in. Mirrors the named-token vocabulary
@@ -111,17 +111,16 @@ export class LocalModels {
     return this.models.some((m) => phaseDisplay(m.phase).inFlight);
   }
 
-  /** Fetch the catalog + current phases. Never throws — the api client folds a
-   *  daemon hiccup into the empty-list fallback. */
+  /** Fetch the catalog + current phases. A failed read sets `error` and keeps
+   *  no models (#288) — it used to fold into an empty list, which read as "no
+   *  local models configured". */
   async load(): Promise<void> {
     this.loading = true;
-    try {
-      const { models } = await this.#api.provisionStatus();
-      if (this.#disposed) return;
-      this.models = models;
-    } finally {
-      if (!this.#disposed) this.loading = false;
-    }
+    const read = await this.#api.tryProvisionStatus();
+    if (this.#disposed) return;
+    this.models = read.ok ? read.data.models : [];
+    this.error = read.ok ? null : failureReason(read.error);
+    this.loading = false;
     this.#syncPolling();
   }
 
@@ -180,9 +179,12 @@ export class LocalModels {
     if (this.#disposed || this.#polling) return;
     this.#polling = true;
     try {
-      const { models } = await this.#api.provisionStatus();
+      // A failed poll keeps the last known phases and says so; the next tick
+      // re-reads while the model is still in flight.
+      const read = await this.#api.tryProvisionStatus();
       if (this.#disposed) return;
-      this.models = models;
+      if (read.ok) this.models = read.data.models;
+      this.error = read.ok ? null : failureReason(read.error);
     } finally {
       this.#polling = false;
     }

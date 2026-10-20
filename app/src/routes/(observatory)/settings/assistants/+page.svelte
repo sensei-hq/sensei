@@ -3,7 +3,8 @@
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
-    import { PageHeader, StatusDot } from "$lib/components";
+    import { PageHeader, ScreenState, StatusDot } from "$lib/components";
+    import { readAssistants } from "../settings-reads";
     import TranscriptConsentCard from "$lib/components/settings/TranscriptConsentCard.svelte";
 
     type Assistant = {
@@ -16,22 +17,25 @@
     let assistants = $state<Assistant[]>([]);
     let loading = $state(true);
 
-    onMount(async () => {
-        const raw = await senseiApi(appState.port).detectAssistants();
-        assistants = (raw as any[]).map((a) => ({
-            family: a.family ?? a.name,
-            name: a.name ?? a.family,
-            version: a.version,
-            configured: a.configured ?? a.found ?? false,
-        }));
+    // Why the assistants could not be detected (#288) — not "none detected".
+    let loadError = $state<string | null>(null);
+
+    async function load() {
+        loading = true;
+        const read = await readAssistants(senseiApi(appState.port));
+        assistants = read.assistants;
+        loadError = read.error;
         loading = false;
-    });
+    }
+    onMount(load);
 </script>
 
 <PageHeader kanji="連" icon={railIcon("/settings/assistants")} eyebrow="Settings" title="Assistants" />
 <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16" data-testid="settings-assistants">
     {#if loading}
         <p class="text-sm text-ink-soft leading-normal">Loading…</p>
+    {:else if loadError}
+        <ScreenState status="error" error={loadError} onretry={() => void load()} />
     {:else}
         <div
             class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"

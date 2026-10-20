@@ -3,14 +3,14 @@
     import { onMount, untrack } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
-    import { PageHeader, Switch } from "$lib/components";
+    import { PageHeader, ScreenState, Switch } from "$lib/components";
     import { Select } from "@rokkit/ui";
     import type { PreferencesData } from "$lib/setup/contracts.js";
     import {
         DEFAULT_PREFERENCES,
         fromPreferencesForm,
-        toPreferencesForm,
     } from "../preferences-form.js";
+    import { readPreferences } from "../settings-reads";
     import { GLYPH_OPTIONS, type GlyphMode } from "$lib/glyphs";
 
     // Static option lists for the preference pickers (label → wire value).
@@ -31,11 +31,19 @@
     let saveError = $state<string | null>(null);
     let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-    onMount(async () => {
-        const cfg = await senseiApi(appState.port).getConfig();
-        prefs = toPreferencesForm(cfg);
+    // Why the saved preferences could not be read (#288). While set there is no
+    // form — and nothing auto-saves: a form of defaults would be written back
+    // over the user's real settings.
+    let loadError = $state<string | null>(null);
+
+    async function load() {
+        loading = true;
+        const read = await readPreferences(senseiApi(appState.port));
+        loadError = read.error;
+        if (read.prefs) prefs = read.prefs;
         loading = false;
-    });
+    }
+    onMount(load);
 
     // Boolean toggles auto-persist; text/select persist from their handlers.
     // Gated on `loading` so the initial hydrate does not spuriously re-save.
@@ -45,10 +53,12 @@
         void prefs.showWelcome;
         // Untracked: saving reads and writes appState.config, and tracking that
         // made every save re-run this effect — an endless write loop.
-        if (!loading) untrack(() => void persist());
+        if (!loading && !loadError) untrack(() => void persist());
     });
 
     async function persist() {
+        // Never save a form that was not read from the daemon (#288).
+        if (loadError) return;
         if (saveTimer) {
             clearTimeout(saveTimer);
             saveTimer = null;
@@ -74,6 +84,8 @@
 <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16">
     {#if loading}
         <p class="text-sm text-ink-soft leading-normal">Loading…</p>
+    {:else if loadError}
+        <ScreenState status="error" error={loadError} onretry={() => void load()} />
     {:else}
         <div
             class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"

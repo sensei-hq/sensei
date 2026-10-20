@@ -3,9 +3,9 @@
   import { onMount } from 'svelte';
   import { Select } from '@rokkit/ui';
   import { appState } from '$lib/appstate.svelte.js';
-  import { senseiApi } from '$lib/api.js';
+  import { senseiApi, failureReason } from '$lib/api.js';
   import { SENSEI_ROLES, type DaemonChain, type SenseiRole } from '$lib/setup/contracts.js';
-  import { ROLE_META } from '$lib/setup/role-meta.js';
+  import { ROLE_META, roleAssignments } from '$lib/setup/role-meta.js';
 
   let chains = $state<DaemonChain[]>([]);
   let loading = $state(true);
@@ -27,22 +27,16 @@
   let memberBusy = $state<Record<string, 'up' | 'down' | 'remove' | null>>({});
 
   async function loadChains(): Promise<void> {
-    const api = senseiApi(appState.port);
-    try {
-      const result = await api.listGatewayChains();
-      chains = result.chains;
-      const daemon: Record<SenseiRole, string | null> = {
-        inference: null, consolidation: null, embedding: null, voice: null,
-      };
-      for (const c of chains) {
-        if (c.role != null && daemon[c.role] === null) daemon[c.role] = c.id;
-      }
-      assignments = daemon;
-    } catch (e) {
-      loadError = e instanceof Error ? e.message : String(e);
-    } finally {
-      loading = false;
+    // A failed read is said so (#288) — it used to show every role unassigned.
+    const result = await senseiApi(appState.port).tryListGatewayChains();
+    if (result.ok) {
+      chains = result.data.chains;
+      assignments = roleAssignments(chains);
+      loadError = null;
+    } else {
+      loadError = failureReason(result.error);
     }
+    loading = false;
   }
 
   function optionsFor(role: SenseiRole): DaemonChain[] {
