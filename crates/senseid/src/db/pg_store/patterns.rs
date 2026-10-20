@@ -1332,6 +1332,7 @@ impl PgStore {
             Option<String>, // description
             Option<String>, // example
             Option<String>, // enforcement
+            Option<i64>,    // rework: the busiest session's re-edits
         )> = sqlx_core::query_as::query_as(
             "SELECT pp.id, pp.name, pp.family, pp.is_anti_pattern, pp.lifecycle::text,
                         pp.confidence::float8, pp.instance_count,
@@ -1339,7 +1340,8 @@ impl PgStore {
                            FROM activity.sessions s
                           WHERE s.folder_id = pp.folder_id AND s.ftr IS NOT NULL
                             AND s.outcome <> 'empty'::sensei.session_outcome) AS folder_ftr,
-                        pp.description, pp.example, pp.enforcement
+                        pp.description, pp.example, pp.enforcement,
+                        (pp.instances->0->>'max_session_edits')::int8
                  FROM sensei.project_patterns pp WHERE pp.project_id = $1
                  ORDER BY pp.is_anti_pattern, pp.name",
         )
@@ -1361,6 +1363,7 @@ impl PgStore {
             description,
             example,
             enforcement,
+            _peak_edits,
         ): (
             uuid::Uuid,
             String,
@@ -1373,6 +1376,7 @@ impl PgStore {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<i64>,
         )| {
             let kind = crate::pattern_effectiveness::pattern_kind(is_anti, &lifecycle);
             let ftr_delta = crate::pattern_effectiveness::ftr_delta(folder_ftr, project_ftr);
@@ -1397,9 +1401,15 @@ impl PgStore {
         let (rework, anti): (Vec<_>, Vec<_>) = anti.into_iter().partition(|r| {
             r.4 == "suggested" && crate::rework_hotspots::rework_file(&r.1).is_some()
         });
-        let files: Vec<(String, Option<f64>)> = rework
+        let files: Vec<crate::rework_hotspots::Hotspot> = rework
             .iter()
-            .filter_map(|r| crate::rework_hotspots::rework_file(&r.1).map(|f| (f.to_string(), r.5)))
+            .filter_map(|r| {
+                crate::rework_hotspots::rework_file(&r.1).map(|f| crate::rework_hotspots::Hotspot {
+                    file: f.to_string(),
+                    confidence: r.5,
+                    peak_edits: r.11,
+                })
+            })
             .collect();
         let mut anti_patterns: Vec<serde_json::Value> = anti.into_iter().map(map_row).collect();
         anti_patterns.extend(crate::rework_hotspots::hotspots(&files));
