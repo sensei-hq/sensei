@@ -862,16 +862,33 @@ pub(crate) async fn status(
 pub(crate) async fn personas(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-    use crate::dojo_client::forge_token::{PersonaAction, persona_action};
+    use crate::dojo_client::forge_token::persona_action;
 
     let rows = state.pg.persona_rows().await.map_err(|e| {
         tracing::error!(error = %e, "personas: could not read the registry");
         axum::http::StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let now = chrono::Utc::now().timestamp();
+    // One quiet read per connected persona: a millisecond, and it cannot prompt.
+    // It is what tells "signed in" from "signed in, but the Keychain withholds
+    // the session" — the second needs the user's approval (#283).
+    let slots: Vec<Option<String>> =
+        rows.iter().map(|r| r.session_slot.clone().filter(|_| r.verified)).collect();
+    let sessions = tokio::task::spawn_blocking(move || {
+        slots
+            .iter()
+            .map(|slot| slot.as_deref().map(|s| session::load_refresh_token(s).map(|_| ())))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "personas: the session reads panicked");
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let list: Vec<serde_json::Value> = rows
         .iter()
-        .map(|r| {
+        .zip(&sessions)
+        .map(|(r, session)| {
             let action =
                 persona_action(r.session_slot.as_deref(), r.verified, &r.state, r.expires_at, now);
             serde_json::json!({
@@ -886,16 +903,73 @@ pub(crate) async fn personas(
                 "sessionSlot": r.session_slot,
                 "connected": r.session_slot.is_some() && r.verified,
                 "forgeToken": { "state": r.state, "expiresAt": r.expires_at },
-                "action": match action {
-                    PersonaAction::Connect => "connect",
-                    PersonaAction::SignIn => "signIn",
-                    PersonaAction::Renew => "renew",
-                    PersonaAction::None => "none",
-                },
+                "action": action_name(action, session.as_ref()),
             })
         })
         .collect();
     Ok(Json(serde_json::json!({ "personas": list })))
+}
+
+/// The wire name of a persona's action. `approve` when its stored session is
+/// there but the Keychain will not hand it over without the user (#283) —
+/// the daemon never prompts, so only a click can. `session` is the quiet read
+/// of a connected persona's session; `None` when there is nothing to read.
+fn action_name(
+    action: crate::dojo_client::forge_token::PersonaAction,
+    session: Option<&Result<(), crate::gateway_keys::KeychainError>>,
+) -> &'static str {
+    use crate::dojo_client::forge_token::PersonaAction;
+    if let Some(Err(crate::gateway_keys::KeychainError::NeedsApproval)) = session {
+        return "approve";
+    }
+    match action {
+        PersonaAction::Connect => "connect",
+        PersonaAction::SignIn => "signIn",
+        PersonaAction::Renew => "renew",
+        PersonaAction::None => "none",
+    }
+}
+
+/// What approving a persona's Keychain items came to (#283). The refresh token
+/// is the session; the GitHub token is optional, since a sign-in may not have
+/// captured one.
+fn approval(
+    refresh: Result<String, crate::gateway_keys::KeychainError>,
+    provider: Result<String, crate::gateway_keys::KeychainError>,
+) -> Result<(), String> {
+    use crate::gateway_keys::KeychainError;
+    match refresh {
+        Ok(_) => {}
+        Err(KeychainError::NotFound) => {
+            return Err("no stored session for this persona — sign in".into());
+        }
+        Err(e) => return Err(e.to_string()),
+    }
+    match provider {
+        Ok(_) | Err(KeychainError::NotFound) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// `POST /api/auth/keychain/approve?persona=<slot>` — the one place a Keychain
+/// read may prompt for a session the daemon already holds (#283). The user
+/// clicked, so the dialog has someone to answer it; "Always Allow" there is what
+/// lets the quiet background reads succeed afterwards.
+pub(crate) async fn approve_keychain(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
+    let who = p.persona.clone();
+    let read = tokio::task::spawn_blocking(move || {
+        crate::gateway_keys::allow_prompt(|| {
+            approval(session::load_refresh_token(&who), session::load_provider_token(&who))
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("keychain read panicked: {e}")));
+    match read {
+        Ok(()) => Json(serde_json::json!({ "ok": true, "persona": p.persona })),
+        Err(error) => {
+            Json(serde_json::json!({ "ok": false, "persona": p.persona, "error": error }))
+        }
+    }
 }
 
 /// `GET /api/auth/orgs?persona=…` — the GitHub organisations this persona can see.
@@ -1320,6 +1394,48 @@ mod tests {
         // curl sends `*/*`. It is not a browser, so it keeps the JSON.
         assert!(!wants_html(Some("*/*")));
         assert!(!wants_html(None));
+    }
+
+    /// #283: a session the Keychain will not hand over is the user's to
+    /// approve, whatever the forge standing says; otherwise the action is as
+    /// `persona_action` decided.
+    #[test]
+    fn a_session_the_keychain_withholds_is_to_be_approved() {
+        use crate::dojo_client::forge_token::PersonaAction;
+        use crate::gateway_keys::KeychainError;
+        let withheld = Err(KeychainError::NeedsApproval);
+        assert_eq!(action_name(PersonaAction::None, Some(&withheld)), "approve");
+        assert_eq!(action_name(PersonaAction::Renew, Some(&withheld)), "approve");
+        assert_eq!(action_name(PersonaAction::None, Some(&Ok(()))), "none");
+        assert_eq!(action_name(PersonaAction::Renew, Some(&Ok(()))), "renew");
+        assert_eq!(action_name(PersonaAction::SignIn, None), "signIn");
+        assert_eq!(action_name(PersonaAction::Connect, None), "connect");
+        assert_eq!(
+            action_name(PersonaAction::None, Some(&Err(KeychainError::NotFound))),
+            "none",
+            "a missing item is the forge standing's to report, not an approval"
+        );
+    }
+
+    #[test]
+    fn approving_needs_the_session_and_tolerates_no_github_token() {
+        use crate::gateway_keys::KeychainError;
+        assert_eq!(approval(Ok("rt".into()), Ok("gho".into())), Ok(()));
+        assert_eq!(approval(Ok("rt".into()), Err(KeychainError::NotFound)), Ok(()));
+        assert!(
+            approval(Err(KeychainError::NotFound), Ok("gho".into()))
+                .unwrap_err()
+                .contains("sign in")
+        );
+        assert_eq!(
+            approval(Ok("rt".into()), Err(KeychainError::NeedsApproval)),
+            Err("keychain access needs approval".into()),
+            "declined at the dialog is still a refusal"
+        );
+        assert_eq!(
+            approval(Err(KeychainError::NeedsApproval), Ok("gho".into())),
+            Err("keychain access needs approval".into())
+        );
     }
 
     /// #283: a Keychain refusal is not a sign-out.
