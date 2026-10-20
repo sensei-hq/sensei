@@ -111,7 +111,6 @@ invariant (§5, not client-only). Kanji 件 stays a `KanjiToken` brand mark.
 `showConflicts` (no DOM); `ConstitutionPreview`/`ConflictCard` with a mock `ProjectConstitution`; Load mock =
 the fixtures.
 
-**New open question (from this exercise):** `ProjectConstitution.project` reuses the shared `Project` type, so
-this screen inherits projects.md's classification gap — a relay-derived project with no `classification` can't
-compose the ladder. Confirm the resolve endpoint returns `classification` itself (authoritative, daemon-side)
-rather than trusting the projects-list field.
+**Resolved (#299):** `ProjectConstitution.project` reuses the shared `Project` type, and every project now
+carries a `classification` — the sync files projects and the dōjō derives it from the repository's tenant, so
+the ladder always composes. A relay run only attaches to a project (slug + constitution); it never names one.
