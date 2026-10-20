@@ -122,7 +122,8 @@ with member_repo as (
          , b.period_start
          , b.period_end
 
-         -- Election inputs. Absent row = NOT elected, never elected-by-default.
+         -- Election inputs. What an absent row means depends on the authority —
+         -- see `elected` below (#301).
          , p.private_repos_shared
          , p.set_at            as policy_set_at
          , oe.elected          as org_elected
@@ -279,13 +280,19 @@ axes as (
          -- happened to guard the same condition. One column's correctness must
          -- never rest on another's. Verified in Postgres, not reasoned about.
          --
-         -- `coalesce(…, false)` throughout, including on the tenant policy: an
-         -- absent row is NOT ELECTED, never elected-by-default, and a NULL verdict
-         -- is unusable to a consumer that has to decide.
+         -- Never NULL: a NULL verdict is unusable to a consumer that has to
+         -- decide. What an absent row MEANS differs by who holds authority:
+         --   * the ORGANISATION's (private org code): absent is NOT ELECTED — an
+         --     org that has not decided has not mandated, and an individual may
+         --     not publish the company's private code by default;
+         --   * the USER's (public code, and everything personal): absent is
+         --     ELECTED. A connected identity's repositories sync without a step
+         --     (#301, user decision 2026-10-20); an explicit `elected = false` row
+         --     is the opt-out, and it holds.
          , case when mr.forge_visibility is null then false
                 when mr.origin = 'organization' and mr.forge_visibility <> 'public'
                      then coalesce(mr.org_elected, mr.private_repos_shared, false)
-                else coalesce(mr.user_elected, false)
+                else coalesce(mr.user_elected, true)
            end as elected
 
          -- May THIS member change it, right now? The view is already

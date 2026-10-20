@@ -105,11 +105,17 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, provider, visibili
    'github.com/ztest-v-noperiod/r', 'r', 'github', 'private', now()),
   ('5ecd0000-0000-0000-0000-000000000023', '5ecd0000-0000-0000-0000-000000000005',
    'github.com/ztest-v-trial/r', 'r', 'github', 'private', now()),
-  -- subscribed and never elected: the row the registry join is tested on
+  -- subscribed, no election row: nobody has decided (it syncs by default, #301)
   ('5ecd0000-0000-0000-0000-000000000024', '5ecd0000-0000-0000-0000-000000000002',
-   'github.com/ztest-v-lastday/unelected', 'unelected', 'github', 'private', now());
+   'github.com/ztest-v-lastday/unelected', 'unelected', 'github', 'private', now()),
+  -- subscribed and OPTED OUT: the refusal row the registry join is tested on
+  ('5ecd0000-0000-0000-0000-000000000025', '5ecd0000-0000-0000-0000-000000000002',
+   'github.com/ztest-v-lastday/optedout', 'optedout', 'github', 'private', now());
 
 insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected, elected_at) values
+  -- The opt-out: absence now means shared (#301), so a refusal needs a decision.
+  ('5ecd0000-0000-0000-0000-000000000002', '5ecd0000-0000-0000-0000-000000000025', 'user',
+   '5ecd0000-0000-0000-0000-00000000a11c', false, now()),
   -- Alice elected BOTH the uncaptured and the stale repository. Neither may
   -- apply: there is no authority to apply it under.
   ('5ecd0000-0000-0000-0000-000000000001', '5ecd0000-0000-0000-0000-000000000010', 'user',
@@ -284,7 +290,7 @@ declare
     n int;
 begin
     select * into v from dojo.all_my_repositories
-     where repo_key = 'github.com/ztest-v-lastday/unelected'
+     where repo_key = 'github.com/ztest-v-lastday/optedout'
        and principal_id = '5ecd0000-0000-0000-0000-00000000a11c';
 
     if v.reason_code <> 'not_elected_user' then
@@ -317,7 +323,7 @@ begin
      where domain = 'repository_sharing' and code = 'not_elected_user';
 
     select * into v from dojo.all_my_repositories
-     where repo_key = 'github.com/ztest-v-lastday/unelected'
+     where repo_key = 'github.com/ztest-v-lastday/optedout'
        and principal_id = '5ecd0000-0000-0000-0000-00000000a11c';
     if not found then
         raise exception 'a repository vanished from the view because its reason code had no registry row — the join must be LEFT.';
