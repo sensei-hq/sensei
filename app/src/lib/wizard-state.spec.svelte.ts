@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { WizardState } from './wizard-state.svelte.js';
+import { WizardState, routerKeyStatus } from './wizard-state.svelte.js';
 import { scanState } from './scan-state.svelte.js';
 import { mockWizardLoadData, mockWatchRoot, mockRouter } from './setup/mock-contracts.js';
 
@@ -499,6 +499,37 @@ describe('WizardState', () => {
       expect(ws.inference.routers[0].id).toBe('openai');
       expect(ws.inference.routers[0].configured).toBe(true);
       expect(ws.inference.routers[1].needsKey).toBe(false);
+    });
+
+    // #285: a key that is set but withheld by the keychain is neither
+    // configured nor missing — it says why, so nobody pastes a key again.
+    it('carries an unreadable key and its reason', () => {
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData({
+        routers: [mockRouter({ configured: null, key_error: 'keychain access needs approval' })],
+      }));
+      expect(ws.inference.routers[0].configured).toBeNull();
+      expect(ws.inference.routers[0].keyError).toBe('keychain access needs approval');
+    });
+
+    it('labels each key standing', () => {
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData({
+        routers: [
+          mockRouter({ configured: true }),
+          mockRouter({ configured: false }),
+          mockRouter({ needs_key: false, configured: true }),
+          mockRouter({ configured: null, key_error: 'keychain access needs approval' }),
+        ],
+      }));
+      const [set, unset, none, unreadable] = ws.inference.routers.map(routerKeyStatus);
+      expect(set).toEqual({ label: 'configured ✓', tone: 'success' });
+      expect(unset).toEqual({ label: 'not configured', tone: 'mute' });
+      expect(none).toEqual({ label: 'no key needed', tone: 'mute' });
+      expect(unreadable).toEqual({
+        label: 'key unreadable: keychain access needs approval',
+        tone: 'warning',
+      });
     });
 
     it('initialises draftKey/saveState empty on hydrate', () => {

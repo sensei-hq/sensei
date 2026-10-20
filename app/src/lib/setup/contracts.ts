@@ -104,7 +104,10 @@ export interface DaemonRouter {
   providers: string[];
   capabilities: string[];
   needs_key: boolean;
-  configured: boolean;
+  /** `null` when the key is set but could not be read (#285). */
+  configured: boolean | null;
+  /** Why the key could not be read; `null` otherwise. */
+  key_error?: string | null;
 }
 
 /** One entry in a fallback chain's ordered model list. `routerName` is

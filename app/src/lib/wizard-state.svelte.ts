@@ -83,10 +83,23 @@ export interface RouterEntry {
   providers: string[];
   capabilities: string[];
   needsKey: boolean;
-  configured: boolean;
+  /** `null` when the key is set but could not be read (#285). */
+  configured: boolean | null;
+  keyError: string | null;
   draftKey: string;          // never sent until commit
   saveState: RouterSaveState;
   saveError: string;
+}
+
+/** How a router's key reads on its card (#285). */
+export function routerKeyStatus(r: RouterEntry): { label: string; tone: 'success' | 'mute' | 'warning' } {
+  if (!r.needsKey) return { label: 'no key needed', tone: 'mute' };
+  if (r.configured === null) {
+    return { label: `key unreadable: ${r.keyError ?? 'reason not given'}`, tone: 'warning' };
+  }
+  return r.configured
+    ? { label: 'configured ✓', tone: 'success' }
+    : { label: 'not configured', tone: 'mute' };
 }
 
 export interface InferenceSlice {
@@ -230,6 +243,7 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       const result = await api.setGatewayRouterKey(router.id, router.draftKey.trim());
       if (result.ok) {
         router.configured = result.data.configured;
+        router.keyError = null;
         router.draftKey = '';
         router.saveState = 'done';
       } else {
@@ -750,6 +764,7 @@ export class WizardState {
         capabilities: r.capabilities,
         needsKey: r.needs_key,
         configured: r.configured,
+        keyError: r.key_error ?? null,
         draftKey: '',
         saveState: 'idle' as RouterSaveState,
         saveError: '',
@@ -865,6 +880,7 @@ export class WizardState {
           capabilities: r.capabilities,
           needsKey: r.needs_key,
           configured: r.configured,
+        keyError: r.key_error ?? null,
           draftKey: prev?.draftKey ?? '',
           saveState: prev?.saveState ?? 'idle',
           saveError: prev?.saveError ?? '',
