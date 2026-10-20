@@ -752,7 +752,9 @@ export class WizardState {
     };
     this.libraries = { libs: [...data.libraries.libs] };
     this.instruments = { mcps: [...data.mcps] };
-    this.inference = {
+    // A failed router read leaves the list as it was (#286); the Providers
+    // screen re-reads on mount and shows the error.
+    if (data.routers) this.inference = {
       routers: data.routers.map(r => ({
         id: r.id,
         name: r.name,
@@ -864,7 +866,10 @@ export class WizardState {
 
   async refreshInferenceRouters(): Promise<void> {
     const api = senseiApi(appState.port);
-    const fresh = await api.listGatewayRouters();
+    const read = await api.tryListGatewayRouters();
+    // A failed read is an error the Providers screen shows (#286), not "no routers".
+    if (!read.ok) throw new Error(read.error.message || `HTTP ${read.error.status}`);
+    const fresh = read.data;
     const previous = new Map(this.inference.routers.map(r => [r.id, r]));
     this.inference = {
       routers: fresh.routers.map(r => {

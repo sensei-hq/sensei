@@ -1130,11 +1130,9 @@ export function senseiApi(port: number) {
       }),
 
     // ── Gateway routers ──────────────────────────────────────────────────
-    listGatewayRouters: () =>
-      get<{ routers: import('./setup/contracts').DaemonRouter[] }>(
-        '/api/gateway/routers',
-        { routers: [] },
-      ),
+    /** A failed read is an error, never "no routers" (#286). */
+    tryListGatewayRouters: () =>
+      tryGet<{ routers: import('./setup/contracts').DaemonRouter[] }>('/api/gateway/routers'),
 
     setGatewayRouterKey: (id: string, key: string) =>
       tryPost<{ ok: boolean; configured: boolean }>(

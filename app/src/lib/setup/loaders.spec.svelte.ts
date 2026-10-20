@@ -170,3 +170,25 @@ describe('loadWizardData — a config read that fails', () => {
     expect(wizardState.setupComplete).toBe(true);
   });
 });
+
+// #286: the router list read through a fallback that turned any failure into
+// `{ routers: [] }` — "no routers", indistinguishable from none configured.
+describe('loadWizardData — a router read that fails', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('loads everything else and says the routers could not be read', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      const path = new URL(String(input), 'http://localhost').pathname;
+      if (path === '/api/gateway/routers') return new Response('boom', { status: 503, statusText: 'Service Unavailable' });
+      const body = path === '/api/config' ? {}
+        : path === '/api/libs' ? { total: 0, libs: [] }
+        : path === '/api/instruments' ? { mcps: [] }
+        : [];
+      return new Response(JSON.stringify(body), { status: 200 });
+    }));
+    const data = await loadWizardData(7744);
+    expect(data.routers).toBeNull();
+    expect(data.routersError).toMatch(/Service Unavailable|503/);
+    expect(data.mcps).toEqual([]);
+  });
+});

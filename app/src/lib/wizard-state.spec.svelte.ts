@@ -532,6 +532,27 @@ describe('WizardState', () => {
       });
     });
 
+    // #286: a failed read is an error the Providers screen shows, not an
+    // empty router list.
+    it('refreshInferenceRouters rejects on a failed read and keeps the list', async () => {
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData({ routers: [mockRouter({ id: 'openai' })] }));
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 503, statusText: 'Service Unavailable' })));
+      try {
+        await expect(ws.refreshInferenceRouters()).rejects.toThrow(/Service Unavailable|503/);
+        expect(ws.inference.routers.map((r) => r.id)).toEqual(['openai']);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('a load whose router read failed leaves the routers untouched', () => {
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData({ routers: [mockRouter({ id: 'openai' })] }));
+      ws.hydrate(mockWizardLoadData({ routers: null, routersError: 'Service Unavailable' }));
+      expect(ws.inference.routers.map((r) => r.id)).toEqual(['openai']);
+    });
+
     it('initialises draftKey/saveState empty on hydrate', () => {
       const ws = new WizardState();
       ws.hydrate(mockWizardLoadData({ routers: [mockRouter()] }));

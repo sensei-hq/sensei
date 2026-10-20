@@ -180,7 +180,10 @@ export interface WizardLoadData {
   projects: DaemonProject[];
   libraries: { total: number; libs: DaemonLibEntry[] };
   mcps: DaemonMcpEntry[];
-  routers: DaemonRouter[];
+  /** `null` when the read failed — never an invented empty list (#286). */
+  routers: DaemonRouter[] | null;
+  /** Why the routers could not be read; `null` when they were. */
+  routersError?: string | null;
 }
 
 // ── Knowledge plane (Phase 0) ─────────────────────────────────────────

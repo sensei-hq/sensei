@@ -111,7 +111,7 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     api.listProjects(),
     api.getLibs(),
     api.listInstruments(),
-    api.listGatewayRouters(),
+    api.tryListGatewayRouters(),
   ]);
 
   if (!configRead.ok) {
@@ -128,6 +128,7 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     projects: projects as any[],
     libraries: { total: libs.total, libs: mapLibraries(libs.libs, config) },
     mcps: instruments.mcps,
-    routers: routers.routers,
+    routers: routers.ok ? routers.data.routers : null,
+    routersError: routers.ok ? null : routers.error.message || `HTTP ${routers.error.status}`,
   };
 }
