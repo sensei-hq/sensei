@@ -45,4 +45,25 @@ describe('Screen — one fixed header over one scroll body (#293)', () => {
     expect(part(m.container, 'screen-header')).toBeNull();
     expect(part(m.container, 'screen-body')!.textContent).toContain('Body');
   });
+
+  it('in fill mode, hands the body to panes that scroll themselves', () => {
+    const m = mountComponent(ScreenHarness, { fill: true });
+    cleanup.push(m.destroy);
+    const body = part(m.container, 'screen-body')!;
+    expect(body.dataset.fill).toBe('true');
+    expect(body.className).toMatch(/\bflex-1\b/);
+    expect(body.className).toMatch(/\bmin-h-0\b/);
+    expect(body.className).toMatch(/\bflex-col\b/);
+    expect(body.className).toMatch(/\boverflow-hidden\b/);
+    expect(body.className).not.toMatch(/\boverflow-y-auto\b/);
+  });
+
+  it('carries a screen\'s own attributes on its root, so tests can find it', () => {
+    const m = mountComponent(ScreenHarness, {});
+    cleanup.push(m.destroy);
+    const screen = part(m.container, 'screen')!;
+    expect(screen.dataset.screen).toBe('probe');
+    expect(screen.dataset.extra).toBe('x');
+    expect(screen.dataset.component).toBe('screen');
+  });
 });

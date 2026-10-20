@@ -12,29 +12,41 @@ import { DAEMON_URL, navigateToScreen } from '../helpers';
 const PROJECT_SCREENS = [
   'traceability', 'instruments', 'libraries', 'memories',
   'diagrams/cycles', 'diagrams/layers', 'diagrams/neighbourhood', 'diagrams/schema', 'diagrams/structure', 'diagrams/world',
+  'overview', 'about', 'patterns', 'impact', 'intake', 'metrics', 'sessions', 'atlas',
 ];
 
-type Probe = { fills: boolean; mainScrolls: boolean; headerMoved: number; bodyScrolled: number } | null;
+type Probe = { fills: boolean; mainScrolls: boolean; headerMoved: number; bodyScrolled: number; fill: boolean } | null;
+
+/** What every screen must show: a `fill` screen's panes scroll themselves, so its
+ *  body is not scrolled; any other body scrolls under a header that stays put. */
+const expected = (fill: boolean) => ({ fills: true, mainScrolls: false, headerMoved: 0, bodyScrolled: fill ? 0 : 1500, fill });
+
+/** A body not yet probed: the screen just navigated to, not the one before it. */
+const FRESH_BODY = '[data-component="screen-body"]:not([data-probed])';
 
 const PROBE = `(() => {
-  const main = document.querySelector('main');
-  const screen = document.querySelector('[data-component="screen"]');
-  const header = document.querySelector('[data-component="screen-header"]');
-  const body = document.querySelector('[data-component="screen-body"]');
+  const body = document.querySelector('[data-component="screen-body"]:not([data-probed])');
+  const screen = body?.closest('[data-component="screen"]');
+  const header = screen?.querySelector(':scope > [data-component="screen-header"]');
+  const main = screen?.closest('main');
   if (!main || !screen || !header || !body) return null;
+  const fill = body.dataset.fill === 'true';
   const spacer = document.createElement('div');
   spacer.style.height = '4000px';
-  body.appendChild(spacer);
+  if (!fill) body.appendChild(spacer);
   const before = header.getBoundingClientRect().top;
-  body.scrollTop = 1500;
+  if (!fill) body.scrollTop = 1500;
   const out = {
     fills: Math.abs(screen.getBoundingClientRect().bottom - main.getBoundingClientRect().bottom) <= 1,
     mainScrolls: main.scrollHeight > main.clientHeight + 1,
     headerMoved: header.getBoundingClientRect().top - before,
     bodyScrolled: body.scrollTop,
+    fill,
   };
   body.scrollTop = 0;
   spacer.remove();
+  // Marked, so the next navigation waits for ITS screen rather than this one.
+  body.setAttribute('data-probed', '');
   return out;
 })()`;
 
@@ -45,12 +57,19 @@ test('screens on the shared layout keep the header fixed over one scroll body', 
   test.skip(!sensei, 'no sensei project on this daemon');
 
   const results: Record<string, Probe> = {};
-  for (const screen of PROJECT_SCREENS) {
-    await navigateToScreen(tauriPage, `/project/${sensei!.id}/${screen}`, '[data-component="screen-body"]', 30_000);
+  const metrics: { metrics: { metric: string }[] } = await (
+    await fetch(`${DAEMON_URL}/api/projects/${sensei!.id}/metrics`)
+  ).json();
+  const screens = [...PROJECT_SCREENS, ...metrics.metrics.slice(0, 1).map((m) => `metrics/${m.metric}`)];
+  for (const screen of screens) {
+    await navigateToScreen(tauriPage, `/project/${sensei!.id}/${screen}`, FRESH_BODY, 30_000);
     results[screen] = (await tauriPage.evaluate(PROBE)) as Probe;
   }
   console.log(`\n[inspect] screen shell ${JSON.stringify(results)}`);
-  for (const screen of PROJECT_SCREENS) {
-    expect(results[screen], screen).toEqual({ fills: true, mainScrolls: false, headerMoved: 0, bodyScrolled: 1500 });
+  expect(screens.length).toBeGreaterThan(PROJECT_SCREENS.length);
+  for (const screen of screens) {
+    expect(results[screen], screen).toEqual(expected(results[screen]?.fill ?? false));
   }
+  // The two list-and-detail screens are the fill ones.
+  expect(screens.filter((s) => results[s]?.fill)).toEqual(['atlas', screens.at(-1)]);
 });

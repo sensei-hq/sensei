@@ -3,7 +3,7 @@
   import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { Select } from '@rokkit/ui';
-  import { EmptyState, Eyebrow } from '$lib/components';
+  import { EmptyState, Eyebrow, Screen } from '$lib/components';
   import {
     kindColor,
     kindNeedsRing,
@@ -147,88 +147,90 @@
   }
 </script>
 
-<div class="flex flex-col h-full" data-screen="atlas" data-atlas-repo={data.repoId}>
-  <!-- Header -->
-  <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
-    <Kanji char="図" size="inherit" tone="inherit" class="text-3xl text-accent leading-none" />
-    <div class="flex-1 min-w-0">
-      <p class="m-0 mb-1"><Eyebrow>This project · Atlas</Eyebrow></p>
-      <h1 class="display text-xl font-normal m-0">Code graph</h1>
-      <p class="text-sm text-ink-mute mt-1 mb-0 max-w-[640px] leading-relaxed">
-        The call graph the daemon indexed for
-        <span class="font-mono text-ink-soft">{data.repoId}</span> — clusters at a
-        glance, individual symbols and their calls up close.
-      </p>
-    </div>
-    <div class="flex gap-5 pl-5 border-l border-paper-edge">
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-ink">{data.stats.modules}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">modules</div>
+<!-- Header and controls stay in place; the canvas and the inspector fill the rest (#293). -->
+<Screen fill data-screen="atlas" data-atlas-repo={data.repoId}>
+  {#snippet header()}
+    <!-- Header -->
+    <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
+      <Kanji char="図" size="inherit" tone="inherit" class="text-3xl text-accent leading-none" />
+      <div class="flex-1 min-w-0">
+        <p class="m-0 mb-1"><Eyebrow>This project · Atlas</Eyebrow></p>
+        <h1 class="display text-xl font-normal m-0">Code graph</h1>
+        <p class="text-sm text-ink-mute mt-1 mb-0 max-w-[640px] leading-relaxed">
+          The call graph the daemon indexed for
+          <span class="font-mono text-ink-soft">{data.repoId}</span> — clusters at a
+          glance, individual symbols and their calls up close.
+        </p>
       </div>
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-ink">{data.stats.exports}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">exports</div>
+      <div class="flex gap-5 pl-5 border-l border-paper-edge">
+        <div class="text-center">
+          <div class="font-mono text-lg font-light text-ink">{data.stats.modules}</div>
+          <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">modules</div>
+        </div>
+        <div class="text-center">
+          <div class="font-mono text-lg font-light text-ink">{data.stats.exports}</div>
+          <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">exports</div>
+        </div>
+        <div class="text-center">
+          <div class="font-mono text-lg font-light text-ink">{data.stats.calls}</div>
+          <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">calls</div>
+        </div>
       </div>
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-ink">{data.stats.calls}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">calls</div>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex items-center gap-3 flex-wrap px-6 py-3 border-b border-paper-edge">
+      <!-- scope -->
+      <div class="flex items-center gap-2 text-xs text-ink-mute" data-atlas-scope>
+        <span class="uppercase tracking-wider">Scope</span>
+        <Select
+          class="font-mono text-xs max-w-[220px]"
+          items={scopeItems}
+          value={data.repoId}
+          onchange={onScopeSelect}
+        />
+      </div>
+
+      <span class="flex-1"></span>
+
+      <!-- hide tests toggle — focus on production code -->
+      <button
+        type="button"
+        class="text-xs rounded py-2 px-3 cursor-pointer border border-paper-edge"
+        class:bg-paper-mute={hideTests}
+        class:text-ink={hideTests}
+        class:font-semibold={hideTests}
+        class:bg-transparent={!hideTests}
+        class:text-ink-mute={!hideTests}
+        data-atlas-hide-tests
+        aria-pressed={hideTests}
+        onclick={() => (hideTests = !hideTests)}
+      >
+        Hide tests
+      </button>
+
+      <!-- level segmented control -->
+      <div class="inline-flex bg-paper-mute rounded p-1" role="group" aria-label="Granularity">
+        {#each LEVELS as l (l.value)}
+          {@const active = view.level === l.value}
+          <button
+            type="button"
+            class="text-xs rounded py-2 px-3 cursor-pointer border-none"
+            class:bg-paper={active}
+            class:text-ink={active}
+            class:font-semibold={active}
+            class:bg-transparent={!active}
+            class:text-ink-mute={!active}
+            data-atlas-level={l.value}
+            aria-pressed={active}
+            onclick={() => view.setLevel(l.value)}
+          >
+            {l.label}
+          </button>
+        {/each}
       </div>
     </div>
-  </div>
-
-  <!-- Controls -->
-  <div class="flex items-center gap-3 flex-wrap px-6 py-3 border-b border-paper-edge">
-    <!-- scope -->
-    <div class="flex items-center gap-2 text-xs text-ink-mute" data-atlas-scope>
-      <span class="uppercase tracking-wider">Scope</span>
-      <Select
-        class="font-mono text-xs max-w-[220px]"
-        items={scopeItems}
-        value={data.repoId}
-        onchange={onScopeSelect}
-      />
-    </div>
-
-    <span class="flex-1"></span>
-
-    <!-- hide tests toggle — focus on production code -->
-    <button
-      type="button"
-      class="text-xs rounded py-2 px-3 cursor-pointer border border-paper-edge"
-      class:bg-paper-mute={hideTests}
-      class:text-ink={hideTests}
-      class:font-semibold={hideTests}
-      class:bg-transparent={!hideTests}
-      class:text-ink-mute={!hideTests}
-      data-atlas-hide-tests
-      aria-pressed={hideTests}
-      onclick={() => (hideTests = !hideTests)}
-    >
-      Hide tests
-    </button>
-
-    <!-- level segmented control -->
-    <div class="inline-flex bg-paper-mute rounded p-1" role="group" aria-label="Granularity">
-      {#each LEVELS as l (l.value)}
-        {@const active = view.level === l.value}
-        <button
-          type="button"
-          class="text-xs rounded py-2 px-3 cursor-pointer border-none"
-          class:bg-paper={active}
-          class:text-ink={active}
-          class:font-semibold={active}
-          class:bg-transparent={!active}
-          class:text-ink-mute={!active}
-          data-atlas-level={l.value}
-          aria-pressed={active}
-          onclick={() => view.setLevel(l.value)}
-        >
-          {l.label}
-        </button>
-      {/each}
-    </div>
-  </div>
-
+  {/snippet}
   {#if empty}
     <div class="p-6">
       <EmptyState
@@ -269,4 +271,4 @@
       </div>
     </div>
   {/if}
-</div>
+</Screen>

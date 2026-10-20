@@ -45,20 +45,13 @@ const NOT_YET = new Set([
 		'(observatory)/share-review/+page.svelte',
 		'(observatory)/traceability/+page.svelte',
 		'(observatory)/upgrades/+page.svelte',
-		'(project)/project/[id]/+page.svelte',
-		'(project)/project/[id]/about/+page.svelte',
-		'(project)/project/[id]/atlas/+page.svelte',
-		'(project)/project/[id]/impact/+page.svelte',
-		'(project)/project/[id]/intake/+page.svelte',
-		'(project)/project/[id]/metrics/[key]/+page.svelte',
-		'(project)/project/[id]/metrics/+page.svelte',
-		'(project)/project/[id]/overview/+page.svelte',
-		'(project)/project/[id]/patterns/+page.svelte',
-		'(project)/project/[id]/sessions/+page.svelte',
 ]);
 
-const all = GROUPS.flatMap((g) => pages(join(ROOT, g))).sort();
-const usesScreen = (page: string) => /<Screen[\s>]/.test(readFileSync(join(ROOT, page), 'utf8'));
+const source = (page: string) => readFileSync(join(ROOT, page), 'utf8');
+// A page with no markup only redirects (its `+page.ts` throws); it is not a screen.
+const hasMarkup = (page: string) => source(page).replace(/<script[\s\S]*?<\/script>/, '').trim() !== '';
+const all = GROUPS.flatMap((g) => pages(join(ROOT, g))).filter(hasMarkup).sort();
+const usesScreen = (page: string) => /<Screen[\s>]/.test(source(page));
 
 describe('screens use the shared Screen layout (#293)', () => {
 	it('every screen not listed as pending uses Screen', () => {

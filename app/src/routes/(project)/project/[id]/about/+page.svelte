@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { PageHeader, Kanji } from '$lib/components';
+    import { PageHeader, Screen, Kanji } from '$lib/components';
     import { Button, Select } from '@rokkit/ui';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi } from '$lib/api.js';
@@ -104,165 +104,169 @@
     </div>
 {/snippet}
 
-<PageHeader title={p?.name ?? "—"} description={p?.goal ?? p?.vision ?? undefined} />
-<div class="px-6 py-6 max-w-[600px]">
-    <section
-        class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"
-        data-testid="project-metadata"
-    >
-        <div class="flex items-baseline justify-between mb-4">
-            <h3 class="text-base m-0">Identity</h3>
-            <span
-                class="text-xs"
-                class:text-ink-mute={form.saveStatus === 'idle'}
-                class:text-ink-soft={form.saveStatus === 'saving'}
-                class:text-success={form.saveStatus === 'saved'}
-                class:text-warning={form.saveStatus === 'error'}
-                data-testid="metadata-save-status"
-            >{saveStatusLabel(form.saveStatus, form.saveError)}</span>
-        </div>
+<Screen>
+    {#snippet header()}
+    <PageHeader title={p?.name ?? "—"} description={p?.goal ?? p?.vision ?? undefined} />
+    {/snippet}
+    <div class="px-6 py-6 max-w-[600px]">
+        <section
+            class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"
+            data-testid="project-metadata"
+        >
+            <div class="flex items-baseline justify-between mb-4">
+                <h3 class="text-base m-0">Identity</h3>
+                <span
+                    class="text-xs"
+                    class:text-ink-mute={form.saveStatus === 'idle'}
+                    class:text-ink-soft={form.saveStatus === 'saving'}
+                    class:text-success={form.saveStatus === 'saved'}
+                    class:text-warning={form.saveStatus === 'error'}
+                    data-testid="metadata-save-status"
+                >{saveStatusLabel(form.saveStatus, form.saveError)}</span>
+            </div>
 
-        <div class="flex flex-col divide-y divide-paper-edge">
-            <div class="grid grid-cols-[1fr_auto] gap-6 items-center py-3">
-                <div>
-                    <div class="text-sm text-ink">Status</div>
-                    <div class="text-xs text-ink-mute mt-0.5">
-                        Lifecycle stage — from discovery through to archived.
+            <div class="flex flex-col divide-y divide-paper-edge">
+                <div class="grid grid-cols-[1fr_auto] gap-6 items-center py-3">
+                    <div>
+                        <div class="text-sm text-ink">Status</div>
+                        <div class="text-xs text-ink-mute mt-0.5">
+                            Lifecycle stage — from discovery through to archived.
+                        </div>
+                    </div>
+                    <div data-testid="metadata-maturity" class="min-w-[140px]">
+                        <Select
+                            class="text-xs"
+                            items={maturityItems}
+                            value={form.maturity}
+                            disabled={!p}
+                            onchange={(v) => {
+                                form.maturity = v as string;
+                                void persist();
+                            }}
+                        />
                     </div>
                 </div>
-                <div data-testid="metadata-maturity" class="min-w-[140px]">
-                    <Select
-                        class="text-xs"
-                        items={maturityItems}
-                        value={form.maturity}
+
+                <div class="grid grid-cols-[1fr_auto] gap-6 items-center py-3">
+                    <div>
+                        <div class="text-sm text-ink">Client</div>
+                        <div class="text-xs text-ink-mute mt-0.5">
+                            Who this work is for. Optional.
+                        </div>
+                    </div>
+                    <input
+                        type="text"
+                        class="w-[220px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none text-right"
+                        data-testid="metadata-client"
                         disabled={!p}
-                        onchange={(v) => {
-                            form.maturity = v as string;
+                        value={form.client}
+                        oninput={(e) => {
+                            form.client = e.currentTarget.value;
                             void persist();
                         }}
+                        placeholder="client / organisation"
                     />
                 </div>
-            </div>
 
-            <div class="grid grid-cols-[1fr_auto] gap-6 items-center py-3">
-                <div>
-                    <div class="text-sm text-ink">Client</div>
-                    <div class="text-xs text-ink-mute mt-0.5">
-                        Who this work is for. Optional.
+                <div class="grid grid-cols-[1fr_auto] gap-6 items-start py-3">
+                    <div>
+                        <div class="text-sm text-ink">Goal</div>
+                        <div class="text-xs text-ink-mute mt-0.5">
+                            What this project is for — its purpose in a line or two.
+                        </div>
                     </div>
+                    <textarea
+                        rows="2"
+                        class="w-[260px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none resize-y"
+                        data-testid="metadata-goal"
+                        disabled={!p}
+                        value={form.goal}
+                        oninput={(e) => {
+                            form.goal = e.currentTarget.value;
+                            void persist();
+                        }}
+                        placeholder="short goal or purpose"
+                    ></textarea>
                 </div>
-                <input
-                    type="text"
-                    class="w-[220px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none text-right"
-                    data-testid="metadata-client"
-                    disabled={!p}
-                    value={form.client}
-                    oninput={(e) => {
-                        form.client = e.currentTarget.value;
-                        void persist();
-                    }}
-                    placeholder="client / organisation"
-                />
-            </div>
 
-            <div class="grid grid-cols-[1fr_auto] gap-6 items-start py-3">
-                <div>
-                    <div class="text-sm text-ink">Goal</div>
-                    <div class="text-xs text-ink-mute mt-0.5">
-                        What this project is for — its purpose in a line or two.
+                <div class="grid grid-cols-[1fr_auto] gap-6 items-start py-3">
+                    <div>
+                        <div class="text-sm text-ink">Description</div>
+                        <div class="text-xs text-ink-mute mt-0.5">
+                            A fuller description of the project. Optional.
+                        </div>
                     </div>
+                    <textarea
+                        rows="3"
+                        class="w-[260px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none resize-y"
+                        data-testid="metadata-description"
+                        disabled={!p}
+                        value={form.description}
+                        oninput={(e) => {
+                            form.description = e.currentTarget.value;
+                            void persist();
+                        }}
+                        placeholder="describe this project"
+                    ></textarea>
                 </div>
-                <textarea
-                    rows="2"
-                    class="w-[260px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none resize-y"
-                    data-testid="metadata-goal"
-                    disabled={!p}
-                    value={form.goal}
-                    oninput={(e) => {
-                        form.goal = e.currentTarget.value;
-                        void persist();
-                    }}
-                    placeholder="short goal or purpose"
-                ></textarea>
-            </div>
-
-            <div class="grid grid-cols-[1fr_auto] gap-6 items-start py-3">
-                <div>
-                    <div class="text-sm text-ink">Description</div>
-                    <div class="text-xs text-ink-mute mt-0.5">
-                        A fuller description of the project. Optional.
-                    </div>
-                </div>
-                <textarea
-                    rows="3"
-                    class="w-[260px] px-3 py-2 text-sm border border-paper-edge rounded-md bg-paper-soft text-ink outline-none resize-y"
-                    data-testid="metadata-description"
-                    disabled={!p}
-                    value={form.description}
-                    oninput={(e) => {
-                        form.description = e.currentTarget.value;
-                        void persist();
-                    }}
-                    placeholder="describe this project"
-                ></textarea>
-            </div>
-        </div>
-    </section>
-
-    <section class="mt-5" data-testid="project-bindings">
-        <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
-            Bindings
-        </h3>
-        <p class="text-xs text-ink-mute leading-normal mb-3">
-            A default is inferred from each git remote and confirmed at first
-            scan — never silently.
-        </p>
-        {#if bindingView.state === 'confirmed'}
-            {@render confirmedRow(bindingView)}
-        {:else if bindingView.state === 'inferred'}
-            {@render inferredRow(bindingView)}
-            {#if bindAction.error}
-                <p class="text-xs text-danger m-0 mt-2" data-binding-error>{bindAction.error}</p>
-            {/if}
-        {:else if bindingView.state === 'error'}
-            <p class="text-xs text-danger m-0" data-binding-load-error>{bindingView.message}</p>
-        {:else}
-            <p class="text-sm text-ink-faint m-0">
-                no dōjō binding — this project's findings stay local.
-            </p>
-        {/if}
-    </section>
-
-    <section class="mt-5">
-        <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
-            Repos{data.reposError ? '' : ` (${data.repos.length})`}
-        </h3>
-        {#if data.reposError}
-            <p class="text-xs text-danger m-0" data-repos-error>{data.reposError}</p>
-        {/if}
-        <ul class="list-none m-0 p-0">
-            {#each data.repos as repo (repo.id)}
-                <li class="repo-row flex gap-3 py-1.5 text-sm border-b border-paper-edge">
-                    <span class="font-semibold">{repo.name}</span>
-                    <span class="opacity-50 text-xs font-mono overflow-hidden text-ellipsis">{repo.path}</span>
-                </li>
-            {/each}
-        </ul>
-    </section>
-
-    {#if p?.stack}
-        <section class="mt-5">
-            <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
-                Stack
-            </h3>
-            <div class="flex flex-wrap gap-1.5">
-                {#each [...(p.stack?.languages ?? []), ...(p.stack?.frameworks ?? [])] as t (t)}
-                    <span class="bg-paper-mute text-xs px-2 py-1 rounded-md">{t}</span>
-                {/each}
             </div>
         </section>
-    {/if}
-</div>
+
+        <section class="mt-5" data-testid="project-bindings">
+            <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
+                Bindings
+            </h3>
+            <p class="text-xs text-ink-mute leading-normal mb-3">
+                A default is inferred from each git remote and confirmed at first
+                scan — never silently.
+            </p>
+            {#if bindingView.state === 'confirmed'}
+                {@render confirmedRow(bindingView)}
+            {:else if bindingView.state === 'inferred'}
+                {@render inferredRow(bindingView)}
+                {#if bindAction.error}
+                    <p class="text-xs text-danger m-0 mt-2" data-binding-error>{bindAction.error}</p>
+                {/if}
+            {:else if bindingView.state === 'error'}
+                <p class="text-xs text-danger m-0" data-binding-load-error>{bindingView.message}</p>
+            {:else}
+                <p class="text-sm text-ink-faint m-0">
+                    no dōjō binding — this project's findings stay local.
+                </p>
+            {/if}
+        </section>
+
+        <section class="mt-5">
+            <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
+                Repos{data.reposError ? '' : ` (${data.repos.length})`}
+            </h3>
+            {#if data.reposError}
+                <p class="text-xs text-danger m-0" data-repos-error>{data.reposError}</p>
+            {/if}
+            <ul class="list-none m-0 p-0">
+                {#each data.repos as repo (repo.id)}
+                    <li class="repo-row flex gap-3 py-1.5 text-sm border-b border-paper-edge">
+                        <span class="font-semibold">{repo.name}</span>
+                        <span class="opacity-50 text-xs font-mono overflow-hidden text-ellipsis">{repo.path}</span>
+                    </li>
+                {/each}
+            </ul>
+        </section>
+
+        {#if p?.stack}
+            <section class="mt-5">
+                <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
+                    Stack
+                </h3>
+                <div class="flex flex-wrap gap-1.5">
+                    {#each [...(p.stack?.languages ?? []), ...(p.stack?.frameworks ?? [])] as t (t)}
+                        <span class="bg-paper-mute text-xs px-2 py-1 rounded-md">{t}</span>
+                    {/each}
+                </div>
+            </section>
+        {/if}
+    </div>
+</Screen>
 
 <style>
     .repo-row:last-child {
