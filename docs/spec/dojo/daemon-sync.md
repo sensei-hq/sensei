@@ -67,11 +67,13 @@ step** rather than at sign-in:
 | public on the forge | **shared** | nothing — the code is already public; the user may still turn it off |
 | private | **off** | **subscription.** Unsubscribed, no metrics, governance or insights are shared at all |
 
-The distinction that matters: this is a **default within a decision the user makes**, not an
-inference drawn from forge visibility behind their back. Nothing flips at sign-in. The user opts
-into sharing, and at that moment the public/private split decides what the sensible starting
-position is — and remains changeable per repository, along with the push cadence (which is now a
-`sensei.schedules` row, so "how often" is the same mechanism as everything else).
+**Superseded 2026-10-20 (#301, user decision): signing in is the decision.** A connected
+identity's repositories sync by default — the public/private split above is the starting
+position, applied without a step. Where the user holds the authority (public code, everything
+personal) an absent election means *shared*; an explicit opt-out per repository holds. Private
+org code stays the organisation's call and stays behind the subscription. Still changeable per
+repository, along with the push cadence (a `sensei.schedules` row, so "how often" is the same
+mechanism as everything else).
 
 Private-repo sharing is where billing enters (phase 2 of the parent spec: claim, seat, billing).
 Until then a private repository stays local-only regardless of configuration.
@@ -853,14 +855,15 @@ cannot tell a user which one they are in.
 , case when r.visibility is null then false
        when t.origin = 'organization' and r.visibility <> 'public'
             then coalesce(oe.elected, p.private_repos_shared)  -- per-repo, else default
-       else coalesce(ue.elected, false)                        -- this principal's
+       else coalesce(ue.elected, true)                         -- this principal's (#301)
   end                                                          as elected
 ```
 
 `oe` is the per-repo `authority='organization'` election, `ue` the
 `authority='user' AND principal_id = m.user_id` one, `p` the tenant policy, `b`
-billing, `sa` the seat. `coalesce(…, false)` throughout: an absent row is *not
-elected*, never *elected by default*.
+billing, `sa` the seat. An absent ORGANISATION row (private org code) is *not elected*; an
+absent USER row is *elected* — a connected identity's repositories sync by default and an
+explicit `elected = false` is the opt-out (#301, 2026-10-20). Never NULL either way.
 
 ### Why `refused_by` is a column and not an inference
 
