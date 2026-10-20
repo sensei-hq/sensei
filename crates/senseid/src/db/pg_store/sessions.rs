@@ -537,16 +537,15 @@ impl PgStore {
     /// clears `analyzed_at` so the next `AnalyzeProject` re-derives every session
     /// from scratch with the current logic (used while metrics are being refined).
     /// Only sessions with a `client_session_id` (hook/transcript-captured) are
-    /// reset. Returns the number of sessions marked.
+    /// reset, selected by `project_id` as `get_project_sessions_needing_enrichment`
+    /// selects them — most sessions carry no folder. Returns the number marked.
     pub async fn reset_project_sessions_for_reenrichment(
         &self,
         project_id: &uuid::Uuid,
     ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
-            "UPDATE activity.sessions s SET analyzed_at = NULL
-               FROM sensei.folder_projects fp
-              WHERE fp.folder_id = s.folder_id AND fp.project_id = $1
-                AND s.client_session_id IS NOT NULL",
+            "UPDATE activity.sessions SET analyzed_at = NULL
+              WHERE project_id = $1 AND client_session_id IS NOT NULL",
         )
         .bind(project_id)
         .execute(&self.pool)

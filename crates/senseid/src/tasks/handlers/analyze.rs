@@ -1629,6 +1629,62 @@ mod tests {
         );
     }
 
+    /// A backfill resets the sessions enrichment will pick up: the project's,
+    /// by `project_id`, as `get_project_sessions_needing_enrichment` selects
+    /// them. Joined through the session's folder, it reset none of the
+    /// folderless ones — most live sessions — so their project never re-derived.
+    #[tokio::test]
+    async fn a_backfill_resets_a_folderless_session_of_the_project() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let pid = pg
+            .create_project(&format!("_test:bf-{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let root = pg
+            .add_watch_root(
+                &format!("/_test/bf-root-{}", uuid::Uuid::new_v4()),
+                "t",
+                &serde_json::json!([]),
+            )
+            .await
+            .unwrap();
+        let abs = format!("/_test/bf-{}", uuid::Uuid::new_v4());
+        let fid =
+            crate::tasks::test_support::seed_repo_folder(pg, &root, "bf-repo", &abs).await.unwrap();
+        let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET folder_id = NULL, analyzed_at = now() WHERE id = $1",
+        )
+        .bind(sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let reset = pg.reset_project_sessions_for_reenrichment(&pid).await.unwrap();
+        let due: Vec<uuid::Uuid> = pg
+            .get_project_sessions_needing_enrichment(&pid)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+            .bind(sid)
+            .execute(pg.pool())
+            .await
+            .ok();
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .ok();
+
+        assert_eq!((reset, due), (1, vec![sid]));
+    }
+
     #[tokio::test]
     async fn derive_signals_flags_churn_corrections_and_principles() {
         let ctx = make_ctx().await;
