@@ -15,6 +15,7 @@
     sessionRows,
     hotspotRows,
     patternSnapshot,
+    decideRecommendation,
     type StatBlock,
   } from './overview-view.svelte.js';
 
@@ -42,41 +43,16 @@
   // Retained through the Slot-4 redesign; the mockup's send-to-acp action sits
   // alongside it and appears only when the rec carries a defaultAcp.
   let deciding = $state(false);
+  // Why the last decision did not land (#288) — it used to reload as if it had.
+  let decideError = $state<string | null>(null);
   async function decide(action: 'accept' | 'reject') {
     if (!rec || !projectId || deciding) return;
     deciding = true;
-    try {
-      const api = senseiApi(appState.port);
-      if (action === 'reject') {
-        await api.rejectProjectRecommendation(projectId, rec.id);
-      } else {
-        // Accept → materialize the rec's artifact:
-        //  • rule-class (revise_rule/promote_pattern/enrich_memory) → a governance
-        //    rule at project scope / recommended tier (no file — auto).
-        //  • write_skill/create_agent → a project FILE (.claude/skills|agents/…).
-        //    A file write is consent-sensitive, so confirm (showing the target
-        //    path) before writing; declining leaves the rec pending.
-        //  • anything else → the plain accept (status flip + FTR measurement).
-        const preview = await api.previewRecommendation(projectId, rec.id);
-        if (preview.materializable && preview.consent_required) {
-          const ok = confirm(
-            `Create a ${preview.kind} at ${preview.path}?\n\nsensei will write a new file into this repo (git-tracked, reversible).`,
-          );
-          if (!ok) return; // declined — rec stays pending
-          await api.materializeRecommendation(projectId, rec.id, {});
-        } else if (preview.materializable) {
-          await api.materializeRecommendation(projectId, rec.id, {
-            gov_scope: 'project',
-            enforcement: 'recommended',
-          });
-        } else {
-          await api.acceptProjectRecommendation(projectId, rec.id);
-        }
-      }
-      await invalidateAll();
-    } finally {
-      deciding = false;
-    }
+    decideError = null;
+    const result = await decideRecommendation(senseiApi(appState.port), projectId, rec.id, action, (m) => confirm(m));
+    deciding = false;
+    if (result.error) decideError = result.error;
+    else if (result.done) await invalidateAll();
   }
 </script>
 
@@ -159,6 +135,9 @@
             <span class="font-mono text-xs text-ink-mute">{hero.meta}</span>
           {/if}
         </div>
+        {#if decideError}
+          <p class="text-xs text-danger mt-2 mb-0" data-testid="rec-decide-error">Could not record that: {decideError}</p>
+        {/if}
       {/if}
     </div>
   </section>

@@ -16,7 +16,7 @@ import type {
   PatternEntry,
 } from '$lib/types.js';
 import { ftrPct } from '$lib/ftr.js';
-import { readOutcome, type ApiResult } from '$lib/api.js';
+import { failureReason, readOutcome, type ApiResult, type RecommendationPreview } from '$lib/api.js';
 
 // ── Header FTR chip ─────────────────────────────────────────────────────────
 
@@ -306,4 +306,57 @@ export function overviewPageData(
     patterns: p.data,
     patternsError: p.error,
   };
+}
+
+// ── Accept / reject the top recommendation ──────────────────────────────────
+
+/** The writes a decision makes — injected so a spec can fail them. */
+export interface DecideApi {
+  tryPreviewRecommendation: (projectId: string, recId: string) => Promise<ApiResult<RecommendationPreview>>;
+  tryMaterializeRecommendation: (
+    projectId: string,
+    recId: string,
+    opts: { gov_scope?: string; enforcement?: string },
+  ) => Promise<ApiResult<unknown>>;
+  tryAcceptProjectRecommendation: (projectId: string, recId: string) => Promise<ApiResult<unknown>>;
+  tryRejectProjectRecommendation: (projectId: string, recId: string) => Promise<ApiResult<unknown>>;
+}
+
+/**
+ * Accept or reject a recommendation. Accept materializes the rec's artifact:
+ *  • file-class (write_skill / create_agent) → a project FILE, written only
+ *    after `confirmWrite` agrees (it is shown the target path); declining
+ *    leaves the rec pending;
+ *  • rule-class → a governance rule at project scope, recommended tier;
+ *  • anything else → the plain accept (status flip + FTR measurement).
+ *
+ * `done` is whether the decision was recorded; `error` is why it was not. A
+ * preview that cannot be read stops here (#288): falling through to the plain
+ * accept would mark the rec accepted with nothing written.
+ */
+export async function decideRecommendation(
+  api: DecideApi,
+  projectId: string,
+  recId: string,
+  action: 'accept' | 'reject',
+  confirmWrite: (message: string) => boolean,
+): Promise<{ done: boolean; error: string | null }> {
+  const settle = (r: ApiResult<unknown>) =>
+    r.ok ? { done: true, error: null } : { done: false, error: failureReason(r.error) };
+  if (action === 'reject') return settle(await api.tryRejectProjectRecommendation(projectId, recId));
+
+  const preview = await api.tryPreviewRecommendation(projectId, recId);
+  if (!preview.ok) return { done: false, error: failureReason(preview.error) };
+  const p = preview.data;
+  if (p.materializable && p.consent_required) {
+    const message = `Create a ${p.kind} at ${p.path}?\n\nsensei will write a new file into this repo (git-tracked, reversible).`;
+    if (!confirmWrite(message)) return { done: false, error: null };
+    return settle(await api.tryMaterializeRecommendation(projectId, recId, {}));
+  }
+  if (p.materializable) {
+    return settle(
+      await api.tryMaterializeRecommendation(projectId, recId, { gov_scope: 'project', enforcement: 'recommended' }),
+    );
+  }
+  return settle(await api.tryAcceptProjectRecommendation(projectId, recId));
 }

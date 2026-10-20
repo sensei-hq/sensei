@@ -50,6 +50,12 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryListImpactVerdicts', call: () => api().tryListImpactVerdicts('p1'), body: { verdicts: [] } },
   { name: 'tryGetProjectDrift', call: () => api().tryGetProjectDrift('p1'), body: { items: [], total: 0 } },
   { name: 'tryScanProjectDrift', call: () => api().tryScanProjectDrift('p1'), body: { scannedDocs: 2 } },
+  // #288 — Upgrades and the recommendation decision.
+  { name: 'tryGetUpgrades', call: () => api().tryGetUpgrades(), body: { artifacts: [], unread_count: 0 } },
+  { name: 'tryPreviewRecommendation', call: () => api().tryPreviewRecommendation('p1', 'r1'), body: { materializable: true } },
+  { name: 'tryMaterializeRecommendation', call: () => api().tryMaterializeRecommendation('p1', 'r1', {}), body: { ok: true } },
+  { name: 'tryAcceptProjectRecommendation', call: () => api().tryAcceptProjectRecommendation('p1', 'r1'), body: { ok: true } },
+  { name: 'tryRejectProjectRecommendation', call: () => api().tryRejectProjectRecommendation('p1', 'r1'), body: { ok: true } },
   // #288 — Atlas.
   { name: 'tryGetGraphNodes', call: () => api().tryGetGraphNodes('r'), body: { nodes: [], edges: [] } },
   { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
@@ -106,6 +112,6 @@ describe('legacy fallback reads (#288)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/lib/api.ts', 'utf8');
     const reads = src.split('\n').filter((l) => /\bget</.test(l) && !l.includes('async function get<'));
-    expect(reads.length).toBeLessThanOrEqual(37);
+    expect(reads.length).toBeLessThanOrEqual(34);
   });
 });

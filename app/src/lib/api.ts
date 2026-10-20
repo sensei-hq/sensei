@@ -50,6 +50,14 @@ export type ApiError = { status: number; message: string } | { status: 0; messag
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
+/** What accepting a recommendation would write (`…/recommendations/{id}/preview`). */
+export interface RecommendationPreview {
+  materializable: boolean; kind?: string; action_type?: string; reason?: string;
+  title?: string; body?: string; impact?: string | null; gov_scope?: string; enforcement?: string;
+  // file-class (write_skill/create_agent) preview fields:
+  name?: string; path?: string; content?: string; consent_required?: boolean;
+}
+
 /** Why a read failed, for the screen to say: the status text, else the status. */
 export const failureReason = (error: ApiError): string => error.message || `HTTP ${error.status}`;
 
@@ -585,16 +593,10 @@ export function senseiApi(port: number) {
     tryGetProjectPatterns: (id: string) =>
       tryGet<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(`/api/projects/${enc(id)}/patterns`),
 
-    getProjectRecommendations: (id: string, status?: string) =>
-      get<Recommendation[]>(
-        `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`, []
-      ),
-
     // Result-based variant: a recommendations-only fetch failure (the /metrics
     // leg can succeed independently) must SURFACE, not collapse to [] — otherwise
     // a 500/timeout is indistinguishable from a genuinely-empty list on a
-    // governance-facing screen. Callers that tolerate the legacy swallow keep
-    // getProjectRecommendations above.
+    // governance-facing screen.
     tryGetProjectRecommendations: (id: string, status?: string) =>
       tryGet<Recommendation[]>(
         `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`,
@@ -615,21 +617,19 @@ export function senseiApi(port: number) {
     // P-A: rule-class accept that MATERIALIZES a governance rule (spec 2026-08-20).
     // `preview` renders what would be written (no write); `materialize` accepts +
     // writes the rule at the chosen scope/enforcement (defaults: project / recommended).
-    previewRecommendation: (id: string, recId: string) =>
-      get<{
-        materializable: boolean; kind?: string; action_type?: string; reason?: string;
-        title?: string; body?: string; impact?: string | null; gov_scope?: string; enforcement?: string;
-        // file-class (write_skill/create_agent) preview fields:
-        name?: string; path?: string; content?: string; consent_required?: boolean;
-      }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/preview`, { materializable: false }),
-    materializeRecommendation: (
+    tryPreviewRecommendation: (id: string, recId: string) =>
+      tryGet<RecommendationPreview>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/preview`),
+    tryMaterializeRecommendation: (
       id: string, recId: string,
-      opts?: { gov_scope?: string; namespace_id?: string; enforcement?: string; title?: string; body?: string },
+      opts: { gov_scope?: string; namespace_id?: string; enforcement?: string; title?: string; body?: string },
     ) =>
-      post<{ ok: boolean; materialized?: unknown }>(
-        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts ?? {}, { ok: false },
+      tryPost<{ ok: boolean; materialized?: unknown }>(
+        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts,
       ),
-
+    tryAcceptProjectRecommendation: (id: string, recId: string) =>
+      tryPost<{ ok: boolean }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/accept`, {}),
+    tryRejectProjectRecommendation: (id: string, recId: string) =>
+      tryPost<{ ok: boolean }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/reject`, {}),
     // ── Observatory · Insights (Slot 5) ─────────────────────────────────
     // Server-side triage aggregator: bundles recs, memories, patterns and
     // corrections pre-bucketed into Now / Soon / Settled. `project` scopes
@@ -1270,11 +1270,9 @@ export function senseiApi(port: number) {
     // float to the top; `unread_count` counts the still-pending items. Fallback
     // is the empty inbox so a daemon that predates the route (404) degrades to
     // the empty state, never a broken screen.
-    getUpgrades: (includeMuted = false) =>
-      get<DojoUpgradesResponse>(
-        `/api/upgrades${includeMuted ? '?include_muted=1' : ''}`,
-        { artifacts: [], unread_count: 0 },
-      ),
+    /** The Dōjō downstream inbox (#288: a failure is an error, not an empty inbox). */
+    tryGetUpgrades: (includeMuted = false) =>
+      tryGet<DojoUpgradesResponse>(`/api/upgrades${includeMuted ? '?include_muted=1' : ''}`),
 
     // Apply / Mute / Pin one artifact. `tryPost` so a failure surfaces as
     // `{ ok: false, error }` for the row to show and retry, rather than being

@@ -4,7 +4,7 @@
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, EmptyState } from '$lib/components';
+  import { PageHeader, EmptyState, ScreenState, UnreadProjectsNotice } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import type { DojoUpgrade } from '$lib/types.js';
   import { KIND_META, type Upgrade, type UpgradeKind } from './buckets.js';
@@ -164,7 +164,7 @@
 
 {#snippet bucket(kind: UpgradeKind)}
   {@const meta = KIND_META[kind]}
-  {@const items = data.buckets[kind]}
+  {@const items = data.buckets?.[kind] ?? []}
   {#if items.length > 0}
     <section class="mb-8" data-upgrade-bucket={kind}>
       <!-- bucket header mirrors the mockup: big kanji + title + count + sub -->
@@ -212,7 +212,9 @@
       <p class="text-xs text-danger mb-3" data-dojo-error>{actions.error}</p>
     {/if}
 
-    {#if orderedUpgrades.length === 0}
+    {#if data.dojoError}
+      <ScreenState status="error" error={data.dojoError} onretry={() => invalidateAll()} />
+    {:else if orderedUpgrades.length === 0}
       <EmptyState
         kanji="贈"
         title="no dōjō upgrades yet"
@@ -238,6 +240,10 @@
       links back to the recommendation that produced it.
     </p>
 
+    {#if data.localError}
+      <ScreenState status="error" error={data.localError} onretry={() => invalidateAll()} />
+    {:else}
+    <UnreadProjectsNotice unread={data.unread} />
     {#if data.total === 0}
       <EmptyState
         kanji="贈"
@@ -248,6 +254,7 @@
       {#each orderedKinds as kind (kind)}
         {@render bucket(kind)}
       {/each}
+    {/if}
     {/if}
   </section>
 </div>
