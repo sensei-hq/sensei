@@ -150,9 +150,11 @@ The settings screen lists them as repositories.
     Removing the existing 167,932 awaits the user's OK.
 - **Dōjō:**
   - #132: steps 1–2 done. No literal `font-size` remains in the dōjō (a spec guards it); sign-in verified at 13/11px. Step 3 (mockup compare) started: the sign-in left pane now follows the mockup, replacing an "Acme Corp" fixture (#241). The right pane's extra password form and placeholder remain.
-  - **#293 screen structure (user, 2026-10-20):** every screen keeps presentation | state | load/save apart, uses the shared shell (fixed header over one scroll body) and rokkit before any custom duplicate. Audits filed as #293 with the ordered list. Step 0 started: app `Screen` (430937ad), traceability, then the six diagrams, instruments, libraries and memories moved (d6c4c3f1), all 10 verified live (header fixed, `<main>` never scrolls); a guard lists the 38 screens still to move. Next: the remaining app screens, then the dōjō shell, then separation and rokkit.
+  - **#293 screen structure (user, 2026-10-20):** every screen keeps presentation | state | load/save apart, uses the shared shell (fixed header over one scroll body) and rokkit before any custom duplicate. Audits filed as #293 with the ordered list. Step 0: `Screen` (with `fill` for list-and-detail screens) holds all 19 project screens, verified live (8b5e67c9); 28 observatory screens remain, then the dōjō shell, then separation and rokkit.
   - #294 (found 2026-10-20 connecting `jerrythomas`): one pending PKCE verifier per daemon, so two sign-ins clobber each other (`bad_code_verifier` + `no sign-in in progress`). Key pending flows by state.
   - #295: `sensei auth status` shows only the `default` slot; list every persona.
+  - #296 (user): the default identity follows the global git/GitHub identity, not whichever signed in first.
+  - #297: the dōjō sign-in page drops Supabase's `#error` fragment (the user saw a blank form after a linking failure).
   - #106: last fixture imports, plus a vitest guard.
   - #191: kavach 1.2.0.
 - **Code health:**

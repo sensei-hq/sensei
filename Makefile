@@ -38,7 +38,7 @@
         app-dev app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
-        test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build \
+        test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build app-e2e-bundle \
         _e2e-cold-pre _e2e-cold-post reset-e2e-db \
         setup-hooks update bump dbd-cache-clear tap-push marketplace-push \
         clean clean-cache
@@ -337,7 +337,13 @@ app-dev:
 # (exposes the playwright IPC socket at /tmp/tauri-playwright.sock).
 # Used by the Playwright globalSetup — kept here so the build recipe is
 # discoverable and not buried in TypeScript.
-app-e2e-build: install-debug
+app-e2e-build: install-debug app-e2e-bundle
+
+# The e2e bundle alone, leaving the installed daemon as it is. For UI-only work:
+# reinstalling senseid gives it a new cdhash, and the Keychain partitions a
+# Team-ID-less binary by cdhash, so every reinstall revokes the user's
+# "Always Allow" on the stored sessions (#283).
+app-e2e-bundle:
 	cd app && bunx tauri build --debug --features e2e-testing
 	# A stable identity, so the bundle's Screen Recording grant (the inspect
 	# harness's window capture needs it) can survive a rebuild (#284).

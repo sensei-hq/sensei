@@ -13,7 +13,8 @@
 - #287 closed: rework placed by path, once per event; Patterns folds it into one "rework hotspots" (618 → 2).
 
 **Remaining:**
-- #293: `Screen` landed; 10 project screens on it, verified live (d6c4c3f1). 38 app screens + dōjō to go.
+- #293: every project screen on `Screen` (8b5e67c9; `fill` for atlas + metric detail), 19 verified live. 28 observatory screens + dōjō to go.
+- Keychain: a Team-ID-less senseid is partitioned by cdhash, so each daemon reinstall revokes approval (#283 comment). UI-only work uses `make app-e2e-bundle` (no daemon reinstall).
 - `jerrythomas` connected (CLI sign-in); its sync denies all 22 repos `not_elected_user` until the user elects repos. #294/#295 filed.
 - #283: the approve round trip needs a stable signing identity first (see Open questions), then close.
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139).
@@ -21,7 +22,7 @@
 - Wave 0 leftovers: #240, #184. Wave 9: the full re-index. Wave 10: Java/C#/Python parity (#275, #276).
 - #187 needs `make test-app-e2e-cold` (it stops postgres and ollama). #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #293 step 0: move the 38 pending app screens onto `Screen` (guard `app/src/routes/screen-shell.spec.ts`, live probe `bun run test:inspect -- screen-shell`), then the dōjō shell; #132 step 3 (dōjō vs mockups), #292 (markdown LanguageAdapter — decided), dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
+**Next command:** `/sensei:session refocus`, then #293 step 0: move the 28 pending observatory screens (settings first, then drop the settings layout's second scroller) onto `Screen` (guard `app/src/routes/screen-shell.spec.ts`; `make app-e2e-bundle` then `bun run test:inspect -- screen-shell`), then the dōjō shell; #132 step 3 (dōjō vs mockups), #292 (markdown LanguageAdapter — decided), dōjō (#132, #106, #191), code health (#201, #139). #278 closes after #289's dedupe + a re-measure.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
