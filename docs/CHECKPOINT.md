@@ -15,7 +15,7 @@
 - #299 S3 done on develop (99cddc18): the relay payload names a project by slug + constitution only.
 - #293 step 1 done for the app (c290f38e … bae2126f) and dōjō `you/[section]` (9f11df08) +
   `org/[slug]/[section]` (785279a6); deep link to a run fixed (a0b8aaf4, live). Next: fold `runs/[run_id]` into
-  RelayDetail. #305 (found): inbox answers to a gate are never sent — fix first.
+  RelayDetail. #305 closed (bf16a437, live): inbox answers reach the dōjō; approvals are explicit Approve/Deny.
 - Dōjō expansion planned: epic #307, docs/roadmap/09-dojo-expansion.md (D1–D4, 2026-10-21); PRD T5 releases,
   DORA & release gates (5564841d). Wave A after #305 + the run-page fold.
 - #302 closed live (keychain migrated); #301/#299 verified on the LOCAL dōjō — production needs the daemon
@@ -24,7 +24,7 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** #305 (inbox replies real), the run-page fold, then epic #307 Wave A.
+**Next command:** fold `/you/runs/[run_id]` into RelayDetail (finishes #293 step 1), then epic #307 Wave A.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
