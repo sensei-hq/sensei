@@ -359,3 +359,38 @@ export function computeTotals(sessions: EnrichedSession[]): DigestTotals {
 export function replayHref(sessionId: string): string {
   return `/instruments?tab=replay&session=${encodeURIComponent(sessionId)}`;
 }
+
+/** The words of the Sessions screen — Observatory-wide (`project` null) or one
+ *  project's window. Everything else about the two is the same screen. */
+export interface SessionsCopy {
+  kanji: string;
+  eyebrow: string;
+  title: string;
+  sub: string;
+  emptyDescription: string;
+  /** The totals line names how many projects the sessions span. */
+  acrossProjects: boolean;
+}
+
+export function sessionsCopy(project: string | null): SessionsCopy {
+  if (project == null) {
+    return {
+      kanji: '録',
+      eyebrow: 'Observatory · Sessions',
+      title: 'The shape of your week.',
+      sub: 'A retrospective. Then one quiet chart — drawn the way you want to read it.',
+      emptyDescription:
+        'Start a session with your assistant, or widen the range. Each session becomes a moment of learning.',
+      acrossProjects: true,
+    };
+  }
+  return {
+    kanji: '刻',
+    eyebrow: `${project} · sessions`,
+    title: 'The shape of this project.',
+    sub: 'A retrospective — this project only. Then one quiet chart, drawn the way you read it.',
+    emptyDescription:
+      'Start a session with your assistant on this project, or widen the range. Each session becomes a moment of learning.',
+    acrossProjects: false,
+  };
+}

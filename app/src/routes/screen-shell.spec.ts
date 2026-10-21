@@ -20,13 +20,19 @@ const source = (page: string) => readFileSync(join(ROOT, page), 'utf8');
 // A page with no markup only redirects (its `+page.ts` throws); it is not a screen.
 const hasMarkup = (page: string) => source(page).replace(/<script[\s\S]*?<\/script>/, '').trim() !== '';
 const all = GROUPS.flatMap((g) => pages(join(ROOT, g))).filter(hasMarkup).sort();
-// A page that renders a co-located `…Screen.svelte` lays out through whatever
-// that component renders, so the component is read too.
+// A page that renders a `…Screen.svelte` — co-located, or shared from
+// `$lib/components/<dir>` — lays out through whatever that component renders,
+// so the component is read too.
 const usesScreen = (page: string) => {
 	const own = source(page);
-	const delegate = own.match(/import \w+ from '\.\/(\w+Screen\.svelte)'/);
-	const rendered = delegate ? own + source(join(dirname(page), delegate[1])) : own;
-	return /<Screen[\s>]/.test(rendered);
+	const local = own.match(/import \w+ from '\.\/(\w+Screen\.svelte)'/);
+	const shared = own.match(/import \{[^}]*\b(\w+Screen)\b[^}]*\} from '\$lib\/components\/(\w+)'/);
+	const delegate = local
+		? source(join(dirname(page), local[1]))
+		: shared
+			? readFileSync(join('src/lib/components', shared[2], `${shared[1]}.svelte`), 'utf8')
+			: '';
+	return /<Screen[\s>]/.test(own + delegate);
 };
 
 describe('screens use the shared Screen layout (#293)', () => {
