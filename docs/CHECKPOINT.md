@@ -23,7 +23,7 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** #307 A2d (daemon refreshes the forge mirror on a cadence) or A3 (teams as groupings + invites incl. viewer-only guests). A2 a–c done: repository roles, predicates off teams, per-person mirror (20248297, live).
+**Next command:** #307 A3 (teams as groupings + invites incl. viewer-only guests). A2 a–d done (A2d 6aa2d690: live check needs a daemon install + one keychain approval per identity). Viewer mockups reviewed — corrections sent to the user (designer side).
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
