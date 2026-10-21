@@ -53,6 +53,18 @@ evidence) are preserved in [`history/backlog/writeups.md`](history/backlog/write
 
 Full one-liners and prior context: [`history/backlog/writeups.md`](history/backlog/writeups.md).
 
+- **The daemon's startup schema upgrade fails on any release that adds a
+  commented column** — `sensei_bootstrap::database::deploy_to` runs `apply`
+  (which re-runs each table's DDL, its `comment on column` included) BEFORE the
+  `reconcile` that adds the column, so the comment hits a column that isn't
+  there yet and the whole upgrade aborts ("SCHEMA DEPLOY FAILED … retried next
+  start" — forever). Hit twice on one install: `sessions.list_cost_usd`
+  (0.13 → develop) and `schedules.runs` (0.13 → 0.15.0); both cleared only by a
+  manual `dbd reconcile --allow-destructive` and a restart. Every upgraded
+  install meets it. Fix in the deploy order (reconcile the tables' columns
+  before re-applying their comments), with a `deploy_upgrade.rs` test that adds
+  a commented column.
+
 - **Library capability provisioning + version-aware doc queries** — nothing
   installs a library's declared skills/agents; `get_lib_docs` lacks a `version`
   override.
