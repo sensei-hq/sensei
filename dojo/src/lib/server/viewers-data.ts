@@ -7,21 +7,13 @@
 import { AdminError, type DojoClient } from './admin-data';
 import { resolveViewerNames } from './identity-resolve';
 import { callFn, requireInTenant } from './tenant-rows';
+import type { DojoViewerWire as DojoViewer, ViewerWorkspaceView as ViewerWorkspace } from '$lib/viewers-view';
 
 export { AdminError };
 
-export interface ViewerWorkspace {
-	id: string;
-	name: string;
-}
-
-export interface DojoViewer {
-	principal_id: string;
-	display_name: string | null;
-	email: string | null;
-	joined_at: string;
-	workspaces: ViewerWorkspace[];
-}
+// One declaration of the wire row, shared with the Viewers tab that reads it:
+// a field renamed on one side fails `bun run check` on the other.
+export type { ViewerWorkspaceView as ViewerWorkspace, DojoViewerWire as DojoViewer } from '$lib/viewers-view';
 
 /** The dōjō's viewers, oldest first, each with the dōjō's workspaces granted to them. */
 export async function listDojoViewers(db: DojoClient, tenantId: string): Promise<DojoViewer[]> {
