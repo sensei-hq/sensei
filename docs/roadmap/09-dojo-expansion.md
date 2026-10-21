@@ -38,6 +38,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D27 | Is Relay or push live in production? | **Not yet** — neither Relay nor push notifications has been seen on the production dōjō, and the VAPID secret is untested. Tracked as a production gap ([06-gaps](06-gaps.md#security-and-production-gaps-2026-10-21)). |
 | D28 | Should relay approval gates fail closed? (#312) | **Only for the hard-block categories, only in unattended runs.** In a relay-driven autonomous run, a deploy, a push to main, a destructive action, credentials or money with no human answer is **denied**, with the reason. Interactive sessions keep fail-open — Claude Code's own prompt covers the person at the keyboard. The semantic backstop stays fail-open. |
 | D29 | Are stack scopes governance levels? (D25 follow-up) | **No.** A stack is a tech stack's rules and packs (React, Rust, …), **applied at a level** — the dōjō, a workspace or a repository (user 2026-10-21). The ladder stays dōjō → workspace → repository. Client scopes are still to decide. |
+| D30 | How deep does R3 go in the daemon's own database? | **Everywhere, schema too** (user 2026-10-21): `sensei.projects` and every `project_id` column are renamed in place on upgrade, rehearsed twice on a copy of a real daemon database. Another system's `project` stays (R3's rule). |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -90,10 +91,12 @@ slice builds, passes and ships on its own.
   Claude Code's config scopes (`mcp_servers.scope` `user|project`, `extension_scope`, i.e. `.mcp.json` in the
   repo), Jira's project (a board key), a forge's project (Azure DevOps), and English ("projection").
   Slices, each green on develop, all in one release (the app and the daemon share `/api`):
-  - **R3a · database.** `sensei.projects`, `repositories_in_projects`, `service_projects`, `extension_projects`
-    and their columns, renamed in place by an apply/before hook (as R2a); D16's stored values (the ladder
-    level, `memory_scope`, `entity_scope`, `sync_entity`, pack namespaces, artifact scopes) converted in the
-    same hook. Rehearse on a copy of a real daemon database, twice.
+  - **R3a · database + the daemon's database layer, one change (D30).** `sensei.projects`,
+    `repositories_in_projects`, `service_projects`, `extension_projects`, every `project_id` column, and the
+    views, functions and indexes that name them, renamed in place by an apply/before hook (as R2a); D16's
+    stored values (the ladder level, `memory_scope`, `entity_scope`, `sync_entity`, pack namespaces,
+    artifact scopes) converted in the same hook; `pg_store`'s SQL and row types in the same commit, so the
+    daemon stays green. Rehearse on a copy of a real daemon database, twice.
   - **R3b · daemon + app together.** `pg_store`, the `/api/projects` routes → `/api/workspaces`, the pipeline,
     and the app's clients, screens and words in the same change.
   - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
