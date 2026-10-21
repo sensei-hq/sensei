@@ -7,7 +7,7 @@ async fn memory_create_and_get() {
     let s = pg_store().await;
     let id = s
         .create_memory(&MemoryRow {
-            project_id: None,
+            workspace_id: None,
             scope: "global",
             scope_filter: None,
             mem_type: "decision",
@@ -45,7 +45,7 @@ async fn a_project_scope_is_stored_as_workspace_and_read_back_as_project() {
         .unwrap();
     let id = s
         .create_memory(&MemoryRow {
-            project_id: Some(&pid),
+            workspace_id: Some(&pid),
             scope: "project",
             scope_filter: None,
             mem_type: "decision",
@@ -85,7 +85,7 @@ async fn create_memory_persists_spine_slot_and_feature() {
         .unwrap();
     let id = s
         .create_memory(&MemoryRow {
-            project_id: Some(&pid),
+            workspace_id: Some(&pid),
             scope: "project",
             scope_filter: None,
             mem_type: "decision",
@@ -123,7 +123,7 @@ async fn memory_reinforce() {
     let s = pg_store().await;
     let id = s
         .create_memory(&MemoryRow {
-            project_id: None,
+            workspace_id: None,
             scope: "global",
             scope_filter: None,
             mem_type: "pattern",
@@ -156,7 +156,7 @@ async fn memory_archive() {
     let s = pg_store().await;
     let id = s
         .create_memory(&MemoryRow {
-            project_id: None,
+            workspace_id: None,
             scope: "global",
             scope_filter: None,
             mem_type: "question",
@@ -184,7 +184,7 @@ async fn memory_list_active() {
     let s = pg_store().await;
     let id1 = s
         .create_memory(&MemoryRow {
-            project_id: None,
+            workspace_id: None,
             scope: "global",
             scope_filter: None,
             mem_type: "decision",
@@ -199,7 +199,7 @@ async fn memory_list_active() {
         .unwrap();
     let id2 = s
         .create_memory(&MemoryRow {
-            project_id: None,
+            workspace_id: None,
             scope: "global",
             scope_filter: None,
             mem_type: "decision",
@@ -229,7 +229,7 @@ async fn memory_example_add_and_list() {
     let s = pg_store().await;
     let mid = s
         .create_memory(&MemoryRow {
-            project_id: None,
+            workspace_id: None,
             scope: "global",
             scope_filter: None,
             mem_type: "pattern",
@@ -264,7 +264,7 @@ async fn memory_evidence_add_and_list() {
     let sid = s.create_session(&fid, "test", None).await.unwrap();
     let mid = s
         .create_memory(&MemoryRow {
-            project_id: None,
+            workspace_id: None,
             scope: "global",
             scope_filter: None,
             mem_type: "decision",
@@ -301,7 +301,7 @@ async fn memory_links_parent_child() {
     let s = pg_store().await;
     let parent = s
         .create_memory(&MemoryRow {
-            project_id: None,
+            workspace_id: None,
             scope: "global",
             scope_filter: None,
             mem_type: "decision",
@@ -316,7 +316,7 @@ async fn memory_links_parent_child() {
         .unwrap();
     let child1 = s
         .create_memory(&MemoryRow {
-            project_id: None,
+            workspace_id: None,
             scope: "global",
             scope_filter: None,
             mem_type: "decision",
@@ -331,7 +331,7 @@ async fn memory_links_parent_child() {
         .unwrap();
     let child2 = s
         .create_memory(&MemoryRow {
-            project_id: None,
+            workspace_id: None,
             scope: "global",
             scope_filter: None,
             mem_type: "decision",
@@ -556,7 +556,7 @@ async fn begin_file_materialization_flips_and_returns_prompt_seed() {
         .await
         .unwrap();
     let rid = s.create_recommendation_full(&RecommendationRow {
-        project_id: &pid,
+        workspace_id: &pid,
         title: "Establish DBD Guardian Agent",
         why: "cross-layer churn needs a review agent",
         impact: None,
@@ -637,7 +637,7 @@ async fn seed_promote_fixture(
     };
     let rid = s
         .create_recommendation_full(&RecommendationRow {
-            project_id: &proj_id,
+            workspace_id: &proj_id,
             title: "_test:promote",
             why: "why",
             impact: None,
@@ -811,7 +811,7 @@ async fn seed_pattern_and_sourced_memory(
         .unwrap();
     // Convention memory sourced by the pattern — mirrors the rule-candidates generator.
     let mem = InsertMemory {
-        project_id: Some(proj_id),
+        workspace_id: Some(proj_id),
         scope: "project".to_string(),
         scope_filter: None,
         mtype: "convention".to_string(),
@@ -846,7 +846,7 @@ async fn seed_regressed_rec_with_memory(
     let based_on = serde_json::json!({ "patterns": [pat_id] });
     let rec_id = s
         .create_recommendation_full(&RecommendationRow {
-            project_id: &proj_id,
+            workspace_id: &proj_id,
             title: "_test:regressed-rec",
             why: "why",
             impact: None,

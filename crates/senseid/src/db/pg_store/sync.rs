@@ -695,7 +695,7 @@ impl PgStore {
                   WHERE {predicate} \
                   ORDER BY (r.tenant_id IS NULL) DESC, r.modified_at DESC, r.repo_key \
                   LIMIT $1",
-            join = super::PROJECT_NAMESPACE_JOIN
+            join = super::WORKSPACE_NAMESPACE_JOIN
         ))
         .bind(limit)
         .fetch_all(&self.pool)

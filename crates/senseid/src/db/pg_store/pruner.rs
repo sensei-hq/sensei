@@ -28,7 +28,8 @@ use super::*;
 pub struct PruneReport {
     pub folders: u64,
     pub repositories: u64,
-    pub projects: u64,
+    #[serde(rename = "projects")]
+    pub workspaces: u64,
 }
 
 impl PgStore {
@@ -86,7 +87,11 @@ impl PgStore {
         // a reason to restore the repository just removed.
         let projects = self.prune_empty_projects_among(0, Some(&projects_touched)).await?;
 
-        Ok(PruneReport { folders: folders as u64, repositories: repos.rows_affected(), projects })
+        Ok(PruneReport {
+            folders: folders as u64,
+            repositories: repos.rows_affected(),
+            workspaces: projects,
+        })
     }
 
     /// The repository roots under a watch root — what stops syncing if it goes.

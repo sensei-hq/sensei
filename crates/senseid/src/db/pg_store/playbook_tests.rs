@@ -40,7 +40,7 @@ async fn playbook_rules_load_and_run_roundtrip() {
             confirmed: true,
             classified_by: Some("manual"),
             model_fallback: false,
-            project_id: proj,
+            workspace_id: proj,
         })
         .await
         .unwrap();
@@ -124,7 +124,7 @@ async fn session_confirmed_run_gate() {
         confirmed: true,
         classified_by: None,
         model_fallback: false,
-        project_id: proj,
+        workspace_id: proj,
     })
     .await
     .unwrap();
@@ -185,7 +185,7 @@ async fn attribution_and_stats_roundtrip() {
         confirmed: true,
         classified_by: Some("manual"),
         model_fallback: false,
-        project_id: proj,
+        workspace_id: proj,
     })
     .await
     .unwrap();

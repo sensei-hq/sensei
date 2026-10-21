@@ -1784,7 +1784,7 @@ mod nothing_generalised_is_nothing_shareable {
 
         let proj = pg.create_project(project, None, None).await.unwrap();
         let mem = |title: &str| InsertMemory {
-            project_id: Some(proj),
+            workspace_id: Some(proj),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),

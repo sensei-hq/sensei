@@ -264,7 +264,7 @@ mod tests {
         let proj = pg.create_project(project, None, None).await.unwrap();
         let mem = pg
             .insert_memory(&InsertMemory {
-                project_id: Some(proj),
+                workspace_id: Some(proj),
                 scope: "project".into(),
                 scope_filter: None,
                 mtype: "convention".into(),

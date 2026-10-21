@@ -181,7 +181,7 @@ async fn pruning_a_repository_root_removes_everything_it_owned_and_nothing_besid
     );
     assert_eq!(report.repositories, 1);
     assert!(!repository(&pg, c.a_repo).await, "nothing else points at `a`'s repository");
-    assert!(report.projects >= 1, "{report:?}");
+    assert!(report.workspaces >= 1, "{report:?}");
     assert!(
         pg.get_project(&c.a_project).await.unwrap().is_none(),
         "`a` was the project's only repository, so the project is empty"

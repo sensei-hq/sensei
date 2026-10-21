@@ -12,7 +12,7 @@ use crate::tracker::{Link, PrevState, SessionText, Snapshot, TaskRow};
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackerRow {
     pub id: uuid::Uuid,
-    pub project_id: uuid::Uuid,
+    pub workspace_id: uuid::Uuid,
     pub kind: String,
     pub base_url: String,
     pub account: String,
@@ -31,14 +31,14 @@ pub struct TrackerRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardOwner {
     pub tracker_id: uuid::Uuid,
-    pub project_id: uuid::Uuid,
-    pub project_name: String,
+    pub workspace_id: uuid::Uuid,
+    pub workspace_name: String,
 }
 
 /// A connect (or re-connect) to persist in one transaction.
 #[derive(Debug, Clone)]
 pub struct NewTracker {
-    pub project_id: uuid::Uuid,
+    pub workspace_id: uuid::Uuid,
     pub kind: String,
     pub base_url: String,
     pub account: String,
@@ -138,7 +138,7 @@ type TrackerTuple = (
 fn tracker_row(t: TrackerTuple) -> TrackerRow {
     TrackerRow {
         id: t.0,
-        project_id: t.1,
+        workspace_id: t.1,
         kind: t.2,
         base_url: t.3,
         account: t.4,
@@ -379,8 +379,8 @@ impl PgStore {
         .map(|r| {
             r.map(|(tracker_id, project_id, project_name)| BoardOwner {
                 tracker_id,
-                project_id,
-                project_name,
+                workspace_id: project_id,
+                workspace_name: project_name,
             })
         })
         .map_err(|e| e.to_string())
@@ -914,7 +914,7 @@ impl PgStore {
         let project = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
             "SELECT id FROM sensei.workspaces WHERE id = $1 FOR UPDATE",
         )
-        .bind(t.project_id)
+        .bind(t.workspace_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
@@ -924,7 +924,7 @@ impl PgStore {
         let existing = sqlx_core::query_as::query_as::<_, (uuid::Uuid, String, String, String)>(
             "SELECT id, kind::text, base_url, board_ref FROM sensei.trackers WHERE workspace_id = $1",
         )
-        .bind(t.project_id)
+        .bind(t.workspace_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
@@ -966,7 +966,7 @@ impl PgStore {
                      VALUES ($1, $2::sensei.tracker_kind, $3, $4, $5, $6, $7, $8)
                      RETURNING id",
                 )
-                .bind(t.project_id)
+                .bind(t.workspace_id)
                 .bind(&t.kind)
                 .bind(&t.base_url)
                 .bind(&t.account)

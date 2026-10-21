@@ -229,7 +229,7 @@ pub async fn consolidate_for_project(
     let based_on = serde_json::json!({ "patterns": pattern_ids });
     ctx.pg()
         .create_recommendation_full(&RecommendationRow {
-            project_id,
+            workspace_id: project_id,
             title: &insight.headline,
             why: &insight.reasoning,
             impact: None,

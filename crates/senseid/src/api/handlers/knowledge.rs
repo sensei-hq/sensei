@@ -476,7 +476,7 @@ async fn insert_with_status(
     let id = state
         .pg
         .insert_memory(&InsertMemory {
-            project_id: pid,
+            workspace_id: pid,
             scope: body.scope,
             scope_filter: body.scope_filter,
             mtype: body.mtype,

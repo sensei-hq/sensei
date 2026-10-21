@@ -285,7 +285,7 @@ async fn apply_pulled_rule(
                 .await?;
             let mem = pg
                 .insert_memory(&InsertMemory {
-                    project_id: None,
+                    workspace_id: None,
                     scope: "global".into(),
                     scope_filter: None,
                     mtype: pulled.rule.rule_type.clone(),

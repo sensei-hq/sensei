@@ -18,7 +18,7 @@ pub struct PlaybookRunRow<'a> {
     pub confirmed: bool,
     pub classified_by: Option<&'a str>,
     pub model_fallback: bool,
-    pub project_id: uuid::Uuid,
+    pub workspace_id: uuid::Uuid,
 }
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
@@ -211,7 +211,7 @@ impl PgStore {
             confirmed,
             classified_by,
             model_fallback,
-            project_id,
+            workspace_id: project_id,
         } = row;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.playbook_run
