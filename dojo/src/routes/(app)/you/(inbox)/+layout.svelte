@@ -5,6 +5,8 @@
 	import { untrack } from 'svelte';
 	import { relayInboxState } from '$lib/relay/relay-inbox-state.svelte';
 	import { initialSelection } from '$lib/relay/relay-inbox-view';
+	import type { SendReply } from '$lib/relay/relay-inbox-state.svelte';
+	import { replyToGate } from '$lib/relay-data';
 
 	// Inbox zone — two-panel master-detail (mockup ScrInbox). Left = RelayList over
 	// relayInboxState; right = RelayDetail for the selected run (in-page selection),
@@ -33,6 +35,9 @@
 		};
 	});
 	const active = $derived(relayInboxState.selectedId);
+	// Replies go to the run's own dōjō with the signed-in session (#305).
+	const send: SendReply = (tenantKey, inboxId, reply) =>
+		replyToGate(tenantKey, inboxId, reply, { fetch, accessToken: data.accessToken ?? null });
 </script>
 
 <!-- h-full + overflow-hidden so the two panes scroll independently inside the shell
@@ -44,7 +49,7 @@
 	</aside>
 	<section class="min-h-0 min-w-0 flex-col {active ? 'flex' : 'hidden md:flex'}">
 		{#if relayInboxState.selected}
-			<RelayDetail />
+			<RelayDetail {send} />
 		{:else}
 			{@render children()}
 		{/if}

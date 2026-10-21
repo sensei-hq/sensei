@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { relayInboxState } from './relay-inbox-state.svelte';
 import { relayInboxMock } from './relay-inbox.mock';
 import { rankSession, filterSessions, needsCount } from './relay-inbox-view';
@@ -20,7 +20,8 @@ const base: RelaySession = {
 	needs: 0,
 	attention: null,
 	plan: { phases: [] },
-	asks: []
+	asks: [],
+	tenantKey: 'organization/acme'
 };
 const s = (over: Partial<RelaySession>): RelaySession => ({ ...base, ...over });
 
@@ -139,5 +140,33 @@ describe('relayInboxState · load outcome', () => {
 		relayInboxState.loaded(result({ sessions: [], tenants: 0 }));
 		expect(relayInboxState.status).toBe('ready');
 		expect(relayInboxState.sessions).toEqual([]);
+	});
+});
+
+// #305: an answer reaches the daemon, or the ask says why it did not.
+describe('relayInboxState · answering an ask', () => {
+	const approval = { id: 'g1', action: 'approve' as const, blocking: true, prompt: 'Run it?', options: ['Approve', 'Deny'], createdAt: '' };
+	beforeEach(() => relayInboxState.load([s({ id: 'r1', asks: [approval], needs: 1 })]));
+
+	it('sends the reply to the run’s dōjō and records the answer once it lands', async () => {
+		const send = vi.fn().mockResolvedValue(undefined);
+		await relayInboxState.answerAsk(send, 'g1', 'Deny', 'not in prod');
+		expect(send).toHaveBeenCalledWith('organization/acme', 'g1', { verdict: 'deny', note: 'not in prod' });
+		expect(relayInboxState.answered.g1).toBe('Deny');
+		expect(relayInboxState.askError('g1')).toBeNull();
+	});
+
+	it('a reply that did not land records nothing and says why', async () => {
+		await relayInboxState.answerAsk(vi.fn().mockRejectedValue(new Error('relay unavailable')), 'g1', 'Approve');
+		expect(relayInboxState.answered.g1).toBeUndefined();
+		expect(relayInboxState.askError('g1')).toBe('relay unavailable');
+		expect(relayInboxState.isSending('g1')).toBe(false);
+	});
+
+	it('an ask the inbox does not hold is not sent', async () => {
+		const send = vi.fn();
+		await relayInboxState.answerAsk(send, 'nope', 'Approve');
+		expect(send).not.toHaveBeenCalled();
+		expect(relayInboxState.askError('nope')).toBeTruthy();
 	});
 });

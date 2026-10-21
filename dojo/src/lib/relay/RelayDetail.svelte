@@ -5,15 +5,18 @@
 	import type { KitTask } from '$lib/components/kit/types';
 	import RelayStatusBadge from '$lib/components/RelayStatusBadge.svelte';
 	import RelayAskCard from './RelayAskCard.svelte';
-	import { relayInboxState } from './relay-inbox-state.svelte';
+	import { relayInboxState, type SendReply } from './relay-inbox-state.svelte';
 	import { relativeAge } from '$lib/triage/view';
 	import * as m from '$lib/paraglide/messages';
 
 	// The run detail (mockup RunDetail) — right panel of the two-panel inbox. Reads
-	// the selected RelaySession straight from relayInboxState (mock-first; a per-run
-	// realtime sub-state is extracted only when the real feed needs it). Header (観 ·
+	// the selected RelaySession straight from relayInboxState; an answer is sent to
+	// the run's dōjō (replyToGate) and recorded only once it lands (#305). Header (観 ·
 	// session id · meta · status) · progress · two tabs (Needs you / Plan) · AskCards
 	// or the plan outline · activity + conversation. Pure over state.
+	// `send` delivers a reply to the run's own dōjō with the signed-in session (#305).
+	let { send }: { send: SendReply } = $props();
+
 	const st = relayInboxState;
 	const run = $derived(st.selected);
 
@@ -49,13 +52,15 @@
 	// Per-run tab pick — a new run falls back to its own default (needs if any, else
 	// plan); a realtime refresh never clobbers the tab the user is on (pure $derived).
 	let picks = $state<Record<string, string>>({});
-	const tab = $derived(run ? (picks[run.id] ?? (openCount ? 'needs' : 'plan')) : 'needs');
+	// A run with asks opens on them — and stays there once they are answered, so the
+	// answer is seen landing rather than the view jumping to the plan.
+	const tab = $derived(run ? (picks[run.id] ?? (run.asks.length ? 'needs' : 'plan')) : 'needs');
 	const pickTab = (id: string) => run && (picks = { ...picks, [run.id]: id });
 
 	let selectedTaskId = $state<string | undefined>(undefined);
 	const onSelectTask = (t: KitTask) => (selectedTaskId = selectedTaskId === t.id ? undefined : t.id);
 
-	const answer = (askId: string, verdict: string) => st.answerAsk(askId, verdict);
+	const answer = (askId: string, ans: string, note?: string) => st.answerAsk(send, askId, ans, note);
 </script>
 
 {#if run}
@@ -106,7 +111,13 @@
 			{#if run.asks.length}
 				<div class="flex flex-col gap-3">
 					{#each run.asks as ask (ask.id)}
-						<RelayAskCard {ask} verdict={st.answered[ask.id]} onanswer={answer} />
+						<RelayAskCard
+							{ask}
+							verdict={st.answered[ask.id]}
+							error={st.askError(ask.id)}
+							sending={st.isSending(ask.id)}
+							onanswer={answer}
+						/>
 					{/each}
 				</div>
 			{:else}

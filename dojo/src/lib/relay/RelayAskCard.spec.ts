@@ -45,4 +45,25 @@ describe('RelayAskCard', () => {
 		expect(getByText(/Run it/)).toBeTruthy();
 		expect(queryByText('Send answer')).toBeNull();
 	});
+
+	// #305: the daemon reads a reply fail-open, so an approval needs an explicit
+	// Approve or Deny; a typed line is only a note.
+	it('an approval sends only with a choice, and the typed line is its note', async () => {
+		const onanswer = vi.fn();
+		const { getByText, getByPlaceholderText } = render(RelayAskCard, {
+			ask: ask({ options: ['Approve', 'Deny'] }),
+			onanswer
+		});
+		const line = getByPlaceholderText(/.+/) as HTMLInputElement;
+		await fireEvent.input(line, { target: { value: 'not in prod' } });
+		expect((getByText('Send answer').closest('button') as HTMLButtonElement).disabled).toBe(true);
+		await fireEvent.click(getByText('Deny'));
+		await fireEvent.click(getByText('Send answer'));
+		expect(onanswer).toHaveBeenCalledWith('a1', 'Deny', 'not in prod');
+	});
+
+	it('shows why an answer was not sent', () => {
+		const { getByText } = render(RelayAskCard, { ask: ask(), error: 'relay unavailable' });
+		expect(getByText(/relay unavailable/)).toBeTruthy();
+	});
 });

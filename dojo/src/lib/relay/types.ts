@@ -79,6 +79,8 @@ export interface RelaySession {
 	attention: 'stalled' | 'blocked' | 'failed' | null;
 	plan: SegmentGraph;
 	asks: RelayAsk[];
+	/** The dōjō the run lives in — where a reply to its asks is sent. */
+	tenantKey: string;
 }
 
 export type RelayFilter = 'needs' | 'running' | 'finished' | 'all';

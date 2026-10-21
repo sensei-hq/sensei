@@ -10,13 +10,20 @@ import type { RelaySession, RelayFilter } from './types';
 import type { InboxLoad } from './relay-inbox';
 import * as m from '$lib/paraglide/messages';
 import { filterSessions, needsCount } from './relay-inbox-view';
+import { askReply } from './relay-inbox-map';
+
+/** Deliver a reply to a gate in a dōjō (the page binds `replyToGate` to its session). */
+export type SendReply = (tenantKey: string, inboxId: string, reply: Record<string, unknown>) => Promise<void>;
 
 let sessions = $state<RelaySession[]>([]);
 let filter = $state<RelayFilter>('needs');
 let selectedId = $state<string | null>(null);
-// Per-ask verdicts (askId → the answer text). Mock-phase local echo of the reply;
-// the real write path (POST /relay/reply) swaps in behind answerAsk later.
+// Per-ask answers (askId → the answer text), recorded only once the reply has
+// reached the dōjō (#305) — never as a local echo of an unsent reply.
 let answered = $state<Record<string, string>>({});
+// Why an ask's reply did not land, and which asks are sending now.
+let askErrors = $state<Record<string, string>>({});
+let sending = $state<Record<string, boolean>>({});
 // The load's outcome (#104). `ready` with `unreachable`/`plansMissing` is a partial
 // inbox; `error` is an inbox that could not be read at all — never shown as empty.
 let status = $state<'loading' | 'ready' | 'error'>('ready');
@@ -75,6 +82,10 @@ export const relayInboxState = {
 		sessions = next;
 		status = 'ready';
 		error = null;
+		// A fresh read is the dōjō's truth: an answered gate leaves its pending list,
+		// and one still listed is still open.
+		answered = {};
+		askErrors = {};
 	},
 	/** The load started; the rail shows its skeleton. */
 	begin() {
@@ -100,8 +111,35 @@ export const relayInboxState = {
 		error = message;
 	},
 	/** Record a reply to an ask — the mock echoes it locally; the real POST swaps in here. */
-	answerAsk(askId: string, verdict: string) {
-		answered = { ...answered, [askId]: verdict };
+	/** Why the reply to an ask did not land, or null. */
+	askError(askId: string): string | null {
+		return askErrors[askId] ?? null;
+	},
+	isSending(askId: string): boolean {
+		return sending[askId] === true;
+	},
+	/** Send an answer to the dōjō the ask's run lives in, as the daemon reads it
+	 *  (`askReply`). The answer is recorded only once the reply lands; otherwise the
+	 *  ask says why and stays open. */
+	async answerAsk(send: SendReply, askId: string, answer: string, note?: string) {
+		const session = sessions.find((x) => x.asks.some((a) => a.id === askId));
+		const ask = session?.asks.find((a) => a.id === askId);
+		if (!session || !ask) {
+			askErrors = { ...askErrors, [askId]: 'this ask is no longer in your inbox' };
+			return;
+		}
+		sending = { ...sending, [askId]: true };
+		const { [askId]: _cleared, ...rest } = askErrors;
+		askErrors = rest;
+		try {
+			await send(session.tenantKey, askId, askReply(ask, answer, note));
+			answered = { ...answered, [askId]: answer };
+		} catch (e) {
+			askErrors = { ...askErrors, [askId]: e instanceof Error && e.message ? e.message : 'could not send your answer' };
+		} finally {
+			const { [askId]: _done, ...still } = sending;
+			sending = still;
+		}
 	},
 	select(id: string | null) {
 		selectedId = id;

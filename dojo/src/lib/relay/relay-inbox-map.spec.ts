@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toRelaySession, toAsk, toSessionPlan, mapRunStatus } from './relay-inbox-map';
+import { askReply, toRelaySession, toAsk, toSessionPlan, mapRunStatus } from './relay-inbox-map';
 import type { RelayRun, RelayGate, RelaySegment } from '$lib/relay-data';
 
 function run(over: Partial<RelayRun> = {}): RelayRun {
@@ -65,7 +65,8 @@ describe('relay-inbox-map', () => {
 		const s = toRelaySession(
 			run(),
 			[gate({ id: 'g1' }), gate({ id: 'g2' })],
-			[seg({ id: 'p1', state: 'done', model: 'claude-sonnet' })]
+			[seg({ id: 'p1', state: 'done', model: 'claude-sonnet' })],
+			'organization/acme'
 		);
 		expect(s.id).toBe('run-1');
 		expect(s.project).toBe('lumen-auth');
@@ -75,5 +76,42 @@ describe('relay-inbox-map', () => {
 		expect(s.model).toBe('claude-sonnet');
 		expect(s.asks).toHaveLength(2);
 		expect(s.plan.phases).toHaveLength(1);
+	});
+
+	// #305: the daemon reads a reply fail-open — only {verdict: 'deny'} blocks — so
+	// an approval must be an explicit choice, never a free line read as "allow".
+	it('gives an approval gate with no options an explicit Approve / Deny', () => {
+		const a = toAsk(gate({ kind: 'approval', payload: { prompt: 'Run it?' } }), new Map());
+		expect(a.options).toEqual(['Approve', 'Deny']);
+	});
+
+	it('toRelaySession carries the tenant the run belongs to', () => {
+		const s = toRelaySession(run(), [], [], 'organization/acme');
+		expect(s.tenantKey).toBe('organization/acme');
+	});
+});
+
+describe('askReply — the wire body the daemon reads', () => {
+	const ask = (action: 'approve' | 'choose' | 'resume' | 'chat') =>
+		({ id: 'g1', action, options: ['Approve', 'Deny'] }) as never;
+
+	it('an approval is a verdict', () => {
+		expect(askReply(ask('approve'), 'Approve')).toEqual({ verdict: 'approve' });
+		expect(askReply(ask('approve'), 'Deny')).toEqual({ verdict: 'deny' });
+		expect(askReply(ask('approve'), 'deny')).toEqual({ verdict: 'deny' });
+	});
+
+	it('a note travels with the answer', () => {
+		expect(askReply(ask('approve'), 'Deny', ' not in prod ')).toEqual({ verdict: 'deny', note: 'not in prod' });
+	});
+
+	it('a decision is a choice; a typed answer is text', () => {
+		expect(askReply({ id: 'g', action: 'choose', options: ['A', 'B'] } as never, 'B')).toEqual({ choice: 'B' });
+		expect(askReply({ id: 'g', action: 'choose', options: ['A', 'B'] } as never, 'neither')).toEqual({ text: 'neither' });
+	});
+
+	it('a resume or a chat is text', () => {
+		expect(askReply(ask('resume'), 'carry on')).toEqual({ text: 'carry on' });
+		expect(askReply(ask('chat'), 'try the other adapter')).toEqual({ text: 'try the other adapter' });
 	});
 });

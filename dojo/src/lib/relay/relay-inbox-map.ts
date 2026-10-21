@@ -40,14 +40,21 @@ function str(v: unknown): string | undefined {
 	return typeof v === 'string' && v.length ? v : undefined;
 }
 
+/** The two answers an approval offers when the gate names none. */
+export const APPROVAL_OPTIONS = ['Approve', 'Deny'] as const;
+
 /** RelayGate → RelayAsk. Prompt/context/options come from the stripped payload; the
  *  held-task title is resolved from the run's segments by segment_id. */
 export function toAsk(gate: RelayGate, segTitleById: Map<string, string>): RelayAsk {
 	const p = gate.payload ?? {};
-	const options = Array.isArray(p.options) ? p.options.map((o) => String(o)) : [];
+	const action = ASK_ACTION[gate.kind] ?? 'choose';
+	const given = Array.isArray(p.options) ? p.options.map((o) => String(o)) : [];
+	// The daemon reads a reply fail-open (only an explicit deny blocks), so an
+	// approval is always an explicit choice — never a free line read as allow.
+	const options = given.length || action !== 'approve' ? given : [...APPROVAL_OPTIONS];
 	return {
 		id: gate.id,
-		action: ASK_ACTION[gate.kind] ?? 'choose',
+		action,
 		blocking: p.severity !== 'advisory',
 		prompt: str(p.prompt) ?? gate.run_title ?? 'sensei needs you',
 		context: str(p.context) ?? str(p.evidence),
@@ -93,6 +100,7 @@ export function toRelaySession(
 	run: RelayRun,
 	gates: RelayGate[],
 	segments: RelaySegment[],
+	tenantKey: string,
 	project: string | null = null
 ): RelaySession {
 	const segTitleById = new Map(segments.map((s) => [s.id, s.title]));
@@ -111,6 +119,23 @@ export function toRelaySession(
 		needs: gates.length,
 		attention: attentionOf(run.status),
 		plan: toSessionPlan(segments),
-		asks: gates.map((g) => toAsk(g, segTitleById))
+		asks: gates.map((g) => toAsk(g, segTitleById)),
+		tenantKey
 	};
+}
+
+/**
+ * An answer to an ask as the daemon reads it (`dojo/gate.rs::decision_from_reply`,
+ * fail-open — only `verdict: 'deny'` blocks). An approval is a verdict; a decision
+ * is the chosen option, or the typed line; a resume or chat is text. A note rides
+ * along, as RelayGateCard sends it.
+ */
+export function askReply(ask: RelayAsk, answer: string, note?: string): Record<string, unknown> {
+	const a = answer.trim();
+	let body: Record<string, unknown>;
+	if (ask.action === 'approve' && /^(approve|deny)$/i.test(a)) body = { verdict: a.toLowerCase() };
+	else if (ask.options.includes(a)) body = { choice: a };
+	else body = { text: a };
+	const n = note?.trim();
+	return n ? { ...body, note: n } : body;
 }

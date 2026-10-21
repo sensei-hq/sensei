@@ -63,7 +63,7 @@ async function loadTenant(tenantKey: string, opts: InboxLoadOpts): Promise<Tenan
 				return [];
 			});
 			const runGates = gates.filter((g) => g.run_id === run.run_id);
-			return toRelaySession(run, runGates, segments);
+			return toRelaySession(run, runGates, segments, tenantKey);
 		})
 	);
 	return { tenantKey, sessions, failed: false, plansMissing };
