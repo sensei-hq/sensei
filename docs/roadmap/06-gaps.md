@@ -87,7 +87,7 @@ address the gaps"). Ordered by risk; each is a GitHub issue.
 |---|---|---|---|
 | ~~G-SEC-1~~ | ~~An admin who leaves the GitHub org keeps their dōjō admin role~~ — fixed (ede5da58): a complete org read ends provisioned memberships the org no longer lists; invited members untouched | #309 closed | — |
 | G-SEC-2 | The dōjō has no secret store, yet D14/D21 hand it shared integration credentials | #310 | P1 (before Wave C) |
-| G-SEC-3 | Invite tokens stored in plain text; the accept endpoint is not rate-limited | #311 | P1 |
+| ~~G-SEC-3~~ | ~~Invite tokens in plain text, accepts unbounded~~ — fixed (f607bf0a): hash only, 429 after 10 failures in 15 min | #311 closed | — |
 | G-SEC-4 | Relay approval gates fail open on a lost or garbled reply | #312 | P1 |
 | G-SEC-5 | Viewer metric reads must be aggregate-only (D6, D8); grants, revokes and exports are not audited (T6) | #313 | P1 (with T6) |
 | G-OPS-1 | Nothing in the dōjō plane verified in production — sync, Relay, push (D27; #184, #299, #301) | #314 | P0 |

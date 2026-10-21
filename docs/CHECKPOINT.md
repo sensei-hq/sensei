@@ -23,7 +23,7 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** gaps first, by priority (user: "document and address the gaps"): #309 done (ede5da58) — next #311 invite tokens hashed + rate limit, #312 relay gates fail closed, #318 code lags decisions. #314/#315 (production verification, release rehearsal) need the user's production access. Then #307 R2b (page URLs and words, D17), R3. Done today: R2a (65eede4d), #274 merged, archive pruned, D1–D27, gap register #309–#321.
+**Next command:** gaps first, by priority (user: "document and address the gaps"): #309 (ede5da58) and #311 (f607bf0a) done — next #312 relay gates fail closed, then #318 code lags decisions. #314/#315 (production verification, release rehearsal) need the user's production access. Then #307 R2b (page URLs and words, D17), R3. Done today: R2a (65eede4d), #274 merged, archive pruned, D1–D27, gap register #309–#321.
 
 **Open questions:**
 - Answered 2026-10-21: D24 (open source; benefits of the paid tier), D25 (governance dōjō → workspace → repository), D26 (k-anonymity stays), D27 (production Relay/push untested → #314).
