@@ -171,7 +171,7 @@ describe('tenant column rename (org → slug)', () => {
 	it('falls back to the tenant SLUG when a tenant has no display name', () => {
 		// The only place the column is read rather than just selected. A row
 		// carrying `slug` and no `name` must render the slug, not `undefined`.
-		const row = { id: 't1', key: 'organization/acme', slug: 'acme', name: null, self_hosted: false };
+		const row = { id: 't1', key: 'organization/acme', slug: 'acme', name: null, self_hosted: false, origin: 'organization' };
 		expect(tenantToOrg(row as never, 'admin').name).toBe('acme');
 	});
 
@@ -278,25 +278,30 @@ describe('tenantToOrg — the kind shown is the ORIGIN, never the unsubstantiate
 	});
 });
 
-// A hand-made dōjō is a TEAM; only a forge-proven organisation is an
-// Organization (decision 2026-10-12, GHSA-hqv4). The display must never promote
-// an unproven tenant to the proven kind — that is the impersonation the
-// separate namespace exists to prevent.
-describe('team dōjōs are told apart from organisations', () => {
-	it('maps each origin to its own kind', async () => {
+// A dōjō is an organization's or a person's — nothing else (#307 D11). Only an
+// exact `organization` is the PROVEN kind; an origin that is neither is a data
+// fault, said as one, never shown as some kind it is not.
+describe('a dōjō is an organization or a person', () => {
+	it('maps each origin to its kind', async () => {
 		const { originToOrgKind } = await import('../dojo-data');
 		expect(originToOrgKind('organization')).toBe('Organization');
-		expect(originToOrgKind('team')).toBe('Team');
 		expect(originToOrgKind('personal')).toBe('Personal');
 	});
-	it('never shows an unrecognised origin as a proven Organization', async () => {
+	it('names no kind for any other origin — never a proven Organization', async () => {
 		const { originToOrgKind } = await import('../dojo-data');
-		for (const odd of ['', null, undefined, 'Organisation', 'org', 'mystery']) {
-			expect(originToOrgKind(odd as never)).not.toBe('Organization');
+		for (const odd of ['', null, undefined, 'Organisation', 'org', 'team', 'mystery']) {
+			expect(originToOrgKind(odd as never)).toBeNull();
 		}
 	});
-	it('gives a team its own glyph', () => {
-		expect(orgKindKanji('Team')).toBe('組');
+	it('a tenant row with no known origin is an error, not a guessed kind', async () => {
+		const { tenantToOrg } = await import('./dojo-orgs');
+		const row = { id: 't', key: 'team/x', slug: 'x', name: 'X', self_hosted: false, origin: 'team' };
+		expect(() => tenantToOrg(row, 'admin')).toThrow();
+		try {
+			tenantToOrg(row, 'admin');
+		} catch (e) {
+			expect(e).toMatchObject({ status: 500, body: { message: expect.stringMatching(/no known origin/) } });
+		}
 	});
 });
 

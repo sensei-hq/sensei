@@ -8,12 +8,11 @@ set search_path to dojo, extensions;
 --
 -- The discovery path is `<origin>/<slug>`, so these values are user-visible and
 -- keep the namespaces apart without a sigil:
---   personal/dev        organization/sensei-hq        team/platform-guild
+--   personal/dev        organization/sensei-hq
 --
--- `organization` is a forge-PROVEN organisation (provisioning) and nothing else;
--- a dōjō someone creates by hand is a `team`, so no one can hold an
--- organisation's natural name ahead of it (decision 2026-10-12, GHSA-hqv4).
--- A team has no forge connection (only provisioning makes one, for a proven
--- organisation), so it holds no repositories.
+-- A dōjō is only ever one of these two (#307 D11, user 2026-10-21): a person's,
+-- or a forge-PROVEN organisation's (provisioning, and nothing else). There is
+-- no hand-made dōjō — the `team` origin is gone; a team is a grouping of people
+-- inside a dōjō (D7).
 create type dojo.tenant_origin
-    as enum ('personal', 'organization', 'team');
+    as enum ('personal', 'organization');

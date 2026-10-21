@@ -18,7 +18,7 @@ type TenantRow = {
 	slug: string;
 	name: string | null;
 	self_hosted: boolean;
-	/** `personal` | `organization`. Drives the DISPLAYED kind — see `originToOrgKind`. */
+	/** `personal` | `organization` — the only kinds of dōjō (#307 D11). Drives the DISPLAYED kind. */
 	origin?: string | null;
 };
 
@@ -111,6 +111,9 @@ export function tenantToOrg(t: TenantRow, role: string, _kind?: string | null): 
 	// keeping the parameter documents that it is deliberately unused rather than
 	// forgotten — see `originToOrgKind`.
 	const orgKind = originToOrgKind(t.origin);
+	// A dōjō is an organization's or a person's (#307 D11); anything else is a
+	// data fault, said as one — never shown as a kind it is not.
+	if (!orgKind) throw error(500, `tenant ${t.key} has no known origin (${t.origin ?? 'none'})`);
 	return {
 		id: t.id,
 		kanji: orgKindKanji(orgKind),

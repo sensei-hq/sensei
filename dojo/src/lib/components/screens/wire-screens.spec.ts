@@ -98,6 +98,6 @@ describe('ScrMyDojos — wired memberships', () => {
 
 	it('shows the honest-empty state with no memberships (solo user, DJ1)', () => {
 		const { getByText } = render(ScrMyDojos, { props: { dojos: toKitDojos([]) } });
-		expect(getByText('No memberships yet — create or join a Dōjō.')).toBeTruthy();
+		expect(getByText('No dōjōs yet.')).toBeTruthy();
 	});
 });

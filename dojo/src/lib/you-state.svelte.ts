@@ -1,5 +1,5 @@
 // The personal zone's section actions (#293) — pin a contribution, adopt a rule
-// pack, create a dōjō, set up dōjōs from GitHub, elect a repository for
+// pack, set up dōjōs from GitHub, elect a repository for
 // sharing. The page renders; this runs the writes with the API and the reload
 // handed in, and says why each one failed. Nothing shows a decision the server
 // did not record.
@@ -11,7 +11,6 @@ import type { KitDownstream, KitRulePack } from '$lib/components/kit/types';
 export interface YouApi {
 	adoptContribution: (artifactId: string) => Promise<void>;
 	setPackAdoption: (slug: string, adopt: boolean) => Promise<void>;
-	createDojo: (name: string, kind: string) => Promise<{ id: string; key: string; name: string }>;
 	provisionFromForge: () => Promise<ProvisionResult>;
 	setRepoElection: (
 		repoKey: string,
@@ -21,8 +20,6 @@ export interface YouApi {
 
 /** Re-read the section's load (the page passes invalidateAll). */
 export type Reload = () => Promise<unknown>;
-
-export const DOJO_KINDS = ['employer', 'client', 'community', 'personal'] as const;
 
 const reason = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
 
@@ -45,7 +42,6 @@ export class YouSectionState {
 	/** Why the last pin or pack change failed. */
 	actionError = $state<string | null>(null);
 
-	create = $state({ open: false, name: '', kind: 'employer', error: null as string | null, busy: false });
 	github = $state({ busy: false, message: null as string | null });
 
 	/** Per-repo overrides with the server's verdict, between a write and its re-read. */
@@ -77,33 +73,6 @@ export class YouSectionState {
 		} catch (e) {
 			this.actionError = `${adopt ? 'Not adopted' : 'Not dropped'}: ${reason(e, 'the dōjō refused')}`;
 			return false;
-		}
-	}
-
-	// ── Create a dōjō ───────────────────────────────────────────────────────
-
-	openCreate(): void {
-		this.create = { open: true, name: '', kind: 'employer', error: null, busy: false };
-	}
-
-	closeCreate(): void {
-		this.create.open = false;
-	}
-
-	/** A real create makes the caller admin; the new dōjō appears via the reload. */
-	async submitCreate(api: YouApi, reload: Reload): Promise<void> {
-		const name = this.create.name.trim();
-		if (!name || this.create.busy) return;
-		this.create.busy = true;
-		this.create.error = null;
-		try {
-			await api.createDojo(name, this.create.kind);
-			this.create.open = false;
-			await reload();
-		} catch (e) {
-			this.create.error = reason(e, 'could not create the dōjō');
-		} finally {
-			this.create.busy = false;
 		}
 	}
 

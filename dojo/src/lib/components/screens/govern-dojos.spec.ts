@@ -154,13 +154,12 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 		expect(onOpen).toHaveBeenCalledWith(dojos.find((d) => d.name === 'Acme Corp'));
 	});
 
-	it('shows the honest empty state with no memberships', () => {
-		const onCreateOrJoin = vi.fn();
-		const { getByText, queryByText } = render(ScrMyDojos, {
-			props: { dojos: [], onCreateOrJoin }
-		});
-		expect(getByText('No memberships yet — create or join a Dōjō.')).toBeTruthy();
+	it('with no memberships, says where a dōjō comes from — none is made by hand (#307 D11)', () => {
+		const { getByText, queryByText } = render(ScrMyDojos, { props: { dojos: [] } });
+		expect(getByText('No dōjōs yet.')).toBeTruthy();
+		expect(getByText(/your GitHub organizations, or an invite/)).toBeTruthy();
 		expect(queryByText('Organization')).toBeNull();
+		expect(queryByText(/Create/)).toBeNull();
 	});
 
 	it('offers Sync from GitHub in its own header, so the route renders only the screen (#293)', async () => {
@@ -186,11 +185,9 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 		expect(queryByText('Sync from GitHub')).toBeNull();
 	});
 
-	it('fires onCreateOrJoin from the empty-state affordance', async () => {
-		const onCreateOrJoin = vi.fn();
-		const { getByText } = render(ScrMyDojos, { props: { dojos: [], onCreateOrJoin } });
-		await fireEvent.click(getByText('Create or join a dōjō'));
-		expect(onCreateOrJoin).toHaveBeenCalled();
+	it('offers no way to make a dōjō by hand (#307 D11)', () => {
+		const { queryByText } = render(ScrMyDojos, { props: { dojos, onSyncGithub: vi.fn() } });
+		expect(queryByText(/Create/)).toBeNull();
 	});
 });
 

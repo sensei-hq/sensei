@@ -22,10 +22,9 @@
  *  ALL insights are anonymised, so there was never anything client-specific to
  *  protect; the function had no callers and the distinction was decorative.
  *
- *  What remains is what the forge actually states — organisation, or person —
- *  plus the TEAM: a dōjō someone made by hand, which the forge proves nothing
- *  about (decision 2026-10-12, GHSA-hqv4). */
-export type OrgKind = 'Organization' | 'Team' | 'Personal';
+ *  What remains is what the forge actually states — organisation, or person.
+ *  There is no third kind: no dōjō is made by hand (#307 D11). */
+export type OrgKind = 'Organization' | 'Personal';
 export type OrgHost = 'self' | 'saas';
 
 export interface DojoOrg {
@@ -45,28 +44,23 @@ export interface DojoOrg {
 	last?: boolean;
 }
 
-/** `dojo.tenants.origin` → the app's `OrgKind`.
+/** `dojo.tenants.origin` → the app's `OrgKind`, or null for any other value.
  *
- *  Replaces `membershipKindToOrgKind`, which read the unsubstantiated `kind`
- *  tag. Origin is knowable — the forge states whether an account is an
- *  organisation or a person — so this cannot be wrong the way the tag was.
- *
- *  Only an exact `organization` is an Organization — the PROVEN kind. Anything
- *  else that is not `personal` is a Team: an unrecognised value must never be
- *  promoted to the kind that says "this is the real organisation", which is
- *  the impersonation the team namespace exists to prevent. */
-export function originToOrgKind(origin: string | null | undefined): OrgKind {
-	const o = (origin ?? '').toLowerCase();
-	if (o === 'personal') return 'Personal';
-	return origin === 'organization' ? 'Organization' : 'Team';
+ *  A dōjō is an organization's or a person's — nothing else (#307 D11). The
+ *  kind comes from the origin, which the forge states, never from the
+ *  unsubstantiated membership `kind` tag. Only an exact `organization` is an
+ *  Organization — the PROVEN kind — and an unrecognised value is no kind at all:
+ *  the caller says so rather than showing a guess. */
+export function originToOrgKind(origin: string | null | undefined): OrgKind | null {
+	if (origin === 'personal') return 'Personal';
+	if (origin === 'organization') return 'Organization';
+	return null;
 }
 
-/** The identity glyph per kind (社 organisation · 組 team · 己 personal),
- *  matching the ladder kanji in `constitution-map`. 客 (client) and 群
- *  (community) went with the taxonomy that produced them. */
+/** The identity glyph per kind (社 organisation · 己 personal), matching the
+ *  ladder kanji in `constitution-map`. */
 export function orgKindKanji(kind: OrgKind): string {
-	if (kind === 'Personal') return '己';
-	return kind === 'Team' ? '組' : '社';
+	return kind === 'Personal' ? '己' : '社';
 }
 
 export const orgs: DojoOrg[] = [
@@ -137,6 +131,5 @@ export const orgs: DojoOrg[] = [
 // /--success/--ink-3; map onto named tokens).
 export const kindToneClass: Record<OrgKind, string> = {
 	Organization: 'text-ink-soft',
-	Team: 'text-ink-soft',
 	Personal: 'text-ink-mute'
 };

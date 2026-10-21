@@ -9,7 +9,6 @@ function api(over: Partial<YouApi> = {}): YouApi {
 	return {
 		adoptContribution: vi.fn().mockResolvedValue(undefined),
 		setPackAdoption: vi.fn().mockResolvedValue(undefined),
-		createDojo: vi.fn().mockResolvedValue({ id: 't1', key: 'k', name: 'Guild' }),
 		provisionFromForge: vi.fn().mockResolvedValue({ synced: true, personal: null, tenants: [] }),
 		setRepoElection: vi.fn().mockResolvedValue({ repo_key: 'r', elected: true, sync_enabled: true, reason_code: null }),
 		...over
@@ -35,30 +34,6 @@ describe('pinning and packs', () => {
 		expect(await s.togglePack(api(), { id: 'owasp' } as never, true, reload())).toBe(true);
 		expect(await s.togglePack(api({ setPackAdoption: boom('nope') }), { id: 'owasp' } as never, true, reload())).toBe(false);
 		expect(s.actionError).toContain('nope');
-	});
-});
-
-describe('creating a dōjō', () => {
-	it('opens a clean form, creates, closes and reloads', async () => {
-		const s = new YouSectionState();
-		s.openCreate();
-		s.create.name = '  Guild ';
-		const a = api();
-		const r = reload();
-		await s.submitCreate(a, r);
-		expect(a.createDojo).toHaveBeenCalledWith('Guild', 'employer');
-		expect(s.create.open).toBe(false);
-		expect(r).toHaveBeenCalledOnce();
-	});
-
-	it('keeps the form open with the reason when the create fails', async () => {
-		const s = new YouSectionState();
-		s.openCreate();
-		s.create.name = 'Guild';
-		await s.submitCreate(api({ createDojo: boom('name taken') }), reload());
-		expect(s.create.open).toBe(true);
-		expect(s.create.error).toBe('name taken');
-		expect(s.create.busy).toBe(false);
 	});
 });
 

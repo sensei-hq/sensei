@@ -19,8 +19,6 @@ import {
 	parsePatchPolicy,
 	deletePolicy,
 	slugify,
-	parseNewDojo,
-	createDojo,
 	AdminError,
 	type DojoClient
 } from './admin-data';
@@ -332,18 +330,6 @@ describe('listIdentities (global rows, scoped by membership)', () => {
 	});
 });
 
-// createDojo calls dojo.create_dojo; this stub records the rpc and answers it.
-function makeCreateDb(result: { data?: unknown; error: unknown }) {
-	const calls: { fn: string; args: Record<string, unknown> }[] = [];
-	const db = {
-		rpc: (fn: string, args: Record<string, unknown>) => {
-			calls.push({ fn, args });
-			return { single: async () => result };
-		}
-	};
-	return { db: db as unknown as DojoClient, calls };
-}
-
 describe('slugify', () => {
 	it('lowercases, hyphenates non-alphanumerics, trims edges', () => {
 		expect(slugify('Acme Corp!')).toBe('acme-corp');
@@ -355,36 +341,3 @@ describe('slugify', () => {
 	});
 });
 
-describe('parseNewDojo', () => {
-	it('requires a name that slugifies + a valid kind', () => {
-		expect(() => parseNewDojo({})).toThrow();
-		expect(() => parseNewDojo({ name: '!!!', kind: 'client' })).toThrow();
-		expect(() => parseNewDojo({ name: 'Acme', kind: 'wizard' })).toThrow();
-		expect(parseNewDojo({ name: 'Acme', kind: 'client' })).toEqual({ name: 'Acme', kind: 'client' });
-	});
-});
-
-// The tenant, its key and url, and the creator's admin membership are the
-// database's, in one transaction, for the SESSION's principal — proved against a
-// real Postgres in database/tests/dojo/create_dojo_insert.sql (#236). This side
-// slugs the name and keeps the collision a 409.
-describe('createDojo', () => {
-	it('asks the database for the dōjō by name, slug and kind — and names no user', async () => {
-		const { db, calls } = makeCreateDb({ data: { id: 't-new', key: 'team/acme-labs', name: 'Acme Labs' }, error: null });
-		const out = await createDojo(db, { name: 'Acme Labs', kind: 'employer' });
-		expect(out).toEqual({ id: 't-new', key: 'team/acme-labs', name: 'Acme Labs' });
-		expect(calls).toEqual([
-			{ fn: 'create_dojo', args: { p_name: 'Acme Labs', p_slug: 'acme-labs', p_kind: 'employer' } }
-		]);
-	});
-	it('maps a key collision (23505) to 409', async () => {
-		const { db } = makeCreateDb({ data: null, error: { code: '23505', message: 'dup key' } });
-		await expect(createDojo(db, { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 409 });
-	});
-	it('keeps a refusal as its status, and anything else a 500', async () => {
-		const refused = makeCreateDb({ data: null, error: { code: '42501', message: 'a signed-in session is required' } });
-		await expect(createDojo(refused.db, { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 403 });
-		const broken = makeCreateDb({ data: null, error: { code: '08006', message: 'connection reset' } });
-		await expect(createDojo(broken.db, { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 500 });
-	});
-});

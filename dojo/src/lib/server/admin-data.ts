@@ -352,14 +352,6 @@ export async function addMember(
 	return data as { id: string; role: string };
 }
 
-// ── self-serve dōjō create (F3a) ─────────────────────────────────────────────
-
-/** A validated `POST /v1/you/dojos` body — the self-serve create. */
-export interface NewDojoInput {
-	name: string;
-	kind: string;
-}
-
 /** A URL-clean slug from a display name: lowercase, non-alphanumerics → single
  *  hyphens, trimmed. `"Acme Corp!" → "acme-corp"`. Pure. */
 export function slugify(name: string): string {
@@ -368,53 +360,6 @@ export function slugify(name: string): string {
 		.trim()
 		.replace(/[^a-z0-9]+/g, '-')
 		.replace(/^-+|-+$/g, '');
-}
-
-/** Validate a create-dōjō body into a {@link NewDojoInput}, or throw
- *  AdminError(400). `name` must slugify to something non-empty; `kind` must be a
- *  `dojo.membership_kind`. */
-export function parseNewDojo(body: Record<string, unknown>): NewDojoInput {
-	const name = typeof body.name === 'string' ? body.name.trim() : '';
-	if (!name) throw new AdminError(400, 'name is required');
-	if (!slugify(name)) throw new AdminError(400, 'name must contain a letter or digit');
-	const kind = typeof body.kind === 'string' ? body.kind : '';
-	if (!(MEMBERSHIP_KINDS as readonly string[]).includes(kind)) {
-		throw new AdminError(400, 'kind must be employer, client, community, or personal');
-	}
-	return { name, kind };
-}
-
-/**
- * Create a dōjō the caller owns (F3a, issue #117). The tenant is a `team` with
- * key `team/{slug}` — `organization/` is the forge-proven organisation's alone
- * (decision 2026-10-12) — and the creator becomes its `admin`. A key collision (someone already registered that name) is a 409.
- * dojo.create_dojo does both in one transaction, for the SESSION's principal,
- * and builds the key and url itself (#236). Fails closed.
- *
- * The key's first segment is the ORIGIN, not a forge — `dojo-auth.ts` resolves a
- * tenant by joining the two URL segments back into `{origin}/{slug}`, so the
- * prefix and `origin` must agree or the tenant is unreachable at its own URL.
- * That is also what keeps `personal/acme`, `organization/acme` and `team/acme`
- * apart under the single unique on `key` (spec §IV.7).
- *
- * This wrote `origin: 'org'`, `org: slug` and `key: org/{slug}` until 5cbe4d4d's
- * sibling commit: all three were retired by the phase-1 schema change, and the
- * insert failed outright with `column "org" of relation "tenants" does not
- * exist`. A mocked test asserted the rejected payload and stayed green — hence
- * the live-Postgres coverage in database/tests/dojo/create_dojo_insert.sql.
- */
-export async function createDojo(
-	db: DojoClient,
-	input: NewDojoInput
-): Promise<{ id: string; key: string; name: string }> {
-	const { data, error } = await db
-		.rpc('create_dojo', { p_name: input.name, p_slug: slugify(input.name), p_kind: input.kind })
-		.single();
-	if (error) {
-		if (error.code === '23505') throw new AdminError(409, 'a dōjō with that name already exists');
-		throw new AdminError(refusalStatus(error), error.message);
-	}
-	return data as { id: string; key: string; name: string };
 }
 
 // ── policies: upsert / patch / delete ────────────────────────────────────────

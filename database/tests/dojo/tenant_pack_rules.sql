@@ -3,16 +3,16 @@
 --
 -- The daemon names its folder's namespaces as (scope_key, slug) pairs. A member
 -- of the path tenant gets the packs adopted at the namespaces that TENANT owns —
--- `organization:<slug>` for an organization tenant, `team:<slug>` for a team —
--- each rule at the adoption's scope, its tier raised (never lowered) by the
+-- `organization:<slug>` for an organization tenant (a personal one owns none; a
+-- dōjō is only ever one of the two, #307 D11) — each rule at the adoption's scope, its tier raised (never lowered) by the
 -- adoption's override. Every other namespace the daemon names is dropped: no
--- tenant owns a technology, repository, project or personal namespace, and
--- another tenant's is not this member's to read.
+-- tenant owns a team, technology, repository, project or personal namespace,
+-- and another tenant's is not this member's to read.
 --
 -- WHAT BREAKS THIS TEST: a membership check that is missing, ignores a disabled
 -- membership, or passes with no session; ownership matched on the slug alone (a
 -- team owning the organization namespace of the same name) or on the scope
--- alone; ignoring the daemon's pairs (a namespace the folder does not name);
+-- alone; a `team:` namespace resolving for anyone; ignoring the daemon's pairs (a namespace the folder does not name);
 -- an override that weakens a rule, or is dropped.
 
 begin;
@@ -21,12 +21,10 @@ insert into dojo.principals (id, auth_user_id, display_name) values
   ('a0000000-0000-4000-8000-000000000181', 'a1000000-0000-4000-8000-000000000181', 'ola');
 insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
   ('b0000000-0000-4000-8000-00000000018a', 'organization/ztest-tpr', 'organization', 'ztest-tpr', 'Org', 'x'),
-  ('b0000000-0000-4000-8000-00000000018b', 'team/ztest-tpr-team', 'team', 'ztest-tpr-team', 'Team', 'x'),
   ('b0000000-0000-4000-8000-00000000018c', 'organization/ztest-tpr-other', 'organization', 'ztest-tpr-other', 'Other', 'x'),
   ('b0000000-0000-4000-8000-00000000018d', 'organization/ztest-tpr-gone', 'organization', 'ztest-tpr-gone', 'Gone', 'x');
 insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via, disabled_at) values
   ('b0000000-0000-4000-8000-00000000018a', 'a0000000-0000-4000-8000-000000000181', 'contributor', 'employer', 'github_oauth', null),
-  ('b0000000-0000-4000-8000-00000000018b', 'a0000000-0000-4000-8000-000000000181', 'contributor', 'employer', 'github_oauth', null),
   ('b0000000-0000-4000-8000-00000000018d', 'a0000000-0000-4000-8000-000000000181', 'contributor', 'employer', 'github_oauth', now());
 
 insert into sensei.namespaces (id, scope_key, slug, name) values
@@ -67,7 +65,6 @@ declare
     got text;
     n int;
     org   constant uuid := 'b0000000-0000-4000-8000-00000000018a';
-    team  constant uuid := 'b0000000-0000-4000-8000-00000000018b';
     other constant uuid := 'b0000000-0000-4000-8000-00000000018c';
     gone  constant uuid := 'b0000000-0000-4000-8000-00000000018d';
     every constant text[] := array['organization:ztest-tpr', 'team:ztest-tpr-team', 'organization:ztest-tpr-other',
@@ -92,12 +89,9 @@ begin
         raise exception 'tenant_pack_rules(org) returned %', got;
     end if;
 
-    -- The team owns team:<slug>, not the organization namespace of the same name.
-    select string_agg(statement || '/' || enforcement || '/' || scope_key, ' ')
-      into got from dojo.tenant_pack_rules(team, every);
-    if got is distinct from 'team rule/recommended/team' then
-        raise exception 'tenant_pack_rules(team) returned %', got;
-    end if;
+    -- Nobody owns a team: namespace — a team is a grouping inside a dōjō, not a dōjō.
+    select count(*) into n from dojo.tenant_pack_rules(org, every) where scope_key = 'team';
+    if n <> 0 then raise exception 'tenant_pack_rules: resolved % rules at a team: namespace', n; end if;
 
     -- Only what the daemon's folder names.
     select count(*) into n from dojo.tenant_pack_rules(org, array['technology:ztest-tpr-react', 'team:ztest-tpr-team']);
