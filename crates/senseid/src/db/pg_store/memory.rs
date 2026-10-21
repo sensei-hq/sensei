@@ -9,7 +9,7 @@ use super::*;
 #[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct MemoryRow<'a> {
-    pub project_id: Option<&'a uuid::Uuid>,
+    pub workspace_id: Option<&'a uuid::Uuid>,
     pub scope: &'a str,
     pub scope_filter: Option<&'a str>,
     pub mem_type: &'a str,
@@ -36,7 +36,7 @@ impl PgStore {
         // EXHAUSTIVE (#161): a field added to `MemoryRow` stops this
         // compiling until someone binds it.
         let MemoryRow {
-            project_id,
+            workspace_id: project_id,
             scope,
             scope_filter,
             mem_type,
@@ -382,7 +382,7 @@ impl PgStore {
                      COALESCE($13, 'learned'), $14, $15::sensei.spine_slot, $16)
              RETURNING id",
         )
-        .bind(m.project_id)
+        .bind(m.workspace_id)
         .bind(scope_to_db(&m.scope))
         .bind(&m.scope_filter)
         .bind(&m.mtype)

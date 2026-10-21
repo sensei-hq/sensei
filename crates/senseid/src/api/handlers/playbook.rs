@@ -120,7 +120,7 @@ pub(crate) async fn recommend_playbook(
                 confirmed,
                 classified_by: Some(classified_by.as_str()),
                 model_fallback,
-                project_id,
+                workspace_id: project_id,
             })
             .await
     {

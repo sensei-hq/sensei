@@ -15,7 +15,7 @@ async fn list_memories_filters_by_status() {
     let project_id = pg.ensure_test_project("list-status").await.unwrap();
     let m1 = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(project_id),
+            workspace_id: Some(project_id),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -36,7 +36,7 @@ async fn list_memories_filters_by_status() {
         .unwrap();
     let _m2 = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(project_id),
+            workspace_id: Some(project_id),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -75,7 +75,7 @@ async fn set_memory_status_accept_proposal() {
     let pid = pg.ensure_test_project("accept-prop").await.unwrap();
     let mid = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(pid),
+            workspace_id: Some(pid),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -109,7 +109,7 @@ async fn get_memory_detail_includes_outcomes() {
     let pid = pg.ensure_test_project("detail").await.unwrap();
     let mid = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(pid),
+            workspace_id: Some(pid),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -163,7 +163,7 @@ async fn assemble_context_blends_three_scopes() {
 
     let m_p = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(pid),
+            workspace_id: Some(pid),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -184,7 +184,7 @@ async fn assemble_context_blends_three_scopes() {
         .unwrap();
     let m_s = pg
         .insert_memory(&InsertMemory {
-            project_id: None,
+            workspace_id: None,
             scope: "stack".into(),
             scope_filter: Some("rust".into()),
             mtype: "convention".into(),
@@ -205,7 +205,7 @@ async fn assemble_context_blends_three_scopes() {
         .unwrap();
     let m_g = pg
         .insert_memory(&InsertMemory {
-            project_id: None,
+            workspace_id: None,
             scope: "global".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -240,7 +240,7 @@ async fn assemble_context_blends_three_scopes() {
     // Proposed memories must not appear.
     let m_prop = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(pid),
+            workspace_id: Some(pid),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -289,7 +289,7 @@ async fn list_memories_for_slot_matches_slot_and_feature() {
 
     let m_design = pg
         .create_memory(&MemoryRow {
-            project_id: Some(&pid),
+            workspace_id: Some(&pid),
             scope: "project",
             scope_filter: None,
             mem_type: "decision",
@@ -304,7 +304,7 @@ async fn list_memories_for_slot_matches_slot_and_feature() {
         .unwrap();
     let m_design_auth = pg
         .create_memory(&MemoryRow {
-            project_id: Some(&pid),
+            workspace_id: Some(&pid),
             scope: "project",
             scope_filter: None,
             mem_type: "decision",
@@ -319,7 +319,7 @@ async fn list_memories_for_slot_matches_slot_and_feature() {
         .unwrap();
     let m_decisions = pg
         .create_memory(&MemoryRow {
-            project_id: Some(&pid),
+            workspace_id: Some(&pid),
             scope: "project",
             scope_filter: None,
             mem_type: "decision",
@@ -360,7 +360,7 @@ async fn assemble_context_leads_with_slot_anchored_memory() {
     let tag = format!("slot-leads-fixture-{}", uuid::Uuid::new_v4());
     let only_ours = vec![tag.clone()];
     let fixture = |title: &str, slot: Option<&str>| InsertMemory {
-        project_id: Some(pid),
+        workspace_id: Some(pid),
         scope: "project".into(),
         scope_filter: None,
         mtype: "decision".into(),
@@ -418,7 +418,7 @@ async fn assemble_context_logs_one_load_per_memory() {
     let only_ours = vec![tag.clone()];
     let mid = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(pid),
+            workspace_id: Some(pid),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -479,7 +479,7 @@ async fn memory_loaded_last_7d_respects_window() {
     let pid = pg.ensure_test_project("loads-window").await.unwrap();
     let mid = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(pid),
+            workspace_id: Some(pid),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -519,7 +519,7 @@ async fn memory_followed_skipped_last_7d_over_outcomes() {
     let pid = pg.ensure_test_project("followed-skipped").await.unwrap();
     let mid = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(pid),
+            workspace_id: Some(pid),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -567,7 +567,7 @@ async fn get_memory_detail_includes_7d_telemetry() {
     let pid = pg.ensure_test_project("detail-telemetry").await.unwrap();
     let mid = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(pid),
+            workspace_id: Some(pid),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -612,7 +612,7 @@ async fn insert_memory_persists_source_id() {
     let src = uuid::Uuid::new_v4();
     let id = pg
         .insert_memory(&InsertMemory {
-            project_id: None,
+            workspace_id: None,
             scope: "global".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -700,7 +700,7 @@ async fn project_learned_convention_scopes_to_its_own_project_not_general() {
     let conv_content = format!("project A convention {}", uuid::Uuid::new_v4());
     let conv = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(proj_a),
+            workspace_id: Some(proj_a),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -725,7 +725,7 @@ async fn project_learned_convention_scopes_to_its_own_project_not_general() {
     let global_content = format!("genuinely global rule {}", uuid::Uuid::new_v4());
     let global = pg
         .insert_memory(&InsertMemory {
-            project_id: None,
+            workspace_id: None,
             scope: "global".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -848,7 +848,7 @@ async fn federated_ledger_and_shareability() {
     let remote = uuid::Uuid::new_v4();
     let mem = pg
         .insert_memory(&InsertMemory {
-            project_id: None,
+            workspace_id: None,
             scope: "global".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -977,7 +977,7 @@ async fn a_namespace_belongs_to_the_repository_so_two_checkouts_resolve_alike() 
 
     let content = format!("namespace rule {uniq}");
     pg.insert_memory(&InsertMemory {
-        project_id: None,
+        workspace_id: None,
         scope: "stack".into(),
         scope_filter: None,
         mtype: "convention".into(),

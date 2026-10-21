@@ -30,7 +30,7 @@ pub(crate) const BARRIER_HASH: &str = "";
 #[derive(Debug, Clone)]
 pub struct RepoAnchor {
     pub repo_folder_id: uuid::Uuid,
-    pub project_id: Option<uuid::Uuid>,
+    pub workspace_id: Option<uuid::Uuid>,
     pub repo_abs_path: String,
     /// "live" (a current abs_path) or "alias" (a former path, after a move/rename).
     pub matched_via: String,
@@ -2170,7 +2170,7 @@ impl PgStore {
             .map_err(|e| e.to_string())?;
         Ok(row.map(|(repo_folder_id, project_id, repo_abs_path, matched_via)| RepoAnchor {
             repo_folder_id,
-            project_id,
+            workspace_id: project_id,
             repo_abs_path,
             matched_via,
         }))

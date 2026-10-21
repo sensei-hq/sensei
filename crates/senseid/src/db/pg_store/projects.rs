@@ -397,9 +397,11 @@ impl PgStore {
         patch: &ProjectPatch<'_>,
     ) -> Result<(), String> {
         if let Some(m) = patch.maturity
-            && !PROJECT_MATURITIES.contains(&m)
+            && !WORKSPACE_MATURITIES.contains(&m)
         {
-            return Err(format!("invalid maturity '{m}': expected one of {PROJECT_MATURITIES:?}"));
+            return Err(format!(
+                "invalid maturity '{m}': expected one of {WORKSPACE_MATURITIES:?}"
+            ));
         }
         sqlx_core::query::query(
             "UPDATE sensei.workspaces SET

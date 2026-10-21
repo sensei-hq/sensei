@@ -1,12 +1,13 @@
 use crate::runs::{NewRun, Run, RunEvent, RunEventKind};
 
-/// How a sensei project is named to the dōjō: its project-scope namespace,
-/// matched on the project's name (the namespaces' documented link — "for a
-/// `project` namespace via the project of the same name"). ONE fragment, spliced
-/// into the relay's queries and the sync's offer (#299), so the two paths cannot
-/// file the same project under different slugs. Expects the project aliased `p`;
-/// binds the namespace as `n`.
-pub(crate) const PROJECT_NAMESPACE_JOIN: &str =
+/// How a sensei workspace is named to the dōjō: its namespace on the ladder's
+/// `project` rung (the rung keeps that name until the dōjō converts it),
+/// matched on the workspace's name (the namespaces' documented link — "for a
+/// `project` namespace via the workspace of the same name"). ONE fragment,
+/// spliced into the relay's queries and the sync's offer (#299), so the two
+/// paths cannot file the same workspace under different slugs. Expects the
+/// workspace aliased `p`; binds the namespace as `n`.
+pub(crate) const WORKSPACE_NAMESPACE_JOIN: &str =
     "JOIN sensei.namespaces n ON n.scope_key = 'project' AND n.name = p.name";
 use dojo_protocol::relay::RelayRunStatus;
 use sensei_bootstrap::{
@@ -79,7 +80,7 @@ pub(crate) fn scope_to_api(scope: String) -> String {
 /// `database/ddl/enum/sensei/workspace_maturity.ddl`. Used to reject an unknown
 /// maturity with a clear error (and a 400 at the HTTP layer) instead of
 /// leaking a raw Postgres enum-cast failure as a 500.
-pub const PROJECT_MATURITIES: [&str; 4] = ["discovery", "active", "maintenance", "archived"];
+pub const WORKSPACE_MATURITIES: [&str; 4] = ["discovery", "active", "maintenance", "archived"];
 
 /// Partial update for a project's editable identity fields (the About screen).
 /// Every field is optional: `None` leaves the column unchanged (COALESCE
@@ -87,7 +88,7 @@ pub const PROJECT_MATURITIES: [&str; 4] = ["discovery", "active", "maintenance",
 /// the fields the user touched. Text columns bind `Option<&str>`; the three
 /// jsonb columns (`icon`/`stack`/`links`) bind `Option<&serde_json::Value>`;
 /// `maturity` is the `sensei.workspace_maturity` enum and is validated against
-/// [`PROJECT_MATURITIES`] before the write.
+/// [`WORKSPACE_MATURITIES`] before the write.
 #[derive(Debug, Default, Clone)]
 pub struct ProjectPatch<'a> {
     pub name: Option<&'a str>,
@@ -140,7 +141,7 @@ pub struct EdgeSpec {
 
 #[derive(Clone)]
 pub struct InsertMemory {
-    pub project_id: Option<uuid::Uuid>,
+    pub workspace_id: Option<uuid::Uuid>,
     pub scope: String,
     pub scope_filter: Option<String>,
     pub mtype: String, // memory_type enum value

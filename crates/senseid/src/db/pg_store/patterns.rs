@@ -7,7 +7,7 @@ use super::*;
 /// No `Default` — that would relocate the silence to the call sites.
 #[derive(Debug, Clone)]
 pub struct RecommendationRow<'a> {
-    pub project_id: &'a uuid::Uuid,
+    pub workspace_id: &'a uuid::Uuid,
     pub title: &'a str,
     pub why: &'a str,
     pub impact: Option<&'a str>,
@@ -260,7 +260,7 @@ impl PgStore {
         };
 
         let mem = crate::db::pg_store::InsertMemory {
-            project_id: Some(project_id),
+            workspace_id: Some(project_id),
             scope: mem_scope.to_string(),
             scope_filter: None,
             mtype: "convention".to_string(),
@@ -403,7 +403,7 @@ impl PgStore {
         // EXHAUSTIVE (#161): a field added to `RecommendationRow` stops this
         // compiling until someone binds it.
         let RecommendationRow {
-            project_id,
+            workspace_id: project_id,
             title,
             why,
             impact,

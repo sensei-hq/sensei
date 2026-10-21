@@ -174,7 +174,7 @@ mod tests {
         let row = pg.tracker_by_id(id).await.unwrap().unwrap();
         assert!(store.has(&row.secret_service));
         sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
-            .bind(row.project_id)
+            .bind(row.workspace_id)
             .execute(pg.pool())
             .await
             .unwrap();

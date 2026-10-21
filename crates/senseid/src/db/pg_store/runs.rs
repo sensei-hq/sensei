@@ -536,7 +536,7 @@ impl PgStore {
             "SELECT n.slug FROM activity.runs r \
                JOIN sensei.workspaces p ON p.id = r.workspace_id {} \
               WHERE r.id = $1 LIMIT 1",
-            super::PROJECT_NAMESPACE_JOIN
+            super::WORKSPACE_NAMESPACE_JOIN
         );
         let row: Option<(String,)> = sqlx_core::query_as::query_as(&sql)
             .bind(run_id)

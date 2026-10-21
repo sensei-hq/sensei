@@ -3834,7 +3834,7 @@ mod tests {
         state
             .pg
             .create_memory(&MemoryRow {
-                project_id: None,
+                workspace_id: None,
                 scope: "global",
                 scope_filter: None,
                 mem_type: "decision",
@@ -4114,7 +4114,7 @@ mod tests {
         // here — slot-led ORDERING is still compared within the returned bundle.
         let tag = format!("route-slot-{}", uuid::Uuid::new_v4());
         let fixture = |title: &str, slot: Option<&str>| crate::db::pg_store::InsertMemory {
-            project_id: Some(pid),
+            workspace_id: Some(pid),
             scope: "project".into(),
             scope_filter: None,
             mtype: "decision".into(),
@@ -4243,7 +4243,7 @@ mod tests {
         state
             .pg
             .insert_memory(&crate::db::pg_store::InsertMemory {
-                project_id: Some(pid),
+                workspace_id: Some(pid),
                 scope: "project".into(),
                 scope_filter: None,
                 mtype: "convention".into(),
@@ -4267,7 +4267,7 @@ mod tests {
         state
             .pg
             .create_memory(&MemoryRow {
-                project_id: None,
+                workspace_id: None,
                 scope: "global",
                 scope_filter: None,
                 mem_type: "convention",
@@ -4454,7 +4454,7 @@ mod tests {
         state
             .pg
             .insert_memory(&crate::db::pg_store::InsertMemory {
-                project_id: Some(pid),
+                workspace_id: Some(pid),
                 scope: "project".into(),
                 scope_filter: None,
                 mtype: "convention".into(),
@@ -4477,7 +4477,7 @@ mod tests {
         state
             .pg
             .create_memory(&MemoryRow {
-                project_id: None,
+                workspace_id: None,
                 scope: "global",
                 scope_filter: None,
                 mem_type: "convention",

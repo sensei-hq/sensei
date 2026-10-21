@@ -387,7 +387,7 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
     let proj = pg.create_project("_test:dojo:outbox", None, None).await.unwrap();
     let mem = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(proj),
+            workspace_id: Some(proj),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -482,7 +482,7 @@ async fn generalisation_persists_the_example_and_the_share_path_carries_it() {
     let proj = pg.create_project("_test:memories:example", None, None).await.unwrap();
     let mem = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(proj),
+            workspace_id: Some(proj),
             scope: "project".into(),
             scope_filter: None,
             mtype: "convention".into(),
@@ -613,7 +613,7 @@ async fn dojo_inbox_upsert_apply_and_state_roundtrip() {
 
     // Land item1 as a global origin='dojo' memory; the row flips to applied.
     let mem_input = InsertMemory {
-        project_id: None,
+        workspace_id: None,
         scope: "global".into(),
         scope_filter: None,
         mtype: "convention".into(),

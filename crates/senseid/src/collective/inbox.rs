@@ -289,7 +289,7 @@ fn build_memory(
     scope_filter: Option<String>,
 ) -> InsertMemory {
     InsertMemory {
-        project_id,
+        workspace_id: project_id,
         scope: scope.to_string(),
         scope_filter,
         mtype: memory_type_for(kind).to_string(),
@@ -957,7 +957,7 @@ mod tests {
         assert!(matches!(apply_inbox_item(&inbox, id).await.unwrap(), ApplyOutcome::Landed { .. }));
         let landed = inbox.landed();
         assert_eq!(landed[0].scope, "project");
-        assert_eq!(landed[0].project_id, Some(pid));
+        assert_eq!(landed[0].workspace_id, Some(pid));
     }
 
     #[tokio::test]

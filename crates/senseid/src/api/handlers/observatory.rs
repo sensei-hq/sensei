@@ -141,7 +141,7 @@ pub(crate) async fn update_solution(
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::db::pg_store::{PROJECT_MATURITIES, ProjectPatch};
+    use crate::db::pg_store::{ProjectPatch, WORKSPACE_MATURITIES};
 
     // Name-or-uuid: resolve so `PUT /api/projects/sensei` works, not only a uuid
     // (#100). 404 when no such project.
@@ -151,7 +151,7 @@ pub(crate) async fn update_solution(
     // client/goal/preferred_acp are free text; icon/stack/links are jsonb.
     let maturity = body.get("maturity").and_then(|v| v.as_str());
     if let Some(m) = maturity
-        && !PROJECT_MATURITIES.contains(&m)
+        && !WORKSPACE_MATURITIES.contains(&m)
     {
         tracing::warn!(maturity = m, "update_solution rejected unknown maturity");
         return Err(StatusCode::BAD_REQUEST);

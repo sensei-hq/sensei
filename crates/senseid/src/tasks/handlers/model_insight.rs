@@ -54,7 +54,7 @@ pub async fn model_insight_for_project(
     match ctx
         .pg()
         .create_recommendation_full(&RecommendationRow {
-            project_id,
+            workspace_id: project_id,
             title: &title,
             why: &why,
             impact: Some(&impact),

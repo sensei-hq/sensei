@@ -199,7 +199,7 @@ pub(crate) async fn world(
         let cells: Vec<Cell> = cells
             .into_iter()
             .map(|c| Cell {
-                project: c.project,
+                project: c.workspace,
                 repository: c.repository,
                 folder: c.folder_id,
                 is_test: c.is_test,

@@ -252,7 +252,7 @@ pub async fn generate_for_project(
                 match ctx
                     .pg()
                     .create_recommendation_full(&RecommendationRow {
-                        project_id,
+                        workspace_id: project_id,
                         title: &title,
                         why: &why,
                         impact: impact.as_deref(),
@@ -290,7 +290,7 @@ pub async fn generate_for_project(
                 // slot from their category/type (project scope — no feature).
                 let slot = crate::memory_slot::default_slot(Some(category.as_str()), &mtype);
                 let mem = crate::db::pg_store::InsertMemory {
-                    project_id: Some(*project_id),
+                    workspace_id: Some(*project_id),
                     scope: "project".to_string(),
                     scope_filter: project_scoped_filter,
                     mtype,

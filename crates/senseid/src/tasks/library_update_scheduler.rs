@@ -86,7 +86,7 @@ async fn write_update_rec(
     }});
     if let Err(e) = pg
         .create_recommendation_full(&RecommendationRow {
-            project_id: pu.project_id,
+            workspace_id: pu.project_id,
             title: &title,
             why: &why,
             impact: None,
@@ -426,7 +426,7 @@ mod tests {
         let based_on = serde_json::json!({ "library_update": {
             "library_id": lid.to_string(), "to_version": "2.0.0", "is_security": false } });
         s.create_recommendation_full(&RecommendationRow {
-            project_id: &pid,
+            workspace_id: &pid,
             title: "t",
             why: "w",
             impact: None,
@@ -602,7 +602,7 @@ mod tests {
         let based_on = serde_json::json!({ "library_update": {
             "library_id": lid.to_string(), "to_version": "1.5.0", "is_security": false } });
         s.create_recommendation_full(&RecommendationRow {
-            project_id: &pid,
+            workspace_id: &pid,
             title: "t",
             why: "w",
             impact: None,

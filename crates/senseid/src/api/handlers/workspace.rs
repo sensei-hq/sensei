@@ -617,7 +617,7 @@ async fn set_root_exclusions(
         })?;
         pruned.folders += r.folders;
         pruned.repositories += r.repositories;
-        pruned.projects += r.projects;
+        pruned.workspaces += r.workspaces;
     }
     // Removed entries → re-scan the root so the un-excluded subtree re-indexes.
     if old_excluded.iter().any(|e| !new_list.contains(e)) {

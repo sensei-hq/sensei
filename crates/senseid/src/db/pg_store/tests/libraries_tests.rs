@@ -288,7 +288,7 @@ async fn ensure_test_project_is_namespaced_and_idempotent() {
     let s = pg_store().await;
     let a = s.ensure_test_project("dup-check").await.unwrap();
     let b = s.ensure_test_project("dup-check").await.unwrap();
-    assert_eq!(a, b, "repeated ensure_test_workspace must reuse one row, not create a new one");
+    assert_eq!(a, b, "repeated ensure_test_project must reuse one row, not create a new one");
     let proj = s.get_project(&a).await.unwrap().unwrap();
     assert_eq!(proj["name"], "_test:dup-check", "test projects must be _test:-namespaced");
     s.delete_project(&a).await.ok();

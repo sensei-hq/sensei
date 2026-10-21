@@ -43,10 +43,10 @@ pub async fn connect(
         .tracker_board_owner(kind, &params.base_url, &params.board_ref)
         .await
         .map_err(ConnectError::Db)?;
-    if let Some(owner) = owner.filter(|o| o.project_id != project_id) {
+    if let Some(owner) = owner.filter(|o| o.workspace_id != project_id) {
         return Err(ConnectError::BoardAlreadyConnected {
-            project_id: owner.project_id,
-            project_name: owner.project_name,
+            project_id: owner.workspace_id,
+            project_name: owner.workspace_name,
         });
     }
     let validated = adapter.validate(transport, &params).await.map_err(ConnectError::Validate)?;
@@ -67,7 +67,7 @@ pub async fn connect(
 
     // 3-4. Persist in one transaction; the swap/delete triggers tombstone the old secret.
     let row = NewTracker {
-        project_id,
+        workspace_id: project_id,
         kind: kind.to_string(),
         base_url: params.base_url.clone(),
         account: params.account.clone(),
@@ -85,8 +85,8 @@ pub async fn connect(
                 .map_err(ConnectError::Db)?
                 .ok_or_else(|| ConnectError::Db("board taken, owner not found".into()))?;
             return Err(ConnectError::BoardAlreadyConnected {
-                project_id: owner.project_id,
-                project_name: owner.project_name,
+                project_id: owner.workspace_id,
+                project_name: owner.workspace_name,
             });
         }
         Err(ConnectDbError::PendingTombstoneGone) => {
@@ -406,7 +406,7 @@ pub(crate) mod tests {
         let Ok(pg) = PgStore::connect_test().await else { return };
         let p = project(&pg).await;
         let t = crate::db::pg_store::trackers::NewTracker {
-            project_id: p,
+            workspace_id: p,
             kind: "jira".into(),
             base_url: site(),
             account: "dev@example.com".into(),

@@ -3819,8 +3819,8 @@ type WorldCellRow = (uuid::Uuid, String, uuid::Uuid, String, bool, i64, i64);
 
 #[derive(Debug, Clone)]
 pub struct WorldCell {
-    pub project_id: uuid::Uuid,
-    pub project: String,
+    pub workspace_id: uuid::Uuid,
+    pub workspace: String,
     pub folder_id: uuid::Uuid,
     pub repository: String,
     /// `true` for the test half of a repository. Tests are a PROPERTY of a
@@ -3897,8 +3897,8 @@ impl PgStore {
                     documented,
                 )| {
                     WorldCell {
-                        project_id,
-                        project,
+                        workspace_id: project_id,
+                        workspace: project,
                         folder_id,
                         repository,
                         is_test,
