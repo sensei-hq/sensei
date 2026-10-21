@@ -140,8 +140,7 @@ So the test for a settled decision is not "is there a reason written down" but
 
 ## 2026-07-24 — Auto-buildout decisions locked (P0–P5)
 
-Locked with Dev ahead of the phased unattended build-out. Full context:
-[`history/analysis/2026-07-24-auto-buildout-readiness.md`](history/analysis/2026-07-24-auto-buildout-readiness.md) §4.
+Locked with Dev ahead of the phased unattended build-out.
 
 | Decision | Locked answer | Why / rejected |
 |---|---|---|
@@ -170,8 +169,8 @@ writes the evidence, and waits.
 
 ## 2026-07-25 — Coverage-audit scope calls
 
-Resolved during the mockup/journey/doc/code coverage audit (see
-[`history/features/coverage-map.md`](history/features/coverage-map.md)). These set what gets built next.
+Resolved during the mockup/journey/doc/code coverage audit (current build status
+lives in [`roadmap/README.md`](roadmap/README.md)). These set what gets built next.
 
 | Decision | Locked answer | Why / rejected |
 |---|---|---|

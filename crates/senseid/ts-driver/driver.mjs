@@ -1,5 +1,5 @@
 // sensei's TypeScript / JavaScript / Svelte compiler driver
-// (docs/plan/2026-10-13-indexer-full-call-placement.md).
+// (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
 //
 //   node driver.mjs <project_root> <engines_dir> <output.scip>
 //   node --input-type=module -e "<this file>" <project_root> <engines_dir> <output.scip>

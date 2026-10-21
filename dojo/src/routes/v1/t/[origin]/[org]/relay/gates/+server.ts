@@ -3,7 +3,7 @@
 // scoped to the caller's tenant. Distinct from relay/inbox GET, which is the DAEMON
 // plane (API-key + ?since cursor). relay_inbox is keyed by session_id (no run_id), so
 // we resolve run_id/title from the session for deep-linking. Reply via relay/reply.
-// See docs/plan/relay-engine.md §6.
+// See docs/history/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { asOwner } from '$lib/server/relay-owner';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';

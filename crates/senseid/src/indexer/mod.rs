@@ -7,7 +7,7 @@ pub mod lib_indexer;
 pub mod llms_indexer;
 pub mod placement;
 
-// ── the indexer (docs/design/indexer.md, docs/plans/indexer-sequence.md) ─────
+// ── the indexer (docs/design/indexer.md, docs/spec/indexer/README.md) ───────
 // WIRED, for the languages in `lang::PRODUCTION_LANGUAGES` and no others.
 // `tasks::handlers::process_file` dispatches on that one list: a language on it
 // goes through `pipeline::index_and_persist`, and everything else still falls to

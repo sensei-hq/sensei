@@ -16,7 +16,7 @@ defers to it where they meet.
 
 Every dōjō data call runs as `service_role`, which bypasses RLS. Authorization
 is re-decided in code beside each of 167 calls. That was a recorded beta
-shortcut (`docs/plan/decisions.md`, "Relay RLS": RLS deferred "when multi-user
+shortcut (`docs/history/plan/decisions.md`, "Relay RLS": RLS deferred "when multi-user
 tenants need row isolation"). That trigger is met.
 
 **Decision B (2026-10-08, #236):**

@@ -43,7 +43,7 @@ the compiler BEFORE this ladder runs (`lang::compiler::place_with`, from
 The task layer compiles each project once per state of its sources, in a
 `CompileProjects` task the file tasks wait on, and a file whose project moved
 on since its compile waits for a fresh one rather than being placed against
-stale answers. See `docs/plan/2026-10-13-indexer-full-call-placement.md`.
+stale answers. See `docs/history/plan/2026-10-13-indexer-full-call-placement.md`.
 
 ## 2. Inputs and outputs
 

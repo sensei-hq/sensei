@@ -1,6 +1,6 @@
 //! The Rust adapter's compiler step: rust-analyzer's answers, read through
 //! [`crate::indexer::lang::compiler`], turned into the identities this indexer
-//! mints (docs/plan/2026-10-13-indexer-full-call-placement.md).
+//! mints (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
 //!
 //! A library target (the language's own `core`/`std`/`alloc`, or a dependency)
 //! is named, never opened: a [`Form::Lib`] of the crate and a path written the way Rust

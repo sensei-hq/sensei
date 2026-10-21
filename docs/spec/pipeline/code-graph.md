@@ -674,8 +674,7 @@ AND a.target_name IS NOT DISTINCT FROM b.target_name` — then create the unique
 `DetectCommunities` folder-by-folder.
 
 > **Related churn note.** `version_rescan` re-scans every root on each daemon version bump (an
-> 8.6× indexing amplifier — see
-> [`analysis/2026-08-04-deep-dive/11-regression-churn-lifecycle.md`](../../history/analysis/2026-08-04-deep-dive/11-regression-churn-lifecycle.md)).
+> 8.6× indexing amplifier).
 > Idempotency (this spec) makes those re-scans *safe*; debouncing the trigger so they are also
 > *cheap* is tracked separately.
 

@@ -1,7 +1,7 @@
 # Architecture
 
 > **The HOW — at a design level.** How the layers realise the
-> [requirements](../history/requirements/README.md). Start with this high-level view,
+> [requirements](../prd/README.md). Start with this high-level view,
 > then read the per-layer doc for the part you're changing. Buildable
 > per-screen/per-pipeline contracts live in [`../spec/`](../spec/README.md);
 > this folder owns component boundaries, data flow, and the rationale behind them.

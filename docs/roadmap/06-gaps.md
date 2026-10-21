@@ -2,7 +2,7 @@
 
 The consolidated, IDed list of every known gap across the product — one line,
 its evidence, its priority, and the module it blocks. This replaces the old
-`plan/README.md` G1–G10 numbering and the `production-readiness.md` A–H
+plan gap analysis's G1–G10 numbering and the `production-readiness.md` A–H
 (now `07-quality.md`), which are absorbed here.
 
 > **Status:** the register's full population is **Phase 3** of the reorg

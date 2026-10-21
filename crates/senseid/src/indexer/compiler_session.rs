@@ -1,5 +1,5 @@
 //! THE TASK LAYER'S HALF OF THE COMPILER STEP — the IO an adapter describes and
-//! never performs (docs/plan/2026-10-13-indexer-full-call-placement.md).
+//! never performs (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
 //!
 //! An adapter declares its compiler ([`CompilerEngine`]): how to find the
 //! project a package belongs to, how to compile it, how a resolved symbol becomes

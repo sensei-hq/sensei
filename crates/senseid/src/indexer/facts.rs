@@ -483,7 +483,7 @@ pub enum Reason {
     Unplaced,
     /// The compiler for this file's language was not run over the project the
     /// file belongs to — the engine is missing, or the project was never handed
-    /// to it. Root cause to fix: run it (docs/plan/2026-10-13-indexer-full-call-placement.md).
+    /// to it. Root cause to fix: run it (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
     EngineNotRun,
     /// The compiler read this file and resolved nothing at this call site.
     CompilerNoSymbol,

@@ -89,7 +89,7 @@ fn worker_count() -> usize {
 /// default** — the daemon's control-plane routes (`/hook/*`, `/api/runs*`)
 /// carry no auth, so a non-loopback bind would expose them to LAN-adjacent
 /// hosts (spurious gate prompts / inert run rows — see
-/// `docs/plan/decisions.md`). The app, CLI, and MCP all connect over loopback,
+/// `docs/history/plan/decisions.md`). The app, CLI, and MCP all connect over loopback,
 /// so this is transparent to them. `SENSEI_BIND_HOST` opts into a specific host
 /// (e.g. `0.0.0.0`) for a deliberate non-loopback deployment — which MUST add
 /// route auth first. Returns `(host, is_loopback)`.

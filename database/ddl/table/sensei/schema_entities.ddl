@@ -21,7 +21,7 @@ schema_indexes / schema_refs) its columns, indexes and column-level foreign keys
 - **Why a separate store.** Columns as nodes would multiply the SQL half of the
   graph ~10x and force an embedding decision per column; detail in
   `nodes.props` would bloat every node read to serve one screen. Decision
-  2026-10-08, docs/plan/decisions.md; spec docs/spec/indexer/20-schema-entities.md.
+  2026-10-08, docs/history/plan/decisions.md; spec docs/spec/indexer/20-schema-entities.md.
 - **Who writes it.** `persist::write_schema`, from the dbd importer (a
   `SchemaBatch`) and from ORM extractors (`FileFacts.schema`), in the same
   transaction as the node. A re-index REPLACES an object''s detail.

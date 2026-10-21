@@ -328,7 +328,7 @@ is a missing *prerequisite*: there is no way for a user to mark a repository sha
 
 ## 8a. REVISION — sharing is two questions, and the code answers one
 
-> **Added 2026-08-28**, after `docs/requirements/repository-sharing.md`. This
+> **Added 2026-08-28**, after `docs/history/requirements/repository-sharing.md`. This
 > revises what was already SHIPPED, so it is written as a diff against reality
 > rather than as a plan.
 

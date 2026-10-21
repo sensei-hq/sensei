@@ -1,7 +1,7 @@
 set search_path to sensei, extensions;
 
 -- Which persona each daemon-local Dōjō membership belongs to (#236 step 4,
--- docs/plan/2026-10-12-dojo-device-plane-as-person.md). The daemon's tenant
+-- docs/spec/dojo/access-matrix.md). The daemon's tenant
 -- calls present THAT persona's session, so the dōjō's policies see the person.
 --
 -- Its own table rather than a column on dojo_memberships: an installed daemon

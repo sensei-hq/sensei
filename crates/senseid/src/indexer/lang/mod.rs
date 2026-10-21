@@ -426,7 +426,7 @@ pub trait LanguageAdapter: Send + Sync {
     }
 
     /// The compiler this language's calls are placed through, if it has one
-    /// (docs/plan/2026-10-13-indexer-full-call-placement.md). Declared here and
+    /// (docs/history/plan/2026-10-13-indexer-full-call-placement.md). Declared here and
     /// run by the task layer — the adapter describes it and never runs it.
     fn compiler(&self) -> Option<&'static dyn compiler::CompilerEngine> {
         None

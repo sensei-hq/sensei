@@ -14,10 +14,9 @@ step. The consolidated gap register is [`06-gaps.md`](06-gaps.md); issue-level o
 work is [`../backlog.md`](../backlog.md) (GitHub issues).
 
 > **Status of this file:** the per-module status tables are populated in **Phase 3**
-> of the reorg ([`../reorg.md`](../reorg.md) §13), folding the old
-> `features/coverage-map.md` (now in `../history/features/`) and the
-> `plan/README.md` gap analysis (now in `../history/plan/`). The models below are
-> final now.
+> of the reorg ([`../reorg.md`](../reorg.md) §13), folding the old feature
+> coverage map and the plan gap analysis (both deleted on 2026-10-21; they live
+> in git history). The models below are final now.
 
 ## Status model
 
@@ -87,6 +86,6 @@ priority, and points at the module it blocks.
 
 - [`../prd/README.md`](../prd/README.md) — what we are building (the why).
 - [`../backlog.md`](../backlog.md) — the live open-issue index (GitHub).
-- [`../history/README.md`](../history/README.md) — superseded snapshots that
-  once answered "is it built" (coverage-map, plan, phases).
+- [`../history/README.md`](../history/README.md) — the small archive of
+  superseded documents that live docs still cite.
 - [09 — Dōjō expansion](09-dojo-expansion.md): workspaces, teams and roles authored in the dōjō, dōjō ⇄ sensei sync, integrations, release pipelines and DORA (decisions 2026-10-21).

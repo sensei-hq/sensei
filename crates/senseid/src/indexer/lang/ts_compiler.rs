@@ -1,7 +1,7 @@
 //! The TypeScript, JavaScript and Svelte adapters' compiler step: the
 //! project's own TypeScript checker, run by `ts-driver/driver.mjs`, read
 //! through [`crate::indexer::lang::compiler`] and turned into the identities
-//! this indexer mints (docs/plan/2026-10-13-indexer-full-call-placement.md).
+//! this indexer mints (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
 //!
 //! The driver writes SCIP with three kinds of symbol:
 //! `local <n>` (never a node), `ts <path>:<line>:<name>` (declared in the

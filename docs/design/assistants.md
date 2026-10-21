@@ -67,7 +67,7 @@ docs say what the user sees; this says how connect + observe actually work.
 - `hooks/nudge` — relay-engine phone-nudge path, fired on `PreToolUse` alongside
   `forward`.
 - `hooks/gate.ts` (mods module, #238) — the relay-engine **control channel**
-  (feature B, `docs/plan/relay-engine.md` §5): a `tool.check` hook that POSTs the
+  (feature B, `docs/history/plan/relay-engine.md` §5): a `tool.check` hook that POSTs the
   call to daemon `/hook/gate`, which may raise it to the phone as a gate-card and
   hold it (bounded by the daemon, ~50 s) for a human answer. **Opt-in** through
   the plugin's `relayGate` option, off by default; `SENSEI_RELAY_GATE_TOOLS`
@@ -107,7 +107,7 @@ docs say what the user sees; this says how connect + observe actually work.
   the live stdio JSON-RPC connection loop itself (`agent-client-protocol` 1.x's
   client side is a builder/actor runtime, not a simple handler trait, so it
   isn't unit-testable yet; the pure mapping ships now, the loop lands in
-  P5.2b). See `../plan/relay-engine.md`.
+  P5.2b). See `../history/plan/relay-engine.md`.
 - `relay_drivers/trait_def.rs` (`RunDriver`, `DriveCapability`) is the seam:
   `ClaudeDriver` and `AcpObserveDriver` both implement it; adding a new
   ACP-speaking assistant needs no new trait, only a new driver behind the same

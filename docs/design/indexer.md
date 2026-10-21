@@ -5,8 +5,8 @@ Status: SPECIFICATION. Nothing here is implemented.
 This states what the indexer must do. It is written to be buildable and
 testable without reference to any prior implementation. Why a rewrite was
 chosen, and the measured defects that led to it, are in
-`docs/analysis/graph-coverage-gaps.md` and
-`docs/analysis/graph-recovery-plan.md`. They are not repeated here.
+`docs/history/analysis/graph-coverage-gaps.md` and
+`docs/history/analysis/graph-recovery-plan.md`. They are not repeated here.
 
 ## 1. Purpose
 
@@ -313,7 +313,7 @@ becomes a node or an edge. (Revised 2026-10-13. It used to say "never opened",
 and that ruled out the only thing that can tell WHICH member a call reaches:
 a language's compiler reads a dependency's declarations to type
 `x.unwrap()`. Reading them to resolve a call is allowed; walking them into the
-graph is not. See §5 and `docs/plan/2026-10-13-indexer-full-call-placement.md`.)
+graph is not. See §5 and `docs/history/plan/2026-10-13-indexer-full-call-placement.md`.)
 
 **R6. Order independence.** Indexing the same files in any order produces the
 same graph. Resolution must not depend on what has been scanned so far.
@@ -714,7 +714,7 @@ edge at all — it names no declaration. Imports stay with the ladder. The
 deferrals below still describe the LADDER, which remains the resolver for
 languages with no engine. The floor — no language, package or edge kind below
 90% — is `indexer::quality::placement`, run nightly; the measured numbers are
-in `docs/reports/2026-10-13-placement.md`.
+in `docs/history/reports/2026-10-13-placement.md`.
 
 These are not in this pass. They are NOT ruled out, and the difference
 matters: a capability declared impossible gets designed around, and the design
@@ -1704,8 +1704,9 @@ reliable, and they are what actually define package boundaries inside one repo
 ## 7h. ALL DDL happens ONCE, in stage 0, before any indexer code
 
 Two plans disagreed about this and the disagreement was not cosmetic.
-`docs/plans/indexer-rust-superseded.md` deferred every schema change to its
-step 9, at the END. `docs/plans/indexer-sequence.md` — the master plan — puts
+The superseded Rust-indexer plan deferred every schema change to its
+step 9, at the END. The master sequence plan (now
+[`docs/spec/indexer/README.md`](../spec/indexer/README.md)) puts
 the files migration at stage 0, at the START. **Stage 0 wins, and it takes ALL
 the DDL with it.**
 

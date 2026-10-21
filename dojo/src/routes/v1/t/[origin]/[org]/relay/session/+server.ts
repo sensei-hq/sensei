@@ -1,7 +1,7 @@
 // GET/POST /v1/t/{origin}/{org}/relay/session — a run's filtered status snapshot.
 // POST = the daemon publishing status (as the person — #236 step 4; upsert by
 // run_id); GET = the
-// phone/console reading it (Supabase-JWT plane). See docs/plan/relay-engine.md §6.
+// phone/console reading it (Supabase-JWT plane). See docs/history/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { asOwner } from '$lib/server/relay-owner';

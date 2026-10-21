@@ -1,7 +1,7 @@
 // POST/GET /v1/t/{origin}/{org}/relay/inbox — the daemon raises gate/decision/
 // chat/nudge/stall rows and polls them back by a monotonic seq cursor. Both the
 // daemon, as the person (#236 step 4). The seq trigger
-// (dojo.relay_inbox_bump_seq) re-surfaces a row whenever it's answered. See docs/plan/relay-engine.md §4/§6.
+// (dojo.relay_inbox_bump_seq) re-surfaces a row whenever it's answered. See docs/history/plan/relay-engine.md §4/§6.
 import type { RequestHandler } from './$types';
 import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantCaller, apiError, ACCESS } from '$lib/server/dojo-auth';

@@ -84,7 +84,7 @@ pub enum TaskKind {
     /// fans out one [`TaskKind::ProcessFile`] each.
     ProcessRepoFiles,
     /// Compile a repository's projects through each language's compiler, ONCE
-    /// per scan, ahead of its file tasks (docs/plan/2026-10-13-indexer-full-call-placement.md).
+    /// per scan, ahead of its file tasks (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
     /// Its own task because a compile runs for minutes: inside a file task the
     /// watchdog abandoned it, dropping the compile, and the next file restarted
     /// it — for ever. Every `ProcessFile` of the scan is `blocked_by` it.

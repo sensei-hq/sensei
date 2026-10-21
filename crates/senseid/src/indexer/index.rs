@@ -401,7 +401,7 @@ pub struct FileInput<'a> {
     /// (`OnMiss::CreateStub`).
     pub world: &'a World<'a>,
     /// **WHAT THE LANGUAGE'S COMPILER SAID**, when the task layer compiled this
-    /// file's project (docs/plan/2026-10-13-indexer-full-call-placement.md).
+    /// file's project (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
     /// For a language whose adapter declares an engine, `None` means every call
     /// in the file is `engine_not_run` — a visible root cause, never the walk's
     /// placement standing in.

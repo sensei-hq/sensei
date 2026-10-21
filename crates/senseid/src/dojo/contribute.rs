@@ -1735,7 +1735,7 @@ mod nothing_generalised_is_nothing_shareable {
         // Pinning a KNOWN LIMIT, not endorsing it: the refusal happens before
         // `build_artifact_for_target`, so unlike `HeldResidualRisk` it writes no
         // outbox row and leaves no durable trace — it is reported in the outcome
-        // only. Parked in docs/plan/decisions.md.
+        // only. Parked in docs/history/plan/decisions.md.
         assert!(obx.states.lock().unwrap().is_empty(), "no artifact was built, so no outbox row");
     }
 

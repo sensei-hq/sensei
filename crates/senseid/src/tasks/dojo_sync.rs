@@ -24,7 +24,7 @@
 //!
 //! # Who decides that a repository syncs
 //!
-//! Two questions, not one (`docs/requirements/repository-sharing.md`):
+//! Two questions, not one (`docs/history/requirements/repository-sharing.md`):
 //! **entitlement** — may it? — and **election** — did whoever holds authority
 //! choose it? The dōjō answers both, in `dojo.all_my_repositories`, and hands the
 //! daemon the conjunction as `plan.allowed`.

@@ -6,7 +6,7 @@ set search_path to dojo, extensions;
 -- the F6 verify re-own). One membership → exactly one (user_id, tenant_id), so
 -- the membership is the single, live ownership reference; RLS on relay_sessions /
 -- relay_inbox / relay_segments all call this. See
--- docs/design/2026-07-27-dojo-relay-rls-membership-function.md.
+-- docs/history/design/2026-07-27-dojo-relay-rls-membership-function.md.
 --
 -- STABLE            → the planner evaluates it once per statement (initplan), not
 --                     per row.

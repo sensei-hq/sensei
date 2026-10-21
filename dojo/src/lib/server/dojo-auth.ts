@@ -177,7 +177,7 @@ export async function resolveTenantAccess(
 /**
  * The daemon's tenant calls (relay, artifacts, rules): the signed-in person's
  * session, presented as `Authorization: Bearer <jwt>` (#236 step 4,
- * docs/history/plan/2026-10-12-dojo-device-plane-as-person.md). Only the header
+ * docs/spec/dojo/access-matrix.md). Only the header
  * counts — a browser cookie session does not reach the daemon's routes. Any
  * other bearer, a retired device token included, fails verification: 401.
  */

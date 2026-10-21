@@ -8,8 +8,8 @@
 - Status: **PARTIAL** — the two-panel master-detail is built and reads REAL `/v1` relay data, but (a) it filters ONE tenant not user-wide (canon violation), (b) the list rail has no plan-pips / repo / realtime, (c) the ask card is the old `RelayGateCard`, not the mockup `AskCard`.
 
 > **Do not duplicate — align + fill gaps.** Two pending plans already own most of this screen:
-> `docs/plan/2026-07-27-dojo-inbox-mockup-fidelity.md` (element→data for the EXISTING single-tenant
-> flow, no model change) and `docs/design/2026-07-27-dojo-relay-rls-membership-function.md`
+> `docs/history/plan/2026-07-27-dojo-inbox-mockup-fidelity.md` (element→data for the EXISTING single-tenant
+> flow, no model change) and `docs/history/design/2026-07-27-dojo-relay-rls-membership-function.md`
 > (the membership-derived RLS + user-wide read that makes it canon-correct). This spec references
 > both, does not restate their tables, and adds only what they leave open (access-axis correction,
 > AskCard fidelity, gate↔task linkage, conversation/pause/observatory, list-rail realtime).

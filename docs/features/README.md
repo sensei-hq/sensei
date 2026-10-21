@@ -10,8 +10,7 @@ The feature index for sensei. Each bullet below becomes its own feature doc
 mockup-ref; the cross-feature modules & layers live in [`../design/`](../design/)).
 Who each feature serves is in [`../prd/03-personas.md`](../prd/03-personas.md).
 
-> **Status of record moved (docs reorg 2026-10-13) → [`../roadmap/`](../roadmap/README.md).** The
-> legacy snapshot is [`../history/features/coverage-map.md`](../history/features/coverage-map.md).
+> **Status of record moved (docs reorg 2026-10-13) → [`../roadmap/`](../roadmap/README.md).**
 > The `[x]/[~]/[ ]` markers below and the per-feature status tables predate the 2026-07-24/25 build wave
 > (governance injection, rule packs + ponytail pack, stance + autonomy gate, Tier-3
 > billing + seats + console wire, the coverage audit, and the D-EXEC-TEAM design). Treat

@@ -5,9 +5,9 @@ Observatory (M15), workspace window (M16), Atlas (M17), instruments (M18),
 insights/impact (M19), planner (M20), relay (M21), agentic execution (M22).
 Status legend: [`README.md`](README.md).
 
-> Per-module statuses are filled in Phase 3 from the legacy coverage map
-> (`../history/features/coverage-map.md`) and the plan gap analysis
-> (`../history/plan/`). Structure is final.
+> Per-module statuses are filled in Phase 3 from the legacy coverage map and the
+> plan gap analysis (both deleted on 2026-10-21; they live in git history).
+> Structure is final.
 
 | ID | Module | One-line "done" | Status |
 |---|---|---|---|

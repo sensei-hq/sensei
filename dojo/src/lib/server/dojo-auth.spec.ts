@@ -175,7 +175,7 @@ describe('resolveCaller — user-wide JWT identity (no tenant, no role floor)', 
 });
 
 // The daemon's tenant routes accept the person's session only (#236 step 4,
-// docs/history/plan/2026-10-12-dojo-device-plane-as-person.md).
+// docs/spec/dojo/access-matrix.md).
 // The bearer's SHAPE picks the path; it is never a fallback from one to the other.
 const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1MSJ9.c2lnbmF0dXJl';
 function bearer(token: string): Request {

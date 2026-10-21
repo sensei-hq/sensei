@@ -217,10 +217,8 @@ modules. A pair with a static edge between the two modules is not hidden couplin
 - [spec/pipeline/code-graph](../../../../spec/pipeline/code-graph.md) — the six fixes D1–D6,
   target + worker invariants, depth ledger (legacy depth, folds here).
 - [analysis/2026-08-04-deep-dive/10-graph-indexing-regression](../../../../history/analysis/2026-08-04-deep-dive/10-graph-indexing-regression.md) — the measured regression.
-- [history/blueprints/2026-08-06-code-graph-meaningful.md](../../../../history/blueprints/2026-08-06-code-graph-meaningful.md) — Fix 1/2/3/4 blueprint.
 - [history/analysis/2026-08-05-indexer-capability-coverage.md](../../../../history/analysis/2026-08-05-indexer-capability-coverage.md) — capability audit (patterns/search/traceability).
-- [history/analysis/2026-09-29-architecture-metrics-and-visuals.md](../../../../history/analysis/2026-09-29-architecture-metrics-and-visuals.md) — architecture metrics unlocked by graph fixes.
-- [history/analysis/2026-09-27-entity-graph-feasibility.md](../../../../history/analysis/2026-09-27-entity-graph-feasibility.md) — schema entities in the graph.
+- [08-metrics-and-health](../../02-insight/08-metrics-and-health/README.md) — the architecture metric family unlocked by graph fixes.
 - [spec/indexer/20-schema-entities](../../../../spec/indexer/20-schema-entities.md) — node/edge/kinds detail.
 - [17-code-map](../../03-delivery/17-code-map/README.md) — the view over this graph;
   consumes file roles, Fix 2 and co-change.

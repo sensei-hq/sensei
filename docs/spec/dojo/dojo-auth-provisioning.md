@@ -894,7 +894,7 @@ namespace governs billability.**
 
 > **CORRECTED 2026-08-28 — this was only half the gate.** Everything below
 > answers *may this sync?* Nothing here answers *did anyone choose to?*, and the
-> two are independent. See `docs/requirements/repository-sharing.md`.
+> two are independent. See `docs/history/requirements/repository-sharing.md`.
 
 **Two questions, both required.** A repository syncs only when entitlement AND
 election both say yes.

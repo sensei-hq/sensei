@@ -1,7 +1,7 @@
 //! **THE PLACEMENT FLOOR** — how many of this repository's calls and references
 //! the production path places, by language, package and edge kind, and the
 //! floor none of them may fall below
-//! (docs/plan/2026-10-13-indexer-full-call-placement.md).
+//! (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
 //!
 //! Measured the way production places them, not a model of it: the files the
 //! repository walk finds and its linguist marks keep, each package's project

@@ -39,7 +39,7 @@ pub struct DojoClient {
 
 /// What a membership's tenant calls present: the person's session, the only
 /// credential the dōjō accepts (#236 step 4,
-/// docs/history/plan/2026-10-12-dojo-device-plane-as-person.md).
+/// docs/spec/dojo/access-matrix.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TenantCredential {
     /// The persona's session — minted fresh per call from its Keychain slot.

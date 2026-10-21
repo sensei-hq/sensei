@@ -7,6 +7,11 @@ status: agreed — decisions folded 2026-10-13
 
 # Docs reorg — step 1 proposal (agreed)
 
+> **Note (2026-10-21):** most of the files this doc moves into `docs/history/`
+> were later deleted at the user's request and live in git history
+> (`git log --diff-filter=D --name-only -- docs/history`); see
+> [`history/README.md`](history/README.md) for the few that remain.
+
 > **Agreed 2026-10-13.** The structure below is signed off and the open
 > questions are answered (§16). No PRD or roadmap documents have been written
 > yet — execution is phased (§13): Phase 1 scaffolds the tree, then module

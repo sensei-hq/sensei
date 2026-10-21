@@ -49,7 +49,7 @@ create policy relay_sessions_select_own
     using (dojo.owns_membership(membership_id));
 
 -- The daemon's writes, as the signed-in person (#236 step 4,
--- docs/plan/2026-10-12-dojo-device-plane-as-person.md): a person's daemon
+-- docs/spec/dojo/access-matrix.md): a person's daemon
 -- publishes their run on a membership they own. The route upserts on
 -- (membership_id, run_id), and PostgREST's upsert sets every posted column on
 -- conflict — so both keys are in the UPDATE grant, and the with-check keeps the

@@ -2,7 +2,7 @@
 // (Execution → Segment → Item). POST = the daemon publishing the outline
 // (as the person — #236 step 4; upsert by session+seq); GET = the phone reading it
 // (Supabase-JWT plane). The per-segment review verdicts are phone-owned and NOT
-// touched by the daemon publish. See docs/plan/relay-engine.md §6.
+// touched by the daemon publish. See docs/history/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { asOwner } from '$lib/server/relay-owner';
 import { callerDb } from '$lib/server/caller-db';

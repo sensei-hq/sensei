@@ -6,7 +6,7 @@
 >
 > **Structure (reorg 2026-10-13, [`reorg.md`](reorg.md)):** what we're building
 > (`prd/`), where we are (`roadmap/`), how it's built (`architecture/`), what it
-> looks like (`mockups/`), and everything that was superseded (`history/`).
+> looks like (`mockups/`), and the few superseded docs live docs still cite (`history/`).
 
 ## The four doors
 
@@ -26,7 +26,7 @@ one is the bug.
 - [`backlog.md`](backlog.md) — **open work, as live GitHub issue references.** Start here for what's being worked.
 - [`decisions.md`](decisions.md) — the decision log.
 - [`reorg.md`](reorg.md) — the 2026-10-13 reorg proposal (agreed): target tree, gap register, migration phasing.
-- [`history/`](history/README.md) — superseded docs and dated snapshots (nothing is deleted).
+- [`history/`](history/README.md) — the few superseded docs live docs still cite; everything else was deleted on 2026-10-21 and lives in git history.
 
 ## The module map in one line
 

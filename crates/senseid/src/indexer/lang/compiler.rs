@@ -1,5 +1,5 @@
 //! What a language's COMPILER says each name in a file refers to — read from the
-//! SCIP index it emits (docs/plan/2026-10-13-indexer-full-call-placement.md).
+//! SCIP index it emits (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
 //!
 //! The AST walk knows a call's FORM (`listener.local_addr().unwrap()`); the
 //! compiler knows its MEANING (`core … Result<T, E>::unwrap`). An adapter that has

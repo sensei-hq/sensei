@@ -16,8 +16,8 @@ This composes with — and does not replace — three existing modules:
 orchestrator), [`assistants.md`](assistants.md) (ACP adapters, the `RunDriver`
 contract, MCP `infer`/`consensus`/`embed`), and [`playbook.md`](playbook.md) (typed
 chunks + `classified_by`/`model_fallback` outcome attribution). It is the concrete
-design for the [heterogeneous-execution-router note](../history/plan/2026-07-19-heterogeneous-execution-router.md)
-(status there: *design note — NOT planned*), pulled forward into a phased build.
+design for the heterogeneous-execution-router note (a *design note — NOT planned*;
+deleted 2026-10-21, in git history), pulled forward into a phased build.
 
 > Grounding convention: every claim below is tagged **EXISTS** (built + wired today)
 > or **BUILD** (net-new). File refs are `crate/file` or `path:line`.
@@ -57,7 +57,7 @@ is worth building rather than just installing superpowers:
 4. **Heterogeneous models** — local + cloud, not Claude-only. **This doc's subject.** **BUILD**.
 
 The coordinator is deliberately "orchestration of capabilities sensei already has"
-(`docs/plan/operating-model.md` §"the vision is orchestration") — not a new runtime.
+(`docs/history/plan/operating-model.md` §"the vision is orchestration") — not a new runtime.
 
 ---
 

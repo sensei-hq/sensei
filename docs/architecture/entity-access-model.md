@@ -87,7 +87,7 @@ stripped). **No opt-out; applies to ALL work, not just client** — because all 
 
 - New RLS / query / table comment: state the surface's axis using §3; if personal work, key off
   the membership (§ the `owns_membership` primitive in
-  `docs/design/2026-07-27-dojo-relay-rls-membership-function.md`), not `tenant_id`.
+  `docs/history/design/2026-07-27-dojo-relay-rls-membership-function.md`), not `tenant_id`.
 - Conflicting older comments (e.g. `tenants.ddl`) should be updated to defer here as they are
   touched.
 - Related: [[reference_sensei_user_primary_model]].

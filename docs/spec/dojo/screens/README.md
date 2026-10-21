@@ -3,7 +3,7 @@
 One spec per screen in this folder (21 screens), each keyed to its mockup component
 (`docs/mockups/Sensei/lib/dojo2/dojo2-app.jsx`), tracing every bound field to a real source and
 marking status. Canonical model: `docs/architecture/entity-access-model.md`. Conflict/impact list:
-`docs/plan/2026-07-27-data-model-fix-impact-register.md`.
+`docs/history/plan/2026-07-27-data-model-fix-impact-register.md`.
 
 ## Spec convention — three-layer state pattern (added 2026-07-28)
 

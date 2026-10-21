@@ -1,5 +1,5 @@
 // The daemon's relay calls run AS THE PERSON (#236 step 4,
-// docs/history/plan/2026-10-12-dojo-device-plane-as-person.md).
+// docs/spec/dojo/access-matrix.md).
 //
 // POST session / segments / inbox and GET inbox resolve the caller through
 // resolveTenantCaller: the relay rows (and the run's project) are read and

@@ -329,6 +329,4 @@ heatmap, the health dial) is a follow-up once db + api + tasks land.
 - [[features/metrics]] · [[features/metrics/catalog]] · [[pipeline/ftr]] (FTR
   source moves here) · [[pipeline/impact]] (unaffected — `measure_verdicts` reads
   `sessions.ftr` inline; that doc is stale, separate fix) ·
-  [[pipeline/signals]] · [[pipeline/analyzer]] (scheduler sibling) ·
-  [[analysis/2026-08-04-metrics-catalog]] ·
-  [[blueprints/2026-08-06-project-quality-metrics]] (per-module quality family)
+  [[pipeline/signals]] · [[pipeline/analyzer]] (scheduler sibling)

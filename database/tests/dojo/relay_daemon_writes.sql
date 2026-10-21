@@ -1,5 +1,5 @@
 -- The daemon's relay writes, as the signed-in person (#236 step 4,
--- docs/plan/2026-10-12-dojo-device-plane-as-person.md).
+-- docs/spec/dojo/access-matrix.md).
 --
 -- A person's daemon presents THEIR session: it publishes their run (a
 -- relay_sessions upsert on the (membership, run) key), the run's outline (a

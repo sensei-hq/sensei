@@ -4,9 +4,9 @@ Observation → understanding: analyzer (M7), metrics/health (M8), memory (M9),
 patterns (M10), traceability (M11), libraries (M12), governance (M13). Status
 legend: [`README.md`](README.md).
 
-> Per-module statuses are filled in Phase 3 from the legacy coverage map
-> (`../history/features/coverage-map.md`) and the plan gap analysis
-> (`../history/plan/`). Structure is final.
+> Per-module statuses are filled in Phase 3 from the legacy coverage map and the
+> plan gap analysis (both deleted on 2026-10-21; they live in git history).
+> Structure is final.
 
 | ID | Module | One-line "done" | Status |
 |---|---|---|---|

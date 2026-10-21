@@ -59,8 +59,9 @@ impl Default for WatchdogConfig {
     /// `stale_after` governs the *stalled* run's daemon-crash ladder and **MUST
     /// exceed the 600s (`DRIVE_TIMEOUT`) agent-drive cap** so a legitimately
     /// in-flight drive step is never escalated mid-step. (Enabling `drive` with a
-    /// sub-600s progress window would false-stall long steps — see
-    /// `docs/analysis/2026-07-24-relay-stall-signal.md`; drive stays OFF for now.)
+    /// sub-600s progress window would false-stall long steps, because a single
+    /// drive step can legitimately run silent for up to `DRIVE_TIMEOUT`; drive
+    /// stays OFF for now.)
     fn default() -> Self {
         Self {
             progress_stale_after: std::time::Duration::from_secs(300),

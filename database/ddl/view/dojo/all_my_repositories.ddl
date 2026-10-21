@@ -51,7 +51,7 @@ set search_path to dojo, extensions;
 -- carry that risk: dojo.my_repositories() pins the principal to the caller.
 --
 -- See docs/spec/dojo/daemon-sync.md §8a/§8b/§8c and
--- docs/requirements/repository-sharing.md.
+-- docs/history/requirements/repository-sharing.md.
 --
 -- REPLACED, not dropped. This file once dropped and recreated the view, because
 -- `create or replace view` cannot rename `visibility` → `forge_visibility` nor

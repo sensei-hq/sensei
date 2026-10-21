@@ -1,8 +1,7 @@
 // DELETE /v1/t/{origin}/{org}/rules/{id} — tombstone (retract) a shared rule.
 // The in-Worker port of dojo-mind's `retract_rule` (api.rs): maintainer+
 // (`resolveTenantCaller` — the person's session, #236 step 4), status → tombstoned, audit-stamped. 204 on success,
-// 404 when no active row matched (unknown id / already tombstoned). See
-// docs/plan/2026-07-23-retire-dojo-mind.md.
+// 404 when no active row matched (unknown id / already tombstoned).
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { callerDb } from '$lib/server/caller-db';
