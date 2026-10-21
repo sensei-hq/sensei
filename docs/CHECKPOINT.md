@@ -7,25 +7,25 @@
   and went exactly as rehearsed, and `dbd diff` is in sync. The Worker serves 0.16.0 (gitSha e62764f). #315 closed.
   The scratch prod copy is dropped; the user's dump file is kept.
 - #312 built (4fcea9de, D28): an unanswered hard-block in an unattended run is denied. Live proof comes with the next release.
-- Placement floor (nightly, red since 10-19): @sensei/glyphs fixed (5981faab, tsconfig — ES5 had no Set).
+- Placement floor (nightly, red since 10-19): @sensei/glyphs (5981faab, tsconfig: ES5 had no Set) and
+  @sensei/marketplace (356ce9a0, vendored engine `claude-code` types — user decision; `make plugin-types src=…`
+  refreshes them). Local floor passes; CI re-run dispatched on develop (run 39676172084).
+- #313 closed (6dad1e33): grant changes audited in-transaction; a viewer reads no one else (SQL-pinned). Verified live
+  on the local dōjō through the API (2 audit rows for 4 calls).
 
 **Remaining:**
-- **Placement floor: @sensei/marketplace** (plugin hooks at 37% / 26%). Its `$` comes from the engine's `claude-code` types,
-  which the repo does not carry. Waits on the user's decision (see Open questions).
-- #313: audit rows for viewer grant/revoke/remove/team-grant (inside the SECURITY DEFINER functions, into
-  dojo.audit_events) + SQL tests pinning that a viewer reads no person-keyed row. Export / first open come with the viewer shell.
+- Confirm the placement floor's CI re-run is green.
 - #314 (user steps: enrol the daemon with production, prod URL env, VAPID + Worker secrets, phone test).
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
+- Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** #313 — write database/tests/dojo/viewer_audit.sql (red), then the audit inserts.
+**Next command:** check run 39676172084; then #307 R2b (page URLs and words) — read roadmap/09 R2b first.
 
 **Open questions:**
-- Marketplace plugin types: vendor the engine's `claude-code` declarations into the plugin (recommended), hand-write the
-  subset it uses, or exclude the package from the floor (documented in the backlog)?
 - Client scope as a governance level: retire it (recommended)?
 - Carried: #289, #149, #133, #282, #194.
 
 **Known-broken / pending:**
-- Nightly placement floor red until the marketplace question is settled. qlty is out of billing minutes, and the
+- qlty is out of billing minutes, and the
   Cloudflare "Workers Builds: dojo" preview check fails; the production deploy works.
 - Keychain approval needed after every daemon reinstall (#283 until #282).
