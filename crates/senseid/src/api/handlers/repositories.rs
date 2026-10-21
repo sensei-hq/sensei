@@ -23,39 +23,10 @@ use axum::{
 };
 
 use crate::api::handlers::err;
+use crate::api::origin_guard::origin_may_mutate;
 use crate::api::state::AppState;
 
 type ApiError = (StatusCode, Json<serde_json::Value>);
-
-/// Origins allowed to flip the sharing gate from a browser.
-///
-/// The daemon serves `CorsLayer::allow_origin(Any)` — deliberately, because the
-/// desktop app is itself cross-origin and Safari rejects wildcard method/header
-/// lists. That is tolerable for reads. It is NOT tolerable for this route, whose
-/// effect is to start sending a repository's metrics off the machine: any page the
-/// user visits could `fetch(...)` it, flip the gate, and read the reply — which
-/// doubles as an inventory oracle over their local repositories. Verified live
-/// against the running daemon before this guard existed.
-const ALLOWED_ORIGINS: &[&str] = &[
-    // Bundled desktop app (Tauri).
-    "tauri://localhost",
-    // `devUrl` from app/src-tauri/tauri.conf.json, both host spellings.
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-];
-
-/// Whether a caller may mutate, judged only by `Origin`.
-///
-/// **No `Origin` header means ALLOW.** That is not a loophole: browsers always
-/// send `Origin` on a cross-origin request, and the daemon's non-browser clients
-/// — the CLI, the MCP server, hooks, `curl` — send none. A forged absence buys an
-/// attacker nothing, because the attack requires a browser to make the request.
-fn origin_may_mutate(headers: &HeaderMap) -> bool {
-    match headers.get(axum::http::header::ORIGIN) {
-        None => true,
-        Some(o) => o.to_str().map(|o| ALLOWED_ORIGINS.contains(&o)).unwrap_or(false),
-    }
-}
 
 /// The legal values, owned by `sensei.repo_visibility`.
 ///

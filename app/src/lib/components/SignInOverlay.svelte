@@ -10,14 +10,13 @@
   // Dismissible on purpose. An expired credential stops syncing; it does not
   // stop sensei, so blocking the app behind it would be out of proportion.
   //
-  // Follows the modal idiom already in `logs/+page.svelte`: `--scrim` backdrop,
-  // click-outside and Escape to close, `tabindex="-1"` so the container can
-  // receive the key. If a third modal appears this shell should be extracted
-  // rather than copied a third time.
+  // The modal behaviour (scrim, Escape, click-outside, focus in, kept in and
+  // given back) is ModalShell's.
   //
   // PRESENTATIONAL. The list, the per-row action and the busy state come from
   // personas.svelte.ts; this renders them and reports clicks upward.
   import type { PersonaWire } from '$lib/personas.svelte.js';
+  import ModalShell from './ModalShell.svelte';
   import SignInPending from './SignInPending.svelte';
 
   interface Props {
@@ -54,57 +53,9 @@
   /** A row needs the user when it is not merely healthy. */
   const needsUser = (p: PersonaWire) => p.action === 'signIn' || p.action === 'connect';
 
-  let card = $state<HTMLElement | null>(null);
-  let restoreTo: HTMLElement | null = null;
-
-  // Move focus INTO the dialog when it opens, and put it back on close.
-  //
-  // Not decoration. Escape is handled on the container, so without this the key
-  // event goes to whatever had focus behind the overlay and the dialog cannot be
-  // dismissed by keyboard at all — caught by the e2e run, not by the unit tests,
-  // which dispatched the event directly onto the element and so never exercised
-  // the real path.
-  //
-  // It is also the correct modal behaviour: focus must not remain on content the
-  // user can no longer see or reach.
-  $effect(() => {
-    if (open && card) {
-      restoreTo = document.activeElement as HTMLElement | null;
-      // The first control if there is one, so a keyboard user can act
-      // immediately; otherwise the card itself, which still receives Escape.
-      const first = card.querySelector<HTMLElement>('button:not([disabled])');
-      (first ?? card).focus();
-      return;
-    }
-    // Closing: hand focus back where it was, rather than dropping it on <body>
-    // and leaving the next Tab to start from the top of the app.
-    if (!open && restoreTo) {
-      restoreTo.focus();
-      restoreTo = null;
-    }
-  });
 </script>
 
-{#if open}
-  <div
-    data-component="sign-in-overlay"
-    class="sign-in-scrim fixed inset-0 z-30 flex items-center justify-center p-6"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="sign-in-overlay-title"
-    tabindex="-1"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) onClose?.();
-    }}
-    onkeydown={(e) => {
-      if (e.key === 'Escape') onClose?.();
-    }}
-  >
-    <div
-      bind:this={card}
-      tabindex="-1"
-      class="sign-in-card flex w-full max-w-md flex-col gap-4 rounded-xl border border-paper-edge bg-paper-soft p-6 outline-none"
-    >
+<ModalShell {open} component="sign-in-overlay" labelledBy="sign-in-overlay-title" {onClose}>
       <header class="flex flex-col gap-1">
         <h2 id="sign-in-overlay-title" class="font-heading text-base text-ink">Identities</h2>
         <p class="text-xs text-ink-soft">
@@ -175,16 +126,4 @@
           Close
         </button>
       </footer>
-    </div>
-  </div>
-{/if}
-
-<style>
-  /* Same scrim and shadow tokens the logs modal uses — no hardcoded rgba. */
-  .sign-in-scrim {
-    background: var(--scrim);
-  }
-  .sign-in-card {
-    box-shadow: 0 24px 60px color-mix(in oklch, var(--shadow-tint) 40%, transparent);
-  }
-</style>
+</ModalShell>

@@ -48,6 +48,7 @@ pub mod schema_deploy;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod ticker;
+pub mod tracker_sync;
 pub mod transcript_scheduler;
 pub mod verdict_classifier;
 pub mod version_rescan;
@@ -138,6 +139,9 @@ pub enum TaskKind {
     /// per-commit children would put N test suites on the machine at once. The
     /// serial loop inside one task is the concurrency control.
     BackfillCoverage,
+    /// Fetch tickets a tracker's board has but sensei hasn't synced yet, named in
+    /// newly ingested sessions, and link them (tracker spec R11). `path` = tracker id.
+    TrackerDiscover,
     /// Global: cluster recurring corrective prompts across all projects into
     /// inference.corrections (analyzer #65 step 5). Enqueued once per scheduler tick.
     AggregateCorrections,
@@ -327,6 +331,7 @@ impl TaskKind {
         Self::ComputeGroupMetrics,
         Self::ComputeHealth,
         Self::BackfillCoverage,
+        Self::TrackerDiscover,
         Self::MeasureVerdicts,
         Self::ClassifyPendingVerdicts,
         Self::AggregateCorrections,
@@ -585,6 +590,14 @@ impl TaskKind {
                 pipeline: Pipeline::Metrics,
                 stage: Stage::Ingest,
                 budget_secs: 7200,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::TrackerDiscover => KindInfo {
+                name: "tracker_discover",
+                pipeline: Pipeline::Activity,
+                stage: Stage::Ingest,
+                budget_secs: 180,
                 high_priority: false,
                 retryable: false,
             },
@@ -1106,7 +1119,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "a kind appears twice in ALL");
-        assert_eq!(total, 40, "ALL is missing a kind — add it beside its info() arm");
+        assert_eq!(total, 41, "ALL is missing a kind — add it beside its info() arm");
     }
 
     #[test]

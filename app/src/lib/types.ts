@@ -2137,6 +2137,120 @@ export interface PruneResult {
   pruned: PruneReport;
 }
 
+// ── Issue trackers (docs/spec/daemon/tracker-jira-linkage.md R8, R9) ─────────
+
+/** A project's tracker connection as `GET /api/projects/{id}/trackers` returns
+ *  it. Never the token, never the keyring name. */
+export interface TrackerConnection {
+  id: string;
+  kind: 'jira';
+  /** Normalised by the daemon, e.g. `https://acme.atlassian.net`. */
+  base_url: string;
+  /** The account the token belongs to (Jira: the Atlassian email). */
+  account: string;
+  /** Jira project key, or the board name for a cross-project board. */
+  external_scope: string;
+  board_ref: string;
+  board_name: string | null;
+  status: 'pending' | 'connected' | 'stale' | 'error';
+  last_success_at: string | null;
+  /** A fixed `tracker_error` code, never a raw message. */
+  last_error: string | null;
+  counts: { tasks: number; sprints: number };
+}
+
+/** What `POST …/trackers/sync` counted. */
+export interface TrackerSyncCounts {
+  sprints: number;
+  tasks: number;
+  removed: number;
+  links: number;
+  skipped_members: number;
+}
+
+/** R7 usage of a set of sessions. A sum over no known values is `null` (never
+ *  0); every sum carries the count it summed (`_n`). */
+export interface TrackerUsage {
+  sessions: number;
+  by_source: { branch: number; prompt: number };
+  /** Sessions in the set linked to two or more of the tracker's tickets. */
+  shared: number;
+  active_secs: number | null;
+  active_n: number;
+  tokens_fresh: number | null;
+  tokens_fresh_n: number;
+  cache_read: number | null;
+  cache_read_n: number;
+  cache_write: number | null;
+  cache_write_n: number;
+  tokens_out: number | null;
+  tokens_out_n: number;
+  tokens_reasoning: number | null;
+  tokens_reasoning_n: number;
+  metered_cost: number | null;
+  metered_cost_n: number;
+}
+
+/** One sprint as `GET …/sprints` returns it. Without a window the count and the
+ *  three parts are `null` and `reason` says why. */
+export interface SprintUsageRow {
+  id: string;
+  name: string;
+  state: 'future' | 'active' | 'closed';
+  start_at: string | null;
+  end_at: string | null;
+  complete_at: string | null;
+  /** Tickets the sprint lists. */
+  tasks: number;
+  candidates_in_window: number | null;
+  linked_sprint: TrackerUsage | null;
+  linked_other: TrackerUsage | null;
+  unlinked: TrackerUsage | null;
+  reason: 'not_started' | 'no_dates' | null;
+}
+
+export interface NamedRef {
+  id: string;
+  name: string;
+}
+
+/** One ticket as `GET …/tracker-tasks` returns it. */
+export interface TrackerTaskRow {
+  key: string;
+  summary: string | null;
+  issue_type: string | null;
+  status: string | null;
+  current_sprint: NamedRef | null;
+  sprints: NamedRef[];
+  removed: boolean;
+  usage: TrackerUsage;
+}
+
+/** `GET …/tracker-tasks/{key}`. */
+export interface TrackerTaskDetail {
+  task: {
+    key: string;
+    summary: string | null;
+    issue_type: string | null;
+    status: string | null;
+    removed: boolean;
+  };
+  usage: TrackerUsage;
+  by_repo: Array<{ repository_id: string; name: string; usage: TrackerUsage }>;
+  sessions: Array<{
+    id: string;
+    started_at: string | null;
+    links: Array<{ source: 'branch' | 'prompt' | 'commit'; matched_key: string; mentions: number }>;
+  }>;
+}
+
+/** A sprint's `unlinked` session (`GET …/sessions/unlinked`). */
+export interface UnlinkedSession {
+  id: string;
+  started_at: string;
+  task: string;
+}
+
 // ── Transcript consent (#218) ───────────────────────────────────────────────
 
 /** One source sensei can read conversation history from, and whether the user

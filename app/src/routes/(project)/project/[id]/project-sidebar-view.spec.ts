@@ -51,6 +51,22 @@ describe('project-sidebar-view', () => {
             expect(ids).toContain('metrics');
             expect(ids.indexOf('metrics')).toBe(ids.indexOf('overview') + 1);
         });
+        it('places Sprints (期) then Integrations (繋) between Impact and About', () => {
+            const ids = SECTIONS.map((s) => s.id);
+            expect(ids.indexOf('sprints')).toBe(ids.indexOf('impact') + 1);
+            expect(ids.indexOf('integrations')).toBe(ids.indexOf('sprints') + 1);
+            expect(ids.indexOf('about')).toBe(ids.indexOf('integrations') + 1);
+            expect(SECTIONS.find((s) => s.id === 'sprints')).toEqual({
+                id: 'sprints',
+                kanji: '期',
+                label: 'Sprints',
+            });
+            expect(SECTIONS.find((s) => s.id === 'integrations')).toEqual({
+                id: 'integrations',
+                kanji: '繋',
+                label: 'Integrations',
+            });
+        });
         it('gives every section a unique id and a kanji glyph', () => {
             const ids = SECTIONS.map((s) => s.id);
             expect(new Set(ids).size).toBe(ids.length);

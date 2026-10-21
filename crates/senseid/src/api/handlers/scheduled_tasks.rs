@@ -58,6 +58,10 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("log_prune", "Structured-log TTL pruning"),
     ("metrics", "Metrics engine — one compute wave per project against its watermark"),
     ("reconcile", "Folder/index reconcile — self-healing scan-drift repair"),
+    (
+        "tracker_sync",
+        "Tracker sync — mirrors each connected Jira board's sprints and tickets (read-only) and drains removed credentials",
+    ),
     ("watchdog", "Run watchdog — stalled-run detection and recovery"),
 ];
 

@@ -64,6 +64,12 @@ impl CompilerEngine for RustEngine {
         }
     }
 
+    /// Without rustup (a nix or distro toolchain), the `rust-analyzer` on `PATH`
+    /// is that toolchain's own.
+    fn compiler_on_path(&self) -> Option<&'static str> {
+        Some("rust-analyzer")
+    }
+
     /// Rust sources and the manifests and lockfile that shape their build.
     fn sources(&self) -> &'static [&'static str] {
         &["rs", "toml", "lock"]
@@ -354,6 +360,7 @@ mod engine_tests {
         assert_eq!(which.program, "rustup");
         assert_eq!(which.args, ["which", "rust-analyzer"]);
         assert_eq!(which.cwd, "/repo");
+        assert_eq!(RUST_ENGINE.compiler_on_path(), Some("rust-analyzer"), "the no-rustup fallback");
         let run =
             RUST_ENGINE.compile("/opt/ra/rust-analyzer", "/repo", "/tmp/out.scip", "/tmp/ra.json");
         assert_eq!(run.program, "/opt/ra/rust-analyzer");

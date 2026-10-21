@@ -24,6 +24,8 @@ export const SECTIONS: SidebarSection[] = [
     { id: 'instruments', kanji: '器', label: 'Instruments' },
     { id: 'patterns', kanji: '型', label: 'Patterns' },
     { id: 'impact', kanji: '響', label: 'Impact' },
+    { id: 'sprints', kanji: '期', label: 'Sprints' },
+    { id: 'integrations', kanji: '繋', label: 'Integrations' },
     { id: 'about', kanji: '情', label: 'About' },
 ];
 

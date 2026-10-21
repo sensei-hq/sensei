@@ -26,6 +26,8 @@ import type {
   SchemaPayload,
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
   TranscriptSourceConsent,
+  TrackerConnection, TrackerSyncCounts,
+  SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -46,7 +48,11 @@ export type { DaySessions, DrilldownSession, ToolUsage };
 
 import type { PersonaWire } from './personas.svelte.js';
 
-export type ApiError = { status: number; message: string } | { status: 0; message: string };
+/** `body` is the daemon's parsed error body, when a caller needs more than the
+ *  code in `message` (e.g. which project already owns a board). */
+export type ApiError =
+  | { status: number; message: string; body?: Record<string, unknown> }
+  | { status: 0; message: string };
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
@@ -183,51 +189,41 @@ export function senseiApi(port: number) {
     }
   }
 
-  // Error-propagating PUT that returns the parsed response body — the
-  // whole-object full-replace endpoints (e.g. collective preferences) echo the
-  // saved object back and the caller adopts it. On a non-ok it surfaces the
-  // daemon's `{ "error": "..." }` message when present, else the status text.
-  async function tryPutJson<T>(path: string, body: unknown): Promise<ApiResult<T>> {
+  // Error-propagating request that returns the parsed response body. On a
+  // non-ok it surfaces the daemon's `{ "error": "..." }` code as the message
+  // when present (else the status text) and keeps the whole parsed body beside
+  // it, for refusals that carry more than a code. A 204 resolves `undefined`.
+  async function tryJson<T>(method: string, path: string, body?: unknown): Promise<ApiResult<T>> {
     try {
       const res = await fetch(`${base}${path}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
       });
+      if (res.status === 204) return { ok: true, data: undefined as T };
       if (res.ok) return { ok: true, data: await res.json() as T };
-      let message = res.statusText;
       try {
-        const j = await res.json() as { error?: string };
-        if (j && typeof j.error === 'string' && j.error) message = j.error;
+        const j = await res.json() as Record<string, unknown> | null;
+        if (j && typeof j === 'object') {
+          const code = typeof j.error === 'string' && j.error ? j.error : res.statusText;
+          return { ok: false, error: { status: res.status, message: code, body: j } };
+        }
       } catch { /* non-JSON error body — keep the status text */ }
-      return { ok: false, error: { status: res.status, message } };
+      return { ok: false, error: { status: res.status, message: res.statusText } };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
   }
 
-  // Error-propagating PATCH returning the parsed body. Same daemon-message
-  // extraction as `tryPutJson`: on a refusal the endpoint's own text is the
-  // useful part (a dōjō 403/404 travels through the daemon's 502 as a message),
-  // and collapsing it to "Bad Gateway" would strip the reason.
-  async function tryPatchJson<T>(path: string, body: unknown): Promise<ApiResult<T>> {
-    try {
-      const res = await fetch(`${base}${path}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) return { ok: true, data: await res.json() as T };
-      let message = res.statusText;
-      try {
-        const j = await res.json() as { error?: string };
-        if (j && typeof j.error === 'string' && j.error) message = j.error;
-      } catch { /* non-JSON error body — keep the status text */ }
-      return { ok: false, error: { status: res.status, message } };
-    } catch (e) {
-      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
-    }
-  }
+  // The whole-object full-replace endpoints (e.g. collective preferences) echo
+  // the saved object back and the caller adopts it.
+  const tryPutJson = <T>(path: string, body: unknown) => tryJson<T>('PUT', path, body);
+
+  // On a refusal the endpoint's own text is the useful part (a dōjō 403/404
+  // travels through the daemon's 502 as a message), and collapsing it to
+  // "Bad Gateway" would strip the reason.
+  const tryPatchJson = <T>(path: string, body: unknown) => tryJson<T>('PATCH', path, body);
 
   return {
     // ── Auth ──────────────────────────────────────────────────────────────
@@ -789,6 +785,36 @@ export function senseiApi(port: number) {
     trySetTranscriptConsent: (source: string, consented: boolean) =>
       tryPutJson<{ ok: boolean; source: string; consented: boolean }>(
         `/api/transcripts/consent/${enc(source)}`, { consented },
+      ),
+
+    // ── Issue trackers (spec R8) ─────────────────────────────────────────
+    // Result-based with the error body kept: a refusal names its code and, for
+    // some, the values the screen shows (the owning project, the board asked for).
+    tryListTrackers: (projectId: string) =>
+      tryJson<TrackerConnection[]>('GET', `/api/projects/${enc(projectId)}/trackers`),
+    tryConnectTracker: (projectId: string, kind: string, body: Record<string, unknown>) =>
+      tryJson<{ tracker: TrackerConnection; first_sync: { pending: boolean } }>(
+        'POST', `/api/projects/${enc(projectId)}/trackers/${enc(kind)}/connect`, body,
+      ),
+    trySyncTracker: (projectId: string) =>
+      tryJson<{ counts: TrackerSyncCounts }>('POST', `/api/projects/${enc(projectId)}/trackers/sync`),
+    tryDisconnectTracker: (projectId: string) =>
+      tryJson<void>('DELETE', `/api/projects/${enc(projectId)}/trackers`),
+    // Usage reads (spec R7/R8). Result-based: a failed read must never pass for
+    // "no tracker" or an empty sprint.
+    tryListSprints: (projectId: string) =>
+      tryJson<SprintUsageRow[]>('GET', `/api/projects/${enc(projectId)}/sprints`),
+    tryListTrackerTasks: (projectId: string, sprintId?: string) =>
+      tryJson<TrackerTaskRow[]>(
+        'GET',
+        `/api/projects/${enc(projectId)}/tracker-tasks${sprintId ? `?sprint=${enc(sprintId)}` : ''}`,
+      ),
+    tryGetTrackerTask: (projectId: string, key: string) =>
+      tryJson<TrackerTaskDetail>('GET', `/api/projects/${enc(projectId)}/tracker-tasks/${enc(key)}`),
+    tryListUnlinkedSessions: (projectId: string, sprintId: string) =>
+      tryJson<UnlinkedSession[]>(
+        'GET',
+        `/api/projects/${enc(projectId)}/sessions/unlinked?sprint=${enc(sprintId)}`,
       ),
 
     /** What stops syncing if this root is removed. */

@@ -832,6 +832,7 @@ mod tests {
             diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
                 crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
             )),
+            trackers: Default::default(),
         });
         Arc::new(TaskContext {
             queue,
@@ -856,6 +857,7 @@ mod tests {
             diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
                 crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
             )),
+            trackers: Default::default(),
         });
         let ctx = Arc::new(TaskContext {
             queue,
