@@ -15,7 +15,9 @@ const STATUS: Record<string, number> = {
 	'22023': 422,
 	// foreign_key_violation: the request names someone or something not in place
 	// yet — a project viewer grant to a person who is not in the dōjō (#307 D8).
-	'23503': 409
+	'23503': 409,
+	// unique_violation: a name already taken (a team's, in its dōjō).
+	'23505': 409
 };
 
 export function refusalStatus(error: { code?: string }): number {

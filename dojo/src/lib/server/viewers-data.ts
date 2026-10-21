@@ -6,7 +6,7 @@
 // database meant. Fails closed: a failed read is an error, never an empty list.
 import { AdminError, type DojoClient } from './admin-data';
 import { resolveViewerNames } from './identity-resolve';
-import { refusalStatus } from './db-refusal';
+import { callFn, requireInTenant } from './tenant-rows';
 
 export { AdminError };
 
@@ -65,21 +65,9 @@ export async function listDojoViewers(db: DojoClient, tenantId: string): Promise
 	});
 }
 
-async function call(db: DojoClient, fn: string, args: Record<string, unknown>): Promise<void> {
-	const { error } = await db.rpc(fn, args);
-	if (error) throw new AdminError(refusalStatus(error), error.message);
-}
-
-/** A tenant-addressed route names a project: it must be this dōjō's. */
-async function requireProject(db: DojoClient, tenantId: string, projectId: string): Promise<void> {
-	const { data, error } = await db.from('projects').select('id').eq('tenant_id', tenantId).eq('id', projectId).maybeSingle();
-	if (error) throw new AdminError(500, error.message);
-	if (!data) throw new AdminError(404, 'no such project in this dōjō');
-}
-
 /** Remove a viewer from the dōjō, and with it their project views here. */
-export function removeDojoViewer(db: DojoClient, tenantId: string, principalId: string): Promise<void> {
-	return call(db, 'remove_dojo_viewer', { p_tenant: tenantId, p_principal: principalId });
+export async function removeDojoViewer(db: DojoClient, tenantId: string, principalId: string): Promise<void> {
+	await callFn(db, 'remove_dojo_viewer', { p_tenant: tenantId, p_principal: principalId });
 }
 
 /** Grant a person (a member or a dōjō viewer) the view of one of the dōjō's projects. */
@@ -89,8 +77,8 @@ export async function grantProjectView(
 	projectId: string,
 	principalId: string
 ): Promise<void> {
-	await requireProject(db, tenantId, projectId);
-	await call(db, 'grant_project_viewer', { p_project: projectId, p_principal: principalId });
+	await requireInTenant(db, 'projects', tenantId, projectId, 'project');
+	await callFn(db, 'grant_project_viewer', { p_project: projectId, p_principal: principalId });
 }
 
 /** Revoke a person's view of one of the dōjō's projects. */
@@ -100,6 +88,6 @@ export async function revokeProjectView(
 	projectId: string,
 	principalId: string
 ): Promise<void> {
-	await requireProject(db, tenantId, projectId);
-	await call(db, 'revoke_project_viewer', { p_project: projectId, p_principal: principalId });
+	await requireInTenant(db, 'projects', tenantId, projectId, 'project');
+	await callFn(db, 'revoke_project_viewer', { p_project: projectId, p_principal: principalId });
 }
