@@ -37,12 +37,15 @@ is a bug in the policy.
 | **member** | an ACTIVE membership in the tenant (`memberships.disabled_at is null`) | The floor for every tenant-scoped cell. A missing or disabled membership is **no access**, never "level 0". |
 | **contributor · maintainer · lead · admin** | `memberships.role` (`dojo.member_role`) | The TENANT role. `admin` is "management": policy, identity, billing, provisioning. A tenant-role `lead` guards client confidentiality (engagements, incidents, audit ledger). |
 | **team member / team lead** | `dojo.team_members` (+ `.role = 'lead'`) on a team that owns the project (`dojo.team_projects`) | The PROJECT relationship. "A lead's projects" means projects owned by a team on which the principal's team role is `lead`. |
-| **project role** (#307 A1) | `dojo.project_members.role` on one project, checked by `dojo.project_role_at_least` | What a person may DO on that project — manage its people now; edit its targets and close its sprints later. The effective role is the higher of the tenant role and the project role: it **only raises**, never lowers, and is never `admin` (dōjō-wide). It grants **no data visibility** — who sees cross-user project data stays the team relationship above. |
+| **project viewer** (#307, D8) | a viewer grant on one project | **Read-only managerial view** of the project — metrics, dashboards, reports, aggregated or split by repository; never per-person. Admin-granted; may be an outsider (viewer-only guest). Grants nothing else. |
+| **repository role** (#307, D5) | the person's role on one repository — mirrored from the forge, admin-overridable | **Where access lives.** A repository's shared rows for anyone with a role on it; per-person rows for the person and maintainers and above on it (D6). |
 | **daemon** | the signed-in persona's session, presented by the daemon for the memberships that persona joined (step 4) | Same principal, same matrix. There is no device credential: any other bearer is a 401. |
 
 **The tenant roles are ordered** `contributor < maintainer < lead < admin` —
 `dojo.member_role`'s declared order and the entity model's. The dōjō's code
 ladder is pinned to that order by `dojo-access-ladder.spec.ts`.
+
+**Superseded 2026-10-21 (#307 D5–D8).** Access moves from team membership to **repository roles**; teams become groupings with no access meaning, and a project's own permission is the read-only viewer grant. The paragraph below records the earlier decision until the predicates are rewired (#307 A2).
 
 **Two leads, on purpose.** The tenant role `lead` (client work) and the team
 role `lead` (cross-user project data) answer different questions. The second

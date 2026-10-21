@@ -13,6 +13,10 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D2 | Where do integrations live? | **The dōjō owns them.** Connected once per project in the dōjō, credentials held by the dōjō, shared by the team. The daemon pulls what they mirror through sync; connecting from sensei forwards to the dōjō. Supersedes the daemon-local `sensei.trackers` proposal in `docs/design/integrations-and-gating-requirements.md` §5. |
 | D3 | Does "both ways" include writing to trackers (Jira, Azure Boards, GitHub Issues — the work-item systems whose tickets and sprints a session links to)? | **No — dōjō ⇄ sensei only.** Projects, teams, roles and connections sync both ways between the dōjō and sensei; Jira / ADO / GitHub stay read-only (the 2026-10-14 decision stands). |
 | D4 | Where do DORA signals come from? | **CI APIs plus git tags.** Deployments from GitHub Actions and Azure Pipelines through the integrations, git tags as the fallback; a production-incident entity, separate from today's confidentiality `dojo.incidents`, for time to restore and change failure rate. |
+| D5 | Where do repository permissions come from? (2026-10-21, second round) | **The forge, with an admin override.** A person's role on a repository mirrors the git provider's per-repo access (GitHub / Azure DevOps / GitLab), refreshed on sync; a dōjō admin may override it. **Permissions live on repositories** — a project is a grouping of repositories and its own permission is only the read-only view (D8). Supersedes the 2026-10-12 decision that team membership grants access. |
+| D6 | Who sees per-person data for a repository? | **The person, and maintainers and above on that repository.** Project viewers see aggregates and per-repository splits, never per-person. |
+| D7 | What are teams for? | **Groupings, not access** — named groups of people for "by team" reports and for granting project-viewer access in bulk. Never a source of repository access, so no default team owns projects. |
+| D8 | What is a project role? | **A read-only managerial viewer**: metrics, dashboards and reports for the project, aggregated or split by repository — for higher management and clients. **Admins grant it**, to a dōjō member or to an outsider invited as a viewer-only guest who sees nothing else. Not an access-management role. |
 
 Already decided elsewhere and kept: **the dōjō wins on conflict** (`docs/spec/2026-08-24-platform-restructure.md` Q1);
 an `origin` column stops push/pull loops (`docs/spec/2026-08-24-shared-schema-and-sync-design.md`).
@@ -36,15 +40,20 @@ dōjō, then production), and keeps presentation | state | load apart with rokki
 
 ### Wave A — the dōjō can author projects, teams and roles
 
-- **A1 · One role ladder.** Update the PRD and the mockup vocabulary to D1. Add project-scoped role
-  overrides (raise only, within the ladder) with RLS.
-- **A2 · Teams are real.** Seed a default team per tenant (provisioning and `create_dojo`); team CRUD
-  and membership; assign teams to projects (`team_projects`); a Teams screen; an invite screen over
-  the existing invite API. Rename the self-made dōjō's `team/<slug>` tenant key vocabulary so "team"
-  means one thing.
-- **A3 · Projects are writable.** Create, rename and archive a project; add, move and remove a
-  repository (security-definer functions, maintainer and up). The project detail page with its Repos
-  and Team tabs; the org drill-in off fixtures.
+- **A1 · One role ladder.** The PRD and docs follow D1 (5564841d). ~~Project-scoped acting roles~~
+  (a053772d) are reshaped by D8 into the **project viewer** grant — read-only, admin-granted, open to
+  viewer-only guests.
+- **A2 · Repository roles (D5, D6).** `repository_roles` per person per repository: mirrored from the
+  forge's per-repo access on sync (read / triage / write → contributor, maintain → maintainer, admin →
+  admin; `lead` stays the tenant's confidentiality role), an admin override that survives the next
+  mirror. The access predicates move from team membership to repository roles: a repository's shared
+  rows for anyone with a role on it, per-person rows for the person and maintainers and above.
+- **A3 · Teams as groupings (D7).** Team CRUD and membership; reports "by team"; grant project viewer
+  to a whole team. The self-made dōjō's `team/<slug>` tenant vocabulary renamed so "team" means one
+  thing. An invite screen over the existing invite API, including viewer-only guests (D8).
+- **A4 · Projects are writable.** Create, rename and archive a project; add, move and remove a
+  repository (admins and maintainers of the repositories involved). The project detail page with its
+  Repos and People (viewers) tabs; the org drill-in off fixtures.
 
 ### Wave B — dōjō ⇄ sensei, both ways
 
