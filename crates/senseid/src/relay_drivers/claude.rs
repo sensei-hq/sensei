@@ -31,17 +31,24 @@ impl RunDriver for ClaudeDriver {
     }
 
     async fn drive_step(&self, step: DriveStep<'_>) -> Result<AgentOutput, AgentSpawnError> {
-        // Byte-for-byte the command P3's `drive_run` built inline: the agent
-        // program, `-p <prompt>`, the step timeout, run in the project cwd. The
-        // spawned claude carries the sensei plugin, so its PreToolUse hook drives
-        // the existing `/hook/gate` — no gate wiring here.
-        let cmd = AgentCommand::new(
+        run_agent(&self.command(&step)).await
+    }
+}
+
+impl ClaudeDriver {
+    /// Byte-for-byte the command P3's `drive_run` built inline: the agent
+    /// program, `-p <prompt>`, the step timeout, run in the project cwd — plus
+    /// `SENSEI_RUN_ID`, so the spawned claude's gate hook reports the session as
+    /// unattended (#312, D28). The spawned claude carries the sensei plugin, so
+    /// its PreToolUse hook drives the existing `/hook/gate` — no gate wiring here.
+    fn command(&self, step: &DriveStep<'_>) -> AgentCommand {
+        AgentCommand::new(
             self.cmd.clone(),
             vec!["-p".to_string(), step.prompt.to_string()],
             step.timeout,
         )
-        .with_cwd(step.cwd);
-        run_agent(&cmd).await
+        .with_cwd(step.cwd)
+        .with_env("SENSEI_RUN_ID", step.run_id)
     }
 }
 
@@ -50,6 +57,25 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::time::Duration;
+
+    #[test]
+    fn a_driven_step_marks_the_spawned_claude_with_its_run() {
+        // The spawned claude's gate hook reads SENSEI_RUN_ID to tell the daemon
+        // the session is unattended (#312, D28).
+        let d = ClaudeDriver { cmd: "claude".into() };
+        let cmd = d.command(&DriveStep {
+            cwd: Path::new("."),
+            prompt: "ship it",
+            run_id: "0b7d6f1e-run",
+            timeout: Duration::from_secs(10),
+        });
+        assert!(
+            cmd.env.contains(&("SENSEI_RUN_ID".to_string(), "0b7d6f1e-run".to_string())),
+            "env was {:?}",
+            cmd.env
+        );
+        assert_eq!(cmd.args, vec!["-p".to_string(), "ship it".to_string()]);
+    }
 
     #[test]
     fn id_is_claude_and_capability_is_hooks() {
@@ -67,6 +93,7 @@ mod tests {
             .drive_step(DriveStep {
                 cwd: Path::new("."),
                 prompt: "ship the relay engine",
+                run_id: "r-1",
                 timeout: Duration::from_secs(10),
             })
             .await
@@ -86,6 +113,7 @@ mod tests {
             .drive_step(DriveStep {
                 cwd: Path::new("."),
                 prompt: "would drive",
+                run_id: "r-1",
                 timeout: Duration::from_secs(10),
             })
             .await

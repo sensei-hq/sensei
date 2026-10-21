@@ -336,7 +336,8 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
     //    kills+reaps; a bad exit / timeout rides in the returned AgentOutput.
     let phase = run.current_phase.clone();
     let feature = Some(label.clone());
-    let step = DriveStep { cwd: &cwd, prompt: &prompt, timeout: cfg.timeout };
+    let run_ref = run_id.to_string();
+    let step = DriveStep { cwd: &cwd, prompt: &prompt, run_id: &run_ref, timeout: cfg.timeout };
     let out = match driver.drive_step(step).await {
         Ok(out) => out,
         Err(e) => {
