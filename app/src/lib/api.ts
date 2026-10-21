@@ -487,18 +487,13 @@ export function senseiApi(port: number) {
     tryGetProjectDrift: (id: string) =>
       tryGet<{ items: DriftItem[]; total: number; drifted: number; broken: number; indexedDocs?: number }>(`/api/projects/${enc(id)}/drift`),
 
-    createImpactVerdict: (id: string, title: string, note?: string, sessionId?: string) =>
-      post<{ id: string }>(
-        `/api/projects/${enc(id)}/impact-verdicts`,
-        { title, note, session_id: sessionId },
-        { id: '' },
-      ),
+    /** Log an impact by hand — its id, or why it was not logged. */
+    tryCreateImpactVerdict: (id: string, title: string, note?: string, sessionId?: string) =>
+      tryPost<{ id: string }>(`/api/projects/${enc(id)}/impact-verdicts`, { title, note, session_id: sessionId }),
 
-    decideImpactVerdict: (id: string, verdictId: string, verdict: 'success' | 'mixed' | 'failure', note?: string) =>
-      put(
-        `/api/projects/${enc(id)}/impact-verdicts/${enc(verdictId)}`,
-        { verdict, note },
-      ),
+    /** Record a logged impact's outcome — or why the daemon refused. */
+    tryDecideImpactVerdict: (id: string, verdictId: string, verdict: 'success' | 'mixed' | 'failure', note?: string) =>
+      tryPut(`/api/projects/${enc(id)}/impact-verdicts/${enc(verdictId)}`, { verdict, note }),
 
     // Measured impact reports — the analyzer's before/after FTR + MOE-style
     // consensus for recommendations that carry a reasoning trace or a
