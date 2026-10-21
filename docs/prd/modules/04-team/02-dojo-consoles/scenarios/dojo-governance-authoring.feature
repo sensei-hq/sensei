@@ -5,9 +5,9 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   Scenario: the scope rail groups the dōjō ladder and marks which kinds are paid
     Given a maintainer with their own rules in sensei and a company Dōjō
     When they open the governance authoring surface
-    Then scopes are grouped Personal · Dōjō · Client · Workspace · Repository · Stack
-    And there is no Team group
-    And Dōjō · Client are marked paid while Personal and Stack read free
+    Then scopes are grouped Personal · Dōjō · Client · Workspace · Repository
+    And there is no Team group and no Stack group (D25, D29)
+    And Dōjō · Client are marked paid while Personal reads free
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
@@ -19,11 +19,11 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
-  Scenario: a workspace inherits from its parents and from every stack scope
-    Given a workspace under the dōjō, with two stack scopes defined elsewhere
-    When the inherited set is composed
+  Scenario: a stack pack adopted at a level applies from that level down (D29)
+    Given a workspace under the dōjō, with the React pack adopted at the workspace
+    When the inherited set of a repository in that workspace is composed
     Then the dōjō contributes
-    And each stack scope contributes too
+    And the React pack's rules contribute, attributed to the workspace
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
@@ -123,7 +123,7 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: the inheritance summary names every scope that contributes
-    Given a repository in a workspace under the dōjō, plus stack scopes
+    Given a repository in a workspace under the dōjō, with a pack adopted at the workspace
     When the summary renders
     Then it reads "this scope plus" and names each contributing scope
 

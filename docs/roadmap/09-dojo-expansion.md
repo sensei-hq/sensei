@@ -36,6 +36,8 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D25 | Which governance levels does a dōjō have? | **Dōjō → workspace → repository**, most specific wins. The **Team rung is retired** — teams are reporting only (D13). An individual's personal rules stay theirs, in sensei. |
 | D26 | Does D10 (no small-group hiding) apply to knowledge promotion? | **No — D10 is for metric aggregates.** Knowledge promotion keeps its **k-anonymity ≥ 3** rule (T1). |
 | D27 | Is Relay or push live in production? | **Not yet** — neither Relay nor push notifications has been seen on the production dōjō, and the VAPID secret is untested. Tracked as a production gap ([06-gaps](06-gaps.md#security-and-production-gaps-2026-10-21)). |
+| D28 | Should relay approval gates fail closed? (#312) | **Only for the hard-block categories, only in unattended runs.** In a relay-driven autonomous run, a deploy, a push to main, a destructive action, credentials or money with no human answer is **denied**, with the reason. Interactive sessions keep fail-open — Claude Code's own prompt covers the person at the keyboard. The semantic backstop stays fail-open. |
+| D29 | Are stack scopes governance levels? (D25 follow-up) | **No.** A stack's rule pack (React, Rust, …) is a pack **adopted at a level** — the dōjō, a workspace or a repository. The ladder stays dōjō → workspace → repository. Client scopes are still to decide. |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the

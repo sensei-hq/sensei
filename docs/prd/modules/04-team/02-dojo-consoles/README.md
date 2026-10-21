@@ -113,8 +113,9 @@ for everyone below. That half of the console is specified in
 - **Lead.** **You author against a scope, not a document.** Every authored
   artifact carries the scope it was written at. A dōjō's governance levels are
   **dōjō → workspace → repository** (D25); scopes compose from self up to the
-  dōjō, and a **Workspace scope additionally inherits from every Stack scope** —
-  stacks cross-cut the ladder rather than sitting on it. Teams are not a
+  dōjō. A **stack's rule pack** (React, Rust, …) is not a level: it is a pack
+  **adopted at a level** — the dōjō, a workspace or a repository — and its rules
+  apply from there like any rule written at that level (D29). Teams are not a
   governance level — they are reporting only (D13). An individual's own rules
   live in sensei, not in the dōjō.
 - **Lead.** **Composition is most-specific-wins**, and it is not the first line
@@ -147,22 +148,20 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 | Client | 客 | Globex | **paid** · *engagement · not your employer* |
 | Workspace | 件 | personal-site · lumen-auth · billing-svc | *(none)* |
 | Repository | — | lumen-auth-api · billing-svc-web | *(none)* |
-| Stack | 技 | Rust · React | free |
 
 - **The dōjō ladder is dōjō → workspace → repository, most specific wins** (D25):
   a rule at the dōjō applies everywhere in it, a workspace rule to that group of
   repositories, a repository rule to one repository. There is **no Team rung** —
   teams are reporting only (D13).
 - **Personal is not a dōjō level.** The Personal group shows an individual's own
-  rules in sensei (*Personal → Workspace → Stack*); they stay theirs and are
+  rules in sensei; they stay theirs and are
   never authored by the dōjō. The rail marks **Dōjō · Client** paid;
   **Workspace and Repository carry no marker**.
 - **Company vs Client is derived per-user from membership** — never chosen.
-- **Composition**: walk `parent` from the scope to the root, then append
-  **every** Stack scope when the scope is a Workspace — so `lumen-auth`
-  composes as *lumen-auth → Company → Rust · React*, and a repository under it as
-  *lumen-auth-api → lumen-auth → Company → Rust · React*. Stacks
-  cross-cut; they are not a rung you sit under.
+- **Composition**: walk `parent` from the scope to the root — so a repository
+  composes as *lumen-auth-api → lumen-auth → Company*. A stack pack adopted at any
+  of those levels (say React at `lumen-auth`) contributes its rules at that level
+  (D29); it is never a rung of its own.
 - The rail badge counts **rules + skills only** at each scope — an empty scope
   reads blank rather than counting agents and commands.
 - Desktop: rail grouped by kind. Mobile: the same scopes as a wrapping pill row.
@@ -222,8 +221,8 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 - A section header reads `N here · M inherited`; empty copy renders only when
   **both** are zero, so a scope that authored nothing but inherits five still
   lists them.
-- The memory section is gated on `kind === "Project"` — a dōjō, repository or
-  stack scope renders no memory section at all.
+- The memory section is gated on `kind === "Project"` — a dōjō or repository
+  scope renders no memory section at all.
 
 ### Defined here, inherited, overridden
 
@@ -233,7 +232,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
   labelled `overridden here` in danger. **Both stay listed** — the collision is
   shown, not resolved by hiding.
 - Attribution is **first-wins along the chain**: nearer scopes are walked before
-  ancestors, and cross-cutting stack scopes come last.
+  ancestors; an adopted pack's rules are attributed to the level that adopted it.
 
 ### What a new developer inherits
 
@@ -345,8 +344,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   authorable.
 - **An accepted playbook proposal never becomes a rule at that scope** — the
   loop's accept path regressed.
-- **A workspace under the dōjō omits the stack scopes from its inherited set** —
-  cross-cutting stacks dropped.
+- **A pack adopted at a level does not reach the scopes below it** — adoption
+  regressed (D29).
 - **An unauthored scope shows a stance other than the middle stop** — default
   drift.
 - **The personal landing shows the management overview instead of "your work"**
@@ -398,8 +397,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   derived from namespace membership.
 - **Library reachability** — the ponytail pack is seeded but nothing adopts it
   (M13's C-2 follow-on); "Browse library" is the surface that would close it.
-- **Client and Stack scopes under D25's dōjō → workspace → repository ladder —
-  undecided.**
+- **Client scopes under D25's dōjō → workspace → repository ladder — undecided.**
+  Stack scopes are retired as levels (D29): a stack's pack is adopted at a level.
+  The code still groups rules as *Company · Teams · Stacks* (#318).
 - **The code still carries a Team rung** (retired by D25): `sensei.scopes` seeds
   `team` (level 50, `database/import/staging/scopes.jsonl`), `gov_scope` accepts
   `team` (`crates/mcp`), and the dōjō's `constitution-map.ts` / `org-ladder-view.ts`
