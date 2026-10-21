@@ -27,7 +27,7 @@ impl PgStore {
         let (n,): (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*)::int8
            FROM sensei.memories
-          WHERE project_id  = $1
+          WHERE workspace_id  = $1
             AND created_at >= now() - make_interval(days => $2::int)",
         )
         .bind(project_id)
@@ -59,11 +59,11 @@ impl PgStore {
         let (patterns, corrections): EligibleCounts = sqlx_core::query_as::query_as(
             "SELECT (SELECT count(*)::int8
                    FROM inference.detected_patterns
-                  WHERE project_id     = $1
+                  WHERE workspace_id   = $1
                     AND instance_count >= $2)                       AS eligible_patterns
               , (SELECT count(*)::int8
                    FROM inference.corrections
-                  WHERE $1 = ANY(project_ids)
+                  WHERE $1 = ANY(workspace_ids)
                     AND count >= $2)                                AS eligible_corrections",
         )
         .bind(project_id)

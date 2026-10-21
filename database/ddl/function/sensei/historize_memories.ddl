@@ -31,7 +31,7 @@ begin
   -- Insert new history snapshot
   insert into history.past_memories (
     memory_id
-  , project_id
+  , workspace_id
   , scope
   , scope_filter
   , type
@@ -48,7 +48,7 @@ begin
   )
   values (
     new.id
-  , new.project_id
+  , new.workspace_id
   , new.scope::text
   , new.scope_filter
   , new.type::text

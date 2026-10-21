@@ -9,7 +9,7 @@ impl PgStore {
         client: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.projects(name, description, client) VALUES($1, $2, $3) RETURNING id"
+            "INSERT INTO sensei.workspaces(name, description, client) VALUES($1, $2, $3) RETURNING id"
         ).bind(name).bind(description).bind(client)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
@@ -52,9 +52,9 @@ impl PgStore {
         // Prefer the folder-bearing row so a not-yet-healed phantom is never
         // adopted over the real project; `id` is the stable tiebreak.
         let existing: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "SELECT p.id FROM sensei.projects p
+            "SELECT p.id FROM sensei.workspaces p
               WHERE p.name = $1
-              ORDER BY (SELECT count(*) FROM sensei.folder_projects fp WHERE fp.project_id = p.id) DESC, p.id
+              ORDER BY (SELECT count(*) FROM sensei.folder_workspaces fp WHERE fp.workspace_id = p.id) DESC, p.id
               LIMIT 1",
         )
         .bind(name)
@@ -68,7 +68,7 @@ impl PgStore {
         }
 
         let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.projects(name) VALUES($1) RETURNING id",
+            "INSERT INTO sensei.workspaces(name) VALUES($1) RETURNING id",
         )
         .bind(name)
         .fetch_one(&mut *tx)
@@ -92,7 +92,7 @@ impl PgStore {
         let stack_json = serde_json::json!(stack);
         let tags_vec: Vec<String> = tags.to_vec();
         sqlx_core::query::query(
-            "UPDATE sensei.projects
+            "UPDATE sensei.workspaces
                 SET description = COALESCE($2, description),
                     client      = COALESCE($3, client),
                     stack       = CASE WHEN jsonb_array_length($4) > 0 THEN $4 ELSE stack END,
@@ -120,7 +120,7 @@ impl PgStore {
         icon: &serde_json::Value,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "UPDATE sensei.projects SET icon = $2, modified_at = now() WHERE id = $1",
+            "UPDATE sensei.workspaces SET icon = $2, modified_at = now() WHERE id = $1",
         )
         .bind(id)
         .bind(icon)
@@ -157,15 +157,15 @@ impl PgStore {
     /// regained folders. Never deletes. Returns rows changed.
     pub async fn mark_orphaned_projects(&self) -> Result<u64, String> {
         let res = sqlx_core::query::query(
-            "UPDATE sensei.projects p
+            "UPDATE sensei.workspaces p
                 SET tags = CASE
-                      WHEN NOT EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = p.id)
+                      WHEN NOT EXISTS (SELECT 1 FROM sensei.folder_workspaces fp WHERE fp.workspace_id = p.id)
                         THEN array(SELECT DISTINCT unnest(p.tags || ARRAY['orphaned']))
                       ELSE array_remove(p.tags, 'orphaned')
                     END,
                     modified_at = now()
               WHERE p.maturity = 'discovery'
-                AND ((NOT EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = p.id))
+                AND ((NOT EXISTS (SELECT 1 FROM sensei.folder_workspaces fp WHERE fp.workspace_id = p.id))
                      <> ('orphaned' = ANY(p.tags)))",
         )
         .execute(&self.pool)
@@ -206,14 +206,14 @@ impl PgStore {
         among: Option<&[uuid::Uuid]>,
     ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
-            "DELETE FROM sensei.projects p
+            "DELETE FROM sensei.workspaces p
               WHERE p.maturity = 'discovery'
                 AND ($2::uuid[] IS NULL OR p.id = ANY($2))
                 AND p.modified_at < now() - make_interval(secs => $1)
-                AND NOT EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = p.id)
-                AND NOT EXISTS (SELECT 1 FROM activity.sessions s     WHERE s.project_id = p.id)
-                AND NOT EXISTS (SELECT 1 FROM inference.recommendations r WHERE r.project_id = p.id)
-                AND NOT EXISTS (SELECT 1 FROM sensei.memories m       WHERE m.project_id = p.id)",
+                AND NOT EXISTS (SELECT 1 FROM sensei.folder_workspaces fp WHERE fp.workspace_id = p.id)
+                AND NOT EXISTS (SELECT 1 FROM activity.sessions s     WHERE s.workspace_id = p.id)
+                AND NOT EXISTS (SELECT 1 FROM inference.recommendations r WHERE r.workspace_id = p.id)
+                AND NOT EXISTS (SELECT 1 FROM sensei.memories m       WHERE m.workspace_id = p.id)",
         )
         .bind(grace_secs)
         .bind(among)
@@ -227,7 +227,7 @@ impl PgStore {
         #[allow(clippy::type_complexity)]
         let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, description, client, maturity::text, goal, icon, stack, links, tags, modified_at FROM sensei.projects WHERE id = $1"
+                "SELECT id, name, description, client, maturity::text, goal, icon, stack, links, tags, modified_at FROM sensei.workspaces WHERE id = $1"
             ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
 
         Ok(row.map(|(id, name, desc, client, maturity, goal, icon, stack, links, tags, modified)| {
@@ -259,22 +259,22 @@ impl PgStore {
             (i64, i64, i64, i64, i64, i64, i64) = sqlx_core::query_as::query_as(
             "SELECT
                (SELECT count(*) FROM sensei.memories
-                  WHERE project_id = $1 AND status != 'archived'),
+                  WHERE workspace_id = $1 AND status != 'archived'),
                (SELECT count(*) FROM activity.sessions
-                  WHERE project_id = $1 AND started_at > now() - interval '7 days'),
+                  WHERE workspace_id = $1 AND started_at > now() - interval '7 days'),
                (SELECT count(*) FROM activity.sessions
-                  WHERE project_id = $1 AND started_at > now() - interval '7 days' AND corrections > 0),
-               (SELECT count(*) FROM sensei.project_drift
-                  WHERE project_id = $1 AND status::text IN ('drifted','broken')),
+                  WHERE workspace_id = $1 AND started_at > now() - interval '7 days' AND corrections > 0),
+               (SELECT count(*) FROM sensei.workspace_drift
+                  WHERE workspace_id = $1 AND status::text IN ('drifted','broken')),
                (SELECT count(DISTINCT di.doc_node_id) FROM inference.drift_items di
-                  JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id WHERE fp.project_id = $1),
+                  JOIN sensei.folder_workspaces fp ON fp.folder_id = di.folder_id WHERE fp.workspace_id = $1),
                (SELECT count(*) FROM sensei.memories
-                  WHERE project_id = $1
+                  WHERE workspace_id = $1
                     AND status::text IN ('active','reinforced','battle_tested')
                     AND scope::text <> 'global'),
                (SELECT coalesce(sum(c), 0)::bigint FROM (
                     SELECT count(*) AS c FROM sensei.memories
-                      WHERE project_id = $1 AND status != 'archived'
+                      WHERE workspace_id = $1 AND status != 'archived'
                       GROUP BY lower(btrim(title)) HAVING count(*) > 1) g)"
         ).bind(project_id).fetch_one(&self.pool).await
             .map_err(|e| { tracing::error!(error = %e, "get_project_overview_stats failed"); e.to_string() })?;
@@ -292,7 +292,7 @@ impl PgStore {
     ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, description, client, maturity::text, goal, stack, links, tags, modified_at FROM sensei.projects WHERE name = $1"
+                "SELECT id, name, description, client, maturity::text, goal, stack, links, tags, modified_at FROM sensei.workspaces WHERE name = $1"
             ).bind(name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
 
         Ok(row.map(|(id, name, desc, client, maturity, goal, stack, links, tags, modified)| {
@@ -335,17 +335,17 @@ impl PgStore {
                 "SELECT p.id, p.name, p.description, p.client, p.maturity::text, p.tags, p.modified_at,
                         p.icon, p.stack, p.goal, p.dojo_id,
                         (SELECT count(*) FROM sensei.folders f
-                           JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-                          WHERE fp.project_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
+                           JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+                          WHERE fp.workspace_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
                         (SELECT count(*) FROM sensei.library_enablement pl
-                          WHERE pl.project_id = p.id)::bigint AS libs_count,
-                        (SELECT max(s.started_at) FROM activity.sessions s WHERE s.project_id = p.id) AS last_session_at,
+                          WHERE pl.workspace_id = p.id)::bigint AS libs_count,
+                        (SELECT max(s.started_at) FROM activity.sessions s WHERE s.workspace_id = p.id) AS last_session_at,
                         (SELECT count(*) FROM activity.sessions s
-                          WHERE s.project_id = p.id AND s.started_at > now() - interval '7 days')::bigint AS sessions7d
-                 FROM sensei.projects p
+                          WHERE s.workspace_id = p.id AND s.started_at > now() - interval '7 days')::bigint AS sessions7d
+                 FROM sensei.workspaces p
                  WHERE $1::text IS NULL OR EXISTS (
-                          SELECT 1 FROM sensei.folder_projects fp
-                           WHERE fp.project_id = p.id
+                          SELECT 1 FROM sensei.folder_workspaces fp
+                           WHERE fp.workspace_id = p.id
                              AND (fp.folder_abs_path = $1::text
                                OR left(fp.folder_abs_path, length($1::text) + 1) = $1::text || '/'))
                  ORDER BY p.name"
@@ -402,10 +402,10 @@ impl PgStore {
             return Err(format!("invalid maturity '{m}': expected one of {PROJECT_MATURITIES:?}"));
         }
         sqlx_core::query::query(
-            "UPDATE sensei.projects SET
+            "UPDATE sensei.workspaces SET
                  name          = COALESCE($2, name),
                  description   = COALESCE($3, description),
-                 maturity      = COALESCE($4::sensei.project_maturity, maturity),
+                 maturity      = COALESCE($4::sensei.workspace_maturity, maturity),
                  client        = COALESCE($5, client),
                  goal          = COALESCE($6, goal),
                  preferred_acp = COALESCE($7, preferred_acp),
@@ -435,7 +435,7 @@ impl PgStore {
     }
 
     pub async fn delete_project(&self, id: &uuid::Uuid) -> Result<(), String> {
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await
@@ -447,7 +447,7 @@ impl PgStore {
     /// sessions + memories are reassigned to `target`, then the source
     /// project row is deleted; ON DELETE CASCADE cleans up the derived rows
     /// (detected_patterns, recommendations, reasoning_traces,
-    /// impact_verdicts, memory_share_batches, service_projects,
+    /// impact_verdicts, memory_share_batches, service_workspaces,
     /// project_dependencies edges terminating at the source).
     ///
     /// Derived signals (patterns/recommendations) are dropped and
@@ -473,7 +473,7 @@ impl PgStore {
 
         // Verify both projects exist.
         let (exists,): (i64,) = sqlx_core::query_as::query_as(
-            "SELECT COUNT(*) FROM sensei.projects WHERE id = ANY($1::uuid[])",
+            "SELECT COUNT(*) FROM sensei.workspaces WHERE id = ANY($1::uuid[])",
         )
         .bind([*source, *target].as_slice())
         .fetch_one(&mut *tx)
@@ -494,9 +494,9 @@ impl PgStore {
         // repository the source also claimed — a merge is a union, not a move,
         // and the source's rows are then deleted with the project by CASCADE.
         sqlx_core::query::query(
-            "INSERT INTO sensei.repositories_in_projects (project_id, repository_id)
-             SELECT $2, pr.repository_id FROM sensei.repositories_in_projects pr
-              WHERE pr.project_id = $1
+            "INSERT INTO sensei.repositories_in_workspaces (workspace_id, repository_id)
+             SELECT $2, pr.repository_id FROM sensei.repositories_in_workspaces pr
+              WHERE pr.workspace_id = $1
              ON CONFLICT DO NOTHING",
         )
         .bind(source)
@@ -506,8 +506,8 @@ impl PgStore {
         .map_err(|e| format!("merge_projects: move repository membership: {e}"))?;
 
         for stmt in [
-            "UPDATE activity.sessions SET project_id = $2 WHERE project_id = $1",
-            "UPDATE sensei.memories   SET project_id = $2 WHERE project_id = $1",
+            "UPDATE activity.sessions SET workspace_id = $2 WHERE workspace_id = $1",
+            "UPDATE sensei.memories   SET workspace_id = $2 WHERE workspace_id = $1",
         ] {
             sqlx_core::query::query(stmt)
                 .bind(source)
@@ -519,8 +519,8 @@ impl PgStore {
 
         // CASCADE deletes derived rows (detected_patterns / recommendations /
         // reasoning_traces / impact_verdicts / memory_share_batches /
-        // service_projects / project_dependencies edges at either end).
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        // service_workspaces / project_dependencies edges at either end).
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(source)
             .execute(&mut *tx)
             .await
@@ -657,8 +657,8 @@ impl PgStore {
             if let (Some(s_pid), Some(g_pid)) = (s_pid.filter(|p| Some(*p) != g_pid), g_pid) {
                 let outside: (i64,) = sqlx_core::query_as::query_as(
                     "SELECT count(*) FROM sensei.folders f
-                       JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-                      WHERE fp.project_id = $1
+                       JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+                      WHERE fp.workspace_id = $1
                         AND NOT starts_with(f.abs_path, $2 || '/')",
                 )
                 .bind(s_pid)
@@ -710,7 +710,7 @@ impl PgStore {
         );
         let rows: Vec<DriftRow> = sqlx_core::query_as::query_as(
             "SELECT id, status::text, detail, expected_signature, actual_signature, detected_at
-                 FROM sensei.project_drift WHERE project_id = $1
+                 FROM sensei.workspace_drift WHERE workspace_id = $1
                  ORDER BY detected_at DESC LIMIT 200",
         )
         .bind(project_id)
@@ -737,8 +737,8 @@ impl PgStore {
         // empty drift list means "nothing checked", not "no drift".
         let (indexed_docs,): (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*)::int8 FROM sensei.nodes n
-               JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id
-              WHERE fp.project_id = $1 AND n.kind = 'doc'::sensei.node_kind",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = n.folder_id
+              WHERE fp.workspace_id = $1 AND n.kind = 'doc'::sensei.node_kind",
         )
         .bind(project_id)
         .fetch_one(&self.pool)
@@ -757,12 +757,13 @@ impl PgStore {
         &self,
         name: String,
     ) -> Result<Option<uuid::Uuid>, String> {
-        let row: Option<(uuid::Uuid,)> =
-            sqlx_core::query_as::query_as("SELECT id FROM sensei.projects WHERE name = $1 LIMIT 1")
-                .bind(&name)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| e.to_string())?;
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.workspaces WHERE name = $1 LIMIT 1",
+        )
+        .bind(&name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.map(|(id,)| id))
     }
 
@@ -774,7 +775,7 @@ impl PgStore {
         // owned by a single test, so the SELECT-then-INSERT is race-free here.
         let name = format!("_test:{name}");
         if let Some(row) = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
-            "SELECT id FROM sensei.projects WHERE name = $1",
+            "SELECT id FROM sensei.workspaces WHERE name = $1",
         )
         .bind(&name)
         .fetch_optional(&self.pool)
@@ -785,7 +786,7 @@ impl PgStore {
         }
         let id = uuid::Uuid::new_v4();
         sqlx_core::query::query(
-            "INSERT INTO sensei.projects (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO sensei.workspaces (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
         )
         .bind(id)
         .bind(&name)
@@ -804,9 +805,9 @@ impl PgStore {
     ) -> Result<(i64, bool), String> {
         let row: (i64, bool) = sqlx_core::query_as::query_as(
             "SELECT
-               (SELECT count(*) FROM activity.sessions WHERE project_id = $1 AND analyzed_at IS NOT NULL),
-               (EXISTS(SELECT 1 FROM inference.recommendations WHERE project_id = $1)
-                OR EXISTS(SELECT 1 FROM sensei.memories WHERE project_id = $1 AND origin = 'learned'))"
+               (SELECT count(*) FROM activity.sessions WHERE workspace_id = $1 AND analyzed_at IS NOT NULL),
+               (EXISTS(SELECT 1 FROM inference.recommendations WHERE workspace_id = $1)
+                OR EXISTS(SELECT 1 FROM sensei.memories WHERE workspace_id = $1 AND origin = 'learned'))"
         ).bind(project_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row)
     }
@@ -878,14 +879,14 @@ impl PgStore {
     }
 
     /// Return the list of stack identifiers for a project.
-    /// The `sensei.projects.stack` column is JSONB and may be an array of strings,
+    /// The `sensei.workspaces.stack` column is JSONB and may be an array of strings,
     /// an object with a recognisable array key, or absent — all cases return `[]`.
     pub async fn get_project_stack_ids(
         &self,
         project_id: &uuid::Uuid,
     ) -> Result<Vec<String>, String> {
         let row: Option<(serde_json::Value,)> =
-            sqlx_core::query_as::query_as("SELECT stack FROM sensei.projects WHERE id = $1")
+            sqlx_core::query_as::query_as("SELECT stack FROM sensei.workspaces WHERE id = $1")
                 .bind(project_id)
                 .fetch_optional(&self.pool)
                 .await
@@ -931,8 +932,8 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT f.id, f.name, f.abs_path, f.kind::text FROM sensei.folders f
-                   JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-                 WHERE fp.project_id = $1 AND f.kind::text NOT IN ('folder', 'module')
+                   JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+                 WHERE fp.workspace_id = $1 AND f.kind::text NOT IN ('folder', 'module')
                  ORDER BY f.name",
             )
             .bind(project_id)
@@ -952,8 +953,8 @@ impl PgStore {
     pub async fn project_org_owners(&self, project_id: &uuid::Uuid) -> Result<Vec<String>, String> {
         let folders: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
             "SELECT f.remote_urls FROM sensei.folders f
-               JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-              WHERE fp.project_id = $1",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+              WHERE fp.workspace_id = $1",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -980,7 +981,7 @@ impl PgStore {
     /// client-work dereference (C5) needs these to strip source references before
     /// anything leaves the machine. Reads only; the strip itself is DB-free.
     ///
-    /// Sources: `sensei.projects.{name, client}`, `sensei.folders.{name,
+    /// Sources: `sensei.workspaces.{name, client}`, `sensei.folders.{name,
     /// abs_path, remote_urls}` (repo name + git owner/repo parsed from remotes),
     /// and `activity.sessions.{id, client_session_id}`.
     pub async fn project_identifiers(
@@ -989,12 +990,13 @@ impl PgStore {
     ) -> Result<crate::dojo::attribution::ProjectIdentifiers, String> {
         use crate::dojo::attribution::ProjectIdentifiers;
 
-        let proj: Option<(String, Option<String>)> =
-            sqlx_core::query_as::query_as("SELECT name, client FROM sensei.projects WHERE id = $1")
-                .bind(project_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| e.to_string())?;
+        let proj: Option<(String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT name, client FROM sensei.workspaces WHERE id = $1",
+        )
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         let (project_name, client_name) = match proj {
             Some((name, client)) => (Some(name), client),
             None => (None, None),
@@ -1002,8 +1004,8 @@ impl PgStore {
 
         let folders: Vec<(String, String, serde_json::Value)> = sqlx_core::query_as::query_as(
             "SELECT f.name, f.abs_path, f.remote_urls FROM sensei.folders f
-               JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-              WHERE fp.project_id = $1",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+              WHERE fp.workspace_id = $1",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -1029,7 +1031,7 @@ impl PgStore {
         }
 
         let sessions: Vec<(uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT id, client_session_id FROM activity.sessions WHERE project_id = $1",
+            "SELECT id, client_session_id FROM activity.sessions WHERE workspace_id = $1",
         )
         .bind(project_id)
         .fetch_all(&self.pool)

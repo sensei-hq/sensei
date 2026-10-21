@@ -1,6 +1,6 @@
 set search_path to sensei, extensions;
 
-CREATE OR REPLACE VIEW sensei.project_extensions_resolved AS
+CREATE OR REPLACE VIEW sensei.workspace_extensions_resolved AS
 SELECT
     e.id,
     e.plugin_id,
@@ -13,16 +13,16 @@ SELECT
     e.tags,
     e.revision,
     e.modified_by,
-    -- project-level overrides (ep wins over e defaults)
+    -- workspace-level overrides (ep wins over e defaults)
     COALESCE(ep.enabled, e.enabled)         AS enabled,
     COALESCE(ep.props, e.props)             AS props,
     e.source,
-    ep.props                                AS project_props,
+    ep.props                                AS workspace_props,
     ep.modified_at                          AS associated_at,
     CASE
-        WHEN ep.project_id IS NULL THEN 'global'
-        ELSE 'project'
+        WHEN ep.workspace_id IS NULL THEN 'global'
+        ELSE 'workspace'
     END                                     AS scope,
-    ep.project_id                           AS scoped_project_id
+    ep.workspace_id                         AS scoped_workspace_id
 FROM sensei.extensions e
-JOIN sensei.extension_projects ep ON ep.extension_id = e.id;
+JOIN sensei.extension_workspaces ep ON ep.extension_id = e.id;

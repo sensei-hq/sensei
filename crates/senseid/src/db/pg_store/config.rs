@@ -111,9 +111,9 @@ impl PgStore {
         rules_hash: Option<&str>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.workflow_state(project, active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at)
+            "INSERT INTO sensei.workflow_state(workspace, active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at)
              VALUES($1, $2, $3, $4, $5, $6, $7, now())
-             ON CONFLICT(project) DO UPDATE SET
+             ON CONFLICT(workspace) DO UPDATE SET
                active_phase = COALESCE($2, workflow_state.active_phase),
                active_plan = COALESCE($3, workflow_state.active_plan),
                active_task = COALESCE($4, workflow_state.active_task),
@@ -139,7 +139,7 @@ impl PgStore {
             Option<i32>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>,
         )> = sqlx_core::query_as::query_as(
             "SELECT active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at
-             FROM sensei.workflow_state WHERE project = $1"
+             FROM sensei.workflow_state WHERE workspace = $1"
         )
             .bind(project)
             .fetch_optional(&self.pool)
@@ -161,7 +161,7 @@ impl PgStore {
     }
 
     pub async fn delete_workflow_state(&self, project: &str) -> Result<(), String> {
-        sqlx_core::query::query("DELETE FROM sensei.workflow_state WHERE project = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workflow_state WHERE workspace = $1")
             .bind(project)
             .execute(&self.pool)
             .await

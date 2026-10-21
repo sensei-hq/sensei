@@ -1,13 +1,13 @@
 set search_path to sensei, activity, extensions;
 
--- Files with high edit / rework frequency per project, derived from the
+-- Files with high edit / rework frequency per workspace, derived from the
 -- assistant event stream (the former activity.events source was never
 -- populated). edit_count = Edit/Write/MultiEdit tool calls touching the file;
 -- correction_count = RE-EDITS (edits beyond the first per session = edit_count -
 -- distinct sessions) — the rework signal, since tool failures aren't captured.
 -- 30-day window. Same column shape as before (read by get_hotspots).
-CREATE OR REPLACE VIEW sensei.project_hotspots AS
-SELECT s.project_id
+CREATE OR REPLACE VIEW sensei.workspace_hotspots AS
+SELECT s.workspace_id
      , f.name                                                              AS folder
      , ae.payload->'tool_input'->>'file_path'                              AS file_path
      , COUNT(*)                                                            AS edit_count
@@ -20,11 +20,11 @@ SELECT s.project_id
    AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
    AND ae.payload->'tool_input' ? 'file_path'
    AND to_timestamp(ae.ts / 1000.0) > now() - interval '30 days'
- GROUP BY s.project_id, f.name, ae.payload->'tool_input'->>'file_path';
+ GROUP BY s.workspace_id, f.name, ae.payload->'tool_input'->>'file_path';
 
-comment on view project_hotspots is
-'Files with high edit/rework frequency per project, from activity.assistant_events.
-Powers the Hotspots section in project overview and the rework graph overlay.
+comment on view workspace_hotspots is
+'Files with high edit/rework frequency per workspace, from activity.assistant_events.
+Powers the Hotspots section in workspace overview and the rework graph overlay.
 - edit_count: Edit/Write/MultiEdit tool calls touching this file (30-day window)
 - correction_count: re-edits = edit_count - distinct sessions (edits beyond the
   first per session) — the rework signal, since tool failures aren''t captured

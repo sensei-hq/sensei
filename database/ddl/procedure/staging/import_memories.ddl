@@ -4,11 +4,11 @@ set search_path to staging, sensei, extensions;
 --
 -- Transforms rows in staging.memories into sensei.memories, regenerating FK ids
 -- from the natural keys carried in staging:
---   project_name                      -> sensei.projects.id
+--   workspace_name                    -> sensei.workspaces.id
 --   (namespace_scope_key, namespace_slug) -> sensei.namespaces.id
 -- Scalar subqueries (LIMIT 1) are used rather than joins so a staging row maps to
--- exactly one output row even when a natural key is non-unique (projects.name has
--- duplicates from the junk-project bug #60). Unresolved keys yield NULL (a global /
+-- exactly one output row even when a natural key is non-unique (workspaces.name has
+-- duplicates from the junk-workspace bug #60). Unresolved keys yield NULL (a global /
 -- unscoped memory). Enum columns are cast from text here.
 --
 -- Mirrors import_assistant_events: a plain insert intended for a freshly-reset/empty
@@ -26,16 +26,16 @@ declare
   v_count int := 0;
 begin
   insert into sensei.memories
-    (project_id, namespace_id, scope, scope_filter, enforcement, origin, type,
+    (workspace_id, namespace_id, scope, scope_filter, enforcement, origin, type,
      title, content, impact, strength, status, reinforced_count, violated_count,
      last_relevant_at, tags, triage_signal, modified_at)
   select
-      (select p.id from sensei.projects p where p.name = stg.project_name limit 1)
+      (select p.id from sensei.workspaces p where p.name = stg.workspace_name limit 1)
     , (select n.id from sensei.namespaces n
          where n.scope_key = stg.namespace_scope_key
            and n.slug      = stg.namespace_slug
          limit 1)
-    , coalesce(stg.scope, 'project')::sensei.memory_scope
+    , coalesce(stg.scope, 'workspace')::sensei.memory_scope
     , stg.scope_filter
     , coalesce(stg.enforcement, 'recommended')::sensei.enforcement
     , coalesce(stg.origin, 'learned')
@@ -64,4 +64,4 @@ end;
 $$;
 
 comment on procedure staging.import_memories() is
-'Import staging.memories into sensei.memories. Regenerates FK ids from natural keys (project_name; namespace_scope_key+slug) via scalar lookups; casts enum columns from text. Plain insert for the reset→apply→import workflow (mirrors import_assistant_events).';
+'Import staging.memories into sensei.memories. Regenerates FK ids from natural keys (workspace_name; namespace_scope_key+slug) via scalar lookups; casts enum columns from text. Plain insert for the reset→apply→import workflow (mirrors import_assistant_events).';

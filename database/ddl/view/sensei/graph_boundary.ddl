@@ -10,7 +10,7 @@ set search_path to sensei, extensions;
 -- same shape so a reader can put them side by side.
 --
 -- Built for GROUP BY. Every column is either an identity to group on
--- (folder, project, language, source_kind, file) or prose to render
+-- (folder, workspace, language, source_kind, file) or prose to render
 -- (summary, detail, remedy) — so "how much of this repo's graph is
 -- unplaceable, by language and by reason" is one query and no joins:
 --
@@ -27,8 +27,8 @@ set search_path to sensei, extensions;
 create or replace view graph_boundary as
 select cg.folder_id
      , cg.folder
-     , cg.project_id
-     , cg.project
+     , cg.workspace_id
+     , cg.workspace
      , cg.edge_id
      , cg.edge_kind
      -- WHERE the unplaced use site sits: the symbol whose body holds it.
@@ -60,7 +60,7 @@ comment on view graph_boundary is
 'Every use site the resolver could not place, with the reason_codes prose that
 explains it. The second half of an impact answer — `call_graph` is the first.
 
-Shaped for GROUP BY: group on folder/project/source_language/source_kind/
+Shaped for GROUP BY: group on folder/workspace/source_language/source_kind/
 reason_code, render summary/detail/remedy. reason_codes is joined LEFT so a
 code with no prose surfaces raw instead of dropping the row.
 

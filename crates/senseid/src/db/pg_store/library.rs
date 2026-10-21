@@ -861,7 +861,7 @@ impl PgStore {
     }
 
     /// The library skills/agents to SUGGEST for a project, from the libraries it
-    /// depends on — REUSES `project_libraries_resolved` (the same view
+    /// depends on — REUSES `workspace_libraries_resolved` (the same view
     /// [`Self::get_library_enablement`] reads) joined to the capability tables. Backs
     /// the recommender enrichment. Returns `{suggested_skills, suggested_agents}`.
     pub async fn list_project_library_capabilities(
@@ -873,10 +873,10 @@ impl PgStore {
         // without it a library with three fetched versions would suggest each
         // skill three times.
         const BY_KIND: &str = "SELECT pl.name, c.name, c.focus
-               FROM sensei.project_libraries_resolved pl
+               FROM sensei.workspace_libraries_resolved pl
                JOIN sensei.library_versions lv ON lv.library_id = pl.id AND lv.is_latest
                JOIN sensei.library_content c ON c.library_version_id = lv.id
-              WHERE (pl.scoped_project_id = $1 OR pl.scoped_project_id IS NULL)
+              WHERE (pl.scoped_workspace_id = $1 OR pl.scoped_workspace_id IS NULL)
                 AND pl.enabled = true
                 AND c.kind = $2::sensei.library_content_kind
               ORDER BY pl.name, c.focus, c.name";
@@ -927,7 +927,7 @@ impl PgStore {
             // and it is still a real pin the scheduler must see. An INNER join
             // would silently drop exactly the libraries with no docs yet.
             "SELECT l.id, l.name, l.ecosystem::text, lv.local_path,
-                    sensei.sole_project_of(f.id),
+                    sensei.sole_workspace_of(f.id),
                     rl.version_used, lv.base_url, lv.source_type::text
                FROM sensei.referenced_libraries rl
                JOIN sensei.libraries l ON l.id = rl.library_id
@@ -939,7 +939,7 @@ impl PgStore {
                      ORDER BY v.is_latest DESC, v.modified_at DESC
                      LIMIT 1
                ) lv ON true
-              WHERE EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.folder_id = f.id)
+              WHERE EXISTS (SELECT 1 FROM sensei.folder_workspaces fp WHERE fp.folder_id = f.id)
                 AND rl.version_used IS NOT NULL AND rl.version_used <> ''",
         )
         .fetch_all(&self.pool)
@@ -1040,7 +1040,7 @@ impl PgStore {
         let row: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(
                SELECT 1 FROM inference.recommendations
-                WHERE project_id = $1 AND action_type = 'library_update'
+                WHERE workspace_id = $1 AND action_type = 'library_update'
                   AND based_on->'library_update' @> jsonb_build_object('library_id', $2::text, 'to_version', $3::text)
                   AND COALESCE((based_on->'library_update'->>'is_security')::boolean, false) = $4)",
         )
@@ -1123,8 +1123,8 @@ impl PgStore {
                   WHERE l.kind = 'detected'::sensei.library_kind
                     AND ($1::text     IS NULL OR f.name = $1)
                     AND ($2::uuid     IS NULL
-                         OR EXISTS (SELECT 1 FROM sensei.folder_projects fp
-                                     WHERE fp.folder_id = f.id AND fp.project_id = $2))
+                         OR EXISTS (SELECT 1 FROM sensei.folder_workspaces fp
+                                     WHERE fp.folder_id = f.id AND fp.workspace_id = $2))
                   GROUP BY l.id, l.name, l.ecosystem, lv.version, l.description, lv.page_count
                  HAVING COUNT(DISTINCT rl.folder_id) >= $3
                   ORDER BY repo_count DESC, l.name"
@@ -1426,7 +1426,7 @@ impl PgStore {
     /// Roll a folder-level library reference up to a project-level association
     /// (sensei.library_enablement), scoped to `project_id`. `referenced_libraries`
     /// is folder-grained; `library_enablement` is the project↔library M2M the
-    /// indexer owns and which `project_libraries_resolved` (the Projects screen)
+    /// indexer owns and which `workspace_libraries_resolved` (the Projects screen)
     /// reads. Idempotent and non-destructive: `ON CONFLICT DO NOTHING` preserves
     /// any user edits to `enabled`/`props` on re-scan.
     pub async fn upsert_project_library(
@@ -1435,9 +1435,9 @@ impl PgStore {
         project_id: &uuid::Uuid,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.library_enablement(library_id, project_id)
+            "INSERT INTO sensei.library_enablement(library_id, workspace_id)
              VALUES($1, $2)
-             ON CONFLICT (library_id, project_id) WHERE project_id IS NOT NULL DO NOTHING",
+             ON CONFLICT (library_id, workspace_id) WHERE workspace_id IS NOT NULL DO NOTHING",
         )
         .bind(library_id)
         .bind(project_id)
@@ -1455,7 +1455,7 @@ impl PgStore {
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, String, Option<uuid::Uuid>, Option<String>, i64)> =
             sqlx_core::query_as::query_as(
-                "SELECT library_name, folder, project_id, version_used, unresolved_import_count
+                "SELECT library_name, folder, workspace_id, version_used, unresolved_import_count
              FROM sensei.library_usage WHERE library_id = $1 ORDER BY folder",
             )
             .bind(library_id)
@@ -1498,9 +1498,9 @@ impl PgStore {
             // library with nothing fetched yet is still enabled, and an INNER
             // join would drop it from the Projects screen entirely.
             "SELECT pl.id, pl.name, pl.ecosystem::text, pl.description, pl.enabled,
-                        pl.project_props, pl.scope,
+                        pl.workspace_props, pl.scope,
                         COALESCE(lv.page_count, 0), lv.local_path
-                 FROM sensei.project_libraries_resolved pl
+                 FROM sensei.workspace_libraries_resolved pl
                  LEFT JOIN LATERAL (
                       SELECT page_count, local_path
                         FROM sensei.library_versions v
@@ -1508,7 +1508,7 @@ impl PgStore {
                        ORDER BY v.is_latest DESC, v.modified_at DESC
                        LIMIT 1
                  ) lv ON true
-                 WHERE (pl.scoped_project_id = $1 OR pl.scoped_project_id IS NULL)
+                 WHERE (pl.scoped_workspace_id = $1 OR pl.scoped_workspace_id IS NULL)
                    AND pl.enabled = true
                  ORDER BY pl.scope DESC, pl.name",
         )
@@ -1527,7 +1527,7 @@ impl PgStore {
                     "description":   desc,
                     "enabled":       enabled,
                     "project_props": props,
-                    "scope":         scope,
+                    "scope":         scope_to_api(scope),
                     "hasDocs":       page_count > 0,
                     "pageCount":     page_count,
                     "localSource":   local_path,
@@ -1549,8 +1549,8 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, String, Vec<String>, Vec<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT library_id, library_name, ecosystem, versions, folders
-                   FROM sensei.project_library_version_conflicts
-                  WHERE project_id = $1
+                   FROM sensei.workspace_library_version_conflicts
+                  WHERE workspace_id = $1
                   ORDER BY library_name",
             )
             .bind(project_id)
@@ -1601,9 +1601,9 @@ impl PgStore {
                    FROM sensei.folder_dependencies fd
                    JOIN sensei.folders  from_f ON from_f.id = fd.from_folder_id
                    JOIN sensei.folders  to_f   ON to_f.id   = fd.to_folder_id
-              LEFT JOIN sensei.projects to_p   ON to_p.id   = sensei.sole_project_of(to_f.id)
-                  WHERE EXISTS (SELECT 1 FROM sensei.folder_projects fp
-                                 WHERE fp.folder_id = from_f.id AND fp.project_id = $1)
+              LEFT JOIN sensei.workspaces to_p   ON to_p.id   = sensei.sole_workspace_of(to_f.id)
+                  WHERE EXISTS (SELECT 1 FROM sensei.folder_workspaces fp
+                                 WHERE fp.folder_id = from_f.id AND fp.workspace_id = $1)
                   ORDER BY to_p.name NULLS LAST, from_f.name, fd.source_manifest",
         )
         .bind(project_id)

@@ -629,7 +629,7 @@ pub struct QueueStatus {
 }
 
 /// Scheduling priority of a task kind for [`TaskQueue::next_task`] — LOWER runs
-/// first. The metric-backfill chain (`AnalyzeProject` → `ComputeProjectMetrics` →
+/// first. The metric-backfill chain (`AnalyzeWorkspace` → `ComputeWorkspaceMetrics` →
 /// `ComputeGroupMetrics` → `ComputeHealth`) is HIGH priority (`0`) so a light metric
 /// compute preempts a bulk boot re-index (heavy per-file / graph tasks) that
 /// would otherwise saturate the small worker pool and leave the backfill
@@ -1100,8 +1100,8 @@ mod tests {
         // Lock the exact HIGH-priority set (the metric-backfill chain) so a
         // future edit can't silently drop a member into the NORMAL band.
         for k in [
-            TaskKind::AnalyzeProject,
-            TaskKind::ComputeProjectMetrics,
+            TaskKind::AnalyzeWorkspace,
+            TaskKind::ComputeWorkspaceMetrics,
             TaskKind::ComputeGroupMetrics,
             TaskKind::ComputeHealth,
         ] {

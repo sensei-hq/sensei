@@ -17,7 +17,7 @@
 //! touched here.
 //!
 //! **Membership routing.** A run publishes to its owning membership: the one its
-//! project is bound to (`sensei.projects.dojo_id`), if any; otherwise it falls
+//! project is bound to (`sensei.workspaces.dojo_id`), if any; otherwise it falls
 //! back to every enabled membership (the personal-beta case = one). A
 //! per-membership failure is logged (never swallowed — house rule) and skipped so
 //! one down dojo can't wedge the others.
@@ -225,7 +225,7 @@ async fn surface_run_nudges(run_id: &uuid::Uuid, memberships: &[DojoMembership])
 }
 
 /// The memberships a run federates to: its project-bound membership if the
-/// project is bound (`sensei.projects.dojo_id`), otherwise every enabled
+/// project is bound (`sensei.workspaces.dojo_id`), otherwise every enabled
 /// membership. Only enabled memberships are ever returned. DB errors bubble up;
 /// an unbound / unknown project cleanly falls back.
 pub(crate) async fn resolve_run_memberships(

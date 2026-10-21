@@ -490,7 +490,7 @@ async fn list_project_library_capabilities_suggests_from_a_projects_deps() {
     .unwrap();
     // The project depends on the library.
     s.execute_raw(&format!(
-            "INSERT INTO sensei.library_enablement(library_id, project_id, enabled) VALUES('{lid}','{pid}',true) ON CONFLICT DO NOTHING"
+            "INSERT INTO sensei.library_enablement(library_id, workspace_id, enabled) VALUES('{lid}','{pid}',true) ON CONFLICT DO NOTHING"
         )).await.unwrap();
 
     let caps = s.list_project_library_capabilities(&pid).await.unwrap();
@@ -580,12 +580,12 @@ async fn folder_path_alias_resolves_old_paths_after_a_rename() {
 ///
 /// #211 removed the column and the parameter outright, so the guarantee is now
 /// structural rather than enforced: a subfolder inherits its REPOSITORY, and
-/// its project is whatever that repository's `repositories_in_projects` row says.
+/// its project is whatever that repository's `repositories_in_workspaces` row says.
 /// There is nothing left to contradict.
 ///
 /// Breaking mutation: drop `repository_id` from the inherited CTE — the
 /// subfolder inherits nothing, resolves to no project, and the assertion on
-/// `sole_project_of` goes NULL.
+/// `sole_workspace_of` goes NULL.
 #[tokio::test]
 async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() {
     let s = pg_store().await;
@@ -607,7 +607,7 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
         .unwrap();
 
     let stored: (Option<uuid::Uuid>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
-        "SELECT sensei.sole_project_of(id), repository_id FROM sensei.folders WHERE id = $1",
+        "SELECT sensei.sole_workspace_of(id), repository_id FROM sensei.folders WHERE id = $1",
     )
     .bind(sub)
     .fetch_one(s.pool())
@@ -646,7 +646,7 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
 /// repository's folders could disagree about their project, and one did: the
 /// client-q `documentation` checkout's root sat in project `client-q` while its 362
 /// subfolders sat in `documentation`. Membership now lives once in
-/// `repositories_in_projects`, keyed on the repository, and `folder_projects`
+/// `repositories_in_workspaces`, keyed on the repository, and `folder_workspaces`
 /// resolves it.
 ///
 /// SEEDS THE DRIFT RATHER THAN LOOKING FOR IT. The first version of this test
@@ -659,7 +659,7 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
 /// `upsert_subfolder_kind` — the subfolder inherits no repository, resolves
 /// through nothing, and reports no project at all.
 ///
-/// (The ORIGINAL mutation — point `folder_projects` at `f.project_id` — is no
+/// (The ORIGINAL mutation — point `folder_workspaces` at `f.project_id` — is no
 /// longer expressible: #211 removed the column.)
 #[tokio::test]
 async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
@@ -690,7 +690,7 @@ async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
         .unwrap();
 
     let resolved: Vec<(Option<String>,)> = sqlx_core::query_as::query_as(
-        "SELECT project FROM sensei.folder_projects WHERE folder_id = $1",
+        "SELECT workspace FROM sensei.folder_workspaces WHERE folder_id = $1",
     )
     .bind(sub)
     .fetch_all(s.pool())
@@ -939,7 +939,7 @@ async fn get_folder_commands_marks_and_ranks_the_preferred_tool() {
         .execute(pool)
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id=$1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id=$1")
         .bind(pid)
         .execute(pool)
         .await
@@ -1073,7 +1073,7 @@ async fn list_all_sessions_joins_project_and_uses_camelcase_times() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -1162,7 +1162,7 @@ async fn process_analysis_selects_unscored_then_saves_judgments_evidence_waterma
         .execute(s.pool())
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id=$1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id=$1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -1213,7 +1213,7 @@ async fn set_session_summary_refreshes_when_changed() {
         .execute(s.pool())
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -1258,14 +1258,14 @@ async fn get_project_repos_excludes_subfolder_tree() {
     assert!(!kinds.iter().any(|k| k == "module"), "kind=module excluded from repos: {kinds:?}");
 
     sqlx_core::query::query(
-        "DELETE FROM sensei.folders f USING sensei.folder_projects fp \
-          WHERE fp.folder_id = f.id AND fp.project_id = $1",
+        "DELETE FROM sensei.folders f USING sensei.folder_workspaces fp \
+          WHERE fp.folder_id = f.id AND fp.workspace_id = $1",
     )
     .bind(pid)
     .execute(s.pool())
     .await
     .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -1336,12 +1336,12 @@ async fn projects_with_session_activity_reports_the_project() {
         activity.iter().find(|(p, _)| *p == pid).expect("project appears in session-activity");
     assert!(row.1.timestamp() > 0, "carries a real latest-activity timestamp");
 
-    sqlx_core::query::query("DELETE FROM activity.sessions WHERE project_id = $1")
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE workspace_id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -1414,12 +1414,12 @@ async fn project_ftr_and_quality_decode_numeric_metrics() {
     s.get_quality_signals(&pid).await.expect("get_quality_signals decodes numeric metrics");
     s.get_tool_usage_stats().await.expect("get_tool_usage_stats decodes numeric avg_duration_ms");
 
-    sqlx_core::query::query("DELETE FROM activity.sessions WHERE project_id = $1")
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE workspace_id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await

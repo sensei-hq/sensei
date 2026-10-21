@@ -215,8 +215,8 @@ impl PgStore {
         project_id: &uuid::Uuid,
     ) -> Result<Vec<uuid::Uuid>, String> {
         let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "SELECT DISTINCT folder_id FROM sensei.folder_projects
-              WHERE project_id = $1 ORDER BY folder_id",
+            "SELECT DISTINCT folder_id FROM sensei.folder_workspaces
+              WHERE workspace_id = $1 ORDER BY folder_id",
         )
         .bind(project_id)
         .fetch_all(&self.pool)

@@ -687,8 +687,8 @@ impl PgStore {
                    LEFT JOIN LATERAL ( \
                         SELECT CASE WHEN count(DISTINCT p.id) = 1 THEN max(n.slug) END AS slug, \
                                CASE WHEN count(DISTINCT p.id) = 1 THEN max(p.name) END AS name \
-                          FROM sensei.repositories_in_projects rip \
-                          JOIN sensei.projects p ON p.id = rip.project_id \
+                          FROM sensei.repositories_in_workspaces rip \
+                          JOIN sensei.workspaces p ON p.id = rip.workspace_id \
                           LEFT {join} \
                          WHERE rip.repository_id = r.id \
                    ) pj ON true \
@@ -743,7 +743,7 @@ mod offered_project_tests {
                 .await;
         }
         for name in [&pa, &pb] {
-            exec(&pg, "INSERT INTO sensei.projects (name) VALUES ($1)", &[name]).await;
+            exec(&pg, "INSERT INTO sensei.workspaces (name) VALUES ($1)", &[name]).await;
             exec(
                 &pg,
                 "INSERT INTO sensei.namespaces (scope_key, name, slug) VALUES ('project', $1, $1 || '-slug')",
@@ -751,8 +751,8 @@ mod offered_project_tests {
             )
             .await;
         }
-        let link = "INSERT INTO sensei.repositories_in_projects (project_id, repository_id) \
-                    SELECT p.id, r.id FROM sensei.projects p, sensei.repositories r \
+        let link = "INSERT INTO sensei.repositories_in_workspaces (workspace_id, repository_id) \
+                    SELECT p.id, r.id FROM sensei.workspaces p, sensei.repositories r \
                      WHERE p.name = $1 AND r.repo_key = $2";
         exec(&pg, link, &[&pa, &one]).await;
         exec(&pg, link, &[&pa, &two]).await;
@@ -777,7 +777,7 @@ mod offered_project_tests {
                 &[name],
             )
             .await;
-            exec(&pg, "DELETE FROM sensei.projects WHERE name = $1", &[name]).await;
+            exec(&pg, "DELETE FROM sensei.workspaces WHERE name = $1", &[name]).await;
         }
     }
 }

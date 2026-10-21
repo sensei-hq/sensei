@@ -27,7 +27,7 @@ impl PgStore {
             sqlx_core::query_as::query_as(
                 "SELECT m.id, m.title, m.content, m.impact, m.enforcement::text,
                         COALESCE(n.scope_key,
-                                 CASE WHEN m.project_id IS NOT NULL THEN 'project' ELSE 'general' END) AS scope,
+                                 CASE WHEN m.workspace_id IS NOT NULL THEN 'project' ELSE 'general' END) AS scope,
                         n.name AS namespace
                    FROM sensei.memories m
                    LEFT JOIN sensei.namespaces n ON n.id = m.namespace_id
@@ -35,29 +35,29 @@ impl PgStore {
                   WHERE m.status IN ('active'::sensei.memory_status,
                                      'reinforced'::sensei.memory_status,
                                      'battle_tested'::sensei.memory_status)
-                    AND ( (m.namespace_id IS NULL AND m.project_id IS NULL)
+                    AND ( (m.namespace_id IS NULL AND m.workspace_id IS NULL)
                           OR n.scope_key IN ('general', 'user')
                           -- Namespaces attach to the REPOSITORY; this lifts
                           -- the folder to it. One definition, four resolvers.
                           OR m.namespace_id IN (
                                 SELECT sensei.namespaces_for_folder($1)
                           )
-                          -- The folder's project(s), through the junction.
+                          -- The folder's workspace(s), through the junction.
                           -- EXISTS over a SET, not equality against a scalar:
-                          -- a repository serving two projects is governed by
+                          -- a repository serving two workspaces is governed by
                           -- both, and that is a real case rather than a
                           -- spelling choice.
                           --
-                          -- This was `m.project_id = (SELECT project_id FROM
+                          -- This was `m.workspace_id = (SELECT workspace_id FROM
                           -- sensei.folders WHERE id = $1)`. Once #211 dropped
                           -- that column the subquery did not fail — the
-                          -- unqualified name resolved OUTWARD to `m.project_id`,
-                          -- making the predicate `m.project_id = m.project_id`
-                          -- and handing every project's rules to every folder.
+                          -- unqualified name resolved OUTWARD to `m.workspace_id`,
+                          -- making the predicate `m.workspace_id = m.workspace_id`
+                          -- and handing every workspace's rules to every folder.
                           OR ( m.namespace_id IS NULL
-                               AND EXISTS (SELECT 1 FROM sensei.folder_projects fp
+                               AND EXISTS (SELECT 1 FROM sensei.folder_workspaces fp
                                             WHERE fp.folder_id = $1
-                                              AND fp.project_id = m.project_id) ) )
+                                              AND fp.workspace_id = m.workspace_id) ) )
                   ORDER BY m.enforcement DESC,
                            COALESCE(n.level, s.level, 0) DESC,
                            m.strength DESC",
@@ -341,7 +341,7 @@ impl PgStore {
                   WHERE m.status IN ('active'::sensei.memory_status,
                                      'reinforced'::sensei.memory_status,
                                      'battle_tested'::sensei.memory_status)
-                    AND ( (m.namespace_id IS NULL AND m.project_id IS NULL)
+                    AND ( (m.namespace_id IS NULL AND m.workspace_id IS NULL)
                           OR n.scope_key IN ('general', 'user') )
                   ORDER BY m.enforcement DESC,
                            COALESCE(n.level, s.level, 0) DESC,
@@ -478,7 +478,7 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, title, content, feature FROM sensei.memories
-                  WHERE status='active' AND project_id = $1
+                  WHERE status='active' AND workspace_id = $1
                     AND spine_slot = $2::sensei.spine_slot
                     AND feature IS NOT DISTINCT FROM $3
                   ORDER BY strength DESC, modified_at DESC LIMIT $4",
@@ -526,13 +526,13 @@ impl PgStore {
             Option<String>,
             chrono::DateTime<chrono::Utc>,
         )> = sqlx_core::query_as::query_as(
-            "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
+            "SELECT id, workspace_id, scope::text, scope_filter, type::text, title, content,
                         impact, strength::float8, status::text, reinforced_count, violated_count,
                         last_relevant_at, tags, triage_signal, modified_at
                    FROM sensei.memories
                   WHERE status::text = ANY($1)
                     AND (
-                           project_id = $2
+                           workspace_id = $2
                         OR (scope = 'stack'  AND scope_filter = ANY($3))
                         OR  scope = 'global'
                     )
@@ -566,7 +566,7 @@ impl PgStore {
                 "WITH existing AS (
                      SELECT id FROM sensei.memories WHERE id = ANY($1::uuid[]) FOR SHARE
                  )
-                 INSERT INTO activity.memory_loads (memory_id, project_id, source)
+                 INSERT INTO activity.memory_loads (memory_id, workspace_id, source)
                  SELECT id, $2, 'get_layered_context' FROM existing",
             )
             .bind(&memory_ids)
@@ -584,7 +584,7 @@ impl PgStore {
             .map(|r| {
                 serde_json::json!({
                     "id":               r.0,
-                    "scope":            r.2,
+                    "scope":            scope_to_api(r.2),
                     "scope_filter":     r.3,
                     "type":             r.4,
                     "title":            r.5,

@@ -29,10 +29,10 @@ impl PgStore {
             "SELECT s.id, s.name, s.display_name, s.publisher,
                     s.protocol::text, s.kind::text, s.summary, s.tools_count,
                     s.verified, s.installed,
-                    (SELECT enabled FROM sensei.service_projects sp
-                      WHERE sp.service_id = s.id AND sp.project_id = $1) AS scoped_enabled,
-                    (SELECT enabled FROM sensei.service_projects sp
-                      WHERE sp.service_id = s.id AND sp.project_id IS NULL) AS global_enabled
+                    (SELECT enabled FROM sensei.service_workspaces sp
+                      WHERE sp.service_id = s.id AND sp.workspace_id = $1) AS scoped_enabled,
+                    (SELECT enabled FROM sensei.service_workspaces sp
+                      WHERE sp.service_id = s.id AND sp.workspace_id IS NULL) AS global_enabled
                FROM sensei.services s
               WHERE s.installed = true
               ORDER BY s.display_name",
@@ -97,9 +97,9 @@ impl PgStore {
         // partial unique index without extra hints in Postgres).
         let updated = if let Some(pid) = project_id {
             sqlx_core::query::query(
-                "UPDATE sensei.service_projects
+                "UPDATE sensei.service_workspaces
                     SET enabled = $1, modified_at = now()
-                  WHERE service_id = $2 AND project_id = $3",
+                  WHERE service_id = $2 AND workspace_id = $3",
             )
             .bind(enabled)
             .bind(service_id)
@@ -109,9 +109,9 @@ impl PgStore {
             .map_err(|e| e.to_string())?
         } else {
             sqlx_core::query::query(
-                "UPDATE sensei.service_projects
+                "UPDATE sensei.service_workspaces
                     SET enabled = $1, modified_at = now()
-                  WHERE service_id = $2 AND project_id IS NULL",
+                  WHERE service_id = $2 AND workspace_id IS NULL",
             )
             .bind(enabled)
             .bind(service_id)
@@ -122,7 +122,7 @@ impl PgStore {
 
         if updated.rows_affected() == 0 {
             sqlx_core::query::query(
-                "INSERT INTO sensei.service_projects (service_id, project_id, enabled)
+                "INSERT INTO sensei.service_workspaces (service_id, workspace_id, enabled)
                  VALUES ($1, $2, $3)",
             )
             .bind(service_id)
@@ -155,7 +155,7 @@ impl PgStore {
                        FROM sensei.session_tool_calls stc
                        JOIN activity.sessions s
                          ON s.client_session_id = stc.session_id
-                      WHERE s.project_id = $1
+                      WHERE s.workspace_id = $1
                  )
                  SELECT tool_name,
                         count(*)::bigint                                                          AS calls,
@@ -332,7 +332,7 @@ impl PgStore {
     ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, String, String, serde_json::Value, serde_json::Value, bool, String)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, acp_family, mcp_key, scope, project_id, config_source, command, args, env, enabled, connection_state
+                "SELECT id, acp_family, mcp_key, scope, workspace_id, config_source, command, args, env, enabled, connection_state
                    FROM sensei.mcp_servers WHERE id = $1"
             )
             .bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
@@ -384,7 +384,7 @@ impl PgStore {
             sqlx_core::query_as::query_as(
                 "SELECT id FROM sensei.mcp_servers
                   WHERE acp_family = $1 AND mcp_key = $2
-                    AND scope = 'project' AND project_id = $3",
+                    AND scope = 'project' AND workspace_id = $3",
             )
             .bind(acp_family)
             .bind(mcp_key)
@@ -427,7 +427,7 @@ impl PgStore {
         } else {
             let (new_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
                 "INSERT INTO sensei.mcp_servers
-                    (acp_family, mcp_key, scope, project_id, config_source, command, args, env)
+                    (acp_family, mcp_key, scope, workspace_id, config_source, command, args, env)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  RETURNING id",
             )
@@ -474,14 +474,14 @@ impl PgStore {
             chrono::DateTime<chrono::Utc>,
         )> = if let Some(pid) = project_id {
             sqlx_core::query_as::query_as(
-                    "SELECT id, acp_family, mcp_key, scope, project_id, config_source, command, args, env, enabled, connection_state, last_error, last_seen_at, discovered_at
+                    "SELECT id, acp_family, mcp_key, scope, workspace_id, config_source, command, args, env, enabled, connection_state, last_error, last_seen_at, discovered_at
                        FROM sensei.mcp_servers
-                      WHERE scope = 'user' OR project_id = $1
+                      WHERE scope = 'user' OR workspace_id = $1
                       ORDER BY acp_family, mcp_key"
                 ).bind(pid).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
         } else {
             sqlx_core::query_as::query_as(
-                    "SELECT id, acp_family, mcp_key, scope, project_id, config_source, command, args, env, enabled, connection_state, last_error, last_seen_at, discovered_at
+                    "SELECT id, acp_family, mcp_key, scope, workspace_id, config_source, command, args, env, enabled, connection_state, last_error, last_seen_at, discovered_at
                        FROM sensei.mcp_servers
                       WHERE scope = 'user'
                       ORDER BY acp_family, mcp_key"

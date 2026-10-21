@@ -114,7 +114,7 @@ pub enum ApplyError {
 }
 
 const TRACKER_SELECT: &str =
-    "SELECT id, project_id, kind::text, base_url, account, external_scope, board_ref,
+    "SELECT id, workspace_id, kind::text, base_url, account, external_scope, board_ref,
         params, secret_service, last_attempt_at, last_success_at, last_error::text,
         discovered_through
    FROM sensei.trackers";
@@ -171,8 +171,8 @@ pub(crate) fn candidate_sessions(tracker: &str) -> String {
     format!(
         "SELECT s.id AS session_id, fp.repository_id
            FROM activity.sessions s
-           JOIN sensei.folder_projects fp ON fp.folder_id = s.repo_folder_id
-           JOIN sensei.trackers tr ON tr.project_id = fp.project_id
+           JOIN sensei.folder_workspaces fp ON fp.folder_id = s.repo_folder_id
+           JOIN sensei.trackers tr ON tr.workspace_id = fp.workspace_id
           WHERE tr.id = {tracker}"
     )
 }
@@ -351,7 +351,7 @@ impl PgStore {
         project_id: uuid::Uuid,
     ) -> Result<Option<TrackerRow>, String> {
         sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!(
-            "{TRACKER_SELECT} WHERE project_id = $1"
+            "{TRACKER_SELECT} WHERE workspace_id = $1"
         ))
         .bind(project_id)
         .fetch_optional(&self.pool)
@@ -367,8 +367,8 @@ impl PgStore {
         board_ref: &str,
     ) -> Result<Option<BoardOwner>, String> {
         sqlx_core::query_as::query_as::<_, (uuid::Uuid, uuid::Uuid, String)>(
-            "SELECT t.id, t.project_id, p.name
-               FROM sensei.trackers t JOIN sensei.projects p ON p.id = t.project_id
+            "SELECT t.id, t.workspace_id, p.name
+               FROM sensei.trackers t JOIN sensei.workspaces p ON p.id = t.workspace_id
               WHERE t.kind = $1::sensei.tracker_kind AND t.base_url = $2 AND t.board_ref = $3",
         )
         .bind(kind)
@@ -707,7 +707,7 @@ impl PgStore {
             >(
                 "SELECT t.id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL
                    FROM sensei.tracker_tasks t JOIN sensei.trackers tr ON tr.id = t.tracker_id
-                  WHERE tr.project_id = $1
+                  WHERE tr.workspace_id = $1
                     AND (upper(t.key) = upper($2)
                          OR EXISTS (SELECT 1 FROM sensei.tracker_task_keys k
                                      WHERE k.task_id = t.id AND upper(k.key) = upper($2)))
@@ -912,7 +912,7 @@ impl PgStore {
         let mut tx = self.pool.begin().await.map_err(db)?;
         // Serialise connects for the project.
         let project = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
-            "SELECT id FROM sensei.projects WHERE id = $1 FOR UPDATE",
+            "SELECT id FROM sensei.workspaces WHERE id = $1 FOR UPDATE",
         )
         .bind(t.project_id)
         .fetch_optional(&mut *tx)
@@ -922,7 +922,7 @@ impl PgStore {
             return Err(ConnectDbError::Db("project not found".into()));
         }
         let existing = sqlx_core::query_as::query_as::<_, (uuid::Uuid, String, String, String)>(
-            "SELECT id, kind::text, base_url, board_ref FROM sensei.trackers WHERE project_id = $1",
+            "SELECT id, kind::text, base_url, board_ref FROM sensei.trackers WHERE workspace_id = $1",
         )
         .bind(t.project_id)
         .fetch_optional(&mut *tx)
@@ -962,7 +962,7 @@ impl PgStore {
                 }
                 let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
                     "INSERT INTO sensei.trackers
-                            (project_id, kind, base_url, account, external_scope, board_ref, params, secret_service)
+                            (workspace_id, kind, base_url, account, external_scope, board_ref, params, secret_service)
                      VALUES ($1, $2::sensei.tracker_kind, $3, $4, $5, $6, $7, $8)
                      RETURNING id",
                 )
@@ -1020,7 +1020,7 @@ impl PgStore {
     }
 
     pub async fn delete_tracker_for_project(&self, project_id: uuid::Uuid) -> Result<bool, String> {
-        sqlx_core::query::query("DELETE FROM sensei.trackers WHERE project_id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.trackers WHERE workspace_id = $1")
             .bind(project_id)
             .execute(&self.pool)
             .await
@@ -1104,7 +1104,7 @@ mod schema_tests {
     ) -> Result<uuid::Uuid, String> {
         sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
             "INSERT INTO sensei.trackers
-                 (project_id, kind, base_url, account, external_scope, board_ref, secret_service)
+                 (workspace_id, kind, base_url, account, external_scope, board_ref, secret_service)
              VALUES ($1, 'jira', $2, 'dev@example.com', 'AUTH', $3, $4)
              RETURNING id",
         )
@@ -1164,7 +1164,7 @@ mod schema_tests {
     }
 
     async fn cleanup(pg: &PgStore, project_id: uuid::Uuid, services: &[&str]) {
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(project_id)
             .execute(pg.pool())
             .await
@@ -1191,7 +1191,10 @@ mod schema_tests {
         let (s1, s2) = (unique("a"), unique("b"));
         insert_tracker(&pg, p, "https://a.atlassian.net", "1", &s1).await.unwrap();
         let second = insert_tracker(&pg, p, "https://b.atlassian.net", "2", &s2).await;
-        assert!(second.is_err(), "a second tracker on one project must violate unique(project_id)");
+        assert!(
+            second.is_err(),
+            "a second tracker on one workspace must violate unique(workspace_id)"
+        );
         cleanup(&pg, p, &[&s1, &s2]).await;
     }
 
@@ -1230,7 +1233,8 @@ mod schema_tests {
         let s = unique("cascade");
         insert_tracker(&pg, p, "https://c.atlassian.net", "8", &s).await.unwrap();
         let seen =
-            within_rollback(&pg, "DELETE FROM sensei.projects WHERE id = $1", p, None, &[&s]).await;
+            within_rollback(&pg, "DELETE FROM sensei.workspaces WHERE id = $1", p, None, &[&s])
+                .await;
         assert_eq!(seen, [Some(("dev@example.com".into(), true))]);
         cleanup(&pg, p, &[&s]).await;
     }

@@ -53,7 +53,7 @@ fn tkey(test: &str, key: &str) -> String {
 /// 13,722 on the live DB — so a folder without one is a state production can no
 /// longer produce. Modelling it here is not a harmless simplification: it is
 /// what let `version_conflicts_view_flags_multi_version_pins_and_excludes_local`
-/// keep asserting on a view that, resolved through `folder_projects`, could
+/// keep asserting on a view that, resolved through `folder_workspaces`, could
 /// never have matched its fixture.
 ///
 /// The repository is keyed on `suffix`, so the same suffix returns the same
@@ -108,8 +108,8 @@ pub(crate) async fn create_test_folder_unattributed(s: &PgStore, suffix: &str) -
 /// project_id, while `list_patterns_by_folder` still keys on folder.
 ///
 /// Goes through `set_folder_project`, the production API, so the membership
-/// reaches `repositories_in_projects` as well as `folders.project_id`. A raw
-/// `UPDATE … SET project_id` writes only the half that `folder_projects` does
+/// reaches `repositories_in_workspaces` as well as `folders.project_id`. A raw
+/// `UPDATE … SET project_id` writes only the half that `folder_workspaces` does
 /// not read.
 async fn create_test_project_and_folder(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid) {
     let pid = s.create_project(&format!("_test:{}", suffix), None, None).await.unwrap();

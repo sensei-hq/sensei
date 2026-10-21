@@ -33,7 +33,7 @@ const ACTION_TYPES: [&str; 8] = [
     "write_skill",
     "archive_memory",
     "enrich_memory",
-    "cross_project",
+    "cross_workspace",
     "revise_rule",
     "audit_stale",
 ];
@@ -41,7 +41,7 @@ const ACTION_TYPES: [&str; 8] = [
 const SYSTEM: &str = "You are a senior engineer reviewing recurring signals from a developer's \
 coding sessions. Synthesize them into ONE highest-value, actionable recommendation. \
 Respond with ONLY a JSON object: {\"headline\": str, \"reasoning\": str, \"action_type\": one of \
-[promote_pattern, create_agent, write_skill, archive_memory, enrich_memory, cross_project, revise_rule, audit_stale], \
+[promote_pattern, create_agent, write_skill, archive_memory, enrich_memory, cross_workspace, revise_rule, audit_stale], \
 \"prompt\": str (a ready-to-send instruction for an AI coding assistant), \"urgency\": one of [low, medium, high]}. \
 No prose outside the JSON.";
 

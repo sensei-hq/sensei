@@ -20,7 +20,7 @@ comment on column folders_to_watch.id
 comment on column folders_to_watch.path
      is 'Absolute filesystem path to the watched root directory.';
 comment on column folders_to_watch.name
-     is 'Display name for the root (e.g. "Developer", "Work Projects").';
+     is 'Display name for the root (e.g. "Developer", "Work Workspaces").';
 comment on column folders_to_watch.note
      is 'Optional user note about this root (e.g. "monorepo root, 3 packages").';
 comment on column folders_to_watch.status

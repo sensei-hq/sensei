@@ -488,9 +488,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     //   1. Dispatch the transcript importer (first install = full history; forward =
     //      new transcripts, smart-skipped) so day-keyed sources exist, then re-attach
     //      orphaned sessions. FRESHLY-synthesized sessions become measurable after the
-    //      analyzer runs, and each `AnalyzeProject` success enqueues an
-    //      overlap-guarded `ComputeProjectMetrics` for its project (the synthesizer →
-    //      analyzer → ComputeProjectMetrics chain).
+    //      analyzer runs, and each `AnalyzeWorkspace` success enqueues an
+    //      overlap-guarded `ComputeWorkspaceMetrics` for its project (the synthesizer →
+    //      analyzer → ComputeWorkspaceMetrics chain).
     //   2. UNCONDITIONALLY enqueue the per-project metric plan on boot
     //      (`enqueue_backfill_all`). This is the trigger for a PERSIST-boot: when the
     //      daemon restarts and its sessions already exist AND are already analyzed
@@ -527,7 +527,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
                 ),
                 Ok(n) => tracing::info!(
                     projects = n,
-                    "startup: enqueued metric backfill (ComputeProjectMetrics per project)"
+                    "startup: enqueued metric backfill (ComputeWorkspaceMetrics per project)"
                 ),
                 Err(e) => tracing::warn!(error = %e, "startup: metric backfill enqueue failed"),
             }

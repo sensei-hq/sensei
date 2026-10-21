@@ -2,7 +2,7 @@
 //! every project gets a meaningful icon at a glance. See
 //! [[pipeline/project-icon]] for the design.
 //!
-//! The scanner writes `sensei.projects.icon` (jsonb `{kind, value, source}`).
+//! The scanner writes `sensei.workspaces.icon` (jsonb `{kind, value, source}`).
 //! The app reads `kind` + `value` only (`kind:"image"` → `<img src=value>`,
 //! `kind:"kanji"` → glyph, else → 場); `source` is provenance the app ignores.
 //!
@@ -48,7 +48,7 @@ fn source_rank(source: &str) -> Option<u8> {
     }
 }
 
-/// An inferred icon, serialized verbatim into `sensei.projects.icon`.
+/// An inferred icon, serialized verbatim into `sensei.workspaces.icon`.
 ///
 /// `kind` is always one of the two the app renders (`"image"` or `"kanji"`);
 /// the letter fallback rides on `kind:"kanji"` so a Latin initial renders as a

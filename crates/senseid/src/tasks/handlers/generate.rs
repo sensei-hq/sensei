@@ -541,12 +541,12 @@ mod tests {
             .execute(pool)
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE project_id = $1")
+        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE workspace_id = $1")
             .bind(pid)
             .execute(pool)
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE project_id = $1")
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE workspace_id = $1")
             .bind(pid)
             .execute(pool)
             .await
@@ -566,7 +566,7 @@ mod tests {
             .execute(pool)
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(pool)
             .await

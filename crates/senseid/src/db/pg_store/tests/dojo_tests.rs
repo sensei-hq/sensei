@@ -101,7 +101,7 @@ async fn project_identifiers_gathers_names_paths_repos_and_sessions() {
     let suffix = format!("projident_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
     // Set the client + a git remote so the parser has something to chew on.
-    sqlx_core::query::query("UPDATE sensei.projects SET client = $2 WHERE id = $1")
+    sqlx_core::query::query("UPDATE sensei.workspaces SET client = $2 WHERE id = $1")
         .bind(pid)
         .bind("Acme Corp")
         .execute(s.pool())
@@ -1120,7 +1120,7 @@ async fn every_cloned_repository_is_offered_even_when_the_user_has_not_elected_i
         .execute(s.pool())
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await

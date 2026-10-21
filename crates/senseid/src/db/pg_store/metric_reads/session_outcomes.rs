@@ -66,7 +66,7 @@ impl PgStore {
                   , coalesce(sum(s.corrections), 0)::int8              AS correction_count
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
                 AND {}
@@ -98,7 +98,7 @@ impl PgStore {
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
                JOIN activity.turns    t  ON t.session_id = s.id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
                 AND {}
@@ -139,7 +139,7 @@ impl PgStore {
                            ORDER BY t.turn_number \
                            LIMIT 1 \
                         ) fu ON true \
-                  WHERE s.project_id  = $1 \
+                  WHERE s.workspace_id  = $1 \
                     AND rf.repository_id IS NOT NULL \
                     AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome \
                     AND {} \
@@ -177,7 +177,7 @@ impl PgStore {
                   , count(*)::int8                                                                  AS total
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
                 AND {}
@@ -213,7 +213,7 @@ impl PgStore {
                   , count(*)::int8                                AS n
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.tokens_in IS NOT NULL
                 AND {}
@@ -260,7 +260,7 @@ impl PgStore {
                   , count(*)::int8                                              AS n
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.duration   IS NOT NULL
                 AND {}
@@ -291,7 +291,7 @@ impl PgStore {
                   , count(*)::int8                                AS completed
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.outcome    = 'completed'::sensei.session_outcome
                 AND s.tokens_out IS NOT NULL
@@ -336,7 +336,7 @@ impl PgStore {
                    FROM activity.sessions s \
                    JOIN sensei.folders          rf ON rf.id = s.repo_folder_id \
                    JOIN activity.assistant_events e ON e.session_id = s.client_session_id \
-                  WHERE s.project_id  = $1 \
+                  WHERE s.workspace_id  = $1 \
                     AND rf.repository_id IS NOT NULL \
                     AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome \
                     AND {day} \

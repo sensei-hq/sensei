@@ -2,7 +2,7 @@ set search_path to inference, sensei, extensions;
 
 create table if not exists detected_patterns (
   id                       uuid              primary key default gen_random_uuid()
-, project_id               uuid              not null references sensei.projects(id) on delete cascade
+, workspace_id             uuid              not null references sensei.workspaces(id) on delete cascade
 , folder_id                uuid                       references sensei.folders(id)  on delete set null
 , name                     text              not null
 , family                   text
@@ -20,11 +20,11 @@ create table if not exists detected_patterns (
 , tags                     text[]            not null default '{}'
 , detected_at              timestamptz       not null default now()
 , modified_at              timestamptz       not null default now()
-, unique(project_id, name, is_anti_pattern)
+, unique(workspace_id, name, is_anti_pattern)
 );
 
-create index if not exists detected_patterns_project_id_idx
-    on detected_patterns(project_id);
+create index if not exists detected_patterns_workspace_id_idx
+    on detected_patterns(workspace_id);
 
 create index if not exists detected_patterns_folder_id_idx
     on detected_patterns(folder_id);
@@ -45,9 +45,9 @@ create index if not exists detected_patterns_fix_pattern_id_idx
     on detected_patterns(fix_pattern_id) where fix_pattern_id is not null;
 
 comment on table detected_patterns is
-'Code patterns detected during indexing and analysis, scoped to a project.
-- project_id: the scoping key. Uniqueness is (project_id, name, is_anti_pattern)
-  so patterns aggregate across every folder in the project — a churn pattern
+'Code patterns detected during indexing and analysis, scoped to a workspace.
+- workspace_id: the scoping key. Uniqueness is (workspace_id, name, is_anti_pattern)
+  so patterns aggregate across every folder in the workspace — a churn pattern
   for the same file that shows in multiple folder passes merges into one row
   (#82).
 - folder_id: optional locus pointer for file/folder-scoped signals (churn).
@@ -62,8 +62,8 @@ comment on table detected_patterns is
 
 comment on column detected_patterns.id
      is 'Surrogate primary key (UUID).';
-comment on column detected_patterns.project_id
-     is 'Foreign key to projects — the scoping key. Patterns aggregate at project level (#82).';
+comment on column detected_patterns.workspace_id
+     is 'Foreign key to workspaces — the scoping key. Patterns aggregate at workspace level (#82).';
 comment on column detected_patterns.folder_id
      is 'Optional foreign key to folders — the file/folder locus for file-scoped signals (churn). Nullable; SET NULL on folder delete.';
 comment on column detected_patterns.name

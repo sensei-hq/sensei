@@ -1,8 +1,8 @@
 set search_path to sensei, extensions;
 
-create or replace view project_metric_quarterly
+create or replace view workspace_metric_quarterly
     as
-select project_id
+select workspace_id
      , metric
      , date_trunc('quarter', date)::date as period
      , case
@@ -22,11 +22,11 @@ select project_id
          else (array_agg(value order by date desc))[1]
        end                               as value
      , direction
-  from sensei.project_metric_daily
- group by project_id, metric, period, type, direction;
+  from sensei.workspace_metric_daily
+ group by workspace_id, metric, period, type, direction;
 
-comment on view project_metric_quarterly is
-'Quarterly roll-up of project_metric_daily, aggregating inline by metric type:
+comment on view workspace_metric_quarterly is
+'Quarterly roll-up of workspace_metric_daily, aggregating inline by metric type:
 - ratio/pct: re-derive sum(numerator)/nullif(sum(denominator),0) — NEVER the mean
   of daily ratios
 - count/currency: sum(value)
@@ -34,4 +34,4 @@ comment on view project_metric_quarterly is
   not recoverable from daily rows, so the mean is the pragmatic latency roll-up)
 - value/score (point-in-time): the period-end value via
   (array_agg(value order by date desc))[1]
-Grouped by project_id, metric, period (quarter start), type, direction.';
+Grouped by workspace_id, metric, period (quarter start), type, direction.';

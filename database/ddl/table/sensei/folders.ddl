@@ -70,19 +70,19 @@ Collapsing any two of these is the mistake this shape exists to prevent: a
 `kind` that moves when an unrelated manifest gains a `workspaces` array is
 describing the wrong thing.
 
-## How to find a project''s folders
+## How to find a workspace''s folders
 
-A folder does NOT carry a project. That column existed until #211 and was
+A folder does NOT carry a workspace. That column existed until #211 and was
 settable per folder, so a repository''s folders could disagree about their
-project — and they did. Membership now lives in
-`sensei.repositories_in_projects`, keyed on the REPOSITORY. Resolve through
-`sensei.folder_projects`, which is
-`folders.repository_id` -> `repositories_in_projects` -> `projects`:
+workspace — and they did. Membership now lives in
+`sensei.repositories_in_workspaces`, keyed on the REPOSITORY. Resolve through
+`sensei.folder_workspaces`, which is
+`folders.repository_id` -> `repositories_in_workspaces` -> `workspaces`:
 
-    SELECT folder_id FROM sensei.folder_projects WHERE project = ''sensei''
+    SELECT folder_id FROM sensei.folder_workspaces WHERE workspace = ''sensei''
 
 That resolution is MULTI-VALUED by design: a repository is keyed on its remote,
-so one serving two projects yields a row for each.
+so one serving two workspaces yields a row for each.
 
 ## Common queries
 
@@ -138,7 +138,7 @@ There is no "not indexed" state. A folders row exists only for a repo root or a 
 comment on column folders.stack
      is 'Detected technology stack as JSON array: ["rust", "typescript"]. Set by ProcessGitFolder from config files (Cargo.toml, package.json, etc.).';
 comment on column folders.role
-     is 'Project role assigned during setup: backend, frontend, library, docs, infra. Null until assigned.';
+     is 'Workspace role assigned during setup: backend, frontend, library, docs, infra. Null until assigned.';
 comment on column folders.name
      is 'Display name — typically the directory basename.';
 comment on column folders.path
@@ -163,7 +163,7 @@ marks which folder IS the anchor.
 SUPERSEDES I16 (2026-10-01, see docs/decisions.md D-REPO-ANCHOR), which set this
 only on the anchor and had subfolders resolve via repo_anchor_for. That is a
 set-returning FUNCTION, and a predicate cannot be pushed into a function scan —
-`WHERE project = $1` seq-scanned all 13,715 folders with 13,715 function calls to
+`WHERE workspace = $1` seq-scanned all 13,715 folders with 13,715 function calls to
 answer a 45-row question, and four of eight views migrated onto it regressed
 catastrophically (one ~450x). Resolving the anchor once per folder WRITTEN
 instead of per row READ makes every read a Bitmap Index Scan on

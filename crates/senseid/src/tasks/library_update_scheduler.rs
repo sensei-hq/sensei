@@ -379,7 +379,7 @@ mod tests {
         // Second pass is idempotent — no duplicate rec for the same to_version.
         tick(&s, &q, &Stub(Some("1.2.0".into())), &no_vulns()).await;
         let n: (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*) FROM inference.recommendations WHERE project_id=$1 AND action_type='library_update' AND based_on->'library_update'->>'to_version'='1.2.0'")
+            "SELECT count(*) FROM inference.recommendations WHERE workspace_id=$1 AND action_type='library_update' AND based_on->'library_update'->>'to_version'='1.2.0'")
             .bind(pid).fetch_one(s.pool()).await.unwrap();
         assert_eq!(n.0, 1, "no duplicate on re-tick");
     }
@@ -479,7 +479,7 @@ mod tests {
     async fn rec_mode(s: &PgStore, pid: &uuid::Uuid, to: &str) -> Option<String> {
         let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
             "SELECT based_on->'library_update'->>'mode' FROM inference.recommendations \
-               WHERE project_id=$1 AND action_type='library_update' AND based_on->'library_update'->>'to_version'=$2 LIMIT 1")
+               WHERE workspace_id=$1 AND action_type='library_update' AND based_on->'library_update'->>'to_version'=$2 LIMIT 1")
             .bind(pid).bind(to).fetch_optional(s.pool()).await.unwrap();
         row.and_then(|(m,)| m)
     }
@@ -569,7 +569,7 @@ mod tests {
         );
         let urgency: (String,) = sqlx_core::query_as::query_as(
             "SELECT urgency::text FROM inference.recommendations \
-               WHERE project_id=$1 AND based_on->'library_update'->>'to_version'='1.5.0' LIMIT 1",
+               WHERE workspace_id=$1 AND based_on->'library_update'->>'to_version'='1.5.0' LIMIT 1",
         )
         .bind(pid)
         .fetch_one(s.pool())

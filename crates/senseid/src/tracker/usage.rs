@@ -375,8 +375,8 @@ mod tests {
 
         // The second repo leaves the project: its session drops out, no resync.
         sqlx_core::query::query(
-            "DELETE FROM sensei.repositories_in_projects
-              WHERE project_id = $2
+            "DELETE FROM sensei.repositories_in_workspaces
+              WHERE workspace_id = $2
                 AND repository_id = (SELECT repository_id FROM sensei.folders WHERE id = $1)",
         )
         .bind(repos[1])
@@ -445,8 +445,8 @@ mod tests {
         let s101 = sprints[0].parts.clone().unwrap();
         let (independent,): (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM activity.sessions s
-               JOIN sensei.folder_projects fp ON fp.folder_id = s.repo_folder_id
-              WHERE fp.project_id = $1 AND s.started_at >= '2026-10-01' AND s.started_at < $2",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = s.repo_folder_id
+              WHERE fp.workspace_id = $1 AND s.started_at >= '2026-10-01' AND s.started_at < $2",
         )
         .bind(p)
         .bind(now)

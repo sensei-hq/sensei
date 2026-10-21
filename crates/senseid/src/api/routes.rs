@@ -1764,7 +1764,7 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = ANY($1)")
             .bind(vec![pid, empty_pid])
             .execute(state.pg.pool())
             .await
@@ -1868,7 +1868,7 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = ANY($1)")
             .bind(vec![pid_has, pid_no])
             .execute(state.pg.pool())
             .await
@@ -2000,7 +2000,7 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(state.pg.pool())
             .await
@@ -2032,7 +2032,7 @@ mod tests {
         ] {
             sqlx_core::query::query(
                 "INSERT INTO activity.sessions
-                    (folder_id, project_id, client_session_id, task, outcome, ftr, turns, corrections, started_at)
+                    (folder_id, workspace_id, client_session_id, task, outcome, ftr, turns, corrections, started_at)
                  VALUES ($1, $2, $3, $4, $5::sensei.session_outcome, $6, $7, $8, $9)")
                 .bind(fid).bind(pid).bind(cs).bind(task).bind(outcome).bind(ftr)
                 .bind(turns).bind(corr).bind(utc(at))
@@ -2098,7 +2098,7 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(state.pg.pool())
             .await
@@ -2154,7 +2154,7 @@ mod tests {
         ] {
             sqlx_core::query::query(
                 "INSERT INTO activity.sessions
-                    (folder_id, project_id, client_session_id, task, summary, outcome, ftr, turns, corrections, started_at)
+                    (folder_id, workspace_id, client_session_id, task, summary, outcome, ftr, turns, corrections, started_at)
                  VALUES ($1, $2, $3, $4, $5, $6::sensei.session_outcome, $7, $8, $9, $10)")
                 .bind(fid).bind(pid).bind(cs).bind(task).bind(summary).bind(outcome).bind(ftr)
                 .bind(turns).bind(corr).bind(utc(at))
@@ -2234,7 +2234,7 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(state.pg.pool())
             .await
@@ -5181,10 +5181,10 @@ mod tests {
                 "base group `{g}` is active in the registry: {base_names:?}"
             );
         }
-        // Enqueue the per-project PARENT only: ComputeProjectMetrics freezes one
+        // Enqueue the per-project PARENT only: ComputeWorkspaceMetrics freezes one
         // frozen as_of, fans out one ComputeGroupMetrics per active base group, and
         // enqueues the ComputeHealth barrier blocked on them — the whole engine graph.
-        ctx.queue.enqueue(Task::new(TaskKind::ComputeProjectMetrics, &pid_str, "")).await;
+        ctx.queue.enqueue(Task::new(TaskKind::ComputeWorkspaceMetrics, &pid_str, "")).await;
         // parent (1) + one child per REQUIRED base group + the health barrier (1).
         //
         // Counted from the fixed list, NOT from `base_names.len()`. Filtering
@@ -5201,7 +5201,7 @@ mod tests {
         // Only the parent is runnable up front; the group children + the health
         // barrier are enqueued when the parent runs.
         let pre = ctx.queue.status().await;
-        assert_eq!(pre.pending, 1, "just the ComputeProjectMetrics parent is pending up front");
+        assert_eq!(pre.pending, 1, "just the ComputeWorkspaceMetrics parent is pending up front");
 
         spawn_workers(ctx.clone(), 2);
 
@@ -5384,8 +5384,8 @@ mod tests {
             "no project_health value row: the retired composite is never computed (honest-empty, not a fabricated score)"
         );
         let (ph_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'project_health'",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'project_health'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -5413,8 +5413,8 @@ mod tests {
         // Honest-absence spot-check: a metric in a seeded group that is deliberately
         // NOT computed (autonomy's false_crash_rate — NEEDS_CONTEXT) writes NO row.
         let (fcr_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'false_crash_rate'",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'false_crash_rate'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -5546,8 +5546,8 @@ mod tests {
         let (direct_rate, direct_count): (f64, i64) = query_as(
             "SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8, count(*)::int8 \
                FROM activity.sessions s \
-               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id \
-              WHERE fp.project_id = $1 AND s.outcome IS NOT NULL",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = s.folder_id \
+              WHERE fp.workspace_id = $1 AND s.outcome IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())

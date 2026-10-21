@@ -102,7 +102,7 @@ pub fn dojo_run_url(registry_url: &str, run_id: &uuid::Uuid) -> String {
 #[derive(Debug)]
 pub struct NewConnection {
     /// The service membership id (`dojo.memberships.id`) — becomes the local PK
-    /// and the value `sensei.projects.dojo_id` points at.
+    /// and the value `sensei.workspaces.dojo_id` points at.
     pub membership_id: uuid::Uuid,
     pub registry_url: String,
     pub tenant_key: String,
@@ -180,7 +180,7 @@ pub async fn register(pg: &PgStore, conn: NewConnection) -> Result<uuid::Uuid, S
     pg.create_dojo_membership(&row).await
 }
 
-/// Bind a local project to a Dōjō membership (sets `sensei.projects.dojo_id`).
+/// Bind a local project to a Dōjō membership (sets `sensei.workspaces.dojo_id`).
 /// A project binds to exactly one membership. Returns `false` if the project is
 /// unknown. Client-membership bindings take precedence at routing time (see
 /// [`crate::dojo::routing`]).

@@ -107,13 +107,13 @@ pub struct MembershipRef {
 }
 
 /// What is being routed. Kept minimal: routing only needs to know the project's
-/// binding (`sensei.projects.dojo_id`). Everything else about the artifact
+/// binding (`sensei.workspaces.dojo_id`). Everything else about the artifact
 /// (payload, scope tags, attribution mode) is decided by dojo-protocol / the C5
 /// attribution pass — this function decides *destination* + *dereference*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Contribution {
     /// The membership this contribution's project is bound to
-    /// (`sensei.projects.dojo_id`), or `None` when the project is unbound.
+    /// (`sensei.workspaces.dojo_id`), or `None` when the project is unbound.
     pub bound_membership: Option<uuid::Uuid>,
 }
 

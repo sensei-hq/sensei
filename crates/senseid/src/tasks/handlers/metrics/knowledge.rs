@@ -241,8 +241,8 @@ mod tests {
             Option<String>,
         ) = query_as(
             "SELECT pm.repository_id, pm.scope::text, pm.identity, pm.commit_sha \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'memory_promotion'",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'memory_promotion'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -333,7 +333,7 @@ mod tests {
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 1, "re-run recomputes the same row");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -376,7 +376,7 @@ mod tests {
         );
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -421,7 +421,7 @@ mod tests {
         );
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -448,7 +448,7 @@ mod tests {
         assert_eq!(written, 0, "no knowledge data in the window → zero rows written");
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -548,8 +548,8 @@ mod tests {
             .expect("A has a repository-linked folder");
         let (repo_id_a,): (Option<uuid::Uuid>,) = query_as(
             "SELECT pm.repository_id \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'memory_promotion'",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'memory_promotion'",
         )
         .bind(pid_a)
         .fetch_one(pg.pool())
@@ -589,7 +589,7 @@ mod tests {
         assert_eq!(written, 0, "historical as_of → forward-only skip → zero rows");
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await

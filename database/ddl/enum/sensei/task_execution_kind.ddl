@@ -22,7 +22,7 @@ set search_path to sensei, extensions;
 --   * resolve_edges      retired in 243e4fc5; FQN edges now resolve at emit, so
 --                        the pass has no successor at all.
 --   * plan_metric_days   retired in 8ec9384a with the day-planner.
---   * compute_metrics    SPLIT in 8ec9384a into compute_project_metrics +
+--   * compute_metrics    SPLIT in 8ec9384a into compute_workspace_metrics +
 --                        compute_group_metrics — a 1:many change, so no single
 --                        successor exists to map it to.
 --   * reconcile_identity renamed to reconcile_repo_metadata (it reads repo
@@ -67,11 +67,11 @@ create type task_execution_kind as enum (
   -- ── activity pipeline ──
 , 'ingest_captures'
 , 'ingest_capture'
-, 'analyze_project'
+, 'analyze_workspace'
 , 'analyze_session_process'
 , 'reconcile_repo_metadata'
   -- ── metrics pipeline ──
-, 'compute_project_metrics'
+, 'compute_workspace_metrics'
 , 'compute_group_metrics'
 , 'compute_health'
 , 'backfill_coverage'

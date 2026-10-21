@@ -432,8 +432,8 @@ mod tests {
         let rid = repository_for_folder(pg, &fid).await;
         let (row_repo, row_scope, row_grain): (uuid::Uuid, String, String) = query_as(
             "SELECT pm.repository_id, pm.scope::text, pm.grain::text \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'ftr'",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'ftr'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -499,7 +499,7 @@ mod tests {
         let (fd_rate, fd_count): (f64, i64) = query_as(
             "SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8, count(*)::int8 \
                FROM activity.sessions s \
-              WHERE s.project_id = $1 AND s.outcome IS NOT NULL",
+              WHERE s.workspace_id = $1 AND s.outcome IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -517,7 +517,7 @@ mod tests {
 
         // ── Per-session grain is RETIRED — no grain='session' rows exist ──
         let (session_grain_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1 AND grain = 'session'",
+            "SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1 AND grain = 'session'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -532,7 +532,7 @@ mod tests {
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 5, "re-run recomputes the same rows");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -571,8 +571,8 @@ mod tests {
         // Two ftr rows, one per repository, each carrying ITS OWN value + denominator.
         let rows: Vec<(Option<uuid::Uuid>, f64, i64)> = query_as(
             "SELECT pm.repository_id, pm.value::float8, (pm.props->>'denominator')::int8 \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'ftr' AND pm.grain = 'daily' AND pm.scope = 'user' \
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'ftr' AND pm.grain = 'daily' AND pm.scope = 'user' \
               ORDER BY pm.repository_id",
         )
         .bind(pid)
@@ -629,7 +629,7 @@ mod tests {
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert!(written > 0, "compute wrote store rows for the seeded sessions");
 
-        // Store-derived daily FTR (get_ftr_daily reads project_metric_daily) ==
+        // Store-derived daily FTR (get_ftr_daily reads workspace_metric_daily) ==
         // the old ftr_daily arithmetic over the seed.
         let daily = pg.get_ftr_daily(Some(&pid), 14).await.unwrap();
         let today = (chrono::Utc::now()).date_naive().to_string();
@@ -647,7 +647,7 @@ mod tests {
             "store session_count == count(*) over the measurable base = 4"
         );
 
-        // Store-derived 14d headline (get_project_ftr reads project_metric_daily)
+        // Store-derived 14d headline (get_project_ftr reads workspace_metric_daily)
         // == the old project_ftr_metrics formula (Σnum/Σden over 14d) over the seed.
         let ftr = pg.get_project_ftr(&pid).await.unwrap();
         assert!(
@@ -762,7 +762,7 @@ mod tests {
         assert_eq!(written, 0, "no sessions in the window → zero rows written");
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -788,7 +788,7 @@ mod tests {
         seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
         // An unresolvable session: outcome measurable, but repo_folder_id NULL.
         let (orphan,): (uuid::Uuid,) = query_as(
-            "INSERT INTO activity.sessions (project_id, outcome, ftr, corrections, started_at) \
+            "INSERT INTO activity.sessions (workspace_id, outcome, ftr, corrections, started_at) \
              VALUES ($1, 'corrected'::sensei.session_outcome, false, 1, $2) RETURNING id",
         )
         .bind(pid)
@@ -802,8 +802,8 @@ mod tests {
 
         let rows: Vec<(f64, i64)> = query_as(
             "SELECT pm.value::float8, (pm.props->>'denominator')::int8 \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'ftr' AND pm.grain = 'daily' AND pm.scope = 'user'",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'ftr' AND pm.grain = 'daily' AND pm.scope = 'user'",
         )
         .bind(pid)
         .fetch_all(pg.pool())
@@ -845,8 +845,8 @@ mod tests {
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let (rework_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'rework_ratio'",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'rework_ratio'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -978,8 +978,8 @@ mod tests {
         compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let (rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'time_to_useful_result'",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'time_to_useful_result'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -1192,8 +1192,8 @@ mod tests {
         // day, 60 days ago) at repo grain — proof the past-dated row reaches the
         // daily roll-up.
         let (ftr_days,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' AND m.key = 'ftr' AND pm.computed_on = $2",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' AND m.key = 'ftr' AND pm.computed_on = $2",
         )
         .bind(pid)
         .bind(day)

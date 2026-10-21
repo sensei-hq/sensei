@@ -21,7 +21,7 @@ async fn pattern_upsert_and_list() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await
@@ -46,7 +46,7 @@ async fn pattern_promote() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await
@@ -89,7 +89,7 @@ async fn pattern_upsert_updates_existing() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await
@@ -129,7 +129,7 @@ async fn pattern_upsert_merges_across_folders_in_same_project() {
         )
         .await
         .unwrap();
-    assert_eq!(id_a, id_b, "same (project_id, name) must merge into one row");
+    assert_eq!(id_a, id_b, "same (workspace_id, name) must merge into one row");
 
     // The row's instances reflect the latest upsert; folder_id follows too.
     let (count, locus): (i32, uuid::Uuid) = sqlx_core::query_as::query_as(
@@ -148,7 +148,7 @@ async fn pattern_upsert_merges_across_folders_in_same_project() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await

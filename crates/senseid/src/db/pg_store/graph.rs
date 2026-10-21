@@ -3241,7 +3241,7 @@ impl PgStore {
         #[allow(clippy::type_complexity)]
         let doc_rows: Vec<(uuid::Uuid, uuid::Uuid, String, String)> =
             sqlx_core::query_as::query_as(
-                // `folders` is joined for `abs_path` and `folder_projects` for
+                // `folders` is joined for `abs_path` and `folder_workspaces` for
                 // the membership — two joins now, because they are two facts.
                 // The migration replaced the single folders join with the
                 // junction and left `f.abs_path` behind it, which Postgres
@@ -3250,8 +3250,8 @@ impl PgStore {
                FROM sensei.nodes n
                JOIN sensei.node_paths np ON np.node_id = n.id
                JOIN sensei.folders f ON f.id = n.folder_id
-               JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id
-              WHERE fp.project_id = $1
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = n.folder_id
+              WHERE fp.workspace_id = $1
                 AND n.kind = 'doc'
               LIMIT 500",
             )
@@ -3385,8 +3385,8 @@ impl PgStore {
         let open_rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
             "SELECT di.id, di.detail
                FROM inference.drift_items di
-               JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
-              WHERE fp.project_id = $1
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = di.folder_id
+              WHERE fp.workspace_id = $1
                 AND di.status = 'broken'
                 AND di.resolved_at IS NULL",
         )
@@ -3451,14 +3451,14 @@ impl PgStore {
                   SELECT 1
                     FROM sensei.nodes g
                     JOIN sensei.folders gf ON gf.id = g.folder_id
-                   -- The two folders SHARE a project. Membership is a set
+                   -- The two folders SHARE a workspace. Membership is a set
                    -- now, so this is an intersection rather than an equality,
-                   -- and a repository serving two projects makes that a real
+                   -- and a repository serving two workspaces makes that a real
                    -- difference rather than a spelling one.
                    WHERE EXISTS (SELECT 1
-                                   FROM sensei.folder_projects a
-                                   JOIN sensei.folder_projects b
-                                     ON b.project_id = a.project_id
+                                   FROM sensei.folder_workspaces a
+                                   JOIN sensei.folder_workspaces b
+                                     ON b.workspace_id = a.workspace_id
                                   WHERE a.folder_id = gf.id
                                     AND b.folder_id = sf.id)
                      AND gf.kind IN ('git'::sensei.folder_kind,
@@ -3856,7 +3856,7 @@ impl PgStore {
     /// project would leave the top level with a single circle. The project a
     /// reader is viewing from is marked by the caller, not filtered here.
     ///
-    /// Membership comes through `folder_projects`, never a folder column (#211),
+    /// Membership comes through `folder_workspaces`, never a folder column (#211),
     /// which is why one repository can legitimately appear under two projects:
     /// measured on this corpus, one does.
     ///
@@ -3867,8 +3867,8 @@ impl PgStore {
     /// 2.7 s corpus-wide, against the 37 s a structure read costs.
     pub async fn world_cells(&self) -> Result<Vec<WorldCell>, String> {
         let rows: Vec<WorldCellRow> = sqlx_core::query_as::query_as(
-            "SELECT fp.project_id
-                  , p.name  AS project
+            "SELECT fp.workspace_id
+                  , p.name  AS workspace
                   , f.id    AS folder_id
                   , f.name  AS repository
                   , n.is_test
@@ -3876,8 +3876,8 @@ impl PgStore {
                   , count(*) FILTER (WHERE n.docstring IS NOT NULL)::bigint AS documented
                FROM sensei.nodes n
                JOIN sensei.folders f          ON f.id = n.folder_id
-               JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-               JOIN sensei.projects p         ON p.id = fp.project_id
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+               JOIN sensei.workspaces p         ON p.id = fp.workspace_id
               WHERE n.fqn IS NOT NULL AND n.fqn NOT LIKE 'lib·%'
               GROUP BY 1, 2, 3, 4, 5",
         )
@@ -3936,7 +3936,7 @@ impl PgStore {
     /// Nodes of the Structure diagram for one project, rolled up to `level`.
     ///
     /// Reads `sensei.structure_graph`, which is already internal-only and
-    /// already resolves membership through `folder_projects` — so a repository
+    /// already resolves membership through `folder_workspaces` — so a repository
     /// serving two projects contributes its files to BOTH, and neither sees the
     /// other's.
     pub async fn structure_nodes(
@@ -3962,7 +3962,7 @@ impl PgStore {
                   , count(*)::bigint                        AS files
                   , coalesce(sum(symbols), 0)::bigint       AS symbols
                FROM sensei.structure_graph
-              WHERE project_id = $1
+              WHERE workspace_id = $1
               GROUP BY 1, 2
               ORDER BY symbols DESC, id"
         );
@@ -4035,8 +4035,8 @@ impl PgStore {
         let row: (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
             "SELECT max(fi.indexed_at)
                FROM sensei.files fi
-               JOIN sensei.folder_projects fp ON fp.folder_id = fi.folder_id
-              WHERE fp.project_id = $1",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = fi.folder_id
+              WHERE fp.workspace_id = $1",
         )
         .bind(project_id)
         .fetch_one(&self.pool)
@@ -4067,7 +4067,7 @@ impl PgStore {
                   , mode() within group (order by span) AS span
                   , sum(occurrences)::bigint            AS occurrences
                FROM sensei.structure_edges
-              WHERE project_id = $1
+              WHERE workspace_id = $1
                 AND kind = ANY($2)
                 AND {src} <> {tgt}
               GROUP BY 1, 2, 3
@@ -4126,7 +4126,7 @@ impl PgStore {
         let sql = if level == "module" {
             "SELECT source_module, target_module, sum(occurrences)::bigint
                FROM sensei.module_edges
-              WHERE project_id = $1 AND kind = ANY($2)
+              WHERE workspace_id = $1 AND kind = ANY($2)
               GROUP BY 1, 2
               ORDER BY 3 DESC, 1, 2"
                 .to_string()
@@ -4141,7 +4141,7 @@ impl PgStore {
             format!(
                 "SELECT {src}, {tgt}, sum(occurrences)::bigint
                    FROM sensei.structure_edges
-                  WHERE project_id = $1 AND kind = ANY($2)
+                  WHERE workspace_id = $1 AND kind = ANY($2)
                   GROUP BY 1, 2
                   ORDER BY 3 DESC, 1, 2"
             )
@@ -4229,7 +4229,7 @@ impl PgStore {
     /// `target_id IS NULL` is the definition: the resolver reached no
     /// conclusion, so the edge names a relationship the index cannot point at
     /// and the diagram must not draw. Counted straight off `edges` scoped by
-    /// `folder_projects`.
+    /// `folder_workspaces`.
     ///
     /// NOT from `graph_placement`, and that is a correction rather than a
     /// preference. Asking it for `outcome <> 'resolved'` matched EVERY row,
@@ -4251,8 +4251,8 @@ impl PgStore {
     ) -> Result<i64, String> {
         let (unplaced,): (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*)::bigint FROM sensei.edges ed
-               JOIN sensei.folder_projects fp ON fp.folder_id = ed.folder_id
-              WHERE fp.project_id = $1
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = ed.folder_id
+              WHERE fp.workspace_id = $1
                 AND ed.kind::text = ANY($2)
                 AND ed.target_id IS NULL",
         )

@@ -2,7 +2,7 @@
 //!
 //! A long-lived tokio task (mirroring [`crate::tasks::analyzer_scheduler`] /
 //! [`crate::tasks::reconcile_scheduler`]) that wakes on an interval and enqueues
-//! ONE [`TaskKind::ComputeProjectMetrics`] per project (project id in
+//! ONE [`TaskKind::ComputeWorkspaceMetrics`] per project (project id in
 //! `task.folder_path`).
 //!
 //! The per-project parent ([`crate::tasks::handlers::metrics::compute_project`])
@@ -24,13 +24,13 @@
 //! Cadence + honesty:
 //! - **No global clock** — coverage is now the per-(repo × group)
 //!   `sensei.metric_watermarks` cursor (spec §5), NOT a daemon-wide `last_run`
-//!   timestamp. The tick simply enqueues the `ComputeProjectMetrics` wave every
+//!   timestamp. The tick simply enqueues the `ComputeWorkspaceMetrics` wave every
 //!   interval (overlap-guarded so it never stacks); because the watermark seals
 //!   settled days, a re-tick recomputes only today + any gap. There is nothing to
 //!   persist across a restart: a rebooted daemon re-derives its work from the
 //!   watermark rows, so it never recomputes the whole history and never skips a
 //!   day either.
-//! - **Overlap-guarded** — a tick enqueues nothing while a `ComputeProjectMetrics`
+//! - **Overlap-guarded** — a tick enqueues nothing while a `ComputeWorkspaceMetrics`
 //!   wave (a prior tick or the boot/on-demand backfill) is still in flight
 //!   (`has_pending_kind`), so waves never stack.
 //! - **Fail-closed** — a DB read failure (`active_task_names` / project list)
@@ -70,7 +70,7 @@ fn base_task_names(active: Vec<String>) -> Vec<String> {
     active.into_iter().filter(|t| t != HEALTH_TASK_NAME).collect()
 }
 
-/// Enqueue the metrics pass: exactly ONE [`TaskKind::ComputeProjectMetrics`] per
+/// Enqueue the metrics pass: exactly ONE [`TaskKind::ComputeWorkspaceMetrics`] per
 /// project (project id in `folder_path`, empty `path`). The per-project parent
 /// ([`crate::tasks::handlers::metrics::compute_project`]) then owns the whole graph
 /// — it freezes one `as_of`, fans out one `ComputeGroupMetrics` child per active
@@ -83,7 +83,7 @@ fn base_task_names(active: Vec<String>) -> Vec<String> {
 /// `project_ids` enqueues nothing — there is nothing to plan.
 ///
 /// Overlap-guarded via [`TaskQueue::has_pending_kind`] (like [`enqueue_backfill_all`]):
-/// if a `ComputeProjectMetrics` wave is already in flight — e.g. a
+/// if a `ComputeWorkspaceMetrics` wave is already in flight — e.g. a
 /// first-install/boot backfill — the tick enqueues nothing rather than stacking a
 /// second per-project wave on top of it.
 async fn enqueue_metrics_pass(
@@ -94,7 +94,7 @@ async fn enqueue_metrics_pass(
     if task_names.is_empty() {
         return 0; // no active base metrics → nothing to plan for anyone
     }
-    if queue.has_pending_kind(TaskKind::ComputeProjectMetrics).await {
+    if queue.has_pending_kind(TaskKind::ComputeWorkspaceMetrics).await {
         // A wave (boot backfill or a prior tick) is still pending/blocked/running
         // — don't stack a second. The in-flight wave already covers every project.
         return 0;
@@ -102,20 +102,20 @@ async fn enqueue_metrics_pass(
     enqueue_project_wave(queue, project_ids).await
 }
 
-/// Enqueue one [`TaskKind::ComputeProjectMetrics`] per project (project id in
+/// Enqueue one [`TaskKind::ComputeWorkspaceMetrics`] per project (project id in
 /// `folder_path`, empty `path`). The shared enqueue core of the interval pass and
 /// the backfill wave (so the "one project-parent per project" shape lives in ONE
 /// place). Returns the number enqueued.
 async fn enqueue_project_wave(queue: &TaskQueue, project_ids: &[uuid::Uuid]) -> u32 {
     let mut enqueued = 0u32;
     for pid in project_ids {
-        queue.enqueue(Task::new(TaskKind::ComputeProjectMetrics, &pid.to_string(), "")).await;
+        queue.enqueue(Task::new(TaskKind::ComputeWorkspaceMetrics, &pid.to_string(), "")).await;
         enqueued += 1;
     }
     enqueued
 }
 
-/// Enqueue a one-time full wave — one [`TaskKind::ComputeProjectMetrics`] per
+/// Enqueue a one-time full wave — one [`TaskKind::ComputeWorkspaceMetrics`] per
 /// project — for first-install / boot and the manual `POST /api/metrics/backfill`
 /// re-plan. Overlap-guarded via [`TaskQueue::has_pending_kind`] so it never stacks a
 /// second wave while one is still in flight. Returns the number enqueued (`0` when a
@@ -129,7 +129,7 @@ async fn enqueue_project_wave(queue: &TaskQueue, project_ids: &[uuid::Uuid]) -> 
 /// re-plan (out-of-window backdated data) is a separate concern handled by the
 /// group children / the manual re-plan path, not by this scheduler.
 pub async fn enqueue_backfill_all(queue: &TaskQueue, pg: &PgStore) -> Result<u32, String> {
-    if queue.has_pending_kind(TaskKind::ComputeProjectMetrics).await {
+    if queue.has_pending_kind(TaskKind::ComputeWorkspaceMetrics).await {
         // A wave is already pending/blocked/running — don't stack a second.
         return Ok(0);
     }
@@ -143,7 +143,7 @@ pub async fn enqueue_backfill_all(queue: &TaskQueue, pg: &PgStore) -> Result<u32
     tracing::info!(
         projects = project_ids.len(),
         enqueued,
-        "metrics backfill: ComputeProjectMetrics enqueued for all projects",
+        "metrics backfill: ComputeWorkspaceMetrics enqueued for all projects",
     );
     Ok(enqueued)
 }
@@ -339,7 +339,7 @@ mod tests {
     #[tokio::test]
     async fn metrics_scheduler_enqueues_one_compute_project_metrics_per_project() {
         // Given 2 projects and a non-empty active base registry, one pass enqueues
-        // EXACTLY one ComputeProjectMetrics per project (project id in `folder_path`,
+        // EXACTLY one ComputeWorkspaceMetrics per project (project id in `folder_path`,
         // empty `path`) and nothing else — the per-project parent owns the rest of
         // the graph (frozen as_of, per-group children, the health barrier).
         let queue = TaskQueue::with_max_repos(64);
@@ -348,14 +348,14 @@ mod tests {
         let task_names = vec!["session_outcomes".to_string(), "churn".to_string()];
 
         let enqueued = enqueue_metrics_pass(&queue, &[p1, p2], &task_names).await;
-        assert_eq!(enqueued, 2, "exactly one ComputeProjectMetrics per project");
+        assert_eq!(enqueued, 2, "exactly one ComputeWorkspaceMetrics per project");
 
-        // All ComputeProjectMetrics are immediately runnable (no cross-project blocking).
+        // All ComputeWorkspaceMetrics are immediately runnable (no cross-project blocking).
         let status = queue.status().await;
-        assert_eq!(status.pending, 2, "2 ComputeProjectMetrics pending (one per project)");
+        assert_eq!(status.pending, 2, "2 ComputeWorkspaceMetrics pending (one per project)");
         assert_eq!(status.blocked, 0, "the scheduler enqueues no barriers itself");
 
-        // Per project: exactly one ComputeProjectMetrics, and no
+        // Per project: exactly one ComputeWorkspaceMetrics, and no
         // ComputeGroupMetrics/ComputeHealth (those are the parent's job now).
         let snap = queue.snapshot().await;
         for pid in [p1, p2] {
@@ -363,23 +363,23 @@ mod tests {
             let parents = snap
                 .iter()
                 .filter(|(k, f, p)| {
-                    *k == TaskKind::ComputeProjectMetrics && *f == owner && p.is_empty()
+                    *k == TaskKind::ComputeWorkspaceMetrics && *f == owner && p.is_empty()
                 })
                 .count();
-            assert_eq!(parents, 1, "exactly one ComputeProjectMetrics per project");
+            assert_eq!(parents, 1, "exactly one ComputeWorkspaceMetrics per project");
         }
         assert!(
             !snap.iter().any(|(k, _, _)| {
                 *k == TaskKind::ComputeGroupMetrics || *k == TaskKind::ComputeHealth
             }),
-            "the scheduler enqueues ONLY ComputeProjectMetrics — group computes + the health barrier are the parent's",
+            "the scheduler enqueues ONLY ComputeWorkspaceMetrics — group computes + the health barrier are the parent's",
         );
     }
 
     #[tokio::test]
     async fn metrics_pass_is_guarded_against_a_second_wave() {
         // The pass is overlap-guarded like the backfill wave — a
-        // ComputeProjectMetrics already in flight means the pass enqueues nothing,
+        // ComputeWorkspaceMetrics already in flight means the pass enqueues nothing,
         // so a first-install/boot backfill and a scheduler tick can't double-enqueue
         // the per-project parents.
         let queue = TaskQueue::with_max_repos(64);
@@ -387,7 +387,7 @@ mod tests {
         // A wave is already pending (e.g. the boot backfill).
         queue
             .enqueue(Task::new(
-                TaskKind::ComputeProjectMetrics,
+                TaskKind::ComputeWorkspaceMetrics,
                 &uuid::Uuid::new_v4().to_string(),
                 "",
             ))
@@ -397,7 +397,7 @@ mod tests {
         let enqueued = enqueue_metrics_pass(&queue, &[p1], &task_names).await;
         assert_eq!(
             enqueued, 0,
-            "a pending ComputeProjectMetrics guards the pass against a second wave"
+            "a pending ComputeWorkspaceMetrics guards the pass against a second wave"
         );
         assert_eq!(
             queue.status().await.pending,
@@ -420,33 +420,33 @@ mod tests {
 
     #[tokio::test]
     async fn backfill_enqueues_one_parent_per_project() {
-        // The boot / on-demand backfill enqueues one ComputeProjectMetrics per
+        // The boot / on-demand backfill enqueues one ComputeWorkspaceMetrics per
         // project (empty path) and nothing else — the same per-project shape as the
         // interval pass.
         let ctx = crate::tasks::test_support::make_ctx().await;
         let enqueued = enqueue_backfill_all(&ctx.queue, ctx.pg()).await.unwrap();
         let snap = ctx.queue.snapshot().await;
         let parents =
-            snap.iter().filter(|(k, _, _)| *k == TaskKind::ComputeProjectMetrics).count() as u32;
+            snap.iter().filter(|(k, _, _)| *k == TaskKind::ComputeWorkspaceMetrics).count() as u32;
         assert_eq!(
             parents, enqueued,
-            "every enqueued task is a ComputeProjectMetrics (one per project)"
+            "every enqueued task is a ComputeWorkspaceMetrics (one per project)"
         );
         assert!(
-            snap.iter().all(|(k, _, p)| *k == TaskKind::ComputeProjectMetrics && p.is_empty()),
-            "backfill enqueues ONLY ComputeProjectMetrics with an empty path",
+            snap.iter().all(|(k, _, p)| *k == TaskKind::ComputeWorkspaceMetrics && p.is_empty()),
+            "backfill enqueues ONLY ComputeWorkspaceMetrics with an empty path",
         );
     }
 
     #[tokio::test]
     async fn backfill_is_guarded_against_a_second_wave() {
-        // Dedupe guard: a ComputeProjectMetrics already in flight means the backfill
+        // Dedupe guard: a ComputeWorkspaceMetrics already in flight means the backfill
         // enqueues nothing (never stacks a second wave). Deterministic regardless of
         // the shared test DB's project count.
         let ctx = crate::tasks::test_support::make_ctx().await;
         ctx.queue
             .enqueue(Task::new(
-                TaskKind::ComputeProjectMetrics,
+                TaskKind::ComputeWorkspaceMetrics,
                 &uuid::Uuid::new_v4().to_string(),
                 "",
             ))
@@ -454,7 +454,7 @@ mod tests {
         let enqueued = enqueue_backfill_all(&ctx.queue, ctx.pg()).await.unwrap();
         assert_eq!(
             enqueued, 0,
-            "a pending ComputeProjectMetrics guards against a second backfill wave"
+            "a pending ComputeWorkspaceMetrics guards against a second backfill wave"
         );
     }
 }

@@ -30,10 +30,10 @@ impl PgStore {
     ) -> Result<DeliveredResults, String> {
         let sql = format!(
             "SELECT (SELECT count(*) FROM activity.runs \
-                      WHERE project_id = $1 AND status = 'done' \
+                      WHERE workspace_id = $1 AND status = 'done' \
                         AND completed_at > now() - interval '{window_days} days')::int8, \
                     (SELECT count(*) FROM inference.recommendations \
-                      WHERE project_id = $1 AND status = 'accepted' \
+                      WHERE workspace_id = $1 AND status = 'accepted' \
                         AND acted_at > now() - interval '{window_days} days')::int8"
         );
         sqlx_core::query_as::query_as::<_, DeliveredResults>(&sql)

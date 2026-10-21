@@ -118,8 +118,8 @@ mod tests {
     ) -> (Option<String>, Option<String>) {
         query_as(
             "SELECT props->>'explainer', props->>'numerator'
-               FROM sensei.project_metrics
-              WHERE project_id = $1 AND grain = 'daily'",
+               FROM sensei.workspace_metrics
+              WHERE workspace_id = $1 AND grain = 'daily'",
         )
         .bind(pid)
         .fetch_one(pg.pool())

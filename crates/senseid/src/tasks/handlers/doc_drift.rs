@@ -4,7 +4,7 @@
 //! — the same writer the manual `POST /api/projects/{id}/drift/scan` endpoint
 //! calls — so drift populates on its own as projects become due, instead of
 //! only when a user clicks scan. `task.path` carries the project id (UUID
-//! string), exactly like `AnalyzeProject`.
+//! string), exactly like `AnalyzeWorkspace`.
 
 use super::super::Task;
 use super::super::executor::TaskContext;
@@ -103,8 +103,8 @@ mod tests {
         let broken = |pid| async move {
             let n: (i64,) = sqlx_core::query_as::query_as(
                 "SELECT count(*) FROM inference.drift_items di
-                   JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
-                  WHERE fp.project_id = $1 AND di.status = 'broken' AND di.resolved_at IS NULL",
+                   JOIN sensei.folder_workspaces fp ON fp.folder_id = di.folder_id
+                  WHERE fp.workspace_id = $1 AND di.status = 'broken' AND di.resolved_at IS NULL",
             )
             .bind(pid)
             .fetch_one(pg.pool())
@@ -154,8 +154,8 @@ mod tests {
         assert_eq!(scan_doc_drift(&ctx, &task).await.unwrap(), 0, "no new broken on re-scan");
         let total: (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM inference.drift_items di
-               JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
-              WHERE fp.project_id = $1",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = di.folder_id
+              WHERE fp.workspace_id = $1",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -179,8 +179,8 @@ mod tests {
         assert_eq!(broken(pid).await, 0, "the previously-broken row is no longer open");
         let resolved: (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM inference.drift_items di
-               JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
-              WHERE fp.project_id = $1 AND di.status = 'current' AND di.resolved_at IS NOT NULL",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = di.folder_id
+              WHERE fp.workspace_id = $1 AND di.status = 'current' AND di.resolved_at IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -215,7 +215,7 @@ mod tests {
             .execute(pool)
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(pool)
             .await

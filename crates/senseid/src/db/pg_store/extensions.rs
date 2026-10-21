@@ -14,7 +14,7 @@ impl PgStore {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.extensions(kind, name, description, content, scope, source)
              VALUES($1::sensei.extension_kind, $2, $3, $4, $5::sensei.extension_scope, $6::sensei.extension_source) RETURNING id"
-        ).bind(kind).bind(name).bind(description).bind(content).bind(scope).bind(source)
+        ).bind(kind).bind(name).bind(description).bind(content).bind(scope_to_db(scope)).bind(source)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -40,7 +40,7 @@ impl PgStore {
             "SELECT id, kind::text, name, description, scope::text, source::text, enabled FROM sensei.extensions WHERE kind = $1::sensei.extension_kind ORDER BY name"
         ).bind(kind).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, name, desc, scope, source, enabled)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "description": desc, "scope": scope, "source": source, "enabled": enabled })
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "description": desc, "scope": scope_to_api(scope), "source": source, "enabled": enabled })
         }).collect())
     }
 
@@ -75,9 +75,9 @@ impl PgStore {
         // Query the resolved view directly — it already joins extensions internally
         let rows: Vec<(uuid::Uuid, String, String, bool, serde_json::Value, String)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, kind::text, enabled, project_props, scope
-                 FROM sensei.project_extensions_resolved
-                 WHERE (scoped_project_id = $1 OR scoped_project_id IS NULL)
+                "SELECT id, name, kind::text, enabled, workspace_props, scope
+                 FROM sensei.workspace_extensions_resolved
+                 WHERE (scoped_workspace_id = $1 OR scoped_workspace_id IS NULL)
                    AND enabled = true
                  ORDER BY scope DESC, name",
             )
@@ -92,7 +92,7 @@ impl PgStore {
             .map(|(id, name, kind, enabled, props, scope)| {
                 serde_json::json!({
                     "id": id, "name": name, "kind": kind,
-                    "enabled": enabled, "project_props": props, "scope": scope,
+                    "enabled": enabled, "project_props": props, "scope": scope_to_api(scope),
                 })
             })
             .collect())

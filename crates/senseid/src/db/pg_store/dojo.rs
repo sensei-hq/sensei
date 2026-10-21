@@ -64,7 +64,7 @@ impl PgStore {
                 "SELECT b.id, b.status::text, b.note, b.created_at, b.decided_at,
                         (SELECT count(*) FROM sensei.memory_share_batch_members m WHERE m.batch_id = b.id)::bigint
                    FROM sensei.memory_share_batches b
-                  WHERE b.project_id = $1
+                  WHERE b.workspace_id = $1
                     AND ($2::text IS NULL OR b.status::text = $2)
                   ORDER BY b.created_at DESC
                   LIMIT 200"
@@ -105,7 +105,7 @@ impl PgStore {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
         let (batch_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.memory_share_batches (project_id, note)
+            "INSERT INTO sensei.memory_share_batches (workspace_id, note)
              VALUES ($1, $2) RETURNING id",
         )
         .bind(project_id)
@@ -179,7 +179,7 @@ impl PgStore {
         batch_id: &uuid::Uuid,
     ) -> Result<Option<(uuid::Uuid, String, Vec<ShareBatchItem>)>, String> {
         let head: Option<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
-            "SELECT project_id, status::text FROM sensei.memory_share_batches WHERE id = $1",
+            "SELECT workspace_id, status::text FROM sensei.memory_share_batches WHERE id = $1",
         )
         .bind(batch_id)
         .fetch_optional(&self.pool)
@@ -234,14 +234,14 @@ impl PgStore {
         Ok(Some((project_id, status, items)))
     }
 
-    /// The membership a project is bound to (`sensei.projects.dojo_id`), or `None`
+    /// The membership a project is bound to (`sensei.workspaces.dojo_id`), or `None`
     /// when the project is unbound / unknown. The routing anchor for C6.
     pub async fn project_bound_membership(
         &self,
         project_id: &uuid::Uuid,
     ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(Option<uuid::Uuid>,)> =
-            sqlx_core::query_as::query_as("SELECT dojo_id FROM sensei.projects WHERE id = $1")
+            sqlx_core::query_as::query_as("SELECT dojo_id FROM sensei.workspaces WHERE id = $1")
                 .bind(project_id)
                 .fetch_optional(&self.pool)
                 .await
@@ -257,7 +257,7 @@ impl PgStore {
         &self,
     ) -> Result<Option<(uuid::Uuid, uuid::Uuid, Option<String>)>, String> {
         let row: Option<(uuid::Uuid, uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT b.id, b.project_id, b.decided_at::text
+            "SELECT b.id, b.workspace_id, b.decided_at::text
                FROM sensei.memory_share_batches b
               WHERE b.status = 'approved'
                 AND EXISTS (
@@ -752,14 +752,14 @@ impl PgStore {
     }
 
     /// Bind (or, with `None`, unbind) a project to a Dōjō membership by setting
-    /// `sensei.projects.dojo_id`. Returns `false` if the project is unknown.
+    /// `sensei.workspaces.dojo_id`. Returns `false` if the project is unknown.
     pub async fn bind_project_to_dojo(
         &self,
         project_id: &uuid::Uuid,
         membership_id: Option<&uuid::Uuid>,
     ) -> Result<bool, String> {
         let res = sqlx_core::query::query(
-            "UPDATE sensei.projects SET dojo_id = $2, modified_at = now() WHERE id = $1",
+            "UPDATE sensei.workspaces SET dojo_id = $2, modified_at = now() WHERE id = $1",
         )
         .bind(project_id)
         .bind(membership_id)
@@ -776,7 +776,7 @@ impl PgStore {
         membership_id: &uuid::Uuid,
     ) -> Result<Vec<(uuid::Uuid, String)>, String> {
         let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
-            "SELECT id, name FROM sensei.projects WHERE dojo_id = $1 ORDER BY name",
+            "SELECT id, name FROM sensei.workspaces WHERE dojo_id = $1 ORDER BY name",
         )
         .bind(membership_id)
         .fetch_all(&self.pool)

@@ -245,8 +245,8 @@ async fn write_one_repo(
     }
 
     // AND THE MEMBERSHIP ITSELF, which is a different fact from either link
-    // above. `repositories_in_projects` says which projects a REPOSITORY belongs
-    // to, and since #210 that junction is the only thing `folder_projects` —
+    // above. `repositories_in_workspaces` says which projects a REPOSITORY belongs
+    // to, and since #210 that junction is the only thing `folder_workspaces` —
     // and so every view resolving a project — actually reads. #211 then
     // dropped `folders.project_id`, so it is not merely the thing read first;
     // it is the only place the answer exists.
@@ -1776,7 +1776,7 @@ mod corpus {
     /// A SCANNED REPOSITORY REACHES THE JUNCTION, not just `folders.project_id`.
     ///
     /// `sensei.repositories_in_projects` is where membership now lives (#210), and
-    /// every view migrated onto `folder_projects` reads it and nothing else. The
+    /// every view migrated onto `folder_workspaces` reads it and nothing else. The
     /// scan path had both ids in hand — `upsert_repository` returns the
     /// repository, `get_or_create_project_by_name` the project — and wrote
     /// neither into the junction: the only writer, `set_folder_project`, has no
@@ -1784,7 +1784,7 @@ mod corpus {
     ///
     /// So the junction held only what the one-time 2026-09-30 backfill put
     /// there. A repository scanned after it resolved to NO project, and because
-    /// `folder_projects` inner-joins the junction, that repository's rows simply
+    /// `folder_workspaces` inner-joins the junction, that repository's rows simply
     /// ceased to exist in every migrated view — an empty result indistinguishable
     /// from a genuinely empty one, which is the exact failure the no-fabrication
     /// rule exists to prevent, in its silent-absence direction.
@@ -1816,8 +1816,8 @@ mod corpus {
         let repository_id = written.repository_id.expect("repository row");
 
         let linked: Vec<String> = sqlx_core::query_scalar::query_scalar(
-            "SELECT p.name FROM sensei.repositories_in_projects pr
-               JOIN sensei.projects p ON p.id = pr.project_id
+            "SELECT p.name FROM sensei.repositories_in_workspaces pr
+               JOIN sensei.workspaces p ON p.id = pr.workspace_id
               WHERE pr.repository_id = $1",
         )
         .bind(repository_id)
@@ -1828,20 +1828,20 @@ mod corpus {
         assert_eq!(
             linked,
             vec![name.clone()],
-            "a freshly scanned repository is absent from `repositories_in_projects`, so every view \
-             resolving through `folder_projects` silently drops it"
+            "a freshly scanned repository is absent from `repositories_in_workspaces`, so every view \
+             resolving through `folder_workspaces` silently drops it"
         );
 
         // And the resolution the views actually perform must agree, or the
         // junction row is present but unreachable.
         let resolved: Vec<String> = sqlx_core::query_scalar::query_scalar(
-            "SELECT DISTINCT project FROM sensei.folder_projects WHERE folder_id = $1",
+            "SELECT DISTINCT workspace FROM sensei.folder_workspaces WHERE folder_id = $1",
         )
         .bind(written.folder_id.expect("folder row"))
         .fetch_all(pg.pool())
         .await
-        .expect("read folder_projects");
-        assert_eq!(resolved, vec![name], "`folder_projects` cannot resolve the scanned repo");
+        .expect("read folder_workspaces");
+        assert_eq!(resolved, vec![name], "`folder_workspaces` cannot resolve the scanned repo");
     }
 
     /// cargo test -p senseid --lib indexer::pipeline::corpus -- --ignored --nocapture

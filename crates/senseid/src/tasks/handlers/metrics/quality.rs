@@ -991,7 +991,7 @@ mod tests {
         let repo_row: (f64, i64, i64, Option<String>, Option<String>) = query_as(
             "SELECT pm.value::float8, (pm.props->>'numerator')::int8, (pm.props->>'denominator')::int8, \
                     pm.identity, pm.commit_sha \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.repository_id = $1 AND pm.scope = 'repo' AND m.key = 'duplication_ratio' \
                 AND pm.computed_on = $2",
         )
@@ -1008,7 +1008,7 @@ mod tests {
 
         // computed_on stamped to the true commit day D; the user row carries the author.
         let (on_d,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.repository_id = $1 AND pm.scope = 'user' AND pm.identity = 'test@sensei.test' \
                 AND m.key = 'duplication_ratio' AND pm.computed_on = $2",
         )
@@ -1024,7 +1024,7 @@ mod tests {
         let again = compute_with_scanner(&ctx, &pid.to_string(), Some(dday), fake).await.unwrap();
         assert_eq!(again, 0, "a covered past day is skipped on re-run (immutable history)");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE repository_id = $1")
                 .bind(rid)
                 .fetch_one(pg.pool())
                 .await
@@ -1090,7 +1090,7 @@ mod tests {
             compute_with_scanner(&ctx, &pid.to_string(), Some(dday), empty).await.unwrap();
         assert_eq!(written, 0, "0 total lines → no denominator → no row");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE repository_id = $1")
                 .bind(rid)
                 .fetch_one(pg.pool())
                 .await
@@ -1156,7 +1156,7 @@ mod tests {
         );
 
         let (value,): (f64,) = query_as(
-            "SELECT pm.value::float8 FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+            "SELECT pm.value::float8 FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.repository_id = $1 AND pm.scope = 'repo' AND m.key = 'duplication_ratio' AND pm.computed_on = $2",
         )
         .bind(rid).bind(dday).fetch_one(pg.pool()).await.unwrap();
@@ -1211,7 +1211,7 @@ mod tests {
 
         let written = compute(&ctx, &pid.to_string(), Some(dday)).await.unwrap();
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE repository_id = $1")
                 .bind(rid)
                 .fetch_one(pg.pool())
                 .await

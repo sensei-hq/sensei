@@ -57,9 +57,26 @@ fn vector_literal(v: &[f32]) -> String {
     buf
 }
 
-/// Valid `projects.maturity` lifecycle values — mirrors the
-/// `sensei.project_maturity` enum in
-/// `database/ddl/enum/sensei/project_maturity.ddl`. Used to reject an unknown
+/// A memory's or an extension's scope as the database stores it. The database
+/// says `workspace` (#307 R3a, D30); the daemon's HTTP API and everything that
+/// fills it still say `project` until R3b moves the API and the app together.
+/// Every bind of a `sensei.memory_scope` / `sensei.extension_scope` value goes
+/// through here, and every read back through [`scope_to_api`].
+pub(crate) fn scope_to_db(scope: &str) -> &str {
+    match scope {
+        "project" => "workspace",
+        other => other,
+    }
+}
+
+/// The inverse of [`scope_to_db`], for a scope read out of the database.
+pub(crate) fn scope_to_api(scope: String) -> String {
+    if scope == "workspace" { "project".to_string() } else { scope }
+}
+
+/// Valid `workspaces.maturity` lifecycle values — mirrors the
+/// `sensei.workspace_maturity` enum in
+/// `database/ddl/enum/sensei/workspace_maturity.ddl`. Used to reject an unknown
 /// maturity with a clear error (and a 400 at the HTTP layer) instead of
 /// leaking a raw Postgres enum-cast failure as a 500.
 pub const PROJECT_MATURITIES: [&str; 4] = ["discovery", "active", "maintenance", "archived"];
@@ -69,7 +86,7 @@ pub const PROJECT_MATURITIES: [&str; 4] = ["discovery", "active", "maintenance",
 /// semantics), matching the About form which strips empty inputs and PUTs only
 /// the fields the user touched. Text columns bind `Option<&str>`; the three
 /// jsonb columns (`icon`/`stack`/`links`) bind `Option<&serde_json::Value>`;
-/// `maturity` is the `sensei.project_maturity` enum and is validated against
+/// `maturity` is the `sensei.workspace_maturity` enum and is validated against
 /// [`PROJECT_MATURITIES`] before the write.
 #[derive(Debug, Default, Clone)]
 pub struct ProjectPatch<'a> {
@@ -182,7 +199,7 @@ pub(crate) type KnowledgeSourceRow =
 /// It holds no credential: its tenant calls present the bound persona's session.
 pub struct NewDojoMembership {
     /// The service membership id (`dojo.memberships.id`); becomes the local PK
-    /// and the value `sensei.projects.dojo_id` points at. Service-assigned.
+    /// and the value `sensei.workspaces.dojo_id` points at. Service-assigned.
     pub id: uuid::Uuid,
     pub registry_url: String,
     pub tenant_key: String,
@@ -407,7 +424,7 @@ pub struct ProjectMetricRow {
 
 /// The latest weekly trend point for one metric of a project — the shape
 /// [`PgStore::get_project_metric_trend`] returns. Read from
-/// `sensei.project_metric_trend` (the weekly `lag()` over `project_metric_weekly`):
+/// `sensei.project_metric_trend` (the weekly `lag()` over `workspace_metric_weekly`):
 /// `prior`/`delta` are `None` for a metric's first period (honest-null, never a
 /// fabricated 0). `direction` travels with the row so the UI can colour the delta
 /// (a positive delta on a `lower_better` metric is a regression) without a
@@ -747,7 +764,7 @@ impl PgStore {
     /// `::text` cast is space-separated, NOT RFC-3339); this matches
     /// `chrono::to_rfc3339()` used elsewhere without pulling chrono into the row
     /// tuple. Shared by every run SELECT.
-    const RUN_SELECT: &'static str = "SELECT id, project_id, plan_ref, goal, status::text,
+    const RUN_SELECT: &'static str = "SELECT id, workspace_id, plan_ref, goal, status::text,
                 to_json(paused_until)#>>'{}',
                 pause_reason, current_phase, current_feature, dojo_session_id,
                 max_concurrency,
@@ -835,8 +852,8 @@ impl PgStore {
             sqlx_core::query_as::query_as(
                 "SELECT f.id, f.kind::text, f.name, f.path, f.abs_path, f.role::text
              FROM sensei.folders f
-             JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-             WHERE fp.project_id = $1
+             JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+             WHERE fp.workspace_id = $1
                AND ($2 = false OR f.kind::text IN ('git','standalone'))
              ORDER BY f.path",
             )
@@ -905,9 +922,9 @@ impl PgStore {
         )> = sqlx_core::query_as::query_as(
             "SELECT c.id, c.text, c.count, c.last_seen, c.memory_id, c.suggestion,
                     COALESCE((SELECT json_agg(json_build_object('id', p.id, 'name', p.name) ORDER BY p.name)
-                              FROM sensei.projects p WHERE p.id = ANY(c.project_ids)), '[]'::json)::text
+                              FROM sensei.workspaces p WHERE p.id = ANY(c.workspace_ids)), '[]'::json)::text
                FROM inference.corrections c
-              WHERE ($1::uuid IS NULL OR $1 = ANY(c.project_ids))
+              WHERE ($1::uuid IS NULL OR $1 = ANY(c.workspace_ids))
               ORDER BY c.count DESC, c.last_seen DESC NULLS LAST",
         )
         .bind(project_filter)
@@ -956,15 +973,15 @@ impl PgStore {
     async fn duplicate_name_phantom_pairs(&self) -> Result<Vec<(uuid::Uuid, uuid::Uuid)>, String> {
         sqlx_core::query_as::query_as(
             "SELECT empty.id, keep.id
-               FROM sensei.projects empty
-               JOIN sensei.projects keep
+               FROM sensei.workspaces empty
+               JOIN sensei.workspaces keep
                  ON keep.name = empty.name AND keep.id <> empty.id
               WHERE empty.maturity = 'discovery'
-                AND NOT EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = empty.id)
-                AND EXISTS     (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = keep.id)
-                AND (SELECT count(*) FROM sensei.projects k
+                AND NOT EXISTS (SELECT 1 FROM sensei.folder_workspaces fp WHERE fp.workspace_id = empty.id)
+                AND EXISTS     (SELECT 1 FROM sensei.folder_workspaces fp WHERE fp.workspace_id = keep.id)
+                AND (SELECT count(*) FROM sensei.workspaces k
                        WHERE k.name = empty.name
-                         AND EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = k.id)) = 1",
+                         AND EXISTS (SELECT 1 FROM sensei.folder_workspaces fp WHERE fp.workspace_id = k.id)) = 1",
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
@@ -998,7 +1015,7 @@ impl PgStore {
         Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, String)>,
         String,
     > {
-        // BOTH project columns are OPTIONAL. `sole_project_of` is NULL whenever
+        // BOTH project columns are OPTIONAL. `sole_workspace_of` is NULL whenever
         // a repository serves no project or two, and 4,129 folders are in that
         // state live. Decoding the enclosing repo's project as a bare `Uuid`
         // made ONE such repo abort the whole heal pass with a decode error, so
@@ -1006,8 +1023,8 @@ impl PgStore {
         // project at all, and only the phantom merge below does.
         sqlx_core::query_as::query_as(
             "SELECT DISTINCT ON (s.id)
-                    s.id, sensei.sole_project_of(s.id), g.id,
-                    sensei.sole_project_of(g.id), g.root_id, g.abs_path
+                    s.id, sensei.sole_workspace_of(s.id), g.id,
+                    sensei.sole_workspace_of(g.id), g.root_id, g.abs_path
                FROM sensei.folders s
                JOIN sensei.folders g
                  ON g.kind = 'git'::sensei.folder_kind
@@ -1222,5 +1239,22 @@ mod pool_lifecycle_tests {
         // Idempotence: the second close must return, not panic or hang.
         pg.close().await;
         assert!(pg.pool().is_closed(), "a second close() leaves the pool closed");
+    }
+}
+
+#[cfg(test)]
+mod scope_vocabulary_tests {
+    use super::{scope_to_api, scope_to_db};
+
+    /// The database says `workspace` and the API `project` (#307 R3a); every
+    /// other scope passes through both ways untouched.
+    #[test]
+    fn a_scope_crosses_the_database_boundary_and_back() {
+        assert_eq!(scope_to_db("project"), "workspace");
+        assert_eq!(scope_to_api("workspace".into()), "project");
+        for other in ["global", "stack", "task_type", "module", "folder"] {
+            assert_eq!(scope_to_db(other), other);
+            assert_eq!(scope_to_api(other.into()), other);
+        }
     }
 }

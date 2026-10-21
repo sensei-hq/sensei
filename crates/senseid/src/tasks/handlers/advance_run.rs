@@ -929,7 +929,7 @@ mod tests {
             .execute(pg.pool())
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(project_id)
             .execute(pg.pool())
             .await

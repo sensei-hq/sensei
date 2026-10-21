@@ -354,7 +354,7 @@ pub(crate) async fn analyze_solution(
     // folder_path, path) — the handler reads the project id from `path`.
     state
         .task_queue
-        .enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeProject, "", &id))
+        .enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeWorkspace, "", &id))
         .await;
 
     // TODO: implement full cross-repo analysis
@@ -389,7 +389,7 @@ pub(crate) async fn analyze_process(
 
 /// `POST /api/projects/{id}/backfill` — RE-DERIVE this project's session signals
 /// from scratch: clear `analyzed_at` (so every captured session re-enriches with
-/// the CURRENT transcript-ground-truth logic) and enqueue `AnalyzeProject` (which
+/// the CURRENT transcript-ground-truth logic) and enqueue `AnalyzeWorkspace` (which
 /// re-enriches them and chains a metrics recompute). Distinct from
 /// [`backfill_metrics`] (day-history recovery) — this refreshes the SESSION
 /// derivations, so it is the button to press after a metric-definition change.
@@ -413,7 +413,7 @@ pub(crate) async fn backfill_project_sessions(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state
         .task_queue
-        .enqueue(crate::tasks::Task::for_project(crate::tasks::TaskKind::AnalyzeProject, &uuid))
+        .enqueue(crate::tasks::Task::for_project(crate::tasks::TaskKind::AnalyzeWorkspace, &uuid))
         .await;
     Ok(Json(serde_json::json!({ "reset": reset, "queued": true })))
 }
@@ -502,7 +502,7 @@ pub(crate) async fn set_transcript_consent(
     Ok(Json(serde_json::json!({ "ok": true, "source": source, "consented": body.consented })))
 }
 
-/// Enqueue a metrics backfill (Phase 5 — history recovery): one `ComputeProjectMetrics` per
+/// Enqueue a metrics backfill (Phase 5 — history recovery): one `ComputeWorkspaceMetrics` per
 /// project. The planner then backfills every data day its sources reach and recomputes
 /// today, so the metric charts render months of history. Overlap-guarded
 /// (`has_pending_kind`), so this is safe to call repeatedly; a re-plan is idempotent

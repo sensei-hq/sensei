@@ -41,4 +41,4 @@ most-specific rung wins on the sensei.scopes ladder.';
 comment on column sensei.stances.user_key
      is 'The user this stance belongs to — the git identity (user.email, resolved like get_user_for_project). Stance follows the user, not a tenant.';
 comment on column sensei.stances.namespace_id
-     is 'The scope instance this stance applies at (organization/client/project/stack …); NULL = the user''s default across scopes. Most-specific rung overrides.';
+     is 'The scope instance this stance applies at (organization/client/workspace/stack …); NULL = the user''s default across scopes. Most-specific rung overrides.';

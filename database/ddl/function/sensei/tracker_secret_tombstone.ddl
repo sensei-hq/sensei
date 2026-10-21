@@ -1,7 +1,7 @@
 set search_path to sensei, extensions;
 
 -- Tombstone the OLD keyring entry whenever a tracker stops referencing it: on
--- delete (disconnect, or the project cascade) and on a secret swap (re-connect).
+-- delete (disconnect, or the workspace cascade) and on a secret swap (re-connect).
 -- No code path writes these tombstones by hand, so a concurrent re-connect cannot
 -- leak one. Spec: docs/spec/daemon/tracker-jira-linkage.md R3.
 create or replace function tracker_secret_tombstone()

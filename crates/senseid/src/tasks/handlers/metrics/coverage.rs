@@ -5,7 +5,7 @@
 //! Dev's, 2026-08-19). A whole-suite property (never per-author), so — following the
 //! `knowledge` convention for a non-author metric — it writes `scope = user` with
 //! `identity = NULL`: `scope = user` is the value the DEFAULT project read surfaces
-//! (the pooled `project_metric_daily` view filters `scope = 'user'`), and a NULL
+//! (the pooled `workspace_metric_daily` view filters `scope = 'user'`), and a NULL
 //! identity keeps it a single value, not an author split. One row PER repository the
 //! project spans, so the pooled project view sums `Σ hit / Σ found` across them.
 //!
@@ -450,8 +450,8 @@ end_of_record
             Option<String>,
         ) = query_as(
             "SELECT pm.value::float8, pm.props, pm.scope::text, pm.repository_id, pm.identity \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'coverage'",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'coverage'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -476,7 +476,7 @@ end_of_record
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 1, "re-run recomputes the same row");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -501,8 +501,8 @@ end_of_record
         assert_eq!(written, 1, "a real 0.0 over a real denominator is written");
         let (value, den): (f64, i64) = query_as(
             "SELECT pm.value::float8, (pm.props->>'denominator')::int8 \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'coverage'",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'coverage'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -526,7 +526,7 @@ end_of_record
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no report → no coverage row (never a fabricated 0)");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -556,7 +556,7 @@ end_of_record
         let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
         assert_eq!(written, 0, "historical as_of → forward-only skip → no row");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -583,9 +583,9 @@ end_of_record
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         let den: Option<i64> = query_as(
-            "SELECT (pm.props->>'denominator')::int8 FROM sensei.project_metrics pm \
+            "SELECT (pm.props->>'denominator')::int8 FROM sensei.workspace_metrics pm \
                JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'coverage'",
+              WHERE pm.workspace_id = $1 AND m.key = 'coverage'",
         )
         .bind(pid)
         .fetch_optional(pg.pool())
@@ -632,8 +632,8 @@ end_of_record
         #[allow(clippy::type_complexity)]
         let rows: Vec<(chrono::NaiveDate, Option<String>, f64)> = query_as(
             "SELECT pm.computed_on, pm.commit_sha, pm.value::float8 \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'coverage' ORDER BY pm.computed_on",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'coverage' ORDER BY pm.computed_on",
         )
         .bind(pid)
         .fetch_all(pg.pool())

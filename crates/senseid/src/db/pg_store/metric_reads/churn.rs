@@ -22,8 +22,8 @@ impl PgStore {
             "SELECT count(DISTINCT (n.folder_id, np.file_path))::int8
                FROM sensei.nodes   n
                JOIN sensei.node_paths np ON np.node_id = n.id
-               JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id
-              WHERE fp.project_id = $1",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = n.folder_id
+              WHERE fp.workspace_id = $1",
         )
         .bind(project_id)
         .fetch_one(&self.pool)
@@ -43,7 +43,7 @@ impl PgStore {
         let (total,): (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*)::int8
                FROM inference.detected_patterns
-              WHERE project_id      = $1
+              WHERE workspace_id    = $1
                 AND is_anti_pattern
                 AND name LIKE 'rework: %'",
         )
