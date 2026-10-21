@@ -142,12 +142,13 @@ export function actionLabel(action: string): string {
 }
 
 /**
- * Token tone for an audit action pill: destructive (delete) reads warning,
- * additive (add/create) reads success, changes read accent, else muted ink.
+ * Token tone for an audit action pill: destructive (delete, revoke, remove)
+ * reads warning, additive (add, create, invite, grant) reads success, changes
+ * read accent, else muted ink.
  */
 export function actionToneClass(action: string): string {
-	if (action.endsWith('_deleted')) return 'text-warning';
-	if (action.endsWith('_added') || action.endsWith('_created')) return 'text-success';
+	if (/_(deleted|revoked|removed)$/.test(action)) return 'text-warning';
+	if (/_(added|created|invited|granted)$/.test(action) || action.includes('_granted_')) return 'text-success';
 	if (action.endsWith('_changed') || action.endsWith('_edited') || action.endsWith('_updated'))
 		return 'text-accent';
 	return 'text-ink-soft';

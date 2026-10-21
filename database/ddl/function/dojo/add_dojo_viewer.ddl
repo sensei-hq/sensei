@@ -5,14 +5,20 @@ set search_path to dojo, extensions;
 -- Idempotent. Keeps the invited email (proven at sign-in) to name the viewer.
 create or replace function dojo.add_dojo_viewer(p_tenant uuid, p_principal uuid, p_invited_by uuid, p_email text)
     returns void
-    language sql
+    language plpgsql
     volatile
     security definer
     set search_path = dojo, pg_temp
 as $$
+begin
     insert into dojo.dojo_viewers (tenant_id, principal_id, invited_by, email)
     values (p_tenant, p_principal, p_invited_by, lower(p_email))
     on conflict (tenant_id, principal_id) do nothing;
+    if found then
+        perform dojo.append_audit_event(p_tenant, p_invited_by, 'viewer_invited',
+                                        jsonb_build_object('principal_id', p_principal));
+    end if;
+end;
 $$;
 
 revoke all on function dojo.add_dojo_viewer(uuid, uuid, uuid, text) from public;
