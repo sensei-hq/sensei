@@ -88,8 +88,9 @@ slice builds, passes and ships on its own.
   plugin, skills and hooks that call them; the desktop app.
   *Sized 2026-10-21: ~13,700 occurrences — database 1.9k, daemon 7.8k, app 3.1k, MCP 0.5k, plugin 0.2k, CLI 0.2k.*
   **The rule:** rename sensei's own concept; **never another system's word.** These stay `project`:
-  Claude Code's config scopes (`mcp_servers.scope` `user|project`, `extension_scope`, i.e. `.mcp.json` in the
-  repo), Jira's project (a board key), a forge's project (Azure DevOps), and English ("projection").
+  Claude Code's config scope (`mcp_servers.scope` `user|project`, i.e. `.mcp.json` in the repo), Jira's
+  project (a board key), a forge's project (Azure DevOps), a compiler's projects (`compile_projects`:
+  rust-analyzer, tsc), dbd's `project`, and English ("projection"). `extension_scope` IS sensei's word.
   Slices, each green on develop, all in one release (the app and the daemon share `/api`):
   - **R3a · database + the daemon's database layer, one change (D30).** `sensei.projects`,
     `repositories_in_projects`, `service_projects`, `extension_projects`, every `project_id` column, and the
@@ -97,8 +98,14 @@ slice builds, passes and ships on its own.
     stored values (the ladder level, `memory_scope`, `entity_scope`, `sync_entity`, pack namespaces,
     artifact scopes) converted in the same hook; `pg_store`'s SQL and row types in the same commit, so the
     daemon stays green. Rehearse on a copy of a real daemon database, twice.
-  - **R3b · daemon + app together.** `pg_store`, the `/api/projects` routes → `/api/workspaces`, the pipeline,
-    and the app's clients, screens and words in the same change.
+  - **R3b · daemon + app together.** `pg_store`'s names, the `/api/projects` routes → `/api/workspaces`, the
+    pipeline, and the app's clients, screens and words in the same change. Also: the governance ladder's
+    `project` rung (D16: `sensei.scopes.key`, `namespaces.scope_key`, the shared `scopes.jsonl` seed) converted
+    in BOTH databases with the dōjō app's readers (`billing-data`, the preview rung) and the relay's
+    `scope_key` in the same change, since federation needs the key on both sides; the `project_health` metric
+    key and `setup.projects`; and R3a's temporary `scope_to_db` / `scope_to_api` translation removed.
+    *R3a done on its branch (955196d1, 7cc9b465): rehearsed twice on a copy of the daemon DB (counts held) and
+    on a copy of the production dōjō (in sync, counts held).*
   - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
     `get_workspace_summary`, …), the plugin's hooks and skills that call them, both `SKILL.md` copies, and
     `sensei` CLI words.
