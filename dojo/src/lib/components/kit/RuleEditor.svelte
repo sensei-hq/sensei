@@ -28,7 +28,7 @@
 
 	// Seed the draft ONCE from `rule` — the screen re-mounts the editor per open
 	// (keyed on the target), so capturing the initial value is intentional.
-	// `untrack` makes that explicit (the same idiom as ScrProjectPreview).
+	// `untrack` makes that explicit (the same idiom as ScrWorkspacePreview).
 	let text = $state(untrack(() => rule?.text ?? ''));
 	let fam = $state(untrack(() => rule?.kanji ?? '守'));
 	let hard = $state(untrack(() => rule?.hard ?? false));

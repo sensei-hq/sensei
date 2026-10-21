@@ -134,7 +134,7 @@ describe('per-pack level', () => {
 	it('levelLabel maps ids to labels and passes an unknown through', () => {
 		expect(levelLabel('org')).toBe('Org');
 		expect(levelLabel('team')).toBe('Team');
-		expect(levelLabel('proj')).toBe('Project');
+		expect(levelLabel('proj')).toBe('Workspace');
 		expect(levelLabel('stack')).toBe('Stack');
 	});
 });

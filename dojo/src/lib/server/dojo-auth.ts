@@ -63,7 +63,7 @@ function tokenFrom(request: Request, locals: App.Locals): string | null {
 /**
  * Authenticate the caller on the Supabase-JWT plane and return their PRINCIPAL
  * id — no tenant, no role floor. For USER-WIDE (user-primary) reads that aren't
- * scoped to one dōjō (e.g. the personal `/you/projects` list, whose read is
+ * scoped to one dōjō (e.g. the personal `/you/workspaces` list, whose read is
  * authorized purely by a `user_id` filter). Throws a Response (401) on a missing
  * or invalid token, like `resolveTenantAccess`. Returns the service-role `db`
  * too so the caller reuses one client for the ownership-filtered read, and the
@@ -100,7 +100,7 @@ export async function resolveCaller(
 	const authUserId = userData.user.id;
 	// Translate the login into the principal every dojo.* row is keyed on. Fail
 	// CLOSED: degrading to the login id on error would produce a caller whose
-	// user_id matches no membership and no project — an empty console that reads
+	// user_id matches no membership and no workspace — an empty console that reads
 	// as "you belong to nothing" rather than as the failure it is.
 	let userId: string;
 	try {

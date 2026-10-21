@@ -18,14 +18,14 @@ export interface OrgActions {
 	removeEngagement: (id: string) => Promise<unknown>;
 	/** The dōjō's viewers (#307 D8). */
 	removeViewer: (principalId: string) => Promise<unknown>;
-	grantView: (principalId: string, projectId: string) => Promise<unknown>;
-	revokeView: (principalId: string, projectId: string) => Promise<unknown>;
+	grantView: (principalId: string, workspaceId: string) => Promise<unknown>;
+	revokeView: (principalId: string, workspaceId: string) => Promise<unknown>;
 	/** The dōjō's teams (#307 D7). `teamId` null creates. */
 	saveTeam: (teamId: string | null, name: string) => Promise<unknown>;
 	deleteTeam: (teamId: string) => Promise<unknown>;
 	addTeamMember: (teamId: string, principalId: string) => Promise<unknown>;
 	removeTeamMember: (teamId: string, principalId: string) => Promise<unknown>;
-	grantTeamView: (teamId: string, projectId: string) => Promise<unknown>;
+	grantTeamView: (teamId: string, workspaceId: string) => Promise<unknown>;
 }
 
 /** Re-read the section's load (the page passes invalidateAll). */
@@ -95,11 +95,11 @@ export class OrgSectionState {
 	closeEngagement = (e: KitEngagement) => this.#act(() => this.actions.closeEngagement(e.id));
 	removeEngagement = (e: KitEngagement) => this.#act(() => this.actions.removeEngagement(e.id));
 
-	/** Admin — remove a dōjō viewer, and their project views here (#307 D8). */
+	/** Admin — remove a dōjō viewer, and their workspace views here (#307 D8). */
 	removeViewer = (v: DojoViewerView) => this.#act(() => this.actions.removeViewer(v.principalId));
-	/** Admin — grant / revoke a viewer's view of one of the dōjō's projects. */
-	grantView = (v: DojoViewerView, projectId: string) => this.#act(() => this.actions.grantView(v.principalId, projectId));
-	revokeView = (v: DojoViewerView, projectId: string) => this.#act(() => this.actions.revokeView(v.principalId, projectId));
+	/** Admin — grant / revoke a viewer's view of one of the dōjō's workspaces. */
+	grantView = (v: DojoViewerView, workspaceId: string) => this.#act(() => this.actions.grantView(v.principalId, workspaceId));
+	revokeView = (v: DojoViewerView, workspaceId: string) => this.#act(() => this.actions.revokeView(v.principalId, workspaceId));
 
 	/** Admin — create (`teamId` null) or rename a team; resolves whether it saved. */
 	saveTeam = (teamId: string | null, name: string) => this.#act(() => this.actions.saveTeam(teamId, name));
@@ -107,6 +107,6 @@ export class OrgSectionState {
 	addTeamMember = (t: TeamView, principalId: string) => this.#act(() => this.actions.addTeamMember(t.id, principalId));
 	removeTeamMember = (t: TeamView, principalId: string) =>
 		this.#act(() => this.actions.removeTeamMember(t.id, principalId));
-	/** Admin — grant everyone now on the team the view of a project. */
-	grantTeamView = (t: TeamView, projectId: string) => this.#act(() => this.actions.grantTeamView(t.id, projectId));
+	/** Admin — grant everyone now on the team the view of a workspace. */
+	grantTeamView = (t: TeamView, workspaceId: string) => this.#act(() => this.actions.grantTeamView(t.id, workspaceId));
 }

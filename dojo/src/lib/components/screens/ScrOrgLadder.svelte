@@ -16,7 +16,7 @@
 	// The dōjō-authoring constitution (mockup ScrOrgLadder) — the richest org
 	// screen. The dōjō authors its OWN rules by scope (company-wide · per team ·
 	// per stack, packs per stack); this is NOT the resolution ladder (that appears
-	// only at project-preview time). A left rail groups the sections (Company ·
+	// only at workspace-preview time). A left rail groups the sections (Company ·
 	// Teams · Stacks); the right pane shows the active section's adopted packs
 	// (stacks) and its rules, each with an include toggle + edit pencil, plus a
 	// New/Add rule affordance that opens the RuleEditor overlay. Presentational:
@@ -33,7 +33,7 @@
 
 	// Seed the authoring store ONCE from the props — a different org re-mounts this
 	// screen (an /org/[slug]/ladder navigation), so the active section + include
-	// state is captured at mount (the same idiom as ScrProjectPreview).
+	// state is captured at mount (the same idiom as ScrWorkspacePreview).
 	const ladder = untrack(() => createOrgLadder(sections));
 
 	// Save a rule from the editor. Presentational this chunk — the composed rule is
@@ -48,7 +48,7 @@
 		<div class="px-4 pt-4 md:px-8 md:pt-8">
 			<SectionHead
 				kanji="掟" eyebrow={orgName + ' · governance'} title="Constitution"
-				description="The dōjō authors its rules by scope — company-wide, per team, per stack. Stacks also adopt rule packs. These are the dōjō's own rules; how they combine with your personal and a project's rules is resolved — and shown — when you open a project."
+				description="The dōjō authors its rules by scope — company-wide, per team, per stack. Stacks also adopt rule packs. These are the dōjō's own rules; how they combine with your personal and a workspace's rules is resolved — and shown — when you open a workspace."
 			>
 				{#snippet right()}
 					<Btn size="sm" icon="add-circle" onclick={ladder.openNew}>New rule</Btn>

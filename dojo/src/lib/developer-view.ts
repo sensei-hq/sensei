@@ -28,7 +28,7 @@ export function roleForKind(kind: OrgKind): string {
  *  a neutral label for a membership without an authored entry (a real membership
  *  the sample overlay doesn't cover yet). */
 export function followsForMembership(id: string): string {
-	return DEV_FOLLOWS[id] ?? 'your projects';
+	return DEV_FOLLOWS[id] ?? 'your workspaces';
 }
 
 // ── My contributions: status tallies ─────────────────────────────────────────

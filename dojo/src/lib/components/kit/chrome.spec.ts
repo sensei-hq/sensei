@@ -48,10 +48,10 @@ describe('kit chrome — NavPane', () => {
 	afterEach(cleanup);
 
 	it('renders grouped items + marks the active one with aria-current', () => {
-		const { getByText } = render(NavPane, { groups: nav, active: 'projects' });
+		const { getByText } = render(NavPane, { groups: nav, active: 'workspaces' });
 		expect(getByText('Relay · you')).toBeTruthy();
 		expect(getByText('Me')).toBeTruthy();
-		expect(getByText('Projects').closest('button')?.getAttribute('aria-current')).toBe('page');
+		expect(getByText('Workspaces').closest('button')?.getAttribute('aria-current')).toBe('page');
 		expect(getByText('Today').closest('button')?.getAttribute('aria-current')).toBeNull();
 	});
 
@@ -78,8 +78,8 @@ describe('kit chrome — NavPane', () => {
 			onnav,
 			onclose
 		});
-		await fireEvent.click(getByText('Projects'));
-		expect(onnav).toHaveBeenCalledWith('projects');
+		await fireEvent.click(getByText('Workspaces'));
+		expect(onnav).toHaveBeenCalledWith('workspaces');
 		expect(onclose).toHaveBeenCalled();
 	});
 });
@@ -91,8 +91,8 @@ describe('kit chrome — TabBar', () => {
 		const onnav = vi.fn();
 		const { getByText } = render(TabBar, { tabs, active: 'today', onnav });
 		expect(getByText('Today')).toBeTruthy();
-		await fireEvent.click(getByText('Projects'));
-		expect(onnav).toHaveBeenCalledWith('projects');
+		await fireEvent.click(getByText('Workspaces'));
+		expect(onnav).toHaveBeenCalledWith('workspaces');
 	});
 });
 

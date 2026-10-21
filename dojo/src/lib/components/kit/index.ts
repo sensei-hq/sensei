@@ -4,7 +4,7 @@
 // conflict / stance; relay: run / gate / needs / decision / chat).
 //
 // Namespaced under lib/components/kit/. Import as
-// `import { AppShell, ProjectRow } from '$lib/components/kit'`.
+// `import { AppShell, WorkspaceRow } from '$lib/components/kit'`.
 
 // Vocab + shared types.
 export * from './vocab';
@@ -26,7 +26,7 @@ export { default as StatBadge } from './StatBadge.svelte';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as Btn } from './Btn.svelte';
 export { default as ListSection } from './ListSection.svelte';
-export { default as ProjectRow } from './ProjectRow.svelte';
+export { default as WorkspaceRow } from './WorkspaceRow.svelte';
 export { default as MyDojoRow } from './MyDojoRow.svelte';
 
 // Plan / run-detail visualizers (ported from dojo2-kit.jsx K2Plan*).

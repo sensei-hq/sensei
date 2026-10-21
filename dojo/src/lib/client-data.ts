@@ -389,11 +389,11 @@ export async function listClientAuditLedger(
 	return data.entries ?? [];
 }
 
-/** One project row (mirrors the server `WorkspaceRow`): a shared project in one
+/** One workspace row (mirrors the server `WorkspaceRow`): a shared workspace in one
  *  dōjō (#299). `slug` is unique within that dōjō; `id` is the drill-in key. */
 export interface WorkspaceRow {
 	id: string;
-	/** The dōjō the project lives in. */
+	/** The dōjō the workspace lives in. */
 	tenant_id: string;
 	slug: string;
 	name: string;
@@ -403,13 +403,13 @@ export interface WorkspaceRow {
 	runs_week: number;
 }
 
-/** `GET …/workspaces` — the org's projects (dojo.projects, tenant-scoped). */
+/** `GET …/workspaces` — the org's workspaces (dojo.workspaces, tenant-scoped). */
 export async function listWorkspaces(tenantKey: string, opts: DojoCallOpts = {}): Promise<WorkspaceRow[]> {
 	const data = await getJson<{ workspaces?: WorkspaceRow[] }>(clientUrl(tenantKey, '/workspaces'), opts);
 	return data.workspaces ?? [];
 }
 
-/** `GET /v1/you/workspaces` — every project the caller may read, across every
+/** `GET /v1/you/workspaces` — every workspace the caller may read, across every
  *  dōjō they belong to. Backs the personal `/you/workspaces` list. Not
  *  tenant-scoped — the server reads with the caller's JWT and RLS decides (#299). Honest-empty on a
  *  missing key; a non-2xx throws `ClientApiError` (never []-as-success). */
@@ -580,15 +580,15 @@ export async function acceptInvite(
 }
 
 /** `GET /v1/you/workspaces/{id}/constitution` — the daemon-resolved constitution
- *  for one project (F4 drill-in), by project id: a slug is unique only within one
+ *  for one workspace (F4 drill-in), by workspace id: a slug is unique only within one
  *  dōjō (#299). `null` when none is federated yet or the caller cannot read the
- *  project (honest-empty). */
+ *  workspace (honest-empty). */
 export async function getWorkspaceConstitution(
-	projectId: string,
+	workspaceId: string,
 	opts: DojoCallOpts = {}
 ): Promise<RelayConstitution | null> {
 	const data = await getJson<{ constitution?: RelayConstitution | null }>(
-		youUrl(`/workspaces/${encodeURIComponent(projectId)}/constitution`),
+		youUrl(`/workspaces/${encodeURIComponent(workspaceId)}/constitution`),
 		opts
 	);
 	return data.constitution ?? null;

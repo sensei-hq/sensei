@@ -1,6 +1,6 @@
 // The invite accept landing (F3b, #307 D8): a member lands in the dōjō they
 // joined; a viewer is not a member — the org would bounce them — so they land on
-// their projects, where the projects they are granted appear.
+// their workspaces, where the workspaces they are granted appear.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const acceptInvite = vi.fn();
@@ -27,8 +27,8 @@ describe('invite accept landing', () => {
 		await expect(run()).rejects.toThrow('303 /org/t1');
 	});
 
-	it('a viewer lands on their projects, not in the dōjō', async () => {
+	it('a viewer lands on their workspaces, not in the dōjō', async () => {
 		acceptInvite.mockResolvedValue({ tenant_id: 't1', role: null, access: 'viewer' });
-		await expect(run()).rejects.toThrow('303 /you/projects');
+		await expect(run()).rejects.toThrow('303 /you/workspaces');
 	});
 });

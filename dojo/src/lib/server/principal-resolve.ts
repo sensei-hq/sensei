@@ -4,7 +4,7 @@
 // `principals.auth_user_id` is a re-pointable POINTER at the Supabase login (see
 // that table's DDL for why the indirection exists: Supabase auto-merges accounts
 // sharing a verified email and offers no way to split them again). Consequently
-// `memberships.user_id`, `projects.user_id` and every other `user_id` column in
+// `memberships.user_id`, `seats.user_id` and every other `user_id` column in
 // `dojo.*` hold a PRINCIPAL id — never the login id that `auth.getUser()` returns.
 //
 // Spec: docs/spec/dojo/dojo-auth-provisioning.md §VIII.2. The database-side

@@ -77,7 +77,7 @@ describe('parseNewInvite', () => {
 		expect(() => parseNewInvite({ email: 'a@b.co', kind: 'wizard' })).toThrow();
 	});
 	// #307 D8: a manager or client is invited INTO the dōjō as a viewer — not a
-	// member — before an admin grants them the view of selected projects.
+	// member — before an admin grants them the view of selected workspaces.
 	it('reads a viewer invite, and refuses an access it does not know', () => {
 		expect(parseNewInvite({ email: 'cfo@acme.co', kind: 'client', access: 'viewer' }).access).toBe('viewer');
 		expect(() => parseNewInvite({ email: 'a@b.co', kind: 'client', access: 'owner' })).toThrow();

@@ -2,7 +2,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import ScrOrgLadder from '$lib/components/screens/ScrOrgLadder.svelte';
-	import ScrProjects from '$lib/components/screens/ScrProjects.svelte';
+	import ScrWorkspaces from '$lib/components/screens/ScrWorkspaces.svelte';
 	import ScrTriage from '$lib/components/screens/ScrTriage.svelte';
 	import ScrApprovals from '$lib/components/screens/ScrApprovals.svelte';
 	import ScrKnowledge from '$lib/components/screens/ScrKnowledge.svelte';
@@ -43,11 +43,11 @@
 	import { InviteState } from '$lib/invite-state.svelte';
 	import { TeamDraft } from '$lib/teams-state.svelte';
 	import { toKitIncidentDetail } from '$lib/incidents-map';
-	import type { KitProject } from '$lib/components/kit/types';
+	import type { KitWorkspace } from '$lib/components/kit/types';
 
 	// The org-zone section screen. Dispatches to the real screen for every NAV_ORG
 	// destination off the kit fixtures the loader supplies: the Overview
-	// (ladder · projects), the maintainer Govern consoles
+	// (ladder · workspaces), the maintainer Govern consoles
 	// (triage · approvals · knowledge), the lead Clients consoles
 	// (engagements · incidents · clientaudit) and the admin consoles
 	// (members/scopes/identity/audit/health/billing) — the full dojo screen set,
@@ -55,17 +55,17 @@
 	// to catch a section added to NAV_ORG before its screen. The `members` and
 	// `audit` sections share
 	// ONE screen (ScrRoleSurfaces): the loader-supplied `roleTab` picks its opening
-	// tab. Opening a project routes to the org project preview at
-	// /org/[slug]/projects/[id] (an in-shell route so the URL stays the source of
-	// truth — the shell keeps "Projects" active for the tail).
+	// tab. Opening a workspace routes to the org workspace preview at
+	// /org/[slug]/workspaces/[id] (an in-shell route so the URL stays the source of
+	// truth — the shell keeps "Workspaces" active for the tail).
 	let { data } = $props();
 
 	// The signed-in viewer's real name (from the layout's loadConsoleContext) —
 	// labels "you" in the audit surface. Never a fixture identity (F4).
 	const viewer = $derived(data.user?.name ?? data.user?.email ?? 'You');
 
-	function openProject(p: KitProject) {
-		goto(orgHref(data.slug, 'projects') + '/' + p.id);
+	function openWorkspace(p: KitWorkspace) {
+		goto(orgHref(data.slug, 'workspaces') + '/' + p.id);
 	}
 
 	// The console writes, bound to the org's tenant and session token. Each reads
@@ -84,14 +84,14 @@
 			closeEngagement: (id) => updateEngagement(tk(), id, { status: 'ended' }, opts()),
 			removeEngagement: (id) => deleteEngagement(tk(), id, opts()),
 			removeViewer: (pid) => removeViewer(tk(), pid, opts()),
-			grantView: (pid, projectId) => grantWorkspaceView(tk(), pid, projectId, opts()),
-			revokeView: (pid, projectId) => revokeWorkspaceView(tk(), pid, projectId, opts()),
+			grantView: (pid, workspaceId) => grantWorkspaceView(tk(), pid, workspaceId, opts()),
+			revokeView: (pid, workspaceId) => revokeWorkspaceView(tk(), pid, workspaceId, opts()),
 			saveTeam: (teamId, name) =>
 				teamId ? renameTeam(tk(), teamId, name, opts()) : createTeam(tk(), name, opts()),
 			deleteTeam: (teamId) => deleteTeam(tk(), teamId, opts()),
 			addTeamMember: (teamId, pid) => addTeamMember(tk(), teamId, pid, opts()),
 			removeTeamMember: (teamId, pid) => removeTeamMember(tk(), teamId, pid, opts()),
-			grantTeamView: (teamId, projectId) => grantTeamWorkspaceView(tk(), teamId, projectId, opts())
+			grantTeamView: (teamId, workspaceId) => grantTeamWorkspaceView(tk(), teamId, workspaceId, opts())
 		},
 		invalidateAll
 	);
@@ -105,13 +105,13 @@
 
 {#if data.section === 'ladder'}
 	<ScrOrgLadder orgName={data.orgName} sections={data.sections} />
-{:else if data.section === 'projects'}
-	<ScrProjects
-		projects={data.projects}
+{:else if data.section === 'workspaces'}
+	<ScrWorkspaces
+		workspaces={data.workspaces}
 		showDojo={false}
 		eyebrow={data.orgName + ' · jurisdiction'}
-		title="Projects"
-		onOpenProject={openProject}
+		title="Workspaces"
+		onOpenWorkspace={openWorkspace}
 	/>
 {:else if data.section === 'triage'}
 	<ScrTriage orgName={data.orgName} groups={data.triage} detail={data.candidateDetail} />
@@ -152,9 +152,9 @@
 		onSetRole={(m, role) => org.setRole(m, role)}
 		{invite}
 		viewers={data.viewers}
-		viewerProjects={data.viewerProjects}
-		onGrantView={(v, projectId) => org.grantView(v, projectId)}
-		onRevokeView={(v, projectId) => org.revokeView(v, projectId)}
+		viewerWorkspaces={data.viewerWorkspaces}
+		onGrantView={(v, workspaceId) => org.grantView(v, workspaceId)}
+		onRevokeView={(v, workspaceId) => org.revokeView(v, workspaceId)}
 		onRemoveViewer={(v) => org.removeViewer(v)}
 		teams={data.teams}
 		{teamDraft}
@@ -162,7 +162,7 @@
 		onDeleteTeam={(t) => org.deleteTeam(t)}
 		onAddTeamMember={(t, pid) => org.addTeamMember(t, pid)}
 		onRemoveTeamMember={(t, pid) => org.removeTeamMember(t, pid)}
-		onGrantTeam={(t, projectId) => org.grantTeamView(t, projectId)}
+		onGrantTeam={(t, workspaceId) => org.grantTeamView(t, workspaceId)}
 	/>
 {:else if data.section === 'scopes'}
 	<ScrScopes orgName={data.orgName} owners={data.scopeOwners} />

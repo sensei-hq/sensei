@@ -88,21 +88,21 @@ describe('kit composed primitives render', () => {
 	it('SectionHead shows eyebrow, title and count', () => {
 		const { getByText } = render(SectionHeadHarness, {
 			eyebrow: 'my work',
-			title: 'Projects in flight',
+			title: 'Workspaces in flight',
 			count: 5,
 			kanji: '件'
 		});
 		expect(getByText('my work')).toBeTruthy();
-		expect(getByText('Projects in flight')).toBeTruthy();
+		expect(getByText('Workspaces in flight')).toBeTruthy();
 		expect(getByText('5')).toBeTruthy();
 	});
 
 	it('ListSection renders the header + fixture rows inside the flush card', () => {
 		const { getByText, getAllByText } = render(ListSectionHarness, {
-			title: 'Active projects',
+			title: 'Active workspaces',
 			count: 3
 		});
-		expect(getByText('Active projects')).toBeTruthy();
+		expect(getByText('Active workspaces')).toBeTruthy();
 		expect(getByText('lumen-auth')).toBeTruthy();
 		// three fixture rows land inside the card.
 		expect(getAllByText(/-/).length).toBeGreaterThan(0);

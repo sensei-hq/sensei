@@ -50,7 +50,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		<Banner kanji="盾" tone="accent" title="Share the lesson, never the source.">
-			Findings from a client project are anonymized before they leave the machine — the pattern
+			Findings from a client workspace are anonymized before they leave the machine — the pattern
 			travels upstream; the client, repo and code never do.
 		</Banner>
 

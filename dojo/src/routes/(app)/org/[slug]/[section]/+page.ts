@@ -18,7 +18,7 @@ import {
 	type WorkspaceRow
 } from '$lib/client-data';
 import { listTriage, type TriageRow } from '$lib/triage-data';
-import { toViewerViews, type DojoViewerView, type DojoViewerWire, type ViewerProjectView } from '$lib/viewers-view';
+import { toViewerViews, type DojoViewerView, type DojoViewerWire, type ViewerWorkspaceView } from '$lib/viewers-view';
 import { toTeamViews, type TeamView, type TeamWire } from '$lib/teams-view';
 import {
 	listMembers,
@@ -53,7 +53,7 @@ import {
 } from '$lib/admin-map';
 import { toKitIncidents, toKitClientAuditLedger } from '$lib/incidents-map';
 import { toKitKnowledge } from '$lib/knowledge-map';
-import { toKitProjects } from '$lib/projects-map';
+import { toKitWorkspaces } from '$lib/workspaces-map';
 import type {
 	KitEngagement,
 	KitTriageGroup,
@@ -63,7 +63,7 @@ import type {
 	KitRolePolicy,
 	KitChatTurn,
 	KitKnowledge,
-	KitProject,
+	KitWorkspace,
 	KitIdentity,
 	KitIncident,
 	KitClientAuditRow,
@@ -100,9 +100,9 @@ import {
 //   • billing           → GET …/billing (admin floor) — the LIVE billable seat
 //     count overlaid on the illustrative pricing catalog (perSeat/tiers/invoices
 //     stay fixture until a payment provider is wired, D-BILLING).
-// The remaining sections (Overview ladder/projects, knowledge, confidentiality,
+// The remaining sections (Overview ladder/workspaces, knowledge, confidentiality,
 // scopes) still render off kit fixtures — their routes aren't built (Tier 3:
-// scopes/projects/stance need further wiring).
+// scopes/workspaces/stance need further wiring).
 export const load: PageLoad = async ({ parent, params, fetch }) => {
 	const { memberships, accessToken, user } = await parent();
 	const org = orgBySlug(memberships, params.slug);
@@ -170,7 +170,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	let rolePolicies: KitRolePolicy[] = toKitRolePolicies();
 	let auditLog: KitChatTurn[] = [];
 	let viewers: DojoViewerView[] = [];
-	let viewerProjects: ViewerProjectView[] = [];
+	let viewerWorkspaces: ViewerWorkspaceView[] = [];
 	let teams: TeamView[] = [];
 	let membersError: string | null = null;
 	if (section === 'members' || section === 'audit') {
@@ -187,7 +187,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 			]);
 			teams = toTeamViews(tm.value);
 			viewers = toViewerViews(v.value);
-			viewerProjects = pr.value.map((row) => ({ id: row.id, name: row.name }));
+			viewerWorkspaces = pr.value.map((row) => ({ id: row.id, name: row.name }));
 			members = toKitMembers(m.value, { self: user?.id ?? undefined });
 			rolePolicies = toKitRolePolicies(p.value);
 			auditLog = toKitAuditThread(a.value);
@@ -241,13 +241,13 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		(res) => toKitBilling(billingFor(slug), res)
 	);
 
-	// Projects (org) — the tenant's dojo.projects (daemon-populated on relay runs).
-	// Real read; honest-empty until populated — NOT the orgProjectsFor(slug) fixture.
-	const projectsRes = await guardedFor<WorkspaceRow[], KitProject[]>(
-		'projects',
+	// Workspaces (org) — the tenant's dojo.workspaces (daemon-populated on relay runs).
+	// Real read; honest-empty until populated — NOT the orgWorkspacesFor(slug) fixture.
+	const workspacesRes = await guardedFor<WorkspaceRow[], KitWorkspace[]>(
+		'workspaces',
 		[],
 		(tk) => listWorkspaces(tk, opts),
-		toKitProjects
+		toKitWorkspaces
 	);
 
 	// Knowledge (maintainer) — the tenant's published library over dojo.artifacts
@@ -272,8 +272,8 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		accessToken,
 		// Overview-section data (fixtures — Tier 3, needs DDL).
 		sections: orgConstitutionFor(slug),
-		projects: projectsRes.value,
-		projectsError: projectsRes.error,
+		workspaces: workspacesRes.value,
+		workspacesError: workspacesRes.error,
 		// Maintainer Govern consoles.
 		triage,
 		candidateDetail,
@@ -296,7 +296,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		rolePolicies,
 		auditLog,
 		viewers,
-		viewerProjects,
+		viewerWorkspaces,
 		teams,
 		membersError,
 		scopeOwners: scopeOwnersFor(slug),

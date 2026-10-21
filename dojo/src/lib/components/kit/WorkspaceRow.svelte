@@ -4,9 +4,9 @@
 	import ClassChip from './ClassChip.svelte';
 	import PhasePill from './PhasePill.svelte';
 	import Spark from './Spark.svelte';
-	import type { KitProject } from './types';
+	import type { KitWorkspace } from './types';
 
-	// A project row (kit K2ProjectRow) — the list workhorse, one row at every width.
+	// A workspace row (kit K2ProjectRow) — the list workhorse, one row at every width.
 	// Below `md` it is a flex row (icon · name/repo · needs · phase · lastRun);
 	// from `md` up it becomes the table row, and the four extra cells
 	// (classification, dōjō, note, sparkline) un-hide into the grid. The shared
@@ -20,9 +20,9 @@
 		showDojo = true,
 		onopen
 	}: {
-		p: KitProject;
+		p: KitWorkspace;
 		showDojo?: boolean;
-		onopen?: (p: KitProject) => void;
+		onopen?: (p: KitWorkspace) => void;
 	} = $props();
 
 	const cols = $derived(

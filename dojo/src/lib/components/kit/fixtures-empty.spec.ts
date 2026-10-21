@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-	orgProjectsFor,
+	orgWorkspacesFor,
 	orgConstitutionFor,
 	triageGroupsFor,
 	approvalsFor,
@@ -18,7 +18,7 @@ describe('org fixtures — an unknown slug returns empty, never Acme', () => {
 	const unknown = 'no-such-org';
 
 	it('array-returning lookups are empty for an unknown slug', () => {
-		expect(orgProjectsFor(unknown)).toEqual([]);
+		expect(orgWorkspacesFor(unknown)).toEqual([]);
 		expect(orgConstitutionFor(unknown)).toEqual([]);
 		expect(triageGroupsFor(unknown)).toEqual([]);
 		expect(approvalsFor(unknown)).toEqual([]);

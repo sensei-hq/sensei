@@ -104,7 +104,7 @@ export function userProfile(su: SessionUser | undefined): OrgUser {
  *  view-model. The displayed kind comes from `tenants.origin`, NOT from
  *  `dojo.membership_kind` — see `originToOrgKind`. Counts are left undefined —
  *  not yet computed here — so the row omits the chip rather than showing a
- *  fabricated 0 (computing real members/projects/pending is a follow-on). */
+ *  fabricated 0 (computing real members/workspaces/pending is a follow-on). */
 export function tenantToOrg(t: TenantRow, role: string, _kind?: string | null): DojoOrg {
 	// `_kind` is accepted and IGNORED. Callers still pass `memberships.kind`, and
 	// keeping the parameter documents that it is deliberately unused rather than

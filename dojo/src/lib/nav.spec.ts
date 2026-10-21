@@ -38,7 +38,7 @@ describe('NAV_YOU — the personal zone (inbox model)', () => {
 		const ids = NAV_YOU.flatMap((g) => g.items.map((it) => it.id));
 		expect(ids).toEqual([
 			'inbox',
-			'projects',
+			'workspaces',
 			'rules',
 			'packs',
 			'dojos',
@@ -126,7 +126,7 @@ describe('href builders — clean dojo URLs', () => {
 	it('the personal landing is /you; a section is /you/{section}', () => {
 		expect(youHref()).toBe('/you');
 		expect(youHref('inbox')).toBe('/you');
-		expect(youHref('projects')).toBe('/you/projects');
+		expect(youHref('workspaces')).toBe('/you/workspaces');
 		expect(youHref('runs')).toBe('/you/runs'); // run-detail base still resolves
 	});
 
@@ -143,8 +143,8 @@ describe('active-section resolution from a URL path', () => {
 		expect(sectionFromYouPath('/you/')).toBe('inbox');
 	});
 
-	it('maps a real section like /you/projects → projects', () => {
-		expect(sectionFromYouPath('/you/projects')).toBe('projects');
+	it('maps a real section like /you/workspaces → workspaces', () => {
+		expect(sectionFromYouPath('/you/workspaces')).toBe('workspaces');
 	});
 
 	it('a retired relay section (approve/decide/chat/runs) falls back to the inbox', () => {
@@ -172,7 +172,7 @@ describe('active-section resolution from a URL path', () => {
 
 describe('labelForSection — placeholder header copy', () => {
 	it('resolves a personal section label from NAV_YOU', () => {
-		expect(labelForSection('projects', 'you')).toBe('Projects');
+		expect(labelForSection('workspaces', 'you')).toBe('Workspaces');
 		expect(labelForSection('contributions', 'you')).toBe('Contributions');
 	});
 

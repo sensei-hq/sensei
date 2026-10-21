@@ -17,7 +17,7 @@ export function scopeLabel(scope: unknown): string {
 	if (scope && typeof scope === 'object') {
 		const s = scope as Record<string, unknown>;
 		if (typeof s.team === 'string' && s.team) return `Team · ${s.team}`;
-		if (typeof s.project === 'string' && s.project) return `Project · ${s.project}`;
+		if (typeof s.project === 'string' && s.project) return `Workspace · ${s.project}`;
 		if (typeof s.stack === 'string' && s.stack) return `Stack · ${s.stack}`;
 		if (s.company) return typeof s.company === 'string' && s.company !== 'true' ? `Company · ${s.company}` : 'Company';
 	}

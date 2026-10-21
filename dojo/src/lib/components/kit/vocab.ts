@@ -22,7 +22,7 @@ export interface ClassTone {
 	fill: string;
 }
 
-/** Project classification — company · client · personal · community. */
+/** Workspace classification — company · client · personal · community. */
 export const K2_CLASS: Record<string, ClassTone> = {
 	company: {
 		kanji: '社',

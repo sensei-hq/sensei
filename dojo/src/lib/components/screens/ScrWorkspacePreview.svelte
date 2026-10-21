@@ -10,35 +10,35 @@
 		RuleRow,
 		ConflictCard
 	} from '$lib/components/kit';
-	import type { KitConflict, KitLadderRung, KitProject } from '$lib/components/kit/types';
-	import { createProjectPreview, type PreviewView } from '$lib/preview/state.svelte';
+	import type { KitConflict, KitLadderRung, KitWorkspace } from '$lib/components/kit/types';
+	import { createWorkspacePreview, type PreviewView } from '$lib/preview/state.svelte';
 	import { untrack } from 'svelte';
 
-	// The resolved-constitution drill-in for one project (mockup ScrProjectPreview)
-	// — the "before you start" view a viewer sees when opening a project from the
-	// list or the landing. A back header, the project identity (classification +
+	// The resolved-constitution drill-in for one workspace (mockup ScrWorkspacePreview)
+	// — the "before you start" view a viewer sees when opening a workspace from the
+	// list or the landing. A back header, the workspace identity (classification +
 	// phase), a classification banner summarizing the resolution, a by-layer /
 	// consolidated toggle over the ladder, and (for non-personal work) the
-	// conflicts the ladder discarded. Presentational: the page supplies the project
+	// conflicts the ladder discarded. Presentational: the page supplies the workspace
 	// + the kit ladder / conflicts; the `active` rung + `view` toggle live in the
 	// `preview/state` rune store.
 	let {
-		project,
+		workspace,
 		ladder,
 		conflicts,
 		onBack
 	}: {
-		project: KitProject;
+		workspace: KitWorkspace;
 		ladder: KitLadderRung[];
 		conflicts: KitConflict[];
 		onBack?: () => void;
 	} = $props();
 
-	// Seed the drill-in state ONCE from the props — opening a different project
-	// re-mounts this screen (a `/you/projects/[id]` navigation), so the resolved
+	// Seed the drill-in state ONCE from the props — opening a different workspace
+	// re-mounts this screen (a `/you/workspaces/[id]` navigation), so the resolved
 	// ladder + `active`/`view` state is captured at mount. `untrack` makes that
 	// initial capture explicit (the same idiom as `ScrYourWork`).
-	const preview = untrack(() => createProjectPreview(project, ladder, conflicts));
+	const preview = untrack(() => createWorkspacePreview(workspace, ladder, conflicts));
 	const views: [PreviewView, string][] = [
 		['layer', 'By layer'],
 		['consolidated', 'Consolidated']
@@ -54,15 +54,15 @@
 					onclick={onBack}
 					class="text-ink-mute inline-flex cursor-pointer items-center gap-1 self-start bg-transparent text-sm"
 				>
-					<Icon name="alt-arrow-left" size={15} toneClass="text-ink-mute" /> Back to projects
+					<Icon name="alt-arrow-left" size={15} toneClass="text-ink-mute" /> Back to workspaces
 				</button>
 			{/if}
 
-			<SectionHead kanji="件" eyebrow={'Before you start · ' + project.repo} title={project.name}>
+			<SectionHead kanji="件" eyebrow={'Before you start · ' + workspace.repo} title={workspace.name}>
 				{#snippet right()}
 					<div class="flex items-center gap-2">
-						<ClassChip kind={project.classification} />
-						<PhasePill phase={project.phase} />
+						<ClassChip kind={workspace.classification} />
+						<PhasePill phase={workspace.phase} />
 					</div>
 				{/snippet}
 			</SectionHead>
@@ -71,9 +71,9 @@
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if ladder.length === 0}
 			<!-- Honest-empty: the composed constitution is resolved by the daemon in the
-			     editor and NOT yet federated to the dōjō (F4). We render the real project
+			     editor and NOT yet federated to the dōjō (F4). We render the real workspace
 			     header above + this truthful state, never a fabricated ladder/conflicts. -->
-			<Banner kanji="観" tone="neutral" title="This project's constitution resolves in your editor.">
+			<Banner kanji="観" tone="neutral" title="This workspace's constitution resolves in your editor.">
 				sensei composes the ladder — your personal rules layered with this dōjō's rules, most-specific
 				wins — locally as you work. The dōjō's view of the resolved constitution is on its way; nothing
 				is shown here until it can be shown truthfully.
@@ -81,8 +81,8 @@
 		{:else}
 			<Banner
 				kanji="観"
-				tone={project.classification === 'client' ? 'accent' : 'neutral'}
-				title={project.classification === 'client'
+				tone={workspace.classification === 'client' ? 'accent' : 'neutral'}
+				title={workspace.classification === 'client'
 					? 'Client engagement — sources are dereferenced, as they always are.'
 					: 'These rules resolve here, most-specific wins.'}
 			>

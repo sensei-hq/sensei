@@ -1,4 +1,4 @@
-// The reactive drill-in state for ScrProjectPreview (mockup) — the selected
+// The reactive drill-in state for ScrWorkspacePreview (mockup) — the selected
 // rung (`active`) and the by-layer / consolidated `view` toggle. Delegates ALL
 // resolution to the pure `preview/view` module; here we only hold the two
 // bits of UI state as `$state` so the screen stays presentational. Kept as a
@@ -6,7 +6,7 @@
 // `your-work-view.svelte.ts`); the pure helpers stay unit-testable without a
 // component.
 
-import type { KitConflict, KitLadderRung, KitProject } from '../components/kit/types';
+import type { KitConflict, KitLadderRung, KitWorkspace } from '../components/kit/types';
 import {
 	discardedTexts,
 	effectiveRules,
@@ -19,8 +19,8 @@ import {
 /** The by-layer (the ladder rungs) or consolidated (flat rules) view. */
 export type PreviewView = 'layer' | 'consolidated';
 
-/** The reactive drill-in state a ScrProjectPreview binds to. */
-export interface ProjectPreviewState {
+/** The reactive drill-in state a ScrWorkspacePreview binds to. */
+export interface WorkspacePreviewState {
 	/** The composed ladder rungs, broad → specific. */
 	readonly rungs: KitLadderRung[];
 	/** The consolidated constitution (rung rules minus discards). */
@@ -31,7 +31,7 @@ export interface ProjectPreviewState {
 	readonly locks: number;
 	/** Whether the ladder shows its discarded conflicts. */
 	readonly showConflicts: boolean;
-	/** The focused rung id (`project` on open). */
+	/** The focused rung id (the workspace rung, scope key `project`, on open). */
 	readonly active: string;
 	/** The current view (`layer` on open). */
 	readonly view: PreviewView;
@@ -44,17 +44,17 @@ export interface ProjectPreviewState {
 	jumpTo(level: string): void;
 }
 
-/** Build the drill-in state for a project against the kit ladder + conflicts. */
-export function createProjectPreview(
-	project: KitProject,
+/** Build the drill-in state for a workspace against the kit ladder + conflicts. */
+export function createWorkspacePreview(
+	workspace: KitWorkspace,
 	ladder: KitLadderRung[],
 	conflicts: KitConflict[]
-): ProjectPreviewState {
-	const rungs = previewRungs(project, ladder);
-	const effective = effectiveRules(project, ladder, conflicts);
-	const discarded = discardedTexts(project, conflicts);
+): WorkspacePreviewState {
+	const rungs = previewRungs(workspace, ladder);
+	const effective = effectiveRules(workspace, ladder, conflicts);
+	const discarded = discardedTexts(workspace, conflicts);
 	const locks = lockCount(rungs);
-	const showConflicts = showsConflicts(project);
+	const showConflicts = showsConflicts(workspace);
 
 	let active = $state('project');
 	let view = $state<PreviewView>('layer');

@@ -6,7 +6,7 @@
 	import type { KitDojo } from './types';
 
 	// A dōjō membership row (kit K2MyDojoRow) — org identity glyph · name · kind
-	// chip · route/members/projects meta · optional "needs you" chip · your role ·
+	// chip · route/members/workspaces meta · optional "needs you" chip · your role ·
 	// a go affordance.
 	let { dojo, onopen }: { dojo: KitDojo; onopen?: (d: KitDojo) => void } = $props();
 
@@ -27,8 +27,8 @@
 			<Chip mono>{dojo.kind}</Chip>
 		</div>
 		<div class="mono text-ink-faint text-xs" style="margin-top: 2px">
-			{dojo.route}{#if dojo.members != null} · {dojo.members} members{/if}{#if dojo.projects != null}
-				· {dojo.projects} projects{/if}
+			{dojo.route}{#if dojo.members != null} · {dojo.members} members{/if}{#if dojo.workspaces != null}
+				· {dojo.workspaces} workspaces{/if}
 		</div>
 	</div>
 	{#if (dojo.needs ?? 0) > 0}

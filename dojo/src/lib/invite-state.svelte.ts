@@ -1,6 +1,6 @@
 // The admin invite (#307 A3, D8). A member invite makes a membership at a role;
 // a viewer invite makes a dōjō viewer — no role, no repositories — whom the admin
-// then grants selected projects. The dōjō issues a single-use token; the admin
+// then grants selected workspaces. The dōjō issues a single-use token; the admin
 // shares the accept link (there is no email delivery yet).
 import { DojoApiError } from '$lib/client-data';
 import { looksLikeEmail, type MEMBERSHIP_KINDS } from '$lib/admin-view';

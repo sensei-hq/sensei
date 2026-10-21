@@ -1,6 +1,6 @@
 // GET /v1/t/{origin}/{org}/relay/status — THAT runs are going, for the people
 // the access matrix lets know it (#252): the caller's own runs, those on a
-// project a team of theirs owns, and every run for a tenant admin. Status only —
+// workspace a team of theirs owns, and every run for a tenant admin. Status only —
 // relay content stays its owner's (#249). Read as the caller through
 // dojo.peer_run_status, which is pinned to their principal.
 import type { RequestHandler } from './$types';

@@ -6,9 +6,9 @@ describe('viewers view', () => {
 	it('maps the wire rows', () => {
 		expect(
 			toViewerViews([
-				{ principal_id: 'v1', display_name: 'Ana', email: 'a@x.co', joined_at: 't', projects: [{ id: 'p', name: 'P' }] }
+				{ principal_id: 'v1', display_name: 'Ana', email: 'a@x.co', joined_at: 't', workspaces: [{ id: 'p', name: 'P' }] }
 			])
-		).toEqual([{ principalId: 'v1', name: 'Ana', email: 'a@x.co', projects: [{ id: 'p', name: 'P' }] }]);
+		).toEqual([{ principalId: 'v1', name: 'Ana', email: 'a@x.co', workspaces: [{ id: 'p', name: 'P' }] }]);
 	});
 
 	it('labels a viewer by name, else email, else a short id — never an invented name', () => {

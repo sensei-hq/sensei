@@ -3,36 +3,36 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import ScrOrgHome from './ScrOrgHome.svelte';
 import ScrOrgLadder from './ScrOrgLadder.svelte';
 import RuleEditor from '$lib/components/kit/RuleEditor.svelte';
-import { orgProjectsFor, orgConstitutionFor, needsYou } from '$lib/components/kit/fixtures';
+import { orgWorkspacesFor, orgConstitutionFor, needsYou } from '$lib/components/kit/fixtures';
 
 // Chunk-4 org Overview screens (the /org/[slug] zone core). Each renders off the
 // ported org fixtures (presentational — real /v1 wiring is a later chunk). We
-// assert the org home shows its jurisdiction projects + needs band + stat row,
+// assert the org home shows its jurisdiction workspaces + needs band + stat row,
 // the ladder groups its sections + toggles a rule's include state + opens/saves/
 // validates the RuleEditor, and the editor composes a rule from its draft.
 
-const projects = orgProjectsFor('acme');
+const workspaces = orgWorkspacesFor('acme');
 const sections = orgConstitutionFor('acme');
 const needs = needsYou.slice(0, 2);
-const stats = { members: 48, needs: 4, projects: 9 };
+const stats = { members: 48, needs: 4, workspaces: 9 };
 
-describe('ScrOrgHome — jurisdiction projects + needs + stats', () => {
+describe('ScrOrgHome — jurisdiction workspaces + needs + stats', () => {
 	afterEach(cleanup);
 
-	it('heads the jurisdiction and lists its projects', () => {
+	it('heads the jurisdiction and lists its workspaces', () => {
 		const { getByText } = render(ScrOrgHome, {
-			props: { orgName: 'Acme Corp', projects, needs, stats }
+			props: { orgName: 'Acme Corp', workspaces, needs, stats }
 		});
 		expect(getByText('Acme Corp · jurisdiction')).toBeTruthy();
-		expect(getByText('4 projects under this dōjō')).toBeTruthy();
-		// a jurisdiction project renders by name (org repo path).
+		expect(getByText('4 workspaces under this dōjō')).toBeTruthy();
+		// a jurisdiction workspace renders by name (org repo path).
 		expect(getByText('lumen-auth')).toBeTruthy();
 		expect(getByText('acme/lumen-auth')).toBeTruthy();
 	});
 
-	it('renders the org stat row (members · need a maintainer · projects)', () => {
+	it('renders the org stat row (members · need a maintainer · workspaces)', () => {
 		const { getByText } = render(ScrOrgHome, {
-			props: { orgName: 'Acme Corp', projects, needs, stats }
+			props: { orgName: 'Acme Corp', workspaces, needs, stats }
 		});
 		expect(getByText('members')).toBeTruthy();
 		expect(getByText('need a maintainer')).toBeTruthy();
@@ -41,39 +41,39 @@ describe('ScrOrgHome — jurisdiction projects + needs + stats', () => {
 
 	it('renders the org needs band under the maintainer title', () => {
 		const { getByText } = render(ScrOrgHome, {
-			props: { orgName: 'Acme Corp', projects, needs, stats }
+			props: { orgName: 'Acme Corp', workspaces, needs, stats }
 		});
 		expect(getByText('Needs a maintainer')).toBeTruthy();
 	});
 
-	it('fires onOpenProject when a project row is clicked', async () => {
-		const onOpenProject = vi.fn();
+	it('fires onOpenWorkspace when a workspace row is clicked', async () => {
+		const onOpenWorkspace = vi.fn();
 		const { getByText } = render(ScrOrgHome, {
-			props: { orgName: 'Acme Corp', projects, needs, stats, onOpenProject }
+			props: { orgName: 'Acme Corp', workspaces, needs, stats, onOpenWorkspace }
 		});
 		await fireEvent.click(getByText('lumen-auth'));
-		expect(onOpenProject).toHaveBeenCalledWith(projects.find((p) => p.name === 'lumen-auth'));
+		expect(onOpenWorkspace).toHaveBeenCalledWith(workspaces.find((p) => p.name === 'lumen-auth'));
 	});
 
 	it('shows a failed queue read as an error in place of the band (#241)', () => {
 		const { container, queryByText } = render(ScrOrgHome, {
-			props: { orgName: 'Acme Corp', projects, needs: [], needsError: 'service down', stats }
+			props: { orgName: 'Acme Corp', workspaces, needs: [], needsError: 'service down', stats }
 		});
 		expect(container.querySelector('[data-needs-error]')?.textContent).toContain('service down');
 		expect(queryByText(needs[0].title)).toBeNull();
 	});
 
-	it('degrades to an honest empty state with no projects in jurisdiction', () => {
+	it('degrades to an honest empty state with no workspaces in jurisdiction', () => {
 		const { getByText } = render(ScrOrgHome, {
-			props: { orgName: 'Acme Corp', projects: [], needs: [], stats }
+			props: { orgName: 'Acme Corp', workspaces: [], needs: [], stats }
 		});
-		expect(getByText('No projects in this jurisdiction yet.')).toBeTruthy();
+		expect(getByText('No workspaces in this jurisdiction yet.')).toBeTruthy();
 	});
 
 	it('bases the phone 4px-grid rhythm and steps up at md, with no inline spacing px', () => {
 		// Word-boundary matched: `toContain('p-8')` also matches inside `md:p-8`.
 		const { container } = render(ScrOrgHome, {
-			props: { orgName: 'Acme Corp', projects, needs, stats }
+			props: { orgName: 'Acme Corp', workspaces, needs, stats }
 		});
 		const el = container.querySelector('[data-component="screen-body"]')!.firstElementChild as HTMLElement;
 		expect(el.className).toMatch(/\bp-4\b/);

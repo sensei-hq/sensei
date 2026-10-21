@@ -17,7 +17,7 @@ describe('ROLE_SURFACE_TABS', () => {
 
 	it('each tab says what it is; the ladder reads contributor first (D1)', () => {
 		expect(resolveTab('members').description).toMatch(/^Roles are additive.*contributor → maintainer → lead → admin/);
-		expect(resolveTab('viewers').description).toMatch(/not members.*only the projects you grant/);
+		expect(resolveTab('viewers').description).toMatch(/not members.*only the workspaces you grant/);
 		for (const t of ROLE_SURFACE_TABS) expect(t.description.length).toBeGreaterThan(0);
 	});
 

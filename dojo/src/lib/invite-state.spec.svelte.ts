@@ -4,7 +4,7 @@ import { DojoApiError } from '$lib/client-data';
 
 // The admin invite (#307 A3, D8): a member invite makes a membership at a role;
 // a viewer invite makes a dōjō viewer — no role, no repositories — whom the admin
-// then grants selected projects. The issued link is what the admin shares.
+// then grants selected workspaces. The issued link is what the admin shares.
 
 describe('invite draft rules', () => {
 	it('a member invite carries its role', () => {

@@ -37,7 +37,7 @@ export interface DojoOrg {
 	// Counts are OPTIONAL — undefined when not (yet) computed. The row omits the
 	// chip rather than showing a fabricated 0 (honest-empty, not a masked zero).
 	members?: number;
-	projects?: number;
+	workspaces?: number;
 	pending?: number;
 	last?: boolean;
 }

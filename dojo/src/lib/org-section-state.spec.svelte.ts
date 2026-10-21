@@ -39,11 +39,11 @@ describe('OrgSectionState', () => {
 		expect(s.actionError).toBeNull();
 	});
 
-	it("the dōjō's viewers: remove, grant and revoke a project, each reloading (#307 D8)", async () => {
+	it("the dōjō's viewers: remove, grant and revoke a workspace, each reloading (#307 D8)", async () => {
 		const a = actions();
 		const reload = vi.fn().mockResolvedValue(undefined);
 		const s = new OrgSectionState(a, reload);
-		const v = { principalId: 'v1', name: null, email: 'v@x.co', projects: [] };
+		const v = { principalId: 'v1', name: null, email: 'v@x.co', workspaces: [] };
 		await s.grantView(v, 'p1');
 		await s.revokeView(v, 'p1');
 		await s.removeViewer(v);
