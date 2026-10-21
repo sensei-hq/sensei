@@ -44,6 +44,16 @@ pub struct TaskListRow {
     pub sprints: Vec<(uuid::Uuid, String)>,
 }
 
+/// Which tickets a list covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskScope {
+    All,
+    /// The tickets this sprint lists.
+    Sprint(uuid::Uuid),
+    /// The tickets no non-removed sprint lists (R7 backlog).
+    Backlog,
+}
+
 /// Which part of a sprint's window a candidate session falls in (R7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Part {
@@ -252,9 +262,14 @@ impl PgStore {
     pub async fn tracker_task_rows(
         &self,
         tracker_id: uuid::Uuid,
-        sprint: Option<uuid::Uuid>,
+        scope: TaskScope,
         include_removed: bool,
     ) -> Result<Vec<TaskListRow>, String> {
+        let (sprint, backlog) = match scope {
+            TaskScope::All => (None, false),
+            TaskScope::Sprint(id) => (Some(id), false),
+            TaskScope::Backlog => (None, true),
+        };
         type Row = (
             uuid::Uuid,
             String,
@@ -279,6 +294,9 @@ impl PgStore {
               WHERE t.tracker_id = $1 AND ($3 OR t.removed_at IS NULL)
                 AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM sensei.tracker_task_sprints x
                                                   WHERE x.task_id = t.id AND x.sprint_id = $2))
+                AND (NOT $4 OR NOT EXISTS (SELECT 1 FROM sensei.tracker_task_sprints x
+                                             JOIN sensei.sprints s ON s.id = x.sprint_id AND s.removed_at IS NULL
+                                            WHERE x.task_id = t.id))
               GROUP BY t.id, cur.id, cur.name
               ORDER BY regexp_replace(t.key, '[0-9]+$', ''),
                        nullif(substring(t.key FROM '([0-9]+)$'), '')::numeric NULLS FIRST, t.key",
@@ -286,6 +304,7 @@ impl PgStore {
         .bind(tracker_id)
         .bind(sprint)
         .bind(include_removed)
+        .bind(backlog)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

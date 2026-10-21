@@ -54,6 +54,7 @@ fn tracker_routes() -> Router<AppState> {
         .route("/api/projects/{id}/trackers/sync", post(trackers::sync_tracker))
         .route("/api/projects/{id}/trackers/{kind}/connect", post(trackers::connect_tracker))
         .route("/api/projects/{id}/sprints", get(trackers::list_sprints))
+        .route("/api/projects/{id}/backlog", get(trackers::get_backlog))
         .route("/api/projects/{id}/tracker-tasks", get(trackers::list_tracker_tasks))
         .route("/api/projects/{id}/tracker-tasks/{key}", get(trackers::get_tracker_task))
         .route("/api/projects/{id}/sessions/unlinked", get(trackers::list_unlinked_sessions))

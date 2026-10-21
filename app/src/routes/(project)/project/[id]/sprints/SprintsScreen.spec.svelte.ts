@@ -114,6 +114,22 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
       },
     }),
     tryListUnlinkedSessions: async () => ({ ok: true, data: [] }),
+    tryGetBacklog: async () => ({ ok: true, data: { tickets: 1, usage: usage({ sessions: 1 }) } }),
+    tryListBacklogTasks: async () => ({
+      ok: true,
+      data: [
+        {
+          key: 'P-783',
+          summary: 'Testing without sprint',
+          issue_type: 'Story',
+          status: 'To-Do',
+          current_sprint: null,
+          sprints: [],
+          removed: false,
+          usage: usage({ sessions: 1 }),
+        },
+      ],
+    }),
     ...over,
   };
 }
@@ -137,7 +153,7 @@ describe('ready', () => {
   it('lists sprints as buttons and marks the selected one', async () => {
     const { q, m } = await open();
     const rows = Array.from(m.container.querySelectorAll<HTMLButtonElement>('button[data-sprint]'));
-    expect(rows.map((r) => r.dataset.sprint)).toEqual(['s14', 's13']);
+    expect(rows.map((r) => r.dataset.sprint)).toEqual(['s14', 's13', 'backlog']);
     expect(q('button[data-sprint="s13"]')!.getAttribute('aria-current')).toBe('true');
     expect(q('button[data-sprint="s14"]')!.getAttribute('aria-current')).toBe(null);
   });
@@ -178,6 +194,19 @@ describe('ready', () => {
     q<HTMLButtonElement>('[data-action="back"]')!.click();
     flushSync();
     expect(q('[data-view="ticket"]')).toBe(null);
+  });
+});
+
+describe('backlog', () => {
+  it('is a selectable row that lists the tickets in no sprint', async () => {
+    const { q } = await open();
+    const row = q<HTMLButtonElement>('button[data-sprint="backlog"]')!;
+    expect(row.textContent).toContain('Backlog');
+    row.click();
+    await settle();
+    expect(row.getAttribute('aria-current')).toBe('true');
+    expect(q('[data-strip]')!.textContent).toContain('1 ticket in no sprint');
+    expect(q('[data-ticket="P-783"]')).not.toBe(null);
   });
 });
 

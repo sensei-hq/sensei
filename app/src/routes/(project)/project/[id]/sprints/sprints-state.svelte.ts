@@ -9,6 +9,7 @@ import type {
   TrackerTaskRow,
   TrackerUsage,
   UnlinkedSession,
+  BacklogUsage,
 } from '$lib/types.js';
 
 export interface SprintsApi {
@@ -17,7 +18,12 @@ export interface SprintsApi {
   tryListTrackerTasks: (projectId: string, sprintId?: string) => Promise<ApiResult<TrackerTaskRow[]>>;
   tryGetTrackerTask: (projectId: string, key: string) => Promise<ApiResult<TrackerTaskDetail>>;
   tryListUnlinkedSessions: (projectId: string, sprintId: string) => Promise<ApiResult<UnlinkedSession[]>>;
+  tryGetBacklog: (projectId: string) => Promise<ApiResult<BacklogUsage>>;
+  tryListBacklogTasks: (projectId: string) => Promise<ApiResult<TrackerTaskRow[]>>;
 }
+
+/** The id the sprint list uses for its Backlog row (tickets in no sprint). */
+export const BACKLOG = 'backlog';
 
 export interface UsageCells {
   sessions: string;
@@ -53,6 +59,8 @@ function dateRange(s: SprintUsageRow): string {
   if (from) return `from ${from}`;
   return 'no dates';
 }
+
+const tickets = (n: number) => `${n} ticket${n === 1 ? '' : 's'}`;
 
 const REASONS: Record<string, string> = {
   not_started: 'Not started. Usage counts from the sprint’s start.',
@@ -91,6 +99,8 @@ export class SprintsState {
   ticketError = $state<string | null>(null);
   unlinked = $state<UnlinkedSession[] | null>(null);
   unlinkedError = $state<string | null>(null);
+  /** The tickets in no sprint and their total; read with the sprints. */
+  backlog = $state<BacklogUsage | null>(null);
 
   constructor(api: SprintsApi, projectId: string) {
     this.#api = api;
@@ -101,19 +111,46 @@ export class SprintsState {
     return this.sprints.find((s) => s.id === this.selectedId) ?? null;
   }
 
+  /** The selected row's name: a sprint's, or "Backlog". */
+  get selectedName(): string {
+    return this.selectedId === BACKLOG ? 'Backlog' : (this.selected?.name ?? '');
+  }
+
   get rows(): SprintRowView[] {
-    return this.sprints.map((s) => ({
+    const rows = this.sprints.map((s) => ({
       id: s.id,
       name: s.name,
       state: s.state,
       dates: dateRange(s),
-      tickets: `${s.tasks} ticket${s.tasks === 1 ? '' : 's'}`,
+      tickets: tickets(s.tasks),
       current: s.id === this.selectedId,
     }));
+    if (!this.backlog) return rows;
+    return [
+      ...rows,
+      {
+        id: BACKLOG,
+        name: 'Backlog',
+        state: 'no sprint',
+        dates: '',
+        tickets: tickets(this.backlog.tickets),
+        current: this.selectedId === BACKLOG,
+      },
+    ];
   }
 
   /** The selected sprint's own usage — never a sum of its tickets. */
   get strip(): Strip | null {
+    if (this.selectedId === BACKLOG && this.backlog) {
+      // No window: the backlog has no dates, so its total is all-time.
+      const { tickets: n, usage } = this.backlog;
+      const c = usageCells(usage);
+      return {
+        kind: 'window',
+        total: `${tickets(n)} in no sprint`,
+        parts: [{ label: 'Linked to backlog tickets', sessions: String(usage.sessions), active: c.active, fresh: c.fresh }],
+      };
+    }
     const s = this.selected;
     if (!s) return null;
     if (s.reason) return { kind: 'reason', text: REASONS[s.reason] ?? s.reason };
@@ -157,9 +194,10 @@ export class SprintsState {
 
   async load() {
     this.view = 'loading';
-    const [trackers, sprints] = await Promise.all([
+    const [trackers, sprints, backlog] = await Promise.all([
       this.#api.tryListTrackers(this.#projectId),
       this.#api.tryListSprints(this.#projectId),
+      this.#api.tryGetBacklog(this.#projectId),
     ]);
     if (!sprints.ok) {
       const body = 'body' in sprints.error ? sprints.error.body : undefined;
@@ -176,6 +214,12 @@ export class SprintsState {
       this.view = 'daemon_error';
       return;
     }
+    // A failed backlog read is the daemon's error, never "0 tickets".
+    if (!backlog.ok) {
+      this.loadError = failureText(backlog.error);
+      this.view = 'daemon_error';
+      return;
+    }
     const t = trackers.data[0];
     if (!t) {
       this.view = 'not_connected';
@@ -184,9 +228,10 @@ export class SprintsState {
     this.loadError = null;
     this.boardTitle = t.board_name ?? `board #${t.board_ref}`;
     this.sprints = sprints.data;
+    this.backlog = backlog.data;
     this.view = 'ready';
     const first = sprints.data.find((s) => s.state === 'active') ?? sprints.data[0];
-    if (first) await this.select(first.id);
+    await this.select(first?.id ?? BACKLOG);
   }
 
   async select(id: string) {
@@ -198,7 +243,10 @@ export class SprintsState {
     this.ticketError = null;
     this.unlinked = null;
     this.unlinkedError = null;
-    const res = await this.#api.tryListTrackerTasks(this.#projectId, id);
+    const res =
+      id === BACKLOG
+        ? await this.#api.tryListBacklogTasks(this.#projectId)
+        : await this.#api.tryListTrackerTasks(this.#projectId, id);
     if (seq !== this.#seq) return;
     if (res.ok) this.tasks = res.data;
     else this.tasksError = failureText(res.error);
@@ -226,7 +274,7 @@ export class SprintsState {
       return;
     }
     const id = this.selectedId;
-    if (!id) return;
+    if (!id || id === BACKLOG) return;
     this.unlinkedError = null;
     const res = await this.#api.tryListUnlinkedSessions(this.#projectId, id);
     if (id !== this.selectedId) return;

@@ -72,7 +72,7 @@
                   onclick={() => screen.select(r.id)}
                 >
                   <span class="text-sm text-ink">{r.name}</span>
-                  <span class="text-xs text-ink-mute">{r.state} · {r.dates}</span>
+                  <span class="text-xs text-ink-mute">{r.state}{r.dates ? ` · ${r.dates}` : ''}</span>
                   <span class="text-xs text-ink-soft">{r.tickets}</span>
                 </button>
               </li>
@@ -88,7 +88,7 @@
             <div data-view="ticket" class="flex flex-col gap-4">
               <div>
                 <button type="button" class={button} data-action="back" onclick={() => screen.closeTicket()}
-                  >Back to {screen.selected?.name ?? 'the sprint'}</button
+                  >Back to {screen.selectedName || 'the sprint'}</button
                 >
               </div>
               <div class="flex flex-col gap-1">
@@ -124,9 +124,9 @@
                 </ul>
               {/if}
             </div>
-          {:else if screen.selected}
+          {:else if screen.selectedId}
             {@const strip = screen.strip}
-            <h2 class="m-0 font-heading text-lg text-ink">{screen.selected.name}</h2>
+            <h2 class="m-0 font-heading text-lg text-ink">{screen.selectedName}</h2>
 
             <div data-strip class="flex flex-col gap-2 rounded-lg border border-paper-edge bg-paper-soft p-4">
               {#if strip?.kind === 'reason'}

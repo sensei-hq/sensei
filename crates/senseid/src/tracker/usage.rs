@@ -181,6 +181,40 @@ pub async fn sprint_usages(
         .collect())
 }
 
+/// The backlog's ticket count and its all-time usage (R7 backlog usage).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct BacklogUsage {
+    pub tickets: i64,
+    pub usage: Usage,
+}
+
+/// The backlog: the tracker's live tickets no live sprint lists, and the usage of
+/// the distinct candidate sessions linked to any of them.
+pub async fn backlog_usage(pg: &PgStore, tracker_id: uuid::Uuid) -> Result<BacklogUsage, String> {
+    use crate::db::pg_store::tracker_usage::TaskScope;
+    let tickets: Vec<uuid::Uuid> = pg
+        .tracker_task_rows(tracker_id, TaskScope::Backlog, false)
+        .await?
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    let pairs = pg.ticket_sessions(tracker_id, Some(&tickets)).await?;
+    // One group: a session linked to two backlog tickets counts once.
+    let members: Vec<(String, uuid::Uuid)> =
+        pairs.iter().map(|p| (BACKLOG_GROUP.into(), p.session_id)).collect();
+    let targets: Vec<(String, uuid::Uuid)> =
+        tickets.iter().map(|t| (BACKLOG_GROUP.into(), *t)).collect();
+    let usage = pg
+        .usage_grouped(tracker_id, &members, &targets)
+        .await?
+        .remove(BACKLOG_GROUP)
+        // No linked session is a genuinely empty set: zero sessions, null sums.
+        .unwrap_or_default();
+    Ok(BacklogUsage { tickets: tickets.len() as i64, usage })
+}
+
+const BACKLOG_GROUP: &str = "backlog";
+
 /// The sprint's `unlinked` sessions; `None` for a sprint the tracker doesn't have,
 /// `Some([])` for one without a window.
 pub async fn unlinked_in_sprint(
@@ -267,6 +301,7 @@ mod tests {
 
     // ── Against the database (fake board, seeded sessions) ──────────────────
 
+    use crate::db::pg_store::tracker_usage::TaskScope;
     use crate::tracker::connect::tests::{connected_tracker, project};
     use crate::tracker::jira::JiraAdapter;
     use crate::tracker::sync::{SYNC_DEADLINE, TrackerLocks, sync_tracker};
@@ -525,12 +560,15 @@ mod tests {
         let keys = |rows: Vec<crate::db::pg_store::tracker_usage::TaskListRow>| {
             rows.into_iter().map(|r| r.key).collect::<Vec<_>>()
         };
-        assert_eq!(keys(pg.tracker_task_rows(t, Some(s100), false).await.unwrap()), vec!["AUTH-1"]);
         assert_eq!(
-            keys(pg.tracker_task_rows(t, Some(s101), false).await.unwrap()),
+            keys(pg.tracker_task_rows(t, TaskScope::Sprint(s100), false).await.unwrap()),
+            vec!["AUTH-1"]
+        );
+        assert_eq!(
+            keys(pg.tracker_task_rows(t, TaskScope::Sprint(s101), false).await.unwrap()),
             vec!["AUTH-1", "AUTH-2", "AUTH-3"]
         );
-        let all = pg.tracker_task_rows(t, None, false).await.unwrap();
+        let all = pg.tracker_task_rows(t, TaskScope::All, false).await.unwrap();
         let auth1 = all.iter().find(|r| r.key == "AUTH-1").unwrap();
         assert_eq!(auth1.current_sprint, Some((s101, "Sprint 2".to_string())));
         let mut listed: Vec<_> = auth1.sprints.iter().map(|(id, _)| *id).collect();
@@ -547,10 +585,99 @@ mod tests {
         );
         sync(&pg, t, &without_3).await;
         assert_eq!(
-            keys(pg.tracker_task_rows(t, None, false).await.unwrap()),
+            keys(pg.tracker_task_rows(t, TaskScope::All, false).await.unwrap()),
             vec!["AUTH-1", "AUTH-2"]
         );
-        let with_removed = pg.tracker_task_rows(t, None, true).await.unwrap();
+        let with_removed = pg.tracker_task_rows(t, TaskScope::All, true).await.unwrap();
         assert!(with_removed.iter().any(|r| r.key == "AUTH-3" && r.removed));
+    }
+
+    /// The standard board plus AUTH-4 (no sprint) and AUTH-5 (only in future
+    /// sprint 102); `with_102 = false` is the same board after 102 is deleted.
+    fn with_backlog(with_102: bool, with_4: bool) -> FakeBoard {
+        let mut issues = vec![json!({"id": "10003", "key": "AUTH-3", "fields": {}})];
+        if with_4 {
+            issues
+                .push(json!({"id": "10004", "key": "AUTH-4", "fields": {"summary": "no sprint"}}));
+        }
+        issues.push(json!({"id": "10005", "key": "AUTH-5", "fields": {}}));
+        let total = 2 + issues.len();
+        let mut sprints = vec![
+            json!({"id": 100, "name": "Sprint 1", "state": "closed",
+                   "startDate": "2026-09-01T00:00:00.000Z", "endDate": "2026-09-15T00:00:00.000Z"}),
+            json!({"id": 101, "name": "Sprint 2", "state": "active", "startDate": "2026-10-01T00:00:00.000Z"}),
+        ];
+        if with_102 {
+            sprints.push(json!({"id": 102, "name": "Sprint 3", "state": "future"}));
+        }
+        FakeBoard::standard()
+            .with(
+                "/rest/agile/1.0/board/42/issue",
+                2,
+                json!({"startAt": 2, "total": total, "issues": issues}),
+            )
+            .with("/rest/agile/1.0/board/42/sprint", 0, json!({"isLast": true, "values": sprints}))
+            .with(
+                "/rest/agile/1.0/board/42/sprint/102/issue",
+                0,
+                json!({"total": 1, "issues": [
+                {"id": "10005", "key": "AUTH-5", "fields": {}}]}),
+            )
+    }
+
+    #[tokio::test]
+    async fn the_backlog_is_the_tickets_no_live_sprint_lists() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, _p) = connected_tracker(&pg).await;
+        let keys = |rows: Vec<crate::db::pg_store::tracker_usage::TaskListRow>| {
+            rows.into_iter().map(|r| r.key).collect::<Vec<_>>()
+        };
+        sync(&pg, t, &with_backlog(true, true)).await;
+        assert_eq!(
+            keys(pg.tracker_task_rows(t, TaskScope::Backlog, false).await.unwrap()),
+            vec!["AUTH-4"],
+            "AUTH-1 is in a closed sprint, AUTH-5 in a future one: neither is backlog"
+        );
+        // Sprint 102 is deleted in Jira: its ticket falls back to the backlog.
+        sync(&pg, t, &with_backlog(false, true)).await;
+        assert_eq!(
+            keys(pg.tracker_task_rows(t, TaskScope::Backlog, false).await.unwrap()),
+            vec!["AUTH-4", "AUTH-5"]
+        );
+        // AUTH-4 leaves the board: a removed ticket shows only when asked for.
+        sync(&pg, t, &with_backlog(false, false)).await;
+        assert_eq!(
+            keys(pg.tracker_task_rows(t, TaskScope::Backlog, false).await.unwrap()),
+            vec!["AUTH-5"]
+        );
+        assert_eq!(
+            keys(pg.tracker_task_rows(t, TaskScope::Backlog, true).await.unwrap()),
+            vec!["AUTH-4", "AUTH-5"]
+        );
+    }
+
+    #[tokio::test]
+    async fn backlog_usage_counts_each_session_once() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let both = session_with(&pg, Some(r), &["fix/AUTH-4"], &["and AUTH-5"]).await;
+        let sprint_only = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        measured(&pg, both, at(10, 5, 9), Some(600), Some(10)).await;
+        measured(&pg, sprint_only, at(10, 5, 10), Some(60), Some(1)).await;
+        sync(&pg, t, &with_backlog(false, true)).await;
+        let b = backlog_usage(&pg, t).await.unwrap();
+        assert_eq!(b.tickets, 2, "AUTH-4 and AUTH-5");
+        assert_eq!(
+            (b.usage.sessions, b.usage.shared),
+            (1, 1),
+            "one session, linked to two backlog tickets"
+        );
+        assert_eq!(b.usage.by_source, BySource { branch: 1, prompt: 1 });
+        assert_eq!(
+            (b.usage.active_secs, b.usage.tokens_fresh),
+            (Some(600.0), Some(10)),
+            "the sprint ticket's session is not counted"
+        );
     }
 }
