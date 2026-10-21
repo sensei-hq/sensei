@@ -33,7 +33,7 @@ as *numbers that don't lie, and say what they're for*.
   accounting (#153 `churn_rate`, #154 `time_to_useful_result` — D-6).
 - Out: the analyzer that produces per-session `sessions.ftr` (M7 — this module rolls
   it up); surfacing in the apps (overview/impact chips, health dial, radar — Delivery
-  plane); DORA delivery metrics and release gates (specified in [T5](../../04-team/05-releases-and-dora/README.md); the four keys land in this module's plumbing); the
+  plane); DORA delivery metrics and release gates (specified in [T5](../../04-team/05-releases-and-dora/README.md); the five keys land in this module's plumbing); the
   architecture-metrics family (#156) is spec'd separately and unblocks T3's gates.
 
 ## Surfaces
