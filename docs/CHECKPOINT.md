@@ -23,10 +23,9 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** #307 A3 last item — rename the hand-made dōjō kind (`origin='team'`, key `team/<slug>`, pack namespace `team:<slug>`) once the user picks the word; then A4 (projects writable). Done in A3: D8 revised (18a532af), invite screen (7e547a19), viewers (2830d9f6, 734cb6ca), teams (d200c4d1, 2e42d46d). A2d live check pending a daemon install.
+**Next command:** #307 Wave R2 — the dōjō says workspace: `dojo.projects` → `dojo.workspaces` (links, viewer grants, team links, predicates, policies, tests), the `/v1` paths, the dōjō UI, and the daemon's dōjō client + relay payload in the same release. D11–D13 recorded (roadmap/09). Done: A3 (invites, viewers, teams), R1 hand-made dōjō retired (7478fe8d). A2d live check pending a daemon install.
 
 **Open questions:**
-- #307: what replaces "team" as the hand-made dōjō kind (recommended: workspace)?
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
 - #149: communities — Leiden/Louvain (recommended) or hierarchy grouping?
 - #133: project glyphs in icon mode, and the dōjō glyph default (kanji recommended for both).

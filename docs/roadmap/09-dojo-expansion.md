@@ -51,7 +51,7 @@ A4, so the writable workspaces are built under their real name. Sized 2026-10-21
 `sensei.projects` and ~30 related tables, views and functions; `dojo.projects` and its links. Each
 slice builds, passes and ships on its own.
 
-- **R1 · Retire the hand-made dōjō (D11).** Drop `dojo.create_dojo`, the `team` tenant origin, the
+- **R1 · Retire the hand-made dōjō (D11).** *Done (7478fe8d).* Drop `dojo.create_dojo`, the `team` tenant origin, the
   `team:<slug>` pack namespace and the "create a dōjō" path in the dōjō UI and API; a dōjō comes only
   from an organization or a person.
 - **R2 · The dōjō says workspace.** `dojo.projects` → `dojo.workspaces` with its links, viewer grants,
