@@ -4,7 +4,7 @@
 > set and (via M20) the planner/baseline work.
 > **Sources:** `mockups/Sensei/lib/dojo2/dojo2-project.jsx` (Integrations · Targets ·
 > Sprints tabs), `mockups/Sensei/lib/relay/relay-planner.jsx` (plan · gates ·
-> decisions), `reorg.md` §9.1–9.5, `prd/modules/04-team/03-dojo-project-planning/`,
+> decisions), `reorg.md` §9.1–9.5, `prd/modules/04-team/03-dojo-workspace-planning/`,
 > `prd/modules/03-delivery/20-planner-and-baseline/`.
 > **Companion:** [`project-management-detailed-requirements.md`](project-management-detailed-requirements.md)
 > (the M16 window this table sits behind).
@@ -355,7 +355,7 @@ GET   /api/projects/{id}/sessions/unlinked
 
 > **Resolved 2026-10-14** — decided in [`decisions.md`](../decisions.md)
 > (“T3 tracker & gating reconciliation”) and folded into
-> [`prd/modules/04-team/03-dojo-project-planning/`](../prd/modules/04-team/03-dojo-project-planning/README.md).
+> [`prd/modules/04-team/03-dojo-workspace-planning/`](../prd/modules/04-team/03-dojo-workspace-planning/README.md).
 > The findings are kept below as the record of what was wrong.
 
 ### 6.1 The seven targets don't match, and FTR is gated
@@ -471,8 +471,8 @@ carries):
 
 - [`project-management-detailed-requirements.md`](project-management-detailed-requirements.md) — the M16 window; its Integrations tab is this doc's §2.
 - [`diagrams-zoom-pan-detail-requirements.md`](diagrams-zoom-pan-detail-requirements.md) — the diagram surfaces the scorecard's trends sit beside.
-- [`../prd/modules/04-team/03-dojo-project-planning/README.md`](../prd/modules/04-team/03-dojo-project-planning/README.md) — the T3 spec this feeds.
+- [`../prd/modules/04-team/03-dojo-workspace-planning/README.md`](../prd/modules/04-team/03-dojo-workspace-planning/README.md) — the T3 spec this feeds.
 - [`../prd/modules/03-delivery/20-planner-and-baseline/README.md`](../prd/modules/03-delivery/20-planner-and-baseline/README.md) — `PlanGraph`, baseline, ratchet (C-1).
-- [`../prd/modules/03-delivery/16-project-window/README.md`](../prd/modules/03-delivery/16-project-window/README.md) — the Tasks tab (unbuilt).
+- [`../prd/modules/03-delivery/16-workspace-window/README.md`](../prd/modules/03-delivery/16-workspace-window/README.md) — the Tasks tab (unbuilt).
 - [`../reorg.md`](../reorg.md) §9 — the canonical gate/improvement + ratchet design.
 - [`../mockups/Sensei/lib/dojo2/dojo2-project.jsx`](../mockups/Sensei/lib/dojo2/dojo2-project.jsx) · [`relay-planner.jsx`](../mockups/Sensei/lib/relay/relay-planner.jsx) — visual source (never edited).

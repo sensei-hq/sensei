@@ -26,7 +26,7 @@ Feature: MCP & Context Delivery — the tool catalog, the defaults contract, and
 
   # pinned: build_daemon_params_injects_repo_id_and_mirrors_query
   Scenario: daemon params inject the repo id and mirror the query
-    Given a tool call with a project name
+    Given a tool call with a workspace name
     When the daemon params are built
     Then the repo id is injected and the query is mirrored
 
@@ -55,9 +55,9 @@ Feature: MCP & Context Delivery — the tool catalog, the defaults contract, and
     Then it is proxied rather than refused
 
   # pinned: resolve_project_matches_by_name_not_empty
-  Scenario: project resolution matches by name, never an empty id
-    Given a call carrying a project name
-    When the project is resolved
+  Scenario: workspace resolution matches by name, never an empty id
+    Given a call carrying a workspace name
+    When the workspace is resolved
     Then it resolves by name and is never left empty
 
   # pinned: resolve_from_cwd_matches_longest_folder_prefix
@@ -100,10 +100,10 @@ Feature: MCP & Context Delivery — the tool catalog, the defaults contract, and
     Then each has a match arm and a call dispatch
 
   # pinned: discover_project_scope_finds_dot_mcp_json
-  Scenario: discovery finds a project-scope .mcp.json
-    Given a project with a .mcp.json
+  Scenario: discovery finds a workspace-scope .mcp.json
+    Given a workspace with a .mcp.json
     When discovery runs
-    Then the project-scope servers are found
+    Then the workspace-scope servers are found
 
   # pinned: discover_user_scope_finds_claude_cursor_zed
   Scenario: discovery finds user-scope configs across assistants

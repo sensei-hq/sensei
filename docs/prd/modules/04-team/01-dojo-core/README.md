@@ -22,7 +22,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 > API (rules, artifacts, triage, audit, knowledge), anonymization (origin-based
 > strip + universal strip), and the dojo_protocol wire are built and tested.
 > The **role-scoped surfaces** (developer/maintainer/lead/admin) are **not
-> wired yet** — the org context `/org/[slug]` with its own nav (projects, ladder
+> wired yet** — the org context `/org/[slug]` with its own nav (workspaces, ladder
 > config, role surfaces) is target (gap T-2). The "create a Dōjō + starter
 > constitution" flow is unbuilt. The free personal ladder exists for solo users.
 
@@ -43,7 +43,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
   (`governance.rs` — gather → order by enforcement desc + scope level desc →
   mandatory-lock → dedup, cached 5 min); the `get_rules` / `get_layered_context`
   MCP tools.
-- Out: the role consoles (T2), project planning against trackers (T3), billing
+- Out: the role consoles (T2), workspace planning against trackers (T3), billing
   and metering (T4), the website claims (P2).
 
 ## Surfaces
@@ -55,7 +55,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 - **Daemon** — `dojo/client.rs` (tenant base URL, artifacts/relay URLs,
   membership resolution); `dojo/routing.rs` (binding inference); `dojo/mod.rs`
   (federation client); `dojo/contribute.rs` (publish/accumulate);
-  `dojo/relay_*.rs` (constitution, project, run, nudge); `governance.rs`
+  `dojo/relay_*.rs` (constitution, workspace, run, nudge); `governance.rs`
   (resolution); `attribution.rs` (origin-based strip).
 - **App** — `dojo/src/routes/(app)/you/*` (personal landing); `dojo/src/routes/(app)/org/[slug]/*`
   (org context — target); `dojo/src/routes/v1/*` (Worker API); sign-in
@@ -93,7 +93,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 | Membership kind | employer / client / community / personal | `employer` |
 | Role floor | member / contributor / lead / maintainer / admin | `maintainer` |
 | Tenant | the Dōjō this repo federates to | `dojo.sensei-hq.com/t/org/sensei-hq` |
-| Effective rules | resolved ladder for this repo | 12 rules (3 company, 2 project, 7 personal) |
+| Effective rules | resolved ladder for this repo | 12 rules (3 company, 2 workspace, 7 personal) |
 | Contribution | a shareable finding | `memory#m-42 → rule (mandatory)` |
 | Triage | auto-approve / human / reject | `auto-approve score 0.87` |
 | Audit | immutable event | `promote rule#r-12 by u-3` |
@@ -128,7 +128,7 @@ curl -s "https://dojo.sensei-hq.com/v1/t/org/sensei-hq/rules/resolved?repo=..." 
 - **Two identical metric pushes create duplicate rows** — `NULLS NOT DISTINCT`
   regressed.
 - **Anonymization leaks a client identifier** — universal strip regressed.
-- **A mandatory rule is relaxed by a project scope** — mandatory-lock regressed.
+- **A mandatory rule is relaxed by a workspace scope** — mandatory-lock regressed.
 
 ## Scenarios
 

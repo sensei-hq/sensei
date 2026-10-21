@@ -28,7 +28,7 @@ the shared Dōjō, and the free tier isn't a trial.*
   invoicing); plan selection at Dōjō creation; billing portal in org context
   (`/org/[slug]/billing` — admin surface); the **no-Enterprise decision** (fold
   self-host, SSO/SCIM, audit retention, SLA into paid org options).
-- Out: the federation backbone (T1), role consoles (T2), project planning (T3),
+- Out: the federation backbone (T1), role consoles (T2), workspace planning (T3),
   the marketing website claims (P2).
 
 ## Surfaces

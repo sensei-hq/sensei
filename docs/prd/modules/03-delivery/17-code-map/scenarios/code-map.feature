@@ -1,20 +1,20 @@
-Feature: Atlas — the code graph canvas, communities and resolution
+Feature: Code map — the graph reads, levels, grouping and lenses
 
   # pinned: graph_nodes_returns_community_and_structural_edges
   Scenario: the graph read returns the community and the structural edges
-    Given an indexed project
+    Given an indexed workspace
     When its graph nodes are read
     Then each node carries its community and the structural edges are returned
 
   # pinned: communities_info_uses_live_membership
   Scenario: community info uses live membership
-    Given a project whose communities are detected
+    Given a workspace whose communities are detected
     When community info is read
     Then it uses the live membership, not a stale cache
 
   # pinned: graph_nodes_makes_dependency_counting_a_query
   Scenario: dependency counting is a query, not client-side
-    Given a project with dependencies
+    Given a workspace with dependencies
     When graph nodes are read
     Then the dependency counts come from the query
 
@@ -68,7 +68,7 @@ Feature: Atlas — the code graph canvas, communities and resolution
 
   # pinned: graph_boundary_explains_a_miss_and_keeps_one_it_cannot_explain
   Scenario: the boundary explains a miss but keeps an honest unknown
-    Given a symbol with no callers inside the project
+    Given a symbol with no callers inside the workspace
     When its boundary is read
     Then the miss is explained and an unexplainable one is kept
 
@@ -85,14 +85,14 @@ Feature: Atlas — the code graph canvas, communities and resolution
     Then it belongs to that package
 
   # pinned: a_project_reads_only_its_own_schema
-  Scenario: a project reads only its own schema
-    Given two projects with schema entities
-    When one project's schema is read
+  Scenario: a workspace reads only its own schema
+    Given two workspaces with schema entities
+    When one workspace's schema is read
     Then only its own entities are returned
 
   # pinned: a_workspace_member_gets_its_own_folder_and_owns_its_files
-  Scenario: a workspace member gets its own folder
-    Given a multi-member workspace
+  Scenario: a package-workspace member gets its own folder
+    Given a multi-member package workspace
     When folders are emitted
     Then each member is its own folder and owns its files
 
@@ -110,7 +110,7 @@ Feature: Atlas — the code graph canvas, communities and resolution
 
   # pinned: an_external_import_is_not_a_structural_tie
   Scenario: an external import is not a structural tie
-    Given a module that imports from outside the project
+    Given a module that imports from outside the workspace
     When its community is detected
     Then the external import does not tie it to another
 
@@ -164,11 +164,87 @@ Feature: Atlas — the code graph canvas, communities and resolution
 
   # gap: G-1
   NO TEST
-  Scenario: Atlas reads at three levels of detail
-    Given a project whose graph exceeds a single readable scale
-    When the view opens at L0
-    Then it shows ≤60 labelled blocks grouped by plane, edges as weighted bands, and no individual symbols
-    When a group is clicked
-    Then L1 shows that module's files and types with external edges as stubs
-    When a node is clicked
-    Then L2 shows that symbol and its neighbourhood, clickable through to the code
+  Scenario: the Code map reads at three levels of detail
+    Given a workspace with more than 2,000 symbols
+    When the Code map opens
+    Then L0 shows at most 60 module blocks, smaller modules folded into "+N more", one weighted band per module pair, and no files or symbols
+    When a module is clicked
+    Then L1 shows that module's files in columns by role, at most 12 per column, with depends-on and used-by stubs
+    When a file is clicked
+    Then L2 shows its symbols with callers and callees one hop out, at most 7 a side
+    And the breadcrumb climbs back to the workspace
+
+  # gap: G-1
+  NO TEST
+  Scenario: group-by re-bands L0 without losing the selection
+    Given the Code map at L0 with a module selected
+    When the grouping changes between layers, folders and communities
+    Then the bands, the Wheel's arcs and the Matrix's diagonal blocks follow the grouping
+    And the selection is kept and nothing reloads
+
+  # gap: file roles (M4)
+  NO TEST
+  Scenario: hiding a role removes it from counts, bars and columns
+    Given modules with code, test, docs, config and generated files
+    When the Code map opens
+    Then config and generated files are hidden by default
+    When Tests are hidden
+    Then every block's file count shrinks and L1 has no Tests column
+
+  # gap: G-1
+  NO TEST
+  Scenario: a hub is counted, not drawn
+    Given a module whose inbound edges exceed 5% of all edges
+    When L0 is drawn
+    Then the module sits in the hub lane with its edge count and none of its edges are drawn
+
+  # gap: G-1
+  NO TEST
+  Scenario: referenced libraries are one block, never members
+    Given a workspace that references external libraries
+    When L0 is drawn
+    Then the libraries are one block and never enter module counts
+
+  # gap: G-1
+  NO TEST
+  Scenario: the matrix colours cells by direction, not by position
+    Given modules with upward, same-layer, skipping and cyclic dependencies
+    When the Dependency matrix lens is open
+    Then upward cells are red, skip and cycle cells are amber, and same-layer cells are neutral
+
+  # gap: Fix 2 (M4)
+  NO TEST
+  Scenario: the Wheel bundles dependencies between groups
+    Given a workspace grouped by communities
+    When the Wheel lens is open
+    Then modules sit on a ring in their group's arc and dependencies between two groups bundle into one strand
+
+  # gap: co-change mining (M4)
+  NO TEST
+  Scenario: Hidden coupling shows co-change with no static edge
+    Given two modules changed in the same commits with no dependency between them
+    When the Hidden coupling lens is open
+    Then a dashed band joins them
+
+  # gap: per-function complexity is not stored
+  NO TEST
+  Scenario: Complexity tints modules by the share of complex functions
+    Given modules with functions over cyclomatic complexity 10
+    When the Complexity lens is open
+    Then a module over 10% is amber and over 20% is red
+
+  # gap: G-1
+  NO TEST
+  Scenario: switching lens keeps the level where the lens allows it
+    Given the Code map at L1 with a module selected
+    When the lens switches between Structure, Cycles, Hidden coupling and Complexity
+    Then the level and selection are kept
+    When the lens switches to Wheel, Zones or the Dependency matrix
+    Then the map returns to L0 and keeps the selection
+
+  # gap: G-1
+  NO TEST
+  Scenario: under 640px every lens is a list
+    Given a viewport narrower than 640px
+    When any lens is open
+    Then it renders as a list with rows at least 44px tall

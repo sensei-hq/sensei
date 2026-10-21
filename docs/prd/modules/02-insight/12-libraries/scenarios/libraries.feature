@@ -56,14 +56,14 @@ Feature: Libraries — detect, wrap, query and watch
     And the unreadable ones are dropped
 
   # pinned: the_published_members_become_the_librarys_packages
-  Scenario: published workspace members become the library's packages
-    Given a workspace with published and private members
+  Scenario: published package-workspace members become the library's packages
+    Given a package workspace with published and private members
     When the manifest groups them
     Then the published members become packages
 
   # pinned: a_private_member_is_not_a_package_anything_can_reference
   Scenario: a private member is not referenceable as a package
-    Given a workspace with a private member
+    Given a package workspace with a private member
     When packages are resolved
     Then the private member is not a package others may reference
 
@@ -100,8 +100,8 @@ Feature: Libraries — detect, wrap, query and watch
     Then reindexing is allowed only when appropriate
 
   # pinned: detect_stack_svelte
-  Scenario: the stack detector recognises a Svelte project
-    Given a project with a Svelte config
+  Scenario: the stack detector recognises a Svelte workspace
+    Given a workspace with a Svelte config
     When the stack is detected
     Then svelte is among the detected stacks
 

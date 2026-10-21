@@ -19,8 +19,8 @@ Feature: Planner & Baseline — the runs API and the unbuilt baseline/ratchet
     Then the response is 400
 
   # pinned: create_run_unresolvable_project_is_400
-  Scenario: creating a run for an unresolvable project is 400
-    Given a project id that cannot be resolved
+  Scenario: creating a run for an unresolvable workspace is 400
+    Given a workspace id that cannot be resolved
     When the run is created
     Then the response is 400
 
@@ -60,8 +60,8 @@ Feature: Planner & Baseline — the runs API and the unbuilt baseline/ratchet
 
   # gap: C-1
   NO TEST
-  Scenario: the Tasks tab in the project window renders the plan
-    Given a project with a persisted plan
+  Scenario: the Tasks tab in the workspace window renders the plan
+    Given a workspace with a persisted plan
     When the Tasks tab opens
     Then it shows phases, tasks, states and progress
     This is unbuilt — blocked on planner persistence (C-1).
@@ -69,7 +69,7 @@ Feature: Planner & Baseline — the runs API and the unbuilt baseline/ratchet
   # gap: D-6
   NO TEST
   Scenario: a Linear tracker adapter syncs task state
-    Given a Linear project and a sensei task
+    Given a Linear workspace and a sensei task
     When the task state changes
     Then Linear is updated
     This is unbuilt — D-6 tracker adapters (T3).
@@ -77,7 +77,7 @@ Feature: Planner & Baseline — the runs API and the unbuilt baseline/ratchet
   # gap: D-6
   NO TEST
   Scenario: a Jira tracker adapter syncs task state
-    Given a Jira project and a sensei task
+    Given a Jira workspace and a sensei task
     When the task state changes
     Then Jira is updated
     This is unbuilt — D-6 tracker adapters (T3).

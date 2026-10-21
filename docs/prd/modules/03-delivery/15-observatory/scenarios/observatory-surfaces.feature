@@ -100,10 +100,10 @@ Feature: Observatory — Memories, Sessions, Collective, Dōjō, Logs and schedu
     Then the response is 404
 
   # pinned: create_and_list_solutions
-  Scenario: the projects index lists what is created
-    Given a project is created
-    When the projects index is listed
-    Then the created project appears
+  Scenario: the workspaces index lists what is created
+    Given a workspace is created
+    When the workspaces index is listed
+    Then the created workspace appears
 
   NO TEST
   Scenario: the Upgrades lane applies, mutes and pins a downstream finding

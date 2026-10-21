@@ -1,7 +1,7 @@
 # Roadmap — Delivery plane (M14–M22)
 
 Getting signal back to the human and the assistant: MCP/context (M14),
-Observatory (M15), project window (M16), Atlas (M17), instruments (M18),
+Observatory (M15), workspace window (M16), Atlas (M17), instruments (M18),
 insights/impact (M19), planner (M20), relay (M21), agentic execution (M22).
 Status legend: [`README.md`](README.md).
 
@@ -13,7 +13,7 @@ Status legend: [`README.md`](README.md).
 |---|---|---|---|
 | M14 | MCP & Context Delivery | The assistant gets the right context on the first turn | 🚧 Phase 3 |
 | M15 | Observatory | The daily user sees *today's one thing*, with its receipt | 🚧 Phase 3 |
-| M16 | Project Window | A user trusts what sensei learned about one project | 🚧 Phase 3 |
+| M16 | Workspace Window | A user trusts what sensei learned about one workspace | 🚧 Phase 3 |
 | M17 | Atlas | The code graph is legible at every level — birds-eye to symbol | 🚧 Phase 3 |
 | M18 | Instruments | The user can see and replay what the assistant actually did | 🚧 Phase 3 |
 | M19 | Insights & Impact | A recommendation is applied, measured, and reinforced | 🚧 Phase 3 |

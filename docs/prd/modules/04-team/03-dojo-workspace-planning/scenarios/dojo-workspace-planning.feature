@@ -1,9 +1,9 @@
-Feature: Dōjō Project Planning — gate/improvement split, targets, and the ladder
+Feature: Dōjō Workspace Planning — gate/improvement split, targets, and the ladder
 
   # gap: T-1
   NO TEST
-  Scenario: a project connects to Jira read-only and imports the plan
-    Given a Jira project and a sensei project
+  Scenario: a workspace connects to Jira read-only and imports the plan
+    Given a Jira workspace and a sensei workspace
     When the tracker is connected
     Then the plan imports from Jira (phases, features, tasks, AC, dependencies)
     And nothing is written back to Jira
@@ -11,8 +11,8 @@ Feature: Dōjō Project Planning — gate/improvement split, targets, and the la
 
   # gap: T-1
   NO TEST
-  Scenario: a project connects to ADO read-only and imports the plan
-    Given an ADO project and a sensei project
+  Scenario: a workspace connects to ADO read-only and imports the plan
+    Given an ADO workspace and a sensei workspace
     When the tracker is connected
     Then the plan imports from ADO
     And nothing is written back to ADO
@@ -26,15 +26,15 @@ Feature: Dōjō Project Planning — gate/improvement split, targets, and the la
 
   NO TEST
   Scenario: an insight never gates
-    Given the first-try rate falls below the project's trailing value
+    Given the first-try rate falls below the workspace's trailing value
     When the sprint scorecard is computed
     Then the first-try rate shows as an insight and blocks nothing
 
   NO TEST
-  Scenario: the baseline is the project's own history, not a borrowed benchmark
+  Scenario: the baseline is the workspace's own history, not a borrowed benchmark
     Given a plan registered on a run
     When the plan is registered
-    Then each ratcheted reading starts from the project's own trailing baseline
+    Then each ratcheted reading starts from the workspace's own trailing baseline
 
   NO TEST
   Scenario: the ratchet advances only on sustained improvement
@@ -53,7 +53,7 @@ Feature: Dōjō Project Planning — gate/improvement split, targets, and the la
   # gap: coverage-scoped-read
   NO TEST
   Scenario: gating target 2 — coverage ≥ 80% on guarded paths blocks close
-    Given a run whose coverage on guarded paths falls below the project value
+    Given a run whose coverage on guarded paths falls below the workspace value
     When the outcome is reported
     Then the target fails and the sprint cannot close without a note
     This needs a path-scoped coverage read (currently ◐).
@@ -77,14 +77,14 @@ Feature: Dōjō Project Planning — gate/improvement split, targets, and the la
   # gap: architecture-metrics (#156)
   NO TEST
   Scenario: gating target 5 — modules in the zone of pain ≤ 1 only warns
-    Given a run that pushes a module into the zone of pain past the project value
+    Given a run that pushes a module into the zone of pain past the workspace value
     When the outcome is reported
     Then the target warns and the sprint can still close
 
   # gap: complexity-scoped-read
   NO TEST
   Scenario: gating target 6 — changed functions over complexity 10 ≤ 2 blocks close
-    Given a run whose changed functions exceed the project complexity value
+    Given a run whose changed functions exceed the workspace complexity value
     When the outcome is reported
     Then the target fails and the sprint cannot close without a note
     This needs a per-function, changed-function read (currently ◐).
@@ -98,10 +98,10 @@ Feature: Dōjō Project Planning — gate/improvement split, targets, and the la
 
   NO TEST
   Scenario: targets inherit most-specific-wins
-    Given a target set at the Dōjō and tightened at the project
+    Given a target set at the Dōjō and tightened at the workspace
     When a sprint adds an override for a task type
     Then the task-type value applies to matching tasks
-    And every other task inherits the project value
+    And every other task inherits the workspace value
     And a scope with no value inherits its nearest ancestor
 
   NO TEST
@@ -124,16 +124,16 @@ Feature: Dōjō Project Planning — gate/improvement split, targets, and the la
 
   NO TEST
   Scenario: client work uses the client's tracker and gates
-    Given a project bound to a client Dōjō
+    Given a workspace bound to a client Dōjō
     When the plan is created
     Then it uses the client's tracker and the client's gates
     The employer's mandatory rules remain a floor.
 
   NO TEST
-  Scenario: the project-planning console shows tracker sync, gate config, baseline, and ratchet history
+  Scenario: the workspace-planning console shows tracker sync, gate config, baseline, and ratchet history
     Given a maintainer/admin in the org context
     When they open /org/[slug]/projects/[id]/planning
     Then they see tracker sync status, gate config, the baseline, and the ratchet history
     This is unbuilt — org context not wired (T-2).
 MD
-echo "feature 1: $(wc -l < docs/prd/modules/04-team/03-dojo-project-planning/scenarios/dojo-project-planning.feature) lines"
+echo "feature 1: $(wc -l < docs/prd/modules/04-team/03-dojo-workspace-planning/scenarios/dojo-workspace-planning.feature) lines"

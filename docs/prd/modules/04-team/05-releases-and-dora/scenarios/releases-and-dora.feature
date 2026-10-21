@@ -2,8 +2,8 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
 
   # gap: D-1
   NO TEST
-  Scenario: a project reads its deployments from GitHub Actions, read-only
-    Given a project with a GitHub Actions connection
+  Scenario: a workspace reads its deployments from GitHub Actions, read-only
+    Given a workspace with a GitHub Actions connection
     When the dōjō syncs the connection
     Then each production deployment is recorded with its commit, environment and outcome
     And nothing is written to GitHub
@@ -11,8 +11,8 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
 
   # gap: D-1
   NO TEST
-  Scenario: a project reads its deployments from Azure Pipelines, read-only
-    Given a project with an Azure Pipelines connection
+  Scenario: a workspace reads its deployments from Azure Pipelines, read-only
+    Given a workspace with an Azure Pipelines connection
     When the dōjō syncs the connection
     Then each production deployment is recorded
     And nothing is written to Azure DevOps
@@ -20,8 +20,8 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
 
   # gap: D-1
   NO TEST
-  Scenario: a project with only release tags lists releases from the tags
-    Given a project with no pipeline connection and release tags in git
+  Scenario: a workspace with only release tags lists releases from the tags
+    Given a workspace with no pipeline connection and release tags in git
     When the Releases tab opens
     Then the releases come from the tags
     And the five keys say they are tag-derived
@@ -29,8 +29,8 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
 
   # gap: D-1
   NO TEST
-  Scenario: a project with no connection and no tags is not measured
-    Given a project with no pipeline connection and no release tags
+  Scenario: a workspace with no connection and no tags is not measured
+    Given a workspace with no pipeline connection and no release tags
     When the Releases tab opens
     Then it says "not measured"
     And it never shows 0 deployments or a passed gate
@@ -39,7 +39,7 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
   # gap: D-3
   NO TEST
   Scenario: the five keys match a hand count
-    Given a project's production deployments and production incidents over 30 days
+    Given a workspace's production deployments and production incidents over 30 days
     When the Delivery card is read
     Then deployment frequency, lead time, change failure rate, time to restore and rework rate match a hand count over the same window
     And each key shows the number of deployments it is computed from
@@ -67,8 +67,8 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
 
   # gap: D-4
   NO TEST
-  Scenario: the gate reads the release's change set, not the whole project
-    Given a project with existing violations from before the last release
+  Scenario: the gate reads the release's change set, not the whole workspace
+    Given a workspace with existing violations from before the last release
     And a release candidate that adds none
     When its release gate is evaluated
     Then the code targets pass
@@ -77,7 +77,7 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
   # gap: D-4
   NO TEST
   Scenario: an open blocking production incident holds a release
-    Given an open blocking production incident on the project
+    Given an open blocking production incident on the workspace
     When a release gate is evaluated
     Then release readiness fails and names the incident
     This is unbuilt.
@@ -85,7 +85,7 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
   # gap: D-4
   NO TEST
   Scenario: the stability guardrail warns by default and blocks only when opted in
-    Given a project whose trailing change failure rate is over its threshold
+    Given a workspace whose trailing change failure rate is over its threshold
     When a release gate is evaluated
     Then the gate warns and does not block
     And with the guardrail set to block, the release is blocked
@@ -94,16 +94,16 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
   # gap: B-1
   NO TEST
   Scenario: sensei shows the dōjō's release and gate state
-    Given a project whose latest release was blocked in the dōjō
-    When the project window opens in sensei
+    Given a workspace whose latest release was blocked in the dōjō
+    When the workspace window opens in sensei
     Then it shows the release, its blocked gate and the failing target
     This is unbuilt.
 
   # gap: D-3
   NO TEST
   Scenario: rework rate counts unplanned fixes, and says when it cannot tell
-    Given a project whose production deployments include two that close Bug tickets
+    Given a workspace whose production deployments include two that close Bug tickets
     When the Delivery card is read
     Then rework rate counts those two over all production deployments in the window
-    And a project with neither a tracker nor a hotfix convention shows rework rate as "not measured"
+    And a workspace with neither a tracker nor a hotfix convention shows rework rate as "not measured"
     This is unbuilt.

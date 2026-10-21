@@ -30,9 +30,9 @@ mistakes*.
 
 ## In scope / out of scope
 
-- In: the memory record + scope contract (project > user > org, tighter wins);
+- In: the memory record + scope contract (workspace > user > org, tighter wins);
   formation (auto-cluster from correction signatures + explicit promotion); the
-  promotion ladder (project → user → org → collective, skip-levels allowed, never
+  promotion ladder (workspace → user → org → collective, skip-levels allowed, never
   widen without a signal); the lifecycle state machine (proposed → reinforced →
   battle-tested · challenged · archived); retrieval (`get_layered_context`) + feedback
   (HTTP `…/reinforce` / `…/challenge`, `record_outcome`); session-start context assembly;
@@ -55,7 +55,7 @@ mistakes*.
 - **Daemon** — `tasks/handlers/consolidate.rs` + `derive_signals` (formation);
   strength recompute on the analyzer tick.
 - **App** — anatomy / curation surface (Memories), Insights Now (proposed +
-  challenged), Today adopted lane, project memories + ready-to-share.
+  challenged), Today adopted lane, workspace memories + ready-to-share.
 
 ## Data invariants
 
@@ -63,7 +63,7 @@ mistakes*.
   `proposed | active | reinforced | challenged | battle_tested | archived | rejected`);
   **`type`** (`memory_type`: `decision | pattern | convention | preference | continuity |
   question`); **`category`** (`memory_category`: `correctness | convention | pattern |
-  preference`); scoped by **`scope`** (`memory_scope`: `global | project | stack |
+  preference`); scoped by **`scope`** (`memory_scope`: `global | workspace | stack |
   task_type | module`) + **`scope_filter`** (stack / task / module qualifier) and
   `namespace_id`; provenance via `session_id` + `source_id`;
   `reinforced_count` / `violated_count`. There is **no** `state`, `scope_level`,
@@ -79,8 +79,8 @@ mistakes*.
   Formation always writes at the **narrowest scope the signal justifies** — widening is a
   human decision.
 - **Never widen without a signal.** Widening recomputes strength at the wider scope;
-  battle-tested in one project is not battle-tested for a user until reinforced in
-  their other projects. Narrowing is allowed and drops wider-scope reinforcement.
+  battle-tested in one workspace is not battle-tested for a user until reinforced in
+  their other workspaces. Narrowing is allowed and drops wider-scope reinforcement.
 - **Lifecycle.** `memory_status` advances under reinforcement and drops to `challenged` /
   `archived` under violations. The `MEM_REINFORCE_MIN` / `MEM_CHALLENGE_MAX` **named
   constants do not exist in code** — reinforcement amount is `REINFORCE_AMOUNT = 1.0`
@@ -112,14 +112,14 @@ mistakes*.
 ## Done gate
 
 - `mcp_call get_layered_context` returns a scope-appropriate list for the current
-  session's project, ordered by status then strength; every call lands in
+  session's workspace, ordered by status then strength; every call lands in
   `activity.memory_loads` (`source = 'get_layered_context'`).
 - A reinforcement / challenge write (`POST /api/knowledge/memories/{id}/reinforce`
   or `/challenge`, or `record_outcome`) updates the counters; `skipped` doesn't penalise.
 - A memory past the reinforcement threshold without a challenge advances at the next
   analyzer tick; persistent violations archive unless the user reinforces first.
 - Overlapping-scope memories never both fire — dedup holds.
-- A project-scope memory for `other_project` never appears in a Dev session (scope
+- A workspace-scope memory for `other_project` never appears in a Dev session (scope
   confidentiality).
 - `what`/`because` text is narration-cache-generated (`memory_what`/`memory_because`)
   with templated fallback — never "Memory 47".
@@ -133,7 +133,7 @@ psql -A -t -c "select count(*) from activity.memory_loads
 
 ## Wrong gate
 
-- **`get_layered_context` returns 0 memories for a project whose Anatomy view shows
+- **`get_layered_context` returns 0 memories for a workspace whose Anatomy view shows
   rows** — scope contract under-implemented (only `project_id` read).
 - **Same memory returns twice** — dedup missing.
 - **Status never advances from `proposed`** — reinforcement counter not wired.
@@ -155,7 +155,7 @@ psql -A -t -c "select count(*) from activity.memory_loads
 - No M9 rows in [06-gaps.md](../../../../roadmap/06-gaps.md) today. Watch:
   post-compaction re-grounding (governance feature status 🟡) and user-side learnings
   (deferred by design — schema + narration kinds should stay shaped for it).
-- **`G-MEM-SCOPE`** — `memory_scope` has no `user` / `org` rung; the cross-project and
+- **`G-MEM-SCOPE`** — `memory_scope` has no `user` / `org` rung; the cross-workspace and
   org-overlay ladder is designed, not built.
 - **`G-MEM-FEEDBACK`** — the LLM-facing feedback tools (`report_memory_use`,
   `report_learning`) do not exist; feedback is HTTP-only today.

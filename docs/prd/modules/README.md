@@ -1,6 +1,6 @@
 # PRD modules — index and spec template
 
-29 modules across five planes. **One module = one PRD spec = one roadmap section
+30 modules across five planes. **One module = one PRD spec = one roadmap section
 = one `.feature` set.** Plane pages are the reading order; this page is the index
 and the spec template.
 
@@ -11,9 +11,9 @@ and the spec template.
 | Foundation | M1–M6 | [`01-foundation/`](01-foundation/README.md) |
 | Insight | M7–M13 | [`02-insight/`](02-insight/README.md) |
 | Delivery | M14–M22 | [`03-delivery/`](03-delivery/README.md) |
-| Team | T1–T5 | [`04-team/`](04-team/README.md) |
+| Team | T1–T6 | [`04-team/`](04-team/README.md) |
 | Platform | P1–P3 | [`05-platform/`](05-platform/README.md) |
-| **Total** | | **29** |
+| **Total** | | **30** |
 
 Per-module specs land here as each module is next touched (Phase 2 of
 [`../../reorg.md`](../../reorg.md)), folding in the legacy `features/` dossiers
@@ -36,8 +36,8 @@ and `spec/` tree. Until a module spec exists, its status lives in
   are stamped superseded; `features/03-observatory.md` and `features/05-governance.md` stay live (they span the Delivery
   and Team planes too), as do the shared pipeline specs until those planes fold.
 - **Delivery — ✅ all nine authored 2026-10-13.** M14 [`14-mcp-context-delivery/`](03-delivery/14-mcp-context-delivery/README.md) ·
-  M15 [`15-observatory/`](03-delivery/15-observatory/README.md) · M16 [`16-project-window/`](03-delivery/16-project-window/README.md) ·
-  M17 [`17-atlas/`](03-delivery/17-atlas/README.md) · M18 [`18-instruments/`](03-delivery/18-instruments/README.md) ·
+  M15 [`15-observatory/`](03-delivery/15-observatory/README.md) · M16 [`16-workspace-window/`](03-delivery/16-workspace-window/README.md) ·
+  M17 [`17-code-map/`](03-delivery/17-code-map/README.md) · M18 [`18-instruments/`](03-delivery/18-instruments/README.md) ·
   M19 [`19-insights-and-impact/`](03-delivery/19-insights-and-impact/README.md) · M20 [`20-planner-and-baseline/`](03-delivery/20-planner-and-baseline/README.md) ·
   M21 [`21-relay/`](03-delivery/21-relay/README.md) · M22 [`22-agentic-execution/`](03-delivery/22-agentic-execution/README.md).
   Each owns a `scenarios/` `.feature` set (M14: 3, M15: 3, M16: 2, M17: 2, M18: 2, M19: 2, M20: 2, M21: 2, M22: 1 = 19 files).

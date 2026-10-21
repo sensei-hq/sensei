@@ -26,7 +26,7 @@ Feature: Setup & Preferences — the free-navigation settings surface and the on
 
   Scenario: every preference section is reachable
     Given the app shell is open at /preferences
-    Then GET /api/preferences exposes assistants, assignments, folders, inference, instruments, libraries, profile, projects
+    Then GET /api/preferences exposes assistants, assignments, folders, inference, instruments, libraries, profile, workspaces
 
   Scenario: editing a value applies live with no Save/Cancel
     Given a preference pane is open

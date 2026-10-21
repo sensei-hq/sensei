@@ -19,7 +19,7 @@ things I can't touch.*
 
 The maintainer's console is not a viewer — it is where the constitution is
 **authored**: the stance, the rules, the shared skills / agents / commands, and
-a project's learnings, written once at a **scope** and composed down the ladder
+a workspace's learnings, written once at a **scope** and composed down the ladder
 for everyone below. That half of the console is specified in
 [The governance authoring surface](#the-governance-authoring-surface).
 
@@ -35,33 +35,33 @@ for everyone below. That half of the console is specified in
 ## In scope / out of scope
 
 - In: the four role definitions and their additive grants:
-  - **Developer** (default) — read-mostly: see projects in jurisdiction, preview
-    a project's effective constitution, view members.
+  - **Developer** (default) — read-mostly: see workspaces in jurisdiction, preview
+    a workspace's effective constitution, view members.
   - **Maintainer** — **manage governance at org level**: author rules/stance on
     the ladder, triage/approve findings, manage knowledge.
   - **Lead** — client engagements, confidentiality, audit trail.
   - **Admin** — **change member roles + access policies**: members, identities/SSO,
     scopes & precedence, billing.
   - The **org context `/org/[slug]` exists** (`+page.svelte` + `/projects` +
-    `/[section]`) with its own nav pane (projects, governance,
+    `/[section]`) with its own nav pane (workspaces, governance,
     role surfaces); the **four role-scoped surfaces within it are unbuilt** (gap T-2).
   - **The governance authoring surface** (`/org/[slug]/governance`, maintainer):
     the **scope ladder** (free personal ladder vs the paid company ladder), the
     **stance** axes, the **five authored artifact kinds** (rules · skills ·
-    agents · commands · project learnings), *defined-here vs inherited*
+    agents · commands · workspace learnings), *defined-here vs inherited*
     rendering with explicit override labels, the **constitution library** entry
     point, the **onboarding preview**, and **playbook-learning proposal
     review** — specified in full below.
   - The personal screens that are already built: `/you/projects`, `/you/inbox`,
     `/you/relay`, `/library`, `/preview`, `/me`.
-- Out: the federation backbone (T1), project planning against trackers (T3),
+- Out: the federation backbone (T1), workspace planning against trackers (T3),
   billing/metering (T4).
 
 ## Surfaces
 
-- **App (target routes)** — `/org/[slug]` (org home: projects in jurisdiction);
+- **App (target routes)** — `/org/[slug]` (org home: workspaces in jurisdiction);
   `/org/[slug]/governance` (ladder config — maintainer);
-  `/org/[slug]/projects/[id]` (project preview: which ladder levels built the
+  `/org/[slug]/projects/[id]` (workspace preview: which ladder levels built the
   constitution);
   `/org/[slug]/members`, `/identities`, `/policies`, `/billing` (admin);
   `/org/[slug]/triage`, `/approvals`, `/knowledge` (maintainer);
@@ -99,7 +99,7 @@ for everyone below. That half of the console is specified in
   conflicts; the employer's mandatory rules remain a floor.
 - **Lead.** **You author against a scope, not a document.** Every authored
   artifact carries the scope it was written at. Scopes compose from self up to
-  the root, and a **Project or Team scope additionally inherits from every Stack
+  the root, and a **Workspace or Team scope additionally inherits from every Stack
   scope** — stacks cross-cut the ladder rather than sitting on it.
 - **Lead.** **Composition is most-specific-wins**, and it is not the first line
   of resolution: confidentiality resolves first, then a mandatory (★) lock that
@@ -126,20 +126,20 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 
 | Rail group | Kanji | Example | Marker |
 |---|---|---|---|
-| Personal | 己 | My projects | free |
+| Personal | 己 | My workspaces | free |
 | Company (Org) | 社 | Company | **paid** · *your employer* |
 | Client | 客 | Globex | **paid** · *engagement · not your employer* |
 | Team | 組 | Payments · Web | **paid** |
-| Project | 件 | personal-site · lumen-auth · billing-svc | *(none)* |
+| Workspace | 件 | personal-site · lumen-auth · billing-svc | *(none)* |
 | Stack | 技 | Rust · React | free |
 
-- **Two ladders share one list**: a free personal ladder (*Personal → Project →
+- **Two ladders share one list**: a free personal ladder (*Personal → Workspace →
   Stack*) for individuals and the paid company ladder (*Company → Client → Team
-  → Project*) for the shared team plane. The rail marks **Company · Client ·
-  Team** paid; **Project carries no marker** (not even under a paid team).
+  → Workspace*) for the shared team plane. The rail marks **Company · Client ·
+  Team** paid; **Workspace carries no marker** (not even under a paid team).
 - **Company vs Client is derived per-user from membership** — never chosen.
 - **Composition**: walk `parent` from the scope to the root, then append
-  **every** Stack scope when the scope is a Project or Team — so `lumen-auth`
+  **every** Stack scope when the scope is a Workspace or Team — so `lumen-auth`
   composes as *lumen-auth → Payments → Company → Rust · React*. Stacks
   cross-cut; they are not a rung you sit under.
 - The rail badge counts **rules + skills only** at each scope — an empty scope
@@ -166,7 +166,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 - Each dial shows **the consequence of the stop selected**, not generic help text.
 - **An unauthored scope defaults to the middle stop on every dial** — *Balanced ·
   Opt-in · 2 approvals*. A locally changed stop wins over the stored one.
-- **Stance resolves most-specific-first**: a project's stance beats its team's,
+- **Stance resolves most-specific-first**: a workspace's stance beats its team's,
   which beats the default (`most_specific_scoped_stance_beats_default_and_lower_rungs`).
 - **A scope can also be *strict*.** Under a strict stance **every dial fails
   closed** — every autonomous action is refused unless explicitly permitted
@@ -176,7 +176,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
   prints the 盾 line unconditionally in the stance header (even at personal
   scope) — a mockup simplification; the requirement is the *floor*, not the label.
 - **Stance ≠ sprint gates.** Autonomy is *approval for a risky agent step*; the
-  code-health gates in [T3](../03-dojo-project-planning/README.md) are
+  code-health gates in [T3](../03-dojo-workspace-planning/README.md) are
   code-derived and delta-scoped. Two mechanisms, one word.
 - Worked examples — *Payments*: **Gate often** · **Automatic** · **Consensus**.
   *lumen-auth*: **Gate often** · **Opt-in** · **Consensus**.
@@ -189,7 +189,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 | 技 | Shared skills | Add skill | here · inherited | local rows carry an *edit* affordance |
 | 問 | Agents & personas | Add agent | here · inherited | as above |
 | 令 | Commands | Add command | here · inherited | as above |
-| 憶 | Memory & learnings · this project | Add learning | here only | **project scopes only**; each row carries a tag (`3rd time`, `settled`, `gotcha`) |
+| 憶 | Memory & learnings · this workspace | Add learning | here only | **workspace scopes only**; each row carries a tag (`3rd time`, `settled`, `gotcha`) |
 
 - **Four rule types here**: `guard` 守 · `principle` 理 · `pattern` 紋 · `anti` 禁
   (chipped *anti-pattern*). That is **not** the six-family vocabulary the rule
@@ -217,7 +217,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 ### What a new developer inherits
 
 - A summary card counts the **composed** set — rules · skills · agents ·
-  commands · (learnings, project only) — deduplicated across the whole chain, so
+  commands · (learnings, workspace only) — deduplicated across the whole chain, so
   the number is *unique artifacts*, not a sum of lists.
 - It names the chain: *"Composed down the ladder — this scope plus **Payments ·
   Company · Rust · React**"* and states delivery: *"Delivered to their
@@ -261,7 +261,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 
 | Element | Meaning | Worked example |
 |---|---|---|
-| Org context nav | projects / governance / members / triage / engagements | maintainer sees governance + triage |
+| Org context nav | workspaces / governance / members / triage / engagements | maintainer sees governance + triage |
 | Role badge | the user's role in this org | `maintainer` |
 | Scope rail | the ladder, grouped by kind, paid-marked, with a rules+skills count | `組 Payments · paid · 4` · `客 Globex · paid · engagement` |
 | Scope chip | which scope you are authoring | `件 lumen-auth · Project` |
@@ -298,10 +298,10 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
   floor updates immediately in `resolveTenantAccess`.
 - A lead opens `/org/[slug]/engagements` and sees client engagements with
   confidentiality pinned; the audit trail is immutable.
-- A developer opens `/org/[slug]` and sees projects in jurisdiction; clicking
+- A developer opens `/org/[slug]` and sees workspaces in jurisdiction; clicking
   one drills to `/org/[slug]/projects/[id]` previewing which ladder levels built
   the constitution.
-- The personal landing (`/`) shows "your work" (projects, needs-you, relay) as
+- The personal landing (`/`) shows "your work" (workspaces, needs-you, relay) as
   primary and "My Dōjōs" with role badges as secondary.
 
 ```bash
@@ -324,7 +324,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   authorable.
 - **An accepted playbook proposal never becomes a rule at that scope** — the
   loop's accept path regressed.
-- **A project under a team omits the stack scopes from its inherited set** —
+- **A workspace under a team omits the stack scopes from its inherited set** —
   cross-cutting stacks dropped.
 - **An unauthored scope shows a stance other than the middle stop** — default
   drift.

@@ -8,7 +8,7 @@ Feature: Observatory — Today, the hero koan, and the early/mature mood switch
 
   # pinned: early_hero_shows_real_count_and_no_action
   Scenario: the early hero shows a real count and offers no action
-    Given a project with too little signal for maturity
+    Given a workspace with too little signal for maturity
     When Today is composed
     Then the hero shows the real session count and no action button
 
@@ -20,13 +20,13 @@ Feature: Observatory — Today, the hero koan, and the early/mature mood switch
 
   # pinned: mature_hero_koan_is_rec_title_and_action_is_nav_cta
   Scenario: the mature hero is the recommendation title with a navigation CTA
-    Given a mature project with a top recommendation
+    Given a mature workspace with a top recommendation
     When Today is composed
     Then the koan is the recommendation title and the action is a navigation CTA
 
   # pinned: mature_hero_null_impact_and_empty_source_when_absent
   Scenario: a mature hero with no impact and no source stays honest
-    Given a mature project whose recommendation has no impact and no source
+    Given a mature workspace whose recommendation has no impact and no source
     When Today is composed
     Then the impact is null and the source is empty, not fabricated
 
@@ -44,7 +44,7 @@ Feature: Observatory — Today, the hero koan, and the early/mature mood switch
 
   # pinned: early_insights_are_a_pair
   Scenario: the early state shows an insight pair
-    Given a project still listening
+    Given a workspace still listening
     When supporting insights are chosen
     Then at most a pair is shown
 
@@ -62,31 +62,31 @@ Feature: Observatory — Today, the hero koan, and the early/mature mood switch
 
   # pinned: early_below_target_even_with_insights
   Scenario: below the target is early even with insights
-    Given a project below the maturity target that has insights
+    Given a workspace below the maturity target that has insights
     When maturity is decided
     Then it is early
 
   # pinned: early_at_target_without_insights
   Scenario: at the target with no insights is early
-    Given a project at the maturity target with no insights
+    Given a workspace at the maturity target with no insights
     When maturity is decided
     Then it is early
 
   # pinned: mature_at_target_with_insights
   Scenario: at the target with insights is mature
-    Given a project at the maturity target that has insights
+    Given a workspace at the maturity target that has insights
     When maturity is decided
     Then it is mature
 
   # pinned: fresh_project_is_early
-  Scenario: a fresh project is early
-    Given a project with no watched sessions
+  Scenario: a fresh workspace is early
+    Given a workspace with no watched sessions
     When maturity is decided
     Then it is early
 
   # pinned: no_fabricated_zero_ftr_in_metrics_surfaces
   Scenario: an absent FTR is null, never a fabricated zero
-    Given a project with no FTR reading
+    Given a workspace with no FTR reading
     When a metrics surface is composed
     Then FTR is null rather than zero
 

@@ -2,7 +2,7 @@ Feature: Insights & Impact — the verdict engine, narration and model insight
 
   # pinned: ftr_delta_buckets_verdicts_at_the_5pp_boundary
   Scenario: an FTR delta of ±5pp buckets the verdict
-    Given a project with a baseline FTR and a current FTR
+    Given a workspace with a baseline FTR and a current FTR
     When the delta is greater than +0.05
     Then the verdict is positive
     When the delta is less than -0.05
@@ -72,7 +72,7 @@ Feature: Insights & Impact — the verdict engine, narration and model insight
 
   # pinned: recommends_clear_winner
   Scenario: model insight recommends a clear winner
-    Given a project with model effectiveness data and a clear leader
+    Given a workspace with model effectiveness data and a clear leader
     When model insight runs
     Then it recommends the winner
 

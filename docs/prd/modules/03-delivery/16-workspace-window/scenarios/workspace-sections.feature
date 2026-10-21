@@ -1,20 +1,20 @@
-Feature: Project Window — the section panes, membership, patterns, libraries and merge
+Feature: Workspace Window — the section panes, membership, patterns, libraries and merge
 
   # pinned: project_create_and_get
-  Scenario: a project is created and read back
-    Given a project is created
+  Scenario: a workspace is created and read back
+    Given a workspace is created
     When it is read back
     Then its fields round-trip
 
   # pinned: get_project_metrics_endpoint
-  Scenario: the project metrics endpoint serves the metrics
-    Given a project with metrics
+  Scenario: the workspace metrics endpoint serves the metrics
+    Given a workspace with metrics
     When the metrics endpoint is called
     Then the metrics are returned
 
   # pinned: list_project_dependencies_joins_target_name_and_folder
-  Scenario: project dependencies join their target name and folder
-    Given a project with dependencies
+  Scenario: workspace dependencies join their target name and folder
+    Given a workspace with dependencies
     When the dependencies are listed
     Then each joins its target name and folder
 
@@ -32,7 +32,7 @@ Feature: Project Window — the section panes, membership, patterns, libraries a
 
   # pinned: build_tree_nests_folders_files_symbols_and_sections
   Scenario: the tree nests folders, files, symbols and sections
-    Given a project with folders, files, symbols and sections
+    Given a workspace with folders, files, symbols and sections
     When the tree is built
     Then they nest in that order
 
@@ -49,19 +49,19 @@ Feature: Project Window — the section panes, membership, patterns, libraries a
     Then the slot is validated
 
   # pinned: merge_projects_moves_folders_sessions_memories_and_deletes_source
-  Scenario: merging projects moves its data and deletes the source
-    Given two projects to merge
+  Scenario: merging workspaces moves its data and deletes the source
+    Given two workspaces to merge
     When the merge runs
     Then folders, sessions and memories move and the source is deleted
 
   NO TEST
-  Scenario: the solution-track roll-up spans a multi-project engagement
-    Given a desktop engagement spanning several projects
+  Scenario: the solution-track roll-up spans a multi-workspace engagement
+    Given a desktop engagement spanning several workspaces
     When the roll-up renders
-    Then each project's status is summarised without reading code
+    Then each workspace's status is summarised without reading code
 
   NO TEST
-  Scenario: the Tasks section renders the project's plan
-    Given a project with a registered plan
+  Scenario: the Tasks section renders the workspace's plan
+    Given a workspace with a registered plan
     When the Tasks section renders
     Then phases, tasks and their states are shown

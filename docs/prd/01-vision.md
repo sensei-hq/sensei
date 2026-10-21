@@ -19,8 +19,8 @@ things a human can act on: **memories** that stick, **patterns** worth reusing,
 **guards** worth adopting, and a clear picture of **when the pairing worked and
 when it didn't**. It is not a productivity dashboard — it is a **retrospective
 loop for a pair (you + your assistant) that otherwise never gets one**. The
-Observatory shows *today's one thing*; the project window shows *what this
-project learned*; the Dōjō (SaaS) extends the same loop across a team without
+Observatory shows *today's one thing*; the workspace window shows *what this
+workspace learned*; the Dōjō (SaaS) extends the same loop across a team without
 leaking client work.
 
 ## North-star metric — FTR
@@ -89,14 +89,14 @@ flowchart TD
 ```
 
 **Value before setup** is literal: the first thing the user does is see *their
-own projects*. The entry point stays deliberately minimal so getting started is
+own workspaces*. The entry point stays deliberately minimal so getting started is
 simple; the full configuration surface (Preferences) is reachable at any time to
 adjust how sensei behaves and which features and support are enabled — tuning
 never blocks the first run.
 
 ### The loops inside the daily app
 
-The Observatory and project window are not flat screens — each domain is a small
+The Observatory and workspace window are not flat screens — each domain is a small
 retrospective loop of its own (mockup: *"Module lifecycles — the loops inside
 the daily app"*): **Security &amp; guards · Architecture · Testing · Style &amp;
 conventions · Memory · Traceability · Impact · Libraries · Insights.** Each
@@ -117,7 +117,7 @@ source: [`mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sens
   session control. Any signed-in phone or console **subscribes** and picks the
   session up — no pairing, no install, no open ports. A responsive **PWA** is the
   surface; a thin native wrapper adds push + offline.
-- **Watch, don't babysit.** A cross-Dōjō Projects home ranked by *what's blocked
+- **Watch, don't babysit.** A cross-Dōjō Workspaces home ranked by *what's blocked
   on me*; you're pulled in only at a **gate** (approve the exact command), a
   **decision** (3–4 options + a free reply), or to **chat** the run back on course.
 - **Free for individuals, paid where shared.** The individual loop is free; the
@@ -180,7 +180,7 @@ one, we call it out.
 
 | # | Theme | What it means |
 |---|---|---|
-| 1 | **Value before setup** | First interaction shows the user their own projects — not a wizard. |
+| 1 | **Value before setup** | First interaction shows the user their own workspaces — not a wizard. |
 | 2 | **One decision, one default** | The same verb set everywhere — **Apply · Review · Dismiss** — recommended one highlighted, others one keystroke away. |
 | 3 | **Discoverability of depth** | Nothing important hidden behind a one-liner; Preferences is searchable; the sidebar clusters with a Focus mode. |
 | 4 | **Trust through proof** | No claim without a receipt — confidence scores, regression notes, before/after FTR. The user verifies; they don't take our word. |

@@ -9,7 +9,7 @@ solo developer ([persona 1](../../../03-personas.md#1--solo-developer--the-wedge
 Agentic Execution is the **autonomous loop**: a high-level goal → planner (M20) →
 relay (M21) → verifier → iterate until done. The planner emits a `PlanGraph`; the
 relay drives an agent step by step; a verifier (the `checker.rs` machinery) runs
-the project's test/lint/build commands and feeds the result back; the loop
+the workspace's test/lint/build commands and feeds the result back; the loop
 continues or revises the plan. The job is to **close the loop from intent to
 verified outcome** without human-in-the-loop for each step. The user feels this
 as *I state the goal, sensei plans, executes, verifies, and iterates until it
@@ -53,7 +53,7 @@ works.*
 - **Lead.** An agent run records the **goal**, the **initial plan graph**, the
   **step-by-step transcript** (drive → verify → revise), and the **final
   verdict** (pass / fail / partial).
-- **Lead.** The verifier runs the project's actual test/lint/build commands via
+- **Lead.** The verifier runs the workspace's actual test/lint/build commands via
   `checker.rs` — no synthetic proxies.
 - **Lead.** The benchmark runner compares **agent FTR** vs **human baseline FTR**
   on the same task set — no fabricated comparisons.

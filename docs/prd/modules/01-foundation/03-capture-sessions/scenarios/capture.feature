@@ -19,10 +19,10 @@ Feature: Capture & Sessions — the four ingest paths that turn folders and assi
     Then the daemon returns an explicit error
 
   # pinned: a_scanned_repository_records_its_project_in_the_junction
-  Scenario: a scanned repository is bound to its project through the junction
+  Scenario: a scanned repository is bound to its workspace through the junction
     Given a repository under a watched root
     When it finishes scanning
-    Then the repository row reaches its project via the folder-project junction
+    Then the repository row reaches its workspace via the folder-workspace junction
 
   # pinned: a_second_scan_of_an_unchanged_repo_keeps_the_parse_state
   Scenario: an unchanged repo re-scan keeps its parse state

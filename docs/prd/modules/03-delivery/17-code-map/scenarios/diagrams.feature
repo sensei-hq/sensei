@@ -1,4 +1,4 @@
-Feature: Atlas — the Diagrams sub-tree (structure, layers, zones, neighbourhood, schema, world)
+Feature: Code map — the diagram endpoints behind the lenses (structure, layering, zones, neighbourhood, schema, world)
 
   # pinned: structure_diagram_rejects_an_unknown_level_or_kind
   Scenario: the structure diagram refuses an unknown level or kind
@@ -28,10 +28,10 @@ Feature: Atlas — the Diagrams sub-tree (structure, layers, zones, neighbourhoo
     Then it refuses rather than inventing one
 
   # pinned: the_world_endpoint_nests_every_project_and_refuses_an_unknown_grouping
-  Scenario: world nests every project and refuses an unknown grouping
-    Given several projects
+  Scenario: world nests every workspace and refuses an unknown grouping
+    Given several workspaces
     When the world diagram is built
-    Then every project is nested
+    Then every workspace is nested
     Given an unknown grouping
     When the world diagram is requested
     Then it is refused
@@ -46,10 +46,10 @@ Feature: Atlas — the Diagrams sub-tree (structure, layers, zones, neighbourhoo
     Then it is refused rather than faked
 
   # pinned: the_callers_hop_stays_in_the_project_and_weighs_call_sites
-  Scenario: the callers hop stays in the project and weighs call sites
-    Given a symbol called from inside and outside the project
+  Scenario: the callers hop stays in the workspace and weighs call sites
+    Given a symbol called from inside and outside the workspace
     When the callers hop runs
-    Then it stays in the project and weighs the call sites
+    Then it stays in the workspace and weighs the call sites
 
   # pinned: the_callees_hop_reaches_a_library_but_marks_it_a_leaf
   Scenario: the callees hop reaches a library but marks it a leaf

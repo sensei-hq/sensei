@@ -31,7 +31,7 @@ evidence is a suspicion, and gets labelled so.
 
 | ID | Module | One line | Evidence | Priority |
 |---|---|---|---|---|
-| A-1 | M2 · M17 | app is kanji-only; the kanji ⇄ solar toggle the mockups + rokkit support is not wired | decision 10; reorg §12.10 | P3 |
+| ~~A-1~~ | M2 · M17 | ~~app is kanji-only~~ — the kanji ⇄ icons switch is live (`ui.glyphs`, Settings → General; #133) | decision 10; reorg §12.10 | — |
 | A-2 | M2 | the personal-preference surface is narrower than the config the app already supports | decision 10 | P3 |
 | G-1 | M17 | graph/layered view unreadable at granular scale — no L0/L1/L2 level of detail | reorg §9.7 | P1 |
 | G-2 | M4 · M2 · M3 | indexer has no ignore mechanism (no `.senseiignore` reader, no ignore config); it walks committed mockups / vendored / generated code and skews the graph + metrics. Ignore is stored repo config synced via the Dōjō, **seeded from the repo's own ignore sources** (`.gitignore`, qlty `.qlty/qlty.toml` `exclude_patterns`) — not a dotfile | decision 2026-10-13 | P2 |
@@ -60,14 +60,14 @@ evidence is a suspicion, and gets labelled so.
 | ACP-5 | M21 | Permission/gate flow not implemented for ACP | only Claude hooks have gate logic | P2 |
 | ACP-6 | M21 | Model selection via ACP not wired | ACP supports; not used | P3 |
 | T-1 | T3 | tracker adapters (Jira/ADO) mockup-only; 2/7 gates buildable now, 2 scoped-read, 3 on #156 | reorg §9.2 | P1 |
-| T-2 | T2 | join/membership flow dead ("Join" → 403) | plan gap analysis | P1 |
-| F-3 | T1 | Dōjō sync never worked | production-readiness → `07-quality.md` | P1 |
+| ~~T-2~~ | T2 | ~~join/membership flow dead~~ — resolved by #307 A3 invites (7e547a19) | plan gap analysis | — |
+| F-3 | T1 | Dōjō sync works against the local dōjō; production unverified (needs an enrolled daemon); #184 open | production-readiness → `07-quality.md` | P1 |
 | D-11 | P2 | website presents unbuilt as shipped (one claim already dropped) | site↔product audit | P2 |
 | D-12 | P0(deps) | dependency drift: `@rokkit/*`, `@kavach/*` held back by lockfiles | production-readiness | P3 |
 | D-13 | P0(deps) | 28 medium osv advisories (transitive; none code-fixable) | production-readiness | P3 |
 | P-5 | P1 | Makefile/Homebrew macOS-only; Linux/Windows service + data-dir design first | reorg §10.3 | P1 |
 | G-MEM-FEEDBACK | M9 | LLM-facing memory feedback tools (`report_memory_use`, `report_learning`) do not exist; feedback is HTTP-only (`…/reinforce`, `…/challenge`) | M9 status honesty; tool registry | P1 |
-| G-MEM-SCOPE | M9 | `memory_scope` has no `user` / `org` rung; the cross-project and org-overlay ladder is designed, not built | M9 `memory_scope` enum vs doc ladder | P1 |
+| G-MEM-SCOPE | M9 | `memory_scope` has no `user` / `org` rung; the cross-workspace and org-overlay ladder is designed, not built | M9 `memory_scope` enum vs doc ladder | P1 |
 | G-PATTERN-STORE | M10 | `sensei.pattern_choices` / `sensei.pattern_registries` have no DDL; chosen options cannot persist | M10 status honesty; DDL inventory | P1 |
 | G-TRACE-STORE | M11 | `sensei.trace_links` / `sensei.doc_lint_findings` have no DDL; bidirectional links and doc-doctor findings cannot persist | M11 status honesty; DDL inventory | P1 |
 | G-TRACE-TOOL | M11 | `get_trace_links` is not a registered MCP tool | M11 status honesty; tool registry | P1 |

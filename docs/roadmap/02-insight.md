@@ -10,7 +10,7 @@ legend: [`README.md`](README.md).
 
 | ID | Module | One-line "done" | Status |
 |---|---|---|---|
-| M7 | Analyzer & Signals | Every project has fresh derived signals on a schedule | 🚧 Phase 3 |
+| M7 | Analyzer & Signals | Every workspace has fresh derived signals on a schedule | 🚧 Phase 3 |
 | M8 | Metrics & Health | Every advertised metric computes, is rated, and cannot lie by omission — master-detail, explicit gating eligibility, coverage-gated presentation | 🚧 Phase 3 |
 | M9 | Memory & Knowledge | A proven lesson becomes a durable, promoted memory | 🚧 Phase 3 |
 | M10 | Patterns & Conventions | Recurring practice (good and bad) is detected and named | 🚧 Phase 3 |

@@ -1,4 +1,4 @@
-# Dōjō Project Planning · T3
+# Dōjō Workspace Planning · T3
 
 **Plane:** team · **Status:** [roadmap/04-team.md](../../../../roadmap/04-team.md) ·
 **Serves:** manager / delivery lead ([persona 6](../../../03-personas.md#6--manager--delivery-lead--the-roll-up)),
@@ -7,12 +7,12 @@ engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--cli
 
 ## Purpose
 
-Dōjō Project Planning connects a project to its **external tracker** — Jira, Azure
+Dōjō Workspace Planning connects a workspace to its **external tracker** — Jira, Azure
 DevOps Boards or GitHub Issues, **read-only** — groups its repos, and enforces
 **delta-scoped, ratchet-fair quality gates** before a sprint closes. The planner
 (M20) emits a `PlanGraph`; the run engine (M21) drives execution; T3 syncs the
 tracker so the plan and the task↔session links reflect the tracker's state, and
-the gates read **code quality only** against the project's own history.
+the gates read **code quality only** against the workspace's own history.
 
 The rule the whole module turns on:
 
@@ -30,24 +30,24 @@ knows what the sprint actually changed, and it only ever asks for better.*
 > exist only in the mockup — nothing is built** (gap T-1, P1). Of the seven gating
 > targets, **1 is buildable today** (hard-rule violations), **2 need a scoped read**
 > (coverage, changed-function complexity) and **4 are blocked** on the
-> architecture-metrics family (#156). The project window Tasks tab (M16) stays
+> architecture-metrics family (#156). The workspace window Tasks tab (M16) stays
 > unbuilt until planner persistence lands (C-1 → M20).
 
 > **Resolved 2026-10-21.** Tracker connections are **owned by the dōjō** (one per
-> project, shared by the team) and stay **read-only — the dōjō pulls**; sensei reads
+> workspace, shared by the team) and stay **read-only — the dōjō pulls**; sensei reads
 > the mirror through sensei ⇄ dōjō sync. The same targets, ladder and modes also gate
 > **releases** over their change set — see [T5](../05-releases-and-dora/README.md).
 
 ## In scope / out of scope
 
-- In: **repo grouping** (a project groups many repos — any provider, or a local
+- In: **repo grouping** (a workspace groups many repos — any provider, or a local
   path via the CLI); **tracker sync, read-only** (Jira / ADO / GitHub Issues) →
   `PlanGraph` fields, with **one tracker owning sprints**; **task linkage by ticket
   key** (found in branch name, commit message or session prompt; unlinked sessions
   count toward no task); the **seven gating targets**, all code-derived and
-  delta-scoped; the **inheritance ladder** (Dōjō → Project → Sprint → Task type →
+  delta-scoped; the **inheritance ladder** (Dōjō → Workspace → Sprint → Task type →
   Task, most specific wins); the **modes** (`block` / `warn` / `off`); the
-  **own-baseline ratchet** for the project-level readings that cannot be
+  **own-baseline ratchet** for the workspace-level readings that cannot be
   delta-scoped; the **sprint scorecard and close rule** (a sprint that misses a
   blocking target cannot close without a note); **notifications** (Slack hooks);
   the planner/run wiring that makes the readings available.
@@ -58,7 +58,7 @@ knows what the sprint actually changed, and it only ever asks for better.*
 
 ## Surfaces
 
-- **App** — the Dōjō project-detail tabs (`dojo2-project.jsx`): **Repos · Team ·
+- **App** — the Dōjō workspace-detail tabs (`dojo2-project.jsx`): **Repos · Team ·
   Integrations · Targets · Sprints · Code health**; and the org console
   `/org/[slug]/projects/[id]/planning` (tracker connection, gate config, baseline
   view, ratchet history) once the org context is wired (T-2).
@@ -77,17 +77,17 @@ knows what the sprint actually changed, and it only ever asks for better.*
   is code-derived; behavioural/AI-usage readings — **including FTR** — are insights
   only, and no insight may block a merge or a sprint close.
 - **Lead.** A gate is **delta-scoped** — *new* violations, *changed* functions,
-  *guarded* paths — **or a ratchet against the project's own trailing baseline**.
-  Never a borrowed benchmark, and never an absolute project-level ratio (§9.3).
+  *guarded* paths — **or a ratchet against the workspace's own trailing baseline**.
+  Never a borrowed benchmark, and never an absolute workspace-level ratio (§9.3).
 - **Lead.** The **ratchet advances only when a reading improves and holds** — a
   single spike never advances the baseline.
-- **Lead.** **Inheritance is most-specific-wins** across **Dōjō → Project → Sprint
+- **Lead.** **Inheritance is most-specific-wins** across **Dōjō → Workspace → Sprint
   → Task type → Task**; a target with no value at a scope **inherits** the nearest
   ancestor's.
 - **Lead.** **Modes are `block` / `warn` / `off`.** Only `block` can prevent a
   sprint close; `warn` surfaces and never blocks; `off` disables the check.
 - **Lead.** **Tracker sync is read-only.** An adapter never writes to the tracker.
-- **Lead.** **One tracker owns sprints.** Projects, issues and task types may come
+- **Lead.** **One tracker owns sprints.** Workspaces, issues and task types may come
   from several trackers; the sprint calendar has exactly one owner.
 - **Lead.** **A session counts toward a task only when its branch, commit or prompt
   carries the ticket key.** Sessions with no matching key are **unlinked** and
@@ -99,10 +99,10 @@ knows what the sprint actually changed, and it only ever asks for better.*
 
 ## The seven gating targets
 
-All seven are code-derived. Values are the mockup's Dōjō default and the project's
+All seven are code-derived. Values are the mockup's Dōjō default and the workspace's
 override; the ladder (§ above) resolves which one applies.
 
-| # | Target | Compare | Dōjō | Project | Mode | Source | Buildable today? |
+| # | Target | Compare | Dōjō | Workspace | Mode | Source | Buildable today? |
 |---|---|---|---|---|---|---|---|
 | 1 | Hard-rule violations at merge | `= 0` | 0 | inherits | block | constitution checks (`checker.rs`) | ✅ |
 | 2 | Coverage on guarded paths | `≥` | 75 % | 80 % | block | test runs (`auth/**`, `payments/**`) | 🟡 needs path-scoped read |
@@ -131,7 +131,7 @@ or sprint gate. They show beside the scorecard for context.
 ## Tracker sync & task linkage
 
 - **Providers** — GitHub, GitLab, Azure Repos, Bitbucket, or a local path.
-- **Read-only** — projects, issues/work items, sprints/iterations and task types
+- **Read-only** — workspaces, issues/work items, sprints/iterations and task types
   are pulled into the `PlanGraph`. Nothing is written back.
 - **One sprint owner.** Jira or ADO owns the sprint calendar; the other may still
   supply issues and task types.
@@ -169,12 +169,12 @@ Three hooks, each independently toggled, posted to a channel:
 
 ## Done gate
 
-- A project connects to a tracker **read-only**; the plan imports from it and
+- A workspace connects to a tracker **read-only**; the plan imports from it and
   **nothing is written back**.
 - The **buildable** targets (hard rules today; coverage and complexity once their
   scoped reads land) run on every run outcome and **block close on failure**.
-- The ladder resolves most-specific-wins across Dōjō → Project → Sprint → Task
-  type → Task; a `null` project value inherits.
+- The ladder resolves most-specific-wins across Dōjō → Workspace → Sprint → Task
+  type → Task; a `null` workspace value inherits.
 - A sprint that misses a blocking target **cannot close without a note**.
 - A session with no ticket key is **unlinked** and counts toward no task; the count
   is shown.
@@ -188,8 +188,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ## Wrong gate
 
-- **A gate uses a borrowed benchmark or an absolute project-level ratio** instead
-  of a delta or the project's own baseline — delta-scoping regressed.
+- **A gate uses a borrowed benchmark or an absolute workspace-level ratio** instead
+  of a delta or the workspace's own baseline — delta-scoping regressed.
 - **An insight — FTR, corrections, AI-assisted share, gate-wait — blocks a merge or
   a sprint close** — the gate/improvement split regressed.
 - **The baseline advances on a single spike** — ratchet regressed.
@@ -203,10 +203,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ## Scenarios
 
-- [`scenarios/dojo-project-planning.feature`](scenarios/dojo-project-planning.feature) —
+- [`scenarios/dojo-workspace-planning.feature`](scenarios/dojo-workspace-planning.feature) —
   the gate/insight split, the own-baseline ratchet, the seven targets, the ladder,
   the modes, the close rule, read-only sync (`NO TEST` / `# gap: T-1` for adapters).
-- [`scenarios/dojo-project-planning-gaps.feature`](scenarios/dojo-project-planning-gaps.feature) —
+- [`scenarios/dojo-workspace-planning-gaps.feature`](scenarios/dojo-workspace-planning-gaps.feature) —
   the unbuilt tracker adapters, task linkage, and the scoped reads
   (`NO TEST` / `# gap: T-1`, `# gap: architecture-metrics`).
 
@@ -217,7 +217,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - [T-2](../../../../roadmap/06-gaps.md) — Dōjō join / membership — blocks the org
   console and the role floor for gate configuration.
 - [C-1](../../../../reorg.md) — planner DB persistence + baseline + ratchet (M20).
-  Blocks the project window Tasks tab (M16).
+  Blocks the workspace window Tasks tab (M16).
 - Architecture-metrics family (#156, blocked on #146/#151/#152) — blocks 4 of 7
   gating targets (layers, cycles, zone of pain, anti-patterns) and needs scoped
   reads for 2 more (coverage, changed-function complexity).
@@ -229,7 +229,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - [design/integrations-and-gating-requirements.md](../../../../design/integrations-and-gating-requirements.md) —
   the full tracker/targets/gating requirements this spec distils.
 - [design/dojo-web.md](../../../../design/dojo-web.md) — org context nav for
-  maintainer (triage, approvals, knowledge, project planning).
+  maintainer (triage, approvals, knowledge, workspace planning).
 - [spec/dojo/governance](../../../../spec/dojo/governance/) — the constitution
   checks target 1 reads.
 - [prd/02-objectives.md §06](../../../02-objectives.md) · [prd/03-personas.md §3,5,6](../../../03-personas.md).

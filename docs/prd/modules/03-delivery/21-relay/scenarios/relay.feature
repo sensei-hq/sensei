@@ -85,8 +85,8 @@ Feature: Relay — the drive loop, watchdog, limits, gate and Dōjō protocol
     Then it blocks
 
   # pinned: enabled_drive_without_project_flags_and_does_not_spawn
-  Scenario: enabled drive without a project flags and does not spawn
-    Given a run with no project
+  Scenario: enabled drive without a workspace flags and does not spawn
+    Given a run with no workspace
     When the drive runs
     Then it flags and does not spawn
 

@@ -67,7 +67,7 @@ Feature: Code graph convergence — idempotent, scoped, durable indexing
 
   # pinned: reconcile_classifies_monorepo_member_roles
   Scenario: monorepo members are classified into roles
-    Given a monorepo with workspace members
+    Given a monorepo with package-workspace members
     When reconcile runs
     Then each member folder is classified into subtree or workspace_member
 

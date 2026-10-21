@@ -34,7 +34,10 @@ as *numbers that don't lie, and say what they're for*.
 - Out: the analyzer that produces per-session `sessions.ftr` (M7 — this module rolls
   it up); surfacing in the apps (overview/impact chips, health dial, radar — Delivery
   plane); DORA delivery metrics and release gates (specified in [T5](../../04-team/05-releases-and-dora/README.md); the five keys land in this module's plumbing); the
-  architecture-metrics family (#156) is spec'd separately and unblocks T3's gates.
+  architecture-metrics family (#156) is spec'd separately and unblocks T3's gates;
+  **diagrams of the architecture metrics** — the layers histogram, zones and cycles
+  are drawn once, by the Code map ([M17](../../03-delivery/17-code-map/README.md)).
+  Metrics keeps their numbers and trends and links into the lens that explains them.
 
 ## Surfaces
 
@@ -46,7 +49,7 @@ as *numbers that don't lie, and say what they're for*.
   components), `POST /api/metrics/backfill`. The legacy name-keyed
   `GET /api/metrics/{project}` remains a landmine (it fabricated zeroes) — consumers
   repoint; see Wrong gate.
-- **Daemon** — `tasks/metrics_scheduler.rs` (compute-project wave per repository,
+- **Daemon** — `tasks/metrics_scheduler.rs` (compute-workspace wave per repository,
   watermark-frozen as_of) + `tasks/handlers/metrics/*.rs` (per-family compute:
   session_outcomes, autonomy, churn, coverage, quality, cost, usage, knowledge,
   architecture, session_process, planner).
@@ -77,7 +80,7 @@ as *numbers that don't lie, and say what they're for*.
   was computed. `computed_by` (`local | dojo`) is the loop-breaker for
   pull-else-compute; `shared_at` records the Dōjō push.
 - **Read-side model.** `metric_facts` (joined facts) → `project_metric_daily`
-  (Σ num/Σ den day-pool per project) → weekly/monthly/quarterly; `project_metric_trend`
+  (Σ num/Σ den day-pool per workspace) → weekly/monthly/quarterly; `project_metric_trend`
   adds `prior` + `delta` via `lag()`, with `direction` travelling so the UI can colour
   without a registry re-join.
 - **Health is derived on read, never stored.** `project_health_score` (latest) and
@@ -125,6 +128,7 @@ as *numbers that don't lie, and say what they're for*.
 | Health dial + radar | `project_health_score`; radar plots **ratings**, never raw values | 82, from 18 of 21 metrics |
 | Coverage readout | `rated_metrics`/`total_weight` + trend `coverage` | "65, from 18 of 21 metrics" — never a bare number |
 | Pareto / heatmap | churn concentration, module friction map | rework_density per module |
+| Architecture metric (layers, zones, cycles) | the number and its trend, plus a link into the Code map lens | layers `25 up` → Structure with *Colour by direction*; zone of pain → Zones; cycles → Cycles |
 
 ## Done gate
 
@@ -168,6 +172,8 @@ curl -s http://localhost:7744/api/projects/sensei/health \
   weight-0 metric rendered with good/bad colour**.
 - **`coverage` ignored** — a repo sensei knows almost nothing about reading as
   perfect (#155 inversion: 1 metric → 98).
+- **An architecture metric drawing its own diagram** — a layers histogram, zone plot
+  or cycle graph inside Metrics, grouped differently from the Code map's lens.
 - **Health rows stored** — the composite must stay a view; storing it reintroduces
   drift and backfill.
 - **Metric defected but still advertised** — #153 `churn_rate` (caption describes the

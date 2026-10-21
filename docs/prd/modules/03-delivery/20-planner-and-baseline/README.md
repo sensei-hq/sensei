@@ -9,7 +9,7 @@ manager / delivery lead ([persona 6](../../../03-personas.md#6--manager--deliver
 
 The planner turns a **goal + depth bar** into a **phased, dependent task graph** the
 run engine (M21) can execute. v0 is stateless: `POST /api/planner/generate` takes
-the goal, the depth bar, and the project context, returns a `PlanGraph` (phases →
+the goal, the depth bar, and the workspace context, returns a `PlanGraph` (phases →
 features → tasks with acceptance criteria and dependencies). The graph is
 validated (DAG, no duplicate ids, no dangling/self deps, no cycles) and can be
 registered on a run (`POST /api/runs/{id}/plan`). The baseline/ratchet is the
@@ -22,7 +22,7 @@ plans it, and the baseline only moves when we actually got better.*
 > `PlanGraph` model, and the runs API (`POST /api/runs`, register plan, update
 > task status, report outcome) are built and tested. **There are no plan tables,
 > no baseline, no ratchet** — `rg ratchet` / `definition_of_done` = 0 hits. The
-> Tasks section in the project window (M16) stays unbuilt until planner
+> Tasks section in the workspace window (M16) stays unbuilt until planner
 > persistence lands (gap [C-1](../../../../reorg.md) → M20). The legacy screen
 > spec `spec/screen/project-tasks.md` names a fully-featured Tasks tab — it is a
 > placeholder.
@@ -49,7 +49,7 @@ plans it, and the baseline only moves when we actually got better.*
   validation, state rollup, progress); `api/handlers/planner.rs`;
   `api/handlers/runs.rs`; `db/pg_store/metric_reads/planner.rs` (placeholder,
   returns empty).
-- **App** — project window Tasks tab (placeholder until C-1); run detail in
+- **App** — workspace window Tasks tab (placeholder until C-1); run detail in
   Observatory.
 - **Data** — **no plan tables yet**; runs use `sensei.runs`, `sensei.run_events`.
 
@@ -61,7 +61,7 @@ plans it, and the baseline only moves when we actually got better.*
   self deps, no cycles — `validate_rejects_a_cycle`.
 - **Lead.** Phase state rolls up from tasks: `failure` and `block` dominate.
 - **Lead.** Task progress = terminal / total.
-- **Lead.** `parent_seq` orders siblings; phases project to phase-then-tasks order.
+- **Lead.** `parent_seq` orders siblings; phases workspace to phase-then-tasks order.
 - **Lead.** Round-trips through JSON with state preserved.
 
 ## Signals shown

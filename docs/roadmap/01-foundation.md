@@ -21,7 +21,7 @@ The floor: provisioning (M1), preferences (M2), capture (M3), the code graph
 
 | Gap | What | Priority |
 |---|---|---|
-| A-1 | app is kanji-only; the kanji ⇄ solar toggle the mockups + rokkit support is not wired (M2) | P3 |
+| ~~A-1~~ | ~~app is kanji-only~~ — the kanji ⇄ icons switch is live (`ui.glyphs`, Settings → General; #133) | — |
 | A-2 | the personal-preference surface is narrower than the configuration the app already supports (M2) | P3 |
 | C-11 | transcript-scanning review not scoped as a task (M3) | P1 |
 | C-13 | Claude "mods" (supersedes plugin + hooks) — install path + migration not verified (M3) | P1 |

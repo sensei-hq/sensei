@@ -9,7 +9,7 @@ team developer ([persona 2](../../../03-personas.md#2--team-developer--the-inher
 MCP is how sensei becomes callable *inside* the assistant session. Every sensei
 capability — search, graph, memory, governance, inference — is a declared MCP tool
 with a **non-empty `defaults` contract**, so a caller never has to know an argument
-name or a project id to get a useful answer. Context delivery is the other half:
+name or a workspace id to get a useful answer. Context delivery is the other half:
 instead of the assistant grepping or loading whole files, sensei assembles one
 token-budgeted `context_pack` — diff-first over the code graph, traceability-boosted,
 semantically backed-off, deduplicated against what this session already saw, and

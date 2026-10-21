@@ -7,15 +7,15 @@
 
 Everything sensei can be told — and nothing more than first-run needs — lives in a
 free-navigation Preferences surface, reachable at any time, never gated. Getting
-started stays minimal: folders, projects, assistants, libraries, instruments,
+started stays minimal: folders, workspaces, assistants, libraries, instruments,
 inference, assignments, profile are panes, not steps. The user searches or browses,
 edits, and the change applies live — no Save/Cancel dance, no restart. The one-and-only
 first-run gate is *point sensei at your work*: add a scan root and press Begin, watching
-projects appear live.
+workspaces appear live.
 
 ## In scope / out of scope
 
-- In: the 8 Preferences panes (Folders, Projects, Assistants, Libraries, Instruments,
+- In: the 8 Preferences panes (Folders, Workspaces, Assistants, Libraries, Instruments,
   Inference, Assignments, Profile); pane deep-links (`/preferences/folders`); global
   search across every configurable value; review cues that surface tuning suggestions;
   restore-default on overridden values; the first-run scan screen (single gate: add root + Begin);
@@ -54,16 +54,16 @@ projects appear live.
 
 | Element | Value | Meaning |
 |---|---|---|
-| Panes (8) | Folders · Projects · Assistants · Libraries · Instruments · Inference · Assignments · Profile | ordered by frequency of visit |
+| Panes (8) | Folders · Workspaces · Assistants · Libraries · Instruments · Inference · Assignments · Profile | ordered by frequency of visit |
 | Search field | text filter across every pane's values + labels + descriptions | type-ahead narrows live |
 | Review cues | "your top assistant sends 40% of sessions to Claude Code but you haven't picked a default persona" | a nudge with a direct link |
 | Canvas root list | roots + branch policy (`active-only` / `pinned` / `all`) | where code comes from |
 | Inference pane | chains, installed models, hardware tier chip, cost running total | gateway tuning per chain (M5) |
-| First-run banner | "Point sensei at your work." + live-arriving projects | one gate, one forward action |
+| First-run banner | "Point sensei at your work." + live-arriving workspaces | one gate, one forward action |
 
 ## Done gate
 
-- A first-run user adds a root and reaches "Begin" in one action; projects appear live as the
+- A first-run user adds a root and reaches "Begin" in one action; workspaces appear live as the
   scan discovers them.
 - Every configurable value is reachable by search from `/preferences` — nothing is
   stranded.

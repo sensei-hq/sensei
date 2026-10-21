@@ -14,16 +14,16 @@
   under organization/sensei-hq and personal repos under the personal dōjō.
 - #299 S3 done on develop (99cddc18): the relay payload names a project by slug + constitution only.
 - #293 step 1 DONE for both apps (app c290f38e … bae2126f; dōjō 9f11df08, 785279a6, a0b8aaf4, 3d443b1b — one
-  run view, activity shown). #305 closed (bf16a437, live). Step 2 (rokkit) + step 3 dead code remain.
-- Dōjō expansion planned: epic #307, docs/roadmap/09-dojo-expansion.md (D1–D4, 2026-10-21); PRD T5 releases,
-  DORA & release gates (5564841d). Wave A after #305 + the run-page fold.
+  run view, activity shown). #305 closed (bf16a437, live on the local dōjō; production after the next release). Step 2 (rokkit) + step 3 dead code remain.
+- Dōjō expansion planned: epic #307, docs/roadmap/09-dojo-expansion.md (D1–D13, 2026-10-21); PRD T5 releases,
+  DORA & release gates (5564841d). Wave A: A1–A3 done; Wave R (D11–D13) before A4.
 - #302 closed live (keychain migrated); #301/#299 verified on the LOCAL dōjō — production needs the daemon
   enrolled with dojo.sensei-hq.com (user step: Settings → Dōjō → Connection). Local dōjō verify: a minted magic link for the local layout-verify test account. Step 2 after. #304: 26 writes still swallow failures (fix per screen).
 - #294, #297, #298.
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** #307 Wave R2 — the dōjō says workspace: `dojo.projects` → `dojo.workspaces` (links, viewer grants, team links, predicates, policies, tests), the `/v1` paths, the dōjō UI, and the daemon's dōjō client + relay payload in the same release. D11–D13 recorded (roadmap/09). Done: A3 (invites, viewers, teams), R1 hand-made dōjō retired (7478fe8d). A2d live check pending a daemon install.
+**Next command:** none until the user answers the decision list (PR #274 vs D2; viewer grant model; how far D12 reaches; self-hosting code; branch scope; audit screens; diagrams list; #116 scope). Then finish the PRD edits that depend on them and resume R2 from `git stash` ("R2a WIP: dōjō projects→workspaces" — DB + server mid-rename, does not build). Local dōjō DB is ALREADY on the workspace schema (reconciled before the stash), so develop's dōjō code fails against it until R2 lands or the DB is reset. Done: A1–A3, R1 (7478fe8d), PRD workspace rename + T6 (uncommitted → this tick).
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.

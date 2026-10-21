@@ -25,19 +25,19 @@ Feature: Relay — the three relay drivers and the unbuilt screens
     Then only the content is carried
 
   # pinned: tool_call_update_never_projects_code_or_args
-  Scenario: a tool call update never projects code or args
+  Scenario: a tool call update never workspaces code or args
     Given an ACP tool call update
     When it is projected
     Then code and args are not projected
 
   # pinned: tool_call_update_variant_never_projects
-  Scenario: a tool call update variant never projects
+  Scenario: a tool call update variant never workspaces
     Given an ACP tool call update variant
     When it is projected
     Then the variant is not projected
 
   # pinned: message_and_thought_chunks_never_project
-  Scenario: message and thought chunks never project
+  Scenario: message and thought chunks never workspace
     Given ACP message and thought chunks
     When they are projected
     Then they are not projected

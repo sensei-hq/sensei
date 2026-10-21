@@ -14,7 +14,7 @@
 
 | Between | Direction | What |
 |---|---|---|
-| sensei ⇄ dōjō | **two-way** | projects and their repositories, teams, roles, integration connections — authored on either side, mirrored to the other; **the dōjō wins on conflict** and sensei says when a local change lost; `origin` marks where a row was authored so nothing loops |
+| sensei ⇄ dōjō | **two-way** | workspaces and their repositories, teams, roles, integration connections — authored on either side, mirrored to the other; **the dōjō wins on conflict** and sensei says when a local change lost; `origin` marks where a row was authored so nothing loops |
 | sensei → dōjō | one-way (as today) | repository registration, metrics, the code graph, contributions, relay sessions and segments |
 | dōjō → sensei | one-way (as today) | the sync plan, memberships, resolved rules, relay replies — and, new, the mirrored tickets, deployments, release-gate results and DORA keys |
 | external → dōjō | **read-only pull** | trackers (Jira, Azure Boards, GitHub Issues) and CI (GitHub Actions, Azure Pipelines) — the dōjō reads; nothing writes back |
@@ -366,7 +366,7 @@ Entitlement and election are independent (parent spec §IV.3, corrected), and
    see. That is a worse privacy defect than the one this revision fixes, and it is
    sufficient on its own.
 
-   *(An earlier version also cited the project's "never mint identity on a miss"
+   *(An earlier version also cited the workspace's "never mint identity on a miss"
    rule. That citation was wrong — inserting rows from a successful authenticated
    listing is real data on a SUCCESS path, not fabrication on a failure path. The
    privacy argument does not need it.)*
@@ -551,7 +551,7 @@ the only writer and always sets `external_id` and `verified_at` together — but
 schema permits an unverified row, and the deferred "link a second forge" flow
 would create exactly that.
 
-The project already states *"an unverified connection confers no entitlement"*
+The workspace already states *"an unverified connection confers no entitlement"*
 (§VI.2). Mapping is the step the whole mandate rests on, so extend the principle:
 an unverified connection confers no **mapping** either.
 

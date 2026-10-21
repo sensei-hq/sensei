@@ -5,7 +5,7 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   Scenario: the scope rail groups both ladders and marks which kinds are paid
     Given a maintainer with a personal Dōjō and a company Dōjō
     When they open the governance authoring surface
-    Then scopes are grouped Personal · Company · Client · Team · Project · Stack
+    Then scopes are grouped Personal · Company · Client · Team · Workspace · Stack
     And Company · Client · Team are marked paid while Personal and Stack read free
 
   # gap: dojo-authoring-surface (epic #91)
@@ -18,8 +18,8 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
-  Scenario: a project inherits from its parents and from every stack scope
-    Given a project under a team, with two stack scopes defined elsewhere
+  Scenario: a workspace inherits from its parents and from every stack scope
+    Given a workspace under a team, with two stack scopes defined elsewhere
     When the inherited set is composed
     Then the team and its ancestors contribute
     And each stack scope contributes too
@@ -77,23 +77,23 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
-  Scenario: learnings are authored at project scope only
-    Given a project with recorded learnings and a team above it with none
+  Scenario: learnings are authored at workspace scope only
+    Given a workspace with recorded learnings and a team above it with none
     When both scopes render
-    Then the project shows Memory & learnings with each learning's tag
+    Then the workspace shows Memory & learnings with each learning's tag
     And the team shows no memory section
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: an inherited item is dimmed and attributed to its source scope
-    Given a project whose team authored a pattern
+    Given a workspace whose team authored a pattern
     When the rules section renders
     Then the pattern is dimmed and attributed to the team
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: a local rule that shadows an inherited one is labelled as an override
-    Given a project whose local rule repeats a company rule's text
+    Given a workspace whose local rule repeats a company rule's text
     When the rules section renders
     Then the local rule reads "overrides ↑ Company"
     And the inherited rule is struck through and reads "overridden here"
@@ -115,14 +115,14 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: the inheritance summary names every scope that contributes
-    Given a project under a team under a company, plus stack scopes
+    Given a workspace under a team under a company, plus stack scopes
     When the summary renders
     Then it reads "this scope plus" and names each contributing scope
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: previewing onboarding breaks the composition down per scope
-    Given a project with contributions from three scopes
+    Given a workspace with contributions from three scopes
     When preview onboarding is opened
     Then each contributing scope lists its rules, skills, agents, commands, and learnings
     And the preview states that a more specific scope's rule wins on collision

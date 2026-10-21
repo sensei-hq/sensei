@@ -2,10 +2,10 @@ Feature: Dōjō Core — the unbuilt org context and create-Dōjō flow
 
   # gap: T-2
   NO TEST
-  Scenario: the org context /org/[slug] has its own nav with projects, ladder config, and role surfaces
+  Scenario: the org context /org/[slug] has its own nav with workspaces, ladder config, and role surfaces
     Given a user with an org membership
     When they click the org in "My Dōjōs"
-    Then they land on /org/[slug] with its own nav pane showing projects, governance ladder, and role-scoped surfaces
+    Then they land on /org/[slug] with its own nav pane showing workspaces, governance ladder, and role-scoped surfaces
     This is unbuilt — org screens currently live flat under /console/*.
 
   # gap: T-2
@@ -37,7 +37,7 @@ Feature: Dōjō Core — the unbuilt org context and create-Dōjō flow
   Scenario: a developer sees read-mostly surfaces in the org context
     Given a user with developer role in an org
     When they open the org context
-    Then they can read projects, preview a project's constitution, and view members
+    Then they can read workspaces, preview a workspace's constitution, and view members
     This is unbuilt — role-gating not wired.
 
   NO TEST

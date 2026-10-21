@@ -1,4 +1,4 @@
-Feature: Code graph retrieval — the API contract the Project window and Atlas consume
+Feature: Code graph retrieval — the API contract the Workspace window and the Code map consume
 
   # pinned: get_graph_imports_breakdown_endpoint
   Scenario: the imports breakdown endpoint lists per-file import relationships
@@ -34,3 +34,37 @@ Feature: Code graph retrieval — the API contract the Project window and Atlas 
     Given GET /api/graph/<repo>/tree returns the hierarchy
     When a repo with more than 500 nodes is viewed
     Then an L0/L1/L2 level-of-detail exists so no view requires ~1000% zoom
+
+  # gap: file roles
+  NO TEST
+  Scenario: every file carries one role
+    Given a repository with source, test, doc, config and generated files
+    When it is indexed
+    Then each file node carries exactly one role of code, test, docs, config or generated
+    And the role comes from path conventions and the indexer's file kind
+
+  # gap: Fix 2
+  NO TEST
+  Scenario: edges between two communities aggregate into one weighted relation
+    Given communities with calls and imports between them
+    When community info is read
+    Then each community pair carries one relation weighted by the edges behind it
+
+  # gap: co-change mining
+  NO TEST
+  Scenario: co-change pairs are mined from git history
+    Given commits that touch the same two files
+    And a commit that touches more than 50 files
+    When co-change is mined
+    Then the two files are a co-change pair weighted by their shared commits
+    And the large commit contributes no pairs
+
+  # gap: branch scope
+  NO TEST
+  Scenario: only core branches sync, and the latest push per branch wins
+    Given core branches main and develop, with main mapped to production
+    When graphs are pushed for main, develop and a feature branch
+    Then the main and develop graphs are synced, each tagged with its branch
+    And the feature branch graph is not synced
+    When develop is pushed again
+    Then the newer develop graph replaces the older one

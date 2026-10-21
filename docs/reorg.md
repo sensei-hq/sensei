@@ -641,7 +641,7 @@ register above is the closed list of SVGs — nothing else gets hand-drawn.
 
 ### 8.2 Naming conventions for the new tree
 
-- Module folders: `prd/modules/<kebab-name>/` (e.g. `code-graph`, `governance`, `dojo-project-planning`).
+- Module folders: `prd/modules/<kebab-name>/` (e.g. `code-graph`, `governance`, `dojo-workspace-planning`).
 - Roadmap files: one per plane (`01-foundation.md`, `02-insight.md`, `03-delivery.md`, `04-team.md`, `05-platform.md`).
 - Diagrams: `prd/assets/diagrams/dNN-<slug>.svg`.
 - History: `history/<origin>/<original-name>` — keep the original filename so `git log --follow` and external links survive.

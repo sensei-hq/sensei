@@ -7,7 +7,7 @@
 - Status: PARTIAL — component + `constitution-map.rulesToLadder` mapper built & unit-tested, but the loader feeds **fixtures** (`stance`, `ladder`); the mapper is unwired, there is no `/v1` read endpoint, and the stance dials forward `onChange` to nowhere (the page passes no `onStance`, no write path).
 
 ## ⚠ Fabricated-data debt — MUST fix on build (2026-07-29 fallback audit)
-`(app)/you/[section]/+page.ts:5` imports and `:23` returns fixture `stance`/`ladder`/`rulePacks`; `/you/projects/[id]` + `/org/[slug]/projects/[id]` likewise resolve project/ladder/conflicts from fixtures. **Impact:** a real user sees a fabricated personal stance + effective-constitution ladder rather than their resolved governance. **Fix on build:** drive every field from the real read (tenant `/v1` ladder + daemon-local stance); on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty. (Ties the daemon-side fabrication fixes + the "no fabricated fallbacks" rule; the fixture-backing is already noted below — this adds the explicit error-not-fixture bar.)
+`(app)/you/[section]/+page.ts:5` imports and `:23` returns fixture `stance`/`ladder`/`rulePacks`; `/you/projects/[id]` + `/org/[slug]/projects/[id]` likewise resolve workspace/ladder/conflicts from fixtures. **Impact:** a real user sees a fabricated personal stance + effective-constitution ladder rather than their resolved governance. **Fix on build:** drive every field from the real read (tenant `/v1` ladder + daemon-local stance); on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty. (Ties the daemon-side fabrication fixes + the "no fabricated fallbacks" rule; the fixture-backing is already noted below — this adds the explicit error-not-fixture bar.)
 
 ## Elements → data (contract)
 | Element | Mockup field | Source (loader/API/table.field) | Status: have/bind/plumb | Realtime? |
@@ -44,7 +44,7 @@
 ### Resolved design (2026-07-30)
 - **Q1 stance → FEDERATE (read + write seam).** Stance dials live on the dōjō web. Build a daemon↔dōjō stance federation (read + write) across the cross-DB boundary — the daemon already owns the stance write API (`POST /api/stance` + MCP `set_stance`/`upsert_stance`, `fb63720f`); the seam mirrors/pushes user-scoped stance to the dōjō and writes back. NOT ladder-only.
 - **Q2 ladder → dōjō `GET /v1/…/rules/resolved`.** The governance rules live in the dōjō (namespaces/scopes/packs), so the dōjō resolves the user's **personal-namespace** ladder itself. No daemon dependency for the ladder.
-- **Q3 rung vocab (factually resolved):** canonical = `sensei.scopes.key` = **`company | client | personal | project | stack`** (per `LadderRung.level` project-detail.md + `namespaces → scopes(key)` FK). Fix BOTH `personalRungs` (view, drop the hardcoded `personal|stack`) and `rulesToLadder` (mapper) to this vocabulary; `/you` personal constitution = the personal-classification composition `[personal, project, stack]`.
+- **Q3 rung vocab (factually resolved):** canonical = `sensei.scopes.key` = **`company | client | personal | project | stack`** (per `LadderRung.level` workspace-detail.md + `namespaces → scopes(key)` FK). Fix BOTH `personalRungs` (view, drop the hardcoded `personal|stack`) and `rulesToLadder` (mapper) to this vocabulary; `/you` personal constitution = the personal-classification composition `[personal, project, stack]`.
 - **Build constraint (fabricated-data debt):** drive every field from the real read; on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty.
 - **Depends on:** the stance federation seam (read+write) + dōjō `/v1/rules/resolved` + the scope-vocab fix + WS-0 Rule A (user-keyed).
 
@@ -76,7 +76,7 @@ unwired); the stance half maps `sensei.stances` rows → `KitStanceDial[]`.
 **State** — `constitution-state.svelte.ts` → `constitutionState` (**new** — today the screen
 reads fixtures through `personal-view.personalRungs`, with local `$state` living inside `StanceDial`)
 - data: `stance: KitStanceDial[]`, `ladder: KitLadderRung[]`
-- `$derived`: `rungs` = `personalRungs(ladder)` (the personal + stack rungs that apply to every project)
+- `$derived`: `rungs` = `personalRungs(ladder)` (the personal + stack rungs that apply to every workspace)
 - methods: `load(c: PersonalConstitution)`, `setDial(id, value)` (moves a dial locally; the single
   seam a write path hooks onto)
 - **no realtime** — governance is a pull, stance is daemon-local

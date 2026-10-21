@@ -27,7 +27,7 @@
 
 ## APIs / loaders
 - No page loader (`signin/+page.svelte` renders `DojoSignIn` directly; `metrics` is a module import).
-- Auth via kavach browser instance from `getContext('kavach')` (hydrated in `dojo/src/routes/+layout.svelte`; `undefined` under SSR/prerender → every use guarded, form renders regardless). kavach maps `provider:'github'` → `signInWithOAuth`, `provider:'magic'` → email OTP; both against the cloud Supabase project.
+- Auth via kavach browser instance from `getContext('kavach')` (hydrated in `dojo/src/routes/+layout.svelte`; `undefined` under SSR/prerender → every use guarded, form renders regardless). kavach maps `provider:'github'` → `signInWithOAuth`, `provider:'magic'` → email OTP; both against the cloud Supabase workspace.
 - Guard: `hooks.server.ts` → `kavach.handle` reads the session cookie into `event.locals.session` and enforces `kavach.config.js` rules — unauth → `/signin`.
 - Post-auth flow (next screens, not this one): OAuth/magic redirect returns to origin → session established → user lands on `/orgs` (`orgs/+page.server.ts`: `sessionUser(locals)` + `listUserOrgs(user.id)` over `dojo.memberships → tenants`) → `enterOrg` sets the `dojo_tenant` cookie → `/org/{slug}`.
 
@@ -47,7 +47,7 @@
 ## Open questions (for Dev)
 - Which left-panel design is canonical — the mockup's generic local-first marketing, or the shipped "welcome-back metrics" panel? If metrics: what's the real per-user/per-org source (and drop the "Acme Corp" literal)?
 - Is self-hosted-dōjō sign-in in scope now (wire Connect to a custom-domain auth handshake), or defer and hide the affordance?
-- Confirm the GitHub OAuth provider is enabled/configured on the cloud Supabase project (client id/secret + callback) — without it the button errors at runtime.
+- Confirm the GitHub OAuth provider is enabled/configured on the cloud Supabase workspace (client id/secret + callback) — without it the button errors at runtime.
 
 ### Resolved design (2026-07-30)
 - **Q1 self-host → DEFER + HIDE the Connect affordance** pre-release (hosted GitHub OAuth + email magic-link suffice; no dead stub).

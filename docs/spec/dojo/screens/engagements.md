@@ -13,7 +13,7 @@
 | Banner "Share the lesson, never the source" | static copy | none (literal in `ScrEngagements.svelte`) | have (static) | no |
 | Row glyph | `e.kanji` (客) | constant `CLIENT_KANJI='客'` in `client-map.ts::toKitEngagement` | have (const) | no |
 | Row client name | `e.client` | `dojo.engagements.client` → `Engagement.client` → `KitEngagement.client` | **plumb** — schema fix: `client text` → `client_tenant_id uuid` + `client_name text` (register Rule C, `engagements.ddl` L4). Repoint `client-map.ts`, `engagements/+server.ts` COLS + POST body, `client-data.ts` `Engagement.client` | no |
-| Row projects | `e.projects` | `bindingsLabel(dojo.engagements.project_bindings jsonb [{project_id,name}])` | have | no |
+| Row workspaces | `e.projects` | `bindingsLabel(dojo.engagements.project_bindings jsonb [{project_id,name}])` | have | no |
 | Row "since" | `e.since` | `relativeAge(engagements.starts_on ?? created_at)` | have | no |
 | Row "lessons kept" | `e.lessons` | **hardcoded `0`** in `toKitEngagement` — real source is per-engagement kept-artifact count | **plumb** — needs `count(dojo.artifacts where engagement_id=x and status published)` via `GET …/audit/artifacts` aggregate; not fetched by the list loader | no |
 | Row "stripped" | `e.dropped` | **hardcoded `0`** in `toKitEngagement` — real source is per-engagement stripped/held count | **plumb** — same `…/audit/artifacts` aggregate | no |
@@ -42,7 +42,7 @@
 - `lessons`/`dropped` are `0` — wire the per-engagement kept-vs-stripped artifact counts (`…/audit/artifacts` aggregate).
 - Confidentiality panel is a global fixture — bind to the tenant's real policy/strip config or mark explicitly illustrative.
 - Schema: split `client` → `client_tenant_id` + `client_name` (Rule C) and repoint reader/writer/mapper.
-- Bind-project has server + client fns but no UI affordance.
+- Bind-workspace has server + client fns but no UI affordance.
 - Create flow captures only a name (no start/end date, description, policy overrides).
 - "Audit" button should deep-link to the engagement's artifact audit view.
 
@@ -85,7 +85,7 @@ type Confidentiality = { kept: string[]; dropped: string[]; example: { raw: stri
 
 **Components** (pure, semantic, own styles + `md:`) — replace `ScrEngagements`:
 - `EngagementRegister` — shell: `SectionHead` + banner + `EngagementRow[]` from `engagementsState` + New button
-- `EngagementRow` — one `Engagement`: `KanjiToken 客` (Solar icon for action glyphs), clientName, project chips, since, lessonsKept/stripped, status; Close (status≠ended) / Delete / Audit / Bind → state methods. **Mockup-match + `md:` live here.**
+- `EngagementRow` — one `Engagement`: `KanjiToken 客` (Solar icon for action glyphs), clientName, workspace chips, since, lessonsKept/stripped, status; Close (status≠ended) / Delete / Audit / Bind → state methods. **Mockup-match + `md:` live here.**
 - `ConfidentialityPanel` — kept/dropped lists + raw→stripped example from `confidentiality`
 - New-engagement + Bind forms via `@rokkit/forms` (schema: `clientName` required, dates, description, policy_overrides) — replaces `window.prompt`
 

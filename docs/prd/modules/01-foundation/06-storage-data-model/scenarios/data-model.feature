@@ -13,14 +13,14 @@ Feature: Storage & Data Model — the schema as the single source of truth
     Then the detail lands on the walked nodes
 
   # pinned: a_project_reads_only_its_own_schema
-  Scenario: a schema-scoped read stays in its own project
-    Given a project-scoped schema
-    When a read is issued from that project
+  Scenario: a schema-scoped read stays in its own workspace
+    Given a workspace-scoped schema
+    When a read is issued from that workspace
     Then only its own schema is visible
 
   # pinned: repositories_schema_invariants
   Scenario: the repository junction holds its schema invariants
-    Given repositories with project bindings
+    Given repositories with workspace bindings
     When the junction is inspected
     Then the schema invariants hold
 
@@ -40,7 +40,7 @@ Feature: Storage & Data Model — the schema as the single source of truth
     Given a bridge table with project_id nullable
     When a second global row is inserted
     Then the partial unique index rejects it
-    And a project-scoped row for the same channel is allowed
+    And a workspace-scoped row for the same channel is allowed
 
   Scenario: a content wipe never destroys user preferences
     Given discovered filesystem state and user intent rows

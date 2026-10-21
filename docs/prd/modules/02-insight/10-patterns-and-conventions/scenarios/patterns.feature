@@ -13,8 +13,8 @@ Feature: Patterns & Conventions — five sources, the MCP surface, anti-patterns
     Then the existing row is updated
 
   # pinned: pattern_upsert_merges_across_folders_in_same_project
-  Scenario: instances merge across folders within a project
-    Given the same pattern detected in different folders of one project
+  Scenario: instances merge across folders within a workspace
+    Given the same pattern detected in different folders of one workspace
     When it is upserted
     Then the instances merge
 
@@ -38,13 +38,13 @@ Feature: Patterns & Conventions — five sources, the MCP surface, anti-patterns
 
   # pinned: ftr_delta_positive_when_folder_beats_baseline
   Scenario: a folder that beats baseline earns a positive ftr delta
-    Given a folder whose ftr outperforms the project baseline
+    Given a folder whose ftr outperforms the workspace baseline
     When pattern effectiveness is scored
     Then the delta is positive
 
   # pinned: ftr_delta_negative_for_underperforming_folder
   Scenario: a folder under baseline earns a negative ftr delta
-    Given a folder whose ftr trails the project baseline
+    Given a folder whose ftr trails the workspace baseline
     When pattern effectiveness is scored
     Then the delta is negative
 
@@ -55,20 +55,20 @@ Feature: Patterns & Conventions — five sources, the MCP surface, anti-patterns
     Then anti, adopted and emerging map to their modes
 
   # pinned: derive_conventions_reports_dominant_naming_per_kind
-  Scenario: project conventions report the dominant naming per kind
-    Given a project's symbols
+  Scenario: workspace conventions report the dominant naming per kind
+    Given a workspace's symbols
     When conventions are derived
     Then the dominant naming convention per kind is reported
 
   # pinned: derive_conventions_empty_is_safe
-  Scenario: an empty project yields safe conventions
-    Given a project with no symbols
+  Scenario: an empty workspace yields safe conventions
+    Given a workspace with no symbols
     When conventions are derived
     Then an empty, safe result is returned
 
   # pinned: get_patterns_proxy_aliases_to_get_file_tags_and_renames_pattern_to_tag
   Scenario: the get_patterns tool proxies to the file-tags surface
-    Given a project with tagged files
+    Given a workspace with tagged files
     When get_patterns is called
     Then it proxies to the tag surface
     And the pattern parameter is carried as the tag
@@ -81,7 +81,7 @@ Feature: Patterns & Conventions — five sources, the MCP surface, anti-patterns
 
   # gap: M10
   Scenario: codebase design patterns are detected from the graph
-    Given a project whose code graph has > 1000 nodes
+    Given a workspace whose code graph has > 1000 nodes
     When the codebase recognisers run
     Then design patterns present in the code are detected
 

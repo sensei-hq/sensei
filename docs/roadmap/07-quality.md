@@ -23,7 +23,7 @@ Ordered by what would hurt most if a second person installed this today.
 
 ## A. Things that are silently wrong
 
-### A1 — `adopt_node_by_identity` fails a whole file when its row moved
+### A1 — ~~`adopt_node_by_identity` fails a whole file when its row moved~~ — closed (#175)
 
 **44 files today, on the CURRENT binary.**
 
@@ -59,7 +59,7 @@ does. A test that runs two concurrent upserts for one identity with a moving
 
 `crates/senseid/src/db/pg_store/graph.rs:911`
 
-### A2 — cost is never captured, so every cost metric is derived or absent
+### A2 — ~~cost is never captured, so every cost metric is derived or absent~~ — closed (#176)
 
     select count(*), count(metered_cost), count(nullif(metered_cost,0)), max(metered_cost)
       from activity.sessions;
@@ -67,14 +67,14 @@ does. A test that runs two concurrent upserts for one identity with a moving
 
 `activity.sessions.metered_cost` is **never non-zero**. `Cost per result` is
 therefore computed from a configured subscription fee, and exists for 2 of 15
-projects. There is no measured spend anywhere in the system.
+workspaces. There is no measured spend anywhere in the system.
 
 **Done looks like:** either populate `metered_cost` at ingest from the
 assistant's own usage report, or retire the column and say plainly that cost is
 modelled from a subscription figure — the current state reads like measurement
 and is not.
 
-### A3 — `Tokens per day` is ~all cache reads, so it cannot proxy cost
+### A3 — ~~`Tokens per day` is ~all cache reads, so it cannot proxy cost~~ — closed (#177)
 
     select sum(tokens_in), sum(tokens_fresh) from activity.sessions
      where started_at::date = '2026-09-22';
@@ -136,7 +136,7 @@ and names the worst offenders, so "slow" is visible before it becomes "missing".
 
 ## C. Operations — the machine fills up
 
-### C1 — `public.logs` is 25 GB of a 37 GB database
+### C1 — ~~`public.logs` is 25 GB of a 37 GB database~~ — closed (#180)
 
     select schemaname||'.'||relname, pg_size_pretty(pg_total_relation_size(relid))
       from pg_catalog.pg_statio_user_tables order by 2 desc limit 3;
@@ -149,7 +149,7 @@ This is also why `pg_dump` now takes ~12 minutes and produces a 5.3 GB file.
 either partitioned by day (so a prune is a `DROP PARTITION` rather than a
 `DELETE`) or moved out of the database that gets dumped before every install.
 
-### C2 — every install writes a 5.3 GB backup, and they accumulate
+### C2 — ~~every install writes a 5.3 GB backup, and they accumulate~~ — closed (#181)
 
     du -sh database/backup   →  24 GB   (6 dumps)
 
@@ -170,7 +170,7 @@ Worth knowing before sequencing a session around it.
 
 ## D. Testing and CI — the main suite never runs in CI
 
-### D1 — CI runs no Rust tests, no clippy, no fmt
+### D1 — ~~CI runs no Rust tests, no clippy, no fmt~~ — closed (#182)
 
 `.github/workflows/` holds four workflows:
 
@@ -204,7 +204,7 @@ immediately.
 **Done looks like:** per-test schema or transaction isolation, or a serialized
 DB-test lane.
 
-### D3 — the e2e suite is 23/130 red, and its first run could not start at all
+### D3 — ~~the e2e suite is 23/130 red, and its first run could not start at all~~ — closed (#134)
 
 **Measured 2026-09-25: 107 passed, 23 failed, 20 skipped, 19.5 minutes.**
 
@@ -260,7 +260,7 @@ PID file from a live daemon, and the 23 failures are triaged — several look li
 one cause (`boot-flow` + `db-setup` + `daemon-verification` are all
 bootstrap-gate screens).
 
-### B3 — a pre-bind exit is invisible; a post-bind one is not
+### B3 — ~~a pre-bind exit is invisible; a post-bind one is not~~ — closed (#179)
 
 `api/server.rs` has `write_startup_error()`, which drops the reason into
 `~/.sensei*/startup-error.log` where the app can read it. **It has three
@@ -282,14 +282,14 @@ already exists and one class of failure does not use it.
 and "the database has gone away" both rendered as degraded — and the first-run
 message read *"Database connection failed after startup retries … run
 `sensei bootstrap` (or `dbd reset`) to (re)provision"*. `dbd reset` DROPS the
-project's managed objects: a data-loss command offered to someone whose install
+workspace's managed objects: a data-loss command offered to someone whose install
 was merely still working.
 
 Two causes under one label, where the label named the rarer and scarier one.
 
 **Fixed.** `DaemonDbMode::Provisioning` is a third state, entered when the
 target database does not exist yet. Which failure it is comes from
-`database_exists` — the question the project already owns — rather than from the
+`database_exists` — the question the workspace already owns — rather than from the
 connect error's text, which arrives as a formatted `String` and would make the
 state machine depend on a Display format. The classifier is pure and
 `None` (the check itself failed) maps to `Degraded`, because not knowing whether
@@ -329,7 +329,7 @@ the plugin is uninstalled rather than a file deleted.
 `src/` only, so `bun run check` and `tsc --noEmit` never look at the Playwright
 suite. A probe config surfaces **9 pre-existing type errors** in it.
 
-**Done looks like:** an `e2e` project in the check script, and those 9 fixed.
+**Done looks like:** an `e2e` workspace in the check script, and those 9 fixed.
 
 ### D5 — 37 commits have never been pushed
 
@@ -340,7 +340,7 @@ returns nothing. Every green gate in this session was local.
 
 ---
 
-## E. Dōjō — the sync has never worked
+## E. Dōjō — the sync (works against the local dōjō since 2026-10-20; production unverified)
 
 ### E1 — enrollment was never completed
 
@@ -355,7 +355,7 @@ returns nothing. Every green gate in this session was local.
 **Zero rows have ever been sent.** The one outbox row has sat `held` for a
 month. The membership never got past `authenticating`.
 
-### E2 — the daemon dials IPv4, Vite binds IPv6 (FIXED in-session, not in code)
+### E2 — ~~the daemon dials IPv4, Vite binds IPv6~~ — closed (#185)
 
 `bun run dev` binds `localhost:5173` as `::1` only. `reqwest` resolves
 `localhost` to `127.0.0.1`, so `dojo_sync` could never connect:
@@ -368,7 +368,7 @@ immediately. **Nothing in the repo records this** — the next person hits it.
 **Done looks like:** the dojo dev script binds IPv4 explicitly, or the daemon
 retries the other family. Plus a note in `dojo/CLAUDE.md`.
 
-### E3 — no local-dojo setup path is written down
+### E3 — ~~no local-dojo setup path is written down~~ — closed (#186)
 
 `supabase start` + a dev server on :5173 + a membership row is the whole
 prerequisite chain for testing sync, and it is folklore. `make supabase-up`

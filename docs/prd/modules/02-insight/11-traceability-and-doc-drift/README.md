@@ -41,8 +41,8 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 
 ## Surfaces
 
-- **API** — `POST /api/traceability/{id}/apply-fix`; Project Overview `Doc drift`
-  stat; Observatory + Project Traceability screens. The expansion drawer's
+- **API** — `POST /api/traceability/{id}/apply-fix`; Workspace Overview `Doc drift`
+  stat; Observatory + Workspace Traceability screens. The expansion drawer's
   `get_trace_links(node)` tool **does not exist** (gap `G-TRACE-TOOL`).
 - **Daemon** — `db/pg_store/graph.rs::scan_project_doc_drift` (+
   `api/handlers/project_detail.rs`), `analysis/doc_drift.rs`
@@ -78,7 +78,7 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 
 | Element | Meaning | Worked example |
 |---|---|---|
-| Project Overview `Doc drift` stat | `count(*) … where state='open' and project_id=X` | "Doc drift: 3" |
+| Workspace Overview `Doc drift` stat | `count(*) … where state='open' and project_id=X` | "Doc drift: 3" |
 | High-confidence drift | identifier gone (or unambiguous rename) | README: `authenticate()` → `authenticateWithCredentials` |
 | Medium-confidence drift | identifier exists, signature changed | Expected-vs-Actual drawer |
 | `get_trace_links(node)` *(not built)* | both directions around a node | "3 docs reference `RefreshTokenStore`" |
@@ -91,8 +91,8 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 - A README rename `foo()` → `bar()` produces a high-confidence drift within one tick
   of either doc or code update; with clear git-log evidence + auto-fix enabled, the
   doc is rewritten; otherwise it surfaces as a suggested-fix card.
-- The Project Overview stat equals the Traceability screen's open-count for the same
-  project — the aggregate and the list never diverge.
+- The Workspace Overview stat equals the Traceability screen's open-count for the same
+  workspace — the aggregate and the list never diverge.
 - Branch switch flips the drift list; a resolved row advances to `resolved_auto` on
   the next scan; `expected` and `actual` are never both NULL on a rendered card.
 - False positives stay out: `` `TODO` ``-class words never drift.

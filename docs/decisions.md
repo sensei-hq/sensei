@@ -61,7 +61,7 @@ to the mockup (`dojo2-project.jsx`) and reorg §9 as the single source.
 | **The ratchet is own-baseline, for readings that can't be delta-scoped** | Gates are delta-scoped where possible (new violations, changed functions, guarded paths); the ratchet covers project-level readings by comparing against the project's **own trailing baseline**, and advances only when a reading improves **and holds**. Not FTR-based. | reorg §9.3–9.4; the ratchet was previously mis-attached to FTR. |
 
 Full requirements: [`design/integrations-and-gating-requirements.md`](design/integrations-and-gating-requirements.md) ·
-folded into [`prd/modules/04-team/03-dojo-project-planning/README.md`](prd/modules/04-team/03-dojo-project-planning/README.md).
+folded into [`prd/modules/04-team/03-dojo-workspace-planning/README.md`](prd/modules/04-team/03-dojo-workspace-planning/README.md).
 
 ---
 

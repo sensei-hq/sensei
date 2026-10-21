@@ -53,7 +53,7 @@ Feature: Traceability & Doc Drift — scanning, confidence tiers, apply-fix, lin
 
   # pinned: rejects_bad_project_id_payload
   Scenario: a bad scan payload is rejected, not silently accepted
-    Given a malformed project id in the scan request
+    Given a malformed workspace id in the scan request
     When the scan task runs
     Then it is rejected as an error
 
@@ -88,14 +88,14 @@ Feature: Traceability & Doc Drift — scanning, confidence tiers, apply-fix, lin
     Then all classes are repaired in one convergence pass
 
   # pinned: active_project_warns_on_drift_or_low_ftr
-  Scenario: the project overview surfaces a drift stat
-    Given a project with open drift items
+  Scenario: the workspace overview surfaces a drift stat
+    Given a workspace with open drift items
     When the overview is composed
     Then the drift count warns
 
   # pinned: print_index_doctor_handles_clean_and_drift_reports
   Scenario: the CLI doctor reports clean and drift states
-    Given a project that is clean and one with drift
+    Given a workspace that is clean and one with drift
     When the index doctor runs
     Then both states are reported correctly
 

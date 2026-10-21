@@ -21,8 +21,8 @@ turns the resulting signal into things a human can act on: memories that stick,
 patterns worth reusing, guards worth adopting, and a clear picture of *when the
 pairing worked and when it didn't*. It is not a productivity dashboard — it is a
 **retrospective loop for a pair (you + your assistant) that otherwise never gets
-one**. The Observatory shows *today's one thing*; the project window shows *what
-this project learned*; the Dōjō (SaaS) extends the same loop across a team
+one**. The Observatory shows *today's one thing*; the workspace window shows *what
+this workspace learned*; the Dōjō (SaaS) extends the same loop across a team
 without leaking client work.
 
 Full vision and background → [`01-vision.md`](01-vision.md).
@@ -49,10 +49,10 @@ If two disagree, the higher row wins; the lower one is the bug.
 
 The personas in [`03-personas.md`](03-personas.md) — the humans whose goals every
 module's "Serves:" line must name. Newly covered this pass: **management /
-delivery-lead** and **client / project stakeholder** viewpoints, for the
+delivery-lead** and **client / workspace stakeholder** viewpoints, for the
 multi-user, multi-team case.
 
-## The 29 modules, by plane
+## The 30 modules, by plane
 
 One module = one PRD spec (in `modules/<plane>/<module>/`) = one roadmap section
 (in [`../roadmap/`](../roadmap/) = one `.feature` set. The plane pages are the
@@ -63,7 +63,7 @@ reading order; the index is [`modules/README.md`](modules/README.md).
 | Foundation — the floor | M1–M6 | [`modules/01-foundation/`](modules/01-foundation/README.md) |
 | Insight — observation→understanding | M7–M13 | [`modules/02-insight/`](modules/02-insight/README.md) |
 | Delivery — signal back to human + assistant | M14–M22 | [`modules/03-delivery/`](modules/03-delivery/README.md) |
-| Team — the Dōjō | T1–T5 | [`modules/04-team/`](modules/04-team/README.md) |
+| Team — the Dōjō | T1–T6 | [`modules/04-team/`](modules/04-team/README.md) |
 | Platform — distribution, web, CI | P1–P3 | [`modules/05-platform/`](modules/05-platform/README.md) |
 
 ## What is deliberately *not* here

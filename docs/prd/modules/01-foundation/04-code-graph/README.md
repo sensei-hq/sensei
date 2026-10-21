@@ -7,8 +7,8 @@
 
 The code graph is sensei's structural memory of every watched repo — `sensei.nodes`
 (files, symbols, doc sections), `sensei.edges` (calls / imports / covers / extends /
-…), and `inference.communities` (clusters). Atlas traceability, semantic search,
-god-node detection, and impact analysis all read it. This module makes indexing
+…), and `inference.communities` (clusters). The Code map (M17), traceability,
+semantic search, god-node detection, and impact analysis all read it. This module makes indexing
 **convergent**: for a given working tree, N runs — full or incremental, in any order,
 across daemon restarts — produce a byte-stable graph. A changed file re-indexes only
 its own slice; a removed symbol disappears; nothing duplicates. That convergence — not
@@ -28,8 +28,8 @@ any single feature — is the whole requirement, because it is what stopped the
 ## In scope / out of scope
 
 - In: the scanner → graph-store write path (M3 *queues* folders; this module *parses,
-  resolves, and writes*); **FQN symbol-table model** (Fix 1 shipped: get-or-create by FQN, edges node→node at emit, `lib` namespace for externals); idempotent edge identity (D1); derived-edge replacement (D2); node-identity preservation on reindex (D3); community durability/determinism (D4); the grouping + granularity kinds (D5); worker execution guarantees — granular, resumable, resilient, incremental (D6); the retrieval contract (`GET /api/graph/nodes`, `communities/info`, the `/tree` hierarchy endpoint); **`is_exported` per adapter** (`pub`/`export`/`__all__`); **git-subtree detection** via `git log --grep='git-subtree-dir:'`; **DB views** (`graph_edges_resolved`, `community_edges`, `folder_tree`, `node_exports`); **per-language name resolution** (imports/scope/enclosing-type/binding-type).
-- Out: the Atlas Svelte rendering for the retrieval contract (downstream follow-on); capture / watchers / branch flips (M3 — they enqueue the work); semantic search UX; **Fix 2 (community-edge aggregation)** and **Fix 3 (DB views)** are spec'd in blueprint but not yet built; **Fix 4 (Atlas structural view)** is Delivery M17.
+  resolves, and writes*); **FQN symbol-table model** (Fix 1 shipped: get-or-create by FQN, edges node→node at emit, `lib` namespace for externals); idempotent edge identity (D1); derived-edge replacement (D2); node-identity preservation on reindex (D3); community durability/determinism (D4); the grouping + granularity kinds (D5); worker execution guarantees — granular, resumable, resilient, incremental (D6); the retrieval contract (`GET /api/graph/nodes`, `communities/info`, the `/tree` hierarchy endpoint); **`is_exported` per adapter** (`pub`/`export`/`__all__`); **git-subtree detection** via `git log --grep='git-subtree-dir:'`; **DB views** (`graph_edges_resolved`, `community_edges`, `folder_tree`, `node_exports`); **per-language name resolution** (imports/scope/enclosing-type/binding-type); **a role per file** (code · test · docs · config · generated); **Fix 2 (community-edge aggregation)** as a prerequisite of the Code map's Wheel and Communities grouping; **co-change mining** from git history for Hidden coupling; **branch scope** — which branches are synced and which graph each one carries.
+- Out: rendering the graph (the Code map, Delivery M17 — Fix 4's structural view lives there); capture / watchers / branch flips (M3 — they enqueue the work); semantic search UX; the dōjō side of graph sync (`spec/dojo/daemon-sync.md`). **Fix 2** and **Fix 3 (DB views)** are spec'd in blueprint but not yet built.
 
 ## Surfaces
 
@@ -37,7 +37,7 @@ any single feature — is the whole requirement, because it is what stopped the
   `GET /api/graph/:repoId/tree`, the graph/imports breakdown endpoint.
 - **Daemon** — `process_file` / `resolve_edge` / `build_connections` workers; task queue
   (`crates/senseid/src/tasks/…`); folder-status machine (`indexed`, `archived`, …); **per-language resolvers** plug into shared FQN core (`LanguageAdapter::resolve_fqn`); **SQL adapter consults dbd `SchemaModel`** for bare-name resolution (since dbd v0.22).
-- **App** — code-graph + communities views in the Project window (layout edges
+- **App** — code-graph + communities views in the Workspace window (layout edges
   `calls,imports,extends,implements`; containment `covers,references,rationale_for` overlay-only).
 
 ## The FQN Model (Fix 1 — shipped)
@@ -52,6 +52,49 @@ any single feature — is the whole requirement, because it is what stopped the
 | **No `resolve_edges`** | Edges are `source_id → target_id` from emit; no limbo, no ambiguity guard |
 
 **Name-resolution rules (Rust):** explicit path via `use` imports; `self`/`super`/same-`impl` → enclosing type; local `foo()` → module scope; `x.method()` on typed local → binding→type map; dynamic `dyn Trait` → trait method FQN (not nothing).
+
+## File roles
+
+Every file node carries one **role**: **code · test · docs · config · generated**. The
+role comes from path conventions and the indexer's file kind, decided once at index
+time and stored on the node. The Code map's L0 role bar, its L1 columns and its Show
+filter read it; nothing downstream re-derives a role from a path.
+
+| Role | Source |
+|---|---|
+| test | path convention — `languages::is_test_path`, stored as `nodes.is_test` (**built**) |
+| docs | the indexer's file kind — design docs emit `doc` / `section` nodes (**built** as kinds, not as a role) |
+| config | path convention (manifests, tool configs, env schemas) — **not built** |
+| generated | path convention (`__generated__/`, generated clients, protobuf output) — **not built** |
+| code | every other source file |
+
+## Fix 2 · community-edge aggregation
+
+Edges between two communities aggregate into one weighted relation
+(`community_edges`, exposed on `communities/info`). It is a **prerequisite** for the
+Code map's **Wheel** lens and its **Communities** grouping, both of which band
+communities, not symbols. Not built.
+
+## Co-change mining
+
+**Hidden coupling** needs pairs of files that change in the same commits. The facts are
+built: `ScanGitHistory` writes `sensei.commits` and `sensei.commit_files`
+(repository-grain, insert-only). The mining is not: group `commit_files` by commit,
+take the paths pairwise, drop any commit touching more than 50 files (a sweep, not
+coupling), keep only paths that exist in `sensei.files`, and roll the pairs up to
+modules. A pair with a static edge between the two modules is not hidden coupling.
+
+## Branch scope
+
+- Code graphs are **tagged by branch**. For each branch, the latest push wins.
+- sensei syncs only the configured **core branches**: **main** and **develop** (the
+  initial default, read from git) plus one more. Each core branch maps to an
+  environment; **main → production**.
+- Sprint targets read the integration branch (develop); release gates read the
+  production-mapped branch (main). The Code map shows develop by default and main for
+  a release.
+- **Today:** `folders.branch` records the checked-out branch per checkout folder, as a
+  metrics-only seam. The code graph is **not** branch-aware yet.
 
 ## Data invariants
 
@@ -76,6 +119,11 @@ any single feature — is the whole requirement, because it is what stopped the
    `rationale` nodes; `parent_id` chains render docs-vs-code / module / class / method.
 7. **Convergence.** `clear-graph + full-scan` reaches the identical steady state as an
    arbitrary sequence of incremental scans — including across a daemon restart mid-scan.
+8. **One role per file.** Every file node has exactly one role; the role is stored,
+   never re-derived by a reader.
+9. **One graph per core branch.** A synced graph names its branch; a newer push for a
+   branch replaces the older one; a branch outside the configured core set is never
+   synced.
 
 ## Signals shown
 
@@ -144,13 +192,16 @@ any single feature — is the whole requirement, because it is what stopped the
 
 | Gap | Description | Priority | Blocks |
 |-----|-------------|----------|--------|
-| [G-1](../../../../roadmap/06-gaps.md) | Graph/layered view unreadable at granular scale, no L0/L1/L2 level of detail | P1 (M17) | Atlas readability |
+| [G-1](../../../../roadmap/06-gaps.md) | Graph/layered view unreadable at granular scale, no L0/L1/L2 level of detail | P1 (M17) | Code map levels |
 | [G-2](../../../../roadmap/06-gaps.md) | No ignore mechanism (seeded from `.gitignore` + qlty `exclude_patterns`) | P2 | Graph/metric pollution |
 | **D1–D6** | Code-graph pipeline fixes (idempotent edge, derived-edge replace, node identity, community durability, grouping kinds, worker guarantees) | P1 | All downstream |
 | **D3** | Embedding survival across reindex (26% coverage; process_file deletes+reinserts with NULL embedding) | P1 | Semantic search, duplication persistence |
 | **D3** | Deterministic, line-independent node IDs (stable across reindex) | P1 | Stable search, drift/pattern FKs |
 | **D5b** | `section` node emission (0 rows today; blocks traceability) | P1 | Requirement-level traceability, `traces_to` |
-| **Fix 2** | Community-edge aggregation (`community_edges` view, `communities/info` relations) | P2 | Community view |
+| **Fix 2** | Community-edge aggregation (`community_edges` view, `communities/info` relations) | P2 | Code map Wheel + Communities grouping |
+| **File roles** | config and generated roles are not tagged (test is `nodes.is_test`) | P2 | Code map role bar + L1 columns |
+| **Co-change mining** | pairwise co-change from `commit_files` (≤ 50 files a commit), rolled up to modules | P2 | Code map Hidden coupling |
+| **Branch scope** | graph not tagged by branch; no core-branch configuration or environment mapping | P1 | Graph sync, sprint vs release reads |
 | **Fix 3** | DB views (`graph_edges_resolved`, `folder_tree`, `node_exports`) | P2 | API simplification |
 | **Git-subtree detection** | `git log --grep='git-subtree-dir:'` prefixes (marketplace/homebrew) | P2 | Scope dropdown |
 | **`is_exported` per adapter** | `pub`/`export`/`__all__`/`__tablename__`; TDD per adapter | P1 | Exports everywhere |
@@ -170,6 +221,10 @@ any single feature — is the whole requirement, because it is what stopped the
 - [history/analysis/2026-09-29-architecture-metrics-and-visuals.md](../../../../history/analysis/2026-09-29-architecture-metrics-and-visuals.md) — architecture metrics unlocked by graph fixes.
 - [history/analysis/2026-09-27-entity-graph-feasibility.md](../../../../history/analysis/2026-09-27-entity-graph-feasibility.md) — schema entities in the graph.
 - [spec/indexer/20-schema-entities](../../../../spec/indexer/20-schema-entities.md) — node/edge/kinds detail.
-- [prd/02-objectives.md](../../../02-objectives.md) §04 The project window ·
+- [17-code-map](../../03-delivery/17-code-map/README.md) — the view over this graph;
+  consumes file roles, Fix 2 and co-change.
+- [spec/dojo/daemon-sync](../../../../spec/dojo/daemon-sync.md) — the sync direction
+  table, including branch scope.
+- [prd/02-objectives.md](../../../02-objectives.md) §04 The workspace window ·
   [prd/01-vision.md §The core loop](../../../01-vision.md#the-core-loop).
 - Crate: `crates/senseid/src/{indexer,graph}`; fixtures: `crates/senseid/tests/fixtures/graph-scan/`.

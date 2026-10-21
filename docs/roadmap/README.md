@@ -56,8 +56,8 @@ a spec.
 |---|---|---:|
 | Foundation | M1 Bootstrap · M2 Setup/Preferences · M3 Capture · M4 Code Graph · M5 Inference Gateway · M6 Storage/Data Model | [01-foundation.md](01-foundation.md) |
 | Insight | M7 Analyzer · M8 Metrics/Health · M9 Memory · M10 Patterns · M11 Traceability · M12 Libraries · M13 Governance | [02-insight.md](02-insight.md) |
-| Delivery | M14 MCP/Context · M15 Observatory · M16 Project Window · M17 Atlas · M18 Instruments · M19 Insights/Impact · M20 Planner · M21 Relay · M22 Agentic Execution | [03-delivery.md](03-delivery.md) |
-| Team | T1 Dōjō Core · T2 Consoles · T3 Project Planning · T4 Billing/Seats | [04-team.md](04-team.md) |
+| Delivery | M14 MCP/Context · M15 Observatory · M16 Workspace Window · M17 Atlas · M18 Instruments · M19 Insights/Impact · M20 Planner · M21 Relay · M22 Agentic Execution | [03-delivery.md](03-delivery.md) |
+| Team | T1 Dōjō Core · T2 Consoles · T3 Workspace Planning · T4 Billing/Seats | [04-team.md](04-team.md) |
 | Platform | P1 Distribution · P2 Website · P3 Harness/CI | [05-platform.md](05-platform.md) |
 
 ## Sequencing — what gates what
@@ -89,4 +89,4 @@ priority, and points at the module it blocks.
 - [`../backlog.md`](../backlog.md) — the live open-issue index (GitHub).
 - [`../history/README.md`](../history/README.md) — superseded snapshots that
   once answered "is it built" (coverage-map, plan, phases).
-- [09 — Dōjō expansion](09-dojo-expansion.md): projects, teams and roles authored in the dōjō, dōjō ⇄ sensei sync, integrations, release pipelines and DORA (decisions 2026-10-21).
+- [09 — Dōjō expansion](09-dojo-expansion.md): workspaces, teams and roles authored in the dōjō, dōjō ⇄ sensei sync, integrations, release pipelines and DORA (decisions 2026-10-21).

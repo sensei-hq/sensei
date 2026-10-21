@@ -51,7 +51,7 @@ learned ever vanishes"*.
   B-tree friendly, 8 vs 16 bytes.
 - **Bridge-table scoping** uses partial unique indexes, not composite PKs: `project_id IS
   NULL` = global, `= X` = scoped, no row = inactive; `*_resolved` views tag `scope` and sort
-  project rows above global (reused across libraries/extensions/instruments).
+  workspace rows above global (reused across libraries/extensions/instruments).
 - Semantic search is a single SQL query: pgvector cosine (`nodes.embedding vector(384)`,
   `library_pages.embedding vector(768)`, HNSW indexes) + relational filters.
 - Seeding is idempotent and guarded: staging tables + import procedures with a timestamp
@@ -69,7 +69,7 @@ learned ever vanishes"*.
 
 - Every schema fact survives a round-trip (`every_schema_fact_survives_the_round_trip`);
   the dbd design lands detail on the walked nodes (`a_dbd_design_lands_its_detail_on_the_walked_nodes`).
-- A schema-scoped write cannot read or leak another project's schema (`a_project_reads_only_its_own_schema`).
+- A schema-scoped write cannot read or leak another workspace's schema (`a_project_reads_only_its_own_schema`).
 - The four CI layer checks pass: no production SQL outside `db/pg_store/`, every grantee is
   created by the schema or built in, no prose between columns in DDL, every brew tap is real.
 - Retention prunes analyzed sessions past the cutoff and **keeps** unanalyzed ones

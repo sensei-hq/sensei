@@ -5,7 +5,7 @@ kind: functional
 ---
 
 > **SUPERSEDED 2026-10-13 — folded into the M16 module spec.**
-> Canonical spec: [`prd/modules/03-delivery/16-project-window/README.md`](../prd/modules/03-delivery/16-project-window/README.md).
+> Canonical spec: [`prd/modules/03-delivery/16-workspace-window/README.md`](../prd/modules/03-delivery/16-workspace-window/README.md).
 > Kept for history and cross-links.
 
 # Project

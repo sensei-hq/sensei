@@ -23,7 +23,7 @@ tenants need row isolation"). That trigger is met.
 - The dōjō reads user-visible data **as the signed-in user**, through **views
   with RLS**, never raw tables.
 - Individuals see their own data.
-- Leads and management additionally see cross-user data for their projects.
+- Leads and management additionally see cross-user data for their workspaces.
 
 This document is the single statement of who may do what. Policies, views and
 the route moves are derived from it, and a cell here that disagrees with a policy
@@ -36,9 +36,9 @@ is a bug in the policy.
 | **anyone signed in** | a valid session JWT → `dojo.current_principal_id()` | Not a member of anything. The matrix gives this nothing tenant-scoped. |
 | **member** | an ACTIVE membership in the tenant (`memberships.disabled_at is null`) | The floor for every tenant-scoped cell. A missing or disabled membership is **no access**, never "level 0". |
 | **contributor · maintainer · lead · admin** | `memberships.role` (`dojo.member_role`) | The TENANT role. `admin` is "management": policy, identity, billing, provisioning. A tenant-role `lead` guards client confidentiality (engagements, incidents, audit ledger). |
-| **team member / team lead** | `dojo.team_members` (+ `.role = 'lead'`) on a team that owns the project (`dojo.team_projects`) | The PROJECT relationship. "A lead's projects" means projects owned by a team on which the principal's team role is `lead`. |
-| **project viewer** (#307, D8) | a viewer grant on one project | **Read-only managerial view** of the project — metrics, dashboards, reports, aggregated or split by repository; never per-person. Admin-granted, only to someone already in the dōjō — a member or a dōjō viewer. Grants nothing else. |
-| **dōjō viewer** (#307, D8 revised) | an accepted invite with `access = viewer` (`dojo.dojo_viewers`) | **Nothing by itself** — not a membership; reads no repository. It makes the person eligible for project viewer grants in that dōjō. Removing them also removes their project views there (unless they are also a member). The dōjō's admins list them (with the email they were invited at) and read their identities. |
+| **team member / team lead** | `dojo.team_members` (+ `.role = 'lead'`) on a team that owns the workspace (`dojo.team_projects`) | The PROJECT relationship. "A lead's workspaces" means workspaces owned by a team on which the principal's team role is `lead`. |
+| **workspace viewer** (#307, D8) | a viewer grant on one workspace | **Read-only managerial view** of the workspace — metrics, dashboards, reports, aggregated or split by repository; never per-person. Admin-granted, only to someone already in the dōjō — a member or a dōjō viewer. Grants nothing else. |
+| **dōjō viewer** (#307, D8 revised) | an accepted invite with `access = viewer` (`dojo.dojo_viewers`) | **Nothing by itself** — not a membership; reads no repository. It makes the person eligible for workspace viewer grants in that dōjō. Removing them also removes their workspace views there (unless they are also a member). The dōjō's admins list them (with the email they were invited at) and read their identities. |
 | **repository role** (#307, D5) | the person's role on one repository — mirrored from the forge, admin-overridable | **Where access lives.** A repository's shared rows for anyone with a role on it; per-person rows for the person and maintainers and above on it (D6). |
 | **daemon** | the signed-in persona's session, presented by the daemon for the memberships that persona joined (step 4) | Same principal, same matrix. There is no device credential: any other bearer is a 401. |
 
@@ -46,13 +46,13 @@ is a bug in the policy.
 `dojo.member_role`'s declared order and the entity model's. The dōjō's code
 ladder is pinned to that order by `dojo-access-ladder.spec.ts`.
 
-**Superseded 2026-10-21 (#307 D5–D8).** Access moves from team membership to **repository roles**; teams become groupings with no access meaning, and a project's own permission is the read-only viewer grant. The predicates are rewired (#307 A2b): `can_read_repository` (any role on the repository), `can_read_repository_metric` (another person's rows: maintainer and above on the repository), `peer_run_status` (a role on one of the project's repositories), `can_read_project` (also its viewers, and its dōjō's admins — so a project is visible to them before it holds a repository); `on_team_of` / `leads_team_of` are retired. The paragraph below records the earlier decision.
+**Superseded 2026-10-21 (#307 D5–D8).** Access moves from team membership to **repository roles**; teams become groupings with no access meaning, and a workspace's own permission is the read-only viewer grant. The predicates are rewired (#307 A2b): `can_read_repository` (any role on the repository), `can_read_repository_metric` (another person's rows: maintainer and above on the repository), `peer_run_status` (a role on one of the workspace's repositories), `can_read_project` (also its viewers, and its dōjō's admins — so a workspace is visible to them before it holds a repository); `on_team_of` / `leads_team_of` are retired. The paragraph below records the earlier decision.
 
 **Two leads, on purpose.** The tenant role `lead` (client work) and the team
-role `lead` (cross-user project data) answer different questions. The second
+role `lead` (cross-user workspace data) answer different questions. The second
 was chosen over the tenant role on 2026-10-12. **Consequence:** nothing in the
 dōjō creates teams today, so until team management exists **no one sees
-cross-user project data except `admin`**. That is the correct reading of the
+cross-user workspace data except `admin`**. That is the correct reading of the
 decision, and the gap is a missing feature, not a policy to loosen.
 
 ## Scopes
@@ -60,8 +60,8 @@ decision, and the gap is a missing feature, not a policy to loosen.
 | Scope | Rows |
 |---|---|
 | **own** | keyed to the caller's principal, or to ANY membership the caller owns (`dojo.owns_membership`). On a tenant-addressed route, a membership of that tenant; on `/you`, every dōjō the person belongs to — personal work is not filtered by one tenant ([entity & access model §3](../../architecture/entity-access-model.md)) |
-| **team** | belonging to a project owned by a team the caller is on |
-| **team-lead** | the same projects, restricted to teams where the caller's team role is `lead` |
+| **team** | belonging to a workspace owned by a team the caller is on |
+| **team-lead** | the same workspaces, restricted to teams where the caller's team role is `lead` |
 | **tenant** | every row of the tenant |
 | **none** | no access |
 
@@ -75,19 +75,19 @@ gets. Roles inherit the cells of the roles below them unless a cell says otherwi
 | Data | member | team member | team lead | maintainer | admin |
 |---|---|---|---|---|---|
 | sessions, segments, inbox (gates, replies, content) | **R/W own** | — | — | — | count only (health) |
-| run status (a task is running on project P) | own | **R team** (status, never content) | R team | — | R tenant (status) |
+| run status (a task is running on workspace P) | own | **R team** (status, never content) | R team | — | R tenant (status) |
 | push subscriptions, notification prefs | R/W own (requires membership) | — | — | — | — |
 
 Relay content is the person's machine. **No role reads another person's
 responses, gates or replies**, admin included (#249). Peer status is a separate,
 content-free view (#252).
 
-### Projects and repositories
+### Workspaces and repositories
 
 | Data | member | team member | team lead | admin |
 |---|---|---|---|---|
-| projects (rows, constitution) | R/W own | R team | R team-lead (cross-user detail) | R tenant |
-| repositories (catalogue) | R repositories of own projects; W register (daemon) | R team | R team | R/W tenant |
+| workspaces (rows, constitution) | R/W own | R team | R team-lead (cross-user detail) | R tenant |
+| repositories (catalogue) | R repositories of own workspaces; W register (daemon) | R team | R team | R/W tenant |
 | repository elections (share decisions) | R/W own (user authority) | — | — | R/W tenant (org authority) |
 | repository visibility | written by the system from the forge, never by a member's request | | | |
 
@@ -95,7 +95,7 @@ content-free view (#252).
 
 | Data | member | team member | team lead | admin |
 |---|---|---|---|---|
-| repository metrics, `scope = repo` | R repositories of own projects | R team | R team | R tenant |
+| repository metrics, `scope = repo` | R repositories of own workspaces | R team | R team | R tenant |
 | repository metrics, `scope = user` | R own | — | **R team-lead (cross-user)** | R tenant |
 | metric activations (tenant-wide on/off) | — | — | — | **W** (org policy) |
 | metric activations (own) | W own, user-authority repositories | | | |
@@ -161,7 +161,7 @@ writes an audit row where it changes tenant state.
 | invite acceptance | the joining principal has no membership yet; the invite token is the authority |
 | clustering after a publish (`promoteCluster`) | derived maintenance over many members' rows |
 | the audit row for a person's action (`recordAudit`) | the system's record of what the person did, written from the resolved caller; a member never authors ledger rows |
-| a display name for an id on a row the caller already read (`resolveDisplayNames`, e.g. an incident's owner; a seat's project name) | names live on memberships/identities/`sensei.namespaces`, which a session does not read; the lookup resolves only the ids the caller's own read returned |
+| a display name for an id on a row the caller already read (`resolveDisplayNames`, e.g. an incident's owner; a seat's workspace name) | names live on memberships/identities/`sensei.namespaces`, which a session does not read; the lookup resolves only the ids the caller's own read returned |
 | the `seats_used` refresh (`POST …/billing`) | a money-facing cache derived from the seats; the system recomputes it after the admin gate, and no session writes the number |
 
 Everything not in this table moves to the user session.
@@ -192,7 +192,7 @@ Today: `my_repositories`, `register_repository`, `set_repository_election`,
 1. **This matrix.**
 2. **Helpers + views + RLS, with policy tests.** One `security definer`
    predicate per relationship: `is_member(tenant)`, `tenant_role_at_least(tenant,
-   role)`, `on_team_of(project)`, `leads_team_of(project)`, `project_of(repository)`.
+   role)`, `on_team_of(workspace)`, `leads_team_of(workspace)`, `project_of(repository)`.
    Views are `security_invoker`, so the base tables' policies decide. Every cell
    gets a test pair: the cell's role CAN, the role below it CANNOT, and a member
    of another tenant cannot.

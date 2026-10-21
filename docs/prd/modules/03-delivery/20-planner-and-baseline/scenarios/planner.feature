@@ -122,7 +122,7 @@ Feature: Planner & Baseline — the v0 planner generate, parse, render and the g
 
   # pinned: create_run_happy_path_returns_201_and_running_run
   Scenario: creating a run returns 201 with a running run
-    Given a valid goal and project
+    Given a valid goal and workspace
     When a run is created
     Then it returns 201 and a running run
 
@@ -170,6 +170,6 @@ Feature: Planner & Baseline — the v0 planner generate, parse, render and the g
 
   NO TEST
   Scenario: the planner generates a plan graph for a realistic goal
-    Given a realistic goal and project context
+    Given a realistic goal and workspace context
     When the planner generates
     Then it returns a valid PlanGraph

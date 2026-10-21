@@ -5,7 +5,7 @@ Feature: Dōjō Consoles — the unbuilt org context role surfaces
   Scenario: the org context /org/[slug] exists with its own nav pane
     Given a user with an org membership
     When they click the org in My Dōjōs
-    Then they land on /org/[slug] with a nav pane for projects, governance, and role surfaces
+    Then they land on /org/[slug] with a nav pane for workspaces, governance, and role surfaces
     This is unbuilt — org screens currently live flat under /console/*.
 
   # gap: T-2
@@ -53,13 +53,13 @@ Feature: Dōjō Consoles — the unbuilt org context role surfaces
   Scenario: a developer sees read-mostly surfaces in the org context
     Given a user with developer role
     When they open the org context
-    Then they can read projects in jurisdiction, preview a project's constitution, and view members
+    Then they can read workspaces in jurisdiction, preview a workspace's constitution, and view members
     This is unbuilt — role-gating not wired.
 
   # gap: T-2
   NO TEST
-  Scenario: a project drill shows which ladder levels built its constitution
-    Given a project in the org's jurisdiction
+  Scenario: a workspace drill shows which ladder levels built its constitution
+    Given a workspace in the org's jurisdiction
     When a user clicks it in /org/[slug]
     Then /org/[slug]/projects/[id] shows which ladder levels contributed, conflicts settled, and locks
     This is unbuilt — the /console/preview demo is a placeholder.
