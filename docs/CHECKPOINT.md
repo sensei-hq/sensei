@@ -17,13 +17,14 @@
   (two prompts this once) → verify `credentials.jerrythomas` present, old items gone; then close.
 - #293 step 1 done for the app (c290f38e … bae2126f) and dōjō `you/[section]` (9f11df08) +
   `org/[slug]/[section]` (785279a6); deep link to a run fixed (a0b8aaf4, live). Next: fold `runs/[run_id]` into
-  RelayDetail. User asked (2026-10-21) for a dōjō feature plan (projects/teams/roles, ADO/Jira, two-way sync,
-  release pipelines + DORA) from docs/prd + docs/mockups — inventory in progress. Local dōjō verify: a minted magic link for the local layout-verify test account. Step 2 after. #304: 26 writes still swallow failures (fix per screen).
+  RelayDetail. #305 (found): inbox answers to a gate are never sent — fix first.
+- Dōjō expansion planned: epic #307, docs/roadmap/09-dojo-expansion.md (decisions D1–D4, 2026-10-21). Wave A
+  after #305 + the run-page fold. Local dōjō verify: a minted magic link for the local layout-verify test account. Step 2 after. #304: 26 writes still swallow failures (fix per screen).
 - #294, #297, #298.
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** after `sensei auth approve`: check the keychain migration (#302) and the sync (#301/#299); then #293 step 1 in the dōjō (`runs/[run_id]` next).
+**Next command:** after `sensei auth approve`: check the keychain migration (#302) and the sync (#301/#299); #305 (inbox replies real), the run-page fold, then epic #307 Wave A.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
