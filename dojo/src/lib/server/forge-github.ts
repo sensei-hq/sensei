@@ -224,3 +224,66 @@ export async function fetchGithubFacts(
 	]);
 	return { provider: 'github', user, orgs };
 }
+
+/** GitHub's per-repo permission, as `dojo.forge_permission_to_role` reads it. */
+export type ForgePermission = 'admin' | 'maintain' | 'write' | 'triage' | 'read';
+
+/** The highest permission in GitHub's `permissions` object, or null when it
+ *  reports none — never a guessed `read`. */
+export function permissionOf(perms: Record<string, unknown> | null | undefined): ForgePermission | null {
+	if (!perms) return null;
+	if (perms.admin === true) return 'admin';
+	if (perms.maintain === true) return 'maintain';
+	if (perms.push === true) return 'write';
+	if (perms.triage === true) return 'triage';
+	if (perms.pull === true) return 'read';
+	return null;
+}
+
+/** One repository the member can see, and their permission on it — what
+ *  `dojo.mirror_principal_repository_roles` takes. */
+export interface ForgeRepoPermission {
+	/** `github.com/<owner>/<repo>`, lowercased — the daemon's `repo_key`. */
+	repo_key: string;
+	permission: ForgePermission;
+}
+
+/** How many pages of 100 the read follows before it gives up. */
+export const MAX_REPO_PERMISSION_PAGES = 30;
+
+/**
+ * The member's permission on every repository their token can see (#307 A2c, D5),
+ * from `/user/repos` — owned, collaborator and organisation repositories alike.
+ *
+ * ALL OR NOTHING. The mirror clears a person's forge role on every repository the
+ * list leaves out, so a partial list would silently revoke access: a failed page
+ * throws, and so does a list longer than MAX_REPO_PERMISSION_PAGES pages, rather
+ * than return what it read so far. An entry with no name or no permission is
+ * skipped — never defaulted.
+ */
+export async function fetchGithubRepoPermissions(
+	token: string,
+	fetchImpl: typeof fetch = fetch
+): Promise<ForgeRepoPermission[]> {
+	const out: ForgeRepoPermission[] = [];
+	for (let page = 1; page <= MAX_REPO_PERMISSION_PAGES; page++) {
+		const body = await getJson(
+			`${GITHUB_API}/user/repos?per_page=100&affiliation=owner,collaborator,organization_member&page=${page}`,
+			token,
+			fetchImpl
+		);
+		if (!Array.isArray(body)) throw new AdminError(502, 'GitHub returned no repository list');
+		for (const entry of body) {
+			const r = entry as Record<string, unknown>;
+			const name = nonEmpty(r.full_name);
+			const permission = permissionOf(r.permissions as Record<string, unknown> | undefined);
+			if (!name || !permission) continue;
+			out.push({ repo_key: `github.com/${name}`.toLowerCase(), permission });
+		}
+		if (body.length < 100) return out;
+	}
+	throw new AdminError(
+		502,
+		`GitHub reports more than ${MAX_REPO_PERMISSION_PAGES * 100} repositories; not mirroring a partial list`
+	);
+}

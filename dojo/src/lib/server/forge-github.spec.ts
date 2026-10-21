@@ -9,7 +9,9 @@ import {
 	fetchGithubUser,
 	fetchGithubOrgs,
 	fetchGithubFacts,
-	fetchGithubRepoFacts
+	fetchGithubRepoFacts,
+	fetchGithubRepoPermissions,
+	permissionOf
 } from './forge-github';
 
 /** A fetch stub that answers by URL substring and records the calls. */
@@ -233,5 +235,52 @@ describe('fetchGithubFacts', () => {
 			'/user': { body: USER_OK }
 		});
 		await expect(fetchGithubFacts('tok', fn)).rejects.toBeInstanceOf(AdminError);
+	});
+});
+
+// #307 A2c: a member's own permission on every repository they can see — what the
+// per-person forge mirror records. A partial list would CLEAR roles on the
+// repositories it missed, so the read is all or nothing.
+describe('permissionOf', () => {
+	it('takes the highest permission GitHub reports', () => {
+		expect(permissionOf({ admin: true, maintain: true, push: true, triage: true, pull: true })).toBe('admin');
+		expect(permissionOf({ admin: false, maintain: true, push: true, pull: true })).toBe('maintain');
+		expect(permissionOf({ push: true, pull: true })).toBe('write');
+		expect(permissionOf({ triage: true, pull: true })).toBe('triage');
+		expect(permissionOf({ pull: true })).toBe('read');
+		expect(permissionOf({})).toBeNull();
+		expect(permissionOf(undefined)).toBeNull();
+	});
+});
+
+describe('fetchGithubRepoPermissions', () => {
+	const repo = (n: number, perms: Record<string, boolean> = { push: true, pull: true }) => ({
+		full_name: `Acme/Repo-${n}`,
+		permissions: perms
+	});
+
+	it('reads every page and keys each repository as the daemon does', async () => {
+		const page1 = Array.from({ length: 100 }, (_, i) => repo(i));
+		const { fn, calls } = fakeFetch({
+			'&page=1': { body: page1 },
+			'&page=2': { body: [repo(100, { admin: true, pull: true }), { full_name: 'Acme/no-perms' }] }
+		});
+		const got = await fetchGithubRepoPermissions('tok', fn);
+		expect(got).toHaveLength(101);
+		expect(got[0]).toEqual({ repo_key: 'github.com/acme/repo-0', permission: 'write' });
+		expect(got[100]).toEqual({ repo_key: 'github.com/acme/repo-100', permission: 'admin' });
+		expect(calls.map((c) => c.url).every((u) => u.includes('/user/repos'))).toBe(true);
+	});
+
+	it('a failed page fails the whole read — never a partial list', async () => {
+		const page1 = Array.from({ length: 100 }, (_, i) => repo(i));
+		const { fn } = fakeFetch({ '&page=1': { body: page1 }, '&page=2': { status: 502, body: null } });
+		await expect(fetchGithubRepoPermissions('tok', fn)).rejects.toThrow(/502/);
+	});
+
+	it('more repositories than it will page through fails rather than truncates', async () => {
+		const full = Array.from({ length: 100 }, (_, i) => repo(i));
+		const { fn } = fakeFetch({ '&page=': { body: full } });
+		await expect(fetchGithubRepoPermissions('tok', fn)).rejects.toThrow(/more than/);
 	});
 });

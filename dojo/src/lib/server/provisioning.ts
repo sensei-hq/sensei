@@ -31,6 +31,7 @@ import { AdminError, slugify, type DojoClient } from './admin-data';
 import {
 	fetchGithubFacts,
 	fetchGithubRepoFacts,
+	fetchGithubRepoPermissions,
 	ForgeReadError,
 	type ForgeFacts,
 	type ForgeOrg,
@@ -83,6 +84,17 @@ export interface ProvisionResult {
 	 *  one that could not reach the forge, captured nothing and says so by
 	 *  omission rather than by reporting five honest-looking zeros. */
 	visibility?: VisibilityRefreshResult;
+	/** The per-person forge mirror (#307 A2c): how many dōjōs and repositories it
+	 *  recorded, or why it could not read the forge — in which case it changed
+	 *  nothing. Present only when the forge was read. */
+	roles?: RoleMirrorResult;
+}
+
+/** What the per-person forge mirror did. */
+export interface RoleMirrorResult {
+	tenants?: number;
+	repositories?: number;
+	error?: string;
 }
 
 /** What we know about the caller when there is no forge to ask. */
@@ -931,5 +943,44 @@ export async function provisionWithToken(
 	// membership the refresh's scope must include, or the first sign-in of the
 	// first employee captures nothing for their employer's repositories.
 	const visibility = await refreshForgeVisibility(db, principalId, providerToken, fetchImpl);
-	return { ...result, visibility };
+	// Also after provisioning, for the same reason: a dōjō this pass created is
+	// one the person's repository roles belong in. A failed mirror changes nothing
+	// and is reported — it does not fail the sign-in (#307 A2c).
+	let roles: RoleMirrorResult;
+	try {
+		roles = await mirrorRepositoryRoles(db, principalId, providerToken, fetchImpl);
+	} catch (e) {
+		roles = { error: e instanceof Error ? e.message : String(e) };
+	}
+	return { ...result, visibility, roles };
+}
+
+/**
+ * The per-person forge mirror (#307 A2c, D5): the member's permission on every
+ * repository their own token can see, recorded as their repository roles in each
+ * dōjō they are an ACTIVE member of (`dojo.mirror_principal_repository_roles`
+ * matches the dōjō's repositories by repo_key; overrides stay).
+ *
+ * Reads first and writes only after a complete, successful read: the mirror
+ * CLEARS the person's forge roles on every repository the list leaves out, so a
+ * failed or partial read — written as an empty list — would revoke all of them.
+ * A failed read throws and nothing is written.
+ */
+export async function mirrorRepositoryRoles(
+	db: DojoClient,
+	principalId: string,
+	providerToken: string,
+	fetchImpl: typeof fetch = fetch
+): Promise<{ tenants: number; repositories: number }> {
+	const entries = await fetchGithubRepoPermissions(providerToken, fetchImpl);
+	const memberships = await myMemberships(db, principalId);
+	for (const m of memberships) {
+		const { error } = await db.rpc('mirror_principal_repository_roles', {
+			p_principal: principalId,
+			p_tenant: m.tenant_id,
+			p_entries: entries
+		});
+		if (error) throw new AdminError(500, error.message);
+	}
+	return { tenants: memberships.length, repositories: entries.length };
 }
