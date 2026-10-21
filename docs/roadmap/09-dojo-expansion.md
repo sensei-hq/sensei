@@ -63,7 +63,9 @@ dōjō, then production), and keeps presentation | state | load apart with rokki
   key pattern that links a session to a ticket (branch, commit, prompt); the Integrations tab.
 - **C3 · Sensei reads them.** The daemon pulls the mirrored tickets so sessions link to tickets locally.
 
-### Wave D — release pipelines and DORA
+### Wave D — release pipelines, DORA and release gates
+
+Specified in the PRD as [T5](../prd/modules/04-team/05-releases-and-dora/README.md).
 
 - **D-1 · Deployments.** GitHub Actions and Azure Pipelines adapters (on the C1 connections) record
   deployments; git tags are the fallback.
@@ -71,6 +73,11 @@ dōjō, then production), and keeps presentation | state | load apart with rokki
   linked to the deployment that caused it.
 - **D-3 · The four keys.** Deployment frequency, lead time for changes, change failure rate and time to
   restore as metrics in the existing plumbing; a DORA view in the dōjō and in sensei.
+- **D-4 · Release gates.** T3's targets, ladder (gaining a **Release** scope) and modes
+  evaluated over a release's change set; release readiness (green pipeline, no open
+  blocking production incident); the stability guardrail (change failure rate / time to
+  restore over threshold — `warn` by default, `block` opt-in); the release scorecard.
+  Specified in [T5](../prd/modules/04-team/05-releases-and-dora/README.md).
 
 ## Order against the burndown
 

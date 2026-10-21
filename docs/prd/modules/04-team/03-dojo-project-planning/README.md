@@ -33,6 +33,11 @@ knows what the sprint actually changed, and it only ever asks for better.*
 > architecture-metrics family (#156). The project window Tasks tab (M16) stays
 > unbuilt until planner persistence lands (C-1 → M20).
 
+> **Resolved 2026-10-21.** Tracker connections are **owned by the dōjō** (one per
+> project, shared by the team) and stay **read-only — the dōjō pulls**; sensei reads
+> the mirror through sensei ⇄ dōjō sync. The same targets, ladder and modes also gate
+> **releases** over their change set — see [T5](../05-releases-and-dora/README.md).
+
 ## In scope / out of scope
 
 - In: **repo grouping** (a project groups many repos — any provider, or a local

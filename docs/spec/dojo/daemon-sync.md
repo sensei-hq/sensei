@@ -10,6 +10,17 @@
 > in place. This document is authoritative for the daemon, and §0 lists every
 > statement it overrides.
 
+## Direction of sync (user, 2026-10-21)
+
+| Between | Direction | What |
+|---|---|---|
+| sensei ⇄ dōjō | **two-way** | projects and their repositories, teams, roles, integration connections — authored on either side, mirrored to the other; **the dōjō wins on conflict** and sensei says when a local change lost; `origin` marks where a row was authored so nothing loops |
+| sensei → dōjō | one-way (as today) | repository registration, metrics, the code graph, contributions, relay sessions and segments |
+| dōjō → sensei | one-way (as today) | the sync plan, memberships, resolved rules, relay replies — and, new, the mirrored tickets, deployments, release-gate results and DORA keys |
+| external → dōjō | **read-only pull** | trackers (Jira, Azure Boards, GitHub Issues) and CI (GitHub Actions, Azure Pipelines) — the dōjō reads; nothing writes back |
+
+Plan: [`roadmap/09-dojo-expansion.md`](../../roadmap/09-dojo-expansion.md) (Wave B) · epic #307.
+
 ## 0. What this overrides in the parent spec
 
 | parent | says | actually |

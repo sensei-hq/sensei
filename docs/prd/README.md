@@ -63,7 +63,7 @@ reading order; the index is [`modules/README.md`](modules/README.md).
 | Foundation — the floor | M1–M6 | [`modules/01-foundation/`](modules/01-foundation/README.md) |
 | Insight — observation→understanding | M7–M13 | [`modules/02-insight/`](modules/02-insight/README.md) |
 | Delivery — signal back to human + assistant | M14–M22 | [`modules/03-delivery/`](modules/03-delivery/README.md) |
-| Team — the Dōjō | T1–T4 | [`modules/04-team/`](modules/04-team/README.md) |
+| Team — the Dōjō | T1–T5 | [`modules/04-team/`](modules/04-team/README.md) |
 | Platform — distribution, web, CI | P1–P3 | [`modules/05-platform/`](modules/05-platform/README.md) |
 
 ## What is deliberately *not* here

@@ -125,7 +125,7 @@ works while the app is open:
 | `relay_sessions` + presence | maps user ↔ daemon ↔ active session with heartbeat — answers "which daemon holds this / is it online" (drives the "needs you" band + offline states). |
 | `relay_inbox` | durable rows for approvals / decisions / chat / stalls (survive a closed app; a push deep-links to one). Realtime broadcasts inserts; push notifies. |
 | `notification_prefs` | per user: which events push (approvals/decisions/stalls), quiet hours, per-Dōjō mute. |
-| **daemon ↔ Dōjō channel** | today: findings up, governance down. Relay adds a **bidirectional** live channel — the daemon publishes session state (phase / gated-action / decision / chat); phone/console send back approve/deny/answer/chat, which the daemon consumes to continue the held session. A new realtime client in the daemon. |
+| **daemon ↔ Dōjō channel** | today: findings up, governance down; from 2026-10-21 projects, teams, roles and connections sync **both ways** (dōjō wins on conflict) and external trackers/CI are a **read-only pull** by the dōjō — see [`spec/dojo/daemon-sync.md`](../spec/dojo/daemon-sync.md#direction-of-sync-user-2026-10-21). Relay adds a **bidirectional** live channel — the daemon publishes session state (phase / gated-action / decision / chat); phone/console send back approve/deny/answer/chat, which the daemon consumes to continue the held session. A new realtime client in the daemon. |
 
 **Metering** follows cost (the [business model](../journeys/dojo.md#business-model--free-where-public-or-personal)):
 the individual loop is free; `push_subscriptions` / `relay_sessions` carry the

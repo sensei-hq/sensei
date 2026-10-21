@@ -11,7 +11,7 @@ and the spec template.
 | Foundation | M1–M6 | [`01-foundation/`](01-foundation/README.md) |
 | Insight | M7–M13 | [`02-insight/`](02-insight/README.md) |
 | Delivery | M14–M22 | [`03-delivery/`](03-delivery/README.md) |
-| Team | T1–T4 | [`04-team/`](04-team/README.md) |
+| Team | T1–T5 | [`04-team/`](04-team/README.md) |
 | Platform | P1–P3 | [`05-platform/`](05-platform/README.md) |
 | **Total** | | **29** |
 

@@ -29,7 +29,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 ## In scope / out of scope
 
 - In: membership kinds (employer · client · community · personal) + role
-  ladder (`member < contributor < lead < maintainer < admin`); the `dojo`
+  ladder (`contributor < maintainer < lead < admin` — `dojo.member_role`, canonical since 2026-10-21); the `dojo`
   schema (`repositories`, `repository_elections`, `repository_metrics`,
   `memberships`, `shared_rules`, `tenants`, `tenant_scopes`);
   routing (`dojo/routing.rs` — client binding routes to client Dōjō and excludes

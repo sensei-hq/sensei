@@ -80,7 +80,7 @@ for everyone below. That half of the console is specified in
   `governance.rs` (resolution, cached 5 min); `get_rules` / `get_layered_context`
   MCP tools.
 - **Data** — `dojo.memberships` (user_id, org_id, role, kind), `dojo.member_role`
-  enum (`member < contributor < lead < maintainer < admin`), `dojo.shared_rules`,
+  enum (`contributor < maintainer < lead < admin`), `dojo.shared_rules`,
   `dojo.tenants`, `dojo.audit_log`, `dojo.audit_events`; plus the governance
   ladder the authoring surface writes against: `sensei.scopes` (levels
   `general` … `repository`, `level` = most-specific-wins), `sensei.namespaces`
@@ -93,7 +93,7 @@ for everyone below. That half of the console is specified in
   see. A maintainer + admin sees both governance and roles/policies.
 - **Lead.** The personal landing is **always reachable** — the org-switcher
   popover has "Relay · you — all Dōjōs" pinned at top.
-- **Lead.** Role floor: `member < contributor < lead < maintainer < admin`.
+- **Lead.** Role floor: `contributor < maintainer < lead < admin` (`dojo.member_role`; canonical since 2026-10-21).
   A role reveals its surfaces; the union is what you see.
 - **Lead.** Client binding **excludes employer** — the owning org wins ordinary
   conflicts; the employer's mandatory rules remain a floor.

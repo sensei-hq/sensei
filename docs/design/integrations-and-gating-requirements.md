@@ -16,6 +16,30 @@ also records three places where T3's spec **contradicts its own design source**
 
 ---
 
+## 0 · Resolution (user, 2026-10-21)
+
+These settle the open questions below and override §5 where they differ.
+
+- **External integrations are read-only; we pull.** Trackers (Jira, Azure Boards,
+  GitHub Issues) and CI (GitHub Actions, Azure Pipelines) are read, never written —
+  §2.6 and the §6.2 decision stand, and there is no export action.
+- **The dōjō owns them.** A connection is made once per project **in the dōjō**,
+  which holds the credential and mirrors the tickets, sprints and pipeline runs;
+  sensei reads the mirror. Connecting from sensei writes the connection to the dōjō.
+  The §5 tables and API therefore live in the **dōjō** (`dojo.*`, `/v1/t/{tenant}/…`),
+  not in `sensei.*` / `/api/…` as first proposed.
+- **Sensei ⇄ dōjō is two-way sync.** Projects, teams, roles and connections may be
+  created or changed on either side and arrive on the other; the dōjō is the
+  authority on conflict, and sensei says when a local change lost.
+- **Releases and DORA** are specified in T5
+  ([`prd/modules/04-team/05-releases-and-dora/`](../prd/modules/04-team/05-releases-and-dora/README.md)):
+  deployments from CI with git tags as the fallback, production incidents, the four
+  keys, and **release gates** — the §3 targets evaluated over a release's change set.
+
+Plan: [`roadmap/09-dojo-expansion.md`](../roadmap/09-dojo-expansion.md) · epic #307.
+
+---
+
 ## 1 · What the mockup actually specifies
 
 `dojo2-project.jsx` is the source of record for the tracker + targets model. The
@@ -289,7 +313,7 @@ gating model — no separate gate semantics.
 
 ---
 
-## 5 · Data model & API shape (proposed)
+## 5 · Data model & API shape (proposed — moves to the dōjō, see §0)
 
 > **Nothing here is built.** `sensei.runs` / `sensei.run_events` exist; plan,
 > baseline, target and tracker tables do not (C-1, T-1).
