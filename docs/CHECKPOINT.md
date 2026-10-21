@@ -20,8 +20,10 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** R3a (D30: schema too) — write the apply/before rename hook + its SQL test, rehearse on a COPY of the
-daemon DB (`make db-backup` first), then pg_store in the same change.
+**Next command:** R3a in progress — an agent works on a branch in a worktree (DDL + in-place rename hook + SQL tests +
+the daemon's SQL; HTTP API unchanged until R3b). The rehearsal copy is `ztest_r3a` (pg_dump of the live 25 GB DB:
+`~/sensei-r3a-dump`; log /tmp/r3a-copy.log). On its report: review the diff, re-run the gates and the rehearsal (twice,
+counts only), then R3b (daemon API + app) on the same branch; merge to develop when R3 is whole.
 **R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
 extension_projects; 19 `project_id`-style columns (activity, history, inference, sensei) + staging.memories.project_name;
 17 views (project_metric_*, project_*); fn sole_project_of; enums project_maturity + 'project' in entity_scope,
