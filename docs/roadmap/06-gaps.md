@@ -89,7 +89,7 @@ address the gaps"). Ordered by risk; each is a GitHub issue.
 | G-SEC-2 | The dōjō has no secret store, yet D14/D21 hand it shared integration credentials | #310 | P1 (before Wave C) |
 | ~~G-SEC-3~~ | ~~Invite tokens in plain text, accepts unbounded~~ — fixed (f607bf0a): hash only, 429 after 10 failures in 15 min | #311 closed | — |
 | G-SEC-4 | Relay approval gates fail open on a lost or garbled reply — fail-open is a deliberate contract; the gate never loosens the engine's verdict. **Built 2026-10-21** (D28, 4fcea9de): an unanswered hard-block in an unattended run is denied; live proof with the next release | #312 | P1 |
-| G-SEC-5 | Viewer metric reads must be aggregate-only (D6, D8); grants, revokes and exports are not audited (T6) | #313 | P1 (with T6) |
+| G-SEC-5 | Viewer metric reads must be aggregate-only (D6, D8); grants, revokes and exports are not audited (T6) — **Done 2026-10-21** (6dad1e33): every grant change is audited, and a viewer reads no one else (SQL-pinned); export / first open come with the viewer shell | #313 | P1 (with T6) |
 | G-OPS-1 | Nothing in the dōjō plane verified in production — sync, Relay, push (D27; #184, #299, #301) | #314 | P0 |
 | G-OPS-2 | develop far ahead of main; the next release runs a destructive dōjō reconcile — count, back up, rehearse on a copy. **Done 2026-10-21:** rehearsed on a prod copy (fixed the rename hook, 55b5753d), then released as v0.16.0 — the production reconcile went exactly as rehearsed and `dbd diff` is in sync | #315 | P0 (before release) |
 | G-FUN-1 | CI / DORA data need a puller that does not depend on a daemon being online (dōjō polling or webhooks) | #316 | P2 (Wave D) |

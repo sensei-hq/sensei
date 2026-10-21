@@ -236,6 +236,14 @@ Bring them to the compiler-grade resolution Rust and TypeScript have.
 | #254 | The next ORM after EF Core (JPA) |
 | #275 | The epic: scip-dotnet, scip-java, scip-python |
 
+## Wave 11 — the website follows what ships (after the dōjō waves)
+
+The user updated the website mocks on 2026-10-21 with the features added since: diagrams and lenses,
+workspaces with issue-tracker integration, planning, release tracking. Taken up **after** the dōjō
+work (#307 and the gaps #309–#321).
+- **How:** build the website from the new mocks. Each feature reads *coming soon* until it ships;
+  flip it to *available* in the change that releases it, not afterwards.
+
 ## Expected closures
 
 | Wave | Issues closed | Rough effort |
