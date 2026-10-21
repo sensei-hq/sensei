@@ -174,13 +174,13 @@ export class AppState {
 
   /**
    * Fetch + cache the project count for rail badges. No-op without Tauri
-   * (browser dev). Errors surface as an empty list (the api `get` fallback),
-   * leaving the count at 0 rather than throwing — the rail must never block.
+   * (browser dev). A failed read leaves the count unknown (null — no badge),
+   * never 0, which read as "no projects" (#288); the rail must never block.
    */
   async loadProjectCount(): Promise<void> {
     if (!hasTauri()) return;
-    const projects = await senseiApi(this.port).listProjects();
-    this.projectCount = projects.length;
+    const read = await senseiApi(this.port).tryListProjects();
+    if (read.ok) this.projectCount = read.data.length;
   }
 
   async reset() {

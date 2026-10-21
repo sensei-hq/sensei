@@ -2,7 +2,7 @@ import { sumiPalette } from '../packages/sumi-palette/index.js';
 
 // Logical icon names the dojo2 kit renders (bare Solar names from the mockup's
 // K2Icon). Each becomes an `icons.overrides` bare-name shortcut → the full
-// `i-solar:{name}-linear` utility; presetRokkit auto-safelists override keys, so
+// `i-solar:{name}-bold-duotone` utility; presetRokkit auto-safelists override keys, so
 // `<span class="{name}">` (applied dynamically in Icon.svelte) still generates
 // the CSS mask — no manual uno.config safelist, no runtime resolver.
 const ICON_NAMES = [
@@ -147,7 +147,7 @@ export default {
 	// (presetRokkit already includes presetIcons; keys become the UnoCSS
 	// collection prefix). dojo2's kit renders bare Solar names (mockup K2Icon)
 	// through this collection — build-time CSS masks, no network fetch.
-	// `overrides` maps each bare logical name → its `i-solar:{name}-linear`
+	// `overrides` maps each bare logical name → its `i-solar:{name}-bold-duotone`
 	// utility (the rokkit bare-name-shortcut idiom); override keys are
 	// auto-safelisted by presetRokkit, so Icon.svelte can apply the bare class
 	// dynamically and UnoCSS still generates the CSS — no runtime resolver, no

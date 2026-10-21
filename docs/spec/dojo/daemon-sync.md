@@ -67,11 +67,13 @@ step** rather than at sign-in:
 | public on the forge | **shared** | nothing — the code is already public; the user may still turn it off |
 | private | **off** | **subscription.** Unsubscribed, no metrics, governance or insights are shared at all |
 
-The distinction that matters: this is a **default within a decision the user makes**, not an
-inference drawn from forge visibility behind their back. Nothing flips at sign-in. The user opts
-into sharing, and at that moment the public/private split decides what the sensible starting
-position is — and remains changeable per repository, along with the push cadence (which is now a
-`sensei.schedules` row, so "how often" is the same mechanism as everything else).
+**Superseded 2026-10-20 (#301, user decision): signing in is the decision.** A connected
+identity's repositories sync by default — the public/private split above is the starting
+position, applied without a step. Where the user holds the authority (public code, everything
+personal) an absent election means *shared*; an explicit opt-out per repository holds. Private
+org code stays the organisation's call and stays behind the subscription. Still changeable per
+repository, along with the push cadence (a `sensei.schedules` row, so "how often" is the same
+mechanism as everything else).
 
 Private-repo sharing is where billing enters (phase 2 of the parent spec: claim, seat, billing).
 Until then a private repository stays local-only regardless of configuration.
@@ -97,7 +99,7 @@ one thing at a time, so each step's effect is observable:
 
 | §3 wanted | already is | evidence |
 |---|---|---|
-| `persona` (Keychain slot) | `sensei.personas.session_slot` | **NOT `label`.** `session.rs::account_for` formats `refresh_token.{slot}` from the string the sign-in was started with; `link_persona_identity` REWRITES `label` to the verified GitHub login, so signing in as `default` yields a row labelled `sensei-hq-org` whose session is still at `refresh_token.default`. The first version of this table claimed they were the same string — they are not, and looking the session up by label silently skipped the persona while the cycle reported success. `session_slot` records what the sign-in actually used. |
+| `persona` (Keychain slot) | `sensei.personas.session_slot` | **NOT `label`.** `session.rs::credentials_account_for` formats `credentials.{slot}` (one keychain item per persona since #302) from the string the sign-in was started with; `link_persona_identity` REWRITES `label` to the verified GitHub login, so signing in as `default` yields a row labelled `sensei-hq-org` whose session is still at `credentials.default`. The first version of this table claimed they were the same string — they are not, and looking the session up by label silently skipped the persona while the cycle reported success. `session_slot` records what the sign-in actually used. |
 | `dojo_url` | a **global** setting | `settings::dojo_url()` — env `DOJO_URL`, then local settings, then a default. Not per-persona |
 | `signed_in_at` | `personas.verified_at` | `link_persona_identity` sets `verified_at = now()` on every completed OAuth callback |
 | `last_sync_at` | `sync_state.synced_at` | keyed `(entity='dojo_sync_plan', entity_key=session_slot)` — the entity value **D7 already adds** |
@@ -853,14 +855,15 @@ cannot tell a user which one they are in.
 , case when r.visibility is null then false
        when t.origin = 'organization' and r.visibility <> 'public'
             then coalesce(oe.elected, p.private_repos_shared)  -- per-repo, else default
-       else coalesce(ue.elected, false)                        -- this principal's
+       else coalesce(ue.elected, true)                         -- this principal's (#301)
   end                                                          as elected
 ```
 
 `oe` is the per-repo `authority='organization'` election, `ue` the
 `authority='user' AND principal_id = m.user_id` one, `p` the tenant policy, `b`
-billing, `sa` the seat. `coalesce(…, false)` throughout: an absent row is *not
-elected*, never *elected by default*.
+billing, `sa` the seat. An absent ORGANISATION row (private org code) is *not elected*; an
+absent USER row is *elected* — a connected identity's repositories sync by default and an
+explicit `elected = false` is the opt-out (#301, 2026-10-20). Never NULL either way.
 
 ### Why `refused_by` is a column and not an inference
 

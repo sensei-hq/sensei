@@ -350,6 +350,14 @@ pub trait TranscriptAdapter: Send + Sync {
     /// testable without a DB); a source that can't reconstruct events returns them
     /// empty and/or `model`/`tokens` as `None`.
     fn parse(&self, content: &str) -> ParsedTranscript;
+    /// Read and parse one unit. The default loads it whole ([`Self::load_content`],
+    /// with its size cap) and parses that; an adapter whose format is line-based
+    /// overrides it to stream, so a transcript too large to hold as one string is
+    /// still read (#280).
+    fn parse_file(&self, key: &str) -> Option<ParsedTranscript> {
+        let content = self.load_content(key)?;
+        Some(self.parse(&content))
+    }
 }
 
 #[cfg(test)]
@@ -470,27 +478,30 @@ async fn ingest_one(
     // whether the session has events yet (so an already-prose-ingested but
     // never-synthesized historical session still gets imported). Load the
     // content only if there's something to do.
-    let prose_fresh = matches!(
-        pg.get_capture_watermark(adapter.source(), key).await,
-        Ok(Some(prev)) if prev >= stamp
-    );
-    let needs_synth = !pg.session_has_events(&session_id).await.unwrap_or(true);
+    //
+    // Every gate read PROPAGATES its error: read as a default, a database fault
+    // decided "fresh", "has events" or "needs no backfill" and the ingest
+    // reported a skip — a success — so the session's tokens were never written
+    // and nothing said why (#280). A failed read fails the task, which retries.
+    let prev = pg.get_capture_watermark(adapter.source(), key).await?;
+    let prose_fresh = matches!(prev, Some(prev) if prev >= stamp);
+    let needs_synth = !pg.session_has_events(&session_id).await?;
     // A session captured before token-capture existed still needs its model + token
     // usage backfilled from the transcript — force a metadata refresh for it even
     // when prose + events are already fresh. `false` for new sessions (synthesis
     // sets their metadata) and for sessions already attempted (skip the re-read,
     // even a token-less source), keyed on the `meta_synced_at` marker.
-    let needs_meta = pg.session_needs_meta_backfill(&session_id).await.unwrap_or(false);
+    let needs_meta = pg.session_needs_meta_backfill(&session_id).await?;
     if prose_fresh && !needs_synth && !needs_meta {
         return Ok(IngestOutcome::skipped());
     }
     // Adapter owns the read + its own oversize/format guards (returns None to skip).
-    let Some(content) = adapter.load_content(key) else {
+    // Read and parse ONCE into the common structure (the adapter owns the read and
+    // its guards; a line-based source streams, so size is not a reason to skip);
+    // every persistence step below reads from `parsed` — the adapter→persistence seam.
+    let Some(parsed) = adapter.parse_file(key) else {
         return Ok(IngestOutcome::skipped());
     };
-    // Parse ONCE into the common structure; every persistence step below reads from
-    // `parsed`, never the raw content — the adapter→persistence seam.
-    let parsed = adapter.parse(&content);
     // 1. prose turns (#73) — only when stale.
     let mut turns = 0u32;
     if !prose_fresh {
@@ -546,17 +557,15 @@ async fn set_session_metadata(
         Some((p, m)) => (Some(p.as_str()), Some(m.as_str())),
         None => (None, None),
     };
-    // Token totals fit `integer` (verified << i32::MAX for real sources); a value
-    // that somehow overflows is dropped rather than truncated to a wrong number.
+    // `bigint` columns: a long session's input passes 2³¹ (1.96 billion tokens,
+    // nearly all cache, was measured in one), which the old `integer` columns —
+    // and an `i32::try_from` that dropped what did not fit — could not hold (#280).
     // `tokens_in` keeps its established meaning — ALL input the model processed —
     // so existing consumers are unaffected; the split rides alongside in its own
     // columns rather than changing what the old one means.
     let t = parsed.tokens;
     let (tokens_in, tokens_out) = match &t {
-        Some(t) => (
-            i32::try_from(t.total_input()).ok(),
-            i32::try_from(t.output + t.reasoning.unwrap_or(0)).ok(),
-        ),
+        Some(t) => (Some(t.total_input()), Some(t.output + t.reasoning.unwrap_or(0))),
         None => (None, None),
     };
     if let Err(e) = pg
@@ -564,6 +573,12 @@ async fn set_session_metadata(
         .await
     {
         tracing::warn!(error = %e, session = %session_id, "set_session_metadata: write failed");
+    }
+    // Then the per-turn sum (#280): where the session has turn rows — this
+    // transcript's, and any hook turns — they decide its tokens, so a turn both
+    // sources saw counts once and a subagent's hook-only turn counts at all.
+    if let Err(e) = pg.refresh_session_tokens(session_id).await {
+        tracing::warn!(error = %e, session = %session_id, "refresh_session_tokens failed");
     }
 }
 
@@ -791,6 +806,14 @@ pub async fn repair_sessions(pg: &crate::db::pg_store::PgStore) -> u32 {
             tracing::warn!(error = %e, "repair_sessions: repair_sessions_from_transcripts failed")
         }
     }
+    // Then tokens (#280): every session with turn rows to its sums. A transcript
+    // already ingested is skipped as fresh, so this is what brings a session
+    // captured before turn_usage existed — or one re-attached above — to it.
+    match pg.refresh_all_session_tokens().await {
+        Ok(n) if n > 0 => tracing::info!(sessions = n, "repair_sessions: token sums refreshed"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "repair_sessions: refresh_all_session_tokens failed"),
+    }
     repaired
 }
 
@@ -881,6 +904,92 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #280: a backfill's repair pass brings existing sessions to their turn sums.
+    /// A fully-ingested transcript is skipped as fresh, so without this pass a
+    /// session captured before turn_usage existed keeps its old figures for ever.
+    ///
+    /// MUTATION: drop the token step from `repair_sessions` — tokens stay NULL.
+    #[tokio::test]
+    async fn the_repair_pass_sets_session_tokens_from_their_turns() {
+        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
+            return;
+        };
+        let sid = format!("_test-repair-tokens-{}", uuid::Uuid::new_v4());
+        sqlx_core::query::query("INSERT INTO activity.sessions (client_session_id) VALUES ($1)")
+            .bind(&sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_turns
+                 (source, session_id, family, turn_index, started_at, tokens_in, cache_read, cache_write, tokens_out)
+             VALUES ('claude_code', $1, 'claude', 1, now(), 5, 100, 0, 2)",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        repair_sessions(&pg).await;
+
+        let (tokens_in,): (Option<i64>,) = sqlx_core::query_as::query_as(
+            "SELECT tokens_in FROM activity.sessions WHERE client_session_id = $1",
+        )
+        .bind(&sid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(tokens_in, Some(105));
+        for sql in [
+            "DELETE FROM activity.transcript_turns WHERE session_id = $1",
+            "DELETE FROM activity.sessions WHERE client_session_id = $1",
+        ] {
+            sqlx_core::query::query(sql).bind(&sid).execute(pg.pool()).await.unwrap();
+        }
+    }
+
+    /// A transcript whose content is gone, so `ingest_one` returns as soon as its
+    /// gates are decided — which isolates what the gates do with a failed read.
+    struct GoneTranscript;
+    impl TranscriptAdapter for GoneTranscript {
+        fn source(&self) -> &'static str {
+            "claude_code"
+        }
+        fn family(&self) -> &'static str {
+            "claude"
+        }
+        fn units(&self) -> Vec<UnitRef> {
+            vec![]
+        }
+        fn stamp_for(&self, _key: &str) -> Option<i64> {
+            Some(1)
+        }
+        fn session_id_for(&self, _key: &str) -> Option<String> {
+            Some("gone-session".to_string())
+        }
+        fn load_content(&self, _key: &str) -> Option<String> {
+            None
+        }
+        fn parse(&self, _content: &str) -> ParsedTranscript {
+            ParsedTranscript::default()
+        }
+    }
+
+    /// #280: the ingest's gates turned a failed read into a decision —
+    /// `session_has_events(..).unwrap_or(true)` and
+    /// `session_needs_meta_backfill(..).unwrap_or(false)` — so a database fault
+    /// reported "skipped", a success, and the session's tokens were never written.
+    /// A failed read must fail the task, which retries.
+    #[tokio::test]
+    async fn a_failed_read_fails_the_ingest_instead_of_skipping_it() {
+        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
+            return;
+        };
+        pg.close().await;
+        let got = ingest_one(&pg, &GoneTranscript, "/gone.jsonl").await;
+        assert!(got.is_err(), "a read that failed was reported as {:?}", got.map(|o| o.skipped));
+    }
 
     /// A task queued BEFORE consent was withdrawn must not read the file after
     /// it (#218): the per-file handler re-checks, so "off" takes effect on the
@@ -1052,8 +1161,8 @@ mod tests {
             bool,               // started_at is historical
             Option<String>,     // provider
             Option<String>,     // model
-            Option<i32>,        // tokens_in
-            Option<i32>,        // tokens_out
+            Option<i64>,        // tokens_in
+            Option<i64>,        // tokens_out
             bool,               // meta_synced_at IS NOT NULL
         );
         let (project_id, backfilled, historical, provider, model, tokens_in, tokens_out, meta_synced):

@@ -18,7 +18,7 @@ create table if not exists sync_state (
 , local_version   bigint
 , remote_version  bigint
 , state           text           not null default 'pending'
-      check (state in ('pending', 'synced', 'error', 'skipped'))
+      check (state in ('pending', 'synced', 'partial', 'error', 'skipped'))
 , last_error      text
 , attempted_at    timestamptz
 , synced_at       timestamptz
@@ -39,7 +39,7 @@ local uuid: uuids differ per machine, so a row keyed on one could not be
 reconciled against the other side.';
 
 comment on column sync_state.state
-     is 'pending → not yet reconciled; synced → both sides agree; error → last attempt failed (see last_error); skipped → deliberately not synced (private repo, deactivated metric).';
+     is 'pending → not yet reconciled; synced → both sides agree; partial → they agree except what last_error names (a file over the request cap), synced_at set; error → last attempt failed (see last_error); skipped → deliberately not synced (private repo, deactivated metric).';
 comment on column sync_state.entity_key
      is 'The entity''s DURABLE key, not a local uuid: repo_key for a repository, metric key for the catalogue. A local uuid differs between installs, so a sync row keyed on one could never be reconciled against the other side.';
 comment on column sync_state.last_error

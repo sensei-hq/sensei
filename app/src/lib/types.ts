@@ -728,6 +728,9 @@ export interface PatternEntry {
   ftrDelta?: number | null;
   /** How many code sites carry this pattern (or the anti-pattern). */
   instanceCount?: number;
+  /** For the folded "rework hotspots" anti-pattern (#287): its files, grouped
+   *  by top-level directory, largest group first. */
+  groups?: Array<{ directory: string; files: string[] }>;
 }
 
 export interface Recommendation {
@@ -1606,14 +1609,13 @@ export interface ScheduledTask {
   last_run_at: string | null;
   last_ok: boolean | null;
   last_error: string | null;
-  /** Optional because the daemon does not send them. Both were hardcoded null
-   *  by the old static handler and are absent from the schedules-backed one;
-   *  `next_run_at` is derivable from `last_run_at + interval_secs` and `avg_ms`
-   *  has no source at all yet. Kept typed rather than deleted so the columns
-   *  that render them stay compilable, and optional rather than `| null` so
-   *  nothing reads them as a value the wire promises. */
-  next_run_at?: string | null;
-  avg_ms?: number | null;
+  /** When it runs next (RFC-3339), from the daemon's own schedule rules —
+   *  null when the schedule is disabled (#96). */
+  next_run_at: string | null;
+  /** Mean duration of the timed passes, in ms — null before the first (#96). */
+  avg_ms: number | null;
+  /** When the pass now in progress started (RFC-3339); null when idle (#283). */
+  running_since: string | null;
 }
 
 // ─── Metric computation status (sensei.metric_status) ────────────────────────
@@ -1733,7 +1735,8 @@ export interface SyncStateRow {
   entity: string;
   entity_key: string;
   direction: 'push' | 'pull';
-  state: 'pending' | 'synced' | 'error' | 'skipped';
+  /** `partial`: agreed except what `last_error` names; `synced_at` is set. */
+  state: 'pending' | 'synced' | 'partial' | 'error' | 'skipped';
   /** The failure message, or on a `skipped` row the REASON — which is not a
    *  fault. Null on `synced`: the writer clears it, because a stale message
    *  beside a success reads as "it failed". */
@@ -1743,7 +1746,7 @@ export interface SyncStateRow {
   updated_at: string;
 }
 
-/** `GET /api/dojo/sync-state`. Rows arrive worst-first (error, pending, skipped,
+/** `GET /api/dojo/sync-state`. Rows arrive worst-first (error, pending, partial, skipped,
  *  synced) so a caller rendering the head of the list sees what needs attention
  *  without re-ranking. `counts` is the by-state tally for a summary line. */
 export interface SyncStateResponse {

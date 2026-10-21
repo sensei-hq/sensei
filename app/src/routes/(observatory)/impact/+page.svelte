@@ -1,23 +1,30 @@
 <script lang="ts">
-  import { EmptyState, Eyebrow, MoeReasoningPanel } from '$lib/components';
+    import Kanji from '$lib/components/Kanji.svelte';
+  import { invalidateAll } from '$app/navigation';
+  import { EmptyState, MoeReasoningPanel, PageHeader, Screen, ScreenState, UnreadProjectsNotice } from '$lib/components';
+  import { railIcon } from '../observatory-nav';
   import {
     formatDeltaPct,
     pct,
     verdictMeta as meta,
     verdictToneClass as toneClass,
+    bucketImpact,
     type ImpactRow,
   } from '$lib/impact.js';
 
   let { data } = $props();
 
+  // No buckets means the read failed (#288): the page shows that error.
+  const buckets = $derived(data.buckets ?? bucketImpact([]));
+
   // Flatten buckets into a single ordered feed for the aside list.
   // Order — negative first (loudest to act on), then positive, neutral,
   // pending. Within each bucket the buckets already sort by |ftrDelta|.
   const flat = $derived<ImpactRow[]>([
-    ...data.buckets.negative,
-    ...data.buckets.positive,
-    ...data.buckets.neutral,
-    ...data.buckets.pending,
+    ...buckets.negative,
+    ...buckets.positive,
+    ...buckets.neutral,
+    ...buckets.pending,
   ]);
 
   // The picked-row id — null until the user clicks a row, at which point
@@ -30,38 +37,48 @@
   const openVm = $derived(open ? meta(open.verdict) : null);
 </script>
 
-<div class="flex flex-col h-full" data-impact-total={data.total}>
-  <!-- Header — kanji + eyebrow + title + description + 4 verdict counts -->
-  <div class="flex items-center gap-5 pt-5 pb-4 px-6 border-b border-paper-edge">
-    <span class="kanji text-3xl text-accent leading-none">果</span>
-    <div class="flex-1 min-w-0">
-      <p class="m-0 mb-1"><Eyebrow>Observatory · Change impact</Eyebrow></p>
-      <h1 class="display text-xl font-normal m-0">Did sensei's advice actually work?</h1>
-      <p class="text-sm text-ink-mute mt-1 mb-0 max-w-[720px] leading-relaxed">
-        Each accepted recommendation gets a measurement window. FTR baseline
-        vs current is compared. The MOE panel writes the reasoning.
-      </p>
+<!-- List beside detail: each column scrolls itself, under a fixed header (#293). -->
+<Screen fill data-impact-total={data.error ? undefined : data.total}>
+  {#snippet header()}
+    <PageHeader
+      kanji="果"
+      icon={railIcon('/impact')}
+      eyebrow="Observatory · Change impact"
+      title="Did sensei's advice actually work?"
+      description="Each accepted recommendation gets a measurement window. FTR baseline vs current is compared. The MOE panel writes the reasoning."
+    >
+      {#snippet right()}
+        {#if !data.error}
+          <div class="flex gap-5 pl-5 border-l border-paper-edge">
+            <div class="text-center">
+              <div class="font-mono text-lg font-light text-success">{buckets.positive.length}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">positive</div>
+            </div>
+            <div class="text-center">
+              <div class="font-mono text-lg font-light text-ink">{buckets.neutral.length}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">neutral</div>
+            </div>
+            <div class="text-center">
+              <div class="font-mono text-lg font-light text-warning">{buckets.negative.length}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">negative</div>
+            </div>
+            <div class="text-center">
+              <div class="font-mono text-lg font-light text-ink-soft">{buckets.pending.length}</div>
+              <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">pending</div>
+            </div>
+          </div>
+        {/if}
+      {/snippet}
+    </PageHeader>
+  {/snippet}
+  {#if data.error}
+    <div class="p-8">
+      <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
     </div>
-    <div class="flex gap-5 pl-5 border-l border-paper-edge">
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-success">{data.buckets.positive.length}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">positive</div>
-      </div>
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-ink">{data.buckets.neutral.length}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">neutral</div>
-      </div>
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-warning">{data.buckets.negative.length}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">negative</div>
-      </div>
-      <div class="text-center">
-        <div class="font-mono text-lg font-light text-ink-soft">{data.buckets.pending.length}</div>
-        <div class="text-xs uppercase tracking-wider text-ink-faint mt-1">pending</div>
-      </div>
-    </div>
-  </div>
-
+  {:else}
+  {#if data.unread.length > 0}
+    <div class="px-6 pt-4"><UnreadProjectsNotice unread={data.unread} /></div>
+  {/if}
   {#if data.total === 0 || !open}
     <div class="p-6">
       <EmptyState
@@ -87,7 +104,7 @@
             onclick={() => (openId = r.id)}
           >
             <div class="flex items-center gap-2">
-              <span class="kanji text-sm {toneClass(vm.tone)}">{vm.glyph}</span>
+              <Kanji char={vm.glyph} size="inherit" tone="inherit" class="text-sm {toneClass(vm.tone)}" />
               <span class="text-xs uppercase tracking-wider {toneClass(vm.tone)}">{r.verdict}</span>
               <span class="flex-1"></span>
               <span
@@ -136,7 +153,7 @@
               class:border-warning={openVm.tone === 'warning'}
               class:border-paper-edge={openVm.tone === 'ink'}
             >
-              <span class="kanji text-sm {toneClass(openVm.tone)}">{openVm.glyph}</span>
+              <Kanji char={openVm.glyph} size="inherit" tone="inherit" class="text-sm {toneClass(openVm.tone)}" />
               <span class="text-xs uppercase tracking-wider font-medium {toneClass(openVm.tone)}">
                 {openVm.label}
               </span>
@@ -186,4 +203,5 @@
       </main>
     </div>
   {/if}
-</div>
+  {/if}
+</Screen>

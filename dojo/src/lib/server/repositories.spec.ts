@@ -63,11 +63,22 @@ describe('registerRepositories', () => {
 		const db = {
 			rpc: (fn: string, args: Record<string, unknown>) => {
 				calls.push({ fn, args });
-				return { single: async () => respond(args) };
+				const answer = () => (fn === 'file_repository_project' ? fileAnswer(args) : respond(args));
+				// `.single()` for a row-returning function, awaited directly for a
+				// scalar one — as supabase-js offers both.
+				return {
+					single: async () => answer(),
+					then: (ok: (v: unknown) => unknown, bad?: (e: unknown) => unknown) =>
+						Promise.resolve(answer()).then(ok, bad)
+				};
 			}
 		};
 		return { db: db as never, calls };
 	}
+	let fileAnswer: (args: Record<string, unknown>) => { data: unknown; error: unknown } = (args) => ({
+		data: `p-${args.p_slug}`,
+		error: null
+	});
 	const filed = (args: Record<string, unknown>) => ({
 		data: { tenant_id: 't-acme', tenant_key: 'organization/acme', repository_id: `r-${args.p_repo_key}`, reason: null },
 		error: null
@@ -143,6 +154,50 @@ describe('registerRepositories', () => {
 		]);
 		expect(out.mapped.map((m) => m.repo_key)).toEqual(['github.com/acme/api', 'github.com/acme/web']);
 		expect(out.unmapped).toHaveLength(1);
+	});
+
+	// #299 (decided: one dōjō project per sensei project): the daemon sends each
+	// repository's sensei project, and a mapped repository is filed under it.
+	const PROJECT = { slug: 'sensei', name: 'sensei' };
+
+	it('files a mapped repository under the project the daemon sent', async () => {
+		const { db, calls } = rpcDb(filed);
+		const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api', project: PROJECT }]);
+		expect(calls[1]).toEqual({
+			fn: 'file_repository_project',
+			// No classification: the database derives it from where the repository lives.
+			args: { p_repository_id: 'r-github.com/acme/api', p_slug: 'sensei', p_name: 'sensei' }
+		});
+		expect(out.mapped[0]).toMatchObject({ repo_key: 'github.com/acme/api', project_id: 'p-sensei' });
+	});
+
+	it('files nothing for a repository sent without a project', async () => {
+		const { db, calls } = rpcDb(filed);
+		const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api' }]);
+		expect(calls.map((c) => c.fn)).toEqual(['register_repository']);
+		expect(out.mapped[0].project_id).toBeUndefined();
+	});
+
+	it('files nothing for a repository that did not map', async () => {
+		const { db, calls } = rpcDb(() => ({
+			data: { tenant_id: null, tenant_key: null, repository_id: null, reason: 'no_connection' },
+			error: null
+		}));
+		await registerRepositories(db, [{ repo_key: 'github.com/acme/api', project: PROJECT }]);
+		expect(calls.map((c) => c.fn)).toEqual(['register_repository']);
+	});
+
+	it('reports a filing that failed on that repository, without hiding the registration', async () => {
+		const saved = fileAnswer;
+		fileAnswer = () => ({ data: null, error: { message: 'not a member of this repository\'s tenant' } });
+		try {
+			const { db } = rpcDb(filed);
+			const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api', project: PROJECT }]);
+			expect(out.mapped[0]).toMatchObject({ repo_key: 'github.com/acme/api', project_error: "not a member of this repository's tenant" });
+			expect(out.mapped[0].project_id).toBeUndefined();
+		} finally {
+			fileAnswer = saved;
+		}
 	});
 
 	it('THROWS on a database error rather than reporting the repository unmapped', async () => {

@@ -21,7 +21,9 @@
 //! not a prompt body); the daemon set it, so it is safe to mirror.
 
 use crate::runs::{Run, RunEvent, RunEventKind};
-use dojo_protocol::relay::{RelaySegment, RelaySessionUpdate, SegmentState};
+use dojo_protocol::relay::{
+    RelayConstitution, RelayProjectInfo, RelaySegment, RelaySessionUpdate, SegmentState,
+};
 
 /// A short, single-line label bounded to `max` chars (ellipsized). Keeps the
 /// mirrored `goal` a human phrase, never an unbounded prompt body. Shares the
@@ -198,23 +200,19 @@ fn phase_event_state(kind: RunEventKind) -> Option<SegmentState> {
     }
 }
 
+/// The project a run is in, for the dōjō to attach the session to: its slug and
+/// resolved constitution. A run outside any project names none. Pure.
+pub fn run_project(
+    slug: Option<String>,
+    constitution: Option<RelayConstitution>,
+) -> Option<RelayProjectInfo> {
+    slug.map(|slug| RelayProjectInfo { slug, constitution })
+}
+
 /// Progress rollup for the session update from projected plan segments:
 /// `(done, total)` where `total` = segment count and `done` = count in the
 /// terminal `Done` state. Matches the TodoWrite path's rollup so the phone reads
 /// both run kinds the same way.
-/// Map a dōjō membership `kind` (`employer | client | community | personal`) to a
-/// `dojo.project_classification` (`company | client | personal | community`) for a
-/// project bound to that membership. Only `employer → company` differs; an unknown
-/// / unbound kind falls to `personal` (an unbound project is the user's own). Pure.
-pub fn kind_to_classification(kind: &str) -> &'static str {
-    match kind {
-        "employer" => "company",
-        "client" => "client",
-        "community" => "community",
-        _ => "personal",
-    }
-}
-
 pub fn segment_progress(segments: &[RelaySegment]) -> (i32, i32) {
     let total = segments.len() as i32;
     let done = segments.iter().filter(|s| s.state == SegmentState::Done).count() as i32;
@@ -228,17 +226,17 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn kind_to_classification_maps_employer_to_company_else_identity() {
-        assert_eq!(kind_to_classification("employer"), "company");
-        assert_eq!(kind_to_classification("client"), "client");
-        assert_eq!(kind_to_classification("community"), "community");
-        assert_eq!(kind_to_classification("personal"), "personal");
+    fn a_run_in_a_project_names_it_by_slug_with_its_constitution() {
+        let c = RelayConstitution { rules: vec![], conflicts: vec![], locks: 2 };
+        let p = run_project(Some("sensei-hq".into()), Some(c.clone())).unwrap();
+        assert_eq!(p.slug, "sensei-hq");
+        assert_eq!(p.constitution, Some(c));
     }
 
     #[test]
-    fn kind_to_classification_unknown_falls_to_personal() {
-        assert_eq!(kind_to_classification(""), "personal");
-        assert_eq!(kind_to_classification("bogus"), "personal");
+    fn a_run_outside_any_project_names_none() {
+        let c = RelayConstitution { rules: vec![], conflicts: vec![], locks: 0 };
+        assert_eq!(run_project(None, Some(c)), None);
     }
 
     fn run(over: impl FnOnce(&mut Run)) -> Run {

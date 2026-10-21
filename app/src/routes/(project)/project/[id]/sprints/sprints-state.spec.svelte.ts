@@ -3,7 +3,7 @@
 // What must never happen here: "no tracker connected" because a read failed, a
 // 0 where the daemon said null, or a sprint total built by adding its tickets.
 import { describe, it, expect } from 'vitest';
-import { SprintsScreen, usageCells, type SprintsApi } from './sprints-state.svelte.js';
+import { SprintsState, usageCells, type SprintsApi } from './sprints-state.svelte.js';
 import type { ApiResult } from '$lib/api.js';
 import type {
   SprintUsageRow,
@@ -127,7 +127,7 @@ function daemon(over: Partial<SprintsApi> = {}) {
 
 async function ready(over: Partial<SprintsApi> = {}) {
   const d = daemon(over);
-  const s = new SprintsScreen(d.api, P);
+  const s = new SprintsState(d.api, P);
   await s.load();
   return { s, ...d };
 }

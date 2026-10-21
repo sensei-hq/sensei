@@ -1,31 +1,38 @@
-# Checkpoint — 2026-10-15
+# Checkpoint — 2026-10-20
 
-**Slice:** #268, the dōjō diagram screens (next). #225 is live-verified; #238 is built.
+**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md). Waves 1 and 2 done; wave 3 in progress.
 
-**Done** (pushed to develop, through 54e60083):
-- #238 steps 2–5: the usage, routing, gate and drive mods. Each was live-verified.
-  The policy calls are in `docs/decisions.md` 2026-10-15; PRD M3 §Usage & cost capture.
-- #225 live verification on the local stack: all 5 done-gate lines pass.
-  Defects found and fixed:
-  - `dojo.graph_schema_indexes.name` is now nullable.
-  - A deleted file leaves the index (`repos_in_scope`; `prune_vanished` reads `files` rows).
-  - `database/tests/run.sh` routes each directory to its scope's database.
-  - The app states skip reasons in words.
+**Done:**
+- **v0.15.0 released** (tag c7803b82; main c79d69c0; fix 9948ac80 on develop). Release workflow green; dōjō Worker
+  serves 0.15.0; dōjō production reshaped (reconcile --allow-destructive → policies → `dbd diff` clean, run 39496401704).
+- Carries #293 step 0 (shared `Screen`), #299 S1/S2 (shared projects), #301 (personal connection, auto-elect),
+  #300 (system-browser sign-in + account guard), #296 (closed, live), #295 (closed), display-name prefill.
 
-**Remaining:** #225 decisions (below) → #268 dōjō diagram screens → #254 JPA 8b.
-#238 stays open until `make bump` ships the mods (C-13 install path).
+**Remaining:**
+- Live proof of #301/#299/#300: user runs `sensei auth approve` (daemon reinstall revoked keychain, #283), signs in to
+  dojo.sensei-hq.com once (backfills the personal connection), then a sync pass → check `sensei-hq/sensei` is filed
+  under organization/sensei-hq and personal repos under the personal dōjō.
+- #299 S3 done on develop (99cddc18): the relay payload names a project by slug + constitution only.
+- #302 done on develop (17302c40), debug daemon installed: one keychain item per identity. Needs one approval
+  (two prompts this once) → verify `credentials.jerrythomas` present, old items gone; then close.
+- #293 step 1 done for the app (c290f38e … bae2126f) and dōjō `you/[section]` (9f11df08) +
+  `org/[slug]/[section]` (785279a6); deep link to a run fixed (a0b8aaf4, live). Next: fold `runs/[run_id]` into
+  RelayDetail. User asked (2026-10-21) for a dōjō feature plan (projects/teams/roles, ADO/Jira, two-way sync,
+  release pipelines + DORA) from docs/prd + docs/mockups — inventory in progress. Local dōjō verify: a minted magic link for the local layout-verify test account. Step 2 after. #304: 26 writes still swallow failures (fix per screen).
+- #294, #297, #298.
+- Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
+  wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** `/sensei:session refocus`, then #268. Its fixture is the local Supabase tenant
-`personal/graphdev`, holding this repository's develop graph. Start the stack with
-`cd dojo && bun run dev -- --host 127.0.0.1`.
+**Next command:** after `sensei auth approve`: check the keychain migration (#302) and the sync (#301/#299); then #293 step 1 in the dōjō (`runs/[run_id]` next).
 
 **Open questions:**
-- #225: `pg_store/tests.rs` exceeds the 3 MB slice cap. Raise the cap, chunk the slice, or split the file?
-- #225: should one over-cap file be a partial success rather than error/never-agreed?
-- Does `--resume` keep the session id and reset /cost? (`GREATEST` would under-count)
-- Should `check_hooks` WARN when the mods module is missing?
+- #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
+- #149: communities — Leiden/Louvain (recommended) or hierarchy grouping?
+- #133: project glyphs in icon mode, and the dōjō glyph default (kanji recommended for both).
+- #282 needs an Apple Developer account. #199: headless Linux credential store or drop Linux daemon artifacts?
+- #194: drop the 145k/day `task_started`/`task_completed` rows? Orphaned Cloudflare build trigger: delete it?
 
 **Known-broken / pending:**
-- This repository's graph row reads `error` until the over-cap decision is made.
-- The mods and the new columns reach installs only at the next release.
-- The committed `database/design.dbml` is stale against `dbd dbml` (pre-existing).
+- Keychain approval needed after every daemon reinstall (#283 until #282). `sensei auth status` shows both identities
+  need approval; joelthomas8847 never signed in here.
+- #284: inspect captures blank until `make dev-signing-cert` + Screen Recording grant. `database/design.dbml` is stale.

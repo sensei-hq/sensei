@@ -4,15 +4,15 @@
   import { page } from '$app/state';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
-  import SprintsPanel from './SprintsPanel.svelte';
-  import { SprintsScreen } from './sprints-state.svelte.js';
+  import SprintsScreen from './SprintsScreen.svelte';
+  import { SprintsState } from './sprints-state.svelte.js';
 
   const projectId = $derived(page.params.id ?? '');
   // One screen state per project: switching project on this route starts fresh.
-  const screen = $derived(new SprintsScreen(senseiApi(appState.port), projectId));
+  const screen = $derived(new SprintsState(senseiApi(appState.port), projectId));
   $effect(() => {
     void screen.load();
   });
 </script>
 
-<SprintsPanel {screen} {projectId} />
+<SprintsScreen {screen} {projectId} />

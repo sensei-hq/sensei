@@ -226,10 +226,8 @@ pub(crate) async fn update_session_handler(
     let turns = body["turns"].as_i64().unwrap_or(0) as i32;
     let corrections = body["corrections"].as_i64().unwrap_or(0) as i32;
     let summary = body["summary"].as_str().filter(|s| !s.is_empty());
-    let tokens_in =
-        body["tokensIn"].as_i64().or_else(|| body["tokens_in"].as_i64()).map(|n| n as i32);
-    let tokens_out =
-        body["tokensOut"].as_i64().or_else(|| body["tokens_out"].as_i64()).map(|n| n as i32);
+    let tokens_in = body["tokensIn"].as_i64().or_else(|| body["tokens_in"].as_i64());
+    let tokens_out = body["tokensOut"].as_i64().or_else(|| body["tokens_out"].as_i64());
 
     match state
         .pg

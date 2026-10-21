@@ -132,6 +132,11 @@ async fn run_scheduled_inner<F, Fut>(
     if defer_first && let Err(e) = pg.defer_schedule_start(name).await {
         tracing::warn!(worker = name, error = %e, "scheduled: could not defer the first run");
     }
+    // Nothing of this worker runs yet in this process; a `running_since` left
+    // by the last one would read as a pass in progress (#283).
+    if let Err(e) = pg.clear_schedule_running(name).await {
+        tracing::warn!(worker = name, error = %e, "scheduled: could not clear a stale pass");
+    }
     let initial = pg.load_schedule(name).await.ok().flatten();
     let mut poll = Poll::new(initial.as_ref().map_or(60, |s| poll_secs(s.interval_secs)));
 
@@ -160,11 +165,25 @@ async fn run_scheduled_inner<F, Fut>(
             continue;
         }
 
-        let outcome = tick().await;
+        if let Err(e) = pg.mark_schedule_started(name).await {
+            tracing::warn!(worker = name, error = %e, "scheduled: could not record the start");
+        }
+        let overrun = |after: Duration| {
+            let pg = pg.clone();
+            async move {
+                let msg = format!("still running after {}s", after.as_secs());
+                tracing::warn!(worker = name, "scheduled: {msg}");
+                if let Err(e) = pg.mark_schedule_overrun(name, &msg).await {
+                    tracing::warn!(worker = name, error = %e, "scheduled: could not record the overrun");
+                }
+            }
+        };
+        let (outcome, duration_ms) =
+            watch_pass(run_pass(name, &tick), pass_limit(stored.interval_secs), overrun).await;
         if let Err(e) = &outcome {
             tracing::warn!(worker = name, error = %e, "scheduled: tick failed");
         }
-        if let Err(e) = pg.mark_schedule_run(name, outcome).await {
+        if let Err(e) = pg.mark_schedule_run(name, outcome, duration_ms).await {
             // Non-fatal: the work happened; only the bookkeeping failed. Dying
             // here would stop a healthy worker over a write to a status column.
             tracing::warn!(worker = name, error = %e, "scheduled: could not record the run");
@@ -172,9 +191,171 @@ async fn run_scheduled_inner<F, Fut>(
     }
 }
 
+/// Run one scheduled pass inside a `scheduled{worker="<name>"}` span, so every
+/// line the worker logs during it carries its name — the daemon's compact file
+/// log prints span fields on each line, which is what [`log_tail`] filters on
+/// (#96). Returns the outcome and how long the pass took.
+pub(crate) async fn run_pass<F, Fut>(name: &str, tick: &F) -> (Result<(), String>, u64)
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    use tracing::Instrument;
+    let started = std::time::Instant::now();
+    let outcome = tick().instrument(tracing::info_span!("scheduled", worker = name)).await;
+    (outcome, u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX))
+}
+
+/// How long one pass may run before it is recorded as overrunning (#283).
+///
+/// The question is "stuck?", not "slow?": the worker's own interval, but never
+/// under half an hour (a 15 s worker is not stuck at 16 s) and never over two
+/// hours (a daily worker blocked on a keychain prompt must not take a day to
+/// say so).
+pub(crate) fn pass_limit(interval_secs: u32) -> Duration {
+    Duration::from_secs(u64::from(interval_secs).clamp(30 * 60, 2 * 60 * 60))
+}
+
+/// Await `pass`; if it is still running after `limit`, call `on_overrun` once
+/// with that limit and keep waiting.
+///
+/// The pass is NOT cancelled. A pass stuck in a `spawn_blocking` keychain read
+/// cannot be stopped by dropping its future — the thread stays blocked — so
+/// cancelling would only let the next poll start a second read beside it. The
+/// loop stays sequential; the overrun is recorded so the stall is visible.
+pub(crate) async fn watch_pass<P, O, OFut>(pass: P, limit: Duration, on_overrun: O) -> P::Output
+where
+    P: std::future::Future,
+    O: FnOnce(Duration) -> OFut,
+    OFut: std::future::Future<Output = ()>,
+{
+    tokio::pin!(pass);
+    tokio::select! {
+        out = &mut pass => return out,
+        () = tokio::time::sleep(limit) => {}
+    }
+    on_overrun(limit).await;
+    pass.await
+}
+
+/// The last `n` log lines of one worker: those tagged `worker="<name>"`. The
+/// closing quote bounds the name, so `dojo_sync` never matches `dojo_sync_v2`.
+pub(crate) fn log_tail<S: AsRef<str>>(
+    lines: impl Iterator<Item = S>,
+    worker: &str,
+    n: usize,
+) -> Vec<String> {
+    let needle = format!("worker=\"{worker}\"");
+    let mut kept = std::collections::VecDeque::with_capacity(n);
+    for line in lines.filter(|l| l.as_ref().contains(&needle)) {
+        if kept.len() == n {
+            kept.pop_front();
+        }
+        kept.push_back(line.as_ref().to_string());
+    }
+    kept.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #96: a worker's log tail is the lines its passes logged, tagged
+    /// `worker="<name>"` — the exact name, so `dojo_sync` never pulls in a
+    /// `dojo_sync_v2`'s lines.
+    #[test]
+    fn a_log_tail_keeps_the_last_lines_of_that_worker_only() {
+        let lines = [
+            r#"INFO scheduled: a: one worker="dojo_sync""#,
+            r#"INFO scheduled: b: other worker="metrics""#,
+            r#"WARN scheduled: a: two worker="dojo_sync""#,
+            r#"INFO scheduled: a: lookalike worker="dojo_sync_v2""#,
+            r#"WARN ticker: three worker="dojo_sync" error=x"#,
+        ];
+        assert_eq!(
+            log_tail(lines.iter().copied(), "dojo_sync", 2),
+            vec![lines[2].to_string(), lines[4].to_string()]
+        );
+    }
+
+    /// A line a worker logs DURING its pass carries the tag — through the same
+    /// compact format the daemon's file log uses — so the tail sees what the
+    /// worker said, not only the ticker's own lines.
+    #[tokio::test]
+    async fn a_pass_tags_what_the_worker_logs_with_its_name() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let sink = buf.clone();
+        let layer = tracing_subscriber::fmt::layer()
+            .compact()
+            .with_ansi(false)
+            .with_writer(move || Capture(sink.clone()));
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let _ = run_pass("dojo_sync", &|| async {
+            tracing::warn!("persona skipped");
+            Ok::<(), String>(())
+        })
+        .await;
+
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let line = out.lines().find(|l| l.contains("persona skipped")).expect("logged");
+        assert!(line.contains(r#"worker="dojo_sync""#), "untagged: {line}");
+    }
+
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// #283: the limit is about STUCK, not slow — the interval, but never under
+    /// half an hour (a 15 s worker is not stuck at 16 s) nor over two hours (a
+    /// daily worker blocked on a prompt must not wait a day to say so).
+    #[test]
+    fn a_pass_limit_is_the_interval_within_half_an_hour_and_two_hours() {
+        assert_eq!(pass_limit(15), Duration::from_secs(1800));
+        assert_eq!(pass_limit(3600), Duration::from_secs(3600));
+        assert_eq!(pass_limit(86_400), Duration::from_secs(7200));
+    }
+
+    /// #283: a pass still running at its limit is reported ONCE, and is not
+    /// cancelled — its own outcome is still what the pass returns, so a blocked
+    /// keychain read is never abandoned and re-issued beside itself.
+    #[tokio::test(start_paused = true)]
+    async fn an_overrunning_pass_is_reported_once_and_still_finishes() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let out = watch_pass(
+            async {
+                tokio::time::sleep(Duration::from_secs(250)).await;
+                "finished"
+            },
+            Duration::from_secs(100),
+            move |after| async move { log.lock().unwrap().push(after) },
+        )
+        .await;
+        assert_eq!(out, "finished");
+        assert_eq!(*seen.lock().unwrap(), vec![Duration::from_secs(100)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_pass_inside_its_limit_is_not_reported() {
+        let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = called.clone();
+        let out = watch_pass(async { 7 }, Duration::from_secs(100), move |_| async move {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst)
+        })
+        .await;
+        assert_eq!(out, 7);
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     /// Is this tick ready RIGHT NOW? `biased` polls the tick first and falls
     /// through to an already-ready future when it is pending, so readiness is

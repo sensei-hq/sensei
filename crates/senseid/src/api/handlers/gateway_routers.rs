@@ -11,23 +11,65 @@ use axum::{
 };
 use serde::Deserialize;
 
+/// `configured` and `key_error` for one router (#285): `configured` is `null`
+/// when its key exists but could not be read, and `key_error` says why.
+fn configured_fields(
+    needs_key: bool,
+    standing: &gateway_keys::KeyStanding,
+) -> (serde_json::Value, serde_json::Value) {
+    use gateway_keys::KeyStanding;
+    use serde_json::Value;
+    match (needs_key, standing) {
+        (false, _) | (true, KeyStanding::Set(_)) => (Value::Bool(true), Value::Null),
+        (true, KeyStanding::NotSet) => (Value::Bool(false), Value::Null),
+        (true, KeyStanding::Unreadable(why)) => (Value::Null, Value::String(why.clone())),
+    }
+}
+
+/// Every router's current key, read in one blocking task, for
+/// `refresh_router_keys`. Shared by the set and clear handlers.
+async fn router_key_snapshot()
+-> Result<std::collections::HashMap<String, Option<String>>, (StatusCode, Json<serde_json::Value>)>
+{
+    tokio::task::spawn_blocking(|| {
+        REGISTRY
+            .iter()
+            .map(|r| (r.id.to_string(), crate::api::gateway_init::keychain_api_key(r.id)))
+            .collect()
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("keychain refresh spawn failed: {e}") })),
+        )
+    })
+}
+
 /// GET /api/gateway/routers — every known router + `configured` flag
 /// from Keychain.
 pub(crate) async fn list_routers(
     State(_state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    // Keychain reads are sync and may prompt — run off-runtime.
+    // Keychain reads are blocking (quiet since #283) — run off-runtime.
     let entries = tokio::task::spawn_blocking(|| {
         REGISTRY
             .iter()
             .map(|r| {
+                let standing = if r.needs_key {
+                    gateway_keys::key_standing(r.id)
+                } else {
+                    gateway_keys::KeyStanding::NotSet
+                };
+                let (configured, key_error) = configured_fields(r.needs_key, &standing);
                 serde_json::json!({
                     "id":           r.id,
                     "name":         r.name,
                     "providers":    r.providers,
                     "capabilities": r.capabilities,
                     "needs_key":    r.needs_key,
-                    "configured":   !r.needs_key || gateway_keys::has_key(r.id),
+                    "configured":   configured,
+                    "key_error":    key_error,
                 })
             })
             .collect::<Vec<_>>()
@@ -108,34 +150,24 @@ pub(crate) async fn set_router_key(
     }
     let id_clone = id.clone();
     let key_owned = body.key;
-    tokio::task::spawn_blocking(move || gateway_keys::set_key(&id_clone, &key_owned))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("keychain spawn failed: {e}") })),
-            )
-        })?
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("keychain write failed: {e}") })),
-            )
-        })?;
-    // Pre-fetch every router's current key in one spawn_blocking, then
-    // hand the gateway a resolver over the snapshot. Avoids N blocking
-    // blocking credential-store reads on the async runtime thread.
-    let all_keys: std::collections::HashMap<String, Option<String>> =
-        tokio::task::spawn_blocking(|| {
-            REGISTRY.iter().map(|r| (r.id.to_string(), gateway_keys::get_key(r.id).ok())).collect()
-        })
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("keychain refresh spawn failed: {e}") })),
-            )
-        })?;
+    // Saving a key is the user's own action, so it may prompt (#283).
+    tokio::task::spawn_blocking(move || {
+        gateway_keys::allow_prompt(|| gateway_keys::set_key(&id_clone, &key_owned))
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("keychain spawn failed: {e}") })),
+        )
+    })?
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("keychain write failed: {e}") })),
+        )
+    })?;
+    let all_keys = router_key_snapshot().await?;
     state.gateway.refresh_router_keys(|id| all_keys.get(id).cloned().flatten()).await;
     Ok(Json(serde_json::json!({ "ok": true, "configured": true })))
 }
@@ -156,34 +188,49 @@ pub(crate) async fn clear_router_key(
         ));
     }
     let id_clone = id.clone();
-    tokio::task::spawn_blocking(move || gateway_keys::delete_key(&id_clone))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("keychain spawn failed: {e}") })),
-            )
-        })?
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("keychain delete failed: {e}") })),
-            )
-        })?;
-    // Pre-fetch every router's current key in one spawn_blocking, then
-    // hand the gateway a resolver over the snapshot. Avoids N blocking
-    // blocking credential-store reads on the async runtime thread.
-    let all_keys: std::collections::HashMap<String, Option<String>> =
-        tokio::task::spawn_blocking(|| {
-            REGISTRY.iter().map(|r| (r.id.to_string(), gateway_keys::get_key(r.id).ok())).collect()
-        })
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("keychain refresh spawn failed: {e}") })),
-            )
-        })?;
+    // The user's own action, so it may prompt (#283).
+    tokio::task::spawn_blocking(move || {
+        gateway_keys::allow_prompt(|| gateway_keys::delete_key(&id_clone))
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("keychain spawn failed: {e}") })),
+        )
+    })?
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("keychain delete failed: {e}") })),
+        )
+    })?;
+    let all_keys = router_key_snapshot().await?;
     state.gateway.refresh_router_keys(|id| all_keys.get(id).cloned().flatten()).await;
     Ok(Json(serde_json::json!({ "ok": true, "configured": false })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configured_fields;
+    use crate::gateway_keys::KeyStanding;
+    use serde_json::{Value, json};
+
+    /// #285: the listing tells "not set" from "could not read".
+    #[test]
+    fn a_router_key_is_configured_unset_or_unreadable() {
+        assert_eq!(configured_fields(false, &KeyStanding::NotSet), (json!(true), Value::Null));
+        assert_eq!(
+            configured_fields(true, &KeyStanding::Set("sk".into())),
+            (json!(true), Value::Null)
+        );
+        assert_eq!(configured_fields(true, &KeyStanding::NotSet), (json!(false), Value::Null));
+        assert_eq!(
+            configured_fields(
+                true,
+                &KeyStanding::Unreadable("keychain access needs approval".into())
+            ),
+            (Value::Null, json!("keychain access needs approval"))
+        );
+    }
 }

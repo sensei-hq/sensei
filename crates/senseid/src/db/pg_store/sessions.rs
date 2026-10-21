@@ -46,8 +46,8 @@ pub struct SessionOutcomeRow<'a> {
     pub turns: i32,
     pub corrections: i32,
     pub summary: Option<&'a str>,
-    pub tokens_in: Option<i32>,
-    pub tokens_out: Option<i32>,
+    pub tokens_in: Option<i64>,
+    pub tokens_out: Option<i64>,
 }
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
@@ -83,8 +83,8 @@ impl PgStore {
             chrono::DateTime<chrono::Utc>,
             Option<chrono::DateTime<chrono::Utc>>,
             Option<String>,
-            Option<i32>,
-            Option<i32>,
+            Option<i64>,
+            Option<i64>,
             Option<f64>,
             Option<String>,
             Option<String>,
@@ -288,7 +288,7 @@ impl PgStore {
     pub async fn get_session(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         // folder_id is nullable since P1 (a pruned raw-cwd folder SET-NULLs it; the session
         // survives via repo_folder_id) — decode as Option so a pruned row doesn't error.
-        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<i32>, Option<i32>, Option<f64>, Option<String>, Option<String>)> =
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<i64>, Option<i64>, Option<f64>, Option<String>, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, folder_id, task, acp_id, outcome::text, ftr, turns, corrections, started_at, completed_at, \
                         tokens_in, tokens_out, EXTRACT(EPOCH FROM duration)::float8, provider, model FROM activity.sessions WHERE id = $1"
@@ -537,16 +537,15 @@ impl PgStore {
     /// clears `analyzed_at` so the next `AnalyzeProject` re-derives every session
     /// from scratch with the current logic (used while metrics are being refined).
     /// Only sessions with a `client_session_id` (hook/transcript-captured) are
-    /// reset. Returns the number of sessions marked.
+    /// reset, selected by `project_id` as `get_project_sessions_needing_enrichment`
+    /// selects them — most sessions carry no folder. Returns the number marked.
     pub async fn reset_project_sessions_for_reenrichment(
         &self,
         project_id: &uuid::Uuid,
     ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
-            "UPDATE activity.sessions s SET analyzed_at = NULL
-               FROM sensei.folder_projects fp
-              WHERE fp.folder_id = s.folder_id AND fp.project_id = $1
-                AND s.client_session_id IS NOT NULL",
+            "UPDATE activity.sessions SET analyzed_at = NULL
+              WHERE project_id = $1 AND client_session_id IS NOT NULL",
         )
         .bind(project_id)
         .execute(&self.pool)
@@ -944,19 +943,24 @@ impl PgStore {
         let mut used = 0i64;
         let mut partial = 0i64;
         let mut ignored = 0i64;
+        let mut unknown = 0i64;
         for (v, n) in rows {
             match v.as_str() {
                 "used" => used = n,
                 "partial" => partial = n,
                 "ignored" => ignored = n,
+                "unknown" => unknown = n,
                 _ => {}
             }
         }
+        // `unknown` (no response captured, #278) is reported but kept out of
+        // the judged total, so it never inflates the ignored share.
         let total = used + partial + ignored;
         Ok(serde_json::json!({
             "used":    used,
             "partial": partial,
             "ignored": ignored,
+            "unknown": unknown,
             "total":   total,
         }))
     }
@@ -1014,8 +1018,8 @@ impl PgStore {
             Option<serde_json::Value>,
             Option<bool>,
             Option<serde_json::Value>,
-            Option<i32>,
-            Option<i32>,
+            Option<i64>,
+            Option<i64>,
             Option<f64>,
             Option<String>,
             Option<String>,
@@ -1104,29 +1108,49 @@ impl PgStore {
     /// "result needed follow-ups" signal. Returns `(folder_id, file,
     /// max_session_edits, total_edits)` only for files whose busiest single
     /// session reaches `min_session_edits`.
-    /// `folders = Some(ids)` scopes derivation to just those folders (incremental
-    /// re-derive — only folders touched by newly-enriched sessions); `None` =
-    /// the whole project (full refresh / on-demand).
+    ///
+    /// Whole project, always (#287). A file is placed by its own path: under the
+    /// innermost repository root of the project that contains it, reported
+    /// relative to that root — most sessions carry a project but no folder, so
+    /// the session cannot place it. A path under none (`~/.claude/…`) is not the
+    /// project's. A relative path stays with its session's folder, when it has
+    /// one. Each edit event counts once, so duplicated events (#289) don't.
     pub async fn get_file_churn_stats(
         &self,
         project_id: &uuid::Uuid,
         min_session_edits: i64,
-        folders: Option<&[uuid::Uuid]>,
     ) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
         let rows: Vec<(uuid::Uuid, String, i64, i64)> = sqlx_core::query_as::query_as(
-            "WITH per_session AS (
-                 SELECT s.folder_id,
-                        ae.payload->'tool_input'->>'file_path' AS file,
-                        ae.session_id,
-                        count(*) AS edits
-                 FROM activity.assistant_events ae
-                 JOIN activity.sessions s ON s.client_session_id = ae.session_id
-                 WHERE s.project_id = $1
-                   AND ($3::uuid[] IS NULL OR s.folder_id = ANY($3))
-                   AND ae.event_type = 'PostToolUse'
-                   AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
-                   AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
-                 GROUP BY s.folder_id, ae.payload->'tool_input'->>'file_path', ae.session_id
+            "WITH roots AS (
+                 SELECT DISTINCT ON (f.repository_id) f.id AS folder_id, f.abs_path
+                   FROM sensei.folders f
+                   JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+                  WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL
+                  ORDER BY f.repository_id, length(f.abs_path) ASC
+             ), edits AS (
+                 SELECT DISTINCT s.folder_id AS session_folder, ae.session_id, ae.ts,
+                        ae.payload->'tool_input'->>'file_path' AS path
+                   FROM activity.assistant_events ae
+                   JOIN activity.sessions s ON s.client_session_id = ae.session_id
+                  WHERE s.project_id = $1
+                    AND ae.event_type = 'PostToolUse'
+                    AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
+                    AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
+             ), placed AS (
+                 (SELECT DISTINCT ON (e.session_id, e.ts, e.path)
+                         r.folder_id, e.session_id,
+                         substr(e.path, length(r.abs_path) + 2) AS file
+                    FROM edits e
+                    JOIN roots r ON starts_with(e.path, r.abs_path || '/')
+                   ORDER BY e.session_id, e.ts, e.path, length(r.abs_path) DESC)
+                 UNION ALL
+                 SELECT session_folder, session_id, path
+                   FROM edits
+                  WHERE left(path, 1) <> '/' AND session_folder IS NOT NULL
+             ), per_session AS (
+                 SELECT folder_id, file, session_id, count(*) AS edits
+                   FROM placed
+                  GROUP BY folder_id, file, session_id
              )
              SELECT folder_id, file,
                     max(edits)::bigint AS max_session_edits,
@@ -1137,7 +1161,6 @@ impl PgStore {
         )
         .bind(project_id)
         .bind(min_session_edits)
-        .bind(folders.map(<[uuid::Uuid]>::to_vec))
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1395,8 +1418,8 @@ impl PgStore {
         client_session_id: &str,
         provider: Option<&str>,
         model: Option<&str>,
-        tokens_in: Option<i32>,
-        tokens_out: Option<i32>,
+        tokens_in: Option<i64>,
+        tokens_out: Option<i64>,
         split: Option<&crate::transcript::SessionTokens>,
     ) -> Result<(), String> {
         // COALESCE throughout: a source that reports no split must not erase what
@@ -1429,6 +1452,49 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Set a session's token columns from `activity.turn_usage` (#280): the ONE
+    /// writer for a session with turn rows, so a turn both the hook and the
+    /// transcript saw is counted once and a subagent's hook-only turn is counted
+    /// at all. `tokens_in` keeps its meaning — ALL input (fresh + cache read +
+    /// cache write). `false` when nothing changed: the session has no turn rows (a
+    /// source that reports only a session total keeps it, untouched), or already
+    /// holds its sums.
+    pub async fn refresh_session_tokens(&self, client_session_id: &str) -> Result<bool, String> {
+        Ok(self.write_session_token_sums(Some(client_session_id)).await? > 0)
+    }
+
+    /// The backfill's repair pass: every session with turn rows brought to its
+    /// sums, writing only those that differ. Returns the sessions changed.
+    pub async fn refresh_all_session_tokens(&self) -> Result<u64, String> {
+        self.write_session_token_sums(None).await
+    }
+
+    async fn write_session_token_sums(&self, only: Option<&str>) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE activity.sessions s
+                SET tokens_in    = u.fresh + u.cache_read + u.cache_write,
+                    tokens_fresh = u.fresh,
+                    cache_read   = u.cache_read,
+                    cache_write  = u.cache_write,
+                    tokens_out   = u.output
+               FROM (SELECT session_id,
+                            sum(fresh)::int8 AS fresh, sum(cache_read)::int8 AS cache_read,
+                            sum(cache_write)::int8 AS cache_write, sum(output)::int8 AS output
+                       FROM activity.turn_usage
+                      WHERE $1::text IS NULL OR session_id = $1
+                      GROUP BY session_id) u
+              WHERE s.client_session_id = u.session_id
+                AND (s.tokens_in, s.tokens_fresh, s.cache_read, s.cache_write, s.tokens_out)
+                    IS DISTINCT FROM
+                    (u.fresh + u.cache_read + u.cache_write, u.fresh, u.cache_read, u.cache_write, u.output)",
+        )
+        .bind(only)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
     }
 
     /// Raise a session's list-price cost to `usd` (#238): the largest /cost total

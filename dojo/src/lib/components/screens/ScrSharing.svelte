@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
+	import { SectionHead } from '$lib/components/kit';
 	// Sharing — the DECISION surface for `dojo.all_my_repositories`.
 	//
 	// Every other consumer of that view reads it: the daemon through
@@ -37,14 +39,17 @@
 	}
 </script>
 
-<section class="flex flex-col gap-4">
-	<header class="flex flex-col gap-1">
-		<h1 class="text-lg font-heading text-ink">Sharing</h1>
-		<p class="text-sm text-ink-soft">
-			Which repositories send metrics to a dōjō. A repository syncs only when it
-			is permitted <em>and</em> whoever holds the choice has made it.
-		</p>
-	</header>
+<Screen>
+	{#snippet header()}
+		<div class="px-4 pt-4 md:px-8 md:pt-8">
+			<SectionHead
+				eyebrow="You · sharing"
+				title="Sharing"
+				description="Which repositories send metrics to a dōjō. A repository syncs only when it is permitted and whoever holds the choice has made it."
+			/>
+		</div>
+	{/snippet}
+<section class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 
 	{#if error}
 		<!-- An error state, never an empty list. -->
@@ -98,3 +103,4 @@
 		</ul>
 	{/if}
 </section>
+</Screen>

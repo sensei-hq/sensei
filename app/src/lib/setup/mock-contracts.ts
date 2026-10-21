@@ -55,7 +55,7 @@ export function mockProject(overrides: Partial<DaemonProject> = {}): DaemonProje
     stack: { languages: ['TypeScript'], frameworks: ['SvelteKit'], runtimes: ['Node 20'], services: [] },
     icon: { kind: 'kanji', value: '工' },
     folders: [
-      { id: 'f-1', name: 'app', path: '/Users/test/code/app', kind: 'git', role: 'frontend' },
+      { id: 'f-1', name: 'app', path: 'app', abs_path: '/Users/test/code/app', kind: 'git', role: 'frontend' },
     ],
     ...overrides,
   };
@@ -97,6 +97,7 @@ export function mockPreferences(overrides: Partial<PreferencesData> = {}): Prefe
     shareSchedule: 'weekly-saturday', downloadCollective: 'weekly',
     correctionAggressiveness: 'balanced', digestCadence: 'daily',
     nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
+    glyphs: 'kanji',
     ...overrides,
   };
 }

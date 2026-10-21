@@ -1,6 +1,7 @@
 <script lang="ts">
+    import { railIcon } from "../../observatory-nav";
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, EmptyState, Kanji, ScreenState } from '$lib/components';
+  import { PageHeader, Screen, EmptyState, Kanji, ScreenState } from '$lib/components';
   import type { DojoMembership } from '$lib/types.js';
   import {
     boundProjectsSummary,
@@ -63,36 +64,40 @@
   </article>
 {/snippet}
 
-<PageHeader
-  eyebrow="Observatory · Dōjō connections"
-  kanji="連"
-  title="Where your sensei meets the team's Dōjō."
-  description="Every company, client, or community Dōjō you belong to joins here when you sign in — share what you learn and receive what the team already knows. You can belong to several at once."
->
-  {#snippet right()}
-    <a
-      href="/settings/dojo"
-      data-sign-in
-      class="px-3 py-2 rounded-md border border-paper-edge bg-transparent text-sm text-ink-soft no-underline"
-    >Sign in to a Dōjō</a>
-  {/snippet}
-</PageHeader>
+<Screen>
+    {#snippet header()}
+    <PageHeader
+      eyebrow="Observatory · Dōjō connections"
+      kanji="連" icon={railIcon("/dojo/connections")}
+      title="Where your sensei meets the team's Dōjō."
+      description="Every company, client, or community Dōjō you belong to joins here when you sign in — share what you learn and receive what the team already knows. You can belong to several at once."
+    >
+      {#snippet right()}
+        <a
+          href="/settings/dojo"
+          data-sign-in
+          class="px-3 py-2 rounded-md border border-paper-edge bg-transparent text-sm text-ink-soft no-underline"
+        >Sign in to a Dōjō</a>
+      {/snippet}
+    </PageHeader>
+    {/snippet}
 
-<div class="max-w-[1060px] mx-auto px-7 pb-10" data-connections-total={data.connections.length}>
-  {#if data.error}
-    <ScreenState status="error" error={data.error} onretry={invalidateAll} />
-  {:else if data.connections.length === 0}
-    <EmptyState
-      kanji="連"
-      title="no dōjō yet"
-      description="Sign in under Settings → Dōjō: each Dōjō you belong to joins here on the next sync. Employer, client, and community Dōjōs each keep their own scopes."
-    />
-  {:else}
-    <p class="text-sm text-ink-soft mb-6" data-connections-summary>
-      {connectionsHeadline(data.connections)}
-    </p>
-    {#each data.connections as c (c.id)}
-      {@render connection(c)}
-    {/each}
-  {/if}
-</div>
+    <div class="max-w-[1060px] mx-auto px-7 pb-10" data-connections-total={data.connections.length}>
+      {#if data.error}
+        <ScreenState status="error" error={data.error} onretry={invalidateAll} />
+      {:else if data.connections.length === 0}
+        <EmptyState
+          kanji="連"
+          title="no dōjō yet"
+          description="Sign in under Settings → Dōjō: each Dōjō you belong to joins here on the next sync. Employer, client, and community Dōjōs each keep their own scopes."
+        />
+      {:else}
+        <p class="text-sm text-ink-soft mb-6" data-connections-summary>
+          {connectionsHeadline(data.connections)}
+        </p>
+        {#each data.connections as c (c.id)}
+          {@render connection(c)}
+        {/each}
+      {/if}
+    </div>
+</Screen>

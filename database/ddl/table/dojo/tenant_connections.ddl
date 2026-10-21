@@ -1,8 +1,9 @@
 set search_path to dojo, extensions;
 
--- A tenant's identity on ONE source forge. A tenant is an ORGANIZATION; this is
--- how that organization is known to GitHub, GitLab, Bitbucket or Azure DevOps,
--- and an organization may be known to several.
+-- A tenant's identity on ONE source forge: how an organization is known to
+-- GitHub, GitLab, Bitbucket or Azure DevOps (it may be known to several), and how
+-- a PERSONAL tenant is known — as its owner's own account (#301), so that
+-- register_repository maps `{login}/…` repositories the same way it maps an org's.
 --
 -- Why this is a child table rather than columns on `tenants`: an org with both
 -- a GitHub and an Azure presence is one dōjō, one subscription, one governance

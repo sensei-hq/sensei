@@ -15,6 +15,68 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-20
+
+### Added
+
+- **Sign in once and your repositories sync** (#301). A connected identity's
+  repositories are shared by default; turning one off still holds. A personal
+  dōjō is now connected to its owner's GitHub account, so repositories under
+  that account map to it (they were refused as `no_connection`). Private
+  repositories in an organisation still need that organisation's subscription.
+- **Synced repositories appear under their dōjō project** (#299). The daemon
+  sends each repository's sensei project; the dōjō files it, and lists the
+  projects you can read in every dōjō you belong to.
+- **The default identity follows your global git email** (#296). With no
+  persona named, the app, the CLI and the daemon use the identity that owns
+  `git config --global user.email` — not whichever signed in first. No email,
+  no owner or two owners is an error that says so.
+- **`sensei auth status` lists every identity** (#295), leading with whether
+  the daemon can read its session, and **`sensei auth approve`** does what the
+  app's Approve button does.
+- **One screen layout** (#293): every app and dōjō screen keeps its header in
+  place while only its content scrolls (a shared `Screen` in `packages/ui`).
+- **Kanji or icons** for every mark in the app and the dōjō (#133).
+- **Background tasks** show their next run, average pass, last error and log
+  (#96); **Settings → Projects** lists repositories and saves roles (#271).
+- **Rework hotspots**: unreviewed rework shows as one anti-pattern, ranked by
+  peak re-edits (#287).
+- **Token usage per turn** (`activity.turn_usage`), counted once across hook and
+  transcript, with session totals derived from it (#280).
+
+### Changed
+
+- **BREAKING (dōjō data)**: `dojo.projects` is the shared project, keyed
+  `(tenant_id, slug)` with no owner (#299). Read follows repository access; only
+  the sync creates a project, and a relay run attaches to one. Existing project
+  rows are dropped when the release reconciles the schema; the sync refiles them.
+- **Sign-in opens your browser** (#300), naming the GitHub account to use and
+  offering the link for a private window. The daemon refuses a callback from any
+  other account, or one held by another identity, before storing anything. The
+  in-app window could not complete passkey, SMS or GitHub Mobile.
+- The release workflow reconciles the dōjō schema with `--allow-destructive`
+  until v1 (the dōjō is pre-v1).
+- Reading an assistant's history is on unless turned off (#280).
+
+### Fixed
+
+- No screen shows a failed read as an empty one: the remaining fallback reads
+  are gone (#288).
+- Settings → General fills an empty display name from the system user name.
+- Files are counted where declarations are, so the Atlas and `rework_density`
+  work again (#290); "Tools used" moved to project Instruments (#291).
+- An unreadable keychain is reported as itself, with an Approve action (#283);
+  a router key the keychain withholds is unreadable, not unset (#285).
+- Transcripts over 64 MB are streamed instead of skipped; token columns are
+  bigint (#280).
+- The daemon records why it exited before binding (#179); the essential backup
+  fails when a table does not export (#181).
+- The dōjō inbox shows a relay outage as an error (#104); its dev server binds
+  IPv4 so a local daemon can reach it (#185).
+- rustls 0.23.46 (RUSTSEC-2026-0346..0349); dbd 0.27.3.
+
+## [0.14.0] — 2026-10-18
+
 ### Added
 
 - **Claude Code usage at the source** (#238): the sensei plugin's mods module
@@ -34,6 +96,10 @@ are marked **BREAKING**.
   - `runDrive` submits a run's dōjō nudges as prompts, each once.
   - The never-registered shell `hooks/gate` is removed.
 - **Settings · Dōjō says why a checkout was skipped**, in words (#225).
+- **A graph push that lands all but an over-cap file is `partial`, not an error**
+  (#225). It is recorded with `synced_at` and names the missing files.
+  Settings · Dōjō shows it as "partly agreed <day>" instead of
+  "failing · never agreed". `sensei.sync_state.state` gains `partial`.
 - **A person's own metrics reach their dōjō** (#240): user-scoped rows that are
   provably the signed-in person's — their session metrics on a repository only
   they elected, and commit metrics under an address GitHub verified for them.
@@ -53,7 +119,7 @@ are marked **BREAKING**.
   on/off toggle** (#245) — restored after the redesign folded them into the
   Playground rail. A failed read says so instead of showing "none", and a
   refused toggle leaves the row as it was.
-- **A repository's code graph has a home on the dōjō** (#225, store only): the
+- **A repository's code graph is shared with the dōjō** (#225, live-verified: every table equal to local): the
   `dojo.graph_*` tables and `dojo.file_graph_slices`, which files a
   repository's graph file by file, one graph per tracked branch
   (`dojo.repository_graph_branches`: the forge default plus any the team adds,
@@ -63,18 +129,27 @@ are marked **BREAKING**.
   the dōjō's hash — skipping a checkout whose working tree has moved to another
   branch since it was indexed. Each branch's outcome is in `sensei.sync_state`
   (`repository_graph`, `<repo_key>@<branch>`). The dōjō's diagram screens over
-  this graph are not built yet.
+  this graph are not built yet (#268). Live-verified on the local stack: all
+  seven tables equal the local index for this repository.
   **Deploy:** `deploy-dojo` first (tables, functions, `/v1/you/graph`); the daemon
   then needs `sync_entity.repository_graph`, which a released daemon deploys on
   first start — a debug build at the same version needs `dbd reconcile`.
 
 ### Fixed
 
+- **Light accent text meets AA (4.65:1), and the observatory's scroll region takes
+  focus** (#245); Knowledge sources is reachable from the Review rail (#245).
+- **A dōjō database function's `invalid_parameter_value` is a 422, not a 500**
+  (#225): a refused graph slice reads as the caller's error, not a server fault.
 - **A deleted file leaves the index, and so the dōjō** (#225). Two causes:
   - A watcher batch that only deleted reached no repository.
   - A vanished file with no symbols was never pruned. On the development
     machine 363 of 3,078 file rows were stale (185 gone from disk, 178 under a
     since-ignored path), and they rode in the graph manifest.
+- **A changed file's graph is shared only once it is parsed** (#225). A push
+  between the new content hash and the parse sent the new hash over the old
+  nodes, and the dōjō never asked again. Such a file is now held back like an
+  uncommitted edit.
 - **A repository with an unnamed index can push its graph** (#225):
   `dojo.graph_schema_indexes.name` is nullable, as the local column is; the
   whole batch used to be refused.

@@ -4,7 +4,9 @@
  * Config table uses jsonb — values are native JSON objects, not strings.
  */
 
-import { senseiApi } from '$lib/api.js';
+import { senseiApi, failureReason, dataOrThrow } from '$lib/api.js';
+import { DEFAULT_PREFERENCES } from './preferences.js';
+import { glyphMode } from '$lib/glyphs';
 import type { AssistantFamily, LibEntry } from '$lib/types.js';
 import type { DaemonAssistantFamily, DaemonLibEntry, PreferencesData, WizardLoadData } from './contracts.js';
 
@@ -13,12 +15,6 @@ const STAGES = [
   'projects', 'libraries', 'instruments', 'inference', 'assignments', 'done',
 ];
 
-const PREF_DEFAULTS: PreferencesData = {
-  displayName: '', contributeLearnings: true, reviewBeforeShare: true,
-  shareSchedule: 'weekly-saturday', downloadCollective: 'weekly',
-  correctionAggressiveness: 'balanced', digestCadence: 'daily',
-  nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
-};
 
 /** Parse setup.* config keys into a completion map. */
 export function extractCompletion(config: Record<string, unknown>): Record<string, 'pending' | 'done'> {
@@ -40,10 +36,13 @@ export function extractSetupComplete(config: Record<string, unknown>): boolean {
 /** Parse the setup.preferences config key into PreferencesData. */
 export function extractPreferences(config: Record<string, unknown>): PreferencesData {
   const stored = config['setup.preferences'];
-  if (stored && typeof stored === 'object') {
-    return { ...PREF_DEFAULTS, ...(stored as Partial<PreferencesData>) };
-  }
-  return { ...PREF_DEFAULTS };
+  const merged: PreferencesData =
+    stored && typeof stored === 'object'
+      ? { ...DEFAULT_PREFERENCES, ...(stored as Partial<PreferencesData>) }
+      : { ...DEFAULT_PREFERENCES };
+  // Its own key (#133), read the same way Settings → General reads it.
+  merged.glyphs = glyphMode(config as Record<string, string>);
+  return merged;
 }
 
 /** Map daemon AssistantFamily[] to app DaemonAssistantFamily[]. */
@@ -103,22 +102,29 @@ export function mapLibraries(libs: LibEntry[], config: Record<string, unknown>):
 /** Fetch all wizard data from daemon in parallel. */
 export async function loadWizardData(port: number): Promise<WizardLoadData> {
   const api = senseiApi(port);
-  const [configRead, families, roots, projects, libs, instruments, routers] = await Promise.all([
+  const [configRead, familiesRead, rootsRead, projectsRead, libsRead, instrumentsRead, routers] = await Promise.all([
     // Error-propagating: the config says whether setup is complete, and a
     // fallback `{}` reads as "incomplete" — sending a set-up user back to setup.
     api.tryGetConfig(),
-    api.detectAssistantFamilies(),
-    api.getScanRoots(),
-    api.listProjects(),
-    api.getLibs(),
-    api.listInstruments(),
-    api.listGatewayRouters(),
+    api.tryDetectAssistantFamilies(),
+    api.tryGetScanRoots(),
+    api.tryListProjects(),
+    api.tryGetLibs(),
+    api.tryListInstruments(),
+    api.tryListGatewayRouters(),
   ]);
 
   if (!configRead.ok) {
     throw new Error(`wizard: reading the daemon config failed (${configRead.error.status}): ${configRead.error.message}`);
   }
   const config = configRead.data;
+  // Each of these seeds a wizard stage: an empty fallback read as "none" and
+  // was then committed as the user's answer (#288). A failed read rejects.
+  const families = dataOrThrow(familiesRead, 'assistants');
+  const roots = dataOrThrow(rootsRead, 'roots');
+  const projects = dataOrThrow(projectsRead, 'projects');
+  const libs = dataOrThrow(libsRead, 'libraries');
+  const instruments = dataOrThrow(instrumentsRead, 'instruments');
 
   return {
     completion: extractCompletion(config),
@@ -129,6 +135,7 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     projects: projects as any[],
     libraries: { total: libs.total, libs: mapLibraries(libs.libs, config) },
     mcps: instruments.mcps,
-    routers: routers.routers,
+    routers: routers.ok ? routers.data.routers : null,
+    routersError: routers.ok ? null : failureReason(routers.error),
   };
 }

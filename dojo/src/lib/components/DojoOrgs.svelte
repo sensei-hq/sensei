@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { kindToneClass, type DojoOrg } from '$lib/dojo-data';
 	import { Chip } from '$lib/components/kit';
 
@@ -17,7 +18,7 @@
 	<div
 		class="border-paper-edge bg-paper flex h-[54px] flex-shrink-0 items-center gap-3 border-b px-4 md:px-6"
 	>
-		<span class="kanji text-accent text-xl" style="line-height: 1">結</span>
+		<KanjiToken char="結" icon={null} size="inherit" toneClass="" class="text-accent text-xl" />
 		<span class="display text-lg" style="letter-spacing: -0.01em">Dōjō</span>
 		<span class="mono text-ink-faint hidden text-xs sm:inline">dojo.sensei-hq.com</span>
 		<span class="flex-1"></span>
@@ -66,7 +67,7 @@
 						<div
 							class="bg-paper border-paper-edge flex h-[46px] w-[46px] items-center justify-center rounded-xl border"
 						>
-							<span class="kanji text-accent text-xl">{o.kanji}</span>
+							<KanjiToken char={o.kanji} icon={null} size="inherit" toneClass="" class="text-accent text-xl" />
 						</div>
 						<div class="min-w-0">
 							<div class="flex flex-wrap items-center gap-2">
@@ -131,7 +132,7 @@
 			<div
 				class="bg-paper border-ink-faint mt-5 flex flex-col gap-4 rounded-2xl border border-dashed p-4 md:flex-row md:items-center"
 			>
-				<span class="kanji text-ink-mute text-xl">迎</span>
+				<KanjiToken char="迎" size="inherit" toneClass="" class="text-ink-mute text-xl" />
 				<div class="min-w-0 flex-1">
 					<div class="text-ink text-sm">Join another organization</div>
 					<div class="text-ink-mute mt-1 text-xs">
@@ -154,7 +155,7 @@
 			</div>
 
 			<div class="text-ink-mute mt-6 flex max-w-[640px] items-start gap-2 text-xs" style="line-height: 1.5">
-				<span class="kanji text-accent text-sm">鍵</span>
+				<KanjiToken char="鍵" size="inherit" toneClass="" class="text-accent text-sm" />
 				<span
 					>Roles are derived from your GitHub org &amp; repo access, then refined inside each Dōjō.
 					Organizations not on GitHub are namespaced

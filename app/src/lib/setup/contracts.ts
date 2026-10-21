@@ -58,6 +58,8 @@ export interface DaemonProjectFolder {
   id: string;
   name: string;
   path: string;
+  /** Absolute on this machine; `path` is relative to the folder's root. */
+  abs_path: string;
   kind: string;
   role: string | null;
 }
@@ -102,7 +104,10 @@ export interface DaemonRouter {
   providers: string[];
   capabilities: string[];
   needs_key: boolean;
-  configured: boolean;
+  /** `null` when the key is set but could not be read (#285). */
+  configured: boolean | null;
+  /** Why the key could not be read; `null` otherwise. */
+  key_error?: string | null;
 }
 
 /** One entry in a fallback chain's ordered model list. `routerName` is
@@ -156,6 +161,8 @@ export interface PreferencesData {
   nudgeOnRegression: boolean;
   anonymizedTelemetry: boolean;
   showWelcome: boolean;
+  /** Kanji or icons across the app (#133). Stored as `ui.glyphs`. */
+  glyphs: import('$lib/glyphs').GlyphMode;
 }
 
 /** Bundle returned by layout load — assembled from parallel daemon fetches. */
@@ -173,7 +180,10 @@ export interface WizardLoadData {
   projects: DaemonProject[];
   libraries: { total: number; libs: DaemonLibEntry[] };
   mcps: DaemonMcpEntry[];
-  routers: DaemonRouter[];
+  /** `null` when the read failed — never an invented empty list (#286). */
+  routers: DaemonRouter[] | null;
+  /** Why the routers could not be read; `null` when they were. */
+  routersError?: string | null;
 }
 
 // ── Knowledge plane (Phase 0) ─────────────────────────────────────────

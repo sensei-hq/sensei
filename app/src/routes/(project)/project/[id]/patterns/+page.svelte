@@ -1,5 +1,7 @@
 <script lang="ts">
-    import { PageHeader } from '$lib/components';
+    import Kanji from '$lib/components/Kanji.svelte';
+    import { PageHeader, Screen, ScreenState } from '$lib/components';
+    import { invalidateAll } from '$app/navigation';
     import type { PatternEntry } from '$lib/types.js';
 
     let { data } = $props();
@@ -44,11 +46,12 @@
             onclick={() => toggle(p.id)}
         >
             <!-- kanji marker: 紋 for pattern, 禁 for anti-pattern -->
-            <span
-                class="kanji text-base w-5 text-center"
-                class:text-accent={!anti}
-                class:text-warning={anti}
-            >{anti ? '禁' : '紋'}</span>
+            <Kanji
+                char={anti ? '禁' : '紋'}
+                size="inherit"
+                tone="inherit"
+                class="text-base w-5 text-center {anti ? 'text-warning' : 'text-accent'}"
+            />
             <div class="flex-1 min-w-0">
                 <p class="m-0 text-sm text-ink truncate">{p.name}</p>
                 <p class="m-0 mt-0.5 text-xs text-ink-soft flex items-center gap-2">
@@ -90,6 +93,25 @@
                     </div>
                 {/if}
 
+                {#if p.groups?.length}
+                    <div>
+                        <span class="text-xs uppercase tracking-wide opacity-60">Files by directory</span>
+                        <ul class="list-none m-0 mt-1 p-0 flex flex-col gap-2">
+                            {#each p.groups as g (g.directory)}
+                                <li data-testid={`pattern-group-${g.directory}`}>
+                                    <span class="text-xs font-mono text-ink">{g.directory}</span>
+                                    <span class="text-xs font-mono text-ink-faint ml-1">{g.files.length}</span>
+                                    <ul class="list-none m-0 mt-0.5 p-0 pl-3">
+                                        {#each g.files as file (file)}
+                                            <li class="text-xs font-mono text-ink-soft break-all">{file}</li>
+                                        {/each}
+                                    </ul>
+                                </li>
+                            {/each}
+                        </ul>
+                    </div>
+                {/if}
+
                 {#if p.example}
                     <div>
                         <span class="text-xs uppercase tracking-wide opacity-60">Example</span>
@@ -101,36 +123,45 @@
     </li>
 {/snippet}
 
-<PageHeader title="Patterns" />
-<div class="px-6 py-6">
-    {#if data.followed.length > 0}
-        <section class="mb-5">
-            <h3 class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wide">
-                Followed ({data.followed.length})
-            </h3>
-            <ul class="list-none m-0 p-0">
-                {#each data.followed as p (p.id)}
-                    {@render PatternRow(p, false)}
-                {/each}
-            </ul>
-        </section>
-    {/if}
-    {#if data.antiPatterns.length > 0}
-        <section>
-            <h3 class="text-xs font-semibold m-0 mb-2 uppercase tracking-wide text-accent">
-                Anti-patterns ({data.antiPatterns.length})
-            </h3>
-            <ul class="list-none m-0 p-0">
-                {#each data.antiPatterns as p (p.id)}
-                    {@render PatternRow(p, true)}
-                {/each}
-            </ul>
-        </section>
-    {/if}
-    {#if data.followed.length === 0 && data.antiPatterns.length === 0}
-        <p class="text-sm text-ink-soft">No patterns detected yet.</p>
-    {/if}
-</div>
+<Screen>
+    {#snippet header()}
+    <PageHeader title="Patterns" />
+    {/snippet}
+    <div class="px-6 py-6">
+        {#if data.error}
+            <!-- A failed read is shown, never "no patterns" (#85). -->
+            <ScreenState status="error" error={data.error} onretry={() => invalidateAll()} />
+        {:else}
+        {#if data.followed.length > 0}
+            <section class="mb-5">
+                <h3 class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wide">
+                    Followed ({data.followed.length})
+                </h3>
+                <ul class="list-none m-0 p-0">
+                    {#each data.followed as p (p.id)}
+                        {@render PatternRow(p, false)}
+                    {/each}
+                </ul>
+            </section>
+        {/if}
+        {#if data.antiPatterns.length > 0}
+            <section>
+                <h3 class="text-xs font-semibold m-0 mb-2 uppercase tracking-wide text-accent">
+                    Anti-patterns ({data.antiPatterns.length})
+                </h3>
+                <ul class="list-none m-0 p-0">
+                    {#each data.antiPatterns as p (p.id)}
+                        {@render PatternRow(p, true)}
+                    {/each}
+                </ul>
+            </section>
+        {/if}
+        {#if data.followed.length === 0 && data.antiPatterns.length === 0}
+            <p class="text-sm text-ink-soft">No patterns detected yet.</p>
+        {/if}
+        {/if}
+    </div>
+</Screen>
 
 <style>
     .pattern-row:last-child {

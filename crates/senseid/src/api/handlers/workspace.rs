@@ -101,31 +101,39 @@ pub(crate) async fn delete_project(
 
 // ── Folders ─────────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
-pub(crate) struct UpdateFolderBody {
-    #[serde(default)]
-    role: Option<String>,
+/// The role a `PUT /api/folders/{id}` body sets: `Some(role)`, or `None` to clear
+/// it (`null` or `""`). `role` is the only editable field, so a body without it,
+/// with another key, or with a non-string role is refused rather than answered
+/// with a 200 that changed nothing.
+fn parse_folder_patch(body: &serde_json::Value) -> Result<Option<String>, String> {
+    let obj = body.as_object().ok_or("body must be a JSON object")?;
+    if let Some(unknown) = obj.keys().find(|k| k.as_str() != "role") {
+        return Err(format!("unknown field {unknown:?} (editable: role)"));
+    }
+    match obj.get("role") {
+        None => Err("nothing to change (editable: role)".into()),
+        Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(r)) if r.is_empty() => Ok(None),
+        Some(serde_json::Value::String(r)) => Ok(Some(r.clone())),
+        Some(_) => Err("role must be a string, or null to clear it".into()),
+    }
 }
 
-/// PUT /api/folders/{id} — update mutable folder fields. Currently only
-/// `role` is supported; the Projects setup stage uses this to persist the
-/// per-folder role dropdown without going through set_folder_project
-/// (which would also touch project membership).
+/// PUT /api/folders/{id} — set or clear a folder's role. Settings → Projects
+/// uses this to persist the per-repository role picker without going through
+/// set_folder_project (which would also touch project membership).
 pub(crate) async fn update_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<UpdateFolderBody>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let folder_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    if let Some(role) = body.role.as_deref() {
-        // Accept empty string as "clear the role" — daemon stores it as NULL.
-        let role_arg = if role.is_empty() { None } else { Some(role) };
-        state
-            .pg
-            .update_folder_role(&folder_id, role_arg)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
+    let role = parse_folder_patch(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state
+        .pg
+        .update_folder_role(&folder_id, role.as_deref())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
@@ -1131,5 +1139,33 @@ mod exclusion_tests {
         let checks = check_exclusions(&root, &["/group-a/vendored/".to_string()]);
         assert_eq!(checks[0].resolved, format!("{root}/group-a/vendored"));
         assert!(checks[0].exists);
+    }
+}
+
+#[cfg(test)]
+mod folder_patch_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Settings → Projects clears a role by sending `{"role": null}`. The handler
+    /// read `null` as "field absent", skipped the update and answered 200, so the
+    /// screen showed the role cleared and a reload brought it back.
+    #[test]
+    fn a_null_role_clears_it() {
+        assert_eq!(parse_folder_patch(&json!({"role": null})), Ok(None));
+        assert_eq!(parse_folder_patch(&json!({"role": ""})), Ok(None), "\"\" still clears");
+    }
+
+    #[test]
+    fn a_named_role_is_set() {
+        assert_eq!(parse_folder_patch(&json!({"role": "quality"})), Ok(Some("quality".into())));
+    }
+
+    /// Each of these was a 200 that changed nothing — a no-op the user reads as a save.
+    #[test]
+    fn a_patch_that_would_change_nothing_is_refused() {
+        for body in [json!({}), json!({"rol": "backend"}), json!({"role": 3}), json!([])] {
+            assert!(parse_folder_patch(&body).is_err(), "{body} must be refused");
+        }
     }
 }

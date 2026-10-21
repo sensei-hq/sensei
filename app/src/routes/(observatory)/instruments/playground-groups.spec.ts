@@ -47,3 +47,21 @@ describe('inferKind', () => {
     expect(inferKind('frobnicate', undefined)).toBe('other');
   });
 });
+
+// #288: a server whose tools could not be read says why — not a server with
+// no tools. The daemon's own probe error is carried the same way.
+describe('buildPlaygroundGroups — a server that could not be read', () => {
+  const server = { id: 'srv', acp_family: 'claude', mcp_key: 'github', enabled: true };
+  it('carries the read error, and no tools', () => {
+    const [, g] = buildPlaygroundGroups([], [server], {}, { srv: 'Service Unavailable' });
+    expect([g.tools, g.error]).toEqual([[], 'Service Unavailable']);
+  });
+  it('carries the probe error the daemon reported', () => {
+    const [, g] = buildPlaygroundGroups([], [server], { srv: { tools: [], error: 'spawn failed' } });
+    expect(g.error).toBe('spawn failed');
+  });
+  it('has no error for a server read cleanly', () => {
+    const [, g] = buildPlaygroundGroups([], [server], { srv: { tools: [{ name: 'list_issues' }], error: null } });
+    expect([g.tools.length, g.error]).toEqual([1, null]);
+  });
+});

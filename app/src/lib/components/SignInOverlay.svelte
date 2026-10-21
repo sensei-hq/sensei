@@ -17,6 +17,7 @@
   // personas.svelte.ts; this renders them and reports clicks upward.
   import type { PersonaWire } from '$lib/personas.svelte.js';
   import ModalShell from './ModalShell.svelte';
+  import SignInPending from './SignInPending.svelte';
 
   interface Props {
     open: boolean;
@@ -33,6 +34,8 @@
     describe: (p: PersonaWire) => string;
     onSignIn?: (p: PersonaWire) => void;
     onClose?: () => void;
+    /** The sign-in in flight (#300): which account to use, and its link. */
+    pending?: { label: string; expectedLogin: string | null; url: string } | null;
   }
   let {
     open,
@@ -43,7 +46,8 @@
     actionLabel,
     describe,
     onSignIn,
-    onClose
+    onClose,
+    pending = null
   }: Props = $props();
 
   /** A row needs the user when it is not merely healthy. */
@@ -107,6 +111,7 @@
           {/each}
         </ul>
       {/if}
+      <SignInPending {pending} />
 
       <footer class="flex items-center justify-between gap-3">
         <!-- Stated because a fresh window is a deliberate, visible choice: the

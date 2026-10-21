@@ -19,8 +19,11 @@ use crate::gateway_keys;
 /// is safe today only because the empty default config makes the
 /// resolver a no-op; once the DB-load path populates routers, this
 /// constraint becomes load-bearing.
+///
+/// A key that is set but cannot be read (#285) is logged with its reason
+/// rather than dropped as if it were never set.
 pub fn keychain_api_key(router_id: &str) -> Option<String> {
-    gateway_keys::get_key(router_id).ok()
+    gateway_keys::key_standing(router_id).usable(router_id)
 }
 
 /// Derive a model's lineage `family` (see [`gateway::types::config::ModelConfig::family`])

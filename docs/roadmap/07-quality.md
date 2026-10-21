@@ -403,10 +403,11 @@ macOS `.app`), `quick-xml`, `unic-*`, `rsa 0.9.10`.
 removed) but its "Open GitHub issues (12)" table is still a hand-maintained copy
 of a live list. Either generate it or drop it.
 
-### G2 — `sensei.error_signature` is referenced and does not exist
+### G2 — ~~`sensei.error_signature` is referenced and does not exist~~ (resolved: mistaken premise)
 
-The checkpoint skill names it as the way failures are grouped by cause. It is
-not in the database.
+It exists as a **function**, `sensei.error_signature(text)` (since c6c1a206),
+backing `activity.task_health` and `activity.task_failures`; it was queried as a
+table. Closed as #189 on 2026-10-18.
 
 ---
 

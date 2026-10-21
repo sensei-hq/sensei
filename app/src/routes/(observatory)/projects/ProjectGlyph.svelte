@@ -22,6 +22,8 @@
     onerror={() => (erroredSrc = src)}
     class="w-[18px] h-[18px] object-contain rounded-sm shrink-0"
   />
+{:else if icon.kind === 'icon'}
+  <span class="{icon.cls} text-accent text-lg shrink-0" data-project-icon aria-hidden="true"></span>
 {:else}
   <span class="kanji text-accent text-lg leading-none shrink-0">{icon.glyph}</span>
 {/if}

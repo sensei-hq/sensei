@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
     import type { ToolHealthSource } from "$lib/types.js";
 
     interface Props {
@@ -38,7 +39,7 @@
 >
     <!-- Header — kanji · name + type/key · connected chip -->
     <div class="flex items-start gap-2">
-        <span class="kanji text-xl text-accent leading-none w-6 text-center shrink-0">{kanji}</span>
+        <Kanji char={kanji} size="inherit" tone="inherit" class="text-xl text-accent leading-none w-6 text-center shrink-0" />
         <div class="flex-1 min-w-0">
             <div class="text-base text-ink truncate">{source.name}</div>
             <div class="flex items-center gap-2 font-mono text-xs text-ink-mute mt-1">

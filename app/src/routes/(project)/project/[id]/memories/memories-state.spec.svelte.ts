@@ -4,8 +4,8 @@
  * derivations, chip semantics, and the generalise / widen state machines.
  * Uses $state/$derived so this is a .spec.svelte.ts.
  */
-import { describe, it, expect } from 'vitest';
-import { ProjectMemoriesState, SCOPE_LADDER } from './memories-state.svelte.js';
+import { describe, it, expect, vi } from 'vitest';
+import { ProjectMemoriesState, SCOPE_LADDER, type MemoriesApi } from './memories-state.svelte.js';
 import type { ProjectMemory } from '$lib/types.js';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
@@ -257,5 +257,101 @@ describe('SCOPE_LADDER', () => {
         expect(SCOPE_LADDER.find((r) => r.scope === 'user')!.governed).toBe(false);
         expect(SCOPE_LADDER.find((r) => r.scope === 'org')!.governed).toBe(true);
         expect(SCOPE_LADDER.find((r) => r.scope === 'global')!.governed).toBe(true);
+    });
+});
+
+// ── Actions (#293: moved out of +page.svelte) ─────────────────────────────
+
+const ok = <T>(data: T) => ({ ok: true as const, data });
+const fail = (status: number, message: string) => ({ ok: false as const, error: { status, message } });
+
+function api(over: Partial<MemoriesApi> = {}): MemoriesApi {
+    return {
+        tryCreateMemoryShareBatch: vi.fn().mockResolvedValue(ok({ id: 'b1' })),
+        tryDecideMemoryShareBatch: vi.fn().mockResolvedValue(ok(undefined)),
+        generaliseMemory: vi.fn().mockResolvedValue(ok({ id: 'm1', original: 'o', generalised: 'g', example: null })),
+        promoteMemory: vi.fn().mockResolvedValue(ok({ id: 'm1x', status: 'proposed', origin: 'm1' })),
+        ...over,
+    } as MemoriesApi;
+}
+
+describe('ProjectMemoriesState — the share batch', () => {
+    it('stages every ready memory for review', () => {
+        const s = new ProjectMemoriesState([mem('a', { generalised: true }), mem('b'), mem('c', { generalised: true })]);
+        s.toggleSelected('b');
+        s.reviewNextBatch();
+        expect([...s.selected].sort()).toEqual(['a', 'c']);
+    });
+
+    it('proposes the selection, clears it and reloads', async () => {
+        const s = new ProjectMemoriesState([mem('a')]);
+        s.toggleSelected('a');
+        const a = api();
+        const reload = vi.fn().mockResolvedValue(undefined);
+        await s.proposeBatch(a, 'p1', reload);
+        expect(a.tryCreateMemoryShareBatch).toHaveBeenCalledWith('p1', ['a']);
+        expect(s.selected.size).toBe(0);
+        expect(reload).toHaveBeenCalledOnce();
+        expect(s.batchError).toBeNull();
+        expect(s.creating).toBe(false);
+    });
+
+    it('keeps the selection and says why when the propose fails', async () => {
+        const s = new ProjectMemoriesState([mem('a')]);
+        s.toggleSelected('a');
+        const reload = vi.fn();
+        await s.proposeBatch(api({ tryCreateMemoryShareBatch: vi.fn().mockResolvedValue(fail(500, 'boom')) }), 'p1', reload);
+        expect([...s.selected]).toEqual(['a']);
+        expect(s.batchError).toContain('boom');
+        expect(reload).not.toHaveBeenCalled();
+        expect(s.creating).toBe(false);
+    });
+
+    it('decides a batch and reloads; a refusal is shown on that batch', async () => {
+        const s = new ProjectMemoriesState();
+        const reload = vi.fn().mockResolvedValue(undefined);
+        await s.decide(api(), 'p1', 'b1', 'approved', reload);
+        expect(reload).toHaveBeenCalledOnce();
+        expect(s.decideError('b1')).toBeNull();
+
+        await s.decide(api({ tryDecideMemoryShareBatch: vi.fn().mockResolvedValue(fail(409, 'Conflict')) }), 'p1', 'b2', 'rejected', reload);
+        expect(s.decideError('b2')).toContain('Conflict');
+        expect(s.isDeciding('b2')).toBe(false);
+        expect(reload).toHaveBeenCalledOnce();
+    });
+});
+
+describe('ProjectMemoriesState — generalise and widen', () => {
+    it('generalises and reloads; a 503 keeps the original and says the model was unavailable', async () => {
+        const s = new ProjectMemoriesState([mem('m1')]);
+        const reload = vi.fn().mockResolvedValue(undefined);
+        await s.generalise(api(), 'm1', reload);
+        expect(reload).toHaveBeenCalledOnce();
+        expect(s.isGeneralising('m1')).toBe(false);
+
+        await s.generalise(api({ generaliseMemory: vi.fn().mockResolvedValue(fail(503, 'x')) }), 'm1', reload);
+        expect(s.generaliseError('m1')).toContain('model was unavailable');
+    });
+
+    it('widens to the user’s own scope at once, and a governed scope only after confirming', async () => {
+        const s = new ProjectMemoriesState([mem('m1', { generalised: true })]);
+        const a = api();
+        const reload = vi.fn().mockResolvedValue(undefined);
+        const user = SCOPE_LADDER.find((r) => !r.governed)!;
+        const org = SCOPE_LADDER.find((r) => r.governed)!;
+
+        await s.pickScope(a, 'm1', user, reload);
+        expect(a.promoteMemory).toHaveBeenCalledWith('m1', { gov_scope: user.scope });
+
+        await s.pickScope(a, 'm1', org, reload);
+        expect(a.promoteMemory).toHaveBeenCalledTimes(1);
+        await s.confirmWiden(a, 'm1', reload);
+        expect(a.promoteMemory).toHaveBeenLastCalledWith('m1', { gov_scope: org.scope });
+    });
+
+    it('a widen the daemon refuses says the memory is not promotable yet', async () => {
+        const s = new ProjectMemoriesState([mem('m1', { generalised: true })]);
+        await s.pickScope(api({ promoteMemory: vi.fn().mockResolvedValue(fail(409, 'x')) }), 'm1', SCOPE_LADDER.find((r) => !r.governed)!, vi.fn());
+        expect(s.promoteError('m1')).toContain("isn't promotable yet");
     });
 });

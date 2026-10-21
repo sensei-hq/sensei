@@ -38,7 +38,7 @@
         app-dev app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
-        test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build \
+        test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build app-e2e-bundle \
         _e2e-cold-pre _e2e-cold-post reset-e2e-db \
         setup-hooks update bump dbd-cache-clear tap-push marketplace-push \
         clean clean-cache
@@ -92,11 +92,24 @@ crates-all:
 # credential resolves via env(). Nothing leaves the machine.
 #   Studio            → http://127.0.0.1:54323
 #   Inbucket (mail)   → http://127.0.0.1:54324   (magic-link emails land here)
-.PHONY: supabase-up supabase-down
+.PHONY: supabase-up supabase-down dojo-local
 supabase-up:  ## Boot the local Dōjō supabase auth stack (localhost only)
 	supabase start
 supabase-down:  ## Stop the local Dōjō supabase auth stack
 	supabase stop
+
+# The whole local chain the daemon's dojo_sync talks to (#186; runbook in
+# dojo/CLAUDE.md). Refuses a busy :5173 rather than drifting to another port the
+# daemon would never dial; boots supabase only if it is not already up; then runs
+# the dōjō dev server on 127.0.0.1:5173 in the foreground (Ctrl-C stops it).
+dojo-local:  ## Local dōjō for the daemon: supabase + dojo dev on 127.0.0.1:5173
+	@if lsof -nP -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then \
+	  echo "dojo-local: port 5173 is already in use:"; lsof -nP -iTCP:5173 -sTCP:LISTEN; exit 1; fi
+	@supabase status >/dev/null 2>&1 || supabase start
+	@echo "dojo-local: supabase is up; starting the dōjō on http://127.0.0.1:5173"
+	@echo "  then: Sensei.app → Settings → Dōjō → Connection, sign in to http://127.0.0.1:5173"
+	@echo "  working: the daemon log shows 'dojo_sync: cycle complete' within 60s"
+	cd dojo && bun run dev
 
 # ── Install ───────────────────────────────────────────────────────────────────
 #
@@ -167,48 +180,14 @@ install: install-service install-app
 #   • logs — pruned by the structured-log TTL (#74 partial)
 #   • task_executions — job history; noisy and self-contained
 #
-# Writes JSONL under database/backup/essential/<ts>/<schema>.<name>.jsonl.
-# Runs `dbd export -n <table> --format jsonl` per table so the file layout
-# matches import/staging/*.jsonl for future re-import.
+# Writes JSONL under database/backup/essential/<ts>/<schema>/<name>.jsonl via
+# `dbd export`, so the layout matches import/staging/*.jsonl for re-import.
+# The script prunes AFTER a complete write (two snapshots at rest, not three)
+# and FAILS when a table does not export — a snapshot missing `sessions` must
+# not report complete. `SKIP_DB_BACKUP=1 make install-debug` skips it while
+# iterating (#181). Tested by crates/bootstrap/tests/backup_script.rs.
 db-backup-essential:
-	@mkdir -p database/backup/essential
-	@if ! psql -d sensei -c "SELECT 1" >/dev/null 2>&1; then \
-	  echo "sensei DB not present — skipping essential backup"; \
-	  exit 0; \
-	fi
-	@# Rotate essential-backup snapshots: keep the 2 most recent.
-	@#
-	@# TWO, NOT FIVE, and the number that changed the answer is the SIZE. The
-	@# comment here used to say 650MB; measured 2026-10-07 it is 3.7 GB, of which
-	@# 3.6 GB is `assistant_events.jsonl` — `dbd export` writes uncompressed
-	@# JSONL. Five snapshots is an 18.5 GB ceiling, which is the shape of the
-	@# problem that removing the full `pg_dump` was meant to solve.
-	@#
-	@# Two is the smallest retention that still survives a bad export: the
-	@# previous snapshot is intact while the new one is being written, so a
-	@# process killed halfway leaves one good copy. One would not.
-	@keep=2; \
-	  ls -1t database/backup/essential 2>/dev/null | tail -n +$$((keep + 1)) \
-	    | while read d; do rm -rf "database/backup/essential/$$d"; done
-	@ts=$$(date +%Y%m%d-%H%M%S); \
-	  outdir="database/backup/essential/$${ts}"; \
-	  mkdir -p "$$outdir"; \
-	  echo "Essential backup → $$outdir"; \
-	  for t in activity.assistant_events activity.sessions activity.transcript_turns activity.turns \
-	           activity.session_process_evidence \
-	           sensei.memories sensei.memory_outcomes sensei.tool_insights \
-	           sensei.playbook_rules sensei.consolidated_rulesets \
-	           inference.detected_patterns inference.recommendations \
-	           inference.reasoning_traces inference.corrections inference.drift_items \
-	           sensei.projects sensei.folders sensei.folders_to_watch \
-	           sensei.repositories sensei.folder_path_aliases; do \
-	    DATABASE_URL="postgres://localhost/sensei" \
-	      dbd export -n "$$t" --format jsonl \
-	                 --output "$$outdir" \
-	                 --source database >/dev/null 2>&1 || \
-	      echo "  skip $$t (dbd export failed — table may not be tracked in design.yaml)"; \
-	  done; \
-	  echo "Essential backup complete — $$(du -sh "$$outdir" | awk '{print $$1}')"
+	@./scripts/db-backup-essential.sh
 
 # Overlay freshly-built release binaries into the brew prefix.
 #
@@ -240,13 +219,20 @@ install-service: db-backup-essential crates
 	cp target/release/senseid    "$$DEST/senseid" && \
 	cp target/release/sensei     "$$DEST/sensei" && \
 	cp target/release/sensei-mcp "$$DEST/sensei-mcp" && \
-	codesign --sign - --options runtime --force "$$DEST/senseid" && \
-	codesign --sign - --options runtime --force "$$DEST/sensei" && \
-	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
+	./scripts/codesign-local.sh "$$DEST/senseid" "$$DEST/sensei" "$$DEST/sensei-mcp" && \
 	echo "Overlaid fresh release binaries into $$DEST (codesigned)"
 	@echo "Restarting sensei service so the new daemon is live..."
 	-@brew services start sensei
 	@$(MAKE) mcp-refresh-note
+
+# One-time, per machine: a self-signed `sensei-dev` code-signing identity, so
+# local installs keep one signature across rebuilds and macOS remembers keychain
+# "Always Allow" and folder access instead of asking after every build.
+# Asks for your login password (it trusts the certificate). See
+# scripts/codesign-local.sh, which every install target signs through.
+.PHONY: dev-signing-cert
+dev-signing-cert:
+	@./scripts/create-dev-signing-cert.sh
 
 # Build the desktop .app bundle and install it to /Applications/.
 # Stop any running instance first — `cp -R` over a running .app would mix
@@ -283,9 +269,7 @@ install-debug: db-backup-essential crates-debug
 	cp target/debug/senseid    "$$DEST/senseid" && \
 	cp target/debug/sensei     "$$DEST/sensei" && \
 	cp target/debug/sensei-mcp "$$DEST/sensei-mcp" && \
-	codesign --sign - --options runtime --force "$$DEST/senseid" && \
-	codesign --sign - --options runtime --force "$$DEST/sensei" && \
-	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
+	./scripts/codesign-local.sh "$$DEST/senseid" "$$DEST/sensei" "$$DEST/sensei-mcp" && \
 	echo "Overlaid debug binaries into $$DEST (codesigned)"
 	@echo "Restarting sensei service so the new daemon is live..."
 	-@brew services start sensei
@@ -353,8 +337,17 @@ app-dev:
 # (exposes the playwright IPC socket at /tmp/tauri-playwright.sock).
 # Used by the Playwright globalSetup — kept here so the build recipe is
 # discoverable and not buried in TypeScript.
-app-e2e-build: install-debug
+app-e2e-build: install-debug app-e2e-bundle
+
+# The e2e bundle alone, leaving the installed daemon as it is. For UI-only work:
+# reinstalling senseid gives it a new cdhash, and the Keychain partitions a
+# Team-ID-less binary by cdhash, so every reinstall revokes the user's
+# "Always Allow" on the stored sessions (#283).
+app-e2e-bundle:
 	cd app && bunx tauri build --debug --features e2e-testing
+	# A stable identity, so the bundle's Screen Recording grant (the inspect
+	# harness's window capture needs it) can survive a rebuild (#284).
+	scripts/codesign-local.sh app/src-tauri/target/debug/bundle/macos/Sensei.app
 
 # Type-check SvelteKit sources.
 #
@@ -386,7 +379,7 @@ website-build:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens test-crates-fast test-app-unit test-plugin
+test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard test-crates-fast test-app-unit test-plugin
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -426,7 +419,14 @@ check-ddl-comments:
 check-brew-tokens:
 	@python3 scripts/check-brew-tokens.py
 
-test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
+# The leak guard's own self-test (#213): every rule catches its case and passes
+# the legitimate one, a hit is reported on its own line, and a message or stdin
+# hit exits non-zero. It ran only when someone remembered `--test`.
+.PHONY: check-leak-guard
+check-leak-guard:
+	@bash .githooks/check-no-leaks.sh --test >/dev/null || bash .githooks/check-no-leaks.sh --test
+
+test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens check-leak-guard test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
 
 test-crates:
 	cargo test --workspace

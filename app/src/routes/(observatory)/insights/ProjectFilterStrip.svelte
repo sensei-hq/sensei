@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import type { InsightProjectRef } from '$lib/types.js';
   import { chipProjects, matchProjects } from './project-filter.js';
 
@@ -60,7 +61,7 @@
       class:bg-paper-soft={!active}
       onclick={() => pick(p.id)}
     >
-      <span class="kanji text-xs" class:text-accent={active} class:text-ink-mute={!active}>{p.kanji}</span>
+      <Kanji char={p.kanji} icon={null} size="inherit" tone="inherit" class="text-xs {active ? 'text-accent' : 'text-ink-mute'}" />
       <span>{p.name}</span>
     </button>
   {/each}
@@ -91,7 +92,7 @@
               class="w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-xs text-ink bg-transparent border-none cursor-pointer hover:bg-paper-mute"
               onclick={() => pick(p.id)}
             >
-              <span class="kanji text-xs text-ink-mute">{p.kanji}</span>
+              <Kanji char={p.kanji} icon={null} size="inherit" tone="inherit" class="text-xs text-ink-mute" />
               <span class="truncate">{p.name}</span>
             </button>
           </li>

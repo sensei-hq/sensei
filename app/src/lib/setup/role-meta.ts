@@ -1,4 +1,4 @@
-import type { SenseiRole } from './contracts.js';
+import type { SenseiRole, DaemonChain } from './contracts.js';
 
 /** Presentation + picker-filter metadata for each sensei role. Kept
  *  co-located with the contract so a new role only touches one file.
@@ -39,3 +39,13 @@ export const ROLE_META: Record<SenseiRole, RoleMeta> = {
     capabilities: ['audio', 'chat'],
   },
 };
+
+/** Each role's chain as the daemon has it: the first chain that claims the
+ *  role, or null. One fold for the Settings panel and the setup wizard. */
+export function roleAssignments(chains: readonly DaemonChain[]): Record<SenseiRole, string | null> {
+  const out: Record<SenseiRole, string | null> = { inference: null, consolidation: null, embedding: null, voice: null };
+  for (const c of chains) {
+    if (c.role != null && out[c.role] === null) out[c.role] = c.id;
+  }
+  return out;
+}

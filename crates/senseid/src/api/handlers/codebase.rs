@@ -266,16 +266,7 @@ pub(crate) async fn call_flow(
         tracing::warn!(error = %e, repo_id = %repo_id, "call_flow: get_nodes_scoped failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let modules: Vec<serde_json::Value> = nodes.iter()
-        .filter(|n| n["kind"].as_str() == Some("file"))
-        .map(|n| serde_json::json!({
-            "path": n["file_path"],
-            "exports": nodes.iter()
-                .filter(|c| c["file_path"] == n["file_path"] && c["is_exported"].as_bool() == Some(true))
-                .filter_map(|c| c["name"].as_str())
-                .collect::<Vec<_>>(),
-        }))
-        .collect();
+    let modules = call_flow_modules(&nodes);
     Ok(Json(serde_json::json!({
         "modules": modules,
         "calls": edges,
@@ -283,6 +274,28 @@ pub(crate) async fn call_flow(
         "exportCount": modules.iter().map(|m| m["exports"].as_array().map_or(0, |a| a.len())).sum::<usize>(),
         "callCount": edges.len(),
     })))
+}
+
+/// Atlas's modules: the files the nodes sit in, in path order, each with its
+/// `is_exported` declarations' names. The indexer writes no `kind = 'file'`
+/// node, so counting those gave 0 modules (#290); a node with no file (a
+/// reference stub) belongs to no module.
+fn call_flow_modules(nodes: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut by_file: std::collections::BTreeMap<&str, Vec<&str>> =
+        std::collections::BTreeMap::new();
+    for n in nodes {
+        let Some(path) = n["file_path"].as_str() else { continue };
+        let exports = by_file.entry(path).or_default();
+        if n["is_exported"].as_bool() == Some(true)
+            && let Some(name) = n["name"].as_str()
+        {
+            exports.push(name);
+        }
+    }
+    by_file
+        .into_iter()
+        .map(|(path, exports)| serde_json::json!({ "path": path, "exports": exports }))
+        .collect()
 }
 
 /// `POST /api/graph/communities` — how many communities a repo currently has.
@@ -837,6 +850,27 @@ pub(crate) async fn project_conventions_handler(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// #290: Atlas's modules are the files the nodes sit in — the indexer writes
+    /// no `kind = 'file'` node any more, so modules counted 0 — and a module's
+    /// exports are its `is_exported` declarations.
+    #[test]
+    fn call_flow_modules_are_files_with_their_exported_names() {
+        let nodes = vec![
+            json!({ "kind": "function", "name": "run", "file_path": "src/a.rs", "is_exported": true }),
+            json!({ "kind": "function", "name": "helper", "file_path": "src/a.rs", "is_exported": false }),
+            json!({ "kind": "struct", "name": "B", "file_path": "src/b.rs", "is_exported": true }),
+            json!({ "kind": "module", "name": "b", "file_path": "src/b.rs", "is_exported": true }),
+            json!({ "kind": "function", "name": "stub", "file_path": null, "is_exported": true }),
+        ];
+        assert_eq!(
+            call_flow_modules(&nodes),
+            vec![
+                json!({ "path": "src/a.rs", "exports": ["run"] }),
+                json!({ "path": "src/b.rs", "exports": ["B", "b"] }),
+            ]
+        );
+    }
 
     #[test]
     fn build_tree_nests_folders_files_symbols_and_sections() {

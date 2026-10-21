@@ -113,6 +113,8 @@ export default defineConfig(({ command }) => ({
   server: {
     port: 5173,
     strictPort: true,
+    // packages/* is shared with the dōjō and sits outside this app (#133, #293).
+    fs: { allow: ['.', '../packages'] },
     host: host || false,
     hmr: host ? { protocol: 'ws', host, port: 5183 } : undefined,
   },

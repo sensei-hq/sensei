@@ -98,12 +98,22 @@ pub fn measured_list_cost(payload: &serde_json::Value) -> Option<f64> {
 /// beyond the event row itself. Shared by the live handler and the drain, so a
 /// dead-lettered event lands the same as a delivered one.
 pub async fn apply_to_session(pg: &PgStore, payload: &serde_json::Value) {
-    let Some(usd) = measured_list_cost(payload) else { return };
     let session_id = hook_event_fields(payload).session_id;
-    match pg.raise_session_list_cost(session_id, usd).await {
-        Ok(true) => {}
-        Ok(false) => tracing::debug!(session_id, "SessionMeasure for a session with no row"),
-        Err(e) => tracing::warn!(error = %e, session_id, "raise_session_list_cost failed"),
+    if let Some(usd) = measured_list_cost(payload) {
+        match pg.raise_session_list_cost(session_id, usd).await {
+            Ok(true) => {}
+            Ok(false) => tracing::debug!(session_id, "SessionMeasure for a session with no row"),
+            Err(e) => tracing::warn!(error = %e, session_id, "raise_session_list_cost failed"),
+        }
+    }
+    // A turn's usage (#280): the event row is already written, so the session's
+    // tokens are re-summed from `activity.turn_usage`, where this turn now counts
+    // once — linked to its transcript turn if the transcript saw it too.
+    if payload["hook_event_name"].as_str() == Some("TurnComplete")
+        && payload.get("usage").is_some()
+        && let Err(e) = pg.refresh_session_tokens(session_id).await
+    {
+        tracing::warn!(error = %e, session_id, "refresh_session_tokens failed");
     }
 }
 
@@ -543,6 +553,45 @@ not json
         .await
         .unwrap();
         assert_eq!(cost, Some(3.75));
+
+        for sql in [
+            "DELETE FROM activity.assistant_events WHERE session_id = $1",
+            "DELETE FROM activity.sessions WHERE client_session_id = $1",
+        ] {
+            sqlx_core::query::query(sql).bind(&sid).execute(pg.pool()).await.unwrap();
+        }
+    }
+
+    /// #280: a turn's usage from the usage mod reaches the session's token
+    /// columns. It was stored as an event and never summed, so a measured session
+    /// showed a list cost and no tokens.
+    ///
+    /// MUTATION: drop the TurnComplete arm of `apply_to_session` — tokens stay NULL.
+    #[tokio::test]
+    async fn a_drained_turn_complete_sets_the_session_tokens() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let fid = crate::db::pg_store::tests::create_test_folder(&pg, "drain-turn-usage").await;
+        let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let id = pg.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let line = json!({
+            "session_id": sid, "assistant_family": "claude", "hook_event_name": "TurnComplete",
+            "ts": 1_760_000_000_000_i64, "turn_id": "t1", "reason": "answer",
+            "usage": {"model": "claude-opus-5-5", "input_tokens": 2, "output_tokens": 4,
+                      "cache_read_input_tokens": 10_327, "cache_creation_input_tokens": 55_095}
+        });
+        std::fs::write(dir.path().join("events.jsonl"), format!("{line}\n")).unwrap();
+
+        drain_once(&pg, dir.path()).await.unwrap();
+
+        let tokens: (Option<i64>, Option<i64>, Option<i64>) = sqlx_core::query_as::query_as(
+            "SELECT tokens_in, tokens_fresh, tokens_out FROM activity.sessions WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(tokens, (Some(65_424), Some(2), Some(4)));
 
         for sql in [
             "DELETE FROM activity.assistant_events WHERE session_id = $1",

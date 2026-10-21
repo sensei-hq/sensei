@@ -210,3 +210,27 @@ describe('org section dispatch covers every nav section', () => {
 		expect(tail).not.toContain('ScrBilling');
 	});
 });
+
+// #133: every nav item and tab carries BOTH a kanji and an icon, so the glyph
+// preference can show either without an empty slot.
+describe('nav marks', () => {
+	const items = [
+		...NAV_YOU.flatMap((g) => g.items),
+		...NAV_ORG_BASE.flatMap((g) => g.items),
+		...TABS_YOU,
+		...TABS_ORG
+	];
+	it('gives every item a kanji and an icon', () => {
+		expect(items.length).toBeGreaterThan(20);
+		for (const it of items) {
+			expect(it.kanji, it.id).toMatch(/^\p{Script=Han}$/u);
+			expect(it.icon, it.id).toBeTruthy();
+		}
+	});
+	it('gives a tab the same marks as the nav item it opens', () => {
+		const byId = new Map([...NAV_YOU, ...NAV_ORG_BASE].flatMap((g) => g.items).map((i) => [i.id, i]));
+		for (const t of [...TABS_YOU, ...TABS_ORG]) {
+			expect({ kanji: t.kanji, icon: t.icon }, t.id).toEqual({ kanji: byId.get(t.id)?.kanji, icon: byId.get(t.id)?.icon });
+		}
+	});
+});

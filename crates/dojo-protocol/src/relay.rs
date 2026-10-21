@@ -280,27 +280,18 @@ pub struct RelaySessionUpdate {
     /// Optional + backward-compatible: absent → no seat is touched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_slug: Option<String>,
-    /// The run's project as the dōjō models it (`dojo.projects`) — populated so the
-    /// user sees their own projects in their own RLS-scoped console. Distinct from
-    /// `project_slug` above (which stays the raw billing seat key): this is the
-    /// display row. Still the user's own project metadata, federated as-is — there
-    /// is no client-specific dereference (content is dereferenced at derivation;
-    /// project identity is not derived content). Optional + backward-compatible.
+    /// The project the run is in, so the dōjō attaches the session to it (and
+    /// shows its constitution). Optional + backward-compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<RelayProjectInfo>,
 }
 
-/// The run's project for the dōjō's `dojo.projects` upsert. `slug`/`name` are the
-/// user's own project metadata (the namespace slug + `sensei.projects.name`),
-/// `classification` = company|client|personal|community (from the bound membership
-/// kind; unbound → personal), `phase` = the adoption phase (the daemon sends the
-/// `watch` default; the dōjō advances it later).
+/// The project a run is in, by its namespace slug. A run never creates a
+/// project: the dōjō finds the shared one the sync filed (#299), which owns its
+/// name, classification and phase.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayProjectInfo {
     pub slug: String,
-    pub name: String,
-    pub classification: String,
-    pub phase: String,
     /// The project's resolved constitution (the daemon composes it locally from
     /// the folder's namespaces + packs). Federated so the dōjō can DISPLAY the
     /// "before you start" preview without re-resolving. Optional + backward-
@@ -482,6 +473,14 @@ pub struct RelaySegmentsPublish {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_run_names_its_project_by_slug_alone() {
+        // #299: the dōjō owns a project's name, classification and phase (the sync
+        // files it); a run only says which project it is in.
+        let p = RelayProjectInfo { slug: "sensei-hq".into(), constitution: None };
+        assert_eq!(serde_json::to_value(&p).unwrap(), json!({ "slug": "sensei-hq" }));
+    }
 
     // ---- enum <-> DB string mapping (MUST match the dojo.* relay enum DDL) ----
 

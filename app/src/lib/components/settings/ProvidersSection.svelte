@@ -1,6 +1,7 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { onMount } from 'svelte';
-  import { wizardState } from '$lib/wizard-state.svelte.js';
+  import { wizardState, routerKeyStatus } from '$lib/wizard-state.svelte.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
 
@@ -24,7 +25,7 @@
    *  persists on demand via the Save button — same daemon endpoint the
    *  wizard's commit-hook used. Runs on the row's `router` object so the
    *  status chips (`saveState`) reflect progress. */
-  async function saveKey(router: { id: string; draftKey: string; saveState: string; saveError: string; configured: boolean }): Promise<void> {
+  async function saveKey(router: { id: string; draftKey: string; saveState: string; saveError: string; configured: boolean | null; keyError: string | null }): Promise<void> {
     const trimmed = router.draftKey.trim();
     if (trimmed.length === 0) return;
     router.saveState = 'saving';
@@ -32,6 +33,7 @@
     const result = await senseiApi(appState.port).setGatewayRouterKey(router.id, trimmed);
     if (result.ok) {
       router.configured = result.data.configured;
+      router.keyError = null;
       router.draftKey = '';
       router.saveState = 'done';
     } else {
@@ -50,7 +52,7 @@
 
   {#if loading}
     <div data-testid="inference-loading" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
-      <span class="kanji text-4xl text-accent opacity-20 block mb-4">想</span>
+      <Kanji char="想" size="inherit" tone="inherit" class="text-4xl text-accent opacity-20 block mb-4" />
       <p class="text-sm text-ink-soft">Loading routers…</p>
     </div>
   {:else if error}
@@ -84,12 +86,12 @@
               <span class="text-xs text-success font-mono">saved ✓</span>
             {:else if router.saveState === 'failed'}
               <span class="text-xs text-danger font-mono">failed</span>
-            {:else if router.configured}
-              <span class="text-xs text-success font-mono">configured ✓</span>
-            {:else if !router.needsKey}
-              <span class="text-xs text-ink-soft font-mono">no key needed</span>
             {:else}
-              <span class="text-xs text-ink-soft font-mono">not configured</span>
+              {@const status = routerKeyStatus(router)}
+              <span
+                class="text-xs font-mono {status.tone === 'success' ? 'text-success' : status.tone === 'warning' ? 'text-warning' : 'text-ink-soft'}"
+                data-key-status={status.tone}
+              >{status.label}</span>
             {/if}
           </div>
 
@@ -108,7 +110,7 @@
               <input
                 type="password"
                 bind:value={router.draftKey}
-                placeholder={router.configured ? 'Update key (paste to replace)' : 'Paste API key (sk-...)'}
+                placeholder={router.configured !== false ? 'Update key (paste to replace)' : 'Paste API key (sk-...)'}
                 data-testid={`router-key-input-${router.id}`}
                 onkeydown={(e) => { if (e.key === 'Enter') void saveKey(router); }}
                 class="key-input flex-1 px-3 py-1.5 text-sm font-mono bg-paper-soft border border-paper-edge rounded-md text-ink focus:outline-none focus:border-accent"

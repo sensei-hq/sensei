@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
 	import { KanjiToken, PlanBar, PlanOutline, ListSection, EmptyState } from '$lib/components/kit';
 	import { Toggle } from '@rokkit/ui';
 	import type { KitTask } from '$lib/components/kit/types';
@@ -58,47 +59,49 @@
 </script>
 
 {#if run}
-	<div class="flex h-full min-h-0 flex-col">
-		<!-- Sticky header (identity · meta · status · progress · tabs) — never scrolls. -->
-		<div class="flex shrink-0 flex-col gap-5 px-8 pb-4 pt-8">
-			<!-- Header: session identity + meta + live status. -->
-		<div class="flex items-baseline gap-3">
-			<KanjiToken char="観" size="lg" toneClass={tone} />
-			<div style="min-width: 0; flex: 1">
-				<div class="text-ink-mute text-xs font-medium uppercase" style="letter-spacing: 0.18em">
-					{m.detail_session()} · {sessionId}
+	<Screen>
+		{#snippet header()}
+			<!-- Sticky header (identity · meta · status · progress · tabs) — never scrolls. -->
+			<div class="flex shrink-0 flex-col gap-5 px-8 pb-4 pt-8">
+				<!-- Header: session identity + meta + live status. -->
+			<div class="flex items-baseline gap-3">
+				<KanjiToken char="観" size="lg" toneClass={tone} />
+				<div style="min-width: 0; flex: 1">
+					<div class="text-ink-mute text-xs font-medium uppercase" style="letter-spacing: 0.18em">
+						{m.detail_session()} · {sessionId}
+					</div>
+					<h2 class="display text-ink text-lg font-normal" style="margin: 2px 0 0; line-height: 1.4">
+						{run.title}
+					</h2>
+					{#if meta}
+						<div class="mono text-ink-mute text-xs" style="margin-top: 3px">{meta}</div>
+					{/if}
 				</div>
-				<h2 class="display text-ink text-lg font-normal" style="margin: 2px 0 0; line-height: 1.4">
-					{run.title}
-				</h2>
-				{#if meta}
-					<div class="mono text-ink-mute text-xs" style="margin-top: 3px">{meta}</div>
-				{/if}
+				<RelayStatusBadge status={run.status} />
 			</div>
-			<RelayStatusBadge status={run.status} />
-		</div>
 
-		<!-- Progress: phase-of-phases + done/total + bar (accent while something waits). -->
-		{#if stages}
-			<div style="max-width: 560px">
-				<div class="mb-2 flex items-center justify-between">
-					<span class="mono text-ink-soft text-xs">
-						{m.detail_phase({ stage, stages })}{run.phase ? ` · ${run.phase}` : ''}
-					</span>
-					<span class="mono text-ink-soft text-xs">{m.detail_tasks_pct({ done: run.done, total: run.total, pct })}</span>
+			<!-- Progress: phase-of-phases + done/total + bar (accent while something waits). -->
+			{#if stages}
+				<div style="max-width: 560px">
+					<div class="mb-2 flex items-center justify-between">
+						<span class="mono text-ink-soft text-xs">
+							{m.detail_phase({ stage, stages })}{run.phase ? ` · ${run.phase}` : ''}
+						</span>
+						<span class="mono text-ink-soft text-xs">{m.detail_tasks_pct({ done: run.done, total: run.total, pct })}</span>
+					</div>
+					<PlanBar {pct} tone={openCount ? 'bg-accent' : 'bg-ink'} />
 				</div>
-				<PlanBar {pct} tone={openCount ? 'bg-accent' : 'bg-ink'} />
-			</div>
-		{/if}
+			{/if}
 
-			<!-- Two tabs: Needs you · Plan. -->
-			<div class="border-paper-edge border-b pb-3">
-				<Toggle options={TAB_OPTS} value={tab} onchange={(v) => pickTab(v as string)} size="sm" label={m.detail_tab_needs()} />
+				<!-- Two tabs: Needs you · Plan. -->
+				<div class="border-paper-edge border-b pb-3">
+					<Toggle options={TAB_OPTS} value={tab} onchange={(v) => pickTab(v as string)} size="sm" label={m.detail_tab_needs()} />
+				</div>
 			</div>
-		</div>
 
-		<!-- Scrolling body: asks / plan + activity (the only scroll region). -->
-		<div class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-8 pb-8">
+			<!-- Scrolling body: asks / plan + activity (the only scroll region). -->
+		{/snippet}
+		<div class="flex flex-col gap-5 px-8 pb-8">
 			{#if tab === 'needs'}
 			{#if run.asks.length}
 				<div class="flex flex-col gap-3">
@@ -137,5 +140,5 @@
 			</ListSection>
 			</div>
 		</div>
-	</div>
+	</Screen>
 {/if}

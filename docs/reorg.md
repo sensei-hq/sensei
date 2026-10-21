@@ -974,7 +974,7 @@ G1 loop-closed ✅, G2 ✅, G3 ✅, G4 ✅, G5 ✅, G6 corpus starved (residual)
 | X-2 | duplicated content across `features/`/`spec/`/`design/`/`architecture/`/`plan/` | reorg |
 | X-3 | `spec/` 186 files declared legacy; no fold completed | reorg |
 | X-4 | `backlog.md` hand-maintained open-issue table (12 vs 67) — **decision 9: drop it, reference live GitHub issues instead** | docs |
-| X-5 | `sensei.error_signature` referenced, does not exist | docs |
+| X-5 | ~~`sensei.error_signature` referenced, does not exist~~ — it is a function (c6c1a206); closed #189 | docs |
 
 ### 12.9 Platform
 

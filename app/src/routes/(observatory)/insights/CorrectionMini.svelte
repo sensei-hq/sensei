@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import type { CorrectionCardVm } from './insights-board.svelte.js';
 
   let { correction }: { correction: CorrectionCardVm } = $props();
@@ -10,7 +11,7 @@
   data-correction-id={correction.id}
   class="flex items-baseline gap-2 rounded bg-paper-soft border border-paper-edge py-2 px-3"
 >
-  <span class="kanji text-xs text-warning">直</span>
+  <Kanji char="直" size="inherit" tone="inherit" class="text-xs text-warning" />
   <span class="flex-1 min-w-0 text-xs text-ink leading-snug truncate">{correction.text}</span>
   <span class="font-mono text-xs text-ink-soft" data-correction-count>{correction.count}×</span>
 </article>

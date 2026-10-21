@@ -30,22 +30,25 @@ use crate::dojo_client::{dojo_auth, pkce, session};
 /// it, which is the honest behaviour — the abandoned flow's code is then
 /// unusable, and that is what we want rather than keeping stale verifiers alive.
 /// The in-flight (persona, verifier) pair.
-static PENDING_VERIFIER: Mutex<Option<(String, String)>> = Mutex::new(None);
+/// The sign-in in flight: (persona slot, PKCE verifier, the GitHub login it is
+/// expected to come back as — `None` for a first connect). The expected login
+/// is what lets the callback refuse the wrong account (#300).
+static PENDING_VERIFIER: Mutex<Option<(String, String, Option<String>)>> = Mutex::new(None);
 
 /// Which persona a sign-in is for. Defaults to the label the user is most likely
 /// to mean on a single-identity install.
 #[derive(Deserialize)]
 pub(crate) struct PersonaQuery {
-    #[serde(default = "default_persona")]
-    persona: String,
+    /// The keychain slot. Absent = the machine's DEFAULT identity, resolved from
+    /// the global git email (#296) — never the literal `default` slot, which only
+    /// ever meant "whoever signed in first without naming a persona".
+    #[serde(default)]
+    persona: Option<String>,
     /// Which GitHub account to suggest. Without it the browser's existing
     /// session is reused, so connecting a SECOND persona quietly links the
     /// first account again — a success as the wrong person.
     #[serde(default)]
     github_login: Option<String>,
-}
-fn default_persona() -> String {
-    "default".to_string()
 }
 
 use crate::dojo_client::settings::dojo_url;
@@ -57,12 +60,80 @@ fn callback_url() -> String {
     )
 }
 
+/// The machine's default identity (#296).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DefaultPersona {
+    pub label: String,
+    /// What to address it by: its keychain slot, or its label when it has never
+    /// signed in here (the label is what a first sign-in creates the slot from).
+    pub slot: String,
+}
+
+/// The default identity: the one that owns the machine's global git email.
+/// No email, no owner, or two owners is an ERROR naming what is missing — never
+/// the `default` slot, which would silently answer for whoever signed in first.
+pub(crate) fn resolve_default(
+    global_email: Option<&str>,
+    owners: &[(String, Option<String>)],
+) -> Result<DefaultPersona, String> {
+    let Some(email) = global_email else {
+        return Err("no default identity: git has no global user.email \
+                    (set one with `git config --global user.email …`, or name a persona)"
+            .into());
+    };
+    match owners {
+        [] => Err(format!(
+            "no default identity: no identity on this machine owns {email}, the global git email"
+        )),
+        [(label, slot)] => Ok(DefaultPersona {
+            label: label.clone(),
+            slot: slot.clone().unwrap_or_else(|| label.clone()),
+        }),
+        many => Err(format!(
+            "no default identity: {email} belongs to several identities ({}) — name one",
+            many.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
+/// Resolve the default identity against the live registry.
+pub(crate) async fn default_persona(state: &AppState) -> Result<DefaultPersona, String> {
+    let email = tokio::task::spawn_blocking(crate::git_identity::read_global_git_email)
+        .await
+        .map_err(|e| format!("reading the global git email panicked: {e}"))?;
+    let owners = match email.as_deref() {
+        Some(e) => state.pg.personas_owning_email(e).await?,
+        None => Vec::new(),
+    };
+    resolve_default(email.as_deref(), &owners)
+}
+
+/// The persona a request addresses: the one it names, or the default (#296).
+async fn requested_persona(state: &AppState, named: Option<String>) -> Result<String, String> {
+    match named {
+        Some(p) => Ok(p),
+        None => default_persona(state).await.map(|d| d.slot),
+    }
+}
+
+/// The JSON a handler answers when the default cannot be resolved.
+fn no_persona(error: String) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "ok": false, "error": error }))
+}
+
 /// `POST /api/auth/signin` — begin sign-in.
 ///
 /// Returns the URL to open rather than opening it here: the daemon may be
 /// headless, and a caller (the desktop app, the CLI) knows better than it does
 /// how to present a browser.
-pub(crate) async fn signin(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
+pub(crate) async fn signin(
+    State(state): State<AppState>,
+    Query(p): Query<PersonaQuery>,
+) -> Json<serde_json::Value> {
+    let persona = match requested_persona(&state, p.persona.clone()).await {
+        Ok(persona) => persona,
+        Err(e) => return no_persona(e),
+    };
     let verifier = pkce::generate_verifier();
     // Check our own output before sending the user to a browser. A malformed
     // verifier is rejected at the TOKEN leg — after the user has signed in — with
@@ -90,11 +161,11 @@ pub(crate) async fn signin(Query(p): Query<PersonaQuery>) -> Json<serde_json::Va
     // leave a stale pending flow behind a failed start, and the NEXT callback —
     // possibly from a different attempt — would try to use it.
     *PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some((p.persona.clone(), verifier));
+        Some((persona.clone(), verifier, p.github_login.clone()));
     Json(serde_json::json!({
         "authorizeUrl": url,
         "callback": callback_url(),
-        "persona": p.persona,
+        "persona": persona,
         "dojo": dojo_url(),
         // The hint is not a guarantee — GitHub suggests the account rather than
         // forcing a re-auth — so the caller should show which identity is
@@ -102,6 +173,39 @@ pub(crate) async fn signin(Query(p): Query<PersonaQuery>) -> Json<serde_json::Va
         "expectedLogin": p.github_login,
         "hint": "if the browser is already signed in to another GitHub account, use a private window",
     }))
+}
+
+/// May the GitHub account a sign-in came back as be stored under `slot` (#300)?
+///
+/// Two refusals, each naming what to do:
+/// * the sign-in expected a login (renewing a known identity) and another
+///   account answered — the browser was signed in to GitHub as someone else;
+/// * the account already belongs to ANOTHER identity on this machine. Linking it
+///   would re-point that identity's slot here (`resolve_persona_for_identity`
+///   finds it by GitHub id), silently moving a working identity.
+pub(crate) fn account_guard(
+    slot: &str,
+    expected_login: Option<&str>,
+    login: &str,
+    owner_slot: Option<&str>,
+) -> Result<(), String> {
+    if let Some(expected) = expected_login
+        && !expected.eq_ignore_ascii_case(login)
+    {
+        return Err(format!(
+            "this sign-in was for {expected}, but GitHub answered as {login}. Sign in to GitHub \
+             as {expected} in your browser (a private window works), then try again."
+        ));
+    }
+    if let Some(owner) = owner_slot
+        && owner != slot
+    {
+        return Err(format!(
+            "{login} is already connected on this machine as another identity. Use that \
+             identity, or sign in to GitHub as a different account for this one."
+        ));
+    }
+    Ok(())
 }
 
 /// What the browser should be told at the end of the redirect.
@@ -276,7 +380,7 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
     let Some(code) = q.code else {
         return serde_json::json!({ "ok": false, "error": "no code in callback" });
     };
-    let Some((persona, verifier)) =
+    let Some((persona, verifier, expected_login)) =
         PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()).take()
     else {
         return serde_json::json!({
@@ -287,6 +391,24 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
 
     match dojo_auth::exchange(&dojo_url(), &code, &verifier).await {
         Ok(tokens) => {
+            // #300: the sign-in ran in the system browser, which may be signed in
+            // to GitHub as someone else. Decide BEFORE anything is stored: a
+            // wrong account must not land in this identity's keychain slot, nor
+            // re-point another identity's slot here.
+            if let Some((login, gh_id)) = tokens.user.as_ref().and_then(github_identity) {
+                let owner = match state.pg.session_slot_of_github_account(gh_id).await {
+                    Ok(owner) => owner,
+                    // Fail closed: not knowing who holds the account is not
+                    // permission to store it.
+                    Err(e) => return serde_json::json!({ "ok": false, "error": e }),
+                };
+                if let Err(e) =
+                    account_guard(&persona, expected_login.as_deref(), login, owner.as_deref())
+                {
+                    tracing::warn!(persona, login, "sign-in refused: {e}");
+                    return serde_json::json!({ "ok": false, "error": e });
+                }
+            }
             // Blocking keychain write off the async runtime, as gateway_keys
             // documents.
             let refresh = tokens.refresh_token.clone();
@@ -297,24 +419,28 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
             // read:org exists for — provisioning cannot list organisations
             // without it, and would report "none" rather than "never asked".
             let provider = tokens.provider_token.clone();
+            // The user just signed in, so a Keychain prompt has someone to
+            // answer it (#283) — the only kind of call that may ask.
             let stored = tokio::task::spawn_blocking(move || {
-                if let Some(pt) = provider.as_deref() {
-                    // Non-fatal: a failed provider-token write costs
-                    // provisioning, not the sign-in itself.
-                    if let Err(e) = session::store_provider_token(&who, pt) {
-                        tracing::warn!(error = %e, "could not store the GitHub token");
+                crate::gateway_keys::allow_prompt(|| {
+                    if let Some(pt) = provider.as_deref() {
+                        // Non-fatal: a failed provider-token write costs
+                        // provisioning, not the sign-in itself.
+                        if let Err(e) = session::store_provider_token(&who, pt) {
+                            tracing::warn!(error = %e, "could not store the GitHub token");
+                        }
                     }
-                }
-                // GitHub's refresh token is deliberately NOT kept. Spending it
-                // needs the App's client secret, which stays in Supabase alone
-                // — so this credential has no consumer here, and a 182-day
-                // grant at rest with no upside is exactly what the Keychain
-                // rules already exclude access tokens for. The delete also
-                // clears what earlier builds stored.
-                if let Err(e) = session::discard_provider_refresh_token(&who) {
-                    tracing::warn!(error = %e, "could not discard the GitHub refresh token");
-                }
-                session::store_refresh_token(&who, &refresh)
+                    // GitHub's refresh token is deliberately NOT kept. Spending it
+                    // needs the App's client secret, which stays in Supabase alone
+                    // — so this credential has no consumer here, and a 182-day
+                    // grant at rest with no upside is exactly what the Keychain
+                    // rules already exclude access tokens for. The delete also
+                    // clears what earlier builds stored.
+                    if let Err(e) = session::discard_provider_refresh_token(&who) {
+                        tracing::warn!(error = %e, "could not discard the GitHub refresh token");
+                    }
+                    session::store_refresh_token(&who, &refresh)
+                })
             })
             .await;
             // Derive the identity from AUTH rather than leaving it a guess.
@@ -521,21 +647,30 @@ pub(crate) async fn signout(
     State(state): State<AppState>,
     Query(p): Query<PersonaQuery>,
 ) -> Json<serde_json::Value> {
-    let who = p.persona.clone();
-    let keychain = match tokio::task::spawn_blocking(move || session::clear_session(&who)).await {
+    let persona = match requested_persona(&state, p.persona.clone()).await {
+        Ok(persona) => persona,
+        Err(e) => return no_persona(e),
+    };
+    let who = persona.clone();
+    // A sign-out the user asked for may prompt (#283).
+    let keychain = match tokio::task::spawn_blocking(move || {
+        crate::gateway_keys::allow_prompt(|| session::clear_session(&who))
+    })
+    .await
+    {
         Ok(r) => r.map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
     // Not short-circuited on a Keychain failure: a credential we could not delete
     // is all the more reason to stop the cycle from presenting it every cadence.
-    let registry = state.pg.clear_persona_session(&p.persona).await;
+    let registry = state.pg.clear_persona_session(&persona).await;
 
     let errors: Vec<String> = [keychain.as_ref().err().cloned(), registry.as_ref().err().cloned()]
         .into_iter()
         .flatten()
         .collect();
     if !errors.is_empty() {
-        tracing::error!(persona = %p.persona, errors = ?errors,
+        tracing::error!(persona = %persona, errors = ?errors,
                         "sign-out did not complete — credentials may remain at rest");
     }
 
@@ -543,7 +678,7 @@ pub(crate) async fn signout(
         "ok": errors.is_empty(),
         // Only claimable when the Keychain actually gave the credentials up.
         "signedIn": keychain.is_err(),
-        "persona": p.persona,
+        "persona": persona,
         // Which halves happened, rather than one boolean covering both. `false`
         // here means the registry held no such slot — not that it failed.
         "credentialsCleared": keychain.is_ok(),
@@ -570,9 +705,13 @@ pub(crate) enum AuthError {
     /// The dōjō REJECTED the refresh token (401/403). Terminal, and the stored
     /// session has already been cleared.
     Rejected(String),
-    /// The dōjō could not be reached, or failed. Transient — the stored session
-    /// was deliberately left alone.
+    /// The dōjō could not be reached, or failed — or the stored session could
+    /// not be read (#283). Transient: the stored session was left alone.
     Unreachable(String),
+    /// The stored session could not be read — the Keychain declined without
+    /// asking (#283). The session is still there; nothing was cleared, and
+    /// signing in again is not what it needs.
+    CredentialUnreadable(String),
 }
 
 /// The detail, so callers can report the cause without destructuring.
@@ -583,7 +722,9 @@ impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SignedOut => write!(f, "no stored session"),
-            Self::Rejected(d) | Self::Unreachable(d) => write!(f, "{d}"),
+            Self::Rejected(d) | Self::Unreachable(d) | Self::CredentialUnreadable(d) => {
+                write!(f, "{d}")
+            }
         }
     }
 }
@@ -592,6 +733,18 @@ impl AuthError {
     /// Whether the user has to sign in again, as opposed to just waiting.
     pub(crate) fn needs_sign_in(&self) -> bool {
         matches!(self, Self::SignedOut | Self::Rejected(_))
+    }
+}
+
+/// What `GET /api/auth/status` says went wrong, one line per kind of failure.
+fn status_error(e: &AuthError) -> &'static str {
+    match e {
+        AuthError::SignedOut => "no stored session — sign in",
+        AuthError::Rejected(_) => "stored session was rejected — sign in again",
+        AuthError::Unreachable(_) => "could not reach dōjō — the stored session was left alone",
+        AuthError::CredentialUnreadable(_) => {
+            "could not read the stored session — the keychain needs approval"
+        }
     }
 }
 
@@ -614,6 +767,19 @@ pub(crate) struct LiveSession {
     pub session: session::Session,
 }
 
+/// The stored refresh token, or why there is none. Only a miss is `SignedOut`:
+/// a Keychain that would not answer (#283) says nothing about the session, and
+/// reporting "signed out" for it sends the user to sign in over a session that
+/// is still there.
+fn stored_session(
+    read: Result<String, crate::gateway_keys::KeychainError>,
+) -> Result<String, AuthError> {
+    read.map_err(|e| match e {
+        crate::gateway_keys::KeychainError::NotFound => AuthError::SignedOut,
+        other => AuthError::CredentialUnreadable(other.to_string()),
+    })
+}
+
 /// Refresh one persona's stored session and hand back a usable one.
 ///
 /// The single implementation of "get me a working credential for this persona".
@@ -631,9 +797,10 @@ pub(crate) struct LiveSession {
 ///   never yields an empty or stale token that a caller would send as a bearer.
 pub(crate) async fn live_session(persona: &str) -> Result<LiveSession, AuthError> {
     let who = persona.to_string();
-    let stored = tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await;
-    let Ok(Ok(refresh)) = stored else {
-        return Err(AuthError::SignedOut);
+    let refresh = match tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await
+    {
+        Ok(read) => stored_session(read)?,
+        Err(e) => return Err(AuthError::Unreachable(format!("session read panicked: {e}"))),
     };
 
     let tokens = match dojo_auth::refresh(&dojo_url(), &refresh).await {
@@ -710,14 +877,18 @@ pub(crate) async fn status(
     State(state): State<AppState>,
     Query(p): Query<PersonaQuery>,
 ) -> Json<serde_json::Value> {
+    let persona = match requested_persona(&state, p.persona.clone()).await {
+        Ok(persona) => persona,
+        Err(e) => return no_persona(e),
+    };
     // The refresh, the rotation and the clear-on-rejection rule all live in
     // `live_session` now, so the sync cycle runs exactly what this reports.
-    let (tokens, sess) = match live_session(&p.persona).await {
+    let (tokens, sess) = match live_session(&persona).await {
         Ok(live) => (live.tokens, live.session),
         Err(AuthError::SignedOut) => {
             return Json(serde_json::json!({
                 "signedIn": false,
-                "persona": p.persona,
+                "persona": persona,
                 // No credential at all, so signing in is both necessary and
                 // sufficient. Stated as a field for the same reason the forge
                 // token states it: a caller must not infer the remedy from the
@@ -727,25 +898,18 @@ pub(crate) async fn status(
                 "dojo": dojo_url(),
             }));
         }
-        Err(e @ (AuthError::Rejected(_) | AuthError::Unreachable(_))) => {
-            let detail = match &e {
-                AuthError::Rejected(d) | AuthError::Unreachable(d) => d.clone(),
-                AuthError::SignedOut => unreachable!("handled above"),
-            };
+        Err(e) => {
+            let detail = e.to_string();
             return Json(serde_json::json!({
                 "signedIn": false,
-                "persona": p.persona,
+                "persona": persona,
                 // The distinction `AuthError` has drawn since it was written,
                 // finally on the wire. Without it every `signedIn: false` looks
                 // alike, and `sensei auth renew-if-needed` opened a browser for
                 // a GoTrue 504 — telling a signed-in user to re-authenticate
                 // over an outage that had nothing to do with their credential.
                 "needsSignIn": e.needs_sign_in(),
-                "error": if e.needs_sign_in() {
-                    "stored session was rejected — sign in again"
-                } else {
-                    "could not reach dōjō — the stored session was left alone"
-                },
+                "error": status_error(&e),
                 "detail": detail,
                 "dojo": dojo_url(),
             }));
@@ -766,12 +930,12 @@ pub(crate) async fn status(
     // exchange and kept, because it is returned exactly once.
     let linked = match tokens.user.as_ref() {
         Some(u) => {
-            let who4 = p.persona.clone();
+            let who4 = persona.clone();
             let pt = tokio::task::spawn_blocking(move || session::load_provider_token(&who4))
                 .await
                 .ok()
                 .and_then(|r| r.ok());
-            Some(link_verified_identity(&state, &p.persona, u, pt.as_deref()).await)
+            Some(link_verified_identity(&state, &persona, u, pt.as_deref()).await)
         }
         None => None,
     };
@@ -780,12 +944,12 @@ pub(crate) async fn status(
     // this endpoint was silent about. Everything above concerns the dōjō session:
     // it can refresh cleanly and report `signedIn: true` while every GitHub call
     // 401s, which is exactly what happened for a whole morning.
-    let row = forge_row(&state, &p.persona).await;
+    let row = forge_row(&state, &persona).await;
     let forge = forge_report(row.as_ref().map(Option::as_ref).map_err(Clone::clone), now);
 
     Json(serde_json::json!({
         "signedIn": auth_user_id.is_some(),
-        "persona": p.persona,
+        "persona": persona,
         "authUserId": auth_user_id,
         "email": email,
         "identity": linked,
@@ -828,16 +992,37 @@ pub(crate) async fn status(
 pub(crate) async fn personas(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
-    use crate::dojo_client::forge_token::{PersonaAction, persona_action};
+    use crate::dojo_client::forge_token::persona_action;
 
     let rows = state.pg.persona_rows().await.map_err(|e| {
         tracing::error!(error = %e, "personas: could not read the registry");
         axum::http::StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let now = chrono::Utc::now().timestamp();
+    // One quiet read per connected persona: a millisecond, and it cannot prompt.
+    // It is what tells "signed in" from "signed in, but the Keychain withholds
+    // the session" — the second needs the user's approval (#283).
+    let slots: Vec<Option<String>> =
+        rows.iter().map(|r| r.session_slot.clone().filter(|_| r.verified)).collect();
+    let sessions = tokio::task::spawn_blocking(move || {
+        slots
+            .iter()
+            .map(|slot| slot.as_deref().map(|s| session::load_refresh_token(s).map(|_| ())))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "personas: the session reads panicked");
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    // Which identity is the machine's default (#296). An unresolvable default
+    // is reported, never papered over with the `default` slot.
+    let default = default_persona(&state).await;
+    let default_label = default.as_ref().ok().map(|d| d.label.clone());
     let list: Vec<serde_json::Value> = rows
         .iter()
-        .map(|r| {
+        .zip(&sessions)
+        .map(|(r, session)| {
             let action =
                 persona_action(r.session_slot.as_deref(), r.verified, &r.state, r.expires_at, now);
             serde_json::json!({
@@ -852,16 +1037,76 @@ pub(crate) async fn personas(
                 "sessionSlot": r.session_slot,
                 "connected": r.session_slot.is_some() && r.verified,
                 "forgeToken": { "state": r.state, "expiresAt": r.expires_at },
-                "action": match action {
-                    PersonaAction::Connect => "connect",
-                    PersonaAction::SignIn => "signIn",
-                    PersonaAction::Renew => "renew",
-                    PersonaAction::None => "none",
-                },
+                "action": action_name(action, session.as_ref()),
+                "isDefault": default_label.as_deref() == Some(r.label.as_str()),
             })
         })
         .collect();
-    Ok(Json(serde_json::json!({ "personas": list })))
+    Ok(Json(serde_json::json!({
+        "personas": list,
+        "default": default_label,
+        "defaultError": default.err(),
+    })))
+}
+
+/// The wire name of a persona's action. `approve` when its stored session is
+/// there but the Keychain will not hand it over without the user (#283) —
+/// the daemon never prompts, so only a click can. `session` is the quiet read
+/// of a connected persona's session; `None` when there is nothing to read.
+fn action_name(
+    action: crate::dojo_client::forge_token::PersonaAction,
+    session: Option<&Result<(), crate::gateway_keys::KeychainError>>,
+) -> &'static str {
+    use crate::dojo_client::forge_token::PersonaAction;
+    if let Some(Err(crate::gateway_keys::KeychainError::NeedsApproval)) = session {
+        return "approve";
+    }
+    match action {
+        PersonaAction::Connect => "connect",
+        PersonaAction::SignIn => "signIn",
+        PersonaAction::Renew => "renew",
+        PersonaAction::None => "none",
+    }
+}
+
+/// What approving a persona's Keychain item came to (#283). The refresh token
+/// is the session; the GitHub token is optional, since a sign-in may not have
+/// captured one. One read, so one prompt (#302).
+fn approval(
+    read: Result<session::Credentials, crate::gateway_keys::KeychainError>,
+) -> Result<(), String> {
+    use crate::gateway_keys::KeychainError;
+    match read {
+        Ok(c) if c.refresh_token.is_some() => Ok(()),
+        Ok(_) | Err(KeychainError::NotFound) => {
+            Err("no stored session for this persona — sign in".into())
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// `POST /api/auth/keychain/approve?persona=<slot>` — the one place a Keychain
+/// read may prompt for a session the daemon already holds (#283). The user
+/// clicked, so the dialog has someone to answer it; "Always Allow" there is what
+/// lets the quiet background reads succeed afterwards.
+pub(crate) async fn approve_keychain(
+    State(state): State<AppState>,
+    Query(p): Query<PersonaQuery>,
+) -> Json<serde_json::Value> {
+    let persona = match requested_persona(&state, p.persona.clone()).await {
+        Ok(persona) => persona,
+        Err(e) => return no_persona(e),
+    };
+    let who = persona.clone();
+    let read = tokio::task::spawn_blocking(move || {
+        crate::gateway_keys::allow_prompt(|| approval(session::load_credentials(&who)))
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("keychain read panicked: {e}")));
+    match read {
+        Ok(()) => Json(serde_json::json!({ "ok": true, "persona": persona })),
+        Err(error) => Json(serde_json::json!({ "ok": false, "persona": persona, "error": error })),
+    }
 }
 
 /// `GET /api/auth/orgs?persona=…` — the GitHub organisations this persona can see.
@@ -879,14 +1124,18 @@ pub(crate) async fn orgs(
     State(state): State<AppState>,
     Query(p): Query<PersonaQuery>,
 ) -> Json<serde_json::Value> {
-    let who = p.persona.clone();
+    let persona = match requested_persona(&state, p.persona.clone()).await {
+        Ok(persona) => persona,
+        Err(e) => return no_persona(e),
+    };
+    let who = persona.clone();
     let token = match tokio::task::spawn_blocking(move || session::load_provider_token(&who)).await
     {
         Ok(Ok(t)) => t,
         _ => {
             return Json(serde_json::json!({
                 "ok": false,
-                "persona": p.persona,
+                "persona": persona,
                 "error": "no GitHub token stored for this persona — sign in again to capture one",
                 "detail": "the provider token is returned only at the exchange; a session created before it was captured has none",
             }));
@@ -912,13 +1161,8 @@ pub(crate) async fn orgs(
             .get(crate::dojo_client::forge_token::EXPIRY_HEADER)
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
-        crate::dojo_client::forge_token::observe(
-            &state.pg,
-            &p.persona,
-            Some(status),
-            exp.as_deref(),
-        )
-        .await;
+        crate::dojo_client::forge_token::observe(&state.pg, &persona, Some(status), exp.as_deref())
+            .await;
     }
 
     match resp {
@@ -941,7 +1185,7 @@ pub(crate) async fn orgs(
                         .collect()
                 })
                 .unwrap_or_default();
-            Json(serde_json::json!({ "ok": true, "persona": p.persona, "orgs": orgs }))
+            Json(serde_json::json!({ "ok": true, "persona": persona, "orgs": orgs }))
         }
         Ok(r) => {
             let status = r.status().as_u16();
@@ -949,12 +1193,12 @@ pub(crate) async fn orgs(
             // 403 here usually means the org enforces SSO or the token lacks
             // read:org — worth saying, because the symptom is an empty list.
             Json(serde_json::json!({
-                "ok": false, "persona": p.persona,
+                "ok": false, "persona": persona,
                 "error": "GitHub rejected the org request", "status": status, "detail": body,
             }))
         }
         Err(e) => {
-            Json(serde_json::json!({ "ok": false, "persona": p.persona, "error": e.to_string() }))
+            Json(serde_json::json!({ "ok": false, "persona": persona, "error": e.to_string() }))
         }
     }
 }
@@ -1097,6 +1341,97 @@ async fn github_verified_emails(provider_token: &str) -> VerifiedEmails {
         })
         .unwrap_or_default();
     VerifiedEmails { emails, status: Some(status), expiry_header }
+}
+
+#[cfg(test)]
+mod default_persona_tests {
+    use super::{DefaultPersona, resolve_default};
+
+    // #296: "default" was a keychain slot NAME — whoever signed in first without
+    // naming a persona owned it. The default is now RESOLVED: the identity that
+    // owns the machine's global git email. Anything else is said, not guessed.
+    fn owner(label: &str, slot: Option<&str>) -> (String, Option<String>) {
+        (label.to_string(), slot.map(str::to_string))
+    }
+
+    #[test]
+    fn the_identity_owning_the_global_email_is_the_default() {
+        let got =
+            resolve_default(Some("dev@example.com"), &[owner("jerrythomas", Some("jerrythomas"))]);
+        assert_eq!(
+            got,
+            Ok(DefaultPersona { label: "jerrythomas".into(), slot: "jerrythomas".into() })
+        );
+    }
+
+    #[test]
+    fn a_default_never_signed_in_here_is_addressed_by_its_label() {
+        let got = resolve_default(Some("a@b.c"), &[owner("joel", None)]);
+        assert_eq!(got, Ok(DefaultPersona { label: "joel".into(), slot: "joel".into() }));
+    }
+
+    #[test]
+    fn no_global_email_is_an_error_not_the_default_slot() {
+        let err = resolve_default(None, &[owner("x", Some("default"))]).unwrap_err();
+        assert!(err.contains("user.email"), "{err}");
+    }
+
+    #[test]
+    fn an_email_no_identity_owns_is_an_error_that_names_it() {
+        let err = resolve_default(Some("nobody@x.y"), &[]).unwrap_err();
+        assert!(err.contains("nobody@x.y"), "{err}");
+    }
+
+    #[test]
+    fn an_email_two_identities_own_is_an_error_that_names_both() {
+        let err =
+            resolve_default(Some("a@b.c"), &[owner("one", None), owner("two", None)]).unwrap_err();
+        assert!(err.contains("one") && err.contains("two"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod account_guard_tests {
+    use super::account_guard;
+
+    // #300: a sign-in now opens the system browser, which may already be signed
+    // in to GitHub as someone else. The guard is what keeps the wrong account
+    // from being stored under this identity.
+
+    #[test]
+    fn the_expected_account_is_accepted() {
+        assert_eq!(account_guard("jerrythomas", Some("jerrythomas"), "jerrythomas", None), Ok(()));
+    }
+
+    #[test]
+    fn logins_compare_without_case() {
+        assert_eq!(account_guard("jerrythomas", Some("JerryThomas"), "jerrythomas", None), Ok(()));
+    }
+
+    #[test]
+    fn a_different_account_than_expected_is_refused_and_names_both() {
+        let err = account_guard("default", Some("sensei-hq-org"), "jerrythomas", None).unwrap_err();
+        assert!(err.contains("jerrythomas") && err.contains("sensei-hq-org"), "{err}");
+    }
+
+    #[test]
+    fn a_first_connect_accepts_an_account_no_identity_holds() {
+        assert_eq!(account_guard("joelthomas8847", None, "joelthomas8847", None), Ok(()));
+    }
+
+    #[test]
+    fn an_account_already_held_by_another_identity_is_refused() {
+        // Without this, resolve_persona_for_identity finds the account's persona
+        // by GitHub id and link_persona_identity re-points ITS slot here.
+        let err =
+            account_guard("joelthomas8847", None, "jerrythomas", Some("jerrythomas")).unwrap_err();
+        assert!(err.contains("jerrythomas"), "{err}");
+    }
+
+    #[test]
+    fn renewing_the_identity_that_holds_the_account_is_accepted() {
+        assert_eq!(account_guard("jerrythomas", None, "jerrythomas", Some("jerrythomas")), Ok(()));
+    }
 }
 
 #[cfg(test)]
@@ -1286,6 +1621,63 @@ mod tests {
         // curl sends `*/*`. It is not a browser, so it keeps the JSON.
         assert!(!wants_html(Some("*/*")));
         assert!(!wants_html(None));
+    }
+
+    /// #283: a session the Keychain will not hand over is the user's to
+    /// approve, whatever the forge standing says; otherwise the action is as
+    /// `persona_action` decided.
+    #[test]
+    fn a_session_the_keychain_withholds_is_to_be_approved() {
+        use crate::dojo_client::forge_token::PersonaAction;
+        use crate::gateway_keys::KeychainError;
+        let withheld = Err(KeychainError::NeedsApproval);
+        assert_eq!(action_name(PersonaAction::None, Some(&withheld)), "approve");
+        assert_eq!(action_name(PersonaAction::Renew, Some(&withheld)), "approve");
+        assert_eq!(action_name(PersonaAction::None, Some(&Ok(()))), "none");
+        assert_eq!(action_name(PersonaAction::Renew, Some(&Ok(()))), "renew");
+        assert_eq!(action_name(PersonaAction::SignIn, None), "signIn");
+        assert_eq!(action_name(PersonaAction::Connect, None), "connect");
+        assert_eq!(
+            action_name(PersonaAction::None, Some(&Err(KeychainError::NotFound))),
+            "none",
+            "a missing item is the forge standing's to report, not an approval"
+        );
+    }
+
+    #[test]
+    fn approving_needs_the_session_and_tolerates_no_github_token() {
+        use crate::gateway_keys::KeychainError;
+        use session::Credentials;
+        let creds = |rt: Option<&str>, gho: Option<&str>| {
+            Ok(Credentials {
+                refresh_token: rt.map(Into::into),
+                provider_token: gho.map(Into::into),
+            })
+        };
+        assert_eq!(approval(creds(Some("rt"), Some("gho"))), Ok(()));
+        assert_eq!(approval(creds(Some("rt"), None)), Ok(()));
+        assert!(approval(creds(None, Some("gho"))).unwrap_err().contains("sign in"));
+        assert!(approval(Err(KeychainError::NotFound)).unwrap_err().contains("sign in"));
+        assert_eq!(
+            approval(Err(KeychainError::NeedsApproval)),
+            Err("keychain access needs approval".into()),
+            "declined at the dialog is still a refusal"
+        );
+    }
+
+    /// #283: a Keychain refusal is not a sign-out.
+    #[test]
+    fn only_a_missing_session_reads_as_signed_out() {
+        use crate::gateway_keys::KeychainError;
+        assert!(matches!(stored_session(Err(KeychainError::NotFound)), Err(AuthError::SignedOut)));
+        match stored_session(Err(KeychainError::NeedsApproval)) {
+            Err(e @ AuthError::CredentialUnreadable(_)) => {
+                assert!(e.to_string().contains("needs approval"), "{e}");
+                assert!(!e.needs_sign_in());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(stored_session(Ok("rt".into())).ok().as_deref(), Some("rt"));
     }
 
     #[test]

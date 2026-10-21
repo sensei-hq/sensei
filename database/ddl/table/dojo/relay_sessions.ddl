@@ -42,6 +42,6 @@ comment on column dojo.relay_sessions.status
 comment on column dojo.relay_sessions.last_event_at
      is 'Timestamp of the newest run_event — drives the "last progress N min ago" line.';
 comment on column dojo.relay_sessions.project_id
-     is 'The run owner''s project (dojo.projects) the run works on, as the daemon files it — what lets a team owning that project see THAT the run is going (dojo.peer_run_status, #252). Only the owner''s own project; null when the run names none.';
+     is 'The shared project (dojo.projects) the run works in, attached by dojo.attach_run_to_project — what lets a team owning that project see THAT the run is going (dojo.peer_run_status, #252). Only a project in a dōjō the runner is a member of (#299); null when the run names none or the dōjō has no such project yet.';
 comment on column dojo.relay_sessions.heartbeat_at
      is 'Presence ping (~15–30s). A stale heartbeat flips the badge to unknown/degraded.';

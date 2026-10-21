@@ -24,17 +24,11 @@
 		getIncident,
 		updateEngagement,
 		deleteEngagement,
-		createEngagement,
-		DojoApiError
+		createEngagement
 	} from '$lib/client-data';
+	import { OrgSectionState } from '$lib/org-section-state.svelte';
 	import { toKitIncidentDetail } from '$lib/incidents-map';
-	import type {
-		KitProject,
-		KitMember,
-		KitIncident,
-		KitIncidentDetail,
-		KitEngagement
-	} from '$lib/components/kit/types';
+	import type { KitProject } from '$lib/components/kit/types';
 
 	// The org-zone section screen. Dispatches to the real screen for every NAV_ORG
 	// destination off the kit fixtures the loader supplies: the Overview
@@ -55,58 +49,28 @@
 	// labels "you" in the audit surface. Never a fixture identity (F4).
 	const viewer = $derived(data.user?.name ?? data.user?.email ?? 'You');
 
-	// A live-action error surfaced honestly under the screen (no silent failure).
-	// Cleared before each attempt; set from the API `error` message on a non-2xx.
-	let actionError = $state<string | null>(null);
-
 	function openProject(p: KitProject) {
 		goto(orgHref(data.slug, 'projects') + '/' + p.id);
 	}
 
-	// Run a console mutation against the resolved org tenant + session token, then
-	// reload so the list reflects the write (invalidateAll re-runs the loader).
-	// A failure surfaces the API message rather than failing silently.
-	async function act(fn: () => Promise<unknown>) {
-		actionError = null;
-		try {
-			await fn();
-			await invalidateAll();
-		} catch (e) {
-			actionError = e instanceof DojoApiError ? e.message : 'that action could not be completed';
-		}
-	}
-
+	// The console writes, bound to the org's tenant and session token. Each reads
+	// `data` when it runs, so a navigation to another org's section (the same
+	// component, new params) writes to that org.
 	const tk = () => requireTenant(data.tenantKey);
 	const opts = () => ({ accessToken: data.accessToken });
-
-	// Admin — set a member's dōjō role (the row carries the underlying user_id).
-	function setRole(m: KitMember, role: string) {
-		if (!m.userId) return;
-		void act(() => setMemberRole(tk(), m.userId as string, role, opts()));
-	}
-
-	// Lead — incident report / resolve / delete.
-	const reportIncident = (title: string) => act(() => createIncident(tk(), { title }, opts()));
-	const resolveIncident = (i: KitIncident) => act(() => updateIncident(tk(), i.id, { resolved: true }, opts()));
-	const removeIncident = (i: KitIncident) => act(() => deleteIncident(tk(), i.id, opts()));
-
-	// Lead — open an incident's detail pane (GET …/incidents/{id} on demand).
-	// A failed fetch surfaces honestly rather than opening an empty pane.
-	let incidentDetail = $state<KitIncidentDetail | null>(null);
-	async function openIncident(i: KitIncident) {
-		actionError = null;
-		try {
-			incidentDetail = toKitIncidentDetail(await getIncident(tk(), i.id, opts()));
-		} catch (e) {
-			actionError = e instanceof DojoApiError ? e.message : 'could not open that incident';
-		}
-	}
-	const closeIncidentDetail = () => (incidentDetail = null);
-
-	// Lead — engagement new / close / delete.
-	const newEngagement = (clientName: string) => act(() => createEngagement(tk(), { client_name: clientName }, opts()));
-	const closeEngagement = (e: KitEngagement) => act(() => updateEngagement(tk(), e.id, { status: 'ended' }, opts()));
-	const removeEngagement = (e: KitEngagement) => act(() => deleteEngagement(tk(), e.id, opts()));
+	const org = new OrgSectionState(
+		{
+			setRole: (userId, role) => setMemberRole(tk(), userId, role, opts()),
+			reportIncident: (title) => createIncident(tk(), { title }, opts()),
+			resolveIncident: (id) => updateIncident(tk(), id, { resolved: true }, opts()),
+			removeIncident: (id) => deleteIncident(tk(), id, opts()),
+			openIncident: async (id) => toKitIncidentDetail(await getIncident(tk(), id, opts())),
+			newEngagement: (clientName) => createEngagement(tk(), { client_name: clientName }, opts()),
+			closeEngagement: (id) => updateEngagement(tk(), id, { status: 'ended' }, opts()),
+			removeEngagement: (id) => deleteEngagement(tk(), id, opts())
+		},
+		invalidateAll
+	);
 </script>
 
 <svelte:head><title>{data.title} · {data.orgName} · Dōjō</title></svelte:head>
@@ -132,20 +96,20 @@
 		orgName={data.orgName}
 		engagements={data.engagements}
 		confidentiality={data.confidentiality}
-		onNew={newEngagement}
-		onClose={closeEngagement}
-		onDelete={removeEngagement}
+		onNew={org.newEngagement}
+		onClose={org.closeEngagement}
+		onDelete={org.removeEngagement}
 	/>
 {:else if data.section === 'incidents'}
 	<ScrIncidents
 		orgName={data.orgName}
 		incidents={data.incidents}
-		detail={incidentDetail}
-		onOpen={openIncident}
-		onCloseDetail={closeIncidentDetail}
-		onReport={reportIncident}
-		onResolve={resolveIncident}
-		onDelete={removeIncident}
+		detail={org.incidentDetail}
+		onOpen={(i) => org.openIncident(i)}
+		onCloseDetail={() => org.closeIncident()}
+		onReport={org.reportIncident}
+		onResolve={org.resolveIncident}
+		onDelete={org.removeIncident}
 	/>
 {:else if data.section === 'clientaudit'}
 	<ScrClientAudit orgName={data.orgName} entries={data.clientAudit} />
@@ -157,7 +121,7 @@
 		policies={data.rolePolicies}
 		audit={data.auditLog}
 		me={viewer}
-		onSetRole={setRole}
+		onSetRole={(m, role) => org.setRole(m, role)}
 	/>
 {:else if data.section === 'scopes'}
 	<ScrScopes orgName={data.orgName} owners={data.scopeOwners} />
@@ -178,7 +142,7 @@
 	<ScrPlaceholder title={labelForSection(data.section, 'org')} eyebrow={data.orgName} />
 {/if}
 
-{#if actionError}
+{#if org.actionError}
 	<!-- Honest surfacing of a failed console action — a dismissible toast, never a
 	     silent no-op. Cleared on the next attempt. -->
 	<div
@@ -186,11 +150,11 @@
 		style="right: 16px; bottom: 16px; padding: 12px 16px; max-width: 380px"
 		role="alert"
 	>
-		<span class="flex-1">{actionError}</span>
+		<span class="flex-1">{org.actionError}</span>
 		<button
 			type="button"
 			class="text-ink-mute cursor-pointer text-xs underline"
-			onclick={() => (actionError = null)}
+			onclick={() => (org.actionError = null)}
 		>
 			dismiss
 		</button>

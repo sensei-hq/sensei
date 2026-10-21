@@ -800,8 +800,8 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.26.0"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.26.0#0f67517176294156b128db1f0cd394ee99ee8f04"
+version = "0.27.3"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.27.3#29db16714ca8c2ab45d2bce5fa23ea2e6da4c840"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1880,7 +1880,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -2933,7 +2933,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -3319,7 +3319,7 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -3790,9 +3790,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "log",
  "once_cell",
@@ -3815,9 +3815,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -3933,7 +3933,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.13.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -3950,7 +3950,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-desktop"
-version = "0.13.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "sensei-bootstrap",

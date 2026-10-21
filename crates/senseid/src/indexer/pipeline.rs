@@ -202,12 +202,6 @@ async fn write_one_repo(
     let mut out = RepoResult { abs_path: abs.clone(), ..Default::default() };
     let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
 
-    // ── Stage 1 S4/S5: repository identity, then the root folder ────────
-    match pg.upsert_repository(&name, origin_remote(&abs).as_deref()).await {
-        Ok(id) => out.repository_id = Some(id),
-        Err(e) => out.errors.push(format!("upsert_repository: {e}")),
-    }
-
     // A repo gets a PROJECT, 1:1. Without it the chain that answers "which
     // projects use this library" — and everything keyed on it, including the
     // update scheduler and therefore the registry-URL extraction — had no input
@@ -234,6 +228,14 @@ async fn write_one_repo(
     };
     out.folder_id = Some(folder_id);
     out.folders += 1;
+
+    // ── Stage 1 S4/S5: the root folder's repository identity ─────────────
+    // After the folder, so a remote-less checkout reuses the keyless repository
+    // its folder already points at instead of minting one per scan (#271).
+    match pg.repository_for_checkout(&folder_id, &name, origin_remote(&abs).as_deref()).await {
+        Ok(id) => out.repository_id = Some(id),
+        Err(e) => out.errors.push(format!("repository_for_checkout: {e}")),
+    }
 
     // S4/S6: the link, both directions asserted by the caller.
     if let Some(rid) = out.repository_id

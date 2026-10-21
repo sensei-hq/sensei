@@ -12,8 +12,11 @@ import type {
   ProjectOverviewTopRec,
   ProjectOverviewStats,
   ProjectOverviewSession,
+  ProjectOverview,
+  PatternEntry,
 } from '$lib/types.js';
 import { ftrPct } from '$lib/ftr.js';
+import { failureReason, readOutcome, type ApiResult, type RecommendationPreview } from '$lib/api.js';
 
 // ── Header FTR chip ─────────────────────────────────────────────────────────
 
@@ -223,4 +226,137 @@ export function sessionRows(sessions: ProjectOverviewSession[], now: number = Da
       role: s.role,
     };
   });
+}
+
+/** One file where edits concentrated, as `GET /api/projects/{id}/hotspots` sends it. */
+export interface Hotspot {
+  folder: string;
+  file_path: string;
+  edit_count: number;
+  correction_count: number;
+}
+
+export interface HotspotRow {
+  path: string;
+  repo: string;
+  edits: number;
+  corrections: number;
+}
+
+/** The five most-edited files (#85), each path relative to its repository —
+ *  or whole, when the repository's name is not in it. */
+export function hotspotRows(hotspots: Hotspot[], limit = 5): HotspotRow[] {
+  return [...hotspots]
+    .sort((a, b) => b.edit_count - a.edit_count || b.correction_count - a.correction_count)
+    .slice(0, limit)
+    .map((h) => {
+      const marker = `/${h.folder}/`;
+      const at = h.file_path.lastIndexOf(marker);
+      return {
+        path: at >= 0 ? h.file_path.slice(at + marker.length) : h.file_path,
+        repo: h.folder,
+        edits: h.edit_count,
+        corrections: h.correction_count,
+      };
+    });
+}
+
+export interface PatternSnapshot {
+  followed: number;
+  anti: number;
+  topFollowed: string[];
+  topAnti: string[];
+}
+
+/** How many patterns are in use, and the three most-used of each kind (#85). */
+export function patternSnapshot(p: {
+  followed: Pick<PatternEntry, 'name' | 'instanceCount'>[];
+  antiPatterns: Pick<PatternEntry, 'name' | 'instanceCount'>[];
+}): PatternSnapshot {
+  const top = (list: Pick<PatternEntry, 'name' | 'instanceCount'>[]) =>
+    [...list]
+      .sort((a, b) => (b.instanceCount ?? 0) - (a.instanceCount ?? 0))
+      .slice(0, 3)
+      .map((x) => x.name);
+  return {
+    followed: p.followed.length,
+    anti: p.antiPatterns.length,
+    topFollowed: top(p.followed),
+    topAnti: top(p.antiPatterns),
+  };
+}
+
+type Read<T> = ApiResult<T>;
+
+/** The overview page's data: each section's payload, or why it could not be
+ *  read. A failed read is never replaced by an all-quiet default (#85). */
+export function overviewPageData(
+  overview: Read<ProjectOverview>,
+  hotspots: Read<{ hotspots: Hotspot[] }>,
+  patterns: Read<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>,
+) {
+  const o = readOutcome(overview);
+  const h = readOutcome(hotspots);
+  const p = readOutcome(patterns);
+  return {
+    overview: o.data,
+    overviewError: o.error,
+    hotspots: h.data?.hotspots ?? null,
+    hotspotsError: h.error,
+    patterns: p.data,
+    patternsError: p.error,
+  };
+}
+
+// ── Accept / reject the top recommendation ──────────────────────────────────
+
+/** The writes a decision makes — injected so a spec can fail them. */
+export interface DecideApi {
+  tryPreviewRecommendation: (projectId: string, recId: string) => Promise<ApiResult<RecommendationPreview>>;
+  tryMaterializeRecommendation: (
+    projectId: string,
+    recId: string,
+    opts: { gov_scope?: string; enforcement?: string },
+  ) => Promise<ApiResult<unknown>>;
+  tryAcceptProjectRecommendation: (projectId: string, recId: string) => Promise<ApiResult<unknown>>;
+  tryRejectProjectRecommendation: (projectId: string, recId: string) => Promise<ApiResult<unknown>>;
+}
+
+/**
+ * Accept or reject a recommendation. Accept materializes the rec's artifact:
+ *  • file-class (write_skill / create_agent) → a project FILE, written only
+ *    after `confirmWrite` agrees (it is shown the target path); declining
+ *    leaves the rec pending;
+ *  • rule-class → a governance rule at project scope, recommended tier;
+ *  • anything else → the plain accept (status flip + FTR measurement).
+ *
+ * `done` is whether the decision was recorded; `error` is why it was not. A
+ * preview that cannot be read stops here (#288): falling through to the plain
+ * accept would mark the rec accepted with nothing written.
+ */
+export async function decideRecommendation(
+  api: DecideApi,
+  projectId: string,
+  recId: string,
+  action: 'accept' | 'reject',
+  confirmWrite: (message: string) => boolean,
+): Promise<{ done: boolean; error: string | null }> {
+  const settle = (r: ApiResult<unknown>) =>
+    r.ok ? { done: true, error: null } : { done: false, error: failureReason(r.error) };
+  if (action === 'reject') return settle(await api.tryRejectProjectRecommendation(projectId, recId));
+
+  const preview = await api.tryPreviewRecommendation(projectId, recId);
+  if (!preview.ok) return { done: false, error: failureReason(preview.error) };
+  const p = preview.data;
+  if (p.materializable && p.consent_required) {
+    const message = `Create a ${p.kind} at ${p.path}?\n\nsensei will write a new file into this repo (git-tracked, reversible).`;
+    if (!confirmWrite(message)) return { done: false, error: null };
+    return settle(await api.tryMaterializeRecommendation(projectId, recId, {}));
+  }
+  if (p.materializable) {
+    return settle(
+      await api.tryMaterializeRecommendation(projectId, recId, { gov_scope: 'project', enforcement: 'recommended' }),
+    );
+  }
+  return settle(await api.tryAcceptProjectRecommendation(projectId, recId));
 }

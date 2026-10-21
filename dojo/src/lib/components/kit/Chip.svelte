@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from './KanjiToken.svelte';
 	import type { Snippet } from 'svelte';
 	import Icon from './Icon.svelte';
 
@@ -31,8 +32,5 @@
 		: ''}"
 	style="padding: 3px 9px{mono ? '; letter-spacing: 0.04em' : ''}"
 >
-	{#if icon}<Icon name={icon} size={13} {toneClass} />{/if}{#if kanji}<span
-			class="kanji"
-			style="font-size: 12px">{kanji}</span
-		>{/if}{#if children}{@render children()}{/if}
+	{#if icon}<Icon name={icon} size={13} {toneClass} />{/if}{#if kanji}<KanjiToken char={kanji} size="xs" toneClass="" />{/if}{#if children}{@render children()}{/if}
 </span>

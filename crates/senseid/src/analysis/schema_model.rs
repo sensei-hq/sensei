@@ -57,6 +57,7 @@ pub fn assemble(
                 kind: e.kind.clone(),
                 note: e.note.clone(),
                 note_md: e.note_md.clone(),
+                module: None,
             });
             continue;
         }
@@ -94,6 +95,7 @@ pub fn assemble(
                 })
                 .collect(),
             checks: Vec::new(),
+            module: None,
         });
         for r in &e.refs {
             let (to_schema, to_table) = object(&r.to)?;

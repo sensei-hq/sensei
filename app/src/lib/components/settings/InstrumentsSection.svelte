@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
   import { onMount } from 'svelte';
   import { wizardState } from '$lib/wizard-state.svelte.js';
   import Switch from '$lib/components/Switch.svelte';
@@ -60,7 +61,7 @@
 
   {#if mcps.length === 0}
     <div data-testid="instruments-empty" class="text-center p-12 bg-paper-mute rounded-lg border border-paper-edge">
-      <span class="kanji text-4xl text-accent opacity-20 block mb-4">器</span>
+      <Kanji char="器" size="inherit" tone="inherit" class="text-4xl text-accent opacity-20 block mb-4" />
       <p class="text-sm text-ink-soft m-0">
         No instruments available yet.
       </p>
@@ -89,8 +90,8 @@
             class="grid grid-cols-[auto_1fr_auto_auto] gap-3 px-4 py-3 bg-paper-mute border border-paper-edge rounded-md items-center transition-opacity duration-fast"
             class:opacity-55={!mcp.selected && !mcp.installed}
           >
-            <span class="kanji text-xl text-accent w-9 h-9 flex items-center justify-center rounded-full bg-paper-soft border border-paper-edge">
-              器
+            <span class="w-9 h-9 flex items-center justify-center rounded-full bg-paper-soft border border-paper-edge">
+              <Kanji char="器" size="xl" tone="accent" />
             </span>
             <div class="min-w-0">
               <div class="flex items-baseline gap-2">
@@ -125,8 +126,8 @@
             class="grid grid-cols-[auto_1fr_auto_auto] gap-3 px-4 py-3 bg-paper-mute border border-paper-edge rounded-md items-center transition-opacity duration-fast"
             class:opacity-60={!mcp.selected && !mcp.installed}
           >
-            <span class="kanji text-xl text-ink-soft w-9 h-9 flex items-center justify-center rounded-full bg-paper-soft border border-paper-edge">
-              器
+            <span class="w-9 h-9 flex items-center justify-center rounded-full bg-paper-soft border border-paper-edge">
+              <Kanji char="器" size="xl" tone="inherit" class="text-ink-soft" />
             </span>
             <div class="min-w-0">
               <div class="flex items-baseline gap-2">

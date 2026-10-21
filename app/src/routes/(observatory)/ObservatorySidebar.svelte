@@ -2,6 +2,7 @@
     import { List } from '@rokkit/ui';
     import { Eyebrow, Wordmark } from '$lib/components';
     import { buildNavItems, resolveActiveHref } from './observatory-nav';
+    import { glyphFields, type GlyphMode } from '$lib/glyphs';
 
     interface Props {
         /** Daemon port, shown in the footer. */
@@ -10,16 +11,18 @@
         pathname: string;
         /** Cached project count for the Projects badge; omit until loaded. */
         projectCount?: number;
+        /** Kanji or icons (#133); the layout reads it from the preference. */
+        glyphs?: GlyphMode;
     }
-    let { port, pathname, projectCount }: Props = $props();
+    let { port, pathname, projectCount, glyphs = 'kanji' }: Props = $props();
 
     const items = $derived(buildNavItems({ projectCount }));
     const activeHref = $derived(resolveActiveHref(pathname));
 
-    // List's default rendering handles icon + label + badge. Only remap the two
-    // keys that differ from defaults: kanji → icon, text → label. href / value /
-    // badge / children / type keep their default field names.
-    const fields = { icon: 'kanji', label: 'text' };
+    // List's default rendering handles icon + label + badge; `glyphFields` says
+    // which property fills the icon slot (#133). href / value / badge /
+    // children / type keep their default field names.
+    const fields = $derived(glyphFields(glyphs));
 </script>
 
 <aside

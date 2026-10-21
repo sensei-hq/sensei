@@ -71,10 +71,23 @@ async fn probe(token: &str) -> ProbeOutcome {
     }
 }
 
+/// Whether a failed token read means the token is gone. Only a miss does: a
+/// Keychain that would not answer (#283's `NeedsApproval`, a locked store) says
+/// nothing about the token, so recording `absent` would be a made-up standing.
+fn absent_on(e: &crate::gateway_keys::KeychainError) -> bool {
+    matches!(e, crate::gateway_keys::KeychainError::NotFound)
+}
+
+fn could_not_read(unread: &mut Vec<String>, slot: &str, why: String) {
+    tracing::warn!(slot, error = %why, "forge_token_check: could not read the token");
+    unread.push(format!("{slot}: {why}"));
+}
+
 /// One pass: consider every signed-in persona.
 pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
     let rows = pg.forge_token_rows().await?;
     let now = chrono::Utc::now().timestamp();
+    let mut unread = Vec::new();
 
     for row in rows {
         let action = forge_token_action(row.expires_at, now, token_state_of(&row.state));
@@ -103,13 +116,23 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
                     // No credential in the Keychain for a persona the table says
                     // is signed in. Record `absent` rather than leaving the row
                     // claiming a token that is not there.
-                    _ => {
+                    Ok(Err(e)) if absent_on(&e) => {
                         if let Err(e) =
                             pg.set_forge_token_state(&row.session_slot, "absent", None).await
                         {
                             tracing::warn!(slot = row.session_slot, error = %e,
                                            "forge_token_check: could not record absent");
                         }
+                        continue;
+                    }
+                    // Could not look. Leave the standing as it is and fail the
+                    // pass with the reason, so it shows on the task's row.
+                    Ok(Err(e)) => {
+                        could_not_read(&mut unread, &row.session_slot, e.to_string());
+                        continue;
+                    }
+                    Err(e) => {
+                        could_not_read(&mut unread, &row.session_slot, format!("panicked: {e}"));
                         continue;
                     }
                 };
@@ -151,7 +174,7 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
             }
         }
     }
-    Ok(())
+    if unread.is_empty() { Ok(()) } else { Err(unread.join("; ")) }
 }
 
 /// Spawn the scheduled loop. Cadence lives in `sensei.schedules` (`forge_token`).
@@ -163,4 +186,19 @@ pub fn spawn(pg: Arc<PgStore>) {
         })
         .await;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::absent_on;
+    use crate::gateway_keys::KeychainError;
+
+    /// #283: after a rebuild the Keychain refuses without asking; that must not
+    /// be written down as "this persona has no forge token".
+    #[test]
+    fn only_a_missing_token_is_absent() {
+        assert!(absent_on(&KeychainError::NotFound));
+        assert!(!absent_on(&KeychainError::NeedsApproval));
+        assert!(!absent_on(&KeychainError::Unavailable("locked".into())));
+    }
 }

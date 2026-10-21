@@ -6,7 +6,7 @@
  * /tmp/sensei-shots/schema-*.png. Run: `bun run test:inspect`.
  */
 import { test, expect, type TauriPageLike } from '../fixtures';
-import { navigateTo, navigateToScreen, installErrorTrap, readErrors, DAEMON_URL } from '../helpers';
+import { navigateTo, navigateToScreen, installErrorTrap, readErrors, DAEMON_URL, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
@@ -26,9 +26,9 @@ const text = (tauriPage: TauriPageLike, sel: string) =>
 
 /** A screenshot when the app has an on-screen window; this harness can also run
  *  where it has none, and the DOM counts below are the evidence either way. */
-async function shot(tauriPage: TauriPageLike, name: string): Promise<void> {
+async function snap(tauriPage: TauriPageLike, name: string): Promise<void> {
   try {
-    await tauriPage.screenshot({ path: `${DIR}/${name}.png` });
+    await shot(tauriPage, `${DIR}/${name}.png`);
   } catch (e) {
     console.log(`[inspect] no screenshot ${name}: ${(e as Error).message}`);
   }
@@ -79,7 +79,7 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   console.log(`[inspect] drawn (all): ${JSON.stringify(all)}`);
   expect(all.nodes, 'one card per table').toBe(169);
   expect(all.edges).toBeGreaterThan(0);
-  await shot(tauriPage, 'schema-er-all');
+  await snap(tauriPage, 'schema-er-all');
 
   // Done gate 3: selecting a table on the canvas shows its columns, in order.
   const hit = await tauriPage.evaluate(`
@@ -96,7 +96,7 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   console.log(`[inspect] entity panel: ${entity?.slice(0, 200)}`);
   expect(entity).toContain('from_node_id');
   expect(entity?.indexOf('from_column')).toBeGreaterThan(entity?.indexOf('from_node_id') ?? -1);
-  await shot(tauriPage, 'schema-er-selected');
+  await snap(tauriPage, 'schema-er-selected');
 
   // One schema: only its tables, and the keys leading out of it counted.
   await pick(tauriPage, 'Schema', 'dojo');
@@ -110,7 +110,7 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   const dojo = await drawn(tauriPage);
   console.log(`[inspect] drawn (dojo): ${JSON.stringify(dojo)}`);
   expect(dojo.nodes, 'only the chosen schema').toBe(39);
-  await shot(tauriPage, 'schema-er-dojo');
+  await snap(tauriPage, 'schema-er-dojo');
 
   await pick(tauriPage, 'Show', 'Dependencies');
   await settle();
@@ -119,7 +119,7 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   expect(deps).toContain('51 objects · 159 dependencies');
   expect(deps).toContain('18 dependencies cross out of the shown schema, not drawn');
   expect(deps).toContain('80 dependencies on a built-in or undescribed object, drawn dimmed');
-  await shot(tauriPage, 'schema-deps-dojo');
+  await snap(tauriPage, 'schema-deps-dojo');
 
   await pick(tauriPage, 'Schema', 'All');
   await settle();
@@ -127,7 +127,7 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   console.log(`[inspect] schema coverage (deps, all): ${allDeps}`);
   expect(allDeps).toContain('262 objects · 784 dependencies');
   expect(allDeps).toContain('360 dependencies on a built-in or undescribed object, drawn dimmed');
-  await shot(tauriPage, 'schema-deps-all');
+  await snap(tauriPage, 'schema-deps-all');
 
   const errs = await readErrors(tauriPage);
   console.log(`[inspect] runtime errors: ${JSON.stringify(errs)}`);

@@ -63,7 +63,9 @@ use crate::db::pg_store::sync::SyncMark;
 use crate::dojo::memberships::NewConnection;
 use crate::dojo_client::dojo_auth;
 use crate::dojo_client::settings::dojo_url;
-use crate::dojo_client::user_plane::{self, HttpUserPlane, MyMembership, RepoInput, UserPlane};
+use crate::dojo_client::user_plane::{
+    self, HttpUserPlane, MyMembership, RepoInput, RepoProjectInput, UserPlane,
+};
 
 /// How many repositories one pass will offer for registration at a time.
 ///
@@ -168,21 +170,22 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
 /// Separate from the cycle so the cycle is reachable in a test: token resolution
 /// needs the real Keychain, and everything after it does not.
 async fn persona_token(persona: &str) -> Result<String, String> {
-    match live_access_token(persona).await {
-        Ok(t) => Ok(t),
-        Err(e) => {
-            // Distinguished rather than collapsed: "sign in again" is worth
-            // saying out loud, a network blip is not worth saying at all.
-            let needs_sign_in = e.needs_sign_in();
-            Err(match e {
-                AuthError::SignedOut => "no stored session".to_string(),
-                AuthError::Rejected(d) => format!("session rejected, sign in again: {d}"),
-                AuthError::Unreachable(d) if !needs_sign_in => {
-                    format!("dōjō unreachable, session kept: {d}")
-                }
-                AuthError::Unreachable(d) => d,
-            })
+    live_access_token(persona).await.map_err(token_failure)
+}
+
+/// Why a persona has no usable token, as the pass reports it. Distinguished
+/// rather than collapsed: "sign in again" is worth saying out loud, a network
+/// blip is not worth saying at all.
+fn token_failure(e: AuthError) -> String {
+    let needs_sign_in = e.needs_sign_in();
+    match e {
+        AuthError::SignedOut => "no stored session".to_string(),
+        AuthError::Rejected(d) => format!("session rejected, sign in again: {d}"),
+        AuthError::Unreachable(d) if !needs_sign_in => {
+            format!("dōjō unreachable, session kept: {d}")
         }
+        AuthError::Unreachable(d) => d,
+        AuthError::CredentialUnreadable(d) => format!("stored session unreadable: {d}"),
     }
 }
 
@@ -348,6 +351,8 @@ async fn plan_persona(
             repo_key: &r.repo_key,
             remote_url: r.remote_url.as_deref(),
             name: &r.name,
+            // The repository's sensei project, so the dōjō files it there (#299).
+            project: r.project.as_ref().map(|p| RepoProjectInput { slug: &p.slug, name: &p.name }),
         })
         .collect();
 
@@ -373,6 +378,12 @@ async fn plan_persona(
         }
     };
     for m in &registered.mapped {
+        // Filing under the project failed though the registration stood (#299):
+        // said, so a project that never appears in the dōjō has a reason on record.
+        if let Some(e) = &m.project_error {
+            tracing::warn!(persona, repo = m.repo_key, error = %e,
+                           "dojo_sync: the dōjō could not file this repository under its project");
+        }
         match uuid::Uuid::parse_str(&m.tenant_id) {
             // Store what the dōjō said, never a guess: an unparseable tenant id
             // is a bug on one side or the other, and writing a placeholder would
@@ -514,6 +525,27 @@ const GRAPH_ENTITY: &str = "repository_graph";
 /// for the envelope (repo key, commit) and the last batch's manifest.
 const GRAPH_BATCH_BYTES: usize = 3 * 1024 * 1024;
 
+/// Where a checkout's graph push leaves its sync state (#225).
+#[derive(Debug, PartialEq, Eq)]
+enum GraphOutcome {
+    /// Every file's slice landed.
+    Synced,
+    /// Everything landed but the named files, each over the request cap alone;
+    /// the shared graph lacks exactly those.
+    Partial(String),
+}
+
+fn graph_outcome(oversize: &[String]) -> GraphOutcome {
+    if oversize.is_empty() {
+        return GraphOutcome::Synced;
+    }
+    GraphOutcome::Partial(format!(
+        "{} file(s) over the {GRAPH_BATCH_BYTES}-byte request cap, not shared: {}",
+        oversize.len(),
+        oversize.join(", ")
+    ))
+}
+
 /// Files read from the database per slice query, so one repository's changes are
 /// never held in memory all at once.
 const GRAPH_SLICE_CHUNK: usize = 200;
@@ -564,17 +596,12 @@ async fn push_graphs(
                 Ok(CheckoutPush::Sent { batches, oversize }) => {
                     sent += batches;
                     pushed_branches.insert(branch.clone());
-                    if oversize.is_empty() {
-                        pg.mark_synced(&mark, None).await?;
-                    } else {
-                        // Pushed, but not whole: the shared graph lacks these files.
-                        let why = format!(
-                            "{} file(s) over the {GRAPH_BATCH_BYTES}-byte request cap, not shared: {}",
-                            oversize.len(),
-                            oversize.join(", ")
-                        );
-                        tracing::warn!(persona, repo = %repo.repo_key, branch, %why, "dojo_sync: graph incomplete");
-                        pg.mark_sync_error(&mark, &why).await?;
+                    match graph_outcome(&oversize) {
+                        GraphOutcome::Synced => pg.mark_synced(&mark, None).await?,
+                        GraphOutcome::Partial(missing) => {
+                            tracing::warn!(persona, repo = %repo.repo_key, branch, %missing, "dojo_sync: graph incomplete");
+                            pg.mark_sync_partial(&mark, &missing).await?;
+                        }
                     }
                 }
                 Ok(CheckoutPush::Skipped(reason)) => pg.mark_sync_skipped(&mark, reason).await?,
@@ -616,9 +643,14 @@ async fn push_checkout(
             .map_err(|e| format!("git status in {}: {e}", checkout.abs_path))?,
     );
 
+    // Held back: what is not committed, and what is committed but not yet parsed
+    // (its row has the new hash, its nodes are still the old content's).
+    let mut held_back = dirty;
+    held_back.extend(pg.graph_parse_pending(&checkout.folder_id).await?);
+
     let local = pg.graph_manifest(&checkout.folder_id).await?;
     let remote = plane.graph_hashes(token, repo_key, branch).await?.files;
-    let plan = plan_push(&local, &remote, &dirty);
+    let plan = plan_push(&local, &remote, &held_back);
     let commit = user_plane::GraphCommit { branch: branch.to_string(), sha, committed_at };
 
     let mut batches = 0;
@@ -989,6 +1021,34 @@ async fn recapture_and_replan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #283: a Keychain that would not answer is said as itself — the dōjō
+    /// was never asked, so "dōjō unreachable" would send the user the wrong way.
+    #[test]
+    fn an_unreadable_credential_is_not_reported_as_the_dojo() {
+        let why =
+            token_failure(AuthError::CredentialUnreadable("keychain access needs approval".into()));
+        assert!(why.contains("keychain access needs approval"), "{why}");
+        assert!(!why.contains("dōjō unreachable"), "{why}");
+    }
+
+    // ── graph_outcome: a checkout push's sync state (#225) ──────────────────
+
+    #[test]
+    fn a_whole_push_is_synced() {
+        assert_eq!(graph_outcome(&[]), GraphOutcome::Synced);
+    }
+
+    #[test]
+    fn a_push_missing_an_over_cap_file_is_partial_and_names_it() {
+        let oversize = vec!["crates/big.rs".to_string()];
+        assert_eq!(
+            graph_outcome(&oversize),
+            GraphOutcome::Partial(
+                "1 file(s) over the 3145728-byte request cap, not shared: crates/big.rs".into()
+            )
+        );
+    }
     use crate::db::pg_store::MetricRow;
 
     /// `forge_visibility_unknown` is the ONE denial the daemon can act on itself.
@@ -1253,6 +1313,7 @@ mod tests {
         }
         fn allowed(repo_key: &str) -> MappedRepo {
             MappedRepo {
+                project_error: None,
                 repo_key: repo_key.into(),
                 tenant: "organization/acme".into(),
                 tenant_id: "11111111-1111-1111-1111-111111111111".into(),
@@ -1344,6 +1405,7 @@ mod tests {
 
     fn mapped(repo_key: &str, tenant_id: &str) -> MappedRepo {
         MappedRepo {
+            project_error: None,
             repo_key: repo_key.to_string(),
             tenant: "organization/ztest".to_string(),
             tenant_id: tenant_id.to_string(),
@@ -2310,7 +2372,7 @@ mod tests {
             .unwrap();
             for (path, hash, fqn) in [("src/a.ts", "ha", "a.x"), ("src/b.ts", "hb-dirty", "b.y")] {
                 sqlx_core::query::query(
-                    "insert into sensei.files(folder_id, file_path, mtime, content_hash) values($1, $2, 0, $3)",
+                    "insert into sensei.files(folder_id, file_path, mtime, content_hash, parsed_at) values($1, $2, 0, $3, now())",
                 )
                 .bind(folder)
                 .bind(path)
@@ -2353,6 +2415,7 @@ mod tests {
         fn plan_tracking(repo_key: &str, branches: &[&str]) -> SyncPlan {
             SyncPlan {
                 allowed: vec![MappedRepo {
+                    project_error: None,
                     repo_key: repo_key.into(),
                     tenant: "organization/acme".into(),
                     tenant_id: "t".into(),
@@ -2379,6 +2442,52 @@ mod tests {
             .fetch_optional(pg.pool())
             .await
             .unwrap()
+        }
+
+        /// A committed file whose parse has not run yet is held back like an edit
+        /// (#225). The structure pass records the new content hash before the
+        /// parse rebuilds the file's nodes, so a push in between shared the new
+        /// hash with the OLD nodes — and the dōjō, holding that hash, never asked
+        /// for the file again (live: scan.rs on the dōjō had 41 nodes, 47 locally).
+        #[tokio::test]
+        async fn a_committed_file_awaiting_its_parse_is_held_back_until_parsed() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            sqlx_core::query::query(
+                "update sensei.files set parsed_at = null where folder_id = $1 and file_path = 'src/a.ts'",
+            )
+            .bind(c.folder)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            let mut plane = StubPlane::default();
+            plane.graph_remote.insert(
+                (c.repo_key.clone(), "main".into()),
+                HashMap::from([
+                    ("src/a.ts".to_string(), "ha-before".to_string()),
+                    ("src/b.ts".to_string(), "hb-committed".to_string()),
+                ]),
+            );
+
+            push_graphs(&pg, "p", "tok", &plane, &plan_tracking(&c.repo_key, &["main"]))
+                .await
+                .unwrap();
+
+            let seen = plane.graph_pushes.lock().unwrap().clone();
+            let pushed: Vec<Option<String>> = seen.iter().flat_map(|p| p.paths.clone()).collect();
+            assert!(
+                !pushed.contains(&Some("src/a.ts".into())),
+                "a file awaiting its parse is not shared: {pushed:?}"
+            );
+            assert_eq!(
+                seen.last().and_then(|p| p.manifest.clone()),
+                Some(BTreeMap::from([
+                    ("src/a.ts".to_string(), "ha-before".to_string()),
+                    ("src/b.ts".to_string(), "hb-committed".to_string()),
+                ])),
+                "it is kept at the dōjō's hash, so the next push after its parse sends it"
+            );
+            drop_checkout(&pg, c).await;
         }
 
         #[tokio::test]

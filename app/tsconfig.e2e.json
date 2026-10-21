@@ -1,0 +1,5 @@
+{
+  "//": "The Playwright suite, which ./tsconfig.json (src/ only) never sees (#187). Run by `bun run check`.",
+  "extends": "./tsconfig.json",
+  "include": ["e2e/**/*.ts"]
+}

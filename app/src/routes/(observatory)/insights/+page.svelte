@@ -1,7 +1,9 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
+    import { railIcon } from "../observatory-nav";
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
-  import { PageHeader } from '$lib/components';
+  import { PageHeader, Screen, ScreenState } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
@@ -18,7 +20,7 @@
   const api = senseiApi(appState.port);
   // Seed the state once from the loaded board; the state owns every refetch
   // and optimistic update thereafter. untrack makes the one-time read explicit.
-  const board = new InsightsBoardState(untrack(() => data.board));
+  const board = new InsightsBoardState(untrack(() => data.board), untrack(() => data.error));
 
   function selectProject(id: string | null): void {
     void board.selectProject(api, id);
@@ -66,12 +68,12 @@
     data-count={count}
   >
     <div class="flex items-baseline gap-2 pt-4 pb-3 px-5 border-b border-paper-edge">
-      <span
-        class="kanji text-xl leading-none"
-        class:text-accent={tone === 'now'}
-        class:text-warning={tone === 'soon'}
-        class:text-success={tone === 'settled'}
-      >{kanji}</span>
+      <Kanji
+        char={kanji}
+        size="xl"
+        tone="inherit"
+        class={tone === 'now' ? 'text-accent' : tone === 'soon' ? 'text-warning' : tone === 'settled' ? 'text-success' : ''}
+      />
       <div class="flex-1 min-w-0">
         <div class="text-sm text-ink font-medium">{title}</div>
         <div class="text-xs text-ink-soft mt-0.5">{sub}</div>
@@ -151,44 +153,54 @@
   {/if}
 {/snippet}
 
-<div class="flex flex-col h-full">
-  <PageHeader
-    size="lg"
-    kanji="今"
-    eyebrow="Observatory · Insights"
-    title="What needs you, what's working, what's quiet."
-    description="Sorted by immediacy. Most days you only need the first column."
-  >
-    {#snippet right()}
-      <div class="flex gap-5 pl-5 border-l border-paper-edge">
-        {@render stat(board.counts.now, 'now', 'now')}
-        {@render stat(board.counts.soon, 'soon', 'soon')}
-        {@render stat(board.counts.settled, 'settled', 'settled')}
-      </div>
-    {/snippet}
-  </PageHeader>
-
-  <div class="py-3 px-6 border-b border-paper-edge shrink-0">
-    <ProjectFilterStrip
-      projects={board.projects}
-      selectedId={board.selectedProjectId}
-      onSelect={selectProject}
-    />
-  </div>
-
-  {#if board.actionError}
-    <div
-      role="alert"
-      class="flex items-center gap-2 py-2 px-6 bg-danger-soft border-b border-paper-edge shrink-0"
+<!-- Three columns that each scroll, under a fixed header (#293). -->
+<Screen fill>
+  {#snippet header()}
+    <PageHeader
+      size="lg"
+      kanji="今" icon={railIcon("/insights")}
+      eyebrow="Observatory · Insights"
+      title="What needs you, what's working, what's quiet."
+      description="Sorted by immediacy. Most days you only need the first column."
     >
-      <span class="kanji text-xs text-danger">警</span>
-      <span class="text-xs text-danger">{board.actionError}</span>
-    </div>
-  {/if}
+      {#snippet right()}
+        <div class="flex gap-5 pl-5 border-l border-paper-edge">
+          {@render stat(board.counts.now, 'now', 'now')}
+          {@render stat(board.counts.soon, 'soon', 'soon')}
+          {@render stat(board.counts.settled, 'settled', 'settled')}
+        </div>
+      {/snippet}
+    </PageHeader>
 
+    <div class="py-3 px-6 border-b border-paper-edge shrink-0">
+      <ProjectFilterStrip
+        projects={board.projects}
+        selectedId={board.selectedProjectId}
+        onSelect={selectProject}
+      />
+    </div>
+
+    {#if board.actionError}
+      <div
+        role="alert"
+        class="flex items-center gap-2 py-2 px-6 bg-danger-soft border-b border-paper-edge shrink-0"
+      >
+        <Kanji char="警" size="inherit" tone="inherit" class="text-xs text-danger" />
+        <span class="text-xs text-danger">{board.actionError}</span>
+      </div>
+    {/if}
+  {/snippet}
+  {#if board.loadError}
+    <!-- The board could not be read (#288) — not three quiet columns. Retry
+         re-reads the current scope through the state, which owns the board. -->
+    <div class="p-8">
+      <ScreenState status="error" error={board.loadError} onretry={() => void board.retry(api)} />
+    </div>
+  {:else}
   <div class="grid grid-cols-3 flex-1 min-h-0" data-triage-grid>
     {@render columnShell('now', '今', 'Now', 'violations · high-impact · this week', board.now.count, nowBody)}
     {@render columnShell('soon', '近', 'Soon', 'emerging patterns · worth a look', board.soon.count, soonBody)}
     {@render columnShell('settled', '定', 'Settled', 'battle-tested · low-noise reference', board.settled.count, settledBody)}
   </div>
-</div>
+  {/if}
+</Screen>

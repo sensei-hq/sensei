@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { WizardState } from './wizard-state.svelte.js';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { WizardState, routerKeyStatus } from './wizard-state.svelte.js';
 import { scanState } from './scan-state.svelte.js';
 import { mockWizardLoadData, mockWatchRoot, mockRouter } from './setup/mock-contracts.js';
 
@@ -501,6 +501,58 @@ describe('WizardState', () => {
       expect(ws.inference.routers[1].needsKey).toBe(false);
     });
 
+    // #285: a key that is set but withheld by the keychain is neither
+    // configured nor missing — it says why, so nobody pastes a key again.
+    it('carries an unreadable key and its reason', () => {
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData({
+        routers: [mockRouter({ configured: null, key_error: 'keychain access needs approval' })],
+      }));
+      expect(ws.inference.routers[0].configured).toBeNull();
+      expect(ws.inference.routers[0].keyError).toBe('keychain access needs approval');
+    });
+
+    it('labels each key standing', () => {
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData({
+        routers: [
+          mockRouter({ configured: true }),
+          mockRouter({ configured: false }),
+          mockRouter({ needs_key: false, configured: true }),
+          mockRouter({ configured: null, key_error: 'keychain access needs approval' }),
+        ],
+      }));
+      const [set, unset, none, unreadable] = ws.inference.routers.map(routerKeyStatus);
+      expect(set).toEqual({ label: 'configured ✓', tone: 'success' });
+      expect(unset).toEqual({ label: 'not configured', tone: 'mute' });
+      expect(none).toEqual({ label: 'no key needed', tone: 'mute' });
+      expect(unreadable).toEqual({
+        label: 'key unreadable: keychain access needs approval',
+        tone: 'warning',
+      });
+    });
+
+    // #286: a failed read is an error the Providers screen shows, not an
+    // empty router list.
+    it('refreshInferenceRouters rejects on a failed read and keeps the list', async () => {
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData({ routers: [mockRouter({ id: 'openai' })] }));
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 503, statusText: 'Service Unavailable' })));
+      try {
+        await expect(ws.refreshInferenceRouters()).rejects.toThrow(/Service Unavailable|503/);
+        expect(ws.inference.routers.map((r) => r.id)).toEqual(['openai']);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('a load whose router read failed leaves the routers untouched', () => {
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData({ routers: [mockRouter({ id: 'openai' })] }));
+      ws.hydrate(mockWizardLoadData({ routers: null, routersError: 'Service Unavailable' }));
+      expect(ws.inference.routers.map((r) => r.id)).toEqual(['openai']);
+    });
+
     it('initialises draftKey/saveState empty on hydrate', () => {
       const ws = new WizardState();
       ws.hydrate(mockWizardLoadData({ routers: [mockRouter()] }));
@@ -509,5 +561,36 @@ describe('WizardState', () => {
       expect(r.saveState).toBe('idle');
       expect(r.saveError).toBe('');
     });
+  });
+});
+
+// #288: a refresh that cannot read the daemon throws — its Settings section
+// shows the reason (those catch branches were unreachable behind fallbacks) —
+// and a role assignment the daemon refused is a failed commit, not a done one.
+describe('WizardState — reads and writes that fail', () => {
+  const failing = (status = 503) =>
+    vi.fn(async () => new Response('boom', { status, statusText: 'Service Unavailable' }));
+  afterEach(() => vi.unstubAllGlobals());
+
+  for (const method of ['refreshLibraries', 'refreshInstruments', 'refreshAssignments'] as const) {
+    it(`${method} throws the daemon's reason`, async () => {
+      vi.stubGlobal('fetch', failing());
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData());
+      await expect(ws[method]()).rejects.toThrow(/Service Unavailable/);
+    });
+  }
+
+  it('the assignments commit fails when the daemon refuses a role', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+      const p = new URL(String(input), 'http://localhost').pathname;
+      if (init?.method === 'PUT') return new Response('conflict', { status: 409, statusText: 'Conflict' });
+      if (p === '/api/gateway/chains') return new Response(JSON.stringify({ chains: [] }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+    const ws = new WizardState();
+    ws.hydrate(mockWizardLoadData());
+    ws.assignments.pendingAssignments.inference = 'chain-x';
+    await expect(ws.commitStage('assignments')).rejects.toThrow(/inference/);
   });
 });

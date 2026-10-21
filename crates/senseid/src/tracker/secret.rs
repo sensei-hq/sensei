@@ -31,7 +31,10 @@ pub struct KeyringSecretStore;
 pub fn map_keychain_error(e: &KeychainError) -> TrackerError {
     match e {
         KeychainError::NotFound => TrackerError::TokenMissing,
+        // NeedsApproval (#283/#302): the OS refused this binary without asking —
+        // the token is there but unreadable until approved or replaced.
         KeychainError::Unavailable(_)
+        | KeychainError::NeedsApproval
         | KeychainError::Store(_)
         | KeychainError::CommandFailed(_)
         | KeychainError::Io(_) => TrackerError::CredentialStore,
@@ -154,6 +157,7 @@ mod tests {
         assert_eq!(map_keychain_error(&KeychainError::NotFound), TrackerError::TokenMissing);
         for e in [
             KeychainError::Unavailable("locked".into()),
+            KeychainError::NeedsApproval,
             KeychainError::Store("x".into()),
             KeychainError::CommandFailed("x".into()),
             KeychainError::Io(std::io::Error::other("x")),

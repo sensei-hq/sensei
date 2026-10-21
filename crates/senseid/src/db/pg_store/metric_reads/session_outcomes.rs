@@ -10,6 +10,19 @@
 use super::{bind_day, day_filter};
 use crate::db::pg_store::PgStore;
 
+/// One (day × repository) of token volume, over the sessions carrying token usage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TokenDay {
+    pub day: chrono::NaiveDate,
+    pub repository_id: uuid::Uuid,
+    pub sum_in: i64,
+    pub sum_out: i64,
+    /// Fresh (uncached) input — `None` when any of the day's sessions predates
+    /// `tokens_fresh` capture, so a partial sum is never passed off as the day's.
+    pub sum_fresh: Option<i64>,
+    pub sessions: i64,
+}
+
 /// This group's occurrence-time anchor for the shared [`day_filter`] /
 /// [`bind_day`] `$2` day-set contract: sessions bucket/window on `s.started_at`.
 const DAY_ANCHOR: &str = "s.started_at";
@@ -177,22 +190,26 @@ impl PgStore {
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
-    /// Per-(day × repository) token-volume sums: `(day, repository_id, sum_in,
-    /// sum_out, n)`. Base = sessions that carry token usage (`tokens_in IS NOT NULL`)
+    /// Per-(day × repository) token-volume sums ([`TokenDay`]). Base = sessions that carry token usage (`tokens_in IS NOT NULL`)
     /// — token volume is independent of outcome analysis, so this base is NOT the
     /// measurable-outcome base the rate metrics use; a session with no captured tokens
-    /// contributes nothing (never a fabricated 0). `n` = sessions with tokens that day.
+    /// contributes nothing (never a fabricated 0).
     pub(crate) async fn session_outcomes_token_volume_by_day(
         &self,
         project_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
-    ) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64, i64)>, String> {
+    ) -> Result<Vec<TokenDay>, String> {
+        // `sum_fresh` only when EVERY session that day carries `tokens_fresh`:
+        // sessions captured before the column existed hold NULL, and a sum over the
+        // rest would understate the day as if it were the whole of it.
         let sql = format!(
             "SELECT date_trunc('day', s.started_at)::date        AS day
                   , rf.repository_id                              AS repository_id
                   , coalesce(sum(s.tokens_in), 0)::int8           AS sum_in
                   , coalesce(sum(s.tokens_out), 0)::int8          AS sum_out
+                  , CASE WHEN count(s.tokens_fresh) = count(*)
+                         THEN sum(s.tokens_fresh) END::int8       AS sum_fresh
                   , count(*)::int8                                AS n
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
@@ -204,11 +221,26 @@ impl PgStore {
               ORDER BY 1, 2",
             day_filter(DAY_ANCHOR, as_of),
         );
-        let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64, i64)>(
-            &sql,
-        )
+        let q = sqlx_core::query_as::query_as::<
+            _,
+            (chrono::NaiveDate, uuid::Uuid, i64, i64, Option<i64>, i64),
+        >(&sql)
         .bind(project_id);
-        bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
+        let rows = bind_day(q, window_days, as_of)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(day, repository_id, sum_in, sum_out, sum_fresh, sessions)| TokenDay {
+                day,
+                repository_id,
+                sum_in,
+                sum_out,
+                sum_fresh,
+                sessions,
+            })
+            .collect())
     }
 
     /// Per-(day × repository) mean active session duration in SECONDS: `(day,

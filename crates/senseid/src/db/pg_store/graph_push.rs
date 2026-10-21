@@ -112,6 +112,25 @@ impl PgStore {
         Ok(rows.into_iter().collect())
     }
 
+    /// The files of a checkout whose parse has not run on their current content:
+    /// a content change resets `parsed_at`, so these carry a new hash over their
+    /// old nodes until the parse lands (#225). A skipped file is decided, not
+    /// pending.
+    pub async fn graph_parse_pending(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<std::collections::HashSet<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "select file_path from sensei.files \
+              where folder_id = $1 and skip_reason is null and parsed_at is null",
+        )
+        .bind(folder_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(|e| format!("graph_parse_pending: {e}"))?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
+    }
+
     /// The slice of each named file: its nodes, and the edges whose source is in
     /// it, as the dōjō's `file_graph_slices` reads them. A path with no `files`
     /// row is absent from the result.

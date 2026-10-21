@@ -14,6 +14,7 @@ type Props = Partial<{
   ftr14d: number;
   sessions7d: number;
   warn: boolean;
+  readError: string | null;
   repos_count: number;
   libs_count: number;
   last_session_at: string | null;
@@ -102,5 +103,16 @@ describe('ProjectRow — interaction', () => {
     const m = mount({ name: 'rokkit', onOpen });
     row(m).click();
     expect(onOpen).toHaveBeenCalledWith('p-1', 'rokkit');
+  });
+});
+
+describe('ProjectRow — a quality read that failed (#288)', () => {
+  it('says the FTR is unavailable, with the reason, and lights no warning', () => {
+    const m = mountComponent(Harness, { sessions7d: 4, readError: 'Bad Gateway' });
+    cleanup.push(m.destroy);
+    const el = m.container.querySelector('[data-ftr-unavailable]');
+    expect(el?.textContent).toContain('unavailable');
+    expect(el?.getAttribute('title')).toBe('Bad Gateway');
+    expect(m.container.querySelector('.text-warning')).toBeNull();
   });
 });

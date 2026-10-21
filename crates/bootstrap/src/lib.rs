@@ -17,6 +17,7 @@ pub mod engines;
 pub mod hardware;
 pub mod health;
 pub mod models;
+pub mod startup_error;
 pub mod tracing_init;
 pub mod upgrade;
 pub mod util;

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { DaemonHealth } from './daemon-health.svelte.js';
 
 describe('DaemonHealth', () => {
@@ -48,5 +48,26 @@ describe('DaemonHealth', () => {
     d.apply({});
     expect(d.dbMode).toBeUndefined();
     expect(d.isDegraded).toBe(false);
+  });
+});
+
+// #288: a poll reads the daemon's mode, or — when /health cannot be read —
+// leaves it unknown (no banner) rather than reading a mode from a default.
+describe('DaemonHealth.poll', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('takes the mode the daemon reports', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ daemonDbMode: 'degraded' }), { status: 200 })));
+    const h = new DaemonHealth();
+    await h.poll();
+    expect(h.dbMode).toBe('degraded');
+  });
+
+  it('is unknown when /health cannot be read, even after a known mode', async () => {
+    const h = new DaemonHealth();
+    h.apply({ daemonDbMode: 'degraded' });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 503 })));
+    await h.poll();
+    expect(h.dbMode).toBeUndefined();
   });
 });

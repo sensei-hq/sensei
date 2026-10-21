@@ -1,4 +1,13 @@
 use crate::runs::{NewRun, Run, RunEvent, RunEventKind};
+
+/// How a sensei project is named to the dōjō: its project-scope namespace,
+/// matched on the project's name (the namespaces' documented link — "for a
+/// `project` namespace via the project of the same name"). ONE fragment, spliced
+/// into the relay's queries and the sync's offer (#299), so the two paths cannot
+/// file the same project under different slugs. Expects the project aliased `p`;
+/// binds the namespace as `n`.
+pub(crate) const PROJECT_NAMESPACE_JOIN: &str =
+    "JOIN sensei.namespaces n ON n.scope_key = 'project' AND n.name = p.name";
 use dojo_protocol::relay::RelayRunStatus;
 use sensei_bootstrap::{
     DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS, DB_POOL_MAX_CONNECTIONS,

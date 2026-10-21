@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Kanji from '$lib/components/Kanji.svelte';
     import type { WizardStage } from './stages.js';
 
     /** The stage's top header — kanji icon + "Step" eyebrow + display title + description.
@@ -14,7 +15,7 @@
     class="shrink-0 px-16 pt-7 pb-6 border-b border-paper-edge bg-paper-soft relative z-1"
 >
     <div class="text-xs text-ink-soft tracking-wide uppercase mb-2">
-        <span class="kanji text-accent mr-1.5">{stage.icon}</span>Step
+        <Kanji char={stage.icon} size="inherit" tone="inherit" class="text-accent mr-1.5" />Step
     </div>
     <h1 class="font-display text-4xl font-light tracking-tight m-0 mb-1.5">
         {stage.title}

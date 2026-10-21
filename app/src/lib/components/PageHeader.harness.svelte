@@ -1,5 +1,6 @@
 <script lang="ts">
   import PageHeader from './PageHeader.svelte';
+  import { setGlyphMode, type GlyphMode } from '$lib/glyphs';
 
   // Test-friendly wrapper: plain props only, so a spec can drive every prop
   // without composing snippets. `rightText` stands in for the right slot.
@@ -14,6 +15,7 @@
     bordered = true,
     padded = true,
     rightText,
+    glyphs = 'kanji',
   }: {
     title: string;
     eyebrow?: string;
@@ -25,7 +27,9 @@
     bordered?: boolean;
     padded?: boolean;
     rightText?: string;
+    glyphs?: GlyphMode;
   } = $props();
+  setGlyphMode(() => glyphs);
 </script>
 
 <PageHeader

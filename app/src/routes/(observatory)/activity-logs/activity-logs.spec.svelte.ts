@@ -5,6 +5,7 @@ import {
   DEFAULT_LIMIT,
   MAX_LIMIT,
   filtersFromParams,
+  logsPageData,
   buildLogsQuery,
   levelTone,
   moduleOf,
@@ -204,5 +205,31 @@ describe('ActivityLogsView', () => {
     v.toggle('r2');
     v.clear();
     expect(v.expandedId).toBeNull();
+  });
+});
+
+// #96 and the no-fabrication rule: the loader fell back to [] on any failure,
+// so a daemon that could not answer read as "no log entries" and "no background
+// tasks". Each half now carries its own error.
+describe('logsPageData', () => {
+  const filters = filtersFromParams(new URLSearchParams());
+  const ok = <T>(data: T) => ({ ok: true as const, data });
+  const fail = { ok: false as const, error: { status: 500, message: 'boom' } };
+
+  it('passes real data through, error-free', () => {
+    const d = logsPageData(ok([]), ok({ tasks: [] }), filters);
+    expect(d).toMatchObject({ rows: [], rowsError: null, tasks: [], tasksError: null });
+  });
+
+  it('says the log rows could not be read, rather than that there are none', () => {
+    const d = logsPageData(fail, ok({ tasks: [] }), filters);
+    expect(d.rowsError).toContain('boom');
+    expect(d.tasksError).toBeNull();
+  });
+
+  it('says the background tasks could not be read, rather than that there are none', () => {
+    const d = logsPageData(ok([]), fail, filters);
+    expect(d.tasksError).toContain('boom');
+    expect(d.rowsError).toBeNull();
   });
 });

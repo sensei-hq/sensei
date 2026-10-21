@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ScanProjectState, ScanActivityState, commonParent } from './scan-state.svelte.js';
+import { ScanProjectState, ScanActivityState, commonParent, pollStep } from './scan-state.svelte.js';
 import type { ScanProject, ScanProjectFolder, ActivityEvent } from './types.js';
 
 // ── Factories ────────────────────────────────────────────────────────────────
@@ -346,5 +346,27 @@ describe('scan simulation', () => {
     expect(projects.readyFolders).toBe(2);
     expect(activities.scanComplete).toBe(true);
     expect(activities.totalElapsed).toBe(1.26);
+  });
+});
+
+// #288: the scan's done signal. A status read used to fall back to an empty
+// queue, so a daemon that stopped answering mid-scan read as reachable AND
+// idle — two such polls marked the scan done.
+describe('pollStep', () => {
+  const status = (pending: number, running: number) => ({
+    ok: true as const,
+    data: { queue: { pending, blocked: 0, running, completed: 0 }, repos: {} },
+  });
+  const down = { ok: false as const, error: { status: 0, message: 'ECONNREFUSED' } };
+
+  it('counts an idle queue; two in a row are done', () => {
+    expect(pollStep(status(0, 0), 0)).toEqual({ reachable: true, idlePolls: 1, done: false });
+    expect(pollStep(status(0, 0), 1)).toEqual({ reachable: true, idlePolls: 2, done: true });
+  });
+  it('a busy queue resets the count', () => {
+    expect(pollStep(status(3, 1), 1)).toEqual({ reachable: true, idlePolls: 0, done: false });
+  });
+  it('a failed read is unreachable — never idle, never done', () => {
+    expect(pollStep(down, 1)).toEqual({ reachable: false, idlePolls: 0, done: false });
   });
 });

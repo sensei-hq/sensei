@@ -17,9 +17,7 @@ const SHUTDOWN_POOL_GRACE: std::time::Duration = std::time::Duration::from_secs(
 /// Write a single-line startup error to `<sensei_dir>/startup-error.log` so
 /// users can find it without scraping launchd / brew-services log paths.
 fn write_startup_error(msg: &str) {
-    let dir = sensei_bootstrap::SenseiConfig::from_env().sensei_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(dir.join("startup-error.log"), msg);
+    sensei_bootstrap::startup_error::record(msg);
 }
 
 /// What to tell a user whose database exists and cannot be used.
@@ -46,8 +44,7 @@ fn provisioning_startup_message(db_name: &str) -> String {
 }
 
 fn clear_startup_error() {
-    let dir = sensei_bootstrap::SenseiConfig::from_env().sensei_dir();
-    let _ = std::fs::remove_file(dir.join("startup-error.log"));
+    sensei_bootstrap::startup_error::clear();
 }
 
 /// Never run fewer workers than this — preserves the historical baseline so a

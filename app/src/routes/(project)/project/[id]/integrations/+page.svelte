@@ -5,7 +5,7 @@
   import { page } from '$app/state';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
-  import IntegrationsPanel from './IntegrationsPanel.svelte';
+  import IntegrationsScreen from './IntegrationsScreen.svelte';
   import { TrackerIntegration } from './integrations-state.svelte.js';
 
   // One screen state per project: switching project on this route gets a fresh
@@ -18,4 +18,4 @@
   });
 </script>
 
-<IntegrationsPanel {screen} />
+<IntegrationsScreen {screen} />

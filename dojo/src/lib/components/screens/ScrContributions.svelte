@@ -31,6 +31,7 @@
 </script>
 
 <script lang="ts">
+	import { Screen } from '@sensei/ui';
 	import { SectionHead, StatBadge, ListSection, KanjiToken, Chip, Btn } from '$lib/components/kit';
 	import type { KitContribution, KitDownstream, KitContribStat } from '$lib/components/kit/types';
 	import { tallyContributions } from '$lib/personal-view';
@@ -48,11 +49,14 @@
 		mine = [],
 		downstream = [],
 		stat,
+		error = null,
 		onPin
 	}: {
 		mine?: KitContribution[];
 		downstream?: KitDownstream[];
 		stat?: KitContribStat;
+		/** Why the last pin did not land. */
+		error?: string | null;
 		onPin?: (item: KitDownstream) => void;
 	} = $props();
 
@@ -61,83 +65,91 @@
 	const tally = $derived(tallyContributions(mine, stat ?? { approved: 0, pending: 0, helped: 0 }));
 </script>
 
-<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-	<SectionHead
-		kanji="共" eyebrow="You · sharing" title="Contributions"
-		description="You propose; a maintainer decides — nothing publishes without their named approval. You share from a session's ready-to-share lane; it lands in the bound dōjō's triage queue. Every source is dereferenced before it leaves — the lesson travels, the source never does."
-	>
-		{#snippet right()}
-			<div class="flex items-center gap-4">
-				<StatBadge n={tally.approved} label="approved" toneClass="text-success" />
-				<StatBadge n={tally.pending} label="in triage" toneClass="text-accent" />
-			</div>
-		{/snippet}
-	</SectionHead>
-
-	<ListSection icon="upload-square" title="What you've shared" count={mine.length}>
-		{#each mine as c, i (i)}
-			{@const s = CSTAT[c.status] ?? CSTAT.pending}
-			<div class="border-paper-edge flex items-center gap-4 border-b px-4 py-3">
-				<KanjiToken char={c.kanji} size="lg" toneClass="text-accent" w={22} />
-				<div class="flex-1" style="min-width: 0">
-					<div class="text-ink text-sm" style="line-height: 1.3">{c.title}</div>
-					<div class="flex flex-wrap items-center gap-2" style="margin-top: 2px">
-						{#if c.anonymous}
-							<Chip
-								icon="eye-closed"
-								toneClass="text-accent"
-								softClass="bg-accent-soft"
-								edgeClass="border-accent-soft">{c.dest} · anonymous</Chip
-							>
-						{:else}
-							<Chip>{c.dest}</Chip>
-						{/if}
-						<span class="mono text-ink-faint text-xs">{c.scope} · {c.note}</span>
+<Screen>
+	{#snippet header()}
+		<div class="px-4 pt-4 md:px-8 md:pt-8">
+			<SectionHead
+				kanji="共" eyebrow="You · sharing" title="Contributions"
+				description="You propose; a maintainer decides — nothing publishes without their named approval. You share from a session's ready-to-share lane; it lands in the bound dōjō's triage queue. Every source is dereferenced before it leaves — the lesson travels, the source never does."
+			>
+				{#snippet right()}
+					<div class="flex items-center gap-4">
+						<StatBadge n={tally.approved} label="approved" toneClass="text-success" />
+						<StatBadge n={tally.pending} label="in triage" toneClass="text-accent" />
 					</div>
-				</div>
-				<Chip
-					icon={s.icon}
-					toneClass={s.toneClass}
-					softClass={s.softClass}
-					edgeClass={s.edgeClass}>{s.label}</Chip
-				>
-				<span class="mono text-ink-faint text-xs" style="width: 28px; text-align: right">{c.when}</span>
-			</div>
-		{/each}
-	</ListSection>
-
-	<ListSection
-		icon="download-square"
-		iconToneClass="text-success"
-		title="Approved for you"
-		count={downstream.length}
-	>
-		{#snippet right()}
-			<span class="mono text-ink-mute text-xs">from your dōjōs · never silently merged</span>
-		{/snippet}
-		{#each downstream as it, i (i)}
-			<div class="border-paper-edge flex items-center gap-4 border-b px-4 py-3">
-				<KanjiToken char={it.kanji} size="lg" toneClass="text-accent" w={22} />
-				<div class="flex-1" style="min-width: 0">
-					<div class="text-ink text-sm" style="line-height: 1.3">{it.title}</div>
-					<div class="mono text-ink-faint text-xs" style="margin-top: 2px">
-						{it.from} · {it.scope} · {it.when} ago
+				{/snippet}
+			</SectionHead>
+		</div>
+	{/snippet}
+	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+		{#if error}
+			<p role="alert" class="text-sm text-danger m-0">{error}</p>
+		{/if}
+		<ListSection icon="upload-square" title="What you've shared" count={mine.length}>
+			{#each mine as c, i (i)}
+				{@const s = CSTAT[c.status] ?? CSTAT.pending}
+				<div class="border-paper-edge flex items-center gap-4 border-b px-4 py-3">
+					<KanjiToken char={c.kanji} size="lg" toneClass="text-accent" w={22} />
+					<div class="flex-1" style="min-width: 0">
+						<div class="text-ink text-sm" style="line-height: 1.3">{c.title}</div>
+						<div class="flex flex-wrap items-center gap-2" style="margin-top: 2px">
+							{#if c.anonymous}
+								<Chip
+									icon="eye-closed"
+									toneClass="text-accent"
+									softClass="bg-accent-soft"
+									edgeClass="border-accent-soft">{c.dest} · anonymous</Chip
+								>
+							{:else}
+								<Chip>{c.dest}</Chip>
+							{/if}
+							<span class="mono text-ink-faint text-xs">{c.scope} · {c.note}</span>
+						</div>
 					</div>
-				</div>
-				{#if it.adopted}
 					<Chip
-						icon="check-circle"
-						toneClass="text-success"
-						softClass="bg-success-soft"
-						edgeClass="border-success-soft">adopted</Chip
+						icon={s.icon}
+						toneClass={s.toneClass}
+						softClass={s.softClass}
+						edgeClass={s.edgeClass}>{s.label}</Chip
 					>
-				{:else}
-					<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
-						>new</Chip
-					>
-					<Btn size="sm" variant="ghost" icon="pin" onclick={() => onPin?.(it)}>Pin</Btn>
-				{/if}
-			</div>
-		{/each}
-	</ListSection>
-</div>
+					<span class="mono text-ink-faint text-xs" style="width: 28px; text-align: right">{c.when}</span>
+				</div>
+			{/each}
+		</ListSection>
+
+		<ListSection
+			icon="download-square"
+			iconToneClass="text-success"
+			title="Approved for you"
+			count={downstream.length}
+		>
+			{#snippet right()}
+				<span class="mono text-ink-mute text-xs">from your dōjōs · never silently merged</span>
+			{/snippet}
+			{#each downstream as it, i (i)}
+				<div class="border-paper-edge flex items-center gap-4 border-b px-4 py-3">
+					<KanjiToken char={it.kanji} size="lg" toneClass="text-accent" w={22} />
+					<div class="flex-1" style="min-width: 0">
+						<div class="text-ink text-sm" style="line-height: 1.3">{it.title}</div>
+						<div class="mono text-ink-faint text-xs" style="margin-top: 2px">
+							{it.from} · {it.scope} · {it.when} ago
+						</div>
+					</div>
+					{#if it.adopted}
+						<Chip
+							icon="check-circle"
+							toneClass="text-success"
+							softClass="bg-success-soft"
+							edgeClass="border-success-soft">adopted</Chip
+						>
+					{:else}
+						<Chip toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+							>new</Chip
+						>
+						<Btn size="sm" variant="ghost" icon="pin" onclick={() => onPin?.(it)}>Pin</Btn>
+					{/if}
+				</div>
+			{/each}
+		</ListSection>
+	</div>
+</Screen>

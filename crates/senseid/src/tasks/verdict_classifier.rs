@@ -37,6 +37,9 @@ pub enum Verdict {
     /// Reaction is unrelated, or there is no reaction (SessionEnd /
     /// UserPromptSubmit / Stop with no in-between tool call).
     Ignored,
+    /// No response was captured, so there is nothing to judge (#278) — not
+    /// counted as ignored.
+    Unknown,
 }
 
 impl Verdict {
@@ -50,13 +53,23 @@ impl Verdict {
             Self::Used => "used",
             Self::Partial => "partial",
             Self::Ignored => "ignored",
+            Self::Unknown => "unknown",
         }
     }
 }
 
 /// One (answer, reaction) pair.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Pair<'a> {
+    /// The answer's tool (`Bash`, `Read`, …).
+    pub tool_name: &'a str,
+    /// The reaction's tool, when the reaction is a tool call.
+    pub reaction_tool_name: &'a str,
+    /// The answer carries no `tool_response` at all — the hook did not capture
+    /// one (#278). Phrased as missing so the default is "captured".
+    pub response_missing: bool,
+    /// The answer's `tool_response.interrupted` (Bash).
+    pub interrupted: bool,
     /// Text of the answer's `payload.tool_response` (concatenated across
     /// shape variants — sometimes a JSON string, sometimes an object with
     /// `content` field, sometimes an array).
@@ -172,8 +185,61 @@ pub fn primary_target(tool_input_json: &str) -> String {
     String::new()
 }
 
+/// Tools that ACT rather than inform: their result is relied on, not quoted,
+/// so they are judged by outcome (#278).
+const ACTION_TOOLS: &[&str] = &["bash", "edit", "write", "multiedit", "notebookedit"];
+
+fn is_action_tool(name: &str) -> bool {
+    ACTION_TOOLS.iter().any(|t| t.eq_ignore_ascii_case(name))
+}
+
+/// An action tool's verdict from its outcome (#278): interrupted → ignored;
+/// the identical command re-run straight away → partial (its result was not
+/// taken); otherwise it completed and the session proceeded on it → used.
+///
+/// Only a COMMAND re-run is a retry. Successive edits to one file are the work
+/// going on — a failed edit arrives as PostToolUseFailure, not as the
+/// PostToolUse classified here (found in the hand-checked sample).
+fn classify_action(pair: &Pair<'_>) -> Classification {
+    if pair.interrupted {
+        return Classification {
+            verdict: Verdict::Ignored,
+            confidence: 0.8,
+            reason: format!("{} was interrupted", pair.tool_name),
+        };
+    }
+    if pair.tool_name.eq_ignore_ascii_case("bash")
+        && pair.reaction_tool_name.eq_ignore_ascii_case(pair.tool_name)
+        && !pair.answer_target.is_empty()
+        && pair.answer_target == pair.reaction_target
+    {
+        return Classification {
+            verdict: Verdict::Partial,
+            confidence: 0.7,
+            reason: format!("re-ran the identical command: {}", pair.answer_target),
+        };
+    }
+    Classification {
+        verdict: Verdict::Used,
+        confidence: 0.8,
+        reason: format!("{} completed and the session proceeded on it", pair.tool_name),
+    }
+}
+
 /// Classify a (answer, reaction) pair — the pure decision function.
 pub fn classify(pair: &Pair<'_>) -> Classification {
+    // Nothing captured → nothing to judge (#278). Never "ignored".
+    if pair.response_missing {
+        return Classification {
+            verdict: Verdict::Unknown,
+            confidence: 1.0,
+            reason: "no response captured for this call".into(),
+        };
+    }
+    if is_action_tool(pair.tool_name) {
+        return classify_action(pair);
+    }
+
     // No reaction at all → ignored.
     if pair.reaction_event_type.is_empty() {
         return Classification {
@@ -267,7 +333,7 @@ pub async fn classify_session(
         // Get the next event; if there isn't one, skip — we don't classify a
         // dangling last call.
         let Some(next) = events.get(i + 1) else { continue };
-        let (_next_id, next_type, _next_tool, _next_ts, next_payload) = next;
+        let (_next_id, next_type, next_tool, _next_ts, next_payload) = next;
 
         let response_text = extract_response_text(payload);
         let answer_target = primary_target(
@@ -282,7 +348,15 @@ pub async fn classify_session(
             .unwrap_or_default();
         let reaction_target = primary_target(&next_input_json);
 
+        let response = payload.get("tool_response");
         let pair = Pair {
+            tool_name: tool_name.as_deref().unwrap_or(""),
+            reaction_tool_name: next_tool.as_deref().unwrap_or(""),
+            response_missing: response.is_none_or(serde_json::Value::is_null),
+            interrupted: response
+                .and_then(|r| r.get("interrupted"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
             response_text: &response_text,
             reaction_event_type: next_type,
             reaction_tool_input: &next_input_json,
@@ -296,6 +370,7 @@ pub async fn classify_session(
             Verdict::Used => "used",
             Verdict::Partial => "partial",
             Verdict::Ignored => "ignored",
+            Verdict::Unknown => "unknown",
         };
         rows.push((
             client_session_id.to_string(),
@@ -388,6 +463,99 @@ mod tests {
         assert_eq!(primary_target("not json"), "");
     }
 
+    /// #278: a call whose response was never captured cannot be judged — it is
+    /// `unknown`, not `ignored` (another family's `bash`/`read` were 100%
+    /// "ignored" for want of a response).
+    #[test]
+    fn a_call_with_no_captured_response_is_unknown() {
+        let pair = Pair {
+            tool_name: "bash",
+            response_missing: true,
+            reaction_event_type: "UserPromptSubmit",
+            ..Default::default()
+        };
+        let c = classify(&pair);
+        assert_eq!(c.verdict, Verdict::Unknown);
+        assert!(c.reason.contains("no response"), "reason: {}", c.reason);
+    }
+
+    /// #278: an action tool is relied on, not quoted. A completed `git commit`
+    /// the session moves on from is used, whatever comes next.
+    #[test]
+    fn a_completed_action_the_session_moves_on_from_is_used() {
+        for next in ["UserPromptSubmit", "Stop", "PreToolUse"] {
+            let pair = Pair {
+                tool_name: "Bash",
+                response_text: "[develop 1a2b3c4] fix: thing",
+                reaction_event_type: next,
+                reaction_tool_name: "Read",
+                answer_target: "git commit -m fix",
+                reaction_target: "src/lib.rs",
+                ..Default::default()
+            };
+            let c = classify(&pair);
+            assert_eq!(c.verdict, Verdict::Used, "{next}: {}", c.reason);
+        }
+    }
+
+    /// Re-running the identical command straight away says its result was not
+    /// taken.
+    #[test]
+    fn an_identical_command_re_run_is_partial() {
+        let pair = Pair {
+            tool_name: "Bash",
+            reaction_event_type: "PreToolUse",
+            reaction_tool_name: "Bash",
+            answer_target: "cargo test -p senseid",
+            reaction_target: "cargo test -p senseid",
+            ..Default::default()
+        };
+        assert_eq!(classify(&pair).verdict, Verdict::Partial);
+    }
+
+    /// Successive edits to one file are the work going on, not a rejected
+    /// result — a failed edit arrives as PostToolUseFailure, not here. Found in
+    /// the hand-checked sample (#278).
+    #[test]
+    fn consecutive_edits_to_one_file_are_used() {
+        let pair = Pair {
+            tool_name: "Edit",
+            reaction_event_type: "PreToolUse",
+            reaction_tool_name: "Edit",
+            answer_target: "src/lib.rs",
+            reaction_target: "src/lib.rs",
+            ..Default::default()
+        };
+        assert_eq!(classify(&pair).verdict, Verdict::Used);
+    }
+
+    #[test]
+    fn an_interrupted_action_is_ignored() {
+        let pair = Pair {
+            tool_name: "Bash",
+            interrupted: true,
+            reaction_event_type: "UserPromptSubmit",
+            answer_target: "cargo test",
+            ..Default::default()
+        };
+        let c = classify(&pair);
+        assert_eq!(c.verdict, Verdict::Ignored);
+        assert!(c.reason.contains("interrupted"), "reason: {}", c.reason);
+    }
+
+    /// A read-type tool is still judged by citation.
+    #[test]
+    fn a_read_is_still_judged_by_citation() {
+        let pair = Pair {
+            tool_name: "Read",
+            response_text: "Nothing citable.",
+            reaction_event_type: "UserPromptSubmit",
+            answer_target: "a.rs",
+            ..Default::default()
+        };
+        assert_eq!(classify(&pair).verdict, Verdict::Ignored);
+    }
+
     #[test]
     fn classify_used_when_reaction_cites_a_fragment() {
         let pair = Pair {
@@ -396,6 +564,7 @@ mod tests {
             reaction_tool_input: r#"{"file_path":"crates/senseid/src/db/pg_store.rs","new_string":"…"}"#,
             answer_target: "crates/senseid/src/db/pg_store.rs",
             reaction_target: "crates/senseid/src/db/pg_store.rs",
+            ..Default::default()
         };
         let c = classify(&pair);
         assert_eq!(c.verdict, Verdict::Used);
@@ -411,6 +580,7 @@ mod tests {
             reaction_tool_input: r#"{"file_path":"a/b/c.rs"}"#,
             answer_target: "a/b/c.rs",
             reaction_target: "a/b/c.rs",
+            ..Default::default()
         };
         let c = classify(&pair);
         assert_eq!(c.verdict, Verdict::Partial);
@@ -425,6 +595,7 @@ mod tests {
             reaction_tool_input: "",
             answer_target: "a/b/c.rs",
             reaction_target: "",
+            ..Default::default()
         };
         let c = classify(&pair);
         assert_eq!(c.verdict, Verdict::Ignored);
@@ -439,6 +610,7 @@ mod tests {
             reaction_tool_input: r#"{"file_path":"unrelated.md"}"#,
             answer_target: "a/b/c.rs",
             reaction_target: "unrelated.md",
+            ..Default::default()
         };
         let c = classify(&pair);
         assert_eq!(c.verdict, Verdict::Ignored);
@@ -452,6 +624,7 @@ mod tests {
             reaction_tool_input: "",
             answer_target: "",
             reaction_target: "",
+            ..Default::default()
         };
         let c = classify(&pair).verdict;
         assert_eq!(c, Verdict::Ignored);
@@ -494,6 +667,7 @@ mod tests {
             reaction_tool_input: r#"{"file_path":"single/frag.rs"}"#,
             answer_target: "single/frag.rs",
             reaction_target: "single/frag.rs",
+            ..Default::default()
         });
         let three_hits = classify(&Pair {
             response_text: "path/a.rs and path/b.rs and path/c.rs",
@@ -501,6 +675,7 @@ mod tests {
             reaction_tool_input: r#"{"file_path":"path/a.rs","other":"path/b.rs; path/c.rs"}"#,
             answer_target: "path/a.rs",
             reaction_target: "path/a.rs",
+            ..Default::default()
         });
         assert_eq!(one_hit.verdict, Verdict::Used);
         assert_eq!(three_hits.verdict, Verdict::Used);

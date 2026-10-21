@@ -18,3 +18,16 @@ export function ftrPctLabel(rate: number | null | undefined): string {
   const pct = ftrPct(rate);
   return pct == null ? FTR_NONE : `${pct}%`;
 }
+
+/** Rendered when an FTR read failed (#288) — distinct from the no-data dash,
+ *  which means there are no analyzed sessions to measure. */
+export const FTR_UNAVAILABLE = 'unavailable';
+
+/** An FTR read as a page holds it — the data, or why it could not be read —
+ *  labelled: "unavailable" on a failed read, else the rate or the no-data dash
+ *  (also while not yet read, `null`). */
+export function ftrReadLabel(
+  read: { data: { ftr14d: number | null } | null; error: string | null } | null,
+): string {
+  return read?.error ? FTR_UNAVAILABLE : ftrPctLabel(read?.data?.ftr14d);
+}

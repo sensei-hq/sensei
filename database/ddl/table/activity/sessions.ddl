@@ -12,12 +12,12 @@ create table if not exists sessions (
 , ftr                      boolean
 , turns                    integer     not null default 0
 , corrections              integer     not null default 0
-, tokens_in                integer
-, tokens_out               integer
-, tokens_fresh     integer     -- input EXCLUDING cache (the expensive part)
-, cache_read       integer
-, cache_write      integer
-, tokens_reasoning integer     -- where the source separates thinking (OpenCode)
+, tokens_in                bigint
+, tokens_out               bigint
+, tokens_fresh     bigint     -- input EXCLUDING cache (the expensive part)
+, cache_read       bigint
+, cache_write      bigint
+, tokens_reasoning bigint     -- where the source separates thinking (OpenCode)
 , metered_cost     numeric
 , list_cost_usd    numeric     -- Claude Code's /cost total (list price), not billed spend
 , duration                 interval

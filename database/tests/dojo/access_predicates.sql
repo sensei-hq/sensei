@@ -41,8 +41,8 @@ insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via,
   ('b0000000-0000-4000-8000-00000000000a', 'a0000000-0000-4000-8000-000000000005', 'admin',       'employer', 'github_oauth', now()),
   ('b0000000-0000-4000-8000-00000000000b', 'a0000000-0000-4000-8000-000000000006', 'contributor', 'employer', 'github_oauth', null);
 
-insert into dojo.projects (id, user_id, tenant_id, slug, name) values
-  ('c0000000-0000-4000-8000-0000000000f1', 'a0000000-0000-4000-8000-000000000001',
+insert into dojo.projects (id, tenant_id, slug, name) values
+  ('c0000000-0000-4000-8000-0000000000f1',
    'b0000000-0000-4000-8000-00000000000a', 'ztest-access-p', 'project P');
 
 insert into dojo.teams (id, tenant_id, name) values

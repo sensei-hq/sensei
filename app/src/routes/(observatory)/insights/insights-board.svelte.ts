@@ -16,7 +16,7 @@
  */
 
 import { SvelteSet } from 'svelte/reactivity';
-import type { SenseiApi } from '$lib/api.js';
+import { failureReason, type SenseiApi } from '$lib/api.js';
 import type {
   InsightsBoard,
   InsightColumn,
@@ -180,9 +180,14 @@ export class InsightsBoardState {
   actionError = $state<string | null>(null);
   /** True while a project-scope refetch is in flight. */
   loading = $state(false);
+  /** Why the board could not be read, or null (#288). The page then shows the
+   *  error — an unread board is not the all-quiet one. */
+  loadError = $state<string | null>(null);
 
-  constructor(board: InsightsBoard = EMPTY_INSIGHTS_BOARD) {
-    this.board = board;
+  /** `board` is null when the first load failed; `loadError` says why. */
+  constructor(board: InsightsBoard | null = EMPTY_INSIGHTS_BOARD, loadError: string | null = null) {
+    this.board = board ?? EMPTY_INSIGHTS_BOARD;
+    this.loadError = loadError;
   }
 
   // Visible rows — everything the user hasn't just acted on. Only
@@ -257,10 +262,20 @@ export class InsightsBoardState {
   async selectProject(api: SenseiApi, projectId: string | null): Promise<void> {
     if (projectId === this.selectedProjectId) return;
     this.selectedProjectId = projectId;
+    await this.retry(api);
+  }
+
+  /** Re-read the board for the current scope — the page's Retry after a failed
+   *  read, and every re-scope. Optimistic removals reset: the fresh board is
+   *  the truth. */
+  async retry(api: SenseiApi): Promise<void> {
     this.removedIds.clear();
     this.actionError = null;
     this.loading = true;
-    this.board = await api.getInsights(projectId ?? undefined);
+    const read = await api.tryGetInsights(this.selectedProjectId ?? undefined);
+    // A failed read drops the previous scope's board, so it cannot pass as this one's.
+    this.board = read.ok ? read.data : EMPTY_INSIGHTS_BOARD;
+    this.loadError = read.ok ? null : failureReason(read.error);
     this.loading = false;
   }
 
@@ -273,10 +288,10 @@ export class InsightsBoardState {
   async apply(api: SenseiApi, rec: RecCardVm): Promise<void> {
     this.actionError = null;
     this.#remove(rec.id);
-    const res = await api.acceptProjectRecommendation(rec.projectId, rec.id);
+    const res = await api.tryAcceptProjectRecommendation(rec.projectId, rec.id);
     if (!res.ok) {
       this.#restore(rec.id);
-      this.actionError = `Couldn't apply "${rec.title}" — it may already be decided. Reloading may help.`;
+      this.actionError = `Couldn't apply "${rec.title}": ${failureReason(res.error)}`;
     }
   }
 
@@ -284,10 +299,10 @@ export class InsightsBoardState {
   async dismiss(api: SenseiApi, rec: RecCardVm): Promise<void> {
     this.actionError = null;
     this.#remove(rec.id);
-    const res = await api.rejectProjectRecommendation(rec.projectId, rec.id);
+    const res = await api.tryRejectProjectRecommendation(rec.projectId, rec.id);
     if (!res.ok) {
       this.#restore(rec.id);
-      this.actionError = `Couldn't dismiss "${rec.title}". Reloading may help.`;
+      this.actionError = `Couldn't dismiss "${rec.title}": ${failureReason(res.error)}`;
     }
   }
 }

@@ -1,7 +1,7 @@
 /**
  * Intake screen state — owns the freeform → classify → recommend → confirm flow.
  *
- * Depends only on `IntakeApi` (the two `senseiApi` methods) so it unit-tests
+ * Depends only on `IntakeApi` (the one `senseiApi` method it calls) so it unit-tests
  * with an injected fake — no network, no appState. Mirrors the state-owns-the-
  * flow pattern of insights-board.svelte.ts.
  */
@@ -10,7 +10,6 @@ import type { IntakeGuide, PlaybookRecommendation } from '$lib/types.js';
 
 /** The slice of the daemon client this state needs (lets tests inject a fake). */
 export interface IntakeApi {
-  getIntakeGuide(): Promise<IntakeGuide>;
   recommendPlaybook(body: Record<string, unknown>): Promise<ApiResult<PlaybookRecommendation>>;
 }
 

@@ -59,3 +59,28 @@ describe("SettingsSidebar", () => {
     expect(container.textContent).toContain("Settings");
   });
 });
+
+// #133: the rail follows the one preference — kanji as literal text, or the
+// Solar class as an icon — through the same List slot.
+describe("SettingsSidebar glyphs", () => {
+  const mountIn = (glyphs: "kanji" | "icon") => {
+    const m = mountComponent(SettingsSidebar, { pathname: "/settings/general", glyphs });
+    cleanup.push(m.destroy);
+    flushSync();
+    return m.container;
+  };
+
+  it("shows kanji by default", () => {
+    const c = mountIn("kanji");
+    const literals = [...c.querySelectorAll("[data-item-icon-literal]")].map((e) => e.textContent);
+    expect(literals).toContain("名");
+    expect(c.querySelector("[data-item-icon]")).toBeNull();
+  });
+
+  it("shows icons in icon mode", () => {
+    const c = mountIn("icon");
+    const icons = [...c.querySelectorAll("[data-item-icon]")].map((e) => e.className);
+    expect(icons.some((cls) => cls.includes("i-solar-user-id-bold-duotone"))).toBe(true);
+    expect(c.querySelector("[data-item-icon-literal]")).toBeNull();
+  });
+});

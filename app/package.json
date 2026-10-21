@@ -1,6 +1,6 @@
 {
 	"name": "@sensei/desktop",
-	"version": "0.13.0",
+	"version": "0.15.0",
 	"private": true,
 	"type": "module",
 	"scripts": {
@@ -8,7 +8,7 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"tauri": "tauri",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc --noEmit -p tsconfig.e2e.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test:unit": "svelte-kit sync && vitest run",
 		"test:e2e": "playwright test --config e2e/playwright.config.ts --project=tauri",

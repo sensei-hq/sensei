@@ -42,6 +42,13 @@ describe('extractCompletion', () => {
 });
 
 describe('extractPreferences', () => {
+  // #133: the glyph mode lives under its own key; the wizard must read it the
+  // way Settings does, or the two would disagree about one preference.
+  it('reads the glyph mode from ui.glyphs, kanji by default', () => {
+    expect(extractPreferences({}).glyphs).toBe('kanji');
+    expect(extractPreferences({ 'ui.glyphs': 'icon' }).glyphs).toBe('icon');
+  });
+
   it('returns defaults when no config key', () => {
     const result = extractPreferences({});
     expect(result.displayName).toBe('');
@@ -162,4 +169,54 @@ describe('loadWizardData — a config read that fails', () => {
     expect(await wizardState.load()).toBe(false);
     expect(wizardState.setupComplete).toBe(true);
   });
+});
+
+// #286: the router list read through a fallback that turned any failure into
+// `{ routers: [] }` — "no routers", indistinguishable from none configured.
+describe('loadWizardData — a router read that fails', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('loads everything else and says the routers could not be read', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      const path = new URL(String(input), 'http://localhost').pathname;
+      if (path === '/api/gateway/routers') return new Response('boom', { status: 503, statusText: 'Service Unavailable' });
+      const body = path === '/api/config' ? {}
+        : path === '/api/libs' ? { total: 0, libs: [] }
+        : path === '/api/instruments' ? { mcps: [] }
+        : [];
+      return new Response(JSON.stringify(body), { status: 200 });
+    }));
+    const data = await loadWizardData(7744);
+    expect(data.routers).toBeNull();
+    expect(data.routersError).toMatch(/Service Unavailable|503/);
+    expect(data.mcps).toEqual([]);
+  });
+});
+
+// #288: every read the wizard loads is the daemon's answer or a rejection
+// naming it — an empty fallback read as "no assistants / roots / projects /
+// libraries / instruments" and seeded the wizard with it.
+describe('loadWizardData — any other read that fails', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  for (const [path, what] of [
+    ['/api/assistants/families', 'assistants'],
+    ['/api/scan/roots', 'roots'],
+    ['/api/projects', 'projects'],
+    ['/api/libs', 'libraries'],
+    ['/api/instruments', 'instruments'],
+  ] as const) {
+    it(`rejects when ${path} fails, naming the ${what}`, async () => {
+      vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+        const p = new URL(String(input), 'http://localhost').pathname;
+        if (p === path) return new Response('boom', { status: 503, statusText: 'Service Unavailable' });
+        const body = p === '/api/config' ? {}
+          : p === '/api/libs' ? { total: 0, libs: [] }
+          : p === '/api/instruments' ? { mcps: [] }
+          : p === '/api/gateway/routers' ? { routers: [] }
+          : [];
+        return new Response(JSON.stringify(body), { status: 200 });
+      }));
+      await expect(loadWizardData(7744)).rejects.toThrow(new RegExp(`${what}.*Service Unavailable`));
+    });
+  }
 });

@@ -17,11 +17,17 @@ export type PlaygroundTool = {
 export type PlaygroundGroup = {
   id: string;
   kanji: string;
+  /** Icon-mode mark (#133); `null` for an assistant's own mark, an identity
+   *  that stays kanji in both modes. */
+  icon?: string | null;
   name: string;
   installed: boolean;
   source: 'sensei' | 'discovered';
   serverId?: string;
   tools: PlaygroundTool[];
+  /** Why a discovered server's tools are not shown: the read failed, or the
+   *  daemon's probe did (#288). null when there is nothing to say. */
+  error?: string | null;
 };
 
 /** The fields of a discovered server this model reads. */
@@ -30,8 +36,9 @@ export type DiscoveredServer = { id: string; acp_family: string; mcp_key: string
 /** The tool shape of sensei's own catalog this model reads. */
 export type SenseiTool = { name: string; kind?: string; summary: string };
 
-/** A cached manifest, as probed from the server: its tools are untyped JSON. */
-export type ServerManifest = { tools?: unknown[] };
+/** A cached manifest, as probed from the server: its tools are untyped JSON,
+ *  and `error` is the probe's failure when it had one. */
+export type ServerManifest = { tools?: unknown[]; error?: string | null };
 
 /** A manifest entry this rail can show: one with a string name. */
 function namedTool(t: unknown): t is { name: string; description?: unknown } {
@@ -46,6 +53,10 @@ const FAMILIES: Array<{ family: string; label: string; kanji: string }> = [
   { family: 'zed', label: 'Zed', kanji: '禅' },
 ];
 const UNKNOWN_KANJI = '器';
+/** Icon-mode marks (#133). The assistants keep their kanji: they are
+ *  identities, and Solar has no logo for them. */
+const SENSEI_ICON = 'i-solar-ruler-pen-bold-duotone';
+const UNKNOWN_ICON = 'i-solar-plug-circle-bold-duotone';
 
 /** Third-party catalogs rarely declare a kind: a mutating verb is an action,
  *  a getter / list / search a query. */
@@ -61,11 +72,13 @@ export function buildPlaygroundGroups(
   senseiTools: SenseiTool[],
   servers: DiscoveredServer[],
   manifests: Record<string, ServerManifest | undefined>,
+  readErrors: Record<string, string | undefined> = {},
 ): PlaygroundGroup[] {
   const groups: PlaygroundGroup[] = [
     {
       id: 'sensei',
       kanji: '具',
+      icon: SENSEI_ICON,
       name: 'Sensei',
       installed: true,
       source: 'sensei',
@@ -88,14 +101,17 @@ export function buildPlaygroundGroups(
         kind: inferKind(t.name, undefined),
         summary: typeof t.description === 'string' ? t.description : '',
       }));
+    const family = FAMILIES.find((f) => f.family === server.acp_family);
     groups.push({
       id: server.id,
-      kanji: FAMILIES.find((f) => f.family === server.acp_family)?.kanji ?? UNKNOWN_KANJI,
+      kanji: family?.kanji ?? UNKNOWN_KANJI,
+      icon: family ? null : UNKNOWN_ICON,
       name: server.mcp_key,
       installed: server.enabled,
       source: 'discovered',
       serverId: server.id,
       tools,
+      error: readErrors[server.id] ?? manifests[server.id]?.error ?? null,
     });
   }
   return groups;

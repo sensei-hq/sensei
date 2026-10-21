@@ -14,7 +14,7 @@ const apiMock = {
   setConfig:    vi.fn().mockResolvedValue(undefined),
   trySetConfig: vi.fn().mockResolvedValue({ ok: true,  data: undefined }),
   deleteConfig: vi.fn().mockResolvedValue(undefined),
-  listProjects: vi.fn().mockResolvedValue([]),
+  tryListProjects: vi.fn().mockResolvedValue({ ok: true, data: [] }),
 };
 
 vi.mock('./api.js', () => ({
@@ -56,7 +56,7 @@ describe('AppState', () => {
     apiMock.getConfig.mockResolvedValue({ setup_complete: '1', active_project: 'proj-1' });
     apiMock.tryGetConfig.mockResolvedValue({ ok: true, data: { setup_complete: '1', active_project: 'proj-1' } });
     apiMock.trySetConfig.mockResolvedValue({ ok: true, data: undefined });
-    apiMock.listProjects.mockResolvedValue([]);
+    apiMock.tryListProjects.mockResolvedValue({ ok: true, data: [] });
     state = new AppState();
   });
 
@@ -281,9 +281,16 @@ describe('AppState', () => {
   });
 
   it('loadProjectCount caches the number of projects from the daemon', async () => {
-    apiMock.listProjects.mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+    apiMock.tryListProjects.mockResolvedValueOnce({ ok: true, data: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] });
     await state.loadProjectCount();
     expect(state.projectCount).toBe(3);
+  });
+
+  // #288: a failed read used to leave the badge at 0 — "no projects".
+  it('loadProjectCount leaves the count unknown (null) when the read fails', async () => {
+    apiMock.tryListProjects.mockResolvedValueOnce({ ok: false, error: { status: 503, message: 'Service Unavailable' } });
+    await state.loadProjectCount();
+    expect(state.projectCount).toBeNull();
   });
 
   it('loadProjectCount is a no-op without Tauri (count stays null)', async () => {

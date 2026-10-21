@@ -409,9 +409,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.17.0"
+version = "1.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ec2f1fc3ec205783a5da9a7e6c1509cc69dedf09a1949e412c1e18469326d00"
+checksum = "faac5829c2b74c28f830747e7818ccfb684261b5f48a1118b1e2a13d36dfab13"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -419,14 +419,15 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.41.0"
+version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a2f9779ce85b93ab6170dd940ad0169b5766ff848247aff13bb788b832fe3f4"
+checksum = "f1622d8446a2d4b2ce0c7eefc73dd43a99779028d5ee5c2dd8073a658ba8a2bc"
 dependencies = [
  "cc",
  "cmake",
  "dunce",
  "fs_extra",
+ "pkg-config",
 ]
 
 [[package]]
@@ -1478,8 +1479,8 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.26.0"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.26.0#0f67517176294156b128db1f0cd394ee99ee8f04"
+version = "0.27.3"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.27.3#29db16714ca8c2ab45d2bce5fa23ea2e6da4c840"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2411,7 +2412,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -4635,9 +4636,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
@@ -4699,9 +4700,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -4850,7 +4851,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.13.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -4868,7 +4869,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-cli"
-version = "0.13.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "clap",
@@ -4978,7 +4979,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-logger"
-version = "0.13.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "reqwest 0.12.28",
@@ -4991,7 +4992,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-mcp"
-version = "0.13.0"
+version = "0.15.0"
 dependencies = [
  "reqwest 0.12.28",
  "sensei-bootstrap",
@@ -5008,7 +5009,7 @@ dependencies = [
 
 [[package]]
 name = "senseid"
-version = "0.13.0"
+version = "0.15.0"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
@@ -5041,6 +5042,7 @@ dependencies = [
  "rusqlite",
  "ruzstd",
  "scip",
+ "security-framework",
  "semver",
  "sensei-bootstrap",
  "sensei-gateway",

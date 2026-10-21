@@ -1,17 +1,16 @@
 import type {
-  ServerProject, ProjectSummary, GraphData, GraphNode, GraphEdge,
+  ServerProject,
   GraphSymbolNode, GraphCallEdge,
-  SolutionGraphResponse, SolutionAnalysis, InferredRole,
-  IndexQueueStatus, DirtyStatus, IndexError,
-  FunctionMatch, CallNeighbour, TypeDetail, CommunityInfo, DocDrift,
-  LibEntry, LibDoc, DepVersion, SessionData, SessionsDigest,
+  ProjectGraphResponse, SolutionAnalysis,
+  FunctionMatch, CommunityInfo,
+  LibEntry, SessionData, SessionsDigest,
   ProjectMemory, DriftItem, PatternEntry, Recommendation,
-  ProjectSession, CallFlowModule, CallFlowCall,
+  CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   DojoMembership, DojoBindingSuggestion, DojoUpgradesResponse, CollectivePreferences,
   ShareReviewResponse, PublishBatchOutcome,
-  McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
+  McpToolManifest, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
@@ -33,7 +32,7 @@ import type {
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
   ProposalCreateBody, MemoryCreateBody, OutcomeBody, OutcomesBatchResponse,
-  DaemonWatchRoot,
+  DaemonWatchRoot, DaemonProject,
 } from './setup/contracts.js';
 import type {
   ConsolidatedRuleset, ConsolidateResult,
@@ -43,6 +42,7 @@ import type {
   DaySessions, DrilldownSession, ToolUsage,
 } from './metrics/metric-view.js';
 import type { ProjectHealth } from './metrics/health-radar.js';
+import type { ProjectImpactWire } from './impact.js';
 
 export type { DaySessions, DrilldownSession, ToolUsage };
 
@@ -56,32 +56,46 @@ export type ApiError =
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
+/** What accepting a recommendation would write (`…/recommendations/{id}/preview`). */
+export interface RecommendationPreview {
+  materializable: boolean; kind?: string; action_type?: string; reason?: string;
+  title?: string; body?: string; impact?: string | null; gov_scope?: string; enforcement?: string;
+  // file-class (write_skill/create_agent) preview fields:
+  name?: string; path?: string; content?: string; consent_required?: boolean;
+}
+
+/** Why a read failed, for the screen to say: the status text, else the status. */
+export const failureReason = (error: ApiError): string => error.message || `HTTP ${error.status}`;
+
+/** A read's data, or — for a caller that cannot go on without it — a throw
+ *  naming what could not be read (#288). */
+export function dataOrThrow<T>(read: ApiResult<T>, what: string): T {
+  if (!read.ok) throw new Error(`reading the ${what} failed: ${failureReason(read.error)}`);
+  return read.data;
+}
+
+/** A read as a loader hands it to its page: the data, or why it could not be
+ *  read — never a default standing in for the failure (#288). */
+export function readOutcome<T>(r: ApiResult<T>): { data: T | null; error: string | null } {
+  return r.ok ? { data: r.data, error: null } : { data: null, error: failureReason(r.error) };
+}
+
 /** The daemon's origin for a given port. The single source of truth for the
  *  loopback base URL, shared by `senseiApi` and any non-fetch consumer (e.g.
  *  an `<img src>` that streams bytes from the daemon, like a project icon). */
 export const apiBase = (port: number): string => `http://127.0.0.1:${port}`;
 
 /** Create a typed API client for the sensei Rust daemon. */
+/** `?persona=…` when one is named; nothing, so the daemon resolves the default
+ *  identity (#296), when not. */
+const personaQuery = (persona?: string) => (persona ? `?persona=${encodeURIComponent(persona)}` : '');
+
 export function senseiApi(port: number) {
   const base = apiBase(port);
 
-  // Legacy fallback-returning helpers — kept for callers that pre-date
-  // the Result-based `tryGet`/`tryPost` etc. New code should use the
-  // try-prefixed variants so errors flow through ApiResult instead of
-  // being absorbed into a sentinel value. The console.warn here keeps
-  // failures observable until the migration finishes.
-  async function get<T>(path: string, fallback: T): Promise<T> {
-    try {
-      const res = await fetch(`${base}${path}`);
-      if (res.ok) return await res.json() as T;
-      console.warn('[api] GET non-ok; using fallback', { path, status: res.status, statusText: res.statusText });
-      return fallback;
-    } catch (e) {
-      console.warn('[api] GET failed; using fallback', { path }, e);
-      return fallback;
-    }
-  }
-
+  // Every read is `tryGet`: the daemon's answer or an ApiResult error (#288).
+  // The write helpers below without a `try` prefix are legacy — they fold a
+  // failure into a sentinel value; new code uses the try- variants.
   async function post<T>(path: string, body: unknown, fallback: T): Promise<T> {
     try {
       const res = await fetch(`${base}${path}`, {
@@ -217,12 +231,15 @@ export function senseiApi(port: number) {
     // NOT collapse into a fallback body: `{}` is indistinguishable from a
     // daemon reporting a shape we do not understand, and either way the caller
     // would be told something about a credential we never asked about.
-    tryGetAuthStatus: (persona = 'default') =>
-      tryGet<Record<string, unknown>>(`/api/auth/status?persona=${encodeURIComponent(persona)}`),
+    // No persona named → the daemon resolves the DEFAULT identity (#296), the
+    // one owning the global git email; never the literal `default` slot.
+    tryGetAuthStatus: (persona?: string) =>
+      tryGet<Record<string, unknown>>(`/api/auth/status${personaQuery(persona)}`),
 
     /** Every identity and what each one needs. Result-based: a failed read must
      *  not become `[]`, which reads as "you have no identities". */
-    tryGetPersonas: () => tryGet<{ personas: PersonaWire[] }>('/api/auth/personas'),
+    tryGetPersonas: () =>
+      tryGet<{ personas: PersonaWire[]; default?: string | null; defaultError?: string | null }>('/api/auth/personas'),
 
     /** Begin the PKCE flow. The daemon returns a URL rather than opening one —
      *  it may be headless — so the caller owns the browser.
@@ -230,50 +247,30 @@ export function senseiApi(port: number) {
      *  `expectedLogin` is passed through to GitHub so it preselects the right
      *  account. Without it a browser already signed in to another account
      *  quietly re-links THAT one — a success as the wrong person. */
-    tryStartSignIn: (persona = 'default', expectedLogin: string | null = null) =>
+    tryStartSignIn: (persona?: string, expectedLogin: string | null = null) =>
       tryPost<{ authorizeUrl?: string }>(
-        `/api/auth/signin?persona=${encodeURIComponent(persona)}` +
-          (expectedLogin ? `&github_login=${encodeURIComponent(expectedLogin)}` : ''),
+        `/api/auth/signin${personaQuery(persona)}` +
+          (expectedLogin ? `${persona ? '&' : '?'}github_login=${encodeURIComponent(expectedLogin)}` : ''),
+        {},
+      ),
+
+    /** Let the daemon read a persona's stored session, with the Keychain's
+     *  dialog allowed — the user clicked, so it has someone to answer it (#283). */
+    tryApproveKeychain: (persona: string) =>
+      tryPost<{ ok: boolean; error?: string }>(
+        `/api/auth/keychain/approve?persona=${encodeURIComponent(persona)}`,
         {},
       ),
 
     // ── Health ────────────────────────────────────────────────────────────
-    getHealth: () => get<Record<string, unknown>>('/health', {}),
-
-    getComponents: () =>
-      get<{ components: Array<{ id: string; name: string; version: string | null; status: string; icon: string }> }>(
-        '/api/health/components', { components: [] },
-      ),
-
-    // ── Scan suggestions ─────────────────────────────────────────────────
-    getScanSuggestions: () =>
-      get<Array<{ name: string; strategy: string; repo_ids: string[] }>>(
-        '/api/scan/suggestions', [],
-      ),
+    tryGetHealth: () => tryGet<Record<string, unknown>>('/health'),
 
     /** Every watch root, paused ones included (#247). Result-based: the
      *  settings screen must tell "you have no roots" from "the daemon is down". */
     tryGetScanRoots: () => tryGet<DaemonWatchRoot[]>('/api/scan/roots'),
 
-    getScanRoots: () =>
-      get<Array<{ path: string; created_at: string | null; repos_found: number; scanned: boolean }>>(
-        '/api/scan/roots', [],
-      ),
 
     // ── Repos (individual git repos) ────────────────────────────────────
-    getRepos: async () => {
-      const repos = await get<ServerProject[]>('/api/repos', []);
-      return repos.map(p => ({
-        ...p,
-        repoId: p.repo_id,
-        indexedAt: p.indexed_at,
-        lastError: p.last_error,
-        partiallyIndexed: false,
-      }));
-    },
-
-    getRepoSummary: (repoId: string) =>
-      get<ProjectSummary | null>(`/api/repos/${enc(repoId)}/summary`, null),
 
     registerRepo: (repoId: string, name: string, path: string) =>
       post('/api/repos', { repoId, name, path }, { ok: false }),
@@ -293,7 +290,6 @@ export function senseiApi(port: number) {
       del(`/api/repos/${enc(repoId)}/tags/${enc(tag)}`),
 
     // ── Projects (groups of 1+ repos) ───────────────────────────────────
-    listProjects: () => get<ProjectListItem[]>('/api/projects', []),
 
     createProject: (project: object) =>
       post<{ ok: boolean; id?: string }>('/api/projects', project, { ok: false }),
@@ -315,27 +311,29 @@ export function senseiApi(port: number) {
     updateFolder: (id: string, patch: { role?: string | null }) =>
       put(`/api/folders/${enc(id)}`, patch),
 
+    /** Error-propagating reads/writes for Settings · Projects (#271): a failed
+     *  load is an error state, never an empty list, and a role save that fails
+     *  is rolled back and reported rather than silently kept on screen. */
+    // One read of the list, typed as the wire carries it: the settings and
+    // setup view (`DaemonProject`) and the projects-index view (`ProjectListItem`).
+    tryListProjects: () => tryGet<Array<DaemonProject & ProjectListItem>>('/api/projects'),
+    tryUpdateFolder: (id: string, patch: { role?: string | null }) =>
+      tryPut(`/api/folders/${enc(id)}`, patch),
+
     addProjectRepo: (projectId: string, repo: { repoId: string; role?: string }) =>
       post(`/api/projects/${enc(projectId)}/repos`, repo, { ok: false }),
 
     removeProjectRepo: (projectId: string, repoId: string) =>
       del(`/api/projects/${enc(projectId)}/repos/${enc(repoId)}`),
 
-    getProjectGraph: (id: string) =>
-      get<SolutionGraphResponse | null>(`/api/projects/${enc(id)}/graph`, null),
-
-    getProjectRoles: (id: string) =>
-      get<InferredRole[]>(`/api/projects/${enc(id)}/roles`, []),
-
     analyzeProject: (id: string) =>
       post<SolutionAnalysis | null>(`/api/projects/${enc(id)}/analyze`, {}, null),
 
     // ── Project detail (new multi-window endpoints) ───────────────────
-    getProjectFtr: (id: string) =>
-      get<{ ftr14d: number | null; ftr14dPrev: number | null; ftrTrend: number[]; sessions7d: number }>(
+    /** A project's FTR headline (14d / prior / trend / 7d). */
+    tryGetProjectFtr: (id: string) =>
+      tryGet<{ ftr14d: number | null; ftr14dPrev: number | null; ftrTrend: number[]; sessions7d: number }>(
         `/api/projects/${enc(id)}/ftr`,
-        // Fallback on a fetch error is honest no-data (null), never a fabricated 0%.
-        { ftr14d: null, ftr14dPrev: null, ftrTrend: [], sessions7d: 0 }
       ),
 
     // ── Project metrics (registry-driven) ─────────────────────────────
@@ -396,11 +394,8 @@ export function senseiApi(port: number) {
 
     // Per-tool usage breakdown (which tools the ACPs invoked) — the tool-usage
     // bubble view. Honest-empty ({tools:[]}) on a fetch error, never fabricated.
-    getProjectTools: (id: string) =>
-      get<{ tools: ToolUsage[]; count: number }>(`/api/projects/${enc(id)}/tools`, {
-        tools: [],
-        count: 0,
-      }),
+    /** Per-tool usage for a project (#288: a failure is an error, not "no tools"). */
+    tryGetProjectTools: (id: string) => tryGet<{ tools: ToolUsage[]; count: number }>(`/api/projects/${enc(id)}/tools`),
 
     tryGetProjectRepos: (id: string) =>
       tryGet<{ repos: Array<{ id: string; name: string; path: string; kind: string; role?: string }> }>(
@@ -431,105 +426,75 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/library-version-conflicts`,
       ),
 
-    getProjectInstruments: (id: string) =>
-      get<{ tools: Array<{ id: string; name: string; kind: string; scope: 'global' | 'project'; enabled: boolean }> }>(
-        `/api/projects/${enc(id)}/instruments`, { tools: [] }
+    tryGetProjectInstruments: (id: string) =>
+      tryGet<{ tools: Array<{ id: string; name: string; kind: string; scope: 'global' | 'project'; enabled: boolean }> }>(
+        `/api/projects/${enc(id)}/instruments`,
       ),
 
     // Per-project MCP tool aggregation — calls / errors / avg duration / FTR
     // scoped to the project. Returns EVERY manifest tool with usage overlaid
     // (zero-call rows included) so the UI can render the full catalogue.
-    getProjectMcpToolStats: (id: string) =>
-      get<{ tools: ProjectMcpToolStat[] }>(
-        `/api/projects/${enc(id)}/mcp-tool-stats`, { tools: [] }
-      ),
+    tryGetProjectMcpToolStats: (id: string) =>
+      tryGet<{ tools: ProjectMcpToolStat[] }>(`/api/projects/${enc(id)}/mcp-tool-stats`),
 
     // Services (MCP servers, inference providers) with per-project scope
     // resolved (scoped > global > default true).
-    listProjectServices: (id: string) =>
-      get<{ services: ProjectService[] }>(
-        `/api/projects/${enc(id)}/services`, { services: [] }
-      ),
+    tryListProjectServices: (id: string) =>
+      tryGet<{ services: ProjectService[] }>(`/api/projects/${enc(id)}/services`),
 
     setProjectServiceScope: (id: string, serviceId: string, enabled: boolean) =>
       put(`/api/projects/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
 
-    getProjectMemories: (id: string) =>
-      get<{ active: ProjectMemory[]; total: number }>(
-        `/api/projects/${enc(id)}/memories`, { active: [], total: 0 }
-      ),
+    tryGetProjectMemories: (id: string) =>
+      tryGet<{ active: ProjectMemory[]; total: number }>(`/api/projects/${enc(id)}/memories`),
 
     // Memory share batches — the proposal / review / verdict lifecycle for
     // grouping memories before federating them out to a hive-mind.
-    listMemoryShareBatches: (id: string, status?: string) =>
-      get<{ batches: MemoryShareBatch[] }>(
+    tryListMemoryShareBatches: (id: string, status?: string) =>
+      tryGet<{ batches: MemoryShareBatch[] }>(
         `/api/projects/${enc(id)}/memory-batches${status ? `?status=${enc(status)}` : ''}`,
-        { batches: [] },
       ),
 
-    createMemoryShareBatch: (id: string, memoryIds: string[], note?: string) =>
-      post<{ id: string }>(
-        `/api/projects/${enc(id)}/memory-batches`,
-        { memory_ids: memoryIds, note },
-        { id: '' },
-      ),
+    /** Propose a share batch — its id, or why it was not created. */
+    tryCreateMemoryShareBatch: (id: string, memoryIds: string[], note?: string) =>
+      tryPost<{ id: string }>(`/api/projects/${enc(id)}/memory-batches`, { memory_ids: memoryIds, note }),
 
-    decideMemoryShareBatch: (id: string, batchId: string, status: 'approved' | 'rejected' | 'withdrawn', note?: string) =>
-      put(
-        `/api/projects/${enc(id)}/memory-batches/${enc(batchId)}`,
-        { status, note },
-      ),
+    /** Approve, reject or withdraw a share batch — or why the daemon refused. */
+    tryDecideMemoryShareBatch: (id: string, batchId: string, status: 'approved' | 'rejected' | 'withdrawn', note?: string) =>
+      tryPut(`/api/projects/${enc(id)}/memory-batches/${enc(batchId)}`, { status, note }),
 
     // Impact verdicts (manual log) — user-logged retrospectives about
     // shipped changes. Independent of the automatic recommendation
     // verdicts on /api/projects/{id}/impact.
-    listImpactVerdicts: (id: string, verdict?: string) =>
-      get<{ verdicts: ImpactVerdictEntry[] }>(
+    /** The user-logged impact log (T3 Slice 3), optionally one verdict. */
+    tryListImpactVerdicts: (id: string, verdict?: string) =>
+      tryGet<{ verdicts: ImpactVerdictEntry[] }>(
         `/api/projects/${enc(id)}/impact-verdicts${verdict ? `?verdict=${enc(verdict)}` : ''}`,
-        { verdicts: [] },
       ),
 
-    createImpactVerdict: (id: string, title: string, note?: string, sessionId?: string) =>
-      post<{ id: string }>(
-        `/api/projects/${enc(id)}/impact-verdicts`,
-        { title, note, session_id: sessionId },
-        { id: '' },
-      ),
+    /** A project's measured recommendations (#288: a failure is an error, not []). */
+    tryGetProjectImpact: (id: string) => tryGet<ProjectImpactWire[]>(`/api/projects/${enc(id)}/impact`),
 
-    decideImpactVerdict: (id: string, verdictId: string, verdict: 'success' | 'mixed' | 'failure', note?: string) =>
-      put(
-        `/api/projects/${enc(id)}/impact-verdicts/${enc(verdictId)}`,
-        { verdict, note },
-      ),
+    /** Run the doc-drift detector now; resolves to what the scan found. */
+    tryScanProjectDrift: (id: string) =>
+      tryPost<{ scannedDocs: number; newBroken: number; resolved: number }>(`/api/projects/${enc(id)}/drift/scan`, {}),
+
+    /** A project's doc-drift items with their counts (#288: a failure is an error). */
+    tryGetProjectDrift: (id: string) =>
+      tryGet<{ items: DriftItem[]; total: number; drifted: number; broken: number; indexedDocs?: number }>(`/api/projects/${enc(id)}/drift`),
+
+    /** Log an impact by hand — its id, or why it was not logged. */
+    tryCreateImpactVerdict: (id: string, title: string, note?: string, sessionId?: string) =>
+      tryPost<{ id: string }>(`/api/projects/${enc(id)}/impact-verdicts`, { title, note, session_id: sessionId }),
+
+    /** Record a logged impact's outcome — or why the daemon refused. */
+    tryDecideImpactVerdict: (id: string, verdictId: string, verdict: 'success' | 'mixed' | 'failure', note?: string) =>
+      tryPut(`/api/projects/${enc(id)}/impact-verdicts/${enc(verdictId)}`, { verdict, note }),
 
     // Measured impact reports — the analyzer's before/after FTR + MOE-style
     // consensus for recommendations that carry a reasoning trace or a
     // non-pending verdict. Distinct from the manual `listImpactVerdicts`
     // retrospectives above.
-    getProjectImpact: (id: string) =>
-      get<Array<{
-        id: string; title: string; actionType: string; status: string;
-        verdict: string; baselineFtr: number | null; currentFtr: number | null;
-        ftrDelta: number | null;
-        props: Record<string, unknown>;
-        // Honest reasoning JSON — `null` when the rec has no trace, otherwise
-        // `{headline, body, modelsUsed: string[], suggestedRevision}`. One
-        // FTR-delta verdict, so no fabricated consensus tally or per-model
-        // roles/notes; `modelsUsed` lists the models that actually ran. Legacy
-        // `{conclusion}`-shape traces are shimmed on the daemon side.
-        reasoning: {
-          headline: string | null;
-          body: string | null;
-          modelsUsed: string[];
-          suggestedRevision: string | null;
-        } | null;
-      }>>(`/api/projects/${enc(id)}/impact`, []),
-
-    getProjectDrift: (id: string) =>
-      get<{ items: DriftItem[]; total: number; drifted: number; broken: number }>(
-        `/api/projects/${enc(id)}/drift`, { items: [], total: 0, drifted: 0, broken: 0 }
-      ),
-
     /** #205 — the Structure diagram payload.
      *
      *  Result-based deliberately. This screen must tell "no edges here" apart
@@ -585,75 +550,52 @@ export function senseiApi(port: number) {
     tryGetProjectSchema: (id: string) =>
       tryGet<SchemaPayload>(`/api/projects/${enc(id)}/diagrams/schema`),
 
-    getProjectPatterns: (id: string) =>
-      get<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(
-        `/api/projects/${enc(id)}/patterns`, { followed: [], antiPatterns: [] }
-      ),
-
-    getProjectRecommendations: (id: string, status?: string) =>
-      get<Recommendation[]>(
-        `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`, []
-      ),
+    /** A failed read is an error, never "no patterns" (#85). */
+    tryGetProjectPatterns: (id: string) =>
+      tryGet<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(`/api/projects/${enc(id)}/patterns`),
 
     // Result-based variant: a recommendations-only fetch failure (the /metrics
     // leg can succeed independently) must SURFACE, not collapse to [] — otherwise
     // a 500/timeout is indistinguishable from a genuinely-empty list on a
-    // governance-facing screen. Callers that tolerate the legacy swallow keep
-    // getProjectRecommendations above.
+    // governance-facing screen.
     tryGetProjectRecommendations: (id: string, status?: string) =>
       tryGet<Recommendation[]>(
         `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`,
       ),
 
-    // Gap 1 fix — expose the accept/reject flow so MeasureVerdicts has
-    // work to measure. Each returns { ok } on success or 409 CONFLICT if
-    // the rec was already decided.
-    acceptProjectRecommendation: (id: string, recId: string) =>
-      post<{ ok: boolean }>(
-        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/accept`, {}, { ok: false },
-      ),
-    rejectProjectRecommendation: (id: string, recId: string) =>
-      post<{ ok: boolean }>(
-        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/reject`, {}, { ok: false },
-      ),
-
     // P-A: rule-class accept that MATERIALIZES a governance rule (spec 2026-08-20).
     // `preview` renders what would be written (no write); `materialize` accepts +
     // writes the rule at the chosen scope/enforcement (defaults: project / recommended).
-    previewRecommendation: (id: string, recId: string) =>
-      get<{
-        materializable: boolean; kind?: string; action_type?: string; reason?: string;
-        title?: string; body?: string; impact?: string | null; gov_scope?: string; enforcement?: string;
-        // file-class (write_skill/create_agent) preview fields:
-        name?: string; path?: string; content?: string; consent_required?: boolean;
-      }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/preview`, { materializable: false }),
-    materializeRecommendation: (
+    tryPreviewRecommendation: (id: string, recId: string) =>
+      tryGet<RecommendationPreview>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/preview`),
+    tryMaterializeRecommendation: (
       id: string, recId: string,
-      opts?: { gov_scope?: string; namespace_id?: string; enforcement?: string; title?: string; body?: string },
+      opts: { gov_scope?: string; namespace_id?: string; enforcement?: string; title?: string; body?: string },
     ) =>
-      post<{ ok: boolean; materialized?: unknown }>(
-        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts ?? {}, { ok: false },
+      tryPost<{ ok: boolean; materialized?: unknown }>(
+        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts,
       ),
-
+    // The accept/reject flow that gives MeasureVerdicts work to measure. Each
+    // resolves { ok } on success, or an error — 409 CONFLICT when the rec was
+    // already decided.
+    tryAcceptProjectRecommendation: (id: string, recId: string) =>
+      tryPost<{ ok: boolean }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/accept`, {}),
+    tryRejectProjectRecommendation: (id: string, recId: string) =>
+      tryPost<{ ok: boolean }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/reject`, {}),
     // ── Observatory · Insights (Slot 5) ─────────────────────────────────
     // Server-side triage aggregator: bundles recs, memories, patterns and
     // corrections pre-bucketed into Now / Soon / Settled. `project` scopes
     // all three columns to one project (name-or-uuid). Fallback is the empty
     // board so a daemon hiccup renders the quiet-state, never a broken screen.
-    getInsights: (project?: string) =>
-      get<InsightsBoard>(
-        `/api/insights${project ? `?project=${enc(project)}` : ''}`,
-        {
-          counts: { now: 0, soon: 0, settled: 0 },
-          projects: [], recommendations: [], memories: [], patterns: [], corrections: [],
-        },
-      ),
+    /** The cross-project triage board, or one project's (#288: a failure is
+     *  an error, never the all-quiet empty board). */
+    tryGetInsights: (project?: string) =>
+      tryGet<InsightsBoard>(`/api/insights${project ? `?project=${enc(project)}` : ''}`),
 
     // ── Front door · Intake ─────────────────────────────────────────────
-    // The guide (frame + axis prompts + catalog) for the intake screen.
-    // Fallback is the empty guide so a daemon hiccup renders the quiet state.
-    getIntakeGuide: () =>
-      get<IntakeGuide>('/api/playbook/guide', { frame: '', axes: [], playbooks: [] }),
+    // The guide (frame + axis prompts + catalog) for the intake screen. A
+    // failure is an error the screen shows, not an empty guide (#288).
+    tryGetIntakeGuide: () => tryGet<IntakeGuide>('/api/playbook/guide'),
 
     // Classify + recommend a playbook. `{ chunk, preview: true }` previews
     // (no row written); `{ lifecycle, intent, risk, confirm: true }` records
@@ -661,104 +603,57 @@ export function senseiApi(port: number) {
     recommendPlaybook: (body: Record<string, unknown>) =>
       tryPost<PlaybookRecommendation>('/api/playbook/recommend', body),
 
-    getProjectSessions: (id: string, limit = 50) =>
-      get<{ sessions: ProjectSession[] }>(
-        `/api/projects/${enc(id)}/sessions?limit=${limit}`, { sessions: [] }
-      ),
-
     // ── Project window · Overview (Slot 4) ──────────────────────────────
     // Server-assembled landing pane: header + top rec + stats + recent
-    // sessions in one call. Fallback is the all-quiet shape so a daemon
-    // hiccup renders the calm empty pane, never a broken screen.
-    getProjectOverview: (id: string) =>
-      get<ProjectOverview>(`/api/projects/${enc(id)}/overview`, {
-        project: {
-          id, name: '', kanji: '場', client: null, goal: null,
-          ftr: 0, warn: false, sessions7d: 0, folders: [],
-        },
-        top_recommendation: null,
-        stats: {
-          sessions7d: 0, sessions7dCorrected: 0,
-          memories: { total: 0, readyToShare: 0, toMerge: 0 },
-          docDrift: { open: 0, referencedDocs: 0 },
-        },
-        recentSessions: [],
-      }),
+    // sessions in one call. A failed read is an error the page shows, never an
+    // all-quiet default that reads as a calm project (#85).
+    tryGetProjectOverview: (id: string) =>
+      tryGet<ProjectOverview>(`/api/projects/${enc(id)}/overview`),
 
     // ── Observatory · Today (home screen) ───────────────────────────────
     // The daemon assembles the whole screen — greeting, maturity gate, hero
     // koan, insights, adopted lane, recent sessions. The screen renders it;
-    // it does not decide early-vs-mature. Fallback is the early state so a
-    // daemon hiccup degrades to "still listening", never a broken screen.
-    getObservatoryToday: () =>
-      get<ObservatoryToday>('/api/observatory/today', {
-        greeting: '',
-        today: '',
-        dataMaturity: 'early',
-        hero: { kanji: '観', koan: '', body: '', impact: null, action: null, source: '', noticed: '' },
-        insights: [],
-        adopted: [],
-        recentSessions: [],
-      }),
+    // it does not decide early-vs-mature. A failed read is an error the screen
+    // shows, never the early "still listening" state (#288).
+    tryGetObservatoryToday: () => tryGet<ObservatoryToday>('/api/observatory/today'),
 
-    // Holistic FTR headline (14d / prior / trend / 7d) → Today header chip.
-    getObservatoryFtr: () =>
-      get<ObservatoryFtr>('/api/observatory/ftr', { ftr14d: null, ftr14dPrev: null, ftrTrend: [], sessions7d: 0 }),
+    /** Holistic FTR headline (14d / prior / trend / 7d) → Today header chip. */
+    tryGetObservatoryFtr: () => tryGet<ObservatoryFtr>('/api/observatory/ftr'),
 
     // ── Observatory chart data ──────────────────────────────────────────
 
-    getHolisticFtrDaily: (days = 14) =>
-      get<{ ftr_daily: Array<{ day: string; ftr_rate: number; session_count: number }> }>(
-        `/api/observatory/ftr-daily?days=${days}`, { ftr_daily: [] }
+    /** Where edits concentrated over the last `days` (#85). */
+    tryGetProjectHotspots: (id: string, days = 7) =>
+      tryGet<{ hotspots: Array<{ folder: string; file_path: string; edit_count: number; correction_count: number }> }>(
+        `/api/projects/${enc(id)}/hotspots?days=${days}`,
       ),
 
-    getProjectFtrDaily: (id: string, days = 14) =>
-      get<{ ftr_daily: Array<{ day: string; ftr_rate: number; session_count: number }> }>(
-        `/api/projects/${enc(id)}/ftr-daily?days=${days}`, { ftr_daily: [] }
-      ),
-
-    getProjectHotspots: (id: string, days = 7) =>
-      get<{ hotspots: Array<{ folder: string; file_path: string; edit_count: number; correction_count: number }> }>(
-        `/api/projects/${enc(id)}/hotspots?days=${days}`, { hotspots: [] }
-      ),
-
-    getProjectQualitySignals: (id: string) =>
-      get<{ ftr_7d: number; pattern_compliance: number | null; open_drift_count: number; test_pass_rate: number | null }>(
+    tryGetProjectQualitySignals: (id: string) =>
+      tryGet<{ ftr_7d: number; pattern_compliance: number | null; open_drift_count: number; test_pass_rate: number | null }>(
         `/api/projects/${enc(id)}/quality-signals`,
-        { ftr_7d: 0, pattern_compliance: null, open_drift_count: 0, test_pass_rate: null }
       ),
 
-    getProjectTeachings: (id: string, limit = 10) =>
-      get<{ teachings: Array<{ id: string; name: string; family: string | null; instance_count: number; modified_at: string }> }>(
-        `/api/projects/${enc(id)}/teachings?limit=${limit}`, { teachings: [] }
+    tryGetToolUsage: () =>
+      tryGet<{ tools: Array<{ tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string }> }>(
+        '/api/observatory/tool-usage',
       ),
 
-    getToolUsage: () =>
-      get<{ tools: Array<{ tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string }> }>(
-        '/api/observatory/tool-usage', { tools: [] }
-      ),
-
-    getToolSignals: () =>
-      get<{ signals: ToolSignal[]; source?: 'cache' | 'derived' }>(
-        '/api/observatory/tool-signals', { signals: [] }
-      ),
+    tryGetToolSignals: () =>
+      tryGet<{ signals: ToolSignal[]; source?: 'cache' | 'derived' }>('/api/observatory/tool-signals'),
 
     // Cached per-tool snapshots (T2 Slice D) — full metrics + optional
     // signal card per tool. Populated by the AggregateToolInsights task.
-    getToolInsights: () =>
-      get<{ insights: ToolInsight[] }>(
-        '/api/observatory/tool-insights', { insights: [] }
-      ),
+    tryGetToolInsights: () => tryGet<{ insights: ToolInsight[] }>('/api/observatory/tool-insights'),
 
     // L1 source grid for Instruments · Health — one card per registered
     // source (builtin tool set or probed MCP server) with the share of
     // registered tools actually invoked in the last 14 days.
-    getToolsHealth: () =>
-      get<ToolsHealth>('/api/instruments/tools-health', { sources: [] }),
+    tryGetToolsHealth: () => tryGet<ToolsHealth>('/api/instruments/tools-health'),
 
-    getLibraryUsage: (id: string) =>
-      get<{ usage: Array<{ library_name: string; folder: string; version_used: string | null; import_count: number }> }>(
-        `/api/libs/${enc(id)}/usage`, { usage: [] }
+    /** Where a library is used (#288: a failure is an error, not "unused"). */
+    tryGetLibraryUsage: (id: string) =>
+      tryGet<{ usage: Array<{ library_name: string; folder: string; version_used: string | null; import_count: number }> }>(
+        `/api/libs/${enc(id)}/usage`,
       ),
 
     // ── Indexing ─────────────────────────────────────────────────────────
@@ -767,39 +662,18 @@ export function senseiApi(port: number) {
         '/api/index', { repoId, repoPath, force }, { ok: false, queued: false, taskId: -1 },
       ),
 
-    getIndexStatus: () =>
-      get<{ queue: { pending: number; blocked: number; running: number; completed: number }; repos: Record<string, { total: number; pending: number; running: number }> }>(
-        '/api/index/status', { queue: { pending: 0, blocked: 0, running: 0, completed: 0 }, repos: {} },
+    /** The index task queue (#288: a failure is an error — it used to read as an
+     *  idle queue, which the scan's done poller took for "finished"). */
+    tryGetIndexStatus: () =>
+      tryGet<{ queue: { pending: number; blocked: number; running: number; completed: number }; repos: Record<string, { total: number; pending: number; running: number }> }>(
+        '/api/index/status',
       ),
-
-    getIndexDirty: () => get<DirtyStatus[]>('/api/index/dirty', []),
-
-    getIndexErrors: (repoId?: string) =>
-      get<IndexError[]>(repoId ? `/api/index/errors/${enc(repoId)}` : '/api/index/errors', []),
 
     /** Subscribe to index progress via SSE. Returns an EventSource. */
     subscribeIndexProgress: (): EventSource =>
       new EventSource(`${base}/api/index/progress`),
 
     // ── Graph ────────────────────────────────────────────────────────────
-    /** Legacy — returns graph data in old format for existing UI. */
-    getGraph: async (repoId: string, _repoPath?: string) => {
-      const { nodes, edges } = await get<{ nodes: GraphNode[]; edges: GraphEdge[] }>(
-        `/api/graph/nodes?repoId=${enc(repoId)}`, { nodes: [], edges: [] },
-      );
-      return {
-        summary: { totalSymbols: nodes.length, totalEdges: edges.length, communities: 0 },
-        communities: [] as GraphData['communities'],
-        godNodes: [] as GraphData['godNodes'],
-        rationale: [] as GraphData['rationale'],
-      } satisfies GraphData;
-    },
-
-    getGraphNodes: (repoId: string) =>
-      get<{ nodes: GraphSymbolNode[]; edges: GraphCallEdge[] }>(
-        `/api/graph/nodes?repoId=${enc(repoId)}`, { nodes: [], edges: [] },
-      ),
-
     /** Functions and methods whose name or signature contains `q`.
      *
      *  Result-based, unlike the `get(…, [])` it replaces: a picker that shows
@@ -808,89 +682,66 @@ export function senseiApi(port: number) {
     trySearchFunctions: (repoId: string, q: string) =>
       tryGet<FunctionMatch[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`),
 
-    searchTypes: (repoId: string, q: string) =>
-      get<TypeDetail[]>(`/api/graph/types?repoId=${enc(repoId)}&q=${enc(q)}`, []),
+    // Atlas (#288): each read is the daemon's answer or why it failed — never
+    // an empty graph, zero calls or a 0-repo roll-up standing in for a failure.
+    tryGetGraphNodes: (repoId: string) =>
+      tryGet<{ nodes: GraphSymbolNode[]; edges: GraphCallEdge[] }>(`/api/graph/nodes?repoId=${enc(repoId)}`),
 
-    // `CallNeighbour`, not `FunctionDetail` — see the type. These return
-    // `file_path`/`line_start` and carry the placement verdict; the old
-    // annotation described a different endpoint's shape entirely.
-    getCallers: (repoId: string, name: string) =>
-      get<CallNeighbour[]>(`/api/graph/callers?repoId=${enc(repoId)}&name=${enc(name)}`, []),
+    tryGetCommunities: (repoId: string) =>
+      tryGet<CommunityInfo[]>(`/api/graph/communities/info?repoId=${enc(repoId)}`),
 
-    getCallees: (repoId: string, name: string) =>
-      get<CallNeighbour[]>(`/api/graph/callees?repoId=${enc(repoId)}&name=${enc(name)}`, []),
+    /** Refresh the repo's clustering, so the communities read after it is current. */
+    tryDetectCommunities: (repoId: string) =>
+      tryPost<{ ok: boolean; communities: number }>('/api/graph/communities', { repoId }),
 
-    getFilesByTag: (repoId: string, tag: string) =>
-      get<Array<{ id: string; path: string; tags: string }>>(
-        `/api/graph/files?repoId=${enc(repoId)}&tag=${enc(tag)}`, [],
+    tryGetCallFlow: (repoId: string) =>
+      tryGet<{ modules: CallFlowModule[]; calls: CallFlowCall[]; moduleCount: number; exportCount: number; callCount: number }>(
+        `/api/graph/call-flow?repoId=${enc(repoId)}`,
       ),
 
-    getCommunities: (repoId: string) =>
-      get<CommunityInfo[]>(`/api/graph/communities/info?repoId=${enc(repoId)}`, []),
-
-    detectCommunities: (repoId: string) =>
-      post<{ ok: boolean; communities: number }>('/api/graph/communities', { repoId }, { ok: false, communities: 0 }),
-
-    getCallFlow: (repoId: string) =>
-      get<{ modules: CallFlowModule[]; calls: CallFlowCall[]; moduleCount: number; exportCount: number; callCount: number }>(
-        `/api/graph/call-flow?repoId=${enc(repoId)}`, { modules: [], calls: [], moduleCount: 0, exportCount: 0, callCount: 0 },
-      ),
-
-    getDocDrift: (repoId: string) =>
-      get<DocDrift[]>(`/api/graph/doc-drift?repoId=${enc(repoId)}`, []),
+    /** The project's solution roll-up across its repos. */
+    tryGetProjectGraph: (id: string) => tryGet<ProjectGraphResponse>(`/api/projects/${enc(id)}/graph`),
 
     // ── Libraries ────────────────────────────────────────────────────────
-    getLibs: (params?: { repoId?: string; projectId?: string; shared?: boolean }) => {
+    /** Every detected library (#288: a failure is an error, not an empty index). */
+    tryGetLibs: (params?: { repoId?: string; projectId?: string; shared?: boolean }) => {
       const qs = new URLSearchParams();
       if (params?.repoId) qs.set('repoId', params.repoId);
       if (params?.projectId) qs.set('projectId', params.projectId);
       if (params?.shared) qs.set('shared', 'true');
-      return get<{ total: number; libs: LibEntry[] }>(`/api/libs?${qs}`, { total: 0, libs: [] });
+      return tryGet<{ total: number; libs: LibEntry[] }>(`/api/libs?${qs}`);
     },
 
     indexLib: (libName: string, url: string, version?: string) =>
       post('/api/libs/index', { libName, url, version }, { ok: false }),
-
-    getLibDocs: (name: string) =>
-      get<LibDoc[]>(`/api/libs/${enc(name)}/docs`, []),
-
-    searchLibDocs: (q: string) =>
-      get<LibDoc[]>(`/api/libs/docs?q=${enc(q)}`, []),
-
-    getDepVersions: (repoId: string) =>
-      get<DepVersion[]>(`/api/libs/versions?repoId=${enc(repoId)}`, []),
 
     // ── Unified Query ────────────────────────────────────────────────────
     query: (q: string, repoId?: string, projectId?: string) =>
       post<Record<string, unknown>>('/api/query', { q, repoId, projectId }, {}),
 
     // ── Sessions ─────────────────────────────────────────────────────────
-    getSessions: () =>
-      get<SessionData>('/api/sessions', { stats: null, sessions: [], toolUsage: [], benchmarkPairs: [] }),
+    /** Every captured session (#288: a failure is an error, not an empty list). */
+    tryGetSessions: () => tryGet<SessionData>('/api/sessions'),
 
     // Observatory · Sessions digest (Slot 6). Same `/api/sessions` handler,
     // now scoped by an optional `range` (7d|30d|90d) and/or `project`
-    // (name-or-uuid). Both are additive server-side. Fallback is the empty
-    // digest so a daemon hiccup renders the quiet state, never a broken screen.
-    getSessionsDigest: (range?: string, project?: string) => {
+    // (name-or-uuid). Both are additive server-side. A failure is an error,
+    // not the empty digest that read as a quiet week (#288).
+    tryGetSessionsDigest: (range?: string, project?: string) => {
       const p = new URLSearchParams();
       if (range) p.set('range', range);
       if (project) p.set('project', project);
       const qs = p.toString() ? `?${p.toString()}` : '';
-      return get<SessionsDigest>(`/api/sessions${qs}`, { sessions: [] });
+      return tryGet<SessionsDigest>(`/api/sessions${qs}`);
     },
-
-    getMetrics: (project: string) =>
-      get<Record<string, unknown>>(`/api/metrics/${encodeURIComponent(project)}`, {}),
 
     // ── Observatory · Logs (activity logs) ──────────────────────────────
     // Structured daemon/cli/mcp/app log rows for the Logs screen. All filters
     // are optional server query params: exact `level` / `source` / `module`
     // match, `since` (relative `15m|1h|24h|7d`, RFC-3339, or `all`), and a row
-    // `limit` (clamped daemon-side to 1000). Newest-first. Fallback is the
-    // empty array so a daemon hiccup renders the quiet state, never a broken
-    // screen. An unparseable `since` is a 400 daemon-side → empty via fallback.
-    getLogs: (q: { level?: string; source?: string; module?: string; since?: string; limit?: number } = {}) => {
+    // `limit` (clamped daemon-side to 1000). Newest-first. A failed read is an
+    // ApiResult error — it once fell back to [], which read as "no entries".
+    tryGetLogs: (q: { level?: string; source?: string; module?: string; since?: string; limit?: number } = {}) => {
       const p = new URLSearchParams();
       if (q.level) p.set('level', q.level);
       if (q.source) p.set('source', q.source);
@@ -898,13 +749,18 @@ export function senseiApi(port: number) {
       if (q.since) p.set('since', q.since);
       if (q.limit !== undefined) p.set('limit', String(q.limit));
       const qs = p.toString() ? `?${p.toString()}` : '';
-      return get<LogRow[]>(`/api/logs${qs}`, []);
+      return tryGet<LogRow[]>(`/api/logs${qs}`);
     },
 
-    // Background-worker registry + last-run times (#96). Fallback empty so a
-    // daemon hiccup renders the empty state, never a broken panel.
-    getScheduledTasks: () =>
-      get<{ tasks: ScheduledTask[] }>('/api/tasks/scheduled', { tasks: [] }),
+    // Background-worker registry (#96). A failed read is an error state — it
+    // once fell back to an empty list, which read as "no background tasks".
+    tryGetScheduledTasks: () => tryGet<{ tasks: ScheduledTask[] }>('/api/tasks/scheduled'),
+
+    /** The last `lines` log lines a worker's passes wrote today (#96). */
+    tryGetScheduledLog: (name: string, lines = 50) =>
+      tryGet<{ worker: string; file: string; lines: string[] }>(
+        `/api/tasks/scheduled/${enc(name)}/log?lines=${lines}`,
+      ),
 
     // ── Scan ─────────────────────────────────────────────────────────────
     /** Add a root to the DB immediately (synchronous). Does not start scanning. */
@@ -990,29 +846,20 @@ export function senseiApi(port: number) {
       ),
 
     // ── MCP Tool Proxy ────────────────────────────────────────────────
-    mcpListTools: () => get<{ tools: McpToolManifest[] }>('/api/mcp/tools', { tools: [] }),
+    tryMcpListTools: () => tryGet<{ tools: McpToolManifest[] }>('/api/mcp/tools'),
 
-    mcpCallTool: (tool: string, params: Record<string, string>) =>
-      post<Record<string, unknown>>('/api/mcp/call', { tool, params }, {}),
-
-    // Session tool-call timeline for the Instruments Replay tab.
-    getSessionToolTimeline: (sessionId: string, limit = 200) =>
-      get<SessionToolTimeline>(
-        `/api/sessions/${enc(sessionId)}/tool-timeline?limit=${limit}`,
-        { sessionId, calls: [], count: 0 },
-      ),
+    /** Call a tool from the Playground — its answer, or why there is none. */
+    tryMcpCallTool: (tool: string, params: Record<string, string>) =>
+      tryPost<Record<string, unknown>>('/api/mcp/call', { tool, params }),
 
     // #84 T2 Slice C — Replay timeline with #90 verdicts joined + session
     // summary. Set `classify: true` to run the classifier before the read
     // (idempotent — safe on every open) so verdicts populate on first view.
-    getSessionReplay: (sessionId: string, opts: { limit?: number; classify?: boolean } = {}) => {
+    tryGetSessionReplay: (sessionId: string, opts: { limit?: number; classify?: boolean } = {}) => {
       const p = new URLSearchParams();
       p.set('limit', String(opts.limit ?? 200));
       if (opts.classify) p.set('classify', 'true');
-      return get<SessionReplayResponse>(
-        `/api/sessions/${enc(sessionId)}/replay?${p.toString()}`,
-        { sessionId, calls: [], count: 0, summary: { used: 0, partial: 0, ignored: 0, total: 0 }, classified: 0 },
-      );
+      return tryGet<SessionReplayResponse>(`/api/sessions/${enc(sessionId)}/replay?${p.toString()}`);
     },
 
     // #84 T2 Slice A — discovered MCP servers (Claude / Cursor / Zed configs).
@@ -1030,7 +877,7 @@ export function senseiApi(port: number) {
     // #84 T2 Slice B — cached tool manifest per server. `?refresh=true`
     // forces a re-probe; `?probe=false` returns stale-badged cache without
     // spawning.
-    getMcpServerTools: (
+    tryGetMcpServerTools: (
       serverId: string,
       opts: { refresh?: boolean; probe?: boolean } = {},
     ) => {
@@ -1038,15 +885,7 @@ export function senseiApi(port: number) {
       if (opts.refresh) p.set('refresh', 'true');
       if (opts.probe === false) p.set('probe', 'false');
       const qs = p.toString() ? `?${p.toString()}` : '';
-      return get<McpServerToolsManifest>(
-        `/api/instruments/mcp-servers/${enc(serverId)}/tools${qs}`,
-        {
-          id: '', server_id: serverId, tools: [], tool_count: 0,
-          probed_at: '', ttl_seconds: 900, error: null,
-          protocol_version: null, server_name: null, server_version: null,
-          age_seconds: 0,
-        },
-      );
+      return tryGet<McpServerToolsManifest>(`/api/instruments/mcp-servers/${enc(serverId)}/tools${qs}`);
     },
 
     // ── Marketplace ──────────────────────────────────────────────────
@@ -1054,11 +893,6 @@ export function senseiApi(port: number) {
       post('/api/marketplace/install', { target, marketplacePath, item, scope }, { ok: false }),
 
     // ── Config (user preferences) ──────────────────────────────────────
-    getConfig: () => get<Record<string, string>>('/api/config', {}),
-
-    getConfigKey: (key: string) =>
-      get<{ key: string; value: string | null }>(`/api/config/${enc(key)}`, { key, value: null }),
-
     setConfig: (config: Record<string, string>) =>
       put('/api/config', config),
 
@@ -1075,9 +909,11 @@ export function senseiApi(port: number) {
     deleteConfig: (key: string) => del(`/api/config/${enc(key)}`),
 
     // ── Assistants ────────────────────────────────────────────────────────
-    detectAssistants: () => get<import('./types').AssistantStatus[]>('/api/assistants/detect', []),
+    /** Detected assistants (#288: a failure is an error, not "none detected"). */
+    tryDetectAssistants: () => tryGet<import('./types').AssistantStatus[]>('/api/assistants/detect'),
 
-    detectAssistantFamilies: () => get<import('./types').AssistantFamily[]>('/api/assistants/families', []),
+    /** Assistant families the daemon detects (#288: a failure is an error). */
+    tryDetectAssistantFamilies: () => tryGet<import('./types').AssistantFamily[]>('/api/assistants/families'),
 
     configureAssistants: (assistants: string[]) =>
       post<import('./types').AssistantConfigureResult>('/api/assistants/configure', { acps: assistants }, { configured: [], skipped: [], errors: [] }),
@@ -1086,11 +922,8 @@ export function senseiApi(port: number) {
       post<import('./types').AssistantRemoveResult>('/api/assistants/remove', { acps: assistants }, { assistants_removed: [], errors: [] }),
 
     // ── Instruments (MCP registry — setup wizard Instruments stage) ───────
-    listInstruments: () =>
-      get<{ total: number; mcps: import('./setup/contracts').DaemonMcpEntry[]; stack: string[] }>(
-        '/api/instruments',
-        { total: 0, mcps: [], stack: [] },
-      ),
+    tryListInstruments: () =>
+      tryGet<{ total: number; mcps: import('./setup/contracts').DaemonMcpEntry[]; stack: string[] }>('/api/instruments'),
 
     // ── Installer ───────────────────────────────────────────────────────
     installAll: (assistants: string[], scope = 'global') =>
@@ -1109,11 +942,8 @@ export function senseiApi(port: number) {
     removeItem: (name: string, kind: string) =>
       post<{ ok: boolean }>('/api/install/item/remove', { name, kind }, { ok: false }),
 
-    getCatalog: () =>
-      get<import('./types').MarketplaceCatalog>('/api/install/catalog', { version: null, items: [] }),
-
-    getInstalledItems: () =>
-      get<import('./types').InstalledItem[]>('/api/install/installed', []),
+    /** Installed skills and commands (#288: a failure is an error, not "none installed"). */
+    tryGetInstalledItems: () => tryGet<import('./types').InstalledItem[]>('/api/install/installed'),
 
     /** Toggle a skill or command. The daemon moves the .md file between
      *  `~/.claude/<kind>s/` and its `disabled/` sibling — Claude Code
@@ -1137,11 +967,9 @@ export function senseiApi(port: number) {
       }),
 
     // ── Gateway routers ──────────────────────────────────────────────────
-    listGatewayRouters: () =>
-      get<{ routers: import('./setup/contracts').DaemonRouter[] }>(
-        '/api/gateway/routers',
-        { routers: [] },
-      ),
+    /** A failed read is an error, never "no routers" (#286). */
+    tryListGatewayRouters: () =>
+      tryGet<{ routers: import('./setup/contracts').DaemonRouter[] }>('/api/gateway/routers'),
 
     setGatewayRouterKey: (id: string, key: string) =>
       tryPost<{ ok: boolean; configured: boolean }>(
@@ -1155,11 +983,8 @@ export function senseiApi(port: number) {
     // Model Assignments — chains carry an optional `role` column; a
     // chain-with-a-role IS the role assignment. Utility chains
     // (consensus-* / classify) stay null and never surface in the picker.
-    listGatewayChains: () =>
-      get<{ chains: import('./setup/contracts').DaemonChain[] }>(
-        '/api/gateway/chains',
-        { chains: [] },
-      ),
+    /** The gateway's fallback chains (#288: a failure is an error, not "no chains"). */
+    tryListGatewayChains: () => tryGet<{ chains: import('./setup/contracts').DaemonChain[] }>('/api/gateway/chains'),
 
     /** Assign or clear a chain's sensei inference role. Pass `null` to
      *  unassign. Returns error status codes: 400 unknown role, 404
@@ -1169,15 +994,6 @@ export function senseiApi(port: number) {
         `/api/gateway/chains/${enc(id)}/role`,
         { role },
       ),
-
-    /** Chain-model editing — available picker source. Returns models
-     *  with matching capability, reachable via `models_in_router`,
-     *  minus the ones already in this chain. */
-    listAvailableChainModels: (chainId: string) =>
-      get<{ models: Array<{
-        modelId: string; modelName: string; fullName: string;
-        routerId: string; routerName: string;
-      }>}>(`/api/gateway/chains/${enc(chainId)}/available-models`, { models: [] }),
 
     /** Append a (model, router) pair to the end of a chain's ordered
      *  list. Returns the new member id + assigned sequence order. */
@@ -1221,10 +1037,9 @@ export function senseiApi(port: number) {
     // The provisionable catalog with each model's current phase. Fallback is
     // the empty list so a daemon hiccup (or a non-embedded build) renders the
     // quiet state, never a broken panel; the UI can poll unconditionally.
-    provisionStatus: () =>
-      get<{ models: ProvisionModel[] }>(
-        '/api/gateway/models/provision/status', { models: [] },
-      ),
+    /** Local model catalog with each model's pull phase (#288: a failure is an
+     *  error, not an empty catalog). */
+    tryProvisionStatus: () => tryGet<{ models: ProvisionModel[] }>('/api/gateway/models/provision/status'),
 
     // Begin (or join) an on-demand pull of a local model, returning its initial
     // phase. `tryPost` so failures propagate: a 501 (embedded provisioning not
@@ -1236,22 +1051,15 @@ export function senseiApi(port: number) {
       ),
 
     // ── Knowledge plane ──────────────────────────────────────────────────
-    listMemories: (q: { status?: string; scope?: string; project_id?: string; limit?: number } = {}) => {
+    /** Memories by status/scope/project (#288: a failure is an error, not an empty tab). */
+    tryListMemories: (q: { status?: string; scope?: string; project_id?: string; limit?: number } = {}) => {
       const p = new URLSearchParams();
       for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
-      return get<MemoryListResponse>(`/api/knowledge/memories?${p.toString()}`, { memories: [] });
+      return tryGet<MemoryListResponse>(`/api/knowledge/memories?${p.toString()}`);
     },
 
     getMemoryDetail: (id: string) =>
       tryGet<MemoryDetail>(`/api/knowledge/memories/${encodeURIComponent(id)}`),
-
-    getLayeredContext: (project_id: string, opts: { limit?: number; tags?: string[] } = {}) => {
-      const p = new URLSearchParams({ project_id });
-      if (opts.limit !== undefined) p.set('limit', String(opts.limit));
-      if (opts.tags?.length) p.set('tags', opts.tags.join(','));
-      return get<ContextResponse>(`/api/knowledge/context?${p.toString()}`,
-                                   { version: '', memories: [], cache_until: '' });
-    },
 
     proposeMemory: (body: ProposalCreateBody) =>
       tryPost<{ id: string; status: 'proposed' }>('/api/knowledge/proposals', body),
@@ -1365,8 +1173,8 @@ export function senseiApi(port: number) {
       ),
 
     // ── Knowledge plane — federation sources ─────────────────────────────
-    listKnowledgeSources: () =>
-      get<{ sources: KnowledgeSource[] }>('/api/knowledge/sources', { sources: [] }),
+    /** Registered knowledge sources (#288: a failure is an error, not "none"). */
+    tryListKnowledgeSources: () => tryGet<{ sources: KnowledgeSource[] }>('/api/knowledge/sources'),
 
     createKnowledgeSource: (body: NewKnowledgeSourceBody) =>
       tryPost<KnowledgeSource>('/api/knowledge/sources', body),
@@ -1414,11 +1222,9 @@ export function senseiApi(port: number) {
     // float to the top; `unread_count` counts the still-pending items. Fallback
     // is the empty inbox so a daemon that predates the route (404) degrades to
     // the empty state, never a broken screen.
-    getUpgrades: (includeMuted = false) =>
-      get<DojoUpgradesResponse>(
-        `/api/upgrades${includeMuted ? '?include_muted=1' : ''}`,
-        { artifacts: [], unread_count: 0 },
-      ),
+    /** The Dōjō downstream inbox (#288: a failure is an error, not an empty inbox). */
+    tryGetUpgrades: (includeMuted = false) =>
+      tryGet<DojoUpgradesResponse>(`/api/upgrades${includeMuted ? '?include_muted=1' : ''}`),
 
     // Apply / Mute / Pin one artifact. `tryPost` so a failure surfaces as
     // `{ ok: false, error }` for the row to show and retry, rather than being
@@ -1517,18 +1323,12 @@ export function senseiApi(port: number) {
     stop: () => post('/stop', {}, {}),
 
     // ── Deprecated aliases (migration: solution→project, project→repo) ──
-    /** @deprecated Use getRepos */
-    get getProjects() { return this.getRepos; },
-    /** @deprecated Use getRepoSummary */
-    get getProjectSummary() { return this.getRepoSummary; },
     /** @deprecated Use registerRepo */
     get registerProject() { return this.registerRepo; },
     /** @deprecated Use addRepoTag */
     get addProjectTag() { return this.addRepoTag; },
     /** @deprecated Use removeRepoTag */
     get removeProjectTag() { return this.removeRepoTag; },
-    /** @deprecated Use listProjects */
-    get listSolutions() { return this.listProjects; },
     /** @deprecated Use createProject */
     get createSolution() { return this.createProject; },
     /** @deprecated Use updateProject */
@@ -1539,10 +1339,6 @@ export function senseiApi(port: number) {
     get addSolutionRepo() { return this.addProjectRepo; },
     /** @deprecated Use removeProjectRepo */
     get removeSolutionRepo() { return this.removeProjectRepo; },
-    /** @deprecated Use getProjectGraph */
-    get getSolutionGraph() { return this.getProjectGraph; },
-    /** @deprecated Use getProjectRoles */
-    get getSolutionRoles() { return this.getProjectRoles; },
     /** @deprecated Use analyzeProject */
     get analyzeSolution() { return this.analyzeProject; },
   };

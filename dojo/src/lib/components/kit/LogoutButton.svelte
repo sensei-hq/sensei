@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from './KanjiToken.svelte';
 	import { createLogout } from './logout.svelte';
 
 	// Shared logout control (kit) — the symmetric partner to DojoSignIn's signIn.
@@ -27,6 +28,6 @@
 	class="text-ink-soft hover:text-ink border-paper-edge flex flex-shrink-0 items-center border bg-transparent {shape}"
 	style={compact ? undefined : 'padding: 4px 10px'}
 >
-	<span class="kanji text-ink-mute text-xs" aria-hidden="true">出</span>
+	<KanjiToken char="出" size="inherit" toneClass="" class="text-ink-mute text-xs" />
 	{#if !compact}<span class="hidden text-xs md:inline">Log out</span>{/if}
 </button>

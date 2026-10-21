@@ -6,8 +6,9 @@
 // rows to whichever project mounted first — so navigating A → B rendered A's
 // sessions under B's heading.
 //
-// The existing `project-sessions.spec.ts` covers the FETCHER, which was always
-// correct; nothing covered the component's use of it, which is why this shipped.
+// `sessions-digest.spec.svelte.ts` covers the FETCHER (`sessionsFetcher`), which
+// was always correct; nothing covered the component's use of it, which is why
+// this shipped.
 // Per test-mount's contract, navigation is simulated by mutating a reactive
 // `data` prop rather than remounting — a remount would pass even with the bug.
 import { describe, it, expect, afterEach } from 'vitest';
@@ -44,6 +45,7 @@ describe('project sessions screen', () => {
       projectId: 'proj-alpha',
       sessions: [row({ id: 'a1', project: 'alpha', task: 'ALPHA_TASK' })],
       range: '7d' as const,
+      error: null as string | null,
     });
 
     const { container, destroy } = mountComponent(Page, { data } as never);
@@ -68,6 +70,7 @@ describe('project sessions screen', () => {
       projectId: 'proj-alpha',
       sessions: [] as SessionRow[],
       range: '7d' as const,
+      error: null as string | null,
     });
     const { container, destroy } = mountComponent(Page, { data } as never);
     cleanup.push(destroy);
@@ -79,5 +82,41 @@ describe('project sessions screen', () => {
     flushSync();
 
     expect(container.textContent).toContain('beta');
+  });
+
+  // #288: sessions that could not be read are an error with retry — not an
+  // empty digest that reads as a quiet week. The range chips stay usable.
+  it('shows the error in place of the digest when the read failed', () => {
+    const data = $state({
+      project: { name: 'alpha' },
+      projectId: 'proj-alpha',
+      sessions: null as SessionRow[] | null,
+      range: '7d' as const,
+      error: 'Service Unavailable' as string | null,
+    });
+    const { container, destroy } = mountComponent(Page, { data } as never);
+    cleanup.push(destroy);
+
+    expect(container.querySelector('[data-screen-state="error"]')?.textContent).toContain('Service Unavailable');
+    expect(container.querySelector('[data-testid="session-list"], [data-testid="chart-body"], [data-testid="mini-numbers"]')).toBeNull();
+    expect(container.querySelector('[data-testid="range-chips"]')).not.toBeNull();
+  });
+
+  // #293: one Sessions screen with the Observatory; a project's totals line
+  // names no project count.
+  it('totals this project without an "across N projects" split', () => {
+    const data = $state({
+      project: { name: 'alpha' },
+      projectId: 'proj-alpha',
+      sessions: [row({ id: 'a1' }), row({ id: 'a2' })],
+      range: '7d' as const,
+      error: null as string | null,
+    });
+    const { container, destroy } = mountComponent(Page, { data } as never);
+    cleanup.push(destroy);
+    const totals = container.querySelector('[data-testid="quality-tally"]')?.parentElement?.textContent ?? '';
+    expect(totals).toMatch(/2\s+sessions\s+·\s+median/);
+    expect(totals).not.toContain('across');
+    expect(container.querySelector('[data-testid="project-sessions"]')).not.toBeNull();
   });
 });

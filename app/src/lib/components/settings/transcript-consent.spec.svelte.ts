@@ -80,10 +80,12 @@ describe('TranscriptConsent', () => {
     expect(c.failure).toMatch(/could not reach the daemon/i);
   });
 
-  it('says in plain words what a yes means', () => {
+  // On by default since 2026-10-19 (#280): the token, cost and session metrics
+  // read this history, so turning it off has to say what stops working.
+  it('says in plain words what reading does, and what turning it off costs', () => {
     const { a } = api();
     expect(new TranscriptConsent(a).explanation).toBe(
-      'Reads past conversations from disk and stores them in sensei’s local database. Off until you turn it on. Configuring an assistant does not turn this on.',
+      'Reads past conversations from disk and stores them in sensei’s local database. On unless you turn it off. Turned off, that assistant’s token, cost and session metrics stop updating.',
     );
   });
 });

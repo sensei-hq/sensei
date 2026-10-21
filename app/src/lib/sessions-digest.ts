@@ -72,6 +72,13 @@ export function durationMinutes(startedAt: string, completedAt: string | null): 
 }
 
 /** Compact duration label: "12m" / "1h 04m" / "2h" / "—". */
+/** The median duration as the totals show it: "—" only when no session has a
+ *  duration, "<1m" for short ones (which round to 0). */
+export function medianLabel(mins: number | null): string {
+  if (mins == null) return '—';
+  return mins < 1 ? '<1m' : compactDuration(mins);
+}
+
 export function compactDuration(mins: number | null): string {
   if (mins == null) return '—';
   if (mins < 60) return `${mins}m`;
@@ -329,7 +336,9 @@ export interface DigestTotals {
   bad: number;
   ugly: number;
   neutral: number;
-  medianMins: number;
+  /** Median duration in whole minutes; 0 is under a minute, null is no
+   *  session with a duration. */
+  medianMins: number | null;
   /** Total tokens over sessions carrying usage, and the per-session median.
    *  Null when NO visible session carried tokens (honest — not a 0 stat). */
   totalTokens: number | null;
@@ -348,7 +357,7 @@ export function computeTotals(sessions: EnrichedSession[]): DigestTotals {
     bad: tone('bad'),
     ugly: tone('ugly'),
     neutral: tone('neutral'),
-    medianMins: Math.round(median(durations)),
+    medianMins: durations.length ? Math.round(median(durations)) : null,
     totalTokens: tokenVals.length ? tokenVals.reduce((a, t) => a + t, 0) : null,
     medianTokens: tokenVals.length ? Math.round(median(tokenVals)) : null,
   };
@@ -358,4 +367,39 @@ export function computeTotals(sessions: EnrichedSession[]): DigestTotals {
  *  Session-id resolves via GET /api/sessions/{id} (shipped Slot 1). */
 export function replayHref(sessionId: string): string {
   return `/instruments?tab=replay&session=${encodeURIComponent(sessionId)}`;
+}
+
+/** The words of the Sessions screen — Observatory-wide (`project` null) or one
+ *  project's window. Everything else about the two is the same screen. */
+export interface SessionsCopy {
+  kanji: string;
+  eyebrow: string;
+  title: string;
+  sub: string;
+  emptyDescription: string;
+  /** The totals line names how many projects the sessions span. */
+  acrossProjects: boolean;
+}
+
+export function sessionsCopy(project: string | null): SessionsCopy {
+  if (project == null) {
+    return {
+      kanji: '録',
+      eyebrow: 'Observatory · Sessions',
+      title: 'The shape of your week.',
+      sub: 'A retrospective. Then one quiet chart — drawn the way you want to read it.',
+      emptyDescription:
+        'Start a session with your assistant, or widen the range. Each session becomes a moment of learning.',
+      acrossProjects: true,
+    };
+  }
+  return {
+    kanji: '刻',
+    eyebrow: `${project} · sessions`,
+    title: 'The shape of this project.',
+    sub: 'A retrospective — this project only. Then one quiet chart, drawn the way you read it.',
+    emptyDescription:
+      'Start a session with your assistant on this project, or widen the range. Each session becomes a moment of learning.',
+    acrossProjects: false,
+  };
 }

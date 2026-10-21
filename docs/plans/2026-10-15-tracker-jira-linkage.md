@@ -97,7 +97,7 @@ CLI are the v1 contract.
 ### Feature 7: Desktop app — project Sprints screen
 
 - **Issue:** TBD
-- **Layers:** app (`project-sidebar-view.ts` section 期 Sprints; `sprints/+page.svelte`, `sprints-state.svelte.ts`, `SprintsPanel.svelte`; `api.ts` wrappers for the four F4 read routes; the tracker error words moved to `$lib` as their second consumer appears)
+- **Layers:** app (`project-sidebar-view.ts` section 期 Sprints; `sprints/+page.svelte`, `sprints-state.svelte.ts`, `SprintsScreen.svelte`; `api.ts` wrappers for the four F4 read routes; the tracker error words moved to `$lib` as their second consumer appears)
 - **Depends on:** F4 (routes), F6 (error words, sidebar placement)
 - **Acceptance criteria:** [`spec/screen/project-sprints.md`](../spec/screen/project-sprints.md) done gate 1–7.
 - **Test scenarios:**

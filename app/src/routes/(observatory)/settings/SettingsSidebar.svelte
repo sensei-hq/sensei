@@ -2,20 +2,21 @@
     import { List } from '@rokkit/ui';
     import { Eyebrow } from '$lib/components';
     import { buildNavItems, resolveActiveHref } from './settings-nav';
+    import { glyphFields, type GlyphMode } from '$lib/glyphs';
 
     interface Props {
         /** Current route, passed from the layout (keeps this component pure). */
         pathname: string;
+        /** Kanji or icons (#133); the layout reads it from the preference. */
+        glyphs?: GlyphMode;
     }
-    let { pathname }: Props = $props();
+    let { pathname, glyphs = 'kanji' }: Props = $props();
 
     const items = buildNavItems();
     const activeHref = $derived(resolveActiveHref(pathname));
 
-    // List's default rendering handles icon + label + badge. Only remap the two
-    // keys that differ from defaults: kanji → icon, text → label. href / value /
-    // children / type keep their default field names.
-    const fields = { icon: 'kanji', label: 'text' };
+    // `glyphFields` says which property fills the List's icon slot (#133).
+    const fields = $derived(glyphFields(glyphs));
 </script>
 
 <aside

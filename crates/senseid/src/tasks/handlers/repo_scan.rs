@@ -506,8 +506,9 @@ async fn write_folder_tree(
         let abs = repo_abs.join(&f.rel_path);
         match ctx
             .pg()
-            .upsert_subfolder(
+            .upsert_subfolder_kind(
                 root_id,
+                f.kind,
                 &name,
                 &f.rel_path.to_string_lossy(),
                 &abs.to_string_lossy(),
@@ -519,7 +520,7 @@ async fn write_folder_tree(
                 ids.insert(f.rel_path.clone(), id);
             }
             Err(e) => {
-                tracing::warn!(folder = %f.rel_path.display(), error = %e, "repo scan: upsert_subfolder failed")
+                tracing::warn!(folder = %f.rel_path.display(), error = %e, "repo scan: upsert_subfolder_kind failed")
             }
         }
     }
@@ -784,11 +785,13 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // Keyed on the REMOTE via the one reader that answers "what is this repo's
     // remote" (`pipeline::origin_remote`), so this agrees with the reconcile
     // rather than minting a second, path-keyed identity for the same checkout.
-    // Both writers are upserts, so whichever runs first wins and the other is
-    // a no-op.
+    // A checkout with NO remote reuses the keyless repository its folder already
+    // points at (#271): a plain keyless upsert inserts a new row every time, and
+    // this runs on every ~300s reconcile.
     let repository_id = match ctx
         .pg()
-        .upsert_repository(
+        .repository_for_checkout(
+            &folder_id,
             &name,
             crate::indexer::pipeline::origin_remote(&task.folder_path).as_deref(),
         )
@@ -1127,6 +1130,70 @@ mod scan_tests {
         assert!(kinds.contains(&TaskKind::ProcessManifest), "got {kinds:?}");
         assert!(kinds.contains(&TaskKind::ProcessRepoFiles), "got {kinds:?}");
         assert!(kinds.contains(&TaskKind::DetectCommunities), "terminal barrier queued");
+    }
+
+    /// A RESCAN KEEPS A MODULE A MODULE.
+    ///
+    /// The pipeline writes a manifest-bearing directory as `module`; this scan
+    /// wrote every subfolder as `folder`, and the upsert relabels between the
+    /// two. Live, each watcher-driven rescan of this repository demoted all of
+    /// its workspace packages, and Settings → Projects lost the roles inferred
+    /// from their manifests until the next full index.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn a_rescan_keeps_a_manifest_folder_a_module() {
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("mono");
+        std::fs::create_dir_all(repo.join("app/src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("package.json"), "{\"workspaces\":[\"app\"]}").unwrap();
+        std::fs::write(repo.join("app/package.json"), "{\"name\":\"app\"}").unwrap();
+        std::fs::write(repo.join("app/src/a.ts"), "export const a = 1;\n").unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "mono", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        // As the indexer pipeline leaves it.
+        let app = repo.join("app");
+        ctx.pg()
+            .upsert_subfolder_kind(
+                &root_id,
+                "module",
+                "app",
+                "app",
+                &app.to_string_lossy(),
+                Some(&fid),
+            )
+            .await
+            .unwrap();
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo.to_string_lossy(), "");
+        super::process_git_folder(&ctx, &task).await.unwrap();
+
+        let kind_of = |p: std::path::PathBuf| {
+            let pool = ctx.pg().pool().clone();
+            async move {
+                let (k,): (String,) = sqlx_core::query_as::query_as(
+                    "SELECT kind::text FROM sensei.folders WHERE abs_path = $1",
+                )
+                .bind(p.to_string_lossy().to_string())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                k
+            }
+        };
+        assert_eq!(kind_of(app.clone()).await, "module", "app holds a manifest");
+        assert_eq!(kind_of(app.join("src")).await, "folder", "app/src holds none");
     }
 
     /// AN EVENT SCOPE MUST NOT PRUNE WHAT IT DID NOT LOOK AT.

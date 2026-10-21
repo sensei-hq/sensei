@@ -13,7 +13,8 @@ export default defineConfig({
     __SENSEI_APP_VERSION__: JSON.stringify('0.0.0-test'),
   },
   test: {
-    include: ['src/**/*.spec.ts', 'src/**/*.spec.svelte.ts'],
+    // e2e/lib: the inspect harness's own pure helpers (#284).
+    include: ['src/**/*.spec.ts', 'src/**/*.spec.svelte.ts', 'e2e/lib/**/*.spec.ts'],
     // jsdom lacks browser APIs @rokkit/chart needs: window.matchMedia at barrel
     // load (AnimatedPlot → svelte/motion), and ResizeObserver for the library's
     // self-sizing chart wrappers. Stub both so chart component tests can run.
@@ -38,11 +39,15 @@ export default defineConfig({
     conditions: ['browser'],
     alias: {
       '$lib': '/src/lib',
+      // Mirrors svelte.config.js: the vocabulary shared with the dōjō (#133).
+      '@sensei/glyphs': fileURLToPath(new URL('../packages/glyphs/index.js', import.meta.url)),
+      '@sensei/ui': fileURLToPath(new URL('../packages/ui/index.js', import.meta.url)),
       // SvelteKit generates `$app/*` modules at build time. Under Vitest
       // there's no SvelteKit runtime, so any component or hook that
       // imports `$app/navigation` fails Vite's resolution. Point it at a
       // local stub that lives outside src/ — see tests/stubs/app-navigation.ts.
       '$app/navigation': fileURLToPath(new URL('./tests/stubs/app-navigation.ts', import.meta.url)),
+      '$app/state': fileURLToPath(new URL('./tests/stubs/app-state.ts', import.meta.url)),
     },
   },
 });

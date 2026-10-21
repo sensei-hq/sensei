@@ -74,7 +74,7 @@ export type Strip =
 
 type View = 'loading' | 'not_connected' | 'daemon_error' | 'ready';
 
-export class SprintsScreen {
+export class SprintsState {
   #api: SprintsApi;
   #projectId: string;
   /** Bumped per selection, so a slower earlier answer is dropped. */

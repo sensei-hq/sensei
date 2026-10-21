@@ -527,46 +527,22 @@ impl PgStore {
     /// the relay federation so the Worker can open the caller's billing seat on
     /// this project (proof the user is actively using sensei there).
     pub async fn run_project_slug(&self, run_id: &uuid::Uuid) -> Result<Option<String>, String> {
-        let row: Option<(String,)> = sqlx_core::query_as::query_as(
-            // Straight from the run's PROJECT to that project's namespace. It
-            // used to detour through a folder of the project and that folder's
-            // namespace binding, so a run reported no slug whenever the detour
-            // had a gap — and reported a DIFFERENT project's slug whenever the
-            // folder binding disagreed with project membership, as eight did.
-            "SELECT n.slug
-               FROM activity.runs r
-               JOIN sensei.projects p   ON p.id = r.project_id
-               JOIN sensei.namespaces n ON n.scope_key = 'project' AND n.name = p.name
-              WHERE r.id = $1
-              LIMIT 1",
-        )
-        .bind(run_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        // Straight from the run's PROJECT to that project's namespace. It used to
+        // detour through a folder of the project and that folder's namespace
+        // binding, so a run reported no slug whenever the detour had a gap — and
+        // reported a DIFFERENT project's slug whenever the folder binding
+        // disagreed with project membership, as eight did.
+        let sql = format!(
+            "SELECT n.slug FROM activity.runs r \
+               JOIN sensei.projects p ON p.id = r.project_id {} \
+              WHERE r.id = $1 LIMIT 1",
+            super::PROJECT_NAMESPACE_JOIN
+        );
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(&sql)
+            .bind(run_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(row.map(|(slug,)| slug))
-    }
-
-    /// The run's project as `(slug, name)` for the dōjō `dojo.projects` display row:
-    /// the project-scope namespace slug (as [`run_project_slug`]) plus the project's
-    /// display name (`sensei.projects.name`). Both are the user's own project
-    /// metadata, federated as-is. `None` when the run has no bound project namespace.
-    pub async fn run_project_info(
-        &self,
-        run_id: &uuid::Uuid,
-    ) -> Result<Option<(String, String)>, String> {
-        let row: Option<(String, String)> = sqlx_core::query_as::query_as(
-            "SELECT n.slug, p.name
-               FROM activity.runs r
-               JOIN sensei.projects p   ON p.id = r.project_id
-               JOIN sensei.namespaces n ON n.scope_key = 'project' AND n.name = p.name
-              WHERE r.id = $1
-              LIMIT 1",
-        )
-        .bind(run_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(row)
     }
 }

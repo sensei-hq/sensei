@@ -72,8 +72,9 @@ type Project = { id: string /* dereferenced slug = drill-in key */; name; repo;
   spark?: number[] }
 type ProjectFilter = { classification?: Project['classification']; phase?: Project['phase'] }
 ```
-`classification`/`phase`/`note`/`spark` are daemon-side attributes → **optional**: a thin relay-derived
-`Project` may omit them and `ProjectCard` renders each chip only when present (never a fabricated value).
+`classification` and `phase` are always present: the sync files every project (#299) and the dōjō derives
+its classification from where the repository lives. A relay run never creates a project; it attaches to one.
+`note`/`spark` stay **optional** — `ProjectCard` renders each only when present (never a fabricated value).
 
 **State** — `projects-state.svelte.ts` → `projectsState`
 - data: `projects: Project[]`, `filter: ProjectFilter`

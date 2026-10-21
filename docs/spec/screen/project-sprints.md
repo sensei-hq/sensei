@@ -6,7 +6,7 @@
 (Sessions); numbers follow the Sessions digest's formatters.
 **App files:**
 - `app/src/routes/(project)/project/[id]/sprints/+page.svelte`
-- `sprints-state.svelte.ts` (state, words, actions) and `SprintsPanel.svelte` (template)
+- `sprints-state.svelte.ts` (state, words, actions) and `SprintsScreen.svelte` (template)
 - the sidebar entry `{ id: 'sprints', kanji: '期', label: 'Sprints' }` in
   `project-sidebar-view.ts` `SECTIONS`, after `impact` and before `integrations`
 - `app/src/lib/api.ts` wrappers: `tryListSprints`, `tryListTrackerTasks`,

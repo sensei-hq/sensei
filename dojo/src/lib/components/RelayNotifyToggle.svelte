@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { Button } from '@rokkit/ui';
 	import { env } from '$env/dynamic/public';
 	import {
@@ -82,7 +83,7 @@
 
 {#if toggleState === 'enabled'}
 	<span class="text-ink-mute text-xs" style="white-space: nowrap">
-		<span class="kanji text-accent text-xs">鈴</span>
+		<KanjiToken char="鈴" size="inherit" toneClass="" class="text-accent text-xs" />
 		{status || 'Notifications on'}
 	</span>
 {:else if toggleState === 'unsupported'}
@@ -94,7 +95,7 @@
 {:else}
 	<div class="flex flex-col items-end" style="gap: 4px">
 		<Button variant="primary" size="sm" onclick={enable} disabled={busy}>
-			<span class="kanji text-xs">鈴</span>
+			<KanjiToken char="鈴" size="inherit" toneClass="" class="text-xs" />
 			{busy ? 'Enabling…' : 'Notify me'}
 		</Button>
 		{#if toggleState === 'error' && status}

@@ -121,16 +121,30 @@ pub(crate) async fn image_generate(
             return Err(err(StatusCode::NOT_FOUND, "unknown router"));
         };
         if entry.needs_key {
+            use crate::gateway_keys::KeyStanding;
             let rid_owned = rid.to_string();
-            let key_present =
-                tokio::task::spawn_blocking(move || crate::gateway_keys::has_key(&rid_owned))
+            let standing =
+                tokio::task::spawn_blocking(move || crate::gateway_keys::key_standing(&rid_owned))
                     .await
-                    .unwrap_or(false);
-            if !key_present {
-                return Err(err(
-                    StatusCode::BAD_REQUEST,
-                    format!("{} router key not configured", rid),
-                ));
+                    .map_err(|e| {
+                        err(StatusCode::INTERNAL_SERVER_ERROR, format!("key read panicked: {e}"))
+                    })?;
+            match standing {
+                KeyStanding::Set(_) => {}
+                KeyStanding::NotSet => {
+                    return Err(err(
+                        StatusCode::BAD_REQUEST,
+                        format!("{} router key not configured", rid),
+                    ));
+                }
+                // Set, but withheld (#285): saying "not configured" would send
+                // the user to paste a key they already saved.
+                KeyStanding::Unreadable(why) => {
+                    return Err(err(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        format!("{rid} router key unreadable: {why}"),
+                    ));
+                }
             }
         }
     }

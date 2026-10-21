@@ -197,15 +197,28 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             {
                 tracing::warn!(error = %db_err, task_id = task.id, kind = %task.kind, "failed to record task_execution failure");
             }
-            task_logger
-                .error(
-                    "task_failed",
-                    Some(serde_json::json!({
-                        "duration_ms": duration_ms,
-                    })),
-                    Some(serde_json::json!({"message": e})),
-                )
-                .await;
+            // Only the LAST failure is logged to public.logs (#194).
+            // `task_executions` already records every attempt — kind, path, error,
+            // retry_number — so logging each retryable attempt at error duplicated
+            // it, and a poison pill produced 17.6M identical rows in ten days. A
+            // failure that will be retried goes to the daemon's file log only.
+            if super::retry::failure_is_terminal(task) {
+                task_logger
+                    .error(
+                        "task_failed",
+                        Some(serde_json::json!({
+                            "duration_ms": duration_ms,
+                            "retry_number": task.retry_number,
+                        })),
+                        Some(serde_json::json!({"message": e})),
+                    )
+                    .await;
+            } else {
+                tracing::warn!(
+                    task_id = task.id, kind = %task.kind, retry_number = task.retry_number,
+                    error = %e, "task failed; will retry"
+                );
+            }
         }
     }
 

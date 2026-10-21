@@ -108,13 +108,13 @@ test.describe('Boot flow', () => {
     await navigateTo(tauriPage, '/health');
     // If all gates become ready within 30 s the page auto-advances.
     // If gates are still pending (slow environment), staying on /health is also a pass.
-    try {
-      // `$` anchors the observatory home, which is `/` — see the note above on
-      // why a bare `observatory` alternative can never match.
-      await tauriPage.waitForURL(/(\/setup\/welcome|localhost\/$)/, { timeout: 30_000 });
-    } catch {
-      // waitForURL timeout does not guarantee the URL hasn't moved — accept either outcome
-      expect(POST_BOOTSTRAP_PATHS).toContain(await pathname(tauriPage));
-    }
+    // Polls the PATH. `waitForURL` took a RegExp here, but the Tauri bridge sends
+    // its pattern as JSON and a RegExp serialises to `{}`, so it never matched,
+    // always timed out, and the catch accepted any outcome (#187).
+    await expect
+      .poll(() => pathname(tauriPage), { timeout: 30_000 })
+      .toMatch(/^\/(setup\/welcome)?$/)
+      .catch(() => {});
+    expect(POST_BOOTSTRAP_PATHS).toContain(await pathname(tauriPage));
   });
 });

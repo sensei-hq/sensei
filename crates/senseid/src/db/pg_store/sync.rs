@@ -165,6 +165,35 @@ impl PgStore {
         Ok(())
     }
 
+    /// Record that a sync agreed except for a named part — a graph push that
+    /// landed every file but one over the request cap (#225).
+    ///
+    /// An agreement, so `synced_at` is set; `what_is_missing` rides in
+    /// `last_error` as the row's detail. Not `error`: that reads "failing · never
+    /// agreed" over a graph that is all but one file there.
+    pub async fn mark_sync_partial(
+        &self,
+        m: &SyncMark<'_>,
+        what_is_missing: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.sync_state \
+                 (entity, entity_key, direction, state, last_error, attempted_at, synced_at, updated_at) \
+             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, 'partial', $4, now(), now(), now()) \
+             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET \
+                 state = 'partial', last_error = EXCLUDED.last_error, \
+                 attempted_at = now(), synced_at = now(), updated_at = now()",
+        )
+        .bind(m.entity)
+        .bind(m.key)
+        .bind(m.direction)
+        .bind(what_is_missing)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("mark_sync_partial: {e}"))?;
+        Ok(())
+    }
+
     /// Record that an entity is deliberately not synced — a private repository, a
     /// deactivated metric.
     ///
@@ -235,8 +264,9 @@ impl PgStore {
               ORDER BY CASE state
                          WHEN 'error'   THEN 0
                          WHEN 'pending' THEN 1
-                         WHEN 'skipped' THEN 2
-                         ELSE                3
+                         WHEN 'partial' THEN 2
+                         WHEN 'skipped' THEN 3
+                         ELSE                4
                        END,
                        attempted_at DESC NULLS LAST,
                        entity::text, entity_key",
@@ -475,6 +505,18 @@ pub struct PushableMetric {
 /// elected). The two answer different questions and stopped having the same answer
 /// in `docs/spec/dojo/daemon-sync.md` §8a, so the type is named for what it
 /// carries rather than for either gate.
+/// One offered repository as read: `(repo_key, remote_url, name, project slug,
+/// project name)`.
+type OfferedRow = (String, Option<String>, String, Option<String>, Option<String>);
+
+/// A sensei project as the dōjō knows it: the project-scope namespace slug and
+/// the project's name — the same pair a relay run sends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfferedProject {
+    pub slug: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OfferedRepo {
     /// The DURABLE cross-install identity — the normalized remote
@@ -485,6 +527,9 @@ pub struct OfferedRepo {
     pub remote_url: Option<String>,
     /// Display name — typically the repository basename.
     pub name: String,
+    /// Its sensei project, named as a relay run names it (#299) — offered only
+    /// when the repository is in exactly ONE project; two is never a guess.
+    pub project: Option<OfferedProject>,
 }
 
 impl PgStore {
@@ -613,12 +658,23 @@ impl PgStore {
         predicate: &str,
         limit: i64,
     ) -> Result<Vec<OfferedRepo>, String> {
-        let rows: Vec<(String, Option<String>, String)> = sqlx_core::query_as::query_as(&format!(
-            "SELECT repo_key, remote_url, name \
-               FROM sensei.repositories \
-              WHERE {predicate} \
-              ORDER BY (tenant_id IS NULL) DESC, modified_at DESC, repo_key \
-              LIMIT $1"
+        // The project: counted by PROJECT, not by namespace — two projects of
+        // which only one has a namespace are still two, and still not a guess.
+        let rows: Vec<OfferedRow> = sqlx_core::query_as::query_as(&format!(
+            "SELECT r.repo_key, r.remote_url, r.name, pj.slug, pj.name \
+                   FROM sensei.repositories r \
+                   LEFT JOIN LATERAL ( \
+                        SELECT CASE WHEN count(DISTINCT p.id) = 1 THEN max(n.slug) END AS slug, \
+                               CASE WHEN count(DISTINCT p.id) = 1 THEN max(p.name) END AS name \
+                          FROM sensei.repositories_in_projects rip \
+                          JOIN sensei.projects p ON p.id = rip.project_id \
+                          LEFT {join} \
+                         WHERE rip.repository_id = r.id \
+                   ) pj ON true \
+                  WHERE {predicate} \
+                  ORDER BY (r.tenant_id IS NULL) DESC, r.modified_at DESC, r.repo_key \
+                  LIMIT $1",
+            join = super::PROJECT_NAMESPACE_JOIN
         ))
         .bind(limit)
         .fetch_all(&self.pool)
@@ -626,7 +682,81 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(repo_key, remote_url, name)| OfferedRepo { repo_key, remote_url, name })
+            .map(|(repo_key, remote_url, name, slug, project_name)| OfferedRepo {
+                repo_key,
+                remote_url,
+                name,
+                project: slug.zip(project_name).map(|(slug, name)| OfferedProject { slug, name }),
+            })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod offered_project_tests {
+    use super::*;
+
+    // #299: the sync files a repository under its sensei project. The project
+    // offered is the SAME (slug, name) a relay run sends, and only when the
+    // repository is in exactly one project — never a guess between two.
+    async fn exec(pg: &PgStore, sql: &str, args: &[&str]) {
+        let mut q = sqlx_core::query::query(sql);
+        for a in args {
+            q = q.bind(*a);
+        }
+        q.execute(pg.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_repository_in_exactly_one_project_offers_that_project() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let (one, two, none) = (
+            format!("github.com/ztest-op/{tag}-one"),
+            format!("github.com/ztest-op/{tag}-two"),
+            format!("github.com/ztest-op/{tag}-none"),
+        );
+        let (pa, pb) = (format!("ztest-op-a-{tag}"), format!("ztest-op-b-{tag}"));
+        for key in [&one, &two, &none] {
+            exec(&pg, "INSERT INTO sensei.repositories (name, repo_key) VALUES ('r', $1)", &[key])
+                .await;
+        }
+        for name in [&pa, &pb] {
+            exec(&pg, "INSERT INTO sensei.projects (name) VALUES ($1)", &[name]).await;
+            exec(
+                &pg,
+                "INSERT INTO sensei.namespaces (scope_key, name, slug) VALUES ('project', $1, $1 || '-slug')",
+                &[name],
+            )
+            .await;
+        }
+        let link = "INSERT INTO sensei.repositories_in_projects (project_id, repository_id) \
+                    SELECT p.id, r.id FROM sensei.projects p, sensei.repositories r \
+                     WHERE p.name = $1 AND r.repo_key = $2";
+        exec(&pg, link, &[&pa, &one]).await;
+        exec(&pg, link, &[&pa, &two]).await;
+        exec(&pg, link, &[&pb, &two]).await;
+
+        let offered = pg.offerable_repositories(100_000).await.unwrap();
+        let find = |k: &str| offered.iter().find(|r| r.repo_key == k).cloned().expect("offered");
+        assert_eq!(
+            find(&one).project,
+            Some(OfferedProject { slug: format!("{pa}-slug"), name: pa.clone() })
+        );
+        assert_eq!(find(&two).project, None, "two projects: never a guess");
+        assert_eq!(find(&none).project, None);
+
+        for key in [&one, &two, &none] {
+            exec(&pg, "DELETE FROM sensei.repositories WHERE repo_key = $1", &[key]).await;
+        }
+        for name in [&pa, &pb] {
+            exec(
+                &pg,
+                "DELETE FROM sensei.namespaces WHERE scope_key = 'project' AND name = $1",
+                &[name],
+            )
+            .await;
+            exec(&pg, "DELETE FROM sensei.projects WHERE name = $1", &[name]).await;
+        }
     }
 }

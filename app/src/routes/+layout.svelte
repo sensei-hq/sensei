@@ -8,6 +8,7 @@
     import { healthState } from "$lib/health-state.svelte.js";
     import { daemonHealth } from "$lib/daemon-health.svelte.js";
     import { forgeAuth } from "$lib/forge-auth.svelte.js";
+    import { glyphMode, setGlyphMode } from "$lib/glyphs";
     import { personaList } from "$lib/personas.svelte.js";
     import { DaemonStatusBanner, SignInOverlay } from "$lib/components";
 
@@ -16,6 +17,9 @@
     // The overlay is opened by need, and closable. An expired credential stops
     // syncing but does not stop sensei, so blocking the app behind it would be
     // out of proportion.
+    // The glyph preference, for every mark below (#133).
+    setGlyphMode(() => glyphMode(appState.config));
+
     let dismissed = $state(false);
     // Asked for explicitly, from View → Identities…. Kept separate from the
     // automatic path so opening it by hand is not undone by `dismissed`, and so
@@ -32,8 +36,8 @@
         dismissed = true;
     }
 
-    async function signIn(p: Parameters<typeof personaList.signIn>[0]) {
-        await personaList.signIn(p);
+    async function signIn(p: Parameters<typeof personaList.act>[0]) {
+        await personaList.act(p);
         // Re-read rather than assume: the standing changes only once the daemon
         // has observed the new credential, and reporting success from the click
         // is how a failed sign-in looks like a successful one.
@@ -120,5 +124,6 @@
     describe={(p) => personaList.describe(p, Math.floor(Date.now() / 1000))}
     onSignIn={signIn}
     onClose={closeOverlay}
+    pending={personaList.pending}
 />
 {@render children()}

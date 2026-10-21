@@ -10,7 +10,8 @@
 // screen — the project page injects a project-scoped fetcher, the observatory
 // page a multi-project one. Pure math lives in ./sessions-digest.ts — this
 // file only adds runes + the refetch action on top of it.
-import type { SessionRow } from '$lib/types.js';
+import type { SessionRow, SessionsDigest } from '$lib/types.js';
+import { failureReason, readOutcome, type ApiResult } from '$lib/api.js';
 import {
   aggregateByDay,
   buildDays,
@@ -25,9 +26,30 @@ import {
   type SessionRange,
 } from './sessions-digest.js';
 
-/** Fetches rows for a range. Injected so the page binds the real api client
- *  and specs bind a fake — keeping this class free of transport concerns. */
-export type SessionsFetcher = (range: SessionRange) => Promise<SessionRow[]>;
+/** Fetches rows for a range, or why they could not be read. Injected so the
+ *  page binds the real api client and specs bind a fake — keeping this class
+ *  free of transport concerns. */
+export type SessionsFetcher = (range: SessionRange) => Promise<ApiResult<SessionRow[]>>;
+
+/** The digest read for a range — scoped to one project when given (the
+ *  endpoint takes `range` and `project` additively) — as its rows. One fetcher
+ *  for the Observatory screen and the project tab. */
+export function sessionsFetcher(
+  api: { tryGetSessionsDigest: (range?: string, project?: string) => Promise<ApiResult<SessionsDigest>> },
+  projectId?: string,
+): SessionsFetcher {
+  return async (range) => {
+    const read = await api.tryGetSessionsDigest(range, projectId);
+    return read.ok ? { ok: true, data: read.data.sessions } : read;
+  };
+}
+
+/** A Sessions page's first load: the default range's rows, or why they could
+ *  not be read (#288) — never the empty digest that read as a quiet week. */
+export async function loadSessionsDigest(fetcher: SessionsFetcher, range: SessionRange) {
+  const { data, error } = readOutcome(await fetcher(range));
+  return { sessions: data, range, error };
+}
 
 export class SessionsDigestState {
   /** The big chart selected by the 4-chip group. Default `trend`. */
@@ -40,13 +62,22 @@ export class SessionsDigestState {
   sessions = $state<SessionRow[]>([]);
   /** In-flight refetch flag for the range chips. */
   loading = $state(false);
+  /** Why the rows for the active range could not be read, or null (#288). */
+  error = $state<string | null>(null);
 
   #fetcher: SessionsFetcher;
 
-  constructor(fetcher: SessionsFetcher, initialSessions: SessionRow[] = [], initialRange: SessionRange = '7d') {
+  /** `initialSessions` is null when the first load failed; `initialError` says why. */
+  constructor(
+    fetcher: SessionsFetcher,
+    initialSessions: SessionRow[] | null = [],
+    initialRange: SessionRange = '7d',
+    initialError: string | null = null,
+  ) {
     this.#fetcher = fetcher;
-    this.sessions = initialSessions;
+    this.sessions = initialSessions ?? [];
     this.range = initialRange;
+    this.error = initialError;
   }
 
   /** Every row with its derived display fields. */
@@ -82,11 +113,17 @@ export class SessionsDigestState {
   async setRange(range: SessionRange): Promise<void> {
     if (range === this.range) return;
     this.range = range;
+    await this.retry();
+  }
+
+  /** Re-read the active range — every range switch, and the page's Retry. A
+   *  failed read drops the previous range's rows so they cannot pass as this
+   *  range's. */
+  async retry(): Promise<void> {
     this.loading = true;
-    try {
-      this.sessions = await this.#fetcher(range);
-    } finally {
-      this.loading = false;
-    }
+    const read = await this.#fetcher(this.range);
+    this.sessions = read.ok ? read.data : [];
+    this.error = read.ok ? null : failureReason(read.error);
+    this.loading = false;
   }
 }

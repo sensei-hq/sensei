@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KanjiToken from './KanjiToken.svelte';
 	import Chip from './Chip.svelte';
 	import RuleRow from './RuleRow.svelte';
 	import type { KitLadderRung } from './types';
@@ -38,10 +39,7 @@
 		class="flex w-full cursor-pointer items-center gap-3 bg-transparent text-left"
 		style="padding: 12px 16px"
 	>
-		<span
-			class="kanji flex-shrink-0 text-center {toneClass}"
-			style="font-size: 22px; line-height: 1; width: 28px">{rung.kanji}</span
-		>
+		<KanjiToken char={rung.kanji} size="xl" {toneClass} w={28} />
 		<div class="flex-1" style="min-width: 0">
 			<div class="flex items-center gap-2">
 				<span class="text-xs font-semibold uppercase {toneClass}" style="letter-spacing: 0.18em"

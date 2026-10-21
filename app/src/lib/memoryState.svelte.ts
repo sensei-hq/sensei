@@ -1,5 +1,5 @@
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
-import { senseiApi } from './api.js';
+import { failureReason, senseiApi } from './api.js';
 import { appState } from './appstate.svelte.js';
 import type { Memory, MemoryDetail, MemoryStatus } from './setup/contracts.js';
 
@@ -66,6 +66,9 @@ class MemoryState {
     detail   = $state<MemoryDetail | null>(null);
     selected = $state<string | null>(null);
     loading  = $state(false);
+    /** Why the lists could not be read or refreshed, or null (#288). A failed
+     *  read used to fold into an empty tab. */
+    listError = $state<string | null>(null);
 
     // Per-memory lifecycle-action UI: ids with an in-flight request, and the
     // last error message keyed by id. The error persists until the next attempt
@@ -85,27 +88,36 @@ class MemoryState {
     async load(projectId?: string) {
         this.#projectId = projectId;
         this.loading = true;
-        try {
-            const [t, a, x] = await Promise.all([
-                this.fetchTab('triage',  projectId),
-                this.fetchTab('active',  projectId),
-                this.fetchTab('archive', projectId),
-            ]);
-            this.triage  = t;
-            this.active  = a;
-            this.archive = x;
-        } finally {
-            this.loading = false;
-        }
+        const [t, a, x] = await Promise.all([
+            this.fetchTab('triage',  projectId),
+            this.fetchTab('active',  projectId),
+            this.fetchTab('archive', projectId),
+        ]);
+        // Any tab unread means the lists are unknown — none is shown.
+        this.listError = t.error ?? a.error ?? x.error;
+        this.triage  = this.listError ? [] : t.memories;
+        this.active  = this.listError ? [] : a.memories;
+        this.archive = this.listError ? [] : x.memories;
+        this.loading = false;
     }
 
-    private async fetchTab(tab: Tab, projectId?: string): Promise<Memory[]> {
+    private async fetchTab(tab: Tab, projectId?: string): Promise<{ memories: Memory[]; error: string | null }> {
         const api = senseiApi(appState.port);
         const statuses = STATUSES_BY_TAB[tab];
         const buckets = await Promise.all(statuses.map(status =>
-            api.listMemories({ status, project_id: projectId, limit: 500 })
+            api.tryListMemories({ status, project_id: projectId, limit: 500 })
         ));
-        return buckets.flatMap(b => b.memories);
+        const failed = buckets.find((b) => !b.ok);
+        if (failed && !failed.ok) return { memories: [], error: failureReason(failed.error) };
+        return { memories: buckets.flatMap((b) => (b.ok ? b.data.memories : [])), error: null };
+    }
+
+    /** Re-read one tab after an action. A failed read keeps the tab as it was
+     *  and says the lists could not be refreshed. */
+    private async refreshTab(tab: Tab, current: Memory[]): Promise<Memory[]> {
+        const read = await this.fetchTab(tab, this.#projectId);
+        this.listError = read.error;
+        return read.error ? current : read.memories;
     }
 
     async select(id: string) {
@@ -120,7 +132,7 @@ class MemoryState {
         const res = await api.acceptProposal(id);
         if (!res.ok) return;
         this.triage = this.triage.filter(m => m.id !== id);
-        this.active = await this.fetchTab('active', this.#projectId);
+        this.active = await this.refreshTab('active', this.active);
     }
 
     async reject(id: string) {
@@ -128,7 +140,7 @@ class MemoryState {
         const res = await api.rejectProposal(id);
         if (!res.ok) return;
         this.triage = this.triage.filter(m => m.id !== id);
-        this.archive = await this.fetchTab('archive', this.#projectId);
+        this.archive = await this.refreshTab('archive', this.archive);
     }
 
     // ── Active-set lifecycle actions ─────────────────────────────────────────
@@ -167,7 +179,7 @@ class MemoryState {
         if (!this.#begin(id)) return;
         const res = await senseiApi(appState.port).reinforceMemory(id);
         if (!res.ok) { this.#fail(id, 'reinforce', res.error.status); return; }
-        this.active = await this.fetchTab('active', this.#projectId);
+        this.active = await this.refreshTab('active', this.active);
         this.#done(id);
     }
 
@@ -177,7 +189,7 @@ class MemoryState {
         if (!this.#begin(id)) return;
         const res = await senseiApi(appState.port).challengeMemory(id);
         if (!res.ok) { this.#fail(id, 'challenge', res.error.status); return; }
-        this.active = await this.fetchTab('active', this.#projectId);
+        this.active = await this.refreshTab('active', this.active);
         this.#done(id);
     }
 
@@ -188,7 +200,7 @@ class MemoryState {
         if (!res.ok) { this.#fail(id, 'archive', res.error.status); return; }
         this.active = this.active.filter(m => m.id !== id);
         this.triage = this.triage.filter(m => m.id !== id);
-        this.archive = await this.fetchTab('archive', this.#projectId);
+        this.archive = await this.refreshTab('archive', this.archive);
         this.#done(id);
     }
 
@@ -200,7 +212,7 @@ class MemoryState {
         if (!res.ok) { this.#fail(id, 'dismiss', res.error.status); return; }
         this.active = this.active.filter(m => m.id !== id);
         this.triage = this.triage.filter(m => m.id !== id);
-        this.archive = await this.fetchTab('archive', this.#projectId);
+        this.archive = await this.refreshTab('archive', this.archive);
         this.#done(id);
     }
 }

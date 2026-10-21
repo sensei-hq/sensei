@@ -1,9 +1,11 @@
+import type { GlyphMode } from '$lib/glyphs';
 import type { ProjectListItem } from '$lib/types.js';
+import { failureReason, type ApiResult } from '$lib/api.js';
 
 /** One row in the segmented Projects list — a project enriched with the
  *  signals shown on its card (FTR%, 7-day sessions, warning dot) plus the
  *  list-endpoint aggregates the card/row render (repos/libs/last-session/
- *  vision). Counts are normalized to numbers in `+page.ts` so the pure
+ *  vision). Counts are normalized to numbers by `baseProject` so the pure
  *  components never have to reach for a fallback. */
 export interface EnrichedProject extends ProjectListItem {
   /** 14-day FTR, 0..1 — null when the project has no analyzed sessions in the
@@ -17,6 +19,36 @@ export interface EnrichedProject extends ProjectListItem {
   libs_count: number;
   last_session_at: string | null;
   vision: string | null;
+  /** Why the card's quality reads (FTR, signals) failed, or null (#288). The
+   *  card then says "unavailable" — not a blank rate, not a made-up warning. */
+  readError: string | null;
+}
+
+/** A project's card from the list payload alone, before any quality read. */
+export function baseProject(p: ProjectListItem): EnrichedProject {
+  return {
+    ...p,
+    ftr14d: null,
+    sessions7d: p.sessions7d ?? 0,
+    warn: false,
+    repos_count: p.repos_count ?? 0,
+    libs_count: p.libs_count ?? 0,
+    last_session_at: p.last_session_at ?? null,
+    vision: p.vision ?? null,
+    readError: null,
+  };
+}
+
+/** The card with its quality reads applied: the rate and the warning, or —
+ *  when either read failed — the reason, and neither (#288). */
+export function withQuality(
+  base: EnrichedProject,
+  ftr: ApiResult<{ ftr14d: number | null }>,
+  signals: ApiResult<{ open_drift_count: number; ftr_7d: number }>,
+): EnrichedProject {
+  if (!ftr.ok) return { ...base, readError: failureReason(ftr.error) };
+  if (!signals.ok) return { ...base, readError: failureReason(signals.error) };
+  return { ...base, ftr14d: ftr.data.ftr14d, warn: isWarning(signals.data, base.sessions7d) };
 }
 
 /** The three mutually-exclusive buckets the screen surfaces. A project
@@ -95,7 +127,11 @@ export const DEFAULT_GLYPH = '場';
  *  `<img>` fails to load (a broken image is worse than a glyph). */
 export type ProjectIcon =
   | { kind: 'image'; src: string; glyph: string }
-  | { kind: 'kanji'; glyph: string };
+  | { kind: 'kanji'; glyph: string }
+  | { kind: 'icon'; cls: string; glyph: string };
+
+/** The default project mark in icon mode (#133) — the Projects rail's icon. */
+export const PROJECT_ICON = 'i-solar-folder-with-files-bold-duotone';
 
 /** Pure: does a stored icon value already point somewhere the browser can load
  *  directly? An author/About-form icon may be an absolute URL or a data URI;
@@ -111,7 +147,11 @@ function isDirectUrl(value: string): boolean {
  *  it with a kanji fallback on load error). Otherwise fall back to the kanji
  *  glyph on the icon, and finally to 場 (place). `base` is the daemon origin
  *  (e.g. `apiBase(port)`); it defaults to '' so tests read a bare route path. */
-export function projectIcon(p: Pick<EnrichedProject, 'id' | 'icon'>, base = ''): ProjectIcon {
+export function projectIcon(
+  p: Pick<EnrichedProject, 'id' | 'icon'>,
+  base = '',
+  mode: GlyphMode = 'kanji',
+): ProjectIcon {
   const icon = p.icon;
   if (icon && icon.kind === 'image' && icon.value) {
     const src = isDirectUrl(icon.value)
@@ -120,6 +160,8 @@ export function projectIcon(p: Pick<EnrichedProject, 'id' | 'icon'>, base = ''):
     return { kind: 'image', src, glyph: DEFAULT_GLYPH };
   }
   if (icon && icon.kind === 'kanji' && icon.value) return { kind: 'kanji', glyph: icon.value };
+  // Only the default mark has an icon to stand for it (#133).
+  if (mode === 'icon') return { kind: 'icon', cls: PROJECT_ICON, glyph: DEFAULT_GLYPH };
   return { kind: 'kanji', glyph: DEFAULT_GLYPH };
 }
 

@@ -1,12 +1,35 @@
 <script lang="ts">
-  type Size = 'xs' | 'sm' | 'base' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | 'screen';
-  type Tone = 'accent' | 'muted' | 'watermark' | 'success' | 'warning';
+  // `inherit`: add no class of its own — for a mark whose size or colour the
+  // caller states in `class` (one converted from a bare span, #133).
+  type Size = 'xs' | 'sm' | 'base' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | 'screen' | 'inherit';
+  type Tone = 'accent' | 'muted' | 'watermark' | 'success' | 'warning' | 'inherit';
+
+  import { useGlyphMode, type GlyphMode } from '$lib/glyphs';
+  import { iconForKanji } from '$lib/glyph-vocabulary';
 
   let {
     char,
     size = 'base',
     tone = 'accent',
-  }: { char: string; size?: Size; tone?: Tone } = $props();
+    icon,
+    mode: modeProp,
+    class: extra = '',
+  }: {
+    char: string;
+    size?: Size;
+    tone?: Tone;
+    /** Icon-mode mark. Omitted: the vocabulary's icon for `char`. `null`: an
+     *  identity mark that stays kanji in both modes (#133). */
+    icon?: string | null;
+    mode?: GlyphMode;
+    /** Classes the mark carries in both modes. */
+    class?: string;
+  } = $props();
+
+  // The provided mode (#133) unless the caller says otherwise.
+  const provided = useGlyphMode();
+  const mode = $derived(modeProp ?? provided());
+  const resolved = $derived(icon === null ? undefined : (icon ?? iconForKanji(char)));
 
   const sizeClass = $derived(
     ({
@@ -21,6 +44,8 @@
       // Signature screen-header glyph — 40px, matching the mockup ScreenHeader/
       // PageHeader (a fixed display glyph, not body type). See mockup-drift-audit F5.
       'screen': 'text-3xl',
+      // Leading too: an inherited size is the caller's whole typographic box.
+      'inherit': '',
     })[size]
   );
 
@@ -31,11 +56,17 @@
       'success':   'text-success',
       'warning':   'text-warning',
       'watermark': 'text-accent opacity-55',
+      'inherit':   '',
     })[tone]
   );
 </script>
 
-<span
-  data-component="kanji"
-  class="kanji leading-none {sizeClass} {toneClass}"
->{char}</span>
+{#if mode === 'icon' && resolved}
+  <!-- #133: the icon that stands for this kanji, at the same size and tone. -->
+  <span data-component="glyph-icon" class={[resolved, sizeClass, toneClass, extra]} aria-hidden="true"></span>
+{:else}
+  <span
+    data-component="kanji"
+    class={['kanji', size !== 'inherit' && 'leading-none', sizeClass, toneClass, extra]}
+  >{char}</span>
+{/if}

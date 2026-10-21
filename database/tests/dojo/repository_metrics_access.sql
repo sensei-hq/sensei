@@ -3,8 +3,8 @@
 --
 -- | row                 | sees it                                                      |
 -- |---------------------|--------------------------------------------------------------|
--- | scope = repo        | a member on a team owning a project with the repository, the |
--- |                     | owner of such a project, a tenant admin                      |
+-- | scope = repo        | a member on a team owning a project with the repository, a   |
+-- |                     | tenant admin. Projects have no owner (#299): shared items.   |
 -- | scope = user, own   | its own person, always                                       |
 -- | scope = user, other | a TEAM LEAD of a project with the repository; a tenant admin |
 --
@@ -14,7 +14,7 @@
 --
 -- WHAT BREAKS THIS TEST: requiring a team for own rows; letting a team member
 -- (not lead) read another's user-scoped rows; treating the TENANT lead as a team
--- lead; dropping the admin clause; dropping the own-project clause.
+-- lead; dropping the admin clause; reintroducing a project-owner clause.
 
 begin;
 
@@ -43,11 +43,11 @@ insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via)
   ('b0000000-0000-4000-8000-00000000002a', 'a0000000-0000-4000-8000-000000000027', 'contributor', 'employer', 'github_oauth');
 
 -- Project P (team X: alice member, dave lead) holds repository R.
--- Project Q (owned by ivy, no team) holds repository S.
-insert into dojo.projects (id, user_id, tenant_id, slug, name) values
-  ('c0000000-0000-4000-8000-0000000000f2', 'a0000000-0000-4000-8000-000000000021',
+-- Project Q (on no team) holds repository S.
+insert into dojo.projects (id, tenant_id, slug, name) values
+  ('c0000000-0000-4000-8000-0000000000f2',
    'b0000000-0000-4000-8000-00000000002a', 'ztest-metrics-p', 'project P'),
-  ('c0000000-0000-4000-8000-0000000000f3', 'a0000000-0000-4000-8000-000000000025',
+  ('c0000000-0000-4000-8000-0000000000f3',
    'b0000000-0000-4000-8000-00000000002a', 'ztest-metrics-q', 'project Q');
 insert into dojo.teams (id, tenant_id, name) values
   ('d0000000-0000-4000-8000-0000000000e2', 'b0000000-0000-4000-8000-00000000002a', 'ztest metrics team X');
@@ -89,7 +89,7 @@ insert into expect values
   ('zed',   'a1000000-0000-4000-8000-000000000027', '4'),       -- own row, on no team
   ('bob',   'a1000000-0000-4000-8000-000000000023', ''),        -- tenant lead, no team: nothing
   ('erin',  'a1000000-0000-4000-8000-000000000024', '1,2,3,4,5'),-- tenant admin: all
-  ('ivy',   'a1000000-0000-4000-8000-000000000025', '5'),       -- owner of project Q: S's repo row
+  ('ivy',   'a1000000-0000-4000-8000-000000000025', ''),        -- member on no owning team: nothing (no owners, #299)
   ('carol', 'a1000000-0000-4000-8000-000000000026', '');        -- admin of ANOTHER tenant
 
 do $$

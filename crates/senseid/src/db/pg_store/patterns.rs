@@ -843,6 +843,25 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Remove a project's unreviewed rework rows before a re-derive writes the
+    /// current set (#287) — the upsert alone never removes a file that stopped
+    /// qualifying, so rows from an earlier, wrong derive lingered. Only
+    /// `suggested` rows: one a user promoted stays.
+    pub async fn prune_suggested_rework(&self, project_id: &uuid::Uuid) -> Result<u64, String> {
+        let done = sqlx_core::query::query(
+            "DELETE FROM inference.detected_patterns
+              WHERE project_id = $1
+                AND is_anti_pattern
+                AND name LIKE 'rework: %'
+                AND lifecycle = 'suggested'",
+        )
+        .bind(project_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(done.rows_affected())
+    }
+
     pub async fn promote_pattern(&self, id: &uuid::Uuid, lifecycle: &str) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE inference.detected_patterns SET lifecycle = $2::sensei.pattern_lifecycle, modified_at = now() WHERE id = $1"
@@ -1313,6 +1332,7 @@ impl PgStore {
             Option<String>, // description
             Option<String>, // example
             Option<String>, // enforcement
+            Option<i64>,    // rework: the busiest session's re-edits
         )> = sqlx_core::query_as::query_as(
             "SELECT pp.id, pp.name, pp.family, pp.is_anti_pattern, pp.lifecycle::text,
                         pp.confidence::float8, pp.instance_count,
@@ -1320,7 +1340,8 @@ impl PgStore {
                            FROM activity.sessions s
                           WHERE s.folder_id = pp.folder_id AND s.ftr IS NOT NULL
                             AND s.outcome <> 'empty'::sensei.session_outcome) AS folder_ftr,
-                        pp.description, pp.example, pp.enforcement
+                        pp.description, pp.example, pp.enforcement,
+                        (pp.instances->0->>'max_session_edits')::int8
                  FROM sensei.project_patterns pp WHERE pp.project_id = $1
                  ORDER BY pp.is_anti_pattern, pp.name",
         )
@@ -1342,6 +1363,7 @@ impl PgStore {
             description,
             example,
             enforcement,
+            _peak_edits,
         ): (
             uuid::Uuid,
             String,
@@ -1354,6 +1376,7 @@ impl PgStore {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<i64>,
         )| {
             let kind = crate::pattern_effectiveness::pattern_kind(is_anti, &lifecycle);
             let ftr_delta = crate::pattern_effectiveness::ftr_delta(folder_ftr, project_ftr);
@@ -1372,9 +1395,27 @@ impl PgStore {
                 "enforcement":   enforcement,
             })
         };
+        // Unreviewed rework rows fold into one "rework hotspots" anti-pattern
+        // (#287) — one row per file flooded the view. A promoted one reads as
+        // itself: the user reviewed that file.
+        let (rework, anti): (Vec<_>, Vec<_>) = anti.into_iter().partition(|r| {
+            r.4 == "suggested" && crate::rework_hotspots::rework_file(&r.1).is_some()
+        });
+        let files: Vec<crate::rework_hotspots::Hotspot> = rework
+            .iter()
+            .filter_map(|r| {
+                crate::rework_hotspots::rework_file(&r.1).map(|f| crate::rework_hotspots::Hotspot {
+                    file: f.to_string(),
+                    confidence: r.5,
+                    peak_edits: r.11,
+                })
+            })
+            .collect();
+        let mut anti_patterns: Vec<serde_json::Value> = anti.into_iter().map(map_row).collect();
+        anti_patterns.extend(crate::rework_hotspots::hotspots(&files));
         Ok(serde_json::json!({
             "followed": followed.into_iter().map(map_row).collect::<Vec<_>>(),
-            "antiPatterns": anti.into_iter().map(map_row).collect::<Vec<_>>(),
+            "antiPatterns": anti_patterns,
         }))
     }
 
