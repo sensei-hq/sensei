@@ -146,7 +146,10 @@ export async function acceptInvite(
 		const { error } = await db.rpc('add_dojo_viewer', {
 			p_tenant: invite.tenant_id,
 			p_principal: userId,
-			p_invited_by: invite.invited_by
+			p_invited_by: invite.invited_by,
+			// The email they were invited at, and just proved by signing in — what
+			// names a viewer who has no forge identity (#307 D8).
+			p_email: invite.email.trim().toLowerCase()
 		});
 		if (error) throw new AdminError(500, error.message);
 	} else {

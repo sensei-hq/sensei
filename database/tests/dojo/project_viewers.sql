@@ -9,7 +9,8 @@
 -- revoking; a grant on one project reading as a grant on another; a direct write
 -- to dojo.project_viewers or dojo.dojo_viewers; a viewer seeing other people's
 -- grants; an admin of another dōjō granting here; a dōjō viewer counting as a
--- member or reading a repository.
+-- member or reading a repository; the dōjō's admin unable to read a viewer's name
+-- (the Viewers list), or anyone else able to.
 
 begin;
 
@@ -30,6 +31,8 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
 insert into dojo.projects (id, tenant_id, slug, name, classification) values
   ('c0000000-0000-4000-8000-000000000311', 'b0000000-0000-4000-8000-00000000031a', 'ztest-pv-p', 'p', 'company'),
   ('c0000000-0000-4000-8000-000000000312', 'b0000000-0000-4000-8000-00000000031a', 'ztest-pv-q', 'q', 'company');
+insert into dojo.identities (principal_id, provider, subject, email, display_name) values
+  ('a0000000-0000-4000-8000-000000000313', 'github_oauth', 'ztest-pv-client', 'client@example.com', 'Client Person');
 
 set local role authenticated;
 
@@ -68,8 +71,25 @@ begin
     -- The client accepts a viewer invite: the accept path (service_role) records
     -- them as a dōjō viewer — modelled here by the same function it calls.
     reset role;
-    perform dojo.add_dojo_viewer('b0000000-0000-4000-8000-00000000031a', client, 'a0000000-0000-4000-8000-000000000311');
+    perform dojo.add_dojo_viewer('b0000000-0000-4000-8000-00000000031a', client, 'a0000000-0000-4000-8000-000000000311', 'Client@Example.com');
     set local role authenticated;
+
+    -- The viewer record keeps the email they were invited at (and proved by
+    -- signing in) — a viewer who signs in by email link has no identity to name them.
+    select count(*) into n from dojo.dojo_viewers where principal_id = client and email = 'client@example.com';
+    if n <> 1 then raise exception 'the dōjō viewer did not keep the invited email'; end if;
+
+    -- The dōjō's admin reads the viewer's name (the Viewers list); a maintainer
+    -- and another dōjō's admin do not.
+    select count(*) into n from dojo.identities where principal_id = client;
+    if n <> 1 then raise exception 'the admin read % of the viewer''s identities, expected 1', n; end if;
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000312"}', true);
+    select count(*) into n from dojo.identities where principal_id = client;
+    if n <> 0 then raise exception 'a maintainer read a viewer''s identity'; end if;
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000314"}', true);
+    select count(*) into n from dojo.identities where principal_id = client;
+    if n <> 0 then raise exception 'another dōjō''s admin read a viewer''s identity'; end if;
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000311"}', true);
 
     -- The admin grants the client (now a dōjō viewer) and a member.
     perform dojo.grant_project_viewer(p, client);

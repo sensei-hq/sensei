@@ -13,9 +13,10 @@
 -- | the personal dōjō's owner       | their personal projects (they admin it)  |
 -- | a member with no repo role      | nothing — membership alone reads nothing |
 --
--- WHAT BREAKS THIS TEST: a read policy keyed on anything but repository access or
--- a viewer grant (an owner column, plain membership, a team); can_read_repository
--- regaining an owner clause; a viewer grant reading another project.
+-- WHAT BREAKS THIS TEST: a read policy keyed on anything but repository access, a
+-- viewer grant or the dōjō's admin (an owner column, plain membership, a team);
+-- can_read_repository regaining an owner clause; a viewer grant reading another
+-- project; an admin unable to see their dōjō's project before it holds a repository.
 
 begin;
 
@@ -51,10 +52,13 @@ insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via)
 
 -- 1 P: in T (alice contributes, dave maintains; vic views).   2 Q: alice's PERSONAL project, in her personal dōjō.
 -- 4 S: in U.                     Each holds one repository; access is the repository's.
+-- 5 R: in T, NOT YET holding any repository — its admins still see it, to fill it
+--      and grant viewers on it; nobody else does.
 insert into dojo.projects (id, tenant_id, slug, name, classification) values
   ('c0000000-0000-4000-8000-000000000061', 'b0000000-0000-4000-8000-00000000006a', 'ztest-p', 'P', 'company'),
   ('c0000000-0000-4000-8000-000000000062', 'b0000000-0000-4000-8000-00000000006c', 'ztest-q', 'Q', 'personal'),
-  ('c0000000-0000-4000-8000-000000000064', 'b0000000-0000-4000-8000-00000000006b', 'ztest-s', 'S', 'company');
+  ('c0000000-0000-4000-8000-000000000064', 'b0000000-0000-4000-8000-00000000006b', 'ztest-s', 'S', 'company'),
+  ('c0000000-0000-4000-8000-000000000065', 'b0000000-0000-4000-8000-00000000006a', 'ztest-r', 'R', 'company');
 insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
   ('96000000-0000-4000-8000-000000000061', 'b0000000-0000-4000-8000-00000000006a', 'github.com/ztest-pr-t/p', 'p', 'github'),
   ('96000000-0000-4000-8000-000000000062', 'b0000000-0000-4000-8000-00000000006c', 'github.com/ztest-pr-alice/q', 'q', 'github'),
@@ -80,7 +84,7 @@ insert into expect values
   -- who     login                                   sees
   ('alice', 'a1000000-0000-4000-8000-000000000061', '1,2'),  -- a role on P's repository; her personal dōjō → Q
   ('dave',  'a1000000-0000-4000-8000-000000000062', '1'),    -- maintains P's repository
-  ('erin',  'a1000000-0000-4000-8000-000000000063', '1'),    -- admin of T: T's projects
+  ('erin',  'a1000000-0000-4000-8000-000000000063', '1,5'),  -- admin of T: T's projects, the empty one too
   ('zed',   'a1000000-0000-4000-8000-000000000064', ''),     -- member of T and U, no repository role: nothing
   ('carol', 'a1000000-0000-4000-8000-000000000065', '4'),    -- admin of U
   ('bob',   'a1000000-0000-4000-8000-000000000066', ''),     -- tenant lead, no repository role: nothing

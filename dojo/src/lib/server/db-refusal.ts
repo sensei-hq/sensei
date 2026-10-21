@@ -12,7 +12,10 @@ const STATUS: Record<string, number> = {
 	// invalid_parameter_value: the request names something the function refuses
 	// by name — an untracked branch, an unknown scope. The caller's to fix, not a
 	// server failure.
-	'22023': 422
+	'22023': 422,
+	// foreign_key_violation: the request names someone or something not in place
+	// yet — a project viewer grant to a person who is not in the dōjō (#307 D8).
+	'23503': 409
 };
 
 export function refusalStatus(error: { code?: string }): number {

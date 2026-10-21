@@ -166,7 +166,7 @@ describe('acceptInvite — every gate fails closed, none provisions unless all p
 		const out = await acceptInvite(db, 'u9', 'ada@acme.co', 'tok', NOW);
 		expect(out).toEqual({ tenant_id: 't1', role: null, access: 'viewer' });
 		expect(captured.rpcs).toEqual([
-			{ fn: 'add_dojo_viewer', args: { p_tenant: 't1', p_principal: 'u9', p_invited_by: 'admin-1' } }
+			{ fn: 'add_dojo_viewer', args: { p_tenant: 't1', p_principal: 'u9', p_invited_by: 'admin-1', p_email: 'ada@acme.co' } }
 		]);
 		expect(captured.inserts.filter((i) => i.table === 'memberships')).toEqual([]);
 		expect(captured.updates[0].payload.accepted_at).toBeTruthy();
