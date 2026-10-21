@@ -49,11 +49,14 @@
 		mine = [],
 		downstream = [],
 		stat,
+		error = null,
 		onPin
 	}: {
 		mine?: KitContribution[];
 		downstream?: KitDownstream[];
 		stat?: KitContribStat;
+		/** Why the last pin did not land. */
+		error?: string | null;
 		onPin?: (item: KitDownstream) => void;
 	} = $props();
 
@@ -79,6 +82,9 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+		{#if error}
+			<p role="alert" class="text-sm text-danger m-0">{error}</p>
+		{/if}
 		<ListSection icon="upload-square" title="What you've shared" count={mine.length}>
 			{#each mine as c, i (i)}
 				{@const s = CSTAT[c.status] ?? CSTAT.pending}

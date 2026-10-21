@@ -60,6 +60,17 @@ describe('ScrConstitution — stance dials + personal ladder', () => {
 describe('ScrRulePacks — adopt/drop rule bundles', () => {
 	afterEach(cleanup);
 
+	// #293: the flip is optimistic, so a refused adopt must flip back and say why.
+	it('puts a refused adopt back and shows the reason', async () => {
+		const onToggle = vi.fn().mockResolvedValue(false);
+		const available = rulePacks.length - rulePacks.filter((p) => p.adopted).length;
+		const { getAllByText, rerender, getByText } = render(ScrRulePacks, { props: { packs: rulePacks, onToggle } });
+		await fireEvent.click(getAllByText('Adopt')[0]);
+		await vi.waitFor(() => expect(getAllByText('Adopt').length).toBe(available));
+		await rerender({ packs: rulePacks, onToggle, error: 'Not adopted: forbidden' });
+		expect(getByText('Not adopted: forbidden')).toBeTruthy();
+	});
+
 	it('splits packs into adopted and available sections', () => {
 		const { getByText } = render(ScrRulePacks, { props: { packs: rulePacks } });
 		expect(getByText('Rule packs')).toBeTruthy();
@@ -185,6 +196,13 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 
 describe('ScrContributions — shared upstream + approved downstream', () => {
 	afterEach(cleanup);
+
+	it('shows why a pin failed', () => {
+		const { getByText } = render(ScrContributions, {
+			props: { mine: contributionsMine, downstream: contributionsDownstream, stat: contributionsStat, error: 'Not pinned: forbidden' }
+		});
+		expect(getByText('Not pinned: forbidden')).toBeTruthy();
+	});
 
 	it('tallies the stat row and renders both sections', () => {
 		const { getByText } = render(ScrContributions, {
