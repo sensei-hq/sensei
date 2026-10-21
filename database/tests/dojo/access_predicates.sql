@@ -1,21 +1,22 @@
 -- The access matrix's predicates (#236 step 2a, docs/spec/dojo/access-matrix.md).
 --
--- Every dōjō policy reduces to four relationships between the signed-in
+-- Every dōjō policy reduces to a few relationships between the signed-in
 -- principal and a row: is a member of its tenant, holds at least a tenant role,
--- is on a team that owns its project, leads such a team. These functions are
--- those four, and nothing else decides them.
+-- holds at least a role on its repository (#307 D5 — access lives on
+-- repositories, superseding team membership). These functions are those, and
+-- nothing else decides them.
 --
 -- The fixture makes each assertion distinguishable from its neighbours:
---   alice  contributor in T, on team X (which owns project P)
---   dave   maintainer  in T, LEAD of team X
---   bob    lead (TENANT role) in T, on no team — the tenant lead is not a team lead
---   erin   admin in T, on no team
+--   alice  contributor in T, contributor on repository R
+--   dave   maintainer  in T, maintainer on R
+--   bob    lead (TENANT role) in T, no role on R — the tenant lead is not a repo maintainer
+--   erin   admin in T, no role on R
 --   frank  admin in T, DISABLED — a disabled membership is no membership
 --   carol  contributor in tenant U only
 --
 -- WHAT BREAKS THIS TEST: ignoring `disabled_at`; comparing roles by text instead
 -- of the enum's order (lead must outrank maintainer); treating the tenant role
--- `lead` as a team lead; letting any of these answer true with no JWT.
+-- `lead` as a repository role; letting any of these answer true with no JWT.
 
 begin;
 
@@ -45,13 +46,14 @@ insert into dojo.projects (id, tenant_id, slug, name) values
   ('c0000000-0000-4000-8000-0000000000f1',
    'b0000000-0000-4000-8000-00000000000a', 'ztest-access-p', 'project P');
 
-insert into dojo.teams (id, tenant_id, name) values
-  ('d0000000-0000-4000-8000-0000000000e1', 'b0000000-0000-4000-8000-00000000000a', 'ztest team X');
-insert into dojo.team_members (team_id, principal_id, role) values
-  ('d0000000-0000-4000-8000-0000000000e1', 'a0000000-0000-4000-8000-000000000001', 'contributor'),
-  ('d0000000-0000-4000-8000-0000000000e1', 'a0000000-0000-4000-8000-000000000002', 'lead');
-insert into dojo.team_projects (team_id, project_id) values
-  ('d0000000-0000-4000-8000-0000000000e1', 'c0000000-0000-4000-8000-0000000000f1');
+insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
+  ('90000000-0000-4000-8000-0000000000f1', 'b0000000-0000-4000-8000-00000000000a', 'github.com/ztest-access/r', 'r', 'github');
+insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id) values
+  ('c0000000-0000-4000-8000-0000000000f1', '90000000-0000-4000-8000-0000000000f1', 'b0000000-0000-4000-8000-00000000000a');
+insert into dojo.repository_roles (repository_id, principal_id, forge_permission, forge_role) values
+  ('90000000-0000-4000-8000-0000000000f1', 'a0000000-0000-4000-8000-000000000001', 'write',    'contributor'),
+  ('90000000-0000-4000-8000-0000000000f1', 'a0000000-0000-4000-8000-000000000002', 'maintain', 'maintainer'),
+  ('90000000-0000-4000-8000-0000000000f1', 'a0000000-0000-4000-8000-000000000005', 'admin',    'admin');
 
 set local role authenticated;
 
@@ -70,15 +72,16 @@ insert into expect values
   ('erin',  'role>=lead',       true),
   ('frank', 'role>=lead',       false),  -- disabled admin is nothing
   ('carol', 'role>=lead',       false),
-  (null,    'on_team',          false),
-  ('alice', 'on_team',          true),
-  ('dave',  'on_team',          true),
-  ('bob',   'on_team',          false),
-  ('carol', 'on_team',          false),
-  ('alice', 'leads_team',       false),
-  ('dave',  'leads_team',       true),
-  ('bob',   'leads_team',       false),  -- the tenant lead is not a team lead
-  ('erin',  'leads_team',       false);
+  (null,    'repo>=contributor', false),
+  ('alice', 'repo>=contributor', true),
+  ('dave',  'repo>=contributor', true),
+  ('bob',   'repo>=contributor', false),
+  ('carol', 'repo>=contributor', false),
+  ('frank', 'repo>=contributor', false),  -- a forge admin with a disabled membership is nothing
+  ('alice', 'repo>=maintainer',  false),
+  ('dave',  'repo>=maintainer',  true),
+  ('bob',   'repo>=maintainer',  false),  -- the tenant lead is not a repository maintainer
+  ('erin',  'repo>=maintainer',  false);
 
 do $$
 declare
@@ -86,7 +89,7 @@ declare
     sub text;
     got boolean;
     t constant uuid := 'b0000000-0000-4000-8000-00000000000a';
-    p constant uuid := 'c0000000-0000-4000-8000-0000000000f1';
+    repo constant uuid := '90000000-0000-4000-8000-0000000000f1';
 begin
     for r in select * from expect loop
         sub := case r.who
@@ -104,8 +107,8 @@ begin
             when 'is_member'        then dojo.is_member(t)
             when 'role>=maintainer' then dojo.tenant_role_at_least(t, 'maintainer')
             when 'role>=lead'       then dojo.tenant_role_at_least(t, 'lead')
-            when 'on_team'          then dojo.on_team_of(p)
-            when 'leads_team'       then dojo.leads_team_of(p)
+            when 'repo>=contributor' then dojo.repo_role_at_least(repo, 'contributor')
+            when 'repo>=maintainer'  then dojo.repo_role_at_least(repo, 'maintainer')
         end;
         if got is distinct from r.want then
             raise exception 'access predicate %: % should be %, got %',

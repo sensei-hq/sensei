@@ -45,7 +45,7 @@ is a bug in the policy.
 `dojo.member_role`'s declared order and the entity model's. The dōjō's code
 ladder is pinned to that order by `dojo-access-ladder.spec.ts`.
 
-**Superseded 2026-10-21 (#307 D5–D8).** Access moves from team membership to **repository roles**; teams become groupings with no access meaning, and a project's own permission is the read-only viewer grant. The paragraph below records the earlier decision until the predicates are rewired (#307 A2).
+**Superseded 2026-10-21 (#307 D5–D8).** Access moves from team membership to **repository roles**; teams become groupings with no access meaning, and a project's own permission is the read-only viewer grant. The predicates are rewired (#307 A2b): `can_read_repository` (any role on the repository), `can_read_repository_metric` (another person's rows: maintainer and above on the repository), `peer_run_status` (a role on one of the project's repositories), `can_read_project` (also its viewers); `on_team_of` / `leads_team_of` are retired. The paragraph below records the earlier decision.
 
 **Two leads, on purpose.** The tenant role `lead` (client work) and the team
 role `lead` (cross-user project data) answer different questions. The second

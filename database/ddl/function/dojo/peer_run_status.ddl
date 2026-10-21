@@ -2,8 +2,8 @@ set search_path to dojo, extensions;
 
 -- Which runs in a tenant the signed-in person may know are going, and their
 -- status — never their content (#252; access matrix "Relay", run-status row).
--- The owner sees their runs; a member or lead of a team owning the run's project
--- sees it; a tenant admin sees every run in the tenant. Relay content (title,
+-- The owner sees their runs; anyone with a role on a repository of the run's
+-- project sees it (#307 D5); a tenant admin sees every run in the tenant. Relay content (title,
 -- goal, phase, gates, replies) stays the owner's (#249), so none of it is
 -- returned. Pinned to the session's principal: there is no user argument.
 create or replace function dojo.peer_run_status(p_tenant uuid)
@@ -27,7 +27,10 @@ as $$
        and m.disabled_at is null
        and dojo.is_member(p_tenant)
        and (   m.user_id = dojo.current_principal_id()
-            or (s.project_id is not null and dojo.on_team_of(s.project_id))
+            or (s.project_id is not null and exists (
+                  select 1 from dojo.repositories_in_projects rip
+                   where rip.project_id = s.project_id
+                     and dojo.repo_role_at_least(rip.repository_id, 'contributor')))
             or dojo.tenant_role_at_least(p_tenant, 'admin'))
      order by s.started_at desc;
 $$;
@@ -37,5 +40,6 @@ grant execute on function dojo.peer_run_status(uuid) to authenticated;
 
 comment on function dojo.peer_run_status(uuid) is
 'Status (never content) of the tenant''s runs the signed-in person may know are
-going: their own, those on a project their team owns, and — for a tenant admin —
-all of them (#252). Pinned to the session''s principal.';
+going: their own, those on a project with a repository they hold a role on (#307
+D5), and — for a tenant admin — all of them (#252). Pinned to the session''s
+principal.';

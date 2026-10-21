@@ -3,18 +3,17 @@
 --
 -- | row                 | sees it                                                      |
 -- |---------------------|--------------------------------------------------------------|
--- | scope = repo        | a member on a team owning a project with the repository, a   |
--- |                     | tenant admin. Projects have no owner (#299): shared items.   |
+-- | scope = repo        | anyone with a role on the repository (#307 D5); a tenant      |
+-- |                     | admin. Projects have no owner (#299): shared items.          |
 -- | scope = user, own   | its own person, always                                       |
--- | scope = user, other | a TEAM LEAD of a project with the repository; a tenant admin |
+-- | scope = user, other | a MAINTAINER or above on the repository (#307 D6); an admin  |
 --
--- The function this replaces put every case behind the team traversal, so a
--- person's OWN metrics were invisible to them unless they sat on a team, an
--- admin saw nothing off-team, and no team lead could see a member's numbers.
+-- Access lives on repositories (#307 D5, superseding team membership).
 --
--- WHAT BREAKS THIS TEST: requiring a team for own rows; letting a team member
--- (not lead) read another's user-scoped rows; treating the TENANT lead as a team
--- lead; dropping the admin clause; reintroducing a project-owner clause.
+-- WHAT BREAKS THIS TEST: requiring a role for own rows; letting a contributor
+-- read another's user-scoped rows; treating the TENANT lead as a repository
+-- maintainer; dropping the admin clause; reintroducing a project-owner or team
+-- clause.
 
 begin;
 
@@ -42,20 +41,13 @@ insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via)
   ('b0000000-0000-4000-8000-00000000002b', 'a0000000-0000-4000-8000-000000000026', 'admin',       'employer', 'github_oauth'),
   ('b0000000-0000-4000-8000-00000000002a', 'a0000000-0000-4000-8000-000000000027', 'contributor', 'employer', 'github_oauth');
 
--- Project P (team X: alice member, dave lead) holds repository R.
--- Project Q (on no team) holds repository S.
+-- Project P holds repository R (alice contributes, dave maintains).
+-- Project Q holds repository S (nobody has a role on it).
 insert into dojo.projects (id, tenant_id, slug, name) values
   ('c0000000-0000-4000-8000-0000000000f2',
    'b0000000-0000-4000-8000-00000000002a', 'ztest-metrics-p', 'project P'),
   ('c0000000-0000-4000-8000-0000000000f3',
    'b0000000-0000-4000-8000-00000000002a', 'ztest-metrics-q', 'project Q');
-insert into dojo.teams (id, tenant_id, name) values
-  ('d0000000-0000-4000-8000-0000000000e2', 'b0000000-0000-4000-8000-00000000002a', 'ztest metrics team X');
-insert into dojo.team_members (team_id, principal_id, role) values
-  ('d0000000-0000-4000-8000-0000000000e2', 'a0000000-0000-4000-8000-000000000021', 'contributor'),
-  ('d0000000-0000-4000-8000-0000000000e2', 'a0000000-0000-4000-8000-000000000022', 'lead');
-insert into dojo.team_projects (team_id, project_id) values
-  ('d0000000-0000-4000-8000-0000000000e2', 'c0000000-0000-4000-8000-0000000000f2');
 
 insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
   ('90000000-0000-4000-8000-0000000000a1', 'b0000000-0000-4000-8000-00000000002a',
@@ -65,9 +57,13 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
 insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id) values
   ('c0000000-0000-4000-8000-0000000000f2', '90000000-0000-4000-8000-0000000000a1', 'b0000000-0000-4000-8000-00000000002a'),
   ('c0000000-0000-4000-8000-0000000000f3', '90000000-0000-4000-8000-0000000000a2', 'b0000000-0000-4000-8000-00000000002a');
+-- Repository roles, as the forge mirror leaves them.
+insert into dojo.repository_roles (repository_id, principal_id, forge_permission, forge_role) values
+  ('90000000-0000-4000-8000-0000000000a1', 'a0000000-0000-4000-8000-000000000021', 'write',    'contributor'),
+  ('90000000-0000-4000-8000-0000000000a1', 'a0000000-0000-4000-8000-000000000022', 'maintain', 'maintainer');
 
 -- One metric, five rows: R repo-scoped, R user-scoped for alice / dave / zed
--- (zed is on no team), S repo-scoped.
+-- (zed has no role on R), S repo-scoped.
 insert into dojo.repository_metrics (id, tenant_id, repository_id, metric_id, scope, principal_id, computed_on, value)
 select v.id::uuid, 'b0000000-0000-4000-8000-00000000002a', v.repo::uuid, m.id, v.scope, v.who::uuid, current_date, 1
   from (values
@@ -84,12 +80,12 @@ set local role authenticated;
 -- Which of the five rows each person sees, by the row's last digit.
 create temp table expect (who text, sub text, want text) on commit drop;
 insert into expect values
-  ('alice', 'a1000000-0000-4000-8000-000000000021', '1,2'),     -- team repo row + own; not dave's
-  ('dave',  'a1000000-0000-4000-8000-000000000022', '1,2,3,4'), -- team lead: every user row on R
-  ('zed',   'a1000000-0000-4000-8000-000000000027', '4'),       -- own row, on no team
-  ('bob',   'a1000000-0000-4000-8000-000000000023', ''),        -- tenant lead, no team: nothing
+  ('alice', 'a1000000-0000-4000-8000-000000000021', '1,2'),     -- contributor on R: repo row + own; not dave's
+  ('dave',  'a1000000-0000-4000-8000-000000000022', '1,2,3,4'), -- maintainer on R: every user row on R
+  ('zed',   'a1000000-0000-4000-8000-000000000027', '4'),       -- own row, no role on R
+  ('bob',   'a1000000-0000-4000-8000-000000000023', ''),        -- tenant lead, no repository role: nothing
   ('erin',  'a1000000-0000-4000-8000-000000000024', '1,2,3,4,5'),-- tenant admin: all
-  ('ivy',   'a1000000-0000-4000-8000-000000000025', ''),        -- member on no owning team: nothing (no owners, #299)
+  ('ivy',   'a1000000-0000-4000-8000-000000000025', ''),        -- member with no repository role: nothing (no owners, #299)
   ('carol', 'a1000000-0000-4000-8000-000000000026', '');        -- admin of ANOTHER tenant
 
 do $$

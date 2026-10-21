@@ -140,6 +140,9 @@ apply:
     # USAGE on `dojo` for the API roles (+ service_role's table grants) — what
     # used to be a manual Supabase deploy step. No-op where `dojo` is absent.
     - apply/after/dojo_api_grants.sql
+    # Drops functions the design no longer has — reconcile prunes orphaned
+    # tables but not functions. No-op once they are gone.
+    - apply/after/retired_functions.sql
 
 import:
   staging:
