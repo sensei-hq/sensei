@@ -23,7 +23,7 @@ Live: `(app)/+layout.server.ts` → `loadConsoleContext` → `listUserOrgs(user.
 | row: role tag | `d.role` | `dojo.memberships.role` → `ROLE_LABEL` → `roleKey` | **have** | — |
 | row: route | `d.route` | `dojo.tenants.key` (the tenant key/discovery path) | **have** | — |
 | row: members count | `d.members` | **hardcoded 0** in `tenantToOrg` (`toKitDojo` passes it through) | plumb | — |
-| row: projects count | `d.projects` | **hardcoded 0** in `toKitDojo` | plumb | — |
+| row: workspaces count | `d.projects` | **hardcoded 0** in `toKitDojo` | plumb | — |
 | row: needs badge | `d.needs` | `DojoOrg.pending` → **hardcoded 0** in `tenantToOrg` | plumb | — |
 | row open → org | `onOpen(d)` | `[section]/+page.svelte` — **`ScrMyDojos onOpen` NOT passed** on this route; row is inert (mockup switches org context) | plumb | — |
 | empty state | `空 No dōjōs yet` + Create/join | `EmptyState` when no memberships (DJ1) | have | — |
@@ -56,11 +56,11 @@ Live: `(app)/+layout.server.ts` → `loadConsoleContext` → `listUserOrgs(user.
 
 ### Resolved design (2026-07-30)
 - **Q1 (factual):** `dojo.memberships.kind` (enum `membership_kind`) and `dojo.tenants.origin` (enum `tenant_origin`) **both exist** — the read just omits `kind`. Fix = add `memberships.kind` to `TENANT_COLS`, derive the glyph from `kind`. Kills the "everything → Communities" bug. No new schema.
-- **Q2 counts → COMPUTE real counts:** members (per tenant), projects (from `dojo.projects` once it lands), pending (asks per membership). Extra per-tenant queries; no fabricated 0s.
+- **Q2 counts → COMPUTE real counts:** members (per tenant), workspaces (from `dojo.projects` once it lands), pending (asks per membership). Extra per-tenant queries; no fabricated 0s.
 - **Q3 row click → NAVIGATES into org:** clicking a dōjō row enters that dōjō's org console (`/org/[slug]`) — a nav path alongside the OrgSwitcher.
 - **Q4 create/join → IN SCOPE. ALL THREE flows:** (1) self-serve create (user creates an org/client dōjō, becomes admin), (2) magic-link invite (admin invites via kavach magic link → membership on accept), (3) GitHub-org auto-join (SSO-style auto-provision from GitHub org membership).
 - **Q5 personal dōjō → SHOW it as a row** (a `Personal` group).
-- **Depends on:** WS-0 Rule A (user-wide membership read) + `dojo.projects` (for the projects count) + WS-1 identity (member names, if shown).
+- **Depends on:** WS-0 Rule A (user-wide membership read) + `dojo.projects` (for the workspaces count) + WS-1 identity (member names, if shown).
 
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 

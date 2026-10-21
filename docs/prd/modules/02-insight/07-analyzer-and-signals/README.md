@@ -9,10 +9,10 @@ team developer ([persona 2](../../../03-personas.md#2--team-developer--the-inher
 The analyzer is what turns raw captured activity into the numbers and copy every
 screen depends on. Without it, `sensei.projects` has rows but nothing to say about
 them — no FTR, no signals, no memories, no model preference. With it, every session
-that lands enriches the project, and every project that grows updates its downstream
+that lands enriches the workspace, and every workspace that grows updates its downstream
 signals — Today's "one thing", the health-signal cards, tool insights, the
 recommendation queue, and the memory pipeline all wake up. The scheduler runs on a
-persisted per-project **watermark**: genuinely new activity is due, nothing else, and
+persisted per-workspace **watermark**: genuinely new activity is due, nothing else, and
 a daemon restart never re-analyzes the world. A daily full refresh keeps the
 time-based insights fresh. The user feels this module as *sensei seems to know*, the
 day after setup.
@@ -58,7 +58,7 @@ day after setup.
   (`ftr IS NULL` OR `corrections IS NULL`). A failed `enrich_session` leaves
   `analyzed_at` NULL so the next tick retries.
 - **Downstream best-effort.** `generate`/`consolidate`/`model_insight` failures are
-  `tracing::warn!` with the project id — never fatal to the tick.
+  `tracing::warn!` with the workspace id — never fatal to the tick.
 - **Scoped signal derivation.** `derive_signals` only touches `affected` folders —
   `inference.detected_patterns` must not grow unbounded on every tick.
 - **`sensei.tool_usage_stats`** — one row per tool ever called (`call_count` ·
@@ -85,14 +85,14 @@ day after setup.
 | Summary cards (`unused`/`win`) | >1 dormant/workhorse collapse to ONE card each | "5 tools dormant · {short}…" |
 | Today insights / adopted | recommendation queue + memory adoption lane | "promote pattern?" · "adopted: use dbd for migrations" |
 | Community view | `DetectCommunities` daily full-refresh only | cluster colouring in Atlas |
-| Model preference chip | `model_insight` per-project | "Opus 4.6 chasing 0.82 here — try it" |
+| Model preference chip | `model_insight` per-workspace | "Opus 4.6 chasing 0.82 here — try it" |
 
 ## Done gate
 
-- On a warm daemon with new sessions since the last tick, exactly those projects are
+- On a warm daemon with new sessions since the last tick, exactly those workspaces are
   enqueued — not all. With no new sessions, **nothing** is written per tick until the
   daily full-refresh window opens.
-- After restart, the watermark is restored; only projects newer than the persisted
+- After restart, the watermark is restored; only workspaces newer than the persisted
   watermark queue (pinned by `analyze_project_enriches_sessions_and_writes_turns`
   and the "unchanged session skipped" tests).
 - `GET /api/observatory/tool-signals` on a ≥20-tool registry where most are dormant
@@ -112,7 +112,7 @@ curl -s http://localhost:7744/api/tasks?status=queued | jq 'length'
 
 ## Wrong gate
 
-- **Every tick re-analyzes every project** — watermark not advancing.
+- **Every tick re-analyzes every workspace** — watermark not advancing.
 - **Daemon restart re-analyzes the world** — watermark JSON broken on read.
 - **`ftr14d` reads 0 despite FTR-true sessions** — `session_outcomes` never wrote the
   daily rows or the window filter misfired.
@@ -136,7 +136,7 @@ curl -s http://localhost:7744/api/tasks?status=queued | jq 'length'
 
 - No M7 rows in [06-gaps.md](../../../../roadmap/06-gaps.md) today; the plane's P1s
   are M8's (M-7/M-8/M-9) and the unbuilt feeds M10 and #156 note. Watch: the "low
-  signal" chip on thin projects (median turns < 3) and per-model FTR decision aids
+  signal" chip on thin workspaces (median turns < 3) and per-model FTR decision aids
   are specified but not shipped.
 
 ## Related

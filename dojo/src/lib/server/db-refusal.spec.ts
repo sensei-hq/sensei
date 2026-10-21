@@ -8,7 +8,9 @@ describe('refusalStatus', () => {
 		['P0002', 404], // no_data_found
 		['55000', 409], // object_not_in_prerequisite_state
 		['42501', 403], // insufficient_privilege
-		['22023', 422] // invalid_parameter_value: the request names something the function refuses by name
+		['22023', 422], // invalid_parameter_value: the request names something the function refuses by name
+		['23505', 409], // unique_violation: a name already taken (a team)
+		['23503', 409] // foreign_key_violation: names someone or something not in place yet (a viewer not in the dōjō)
 	] as const) {
 		it(`turns ${code} into ${status}`, () => {
 			expect(refusalStatus({ code })).toBe(status);

@@ -3,7 +3,7 @@
 One spec per screen in this folder (21 screens), each keyed to its mockup component
 (`docs/mockups/Sensei/lib/dojo2/dojo2-app.jsx`), tracing every bound field to a real source and
 marking status. Canonical model: `docs/architecture/entity-access-model.md`. Conflict/impact list:
-`docs/plan/2026-07-27-data-model-fix-impact-register.md`.
+`docs/history/plan/2026-07-27-data-model-fix-impact-register.md`.
 
 ## Spec convention — three-layer state pattern (added 2026-07-28)
 
@@ -46,8 +46,8 @@ STUB screens render faithfully but their loader returns empty/fixture. So the ro
 | Screen | Zone | Axis | Status | Core gap |
 |---|---|---|---|---|
 | inbox | personal | user | PARTIAL | single-tenant (should be user-wide); no pips/repo/realtime; old gate card not mockup AskCard |
-| projects | personal | user | STUB | loader returns `[]`; no projects endpoint/source |
-| project-detail | personal | user | STUB | project/ladder/conflicts all fixtures; no resolve endpoint |
+| workspaces | personal | user | STUB | loader returns `[]`; no workspaces endpoint/source |
+| workspace-detail | personal | user | STUB | workspace/ladder/conflicts all fixtures; no resolve endpoint |
 | my-dojos | personal | user | PARTIAL | real memberships, but kind/counts hardcoded |
 | contributions | personal | user | STUB | loader empty; no contributions endpoint |
 | constitution | governance | tenant | PARTIAL | W1 mapper built but wired to nothing; reads fixtures |
@@ -75,7 +75,7 @@ STUB screens render faithfully but their loader returns empty/fixture. So the ro
 - **WS-1 · Identity resolution** — a shared `user_id → display name` (via `dojo.identities`).
   Unblocks my-dojos, role-surfaces, incidents, members, and the audit actor.
 - **WS-2 · Fixture → `/v1` read endpoints** — the bulk: governance (constitution mapper→endpoint,
-  rule-packs, scopes, org-ladder), personal (projects, contributions), knowledge, org-home summary.
+  rule-packs, scopes, org-ladder), personal (workspaces, contributions), knowledge, org-home summary.
 - **WS-3 · New tables / schema gaps** — real blockers, not just wiring: **scope-ownership**,
   **IdP/SCIM settings**, **pricing catalog**, **decisions/2-sig quorum**, **knowledge read**.
 - **WS-4 · Wire mutations** — decide/approve/edit CTAs are inert across triage/approvals/identity/
@@ -84,8 +84,8 @@ STUB screens render faithfully but their loader returns empty/fixture. So the ro
 
 ## Suggested priority (dependency-aware)
 1. **WS-0** data-model fixes (canon base) — with the two pending plans (inbox fidelity + RLS).
-2. **Personal zone** (primary/user surface): inbox → my-dojos → projects → contributions →
-   project-detail. Needs WS-1 + WS-2.
+2. **Personal zone** (primary/user surface): inbox → my-dojos → workspaces → contributions →
+   workspace-detail. Needs WS-1 + WS-2.
 3. **Governance** (tenant): constitution (mapper→endpoint) → rule-packs → org-ladder → scopes (WS-3).
 4. **Org console**: org-home → role-surfaces → identity → billing → health.
 5. **Org ops**: triage → approvals (WS-3 decisions) → knowledge (WS-2/3).
@@ -95,7 +95,7 @@ STUB screens render faithfully but their loader returns empty/fixture. So the ro
 ## Open questions for Dev — consolidated (full detail in each spec)
 
 **A. Draw the pre-release scope line** (many screens ask "is X in scope pre-release, or stay
-honest-empty?"): cross-dōjō projects list · contributions · billing invoices/payment provider ·
+honest-empty?"): cross-dōjō workspaces list · contributions · billing invoices/payment provider ·
 incident detail · knowledge read · self-host auth.
 
 **B. New tables / schema gaps — build now vs defer/derive** (WS-3):
@@ -106,7 +106,7 @@ incidents, members, audit actor) — in scope this pass?
 
 **D. Confirm these ride the WS-0 data-model pass** (register): inbox user-wide + drop `user_id`
 + persist `project_slug`; `engagements.client` split; dereference/attribution rewording on
-project-detail · contributions · signin · scopes · engagements; role-surfaces `dojo_url`/
+workspace-detail · contributions · signin · scopes · engagements; role-surfaces `dojo_url`/
 `attribution_default`.
 
 **E. Per-screen semantic decisions** (the ones that change the build):

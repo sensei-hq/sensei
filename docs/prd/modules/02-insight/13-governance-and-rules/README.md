@@ -47,7 +47,7 @@ rules are the Team plane on top of the same primitives. The user feels this modu
   [Instruction delivery & stickiness](#instruction-delivery--stickiness); the
   solution-scope rule cascade.
 - Out: the Dōjō share plane — triage, distribution, tenant consoles, identity/SSO,
-  leak-guard, Collective commons (T1–T4, shares the same rule primitives up-stream);
+  leak-guard, Collective commons (T1–T6, shares the same rule primitives up-stream);
   the MCP `get_rules`/`get_layered_context` *consumer* surfaces in the assistant
   (interface here, delivery in the Assistant-plane modules).
 
@@ -66,7 +66,7 @@ rules are the Team plane on top of the same primitives. The user feels this modu
   `structure_ruleset`/`RawRule`/`ResolvedRule`),
   `crates/senseid/src/db/pg_store/governance.rs::resolve_rules_raw` (cached 5 min).
 - **App** — Preferences → Rules (ladders per concern, mandatory/advisory flags,
-  retire), Project Patterns promote surface, Insights violation cards.
+  retire), Workspace Patterns promote surface, Insights violation cards.
 
 ## Data invariants
 
@@ -102,16 +102,16 @@ rules are the Team plane on top of the same primitives. The user feels this modu
 - **Sources of rule rows** are recorded in `origin` and the promotion provenance
   (`promoted:memory:{id}`, `promoted:pattern:{id}`, `chosen:option:{category}`,
   `derived`, `dojo:{org}:{artifact}`, `user_added`, `remote`).
-- **Solution cascade** (multi-repo): global → org → solution → project → module,
+- **Solution cascade** (multi-repo): global → org → solution → workspace → module,
   walk-merged by the resolver; solution rules may not be overridden by member
-  projects when `mandatory`.
+  workspaces when `mandatory`.
 - **Stance is authored elsewhere, resolved here.** The dials (autonomy · sharing
   · review) and the non-authorable anonymization floor are specified in
   [T2 §Stance](../../04-team/02-dojo-consoles/README.md#stance--three-dials-and-a-fixed-floor);
   this module owns their **effect** — autonomy decides how far an agent goes
   before it gates to a human, the strict posture refuses every autonomous action
   unless explicitly permitted, and the stance resolves most-specific-first (a
-  project's beats its team's, which beats the default). The rule model is not
+  workspace's beats its team's, which beats the default). The rule model is not
   restated there, and the stance semantics are not restated here.
 
 ## Instruction delivery & stickiness
@@ -175,8 +175,8 @@ so guidance sticks on long runs" — this is that requirement, made testable.
 
 - `~/.sensei/rules.md` parses into the store with correct ladder + priority + scope;
   editing it while the daemon runs hot-reloads within the debounce window.
-- `get_rules(project=X)` returns the priority-ordered merged list; a P0 project rule
-  never loses to a P2 project rule; mandatory rules survive tighter-scope conflicts
+- `get_rules(project=X)` returns the priority-ordered merged list; a P0 workspace rule
+  never loses to a P2 workspace rule; mandatory rules survive tighter-scope conflicts
   (the conflicting tighter rule is flagged).
 - A battle-tested memory promoted to a rule carries `origin = 'promoted'`; retiring the
   source memory archives/retires the rule.
@@ -211,11 +211,11 @@ psql -A -t -c "select max(modified_at) from sensei.memories
 
 - **`get_rules` returns insertion order, not priority** — resolver not applying the
   ladder.
-- **A P2 project-scope rule beats a P0 project-scope rule** — priority inversion.
+- **A P2 workspace-scope rule beats a P0 workspace-scope rule** — priority inversion.
 - **`~/.sensei/rules.md` edits require a restart** — hot-reload broken.
 - **Promoted rule stays active after its source memory retires** — provenance link
   broken.
-- **A project-scope rule leaks into another project's `get_rules`** — scope filter.
+- **A workspace-scope rule leaks into another workspace's `get_rules`** — scope filter.
 - **A P0 violation didn't block the action** — verifier not consulted, or the wrong
   scope's ruleset was read.
 - **A bypass shipped without an override row or an expiry** — audit trail broken.
@@ -274,7 +274,7 @@ psql -A -t -c "select max(modified_at) from sensei.memories
   stickiness](#instruction-delivery--stickiness).
 - [features/governance/feature.md](../../../../features/governance/feature.md) —
   grounding/stickiness story · [features/05-governance.md](../../../../features/05-governance.md) —
-  the Dōjō plane (folds with T1–T4, not here).
+  the Dōjō plane (folds with T1–T6, not here).
 - [spec/pipeline/memory](../../../../spec/pipeline/memory.md) — promotion path ·
   [spec/pipeline/patterns](../../../../spec/pipeline/patterns.md) — verifier
   conformance.

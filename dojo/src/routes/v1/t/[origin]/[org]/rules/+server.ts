@@ -3,8 +3,7 @@
 // (api.rs). The daemon's `KnowledgeSource.url` points at this tenant path and
 // presents the person's session (`resolveTenantCaller`, #236 step 4). The wire shape matches
 // `dojo_protocol` (PublishResponse / PullResponse) so senseid's federation
-// client retargets with only a URL/auth swap. See
-// docs/plan/2026-07-23-retire-dojo-mind.md (D1 option a).
+// client retargets with only a URL/auth swap (dojo-mind retirement, D1 option a).
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { callerDb } from '$lib/server/caller-db';

@@ -30,11 +30,15 @@ as *numbers that don't lie, and say what they're for*.
   the **master-detail model + gating eligibility** (2026-10-13 decision 8,
   reorg §9.6 — the spec this module authors) and the per-metric design/coverage record
   (M-9); coverage-gated presentation (#155 generalised — M-8); the retired-feeds
-  accounting (#153 `churn_rate`, #154 `time_to_useful_result` — D-6).
+  accounting (D-6: #153 `churn_rate` and #154 `time_to_useful_result`, both fixed and closed
+  2026-10-19).
 - Out: the analyzer that produces per-session `sessions.ftr` (M7 — this module rolls
   it up); surfacing in the apps (overview/impact chips, health dial, radar — Delivery
-  plane); DORA delivery module (C-3; prereq deploy/release detector, deferred); the
-  architecture-metrics family (#156) is spec'd separately and unblocks T3's gates.
+  plane); DORA delivery metrics and release gates (specified in [T5](../../04-team/05-releases-and-dora/README.md); the five keys land in this module's plumbing); the
+  architecture-metrics family (#156) is spec'd separately and unblocks T3's gates;
+  **diagrams of the architecture metrics** — the layers histogram, zones and cycles
+  are drawn once, by the Code map ([M17](../../03-delivery/17-code-map/README.md)).
+  Metrics keeps their numbers and trends and links into the lens that explains them.
 
 ## Surfaces
 
@@ -46,7 +50,7 @@ as *numbers that don't lie, and say what they're for*.
   components), `POST /api/metrics/backfill`. The legacy name-keyed
   `GET /api/metrics/{project}` remains a landmine (it fabricated zeroes) — consumers
   repoint; see Wrong gate.
-- **Daemon** — `tasks/metrics_scheduler.rs` (compute-project wave per repository,
+- **Daemon** — `tasks/metrics_scheduler.rs` (compute-workspace wave per repository,
   watermark-frozen as_of) + `tasks/handlers/metrics/*.rs` (per-family compute:
   session_outcomes, autonomy, churn, coverage, quality, cost, usage, knowledge,
   architecture, session_process, planner).
@@ -77,7 +81,7 @@ as *numbers that don't lie, and say what they're for*.
   was computed. `computed_by` (`local | dojo`) is the loop-breaker for
   pull-else-compute; `shared_at` records the Dōjō push.
 - **Read-side model.** `metric_facts` (joined facts) → `project_metric_daily`
-  (Σ num/Σ den day-pool per project) → weekly/monthly/quarterly; `project_metric_trend`
+  (Σ num/Σ den day-pool per workspace) → weekly/monthly/quarterly; `project_metric_trend`
   adds `prior` + `delta` via `lag()`, with `direction` travelling so the UI can colour
   without a registry re-join.
 - **Health is derived on read, never stored.** `project_health_score` (latest) and
@@ -125,6 +129,7 @@ as *numbers that don't lie, and say what they're for*.
 | Health dial + radar | `project_health_score`; radar plots **ratings**, never raw values | 82, from 18 of 21 metrics |
 | Coverage readout | `rated_metrics`/`total_weight` + trend `coverage` | "65, from 18 of 21 metrics" — never a bare number |
 | Pareto / heatmap | churn concentration, module friction map | rework_density per module |
+| Architecture metric (layers, zones, cycles) | the number and its trend, plus a link into the Code map lens | layers `25 up` → Structure with *Colour by direction*; zone of pain → Zones; cycles → Cycles |
 
 ## Done gate
 
@@ -168,11 +173,13 @@ curl -s http://localhost:7744/api/projects/sensei/health \
   weight-0 metric rendered with good/bad colour**.
 - **`coverage` ignored** — a repo sensei knows almost nothing about reading as
   perfect (#155 inversion: 1 metric → 98).
+- **An architecture metric drawing its own diagram** — a layers histogram, zone plot
+  or cycle graph inside Metrics, grouped differently from the Code map's lens.
 - **Health rows stored** — the composite must stay a view; storing it reintroduces
   drift and backfill.
-- **Metric defected but still advertised** — #153 `churn_rate` (caption describes the
-  retired indexing feed) and #154 `time_to_useful_result` (rating scale in minutes,
-  value in seconds) are the standing examples (D-6).
+- **Metric defected but still advertised** — the examples were #153 `churn_rate` (caption
+  described the retired indexing feed) and #154 `time_to_useful_result` (rating scale in
+  minutes, value in seconds), both closed 2026-10-19 (D-6).
 
 ## Scenarios
 
@@ -187,8 +194,8 @@ curl -s http://localhost:7744/api/projects/sensei/health \
   generalised; P1).
 - [M-9](../../../../roadmap/06-gaps.md) — no per-metric design/coverage record tying
   a metric to its chart and LOD (P1).
-- D-6 — metric doc defects (#153 `churn_rate`, #154 `time_to_useful_result`; P2, see
-  [02-insight.md](../../../../roadmap/02-insight.md)). The #156 architecture-metrics
+- D-6 — metric doc defects: **closed** (#153 `churn_rate`, #154 `time_to_useful_result`,
+  both 2026-10-19; see [02-insight.md](../../../../roadmap/02-insight.md)). The #156 architecture-metrics
   family is WIP in a separate backlog session (decision 8) and unblocks T3's gates.
 
 ## Related

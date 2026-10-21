@@ -126,9 +126,9 @@ The line is drawn by **who the knowledge is for**, not by features. You pay to
 | **Public / OSS** `公` | open-source projects & communities; `github/<org>` | **free forever** — full governance + Relay for your projects |
 | **Personal** `己` | your own constitution & rules for your own projects; `personal/<you>` | **free** — private to you, across every linked email, Relay included |
 | **Team** `組` | a private, **shared** org Dōjō on the SaaS | **paid per active contributor** (read-only free) — private scopes, role consoles, governance authoring, shared-team Relay, client engagements |
-| **Enterprise** `企` | control & compliance | **custom** — self-host / VPC, SSO (OIDC/SAML) + SCIM, audit retention, self-hosted relay + SSO on mobile, SLA |
+| **Enterprise** `企` | control & compliance | **custom** — SSO (OIDC/SAML) + SCIM, audit retention, SSO on mobile, SLA (no self-hosting product — D17, D24) |
 
-Relay stays a **hook, not a paywall**: the individual loop (watch · approve ·
+Relay's individual loop stays **free**: the individual loop (watch · approve ·
 decide · nudge · chat on your own projects) is free; the paid tiers meter the
 **shared coordination** around it (team inbox, presence, concurrency, priority
 realtime, approval audit) — where the real infra cost lives. *(Open pricing

@@ -25,6 +25,12 @@ describe('DojoOrgs', () => {
 		expect(getAllByText('Enter').length).toBe(orgs.length);
 	});
 
+	it('shows no hosting chip — there is no self-hosting product (D17)', () => {
+		const { queryByText } = render(DojoOrgs, { user, orgs });
+		expect(queryByText(/self-hosted/)).toBeNull();
+		expect(queryByText(/SaaS/)).toBeNull();
+	});
+
 	it('invokes onEnter with the org when its Enter button is clicked', async () => {
 		const onEnter = vi.fn();
 		const { getAllByText } = render(DojoOrgs, { user, orgs, onEnter });

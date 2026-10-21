@@ -1,0 +1,127 @@
+Feature: Releases, DORA & release gates — deployments read from CI, the five keys, gated releases
+
+  # gap: D-1
+  NO TEST
+  Scenario: a workspace reads its deployments from GitHub Actions, read-only
+    Given a workspace with a GitHub Actions connection
+    When the dōjō syncs the connection
+    Then each production deployment is recorded with its commit, environment and outcome
+    And nothing is written to GitHub
+    This is unbuilt — no pipeline adapter.
+
+  # gap: D-1
+  NO TEST
+  Scenario: a workspace reads its deployments from Azure Pipelines, read-only
+    Given a workspace with an Azure Pipelines connection
+    When the dōjō syncs the connection
+    Then each production deployment is recorded
+    And nothing is written to Azure DevOps
+    This is unbuilt — no pipeline adapter.
+
+  # gap: D-1
+  NO TEST
+  Scenario: a workspace with only release tags lists releases from the tags
+    Given a workspace with no pipeline connection and release tags in git
+    When the Releases tab opens
+    Then the releases come from the tags
+    And the five keys say they are tag-derived
+    This is unbuilt.
+
+  # gap: D-1
+  NO TEST
+  Scenario: a workspace with no connection and no tags is not measured
+    Given a workspace with no pipeline connection and no release tags
+    When the Releases tab opens
+    Then it says "not measured"
+    And it never shows 0 deployments or a passed gate
+    This is unbuilt.
+
+  # gap: D-3
+  NO TEST
+  Scenario: the five keys match a hand count
+    Given a workspace's production deployments and production incidents over 30 days
+    When the Delivery card is read
+    Then deployment frequency, lead time, change failure rate, time to restore and rework rate match a hand count over the same window
+    And each key shows the number of deployments it is computed from
+    And no key is shown per author
+    This is unbuilt.
+
+  # gap: D-2
+  NO TEST
+  Scenario: a production incident moves change failure rate and time to restore
+    Given a production deployment
+    When a production incident linked to it is opened and later restored
+    Then change failure rate counts that deployment as failed
+    And time to restore includes the incident's open-to-restore time
+    And a confidentiality incident never counts toward either
+    This is unbuilt — dojo.incidents holds confidentiality incidents only.
+
+  # gap: D-4
+  NO TEST
+  Scenario: a release that adds a hard-rule violation is blocked and says why
+    Given a release candidate whose change set adds a hard-rule violation
+    When its release gate is evaluated
+    Then the release is blocked and names the target
+    And a maintainer can mark it shippable only with a note, which is kept
+    This is unbuilt.
+
+  # gap: D-4
+  NO TEST
+  Scenario: the gate reads the release's change set, not the whole workspace
+    Given a workspace with existing violations from before the last release
+    And a release candidate that adds none
+    When its release gate is evaluated
+    Then the code targets pass
+    This is unbuilt.
+
+  # gap: D-4
+  NO TEST
+  Scenario: an open blocking production incident holds a release
+    Given an open blocking production incident on the workspace
+    When a release gate is evaluated
+    Then release readiness fails and names the incident
+    This is unbuilt.
+
+  # gap: D-4
+  NO TEST
+  Scenario: the stability guardrail warns by default and blocks only when opted in
+    Given a workspace whose trailing change failure rate is over its threshold
+    When a release gate is evaluated
+    Then the gate warns and does not block
+    And with the guardrail set to block, the release is blocked
+    This is unbuilt.
+
+  # gap: B-1
+  NO TEST
+  Scenario: sensei shows the dōjō's release and gate state
+    Given a workspace whose latest release was blocked in the dōjō
+    When the workspace window opens in sensei
+    Then it shows the release, its blocked gate and the failing target
+    This is unbuilt.
+
+  # gap: D-3
+  NO TEST
+  Scenario: rework rate counts unplanned fixes, and says when it cannot tell
+    Given a workspace whose production deployments include two that close Bug tickets
+    When the Delivery card is read
+    Then rework rate counts those two over all production deployments in the window
+    And a workspace with neither a tracker nor a hotfix convention shows rework rate as "not measured"
+    This is unbuilt.
+
+  # gap: D-3
+  NO TEST
+  Scenario: a key over fewer than 5 deployments is flagged low sample
+    Given a workspace with 2 production deployments in the window
+    When the Delivery card is read
+    Then each key shows "low sample" beside its count
+    This is unbuilt.
+
+  # gap: D-3
+  NO TEST
+  Scenario: stability keys read against the workspace's guardrail, never a benchmark band
+    Given a workspace whose change failure rate threshold is 15%
+    And a trailing change failure rate of 17%
+    When the Delivery card is read
+    Then it reads "over 15%"
+    And no elite / high / medium / low band is shown
+    This is unbuilt.

@@ -287,7 +287,7 @@ pub struct ShareBatchItem {
     /// only the deterministic strip runs, which removes KNOWN identifiers
     /// (project/client/repo/folder/session/person) and pattern-matched
     /// paths/emails/uuids/secrets — ordinary prose passes through unchanged.
-    /// Generalising the title is tracked in `docs/plan/decisions.md`.
+    /// Generalising the title is tracked in `docs/history/plan/decisions.md`.
     pub title: String,
     /// The portable text: the `generalised_content` rewrite, or EMPTY when the
     /// memory has not been generalised. Deliberately never the raw `content` —
@@ -585,6 +585,8 @@ mod runs;
 mod schedules;
 mod sessions;
 pub(crate) mod sync;
+pub(crate) mod tracker_usage;
+pub(crate) mod trackers;
 mod transcript;
 pub(crate) use repo_key::normalize_repo_key;
 pub(crate) use schedules::{SchedulePatch, StoredSchedule};

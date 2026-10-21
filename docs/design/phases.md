@@ -2,7 +2,7 @@
 type: design
 date: 2026-08-18
 status: draft
-supersedes: reframes the phase sequencing from `plan/2026-07-20-phases-1-3-plan.md`
+supersedes: reframes the phase sequencing of the old phases 1–3 plan (deleted 2026-10-21; in git history)
 ---
 
 # Phases — incremental delivery toward the operating model
@@ -14,10 +14,10 @@ supersedes: reframes the phase sequencing from `plan/2026-07-20-phases-1-3-plan.
 > defines **four phases**, each shipping value on its own, each making the next
 > phase possible. Phase N does not require Phase N+1 to be useful.
 >
-> The existing `plan/2026-07-20-phases-1-3-plan.md` covers mock gaps, verify-only
-> stories, and bug lists — the tactical detail of *what's broken*. This doc is the
-> strategic view of *what ships when and why*. The two complement each other; this
-> one should be read first.
+> The old phases 1–3 plan covered mock gaps, verify-only stories, and bug lists —
+> the tactical detail of *what's broken*; it was deleted on 2026-10-21 (git
+> history), and open gaps now live in [`../roadmap/06-gaps.md`](../roadmap/06-gaps.md).
+> This doc is the strategic view of *what ships when and why*.
 
 ---
 
@@ -133,7 +133,7 @@ available to the AI without anyone calling `add_library`.
 | P1.3 | Library auto-pull on reference | build | When a session references a library name (e.g. "rokkit", "drizzle"), `search_lib_docs` is called and the top hit is injected; the model gets the component API without fetching docs manually | `mcp/src/lib.rs` `search_lib_docs` / `get_lib_docs`; `design/assistants.md` |
 | P1.4 | Context-use logging (feedback signal) | build | When injected context is referenced in a subsequent assistant turn (the model quotes or uses a pattern/memory that was injected), log a `context_used` event; when it isn't, log `context_ignored`; this is the beginning of §9 playbook→outcome attribution | `playbook.rs`; `analysis/` analyzer pipeline; `plan/2026-07-19-learning-loop-*.md` |
 | P1.5 | Mindset auto-invocation from blast radius | build | When the code graph shows a change touches auth, security-sensitive paths, or UI, the hook auto-loads the relevant mindset (security-reviewer, performance, ux); the model gets guidance without manual `/sensei:agent` invocation | `design/instruction-delivery-model.md` §push model; `marketplace/plugins/sensei/skills/` |
-| P1.6 | Verify: FTR measurably improves | verify-only | After P1.1-P1.5 ship, measure FTR on a project with injected context vs without; the injected-context sessions should show higher FTR (or honest null if too few sessions) | `verdicts.rs`; `plan/README.md` G1 (FTR loop closed); `design/playbook.md` §learning loop |
+| P1.6 | Verify: FTR measurably improves | verify-only | After P1.1-P1.5 ship, measure FTR on a project with injected context vs without; the injected-context sessions should show higher FTR (or honest null if too few sessions) | `verdicts.rs`; `roadmap/06-gaps.md` (old G1, FTR loop closed); `design/playbook.md` §learning loop |
 | P1.7 | Auto-index detected dependencies (llms.txt + skills + agents) | build | When `extract_deps` detects a library from a manifest, a background task auto-discovers its llms.txt URL (via `discover_lib_url`), fetches and indexes the docs, and checks for a `sensei.library.json` manifest to register any declared skills/agents. No user action required — library docs are available to `get_lib_docs`/`search_lib_docs` within minutes of project scan. Libraries that have no llms.txt (or whose probe fails) are silently skipped — never an error. | §3.3 below; `indexer/lib_indexer.rs`; `tasks/handlers/libraries.rs`; `discover_lib_url` in `api/handlers/mcp.rs`; `libraries/manifest.rs` |
 | P1.8 | Auto-inject library context at session start | build | SessionStart hook checks the project's `project_libraries` and injects summaries of the top-5 most-used libraries (by import frequency or relevance) into `additionalContext`; the model sees "this project uses rokkit (component library), drizzle (ORM), etc." and their key patterns without calling any MCP tool | P1.7 (docs must be indexed first); `instruction-delivery-model.md` S4; `get_lib_docs` MCP |
 
@@ -260,7 +260,7 @@ and wiring the minimal knowledge-sharing surface.
 
 | ID | Title | Status | Acceptance criteria | Refs |
 |----|-------|--------|-------------------|------|
-| P2.1 | Fix join/membership flow | build | A new user signs up via magic-link → membership row created → user sees their Dōjō console (not 403) | `governance.md` §identity/membership; `dojo/src/lib/server/dojo-auth.ts` (`resolveTenantAccess`); `docs/design/2026-07-27-dojo-relay-rls-membership-function.md` |
+| P2.1 | Fix join/membership flow | build | A new user signs up via magic-link → membership row created → user sees their Dōjō console (not 403) | `governance.md` §identity/membership; `dojo/src/lib/server/dojo-auth.ts` (`resolveTenantAccess`); `docs/history/design/2026-07-27-dojo-relay-rls-membership-function.md` |
 | P2.2 | Shared rules visible to members | build | After join, the member sees the Dōjō's shared rules (org-scoped mandatory + recommended rules) in their console; rules resolve correctly per the specificity ladder | `governance.md` §scopes/precedence; `design/remote.md` §governance |
 | P2.3 | Shared memories visible to members | build | After join, the member sees k-anonymized memories contributed by other members; triage status (proposed / approved / declined) is visible | `governance.md` §promotion/triage; `dojo/src/routes/v1/` triage routes |
 | P2.4 | Admin approve/decline shared knowledge | build | Admin console shows a triage queue; admin can approve or decline; approved items appear for all members; declined items are hidden | `governance.md` §promotion lifecycle; `dojo/src/routes/v1/triage/` |
@@ -300,7 +300,7 @@ anywhere.
 
 | ID | Title | Status | Acceptance criteria | Refs |
 |----|-------|--------|-------------------|------|
-| P3.1 | Multi-assistant adapters (P5) | build | Relay works with Claude Code + at least one other assistant (Codex / OpenCode / Aider) via ACP or a fallback adapter; the run engine drives whichever adapter the user selects | `design/remote.md` §run engine; `relay_drivers/trait_def.rs` (`RunDriver`); `plan/2026-07-18-relay-p5-multi-assistant.md` |
+| P3.1 | Multi-assistant adapters (P5) | build | Relay works with Claude Code + at least one other assistant (Codex / OpenCode / Aider) via ACP or a fallback adapter; the run engine drives whichever adapter the user selects | `design/remote.md` §run engine; `relay_drivers/trait_def.rs` (`RunDriver`) |
 | P3.2 | Activate drive for a supervised pilot | build | `SENSEI_RUN_DRIVE` is turned on for a real run; the daemon drives an agent through a plan; gates are raised and answered from the phone; the run survives a laptop sleep | `relay-engine.md` §5; `design/remote.md` §gates+nudges; `run_limits.rs`; `run_watchdog.rs` |
 | P3.3 | `respond_gate` local reply channel | build | A raised gate can be answered from the desktop app (not just the phone); the `await_reply` loop checks both the Dōjō inbox and a local in-daemon reply store | `relay-engine.md` §control channel; `design/remote.md` §hooks; `decisions.md` deferred items |
 | P3.4 | Prod deploy of P0-P4 | deploy | VAPID prod keys, prod `PUBLIC_SUPABASE_ANON_KEY`, dojo schema deployed, `supabase_realtime` publication migration, RLS validated; push notifications work for real users | `backlog.md` P4 deferred items; `decisions.md` relay deploy notes |
@@ -341,7 +341,7 @@ join) and 3 (runs can be supervised) to have users first.
 | P4.3 | Team relay (P6) | build | Org gates fan into one shared queue; each decision carries attribution; on-call routing works | `relay-engine.md` §team relay; `../prd/02-objectives.md` R8; `design/remote.md` |
 | P4.4 | DORA metrics (when deploy signals exist) | build | Deploy/release signals are captured (from git tags or CI webhooks); DORA Four Keys are computed and surfaced alongside FTR; AI-pairing patterns are correlated with DORA movement | `spec/governance/default-constitution.md`; `backlog.md` DORA module |
 | P4.5 | Default governance bundle | build | A fresh project inherits a curated starter constitution (DORA + XP/CD + Core Protocols) as default rules; the user can dismiss/modify, but the baseline is not empty | `spec/governance/default-constitution.md`; `governance.md` §default gate line |
-| P4.6 | Verify: cross-project improvement | verify-only | A pattern from project A is shared via Dōjō → project B picks it up → project B's FTR improves (or honest null if too few sessions to measure) | `verdicts.rs`; `design/playbook.md` §learning loop; `plan/README.md` G1-G2 |
+| P4.6 | Verify: cross-project improvement | verify-only | A pattern from project A is shared via Dōjō → project B picks it up → project B's FTR improves (or honest null if too few sessions to measure) | `verdicts.rs`; `design/playbook.md` §learning loop; `roadmap/06-gaps.md` (old G1-G2) |
 
 ### 6.3 Dependencies
 
@@ -373,13 +373,12 @@ flywheel spinning — they should ship after the core loop proves daily value.
 
 | Existing doc | Relationship |
 |-------------|-------------|
-| `plan/README.md` | The ranked-gap analysis (G1-G10). Phase 1 closes the adoption gap (the operating model's core finding). Phases 2-4 close the Dōjō/Relay gaps (G10 and beyond). |
-| `plan/2026-07-20-phases-1-3-plan.md` | The tactical plan with mock gaps, verify stories, and bug lists. This doc is the strategic layer above it; that doc is the execution layer within each phase. |
+| `roadmap/06-gaps.md` | The gap register (absorbed the old ranked-gap analysis, G1-G10). Phase 1 closes the adoption gap (the operating model's core finding). Phases 2-4 close the Dōjō/Relay gaps (G10 and beyond). |
 | `design/instruction-delivery-model.md` | The delivery surfaces Phase 1 works with. P1.1-P1.5 implement the "push + re-assert" model described there. |
 | `design/playbook.md` | The playbook recommender and learning loop. Phase 1 validates the playbook→outcome attribution (P1.4, P1.6). Phase 4 extends it across teams (P4.1). |
 | `design/remote.md` | The relay run engine and control channel. Phase 3 ships the personal relay; Phase 4 adds team relay (P4.3). |
 | `design/governance.md` | The governance plane. Phase 2 makes it joinable; Phase 4 makes it the team flywheel. |
-| `plan/relay-engine.md` | The full relay spec (P0-P6). Phase 3 covers P5 (multi-assistant) and prod deploy; P6 (team relay) is Phase 4. |
+| `history/plan/relay-engine.md` | The full relay spec (P0-P6). Phase 3 covers P5 (multi-assistant) and prod deploy; P6 (team relay) is Phase 4. |
 | `spec/2026-08-18-repo-grain-metrics-watermark-engine.md` | The metrics rebuild. P-A/P-B (local, repo-grain, user-attributed quality) are v1 (§2.1); P-C (Dōjō sync, me-vs-team, enrollment D16) rides Phase 2. Supersedes the assumed-metrics behind P1.6. |
 | `library-auto-discovery.md` | The Phase-1 P1.7/P1.8 module — detected dep → auto-index docs/skills → session-start inject. Nearly built; a v1 stream. |
 | `operating-model.md` | The v2 vision. This doc is the incremental path *toward* that vision, not a replacement. The operating model describes the end state; these phases describe the sequence to get there. |

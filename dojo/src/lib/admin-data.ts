@@ -24,6 +24,8 @@
 
 import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from './dojo-api';
 import type { DojoCallOpts } from './dojo-api';
+import type { DojoViewerWire } from './viewers-view';
+import type { TeamWire } from './teams-view';
 
 // Re-export the shared error under the admin name so admin screens `instanceof`
 // against a local symbol without reaching into the shared module directly.
@@ -156,10 +158,10 @@ async function getJson<T>(url: string, opts: DojoCallOpts): Promise<T> {
 	return parseJson<T>(res);
 }
 
-/** A body-carrying request (POST/PATCH/DELETE) with the bearer + JSON headers. */
+/** A body-carrying request (POST/PUT/PATCH/DELETE) with the bearer + JSON headers. */
 async function sendJson<T>(
 	url: string,
-	method: 'POST' | 'PATCH' | 'DELETE',
+	method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
 	body: unknown,
 	opts: DojoCallOpts
 ): Promise<T> {
@@ -170,6 +172,97 @@ async function sendJson<T>(
 		body: body === undefined ? undefined : JSON.stringify(body)
 	});
 	return parseJson<T>(res);
+}
+
+// viewers (#307 D8) ────────────────────────────────────────────────────────────
+
+const viewerPath = (principalId: string) => `/viewers/${encodeURIComponent(principalId)}`;
+const grantPath = (principalId: string, projectId: string) =>
+	`${viewerPath(principalId)}/workspaces/${encodeURIComponent(projectId)}`;
+
+/** `GET …/viewers` — the dōjō's viewers, each with the projects granted to them (admin). */
+export async function listViewers(tenantKey: string, opts: DojoCallOpts = {}): Promise<DojoViewerWire[]> {
+	return (await getJson<{ viewers: DojoViewerWire[] }>(adminUrl(tenantKey, '/viewers'), opts)).viewers;
+}
+
+/** `DELETE …/viewers/{id}` — remove a viewer from the dōjō, and their project views. */
+export async function removeViewer(tenantKey: string, principalId: string, opts: DojoCallOpts = {}): Promise<void> {
+	await sendJson(adminUrl(tenantKey, viewerPath(principalId)), 'DELETE', undefined, opts);
+}
+
+/** `PUT …/viewers/{id}/workspaces/{project}` — grant the view of one of the dōjō's projects. */
+export async function grantWorkspaceView(
+	tenantKey: string,
+	principalId: string,
+	projectId: string,
+	opts: DojoCallOpts = {}
+): Promise<void> {
+	await sendJson(adminUrl(tenantKey, grantPath(principalId, projectId)), 'PUT', undefined, opts);
+}
+
+/** `DELETE …/viewers/{id}/workspaces/{project}` — revoke it. */
+export async function revokeWorkspaceView(
+	tenantKey: string,
+	principalId: string,
+	projectId: string,
+	opts: DojoCallOpts = {}
+): Promise<void> {
+	await sendJson(adminUrl(tenantKey, grantPath(principalId, projectId)), 'DELETE', undefined, opts);
+}
+
+// teams (#307 D7) ──────────────────────────────────────────────────────────────
+
+const teamPath = (teamId: string) => `/teams/${encodeURIComponent(teamId)}`;
+
+/** `GET …/teams` — the dōjō's teams with their members. */
+export async function listTeams(tenantKey: string, opts: DojoCallOpts = {}): Promise<TeamWire[]> {
+	return (await getJson<{ teams: TeamWire[] }>(adminUrl(tenantKey, '/teams'), opts)).teams;
+}
+
+export async function createTeam(tenantKey: string, name: string, opts: DojoCallOpts = {}): Promise<void> {
+	await sendJson(adminUrl(tenantKey, '/teams'), 'POST', { name }, opts);
+}
+
+export async function renameTeam(tenantKey: string, teamId: string, name: string, opts: DojoCallOpts = {}): Promise<void> {
+	await sendJson(adminUrl(tenantKey, teamPath(teamId)), 'PATCH', { name }, opts);
+}
+
+/** The project views a team granted were granted to people, and stay. */
+export async function deleteTeam(tenantKey: string, teamId: string, opts: DojoCallOpts = {}): Promise<void> {
+	await sendJson(adminUrl(tenantKey, teamPath(teamId)), 'DELETE', undefined, opts);
+}
+
+export async function addTeamMember(
+	tenantKey: string,
+	teamId: string,
+	principalId: string,
+	opts: DojoCallOpts = {}
+): Promise<void> {
+	await sendJson(adminUrl(tenantKey, `${teamPath(teamId)}/members/${encodeURIComponent(principalId)}`), 'PUT', undefined, opts);
+}
+
+export async function removeTeamMember(
+	tenantKey: string,
+	teamId: string,
+	principalId: string,
+	opts: DojoCallOpts = {}
+): Promise<void> {
+	await sendJson(
+		adminUrl(tenantKey, `${teamPath(teamId)}/members/${encodeURIComponent(principalId)}`),
+		'DELETE',
+		undefined,
+		opts
+	);
+}
+
+/** Grant everyone now on the team the view of one of the dōjō's projects. */
+export async function grantTeamWorkspaceView(
+	tenantKey: string,
+	teamId: string,
+	projectId: string,
+	opts: DojoCallOpts = {}
+): Promise<void> {
+	await sendJson(adminUrl(tenantKey, `${teamPath(teamId)}/workspaces/${encodeURIComponent(projectId)}`), 'PUT', undefined, opts);
 }
 
 // members ──────────────────────────────────────────────────────────────────────

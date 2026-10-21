@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 import { youHref } from '$lib/nav';
-import { listUserProjects, getProjectConstitution } from '$lib/client-data';
+import { listUserWorkspaces, getWorkspaceConstitution } from '$lib/client-data';
 import { toKitProjects } from '$lib/projects-map';
 import { rulesToLadder, relayRules, relayToKitConflicts } from '$lib/constitution-map';
 import type { KitProject, KitLadderRung, KitConflict } from '$lib/components/kit/types';
@@ -20,7 +20,7 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 
 	let project: KitProject | undefined;
 	try {
-		const projects = toKitProjects(await listUserProjects({ fetch, accessToken }));
+		const projects = toKitProjects(await listUserWorkspaces({ fetch, accessToken }));
 		project = projects.find((p) => p.id === params.id);
 	} catch {
 		redirect(307, youHref('projects'));
@@ -34,7 +34,7 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 	let conflicts: KitConflict[] = [];
 	try {
 		// By id: a slug is unique only within one dōjō (#299).
-		const c = await getProjectConstitution(project.id, { fetch, accessToken });
+		const c = await getWorkspaceConstitution(project.id, { fetch, accessToken });
 		if (c) {
 			ladder = rulesToLadder(relayRules(c));
 			conflicts = relayToKitConflicts(c);

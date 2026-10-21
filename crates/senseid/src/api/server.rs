@@ -89,7 +89,7 @@ fn worker_count() -> usize {
 /// default** — the daemon's control-plane routes (`/hook/*`, `/api/runs*`)
 /// carry no auth, so a non-loopback bind would expose them to LAN-adjacent
 /// hosts (spurious gate prompts / inert run rows — see
-/// `docs/plan/decisions.md`). The app, CLI, and MCP all connect over loopback,
+/// `docs/history/plan/decisions.md`). The app, CLI, and MCP all connect over loopback,
 /// so this is transparent to them. `SENSEI_BIND_HOST` opts into a specific host
 /// (e.g. `0.0.0.0`) for a deliberate non-loopback deployment — which MUST add
 /// route auth first. Returns `(host, is_loopback)`.
@@ -398,6 +398,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
             crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
         )),
+        trackers: Default::default(),
     });
 
     let task_logger = sensei_logger::Logger::new(
@@ -550,6 +551,8 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // the decision says asking is worth it) and the only thing that turns a
     // silently-dead token into a fact the UI can act on.
     crate::tasks::forge_token_check::spawn(Arc::new(state.pg.clone()));
+    // Tracker integrations: mirror connected boards, drain removed credentials.
+    crate::tasks::tracker_sync::spawn(Arc::new(state.pg.clone()), state.trackers.clone());
 
     // Watcher safety net: frequently (boot + the `reconcile` schedule,
     // default 300s) re-scan every watch root so the index converges even when

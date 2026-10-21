@@ -46,7 +46,7 @@
 4. **Policies tab shows a constant ladder, not tenant policies.** The real per-scope `dojo.policies` (attribution_default · confidentiality · retention_days) are fetched but dropped; either surface them or add a separate Policies screen. CRUD endpoints already exist.
 5. **Audit actor is always "sensei"** — `toKitChatTurn` hardcodes `who='sensei'`; map `audit_events.actor_id` → viewer/other so the `me` label path works.
 6. **Invite / New policy / Export / Edit policy** CTAs inert — wire to the existing `POST …/members`, policy CRUD, and an audit CSV export.
-7. **Register conflict (Rule B):** `attribution_default` on the membership/policy still uses the 3-value `AttributionMode` incl. `dereferenced` (`admin-data.ts:76`, `server/admin-data.ts:93` `ATTRIBUTION_MODES`, `parseUpsertPolicy`/`parsePatchPolicy` 400 messages). Canon = `named | anonymous` only (`docs/plan/2026-07-27-data-model-fix-impact-register.md` §1B). Not surfaced on this screen yet, but the write validators must drop `dereferenced` when Policies is wired.
+7. **Register conflict (Rule B):** `attribution_default` on the membership/policy still uses the 3-value `AttributionMode` incl. `dereferenced` (`admin-data.ts:76`, `server/admin-data.ts:93` `ATTRIBUTION_MODES`, `parseUpsertPolicy`/`parsePatchPolicy` 400 messages). Canon = `named | anonymous` only (`docs/history/plan/2026-07-27-data-model-fix-impact-register.md` §1B). Not surfaced on this screen yet, but the write validators must drop `dereferenced` when Policies is wired.
 8. **Register conflict (Rule C):** `addMember` writes `dojo_url` on the membership (`server/admin-data.ts:326`); canon drops it (derive via `tenant_id → tenants.dojo_url`, §1C).
 
 ## Open questions (for Dev)

@@ -9,15 +9,21 @@
 	// kind glyph is a Solar icon (not kanji) + a verb label; per Q4 the options are a
 	// selectable rokkit-schema-style list (click to pick) with one optional freeform
 	// line, not "type 1–N". Answered → a verdict echo card. Pure over props; the reply
-	// routes out through onanswer (state.answerAsk now, POST /relay/reply later).
+	// routes out through onanswer to state.answerAsk, which sends it to the dōjō.
 	let {
 		ask,
 		verdict,
+		error = null,
+		sending = false,
 		onanswer
 	}: {
 		ask: RelayAsk;
 		verdict?: string;
-		onanswer?: (askId: string, verdict: string) => void;
+		/** Why the answer did not reach the dōjō (#305). */
+		error?: string | null;
+		sending?: boolean;
+		/** The answer, and for an approval the typed line as its note. */
+		onanswer?: (askId: string, answer: string, note?: string) => void;
 	} = $props();
 
 	// action → Solar icon + verb label (status ≠ action: a stalled run takes "resume").
@@ -32,19 +38,29 @@
 
 	let picked = $state<number | null>(null);
 	let freeform = $state('');
-	const ready = $derived(picked !== null || freeform.trim().length > 0);
+	// The daemon reads a reply fail-open — only an explicit deny blocks — so an
+	// approval sends only with a choice, and the typed line is its note. Anything
+	// else may be answered by an option or the typed line.
+	const isApproval = $derived(ask.action === 'approve');
+	const ready = $derived(!sending && (picked !== null || (!isApproval && freeform.trim().length > 0)));
 
 	function pick(i: number) {
 		picked = picked === i ? null : i;
-		if (picked !== null) freeform = '';
+		if (picked !== null && !isApproval) freeform = '';
 	}
 	function onFreeform(e: Event) {
 		freeform = (e.currentTarget as HTMLInputElement).value;
-		if (freeform.trim()) picked = null;
+		if (freeform.trim() && !isApproval) picked = null;
 	}
 	function send() {
 		if (!ready) return;
-		onanswer?.(ask.id, picked !== null ? ask.options[picked] : freeform.trim());
+		const note = freeform.trim();
+		if (isApproval && picked !== null) {
+			if (note) onanswer?.(ask.id, ask.options[picked], note);
+			else onanswer?.(ask.id, ask.options[picked]);
+		} else {
+			onanswer?.(ask.id, picked !== null ? ask.options[picked] : note);
+		}
 	}
 </script>
 
@@ -123,6 +139,9 @@
 					{m.ask_send()}
 				</Button>
 			</div>
+			{#if error}
+				<span role="alert" class="text-danger text-xs">{error}</span>
+			{/if}
 			<span class="mono text-ink-faint text-xs">{m.ask_hold_note()}</span>
 		</div>
 	</div>

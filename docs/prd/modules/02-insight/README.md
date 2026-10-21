@@ -6,7 +6,7 @@
 
 | ID | Module | One-line "done" | Spec |
 |---|---|---|---|
-| M7 | Analyzer & Signals | Every project has fresh derived signals on a schedule | ✅ [`07-analyzer-and-signals/`](07-analyzer-and-signals/README.md) · 2026-10-13 |
+| M7 | Analyzer & Signals | Every workspace has fresh derived signals on a schedule | ✅ [`07-analyzer-and-signals/`](07-analyzer-and-signals/README.md) · 2026-10-13 |
 | M8 | Metrics & Health | Every advertised metric computes, is rated, and cannot lie by omission — master-detail, with explicit gating eligibility | ✅ [`08-metrics-and-health/`](08-metrics-and-health/README.md) · 2026-10-13 |
 | M9 | Memory & Knowledge | A proven lesson becomes a durable, promoted memory | ✅ [`09-memory-and-knowledge/`](09-memory-and-knowledge/README.md) · 2026-10-13 |
 | M10 | Patterns & Conventions | Recurring practice (good and bad) is detected and named | ✅ [`10-patterns-and-conventions/`](10-patterns-and-conventions/README.md) · 2026-10-13 |
@@ -31,7 +31,7 @@ depends on the rest producing honest data.
 ## Customer
 
 The Delivery plane (M14–M22) renders what this plane derives, and the Team plane
-(T1–T4) governs and shares it. The **metrics master-detail** and the **graph
+(T1–T6) governs and shares it. The **metrics master-detail** and the **graph
 level-of-detail** are the two 2026-10-13 additions that change how this plane is
 speced (reorg §9.6, §9.7).
 

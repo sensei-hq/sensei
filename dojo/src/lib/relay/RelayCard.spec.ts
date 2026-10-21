@@ -26,6 +26,8 @@ function session(over: Partial<RelaySession> = {}): RelaySession {
 			]
 		},
 		asks: [],
+		tenantKey: 'organization/acme',
+		activity: [],
 		...over
 	};
 }

@@ -27,7 +27,6 @@ function membership(id: string, kind: OrgKind): DojoOrg {
 		kanji: '社',
 		name: id,
 		kind,
-		host: 'saas',
 		url: `github/${id}`,
 		role: 'Contributor',
 		from: 'test',
@@ -40,7 +39,6 @@ describe('My teams overlay', () => {
 	it('roleForKind maps each kind to the mockup role', () => {
 		expect(roleForKind('Organization')).toBe('Contributor');
 		expect(roleForKind('Personal')).toBe('Owner');
-		expect(roleForKind('Team')).toBe('Member');
 	});
 
 	it('roleForKind falls back to Member for an unknown kind', () => {

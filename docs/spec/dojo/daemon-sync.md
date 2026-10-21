@@ -10,6 +10,24 @@
 > in place. This document is authoritative for the daemon, and §0 lists every
 > statement it overrides.
 
+## Direction of sync (user, 2026-10-21)
+
+| Between | Direction | What |
+|---|---|---|
+| sensei ⇄ dōjō | **two-way** | workspaces and their repositories, teams, roles, integration connections — authored on either side, mirrored to the other; **the dōjō wins on conflict** and sensei says when a local change lost; `origin` marks where a row was authored so nothing loops |
+| sensei → dōjō | one-way (as today) | repository registration, metrics, the code graph, contributions, relay sessions and segments |
+| dōjō → sensei | one-way (as today) | the sync plan, memberships, resolved rules, relay replies — and, new, the mirrored tickets, deployments, release-gate results and DORA keys |
+| external → dōjō | **read-only pull** | trackers (Jira, Azure Boards, GitHub Issues) and CI (GitHub Actions, Azure Pipelines) — the dōjō reads; nothing writes back |
+
+**Branch scope (user, 2026-10-21; target — not in code).** Code graphs are tagged by branch and the
+latest push per branch wins. Sensei syncs only the branches mapped to the three environments —
+**production · testing · development** (D18) — each mapped to whatever branch the repository uses;
+production defaults to the forge's default branch and an unmapped environment falls back to it.
+Sprint targets read development; release gates run development → testing → production — T3 and
+T5. Today the graph is not branch-aware (`folders.branch` only feeds metrics).
+
+Plan: [`roadmap/09-dojo-expansion.md`](../../roadmap/09-dojo-expansion.md) (Wave B) · epic #307.
+
 ## 0. What this overrides in the parent spec
 
 | parent | says | actually |
@@ -99,7 +117,7 @@ one thing at a time, so each step's effect is observable:
 
 | §3 wanted | already is | evidence |
 |---|---|---|
-| `persona` (Keychain slot) | `sensei.personas.session_slot` | **NOT `label`.** `session.rs::account_for` formats `refresh_token.{slot}` from the string the sign-in was started with; `link_persona_identity` REWRITES `label` to the verified GitHub login, so signing in as `default` yields a row labelled `sensei-hq-org` whose session is still at `refresh_token.default`. The first version of this table claimed they were the same string — they are not, and looking the session up by label silently skipped the persona while the cycle reported success. `session_slot` records what the sign-in actually used. |
+| `persona` (Keychain slot) | `sensei.personas.session_slot` | **NOT `label`.** `session.rs::credentials_account_for` formats `credentials.{slot}` (one keychain item per persona since #302) from the string the sign-in was started with; `link_persona_identity` REWRITES `label` to the verified GitHub login, so signing in as `default` yields a row labelled `sensei-hq-org` whose session is still at `credentials.default`. The first version of this table claimed they were the same string — they are not, and looking the session up by label silently skipped the persona while the cycle reported success. `session_slot` records what the sign-in actually used. |
 | `dojo_url` | a **global** setting | `settings::dojo_url()` — env `DOJO_URL`, then local settings, then a default. Not per-persona |
 | `signed_in_at` | `personas.verified_at` | `link_persona_identity` sets `verified_at = now()` on every completed OAuth callback |
 | `last_sync_at` | `sync_state.synced_at` | keyed `(entity='dojo_sync_plan', entity_key=session_slot)` — the entity value **D7 already adds** |
@@ -310,7 +328,7 @@ is a missing *prerequisite*: there is no way for a user to mark a repository sha
 
 ## 8a. REVISION — sharing is two questions, and the code answers one
 
-> **Added 2026-08-28**, after `docs/requirements/repository-sharing.md`. This
+> **Added 2026-08-28**, after `docs/history/requirements/repository-sharing.md`. This
 > revises what was already SHIPPED, so it is written as a diff against reality
 > rather than as a plan.
 
@@ -355,7 +373,7 @@ Entitlement and election are independent (parent spec §IV.3, corrected), and
    see. That is a worse privacy defect than the one this revision fixes, and it is
    sufficient on its own.
 
-   *(An earlier version also cited the project's "never mint identity on a miss"
+   *(An earlier version also cited the workspace's "never mint identity on a miss"
    rule. That citation was wrong — inserting rows from a successful authenticated
    listing is real data on a SUCCESS path, not fabrication on a failure path. The
    privacy argument does not need it.)*
@@ -540,7 +558,7 @@ the only writer and always sets `external_id` and `verified_at` together — but
 schema permits an unverified row, and the deferred "link a second forge" flow
 would create exactly that.
 
-The project already states *"an unverified connection confers no entitlement"*
+The workspace already states *"an unverified connection confers no entitlement"*
 (§VI.2). Mapping is the step the whole mandate rests on, so extend the principle:
 an unverified connection confers no **mapping** either.
 

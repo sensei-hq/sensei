@@ -35,7 +35,7 @@ const ask = (
 });
 
 export function relayInboxMock(): RelaySession[] {
-	return [
+	const sessions: Omit<RelaySession, 'tenantKey' | 'activity'>[] = [
 		{
 			id: 'run-lumen',
 			project: 'lumen-auth',
@@ -164,4 +164,6 @@ export function relayInboxMock(): RelaySession[] {
 			asks: []
 		}
 	];
+	// Every mock run lives in one fixture dōjō.
+	return sessions.map((s) => ({ ...s, tenantKey: 'organization/acme', activity: [] }));
 }

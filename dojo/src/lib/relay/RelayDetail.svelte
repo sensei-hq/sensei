@@ -1,21 +1,40 @@
 <script lang="ts">
 	import { Screen } from '@sensei/ui';
-	import { KanjiToken, PlanBar, PlanOutline, ListSection, EmptyState } from '$lib/components/kit';
+	import { KanjiToken, PlanBar, PlanOutline, ListSection, EmptyState, Icon, RunActivity } from '$lib/components/kit';
 	import { Toggle } from '@rokkit/ui';
 	import type { KitTask } from '$lib/components/kit/types';
+	import type { RelaySession } from './types';
 	import RelayStatusBadge from '$lib/components/RelayStatusBadge.svelte';
 	import RelayAskCard from './RelayAskCard.svelte';
-	import { relayInboxState } from './relay-inbox-state.svelte';
+	import { relayInboxState, type SendReply } from './relay-inbox-state.svelte';
 	import { relativeAge } from '$lib/triage/view';
 	import * as m from '$lib/paraglide/messages';
 
 	// The run detail (mockup RunDetail) — right panel of the two-panel inbox. Reads
-	// the selected RelaySession straight from relayInboxState (mock-first; a per-run
-	// realtime sub-state is extracted only when the real feed needs it). Header (観 ·
+	// the selected RelaySession straight from relayInboxState; an answer is sent to
+	// the run's dōjō (replyToGate) and recorded only once it lands (#305). Header (観 ·
 	// session id · meta · status) · progress · two tabs (Needs you / Plan) · AskCards
 	// or the plan outline · activity + conversation. Pure over state.
+	// `send` delivers a reply to the run's own dōjō with the signed-in session (#305).
+	// `session` is a run opened by a /you/runs link (else the inbox's selection);
+	// `notice` says the live relay could not be read; `onBack` returns to the list on
+	// a narrow screen; `onAnswered` lets the page re-read once a reply lands.
+	let {
+		send,
+		session = undefined,
+		notice = null,
+		onBack = undefined,
+		onAnswered = undefined
+	}: {
+		send: SendReply;
+		session?: RelaySession;
+		notice?: string | null;
+		onBack?: () => void;
+		onAnswered?: () => void;
+	} = $props();
+
 	const st = relayInboxState;
-	const run = $derived(st.selected);
+	const run = $derived(session ?? st.selected);
 
 	// Open (unanswered) asks drive the badge + the header/bar accent tone.
 	const openCount = $derived(run ? run.asks.filter((a) => !st.answered[a.id]).length : 0);
@@ -49,13 +68,17 @@
 	// Per-run tab pick — a new run falls back to its own default (needs if any, else
 	// plan); a realtime refresh never clobbers the tab the user is on (pure $derived).
 	let picks = $state<Record<string, string>>({});
-	const tab = $derived(run ? (picks[run.id] ?? (openCount ? 'needs' : 'plan')) : 'needs');
+	// A run with asks opens on them — and stays there once they are answered, so the
+	// answer is seen landing rather than the view jumping to the plan.
+	const tab = $derived(run ? (picks[run.id] ?? (run.asks.length ? 'needs' : 'plan')) : 'needs');
 	const pickTab = (id: string) => run && (picks = { ...picks, [run.id]: id });
 
 	let selectedTaskId = $state<string | undefined>(undefined);
 	const onSelectTask = (t: KitTask) => (selectedTaskId = selectedTaskId === t.id ? undefined : t.id);
 
-	const answer = (askId: string, verdict: string) => st.answerAsk(askId, verdict);
+	async function answer(askId: string, ans: string, note?: string) {
+		if (run && (await st.answerAsk(send, run, askId, ans, note))) onAnswered?.();
+	}
 </script>
 
 {#if run}
@@ -63,6 +86,16 @@
 		{#snippet header()}
 			<!-- Sticky header (identity · meta · status · progress · tabs) — never scrolls. -->
 			<div class="flex shrink-0 flex-col gap-5 px-8 pb-4 pt-8">
+				{#if onBack}
+					<!-- <md the detail is a full pane over the list; this returns to it. -->
+					<button
+						type="button"
+						onclick={onBack}
+						class="text-ink-mute inline-flex cursor-pointer items-center gap-1 self-start bg-transparent text-sm md:hidden"
+					>
+						<Icon name="alt-arrow-left" size={15} toneClass="text-ink-mute" /> Back to inbox
+					</button>
+				{/if}
 				<!-- Header: session identity + meta + live status. -->
 			<div class="flex items-baseline gap-3">
 				<KanjiToken char="観" size="lg" toneClass={tone} />
@@ -93,6 +126,12 @@
 				</div>
 			{/if}
 
+				{#if notice}
+					<div role="status" class="bg-warning-soft border-warning-edge text-ink-soft rounded-xl border text-sm" style="padding: 12px 16px">
+						Live relay is unavailable. <span class="mono text-ink-mute text-xs">{notice}</span>
+					</div>
+				{/if}
+
 				<!-- Two tabs: Needs you · Plan. -->
 				<div class="border-paper-edge border-b pb-3">
 					<Toggle options={TAB_OPTS} value={tab} onchange={(v) => pickTab(v as string)} size="sm" label={m.detail_tab_needs()} />
@@ -106,7 +145,13 @@
 			{#if run.asks.length}
 				<div class="flex flex-col gap-3">
 					{#each run.asks as ask (ask.id)}
-						<RelayAskCard {ask} verdict={st.answered[ask.id]} onanswer={answer} />
+						<RelayAskCard
+							{ask}
+							verdict={st.answered[ask.id]}
+							error={st.askError(ask.id)}
+							sending={st.isSending(ask.id)}
+							onanswer={answer}
+						/>
 					{/each}
 				</div>
 			{:else}
@@ -130,10 +175,14 @@
 			<EmptyState kanji="継" title={m.detail_plan_empty_title()}>{m.detail_plan_empty_body()}</EmptyState>
 		{/if}
 
-		<!-- Activity + Conversation (mock carries neither yet — honest empty). -->
+		<!-- Activity (what the run submitted) + Conversation (none carried yet). -->
 		<div class="grid grid-cols-1 items-start gap-4 md:grid-cols-2">
 			<ListSection icon="pulse" iconToneClass="text-ink-mute" title={m.detail_activity()}>
-				<div class="text-ink-mute px-4 py-3 text-sm">{m.detail_activity_empty()}</div>
+				{#if run.activity.length}
+					<RunActivity feed={run.activity} />
+				{:else}
+					<div class="text-ink-mute px-4 py-3 text-sm">{m.detail_activity_empty()}</div>
+				{/if}
 			</ListSection>
 			<ListSection icon="chat-round-line" iconToneClass="text-ink-mute" title={m.detail_conversation()}>
 				<div class="text-ink-mute px-4 py-3 text-sm">{m.detail_conversation_empty()}</div>

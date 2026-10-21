@@ -9,7 +9,6 @@ create table if not exists dojo.tenants (
 , scope         dojo.tenant_scope  not null default 'private'
 , name          text              not null
 , dojo_url      text              not null
-, self_hosted   boolean           not null default false
 , claimed_at    timestamptz
 , claimed_by    uuid              references dojo.principals(id) on delete set null
 , settings      jsonb             not null default '{}'
@@ -42,8 +41,6 @@ comment on column dojo.tenants.scope
      is 'private (normal org/client Dōjō) or global (the single public global-dojo everyone may join).';
 comment on column dojo.tenants.dojo_url
      is 'Base URL the daemon connects to (SaaS dojo.sensei-hq.org/... or a self-hosted domain).';
-comment on column dojo.tenants.self_hosted
-     is 'True when the tenant runs on the customer''s own infra rather than SaaS.';
 comment on column dojo.tenants.settings
      is 'Free-form tenant configuration (heartbeat window, triage thresholds, etc.).';
 

@@ -86,7 +86,7 @@ export function toKitMembers(members: Membership[], opts: { self?: string; now?:
 // verbatim; the tenant policies feed the count/summary chips.
 
 const ROLE_LADDER: readonly KitRolePolicy[] = [
-	{ id: 'developer', kanji: '士', label: 'developer', note: 'read-mostly · watches & chats' },
+	{ id: 'contributor', kanji: '士', label: 'contributor', note: 'read-mostly · watches & chats' },
 	{ id: 'maintainer', kanji: '掟', label: 'maintainer', note: 'authors governance · triages' },
 	{ id: 'lead', kanji: '客', label: 'lead', note: 'client engagements & audit' },
 	{ id: 'admin', kanji: '任', label: 'admin', note: 'member roles & policies' }

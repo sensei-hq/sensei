@@ -389,9 +389,9 @@ export async function listClientAuditLedger(
 	return data.entries ?? [];
 }
 
-/** One project row (mirrors the server `ProjectRow`): a shared project in one
+/** One project row (mirrors the server `WorkspaceRow`): a shared project in one
  *  dōjō (#299). `slug` is unique within that dōjō; `id` is the drill-in key. */
-export interface ProjectRow {
+export interface WorkspaceRow {
 	id: string;
 	/** The dōjō the project lives in. */
 	tenant_id: string;
@@ -403,19 +403,19 @@ export interface ProjectRow {
 	runs_week: number;
 }
 
-/** `GET …/projects` — the org's projects (dojo.projects, tenant-scoped). */
-export async function listProjects(tenantKey: string, opts: DojoCallOpts = {}): Promise<ProjectRow[]> {
-	const data = await getJson<{ projects?: ProjectRow[] }>(clientUrl(tenantKey, '/projects'), opts);
-	return data.projects ?? [];
+/** `GET …/workspaces` — the org's projects (dojo.projects, tenant-scoped). */
+export async function listWorkspaces(tenantKey: string, opts: DojoCallOpts = {}): Promise<WorkspaceRow[]> {
+	const data = await getJson<{ workspaces?: WorkspaceRow[] }>(clientUrl(tenantKey, '/workspaces'), opts);
+	return data.workspaces ?? [];
 }
 
-/** `GET /v1/you/projects` — every project the caller may read, across every
- *  dōjō they belong to. Backs the personal `/you/projects` list. Not
+/** `GET /v1/you/workspaces` — every project the caller may read, across every
+ *  dōjō they belong to. Backs the personal `/you/workspaces` list. Not
  *  tenant-scoped — the server reads with the caller's JWT and RLS decides (#299). Honest-empty on a
  *  missing key; a non-2xx throws `ClientApiError` (never []-as-success). */
-export async function listUserProjects(opts: DojoCallOpts = {}): Promise<ProjectRow[]> {
-	const data = await getJson<{ projects?: ProjectRow[] }>(youUrl('/projects'), opts);
-	return data.projects ?? [];
+export async function listUserWorkspaces(opts: DojoCallOpts = {}): Promise<WorkspaceRow[]> {
+	const data = await getJson<{ workspaces?: WorkspaceRow[] }>(youUrl('/workspaces'), opts);
+	return data.workspaces ?? [];
 }
 
 /** `GET /v1/you/contributions` — the caller's contributions across every dōjō:
@@ -528,17 +528,6 @@ export async function setPackAdoption(
 	await sendJson(youUrl(`/rule-packs/${encodeTenant(slug)}/adopt`), 'POST', { adopt }, opts);
 }
 
-/** `POST /v1/you/dojos` — self-serve create a dōjō (F3a): a TEAM
- *  (`team/<slug>`) with the caller as its admin. Returns the new `{ id, key, name }`. Throws `ClientApiError` on a
- *  non-2xx (e.g. 409 name collision, 400 invalid). */
-export async function createDojo(
-	name: string,
-	kind: string,
-	opts: DojoCallOpts = {}
-): Promise<{ id: string; key: string; name: string }> {
-	return sendJson(youUrl('/dojos'), 'POST', { name, kind }, opts);
-}
-
 /** One tenant a provisioning pass established the caller's place in. */
 export interface ProvisionedTenant {
 	id: string;
@@ -573,32 +562,33 @@ export async function provisionFromForge(opts: DojoCallOpts = {}): Promise<Provi
  *  `ClientApiError` on a non-2xx (403 below admin, 400 invalid). */
 export async function createInvite(
 	tenantKey: string,
-	input: { email: string; role?: string; kind: string },
+	input: { email: string; role?: string; kind: string; access?: 'member' | 'viewer' },
 	opts: DojoCallOpts = {}
 ): Promise<{ id: string; token: string; email: string; role: string; expires_at: string }> {
 	return sendJson(clientUrl(tenantKey, '/invites'), 'POST', input, opts);
 }
 
 /** `POST /v1/you/invites/accept` — the invitee redeems an invite by its token
- *  (F3b). Returns `{ tenant_id, role }` on success. Throws `ClientApiError` on a
+ *  (F3b). Returns `{ tenant_id, role, access }` on success — a viewer invite
+ *  (#307 D8) has `role: null` and `access: 'viewer'`. Throws `ClientApiError` on a
  *  gate rejection (403 email-mismatch, 410 expired, 409 used, 404 unknown). */
 export async function acceptInvite(
 	token: string,
 	opts: DojoCallOpts = {}
-): Promise<{ tenant_id: string; role: string }> {
+): Promise<{ tenant_id: string; role: string | null; access: 'member' | 'viewer' }> {
 	return sendJson(youUrl('/invites/accept'), 'POST', { token }, opts);
 }
 
-/** `GET /v1/you/projects/{id}/constitution` — the daemon-resolved constitution
+/** `GET /v1/you/workspaces/{id}/constitution` — the daemon-resolved constitution
  *  for one project (F4 drill-in), by project id: a slug is unique only within one
  *  dōjō (#299). `null` when none is federated yet or the caller cannot read the
  *  project (honest-empty). */
-export async function getProjectConstitution(
+export async function getWorkspaceConstitution(
 	projectId: string,
 	opts: DojoCallOpts = {}
 ): Promise<RelayConstitution | null> {
 	const data = await getJson<{ constitution?: RelayConstitution | null }>(
-		youUrl(`/projects/${encodeURIComponent(projectId)}/constitution`),
+		youUrl(`/workspaces/${encodeURIComponent(projectId)}/constitution`),
 		opts
 	);
 	return data.constitution ?? null;

@@ -422,10 +422,10 @@ patterns = { followed[], antiPatterns[] }
 
 ## 12 · Related
 
-- [`../prd/modules/03-delivery/16-project-window/README.md`](../prd/modules/03-delivery/16-project-window/README.md) — the M16 spec this feeds.
+- [`../prd/modules/03-delivery/16-workspace-window/README.md`](../prd/modules/03-delivery/16-workspace-window/README.md) — the M16 spec this feeds.
 - [`diagrams-zoom-pan-detail-requirements.md`](diagrams-zoom-pan-detail-requirements.md) — the diagram detail/zoom requirements.
 - [`integrations-and-gating-requirements.md`](integrations-and-gating-requirements.md) — the T3 trackers/targets the window surfaces.
-- [`../prd/modules/04-team/03-dojo-project-planning/README.md`](../prd/modules/04-team/03-dojo-project-planning/README.md) — tracker sync + gates.
+- [`../prd/modules/04-team/03-dojo-workspace-planning/README.md`](../prd/modules/04-team/03-dojo-workspace-planning/README.md) — tracker sync + gates.
 - [`../prd/modules/02-insight/09-memory-and-knowledge/README.md`](../prd/modules/02-insight/09-memory-and-knowledge/README.md) — the memory promotion lifecycle.
-- [`../prd/modules/03-delivery/17-atlas/README.md`](../prd/modules/03-delivery/17-atlas/README.md) — the shared diagram embed, in full.
+- [`../prd/modules/03-delivery/17-code-map/README.md`](../prd/modules/03-delivery/17-code-map/README.md) — the shared diagram embed, in full.
 - Mockups: `project-pages.jsx` · `perspective-split.jsx` · `project-lite-panes.jsx` · `project-shared.jsx` · `project-metrics.jsx` · `observatory/sessions-zen.jsx` · `data/project-data.js`.

@@ -7,7 +7,7 @@
 -- schema dojo", and every route that reads as the system (`service_role`) does too.
 --
 -- WHY A HOOK, and not a manual deploy step. It used to be one ("expose + grant
--- the dojo schema", docs/plan/decisions.md), kept out of the dbd tree on two
+-- the dojo schema", docs/history/plan/decisions.md), kept out of the dbd tree on two
 -- grounds that no longer hold: the Supabase roles may not exist (apply/before/
 -- roles.sql now makes them resolvable everywhere), and dbd could not parse a
 -- `do` block (fixed in 0.12.0). A step a person must remember is a step a fresh

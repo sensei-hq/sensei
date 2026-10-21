@@ -12,7 +12,7 @@ sensei exists to shorten. Five sources answer five questions: what shapes alread
 exist in this repo (**codebase**), the conventions for using this library correctly
 (**library**), established patterns for problems like this (**registry**), the
 tradeoff-laden choices the user should make deliberately (**architectural options**),
-and what this project has consistently done — its implicit standard (**derived**).
+and what this workspace has consistently done — its implicit standard (**derived**).
 They come in three modes: design/positive patterns to follow, anti-patterns to avoid,
 and optimization opportunities. The user feels this module as *the assistant already
 knows how we do things here*.
@@ -56,7 +56,7 @@ knows how we do things here*.
 - **Daemon** — pattern detection scheduled by the M7 analyzer tick (incremental gate
   on the affected folders), `crates/senseid/src/patterns/{detect,codebase,library,
   registry,options,derived}/`.
-- **App** — Project Patterns review + promote; Insights violation cards (anti),
+- **App** — Workspace Patterns review + promote; Insights violation cards (anti),
   Soon column (opt).
 
 ## Data invariants
@@ -71,22 +71,22 @@ knows how we do things here*.
   `detected | promoted | dismissed`, `signature` (dedup by instance shape).
 - `sensei.pattern_registries` — external registries (`patterns.dev`),
   `indexed`, `last_ingested_at`.
-- `sensei.pattern_choices` — per project × `option_category` chosen pattern +
+- `sensei.pattern_choices` — per workspace × `option_category` chosen pattern +
   `chosen_by` + `rationale`; a choice propagates as a rule with
   `source: chosen:option:{category}` (M13).
 - **Ordering on read.** `get_patterns` default:
   derived > codebase > library > registry > option — a registry pattern must never
-  outrank the project's own convention.
+  outrank the workspace's own convention.
 - **Dedup across sources.** Same pattern from two sources collapses to one entry.
 - **Incremental detection.** Re-runs only on changed/affected folders — never every
-  tick over the whole project.
+  tick over the whole workspace.
 - All human-facing pattern copy goes through narration-cache.
 
 ## Signals shown
 
 | Element | Meaning | Worked example |
 |---|---|---|
-| `get_project_conventions()` | derived patterns + chosen options for this project | "SSR data-separation is the standard here" |
+| `get_project_conventions()` | derived patterns + chosen options for this workspace | "SSR data-separation is the standard here" |
 | `match_pattern(task)` | ranked matches with tradeoffs | adapter task → `custom.assistant_adapter_trait` + instances |
 | Codebase custom pattern | named community cluster with shared shape | `custom.assistant_adapter_trait` |
 | Anti-pattern violation | duplication / spaghetti / broken layering above threshold | Insights Now violation card |
@@ -95,7 +95,7 @@ knows how we do things here*.
 
 ## Done gate
 
-- Every project with > 1000 nodes has codebase design patterns detected where they
+- Every workspace with > 1000 nodes has codebase design patterns detected where they
   exist (adapter / plugin / observer / subscriber are the likeliest in this repo).
 - Libraries with llms.txt-style pattern sections ingest their patterns when
   `add_library` runs; ≥1 industry registry is ingestible and reachable via

@@ -20,7 +20,6 @@ const acme: DojoOrg = {
 	kanji: '社',
 	name: 'Acme Corp',
 	kind: 'Organization',
-	host: 'self',
 	url: 'dojo.acme.internal',
 	role: 'Admin',
 	from: 'GitHub · org owner',
@@ -32,7 +31,6 @@ const globex: DojoOrg = {
 	kanji: '社',
 	name: 'Globex',
 	kind: 'Organization',
-	host: 'saas',
 	url: 'github/globex',
 	role: 'Maintainer',
 	from: 'GitHub · repo admin',
@@ -47,14 +45,14 @@ describe('roleKey — label → lowercase role rank key', () => {
 		expect(roleKey('Lead')).toBe('lead');
 	});
 
-	it('maps Contributor/Member → developer (the base rank)', () => {
-		expect(roleKey('Contributor')).toBe('developer');
-		expect(roleKey('Member')).toBe('developer');
+	it('maps Contributor/Member → contributor (the base rank, D1)', () => {
+		expect(roleKey('Contributor')).toBe('contributor');
+		expect(roleKey('Member')).toBe('contributor');
 	});
 
-	it('floors an unknown role to developer', () => {
-		expect(roleKey('Overlord')).toBe('developer');
-		expect(roleKey(undefined)).toBe('developer');
+	it('floors an unknown role to contributor', () => {
+		expect(roleKey('Overlord')).toBe('contributor');
+		expect(roleKey(undefined)).toBe('contributor');
 	});
 });
 

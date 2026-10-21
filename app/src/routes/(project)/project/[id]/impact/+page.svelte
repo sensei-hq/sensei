@@ -11,63 +11,29 @@
     pct,
     verdictMeta,
     verdictToneClass as toneClass,
-    type ImpactRow,
   } from '$lib/impact.js';
+  import { ProjectImpactState, flattenBuckets, splitLog, type ImpactOutcome } from './impact-state.svelte.js';
   import type { ImpactVerdictEntry } from '$lib/types.js';
 
   let { data } = $props();
 
-  // Measured verdicts — negative first (loudest to act on), then positive,
-  // neutral, pending. Each bucket already sorts by |ftrDelta|.
-  const flat = $derived<ImpactRow[]>([
-    ...data.buckets.negative,
-    ...data.buckets.positive,
-    ...data.buckets.neutral,
-    ...data.buckets.pending,
-  ]);
+  // Presentation only: ProjectImpactState holds the picked row, the log form
+  // and the two writes; the load is +page.ts.
+  const st = new ProjectImpactState();
+  const api = $derived(senseiApi(appState.port));
+  const projectId = $derived(page.params.id ?? '');
 
-  // Picked row — null until the user clicks, then honoured; falls back to the
-  // first row when null or the picked row drops out of the list.
-  let selectedId = $state<string | null>(null);
-  const selected = $derived(flat.find((v) => v.id === selectedId) ?? flat[0]);
+  const flat = $derived(flattenBuckets(data.buckets));
+  const selected = $derived(st.selectedIn(flat));
   const selectedVm = $derived(selected ? verdictMeta(selected.verdict) : null);
 
-  // ── Manual impact-log lane (T3 Slice 3) — independent, user-logged ──────
-  const projectId = $derived(page.params.id ?? '');
-  let logForm = $state({ title: '', note: '' });
-  let logging = $state(false);
-  let decideBusy = $state<Record<string, boolean>>({});
-
-  async function logImpact() {
-    if (!projectId || !logForm.title.trim()) return;
-    logging = true;
-    try {
-      await senseiApi(appState.port).createImpactVerdict(
-        projectId,
-        logForm.title.trim(),
-        logForm.note.trim() || undefined,
-      );
-      logForm = { title: '', note: '' };
-      await invalidateAll();
-    } finally {
-      logging = false;
-    }
-  }
-
-  async function decide(verdictId: string, outcome: 'success' | 'mixed' | 'failure') {
-    if (!projectId) return;
-    decideBusy = { ...decideBusy, [verdictId]: true };
-    try {
-      await senseiApi(appState.port).decideImpactVerdict(projectId, verdictId, outcome);
-      await invalidateAll();
-    } finally {
-      decideBusy = { ...decideBusy, [verdictId]: false };
-    }
-  }
-
   const impactLog: ImpactVerdictEntry[] = $derived(data.impactLog);
-  const impactPending = $derived(impactLog.filter((e) => e.verdict === 'pending'));
-  const impactDecided = $derived(impactLog.filter((e) => e.verdict !== 'pending'));
+  const split = $derived(splitLog(impactLog));
+  const impactPending = $derived(split.pending);
+  const impactDecided = $derived(split.decided);
+
+  const logImpact = () => st.logImpact(api, projectId, invalidateAll);
+  const decide = (id: string, outcome: ImpactOutcome) => st.decide(api, projectId, id, outcome, invalidateAll);
 </script>
 
 <Screen>
@@ -125,7 +91,7 @@
               class:border-l-ink-mute={isOpen && vm.tone === 'ink'}
               data-verdict-row={v.id}
               data-verdict-bucket={v.verdict}
-              onclick={() => (selectedId = v.id)}
+              onclick={() => (st.selectedId = v.id)}
             >
               <div class="flex items-center gap-2 mb-1">
                 <Kanji char={vm.glyph} size="inherit" tone="inherit" class="text-sm {toneClass(vm.tone)}" />
@@ -229,13 +195,13 @@
         <input
           type="text"
           placeholder="What shipped?"
-          bind:value={logForm.title}
+          bind:value={st.logForm.title}
           class="px-3 py-2 border border-paper-edge rounded-md bg-paper text-ink text-sm outline-none"
           data-testid="impact-title"
         />
         <textarea
           placeholder="Context (optional)"
-          bind:value={logForm.note}
+          bind:value={st.logForm.note}
           rows="2"
           class="px-3 py-2 border border-paper-edge rounded-md bg-paper text-ink text-sm outline-none resize-y"
           data-testid="impact-note"
@@ -245,9 +211,12 @@
           variant="primary"
           size="sm"
           class="self-start"
-          disabled={!logForm.title.trim() || logging}
+          disabled={!st.logForm.title.trim() || st.logging}
           data-testid="impact-log-button"
-        >{logging ? 'Logging…' : 'Log impact'}</Button>
+        >{st.logging ? 'Logging…' : 'Log impact'}</Button>
+        {#if st.logError}
+          <p class="text-xs text-danger m-0" data-testid="impact-log-error">{st.logError}</p>
+        {/if}
       </form>
 
       {#if impactPending.length > 0}
@@ -262,15 +231,18 @@
                 {/if}
                 <div class="text-xs text-ink-soft mt-0.5">{new Date(entry.createdAt).toLocaleDateString()}</div>
               </div>
-              <button type="button" disabled={decideBusy[entry.id]} onclick={() => decide(entry.id, 'success')}
+              <button type="button" disabled={st.isDeciding(entry.id)} onclick={() => decide(entry.id, 'success')}
                       data-testid={`impact-success-${entry.id}`}
                       class="px-2 py-1 text-xs rounded-md bg-success-soft text-success border-none cursor-pointer">Success</button>
-              <button type="button" disabled={decideBusy[entry.id]} onclick={() => decide(entry.id, 'mixed')}
+              <button type="button" disabled={st.isDeciding(entry.id)} onclick={() => decide(entry.id, 'mixed')}
                       data-testid={`impact-mixed-${entry.id}`}
                       class="px-2 py-1 text-xs rounded-md bg-warning-soft text-warning border-none cursor-pointer">Mixed</button>
-              <button type="button" disabled={decideBusy[entry.id]} onclick={() => decide(entry.id, 'failure')}
+              <button type="button" disabled={st.isDeciding(entry.id)} onclick={() => decide(entry.id, 'failure')}
                       data-testid={`impact-failure-${entry.id}`}
                       class="px-2 py-1 text-xs rounded-md bg-danger-soft text-danger border-none cursor-pointer">Failure</button>
+              {#if st.decideError(entry.id)}
+                <span class="text-xs text-danger" data-testid={`impact-decide-error-${entry.id}`}>{st.decideError(entry.id)}</span>
+              {/if}
             </li>
           {/each}
         </ul>

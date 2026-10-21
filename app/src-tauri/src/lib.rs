@@ -169,9 +169,20 @@ pub fn run() {
                 cfg.db_name, cfg.daemon_port,
             ));
 
+            // ── Main window ───────────────────────────────────────────────
+            // Built from its `tauri.conf.json` entry (`create: false`) so the
+            // window can be transparent on macOS only. Transparency exists for
+            // the vibrancy below; on Linux nothing paints behind a transparent
+            // window, so the native GTK menu bar would render see-through.
+            let main_cfg = app.config().app.windows.iter()
+                .find(|w| w.label == "main")
+                .ok_or("window 'main' not found in config")?
+                .clone();
+            let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &main_cfg)?
+                .transparent(cfg!(target_os = "macos"))
+                .build()?;
+
             // ── Vibrancy ──────────────────────────────────────────────────
-            let window = app.get_webview_window("main")
-                .ok_or("window 'main' not found")?;
             #[cfg(target_os = "macos")]
             {
                 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};

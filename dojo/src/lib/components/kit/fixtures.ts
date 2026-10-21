@@ -68,7 +68,7 @@ export const dojos: KitDojo[] = [
 		kanji: '社',
 		name: 'Rust Guild',
 		kind: 'organization',
-		role: 'developer',
+		role: 'contributor',
 		route: 'sensei-hq.com/rust-guild',
 		members: 340,
 		projects: 18,
@@ -1200,8 +1200,8 @@ export const members: KitMember[] = [
 		scopes: 'Platform · API',
 		active: '3h'
 	},
-	{ name: 'Aiko Nakamura', git: 'Write', role: 'developer', scopes: 'Web · Auth', active: '1h' },
-	{ name: 'Tom Becker', git: 'Read', role: 'developer', scopes: '—', active: '5d' }
+	{ name: 'Aiko Nakamura', git: 'Write', role: 'contributor', scopes: 'Web · Auth', active: '1h' },
+	{ name: 'Tom Becker', git: 'Read', role: 'contributor', scopes: '—', active: '5d' }
 ];
 
 /** The org's members (dojo2-data `members`). One authored fixture this chunk. */
@@ -1211,7 +1211,7 @@ export function membersFor(_slug: string): KitMember[] {
 
 // Role policies — additive rungs, each adds capability (dojo2-data `roles`).
 export const rolePolicies: KitRolePolicy[] = [
-	{ id: 'developer', kanji: '士', label: 'developer', note: 'read-mostly · watches & chats' },
+	{ id: 'contributor', kanji: '士', label: 'contributor', note: 'read-mostly · watches & chats' },
 	{ id: 'maintainer', kanji: '掟', label: 'maintainer', note: 'authors governance · triages' },
 	{ id: 'lead', kanji: '客', label: 'lead', note: 'client engagements & audit' },
 	{ id: 'admin', kanji: '任', label: 'admin', note: 'member roles & policies' }

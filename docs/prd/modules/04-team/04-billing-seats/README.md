@@ -6,18 +6,26 @@ engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--cli
 
 ## Purpose
 
-Billing & Seats is the **business layer**: a private shared Dōjō can be
-subscribed and metered. The model is **free for individuals and open source**;
-**paid per active contributor** for organizations; read-only members are free;
+Billing & Seats is the **business layer**: a hosted Dōjō can be
+subscribed and metered. **Every dōjō gets the free tier** (D20); billing pays for
+what is beyond it — **gating, integrations and consolidated metrics in the dōjō** —
+**per active contributor**. Sensei itself serves the individual; the shared views and
+gates are the dōjō's. The model stays **free for individuals and open source**; read-only members are free;
 GitHub Sponsors is optional support. There is **no separate Enterprise tier** —
-self-host, SSO/SCIM, audit retention, SLA become options on the paid org tier.
+SSO/SCIM, audit retention, SLA become options on the paid org tier. There is no
+self-hosting (Q14). **Viewers and invited guests are never metered** — only active
+contributors are.
 The job is **meter what matters (active contributors), bill fairly, keep the
 free tier real**. The user feels this as *I only pay when my team actually uses
 the shared Dōjō, and the free tier isn't a trial.*
 
 > **Status honesty.** The pricing model and tier table are designed (features/07-pricing.md).
-> **Nothing is built** — no billing integration, no metering, no invoices, no
-> payment processor. The mockup `dojo-billing.jsx` uses hardcoded example data.
+> **Built:** the billing account and seat tables (`dojo.billing_accounts`,
+> `dojo.seats`, live usage from `dojo.tenant_seat_usage`), GET/POST
+> `/v1/t/[origin]/[org]/billing` (admin-only: the account plus live per-seat usage;
+> POST refreshes the cached seat count), and the org's **Plan & billing** section at
+> `/org/[slug]/billing`, which reads that route. **Not built:** a payment provider,
+> invoices, plan changes. The mockup `dojo-billing.jsx` uses hardcoded example data.
 > The website has a live GitHub Sponsors link. The free tier intent exists but
 > the website says "free during preview" (not the final "free forever" claim).
 
@@ -25,24 +33,26 @@ the shared Dōjō, and the free tier isn't a trial.*
 
 - In: the three tiers (Free individuals/OSS · Paid organizations · GitHub
   Sponsors support); **active contributor metering** (definition, detection,
-  invoicing); plan selection at Dōjō creation; billing portal in org context
+  invoicing); plan selection in the org's billing page (a dōjō arrives from a git
+  integration on the free tier — D20); billing portal in org context
   (`/org/[slug]/billing` — admin surface); the **no-Enterprise decision** (fold
-  self-host, SSO/SCIM, audit retention, SLA into paid org options).
-- Out: the federation backbone (T1), role consoles (T2), project planning (T3),
+  SSO/SCIM, audit retention, SLA into paid org options).
+- Out: the federation backbone (T1), role consoles (T2), workspace planning (T3),
   the marketing website claims (P2).
 
 ## Surfaces
 
-- **App** — `/org/new` (create Dōjō + choose plan); `/org/[slug]/billing`
-  (admin: current plan, active contributor count, invoices, payment method,
+- **App** — `/org/[slug]/billing` (admin: choose or change the plan, current plan, active contributor count, invoices, payment method,
   usage history, upgrade/downgrade).
 - **Daemon** — **none yet** (metering/aggregation not built).
-- **Worker API (planned)** — `/v1/t/{tenant}/billing/*` (plan, metering,
-  invoices, payment).
-- **Data (planned)** — `dojo.tenants` (plan, status, billing_anchor);
-  `dojo.subscriptions` (stripe_customer_id, price_id, status);
-  `dojo.active_contributors` (tenant, user, window_start, window_end, count);
-  `dojo.invoices` (tenant, stripe_invoice_id, amount, period, status).
+- **Worker API (built)** — `GET/POST /v1/t/[origin]/[org]/billing`: the account and
+  live seat usage; POST recomputes `seats_used`. **Planned:** plan change, invoices,
+  payment.
+- **Data (built)** — `dojo.billing_accounts` (one per tenant: plan, status,
+  seats_included, seats_used, `external_customer_ref` — NULL until a provider is
+  chosen, period); `dojo.seats` (one row per user's active participation; a seat is
+  billable on a private namespace); `dojo.tenant_seat_usage` (the live count).
+  **Planned:** invoices and a provider subscription.
 
 ## Data invariants
 
@@ -51,10 +61,12 @@ the shared Dōjō, and the free tier isn't a trial.*
 - **Lead.** **Paid = per active contributor.** Read-only members are free.
   "Active contributor" = a user who authored a commit/push/contribution in the
   billing window (exact definition TBD — gap).
-- **Lead.** **No separate Enterprise tier.** Self-host, SSO/SCIM, audit
-  retention, SLA are options on the paid org tier.
-- **Lead.** Plan selection happens at **Dōjō creation** — the `/org/new` flow
-  includes the tier choice.
+- **Lead.** **No separate Enterprise tier.** SSO/SCIM, audit retention, SLA are
+  options on the paid org tier.
+- **Lead.** **Viewers and invited guests are never metered** (T6) — a seat is an active
+  contributor.
+- **Lead.** **Every dōjō starts on the free tier**; the plan is chosen in the org's
+  billing page, never at creation — a dōjō arrives from a git integration (D20).
 - **Lead.** The billing portal is **admin-only** in the org context.
 
 ## Signals shown
@@ -70,8 +82,8 @@ the shared Dōjō, and the free tier isn't a trial.*
 
 ## Done gate
 
-- A user creates a Dōjō at `/org/new`, chooses Free or Paid, and the plan is
-  recorded on the tenant.
+- A dōjō imported from a git integration starts on Free; an admin chooses Paid in
+  the billing page, and the plan is recorded on the tenant.
 - The billing portal (`/org/[slug]/billing`) shows the current plan, active
   contributor count, invoices, and payment method (admin only).
 - Active contributors are metered correctly (definition implemented); invoices
@@ -80,7 +92,7 @@ the shared Dōjō, and the free tier isn't a trial.*
 - GitHub Sponsors link is present and functional.
 
 ```bash
-# Not implemented — placeholder
+# Built: the account and live seat usage (admin only); no provider, no invoices
 curl -s -H "Authorization: Bearer $TOKEN" \
   "https://dojo.sensei-hq.com/v1/t/org/sensei-hq/billing" | jq
 ```
@@ -98,14 +110,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 - [`scenarios/billing-seats.feature`](scenarios/billing-seats.feature) — the
   tier model, active contributor metering, plan selection, billing portal
-  (all `NO TEST` — nothing built).
+  (all `NO TEST` — the account, seats and billing route are built but not pinned here).
 
 ## Open gaps
 
 - **Active contributor definition** — how is "active" defined (seat metering)?
-- **Self-host licensing** — license vs. subscription?
 - **Fair-use limits, storage caps, non-profit/education pricing?**
-- **Payment processor integration** — none selected.
+- **Payment processor integration** — none selected (`external_customer_ref` stays NULL).
 - **Metering aggregation** — daemon-side not built.
 
 ## Related
@@ -117,6 +128,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - [mockups/Sensei/lib/dojo/dojo-billing.jsx](../../../../mockups/Sensei/lib/dojo/dojo-billing.jsx)
   — visual source (tier table + per-seat example, hardcoded data).
 - [mockups/Sensei/lib/dojo/dojo-saas.jsx](../../../../mockups/Sensei/lib/dojo/dojo-saas.jsx)
-  — SaaS entry: sign-in · orgs · create Dōjō (plan choice).
+  — SaaS entry: sign-in · orgs · create Dōjō (plan choice). Superseded: a dōjō comes
+  from a git integration on the free tier and the plan is chosen in billing (D20).
 - [prd/01-vision.md §Business model](../../../01-vision.md) · [prd/03-personas.md §4,5](../../../03-personas.md).
-- Crates: **none yet** — Worker: `dojo/src/routes/(app)/org/[slug]/billing/`.
+- Crates: **none yet** — Worker: `dojo/src/routes/v1/t/[origin]/[org]/billing/+server.ts`;
+  the org section is `/org/[slug]/billing`, served by `dojo/src/routes/(app)/org/[slug]/[section]/`.

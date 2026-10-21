@@ -11,6 +11,14 @@
 	} from '$lib/components/kit';
 	import type { KitMember, KitRolePolicy, KitChatTurn } from '$lib/components/kit/types';
 	import { ROLE_SURFACE_TABS, resolveTab } from '$lib/role-surfaces-view';
+	import { MEMBER_ROLES } from '$lib/admin-view';
+	import type { InviteState } from '$lib/invite-state.svelte';
+	import InvitePanel from './InvitePanel.svelte';
+	import ViewersList from './ViewersList.svelte';
+	import TeamsList from './TeamsList.svelte';
+	import type { TeamView } from '$lib/teams-view';
+	import type { TeamDraft, SaveTeam } from '$lib/teams-state.svelte';
+	import type { DojoViewerView, ViewerProjectView } from '$lib/viewers-view';
 
 	// The admin Members & Roles / Policies / Audit surface (mockup
 	// ScrRoleSurfaces) — ONE screen the org nav shares between two ids: the
@@ -27,7 +35,20 @@
 		policies = [],
 		audit = [],
 		me = 'You',
-		onSetRole
+		onSetRole,
+		invite,
+		viewers = [],
+		viewerProjects = [],
+		onGrantView,
+		onRevokeView,
+		onRemoveViewer,
+		teams = [],
+		teamDraft,
+		onSaveTeam,
+		onDeleteTeam,
+		onAddTeamMember,
+		onRemoveTeamMember,
+		onGrantTeam
 	}: {
 		orgName: string;
 		tab?: string;
@@ -38,11 +59,26 @@
 		/** Change a member's role (admin). Called with the row + the chosen role;
 		 *  absent = read-only (fixture render). The row must carry a `userId`. */
 		onSetRole?: (member: KitMember, role: string) => void;
+		/** The admin invite (#307 A3) — the Members tab's Invite button opens it;
+		 *  absent = the button does nothing (fixture render). */
+		invite?: InviteState;
+		/** The dōjō's viewers (#307 D8) and the projects they can be granted. */
+		viewers?: DojoViewerView[];
+		viewerProjects?: ViewerProjectView[];
+		onGrantView?: (viewer: DojoViewerView, projectId: string) => void;
+		onRevokeView?: (viewer: DojoViewerView, projectId: string) => void;
+		onRemoveViewer?: (viewer: DojoViewerView) => void;
+		/** The dōjō's teams (#307 D7) and the draft behind New team / Rename. */
+		teams?: TeamView[];
+		teamDraft?: TeamDraft;
+		onSaveTeam?: SaveTeam;
+		onDeleteTeam?: (team: TeamView) => void;
+		onAddTeamMember?: (team: TeamView, principalId: string) => void;
+		onRemoveTeamMember?: (team: TeamView, principalId: string) => void;
+		onGrantTeam?: (team: TeamView, projectId: string) => void;
 	} = $props();
 
-	/** The additive role ladder the set-role picker offers (matches
-	 *  `dojo.member_role`). */
-	const ROLE_OPTIONS = ['contributor', 'maintainer', 'lead', 'admin'];
+
 
 	// The active tab. The nav shares this one screen between the `members` and
 	// `audit` ids, so a members↔audit navigation changes the `tab` prop from the
@@ -56,6 +92,16 @@
 	);
 	const current = $derived(resolveTab(active));
 
+	/** The header button: Invite on Members / Viewers, New team on Teams. */
+	const cta = $derived.by(() => {
+		if (active === 'members' || active === 'viewers') {
+			const access = active === 'viewers' ? 'viewer' : 'member';
+			return () => invite?.start(access);
+		}
+		if (active === 'teams') return () => teamDraft?.start();
+		return undefined;
+	});
+
 	function select(id: string) {
 		override = { against: tab, id: resolveTab(id).id };
 	}
@@ -66,10 +112,14 @@
 		<div class="px-4 pt-4 md:px-8 md:pt-8">
 			<SectionHead
 				kanji="規" eyebrow={orgName + ' · ' + current.eyebrow} title={current.title}
-				description="Roles are additive and derived from git. developer → maintainer → lead → admin. A role only ever adds capability."
+				description={current.description}
 			>
 				{#snippet right()}
-					<Btn size="sm" icon="add-circle">{current.cta}</Btn>
+					<Btn
+						size="sm"
+						icon="add-circle"
+						onclick={cta}>{current.cta}</Btn
+					>
 				{/snippet}
 			</SectionHead>
 		</div>
@@ -95,6 +145,9 @@
 		</div>
 
 		{#if active === 'members'}
+			{#if invite?.open}
+				<InvitePanel {invite} />
+			{/if}
 			<!-- Members & Roles — the git-derived role + dōjō-override table. -->
 			<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 				{#each members as m (m.name)}
@@ -122,7 +175,7 @@
 								value={m.role}
 								onchange={(e) => onSetRole?.(m, (e.currentTarget as HTMLSelectElement).value)}
 							>
-								{#each ROLE_OPTIONS as r (r)}
+								{#each MEMBER_ROLES as r (r)}
 									<option value={r}>{r}</option>
 								{/each}
 							</select>
@@ -133,6 +186,32 @@
 					</div>
 				{/each}
 			</div>
+		{:else if active === 'viewers'}
+			{#if invite?.open}
+				<InvitePanel {invite} />
+			{/if}
+			<!-- Viewers (#307 D8) — invited as viewers, not members; granted projects. -->
+			<ViewersList
+				{viewers}
+				projects={viewerProjects}
+				onGrant={onGrantView}
+				onRevoke={onRevokeView}
+				onRemove={onRemoveViewer}
+			/>
+		{:else if active === 'teams'}
+			{#if teamDraft}
+				<TeamsList
+					{teams}
+					{members}
+					projects={viewerProjects}
+					draft={teamDraft}
+					onSave={onSaveTeam}
+					onDelete={onDeleteTeam}
+					onAddMember={onAddTeamMember}
+					onRemoveMember={onRemoveTeamMember}
+					onGrant={onGrantTeam}
+				/>
+			{/if}
 		{:else if active === 'policies'}
 			<!-- Policies — the additive role-policy grid. -->
 			<div class="flex flex-col gap-3">

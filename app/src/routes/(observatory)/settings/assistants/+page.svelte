@@ -1,33 +1,14 @@
 <script lang="ts">
     import { railIcon } from "../settings-nav";
-    import { onMount } from "svelte";
-    import { appState } from "$lib/appstate.svelte.js";
-    import { senseiApi } from "$lib/api.js";
+    import { invalidateAll } from "$app/navigation";
     import { PageHeader, Screen, ScreenState, StatusDot } from "$lib/components";
-    import { readAssistants } from "../settings-reads";
     import TranscriptConsentCard from "$lib/components/settings/TranscriptConsentCard.svelte";
 
-    type Assistant = {
-        family: string;
-        name: string;
-        version?: string;
-        configured: boolean;
-    };
-
-    let assistants = $state<Assistant[]>([]);
-    let loading = $state(true);
-
-    // Why the assistants could not be detected (#288) — not "none detected".
-    let loadError = $state<string | null>(null);
-
-    async function load() {
-        loading = true;
-        const read = await readAssistants(senseiApi(appState.port));
-        assistants = read.assistants;
-        loadError = read.error;
-        loading = false;
-    }
-    onMount(load);
+    // The detected assistants, or why they could not be detected (#288) —
+    // read by +page.ts.
+    let { data } = $props();
+    const assistants = $derived(data.assistants);
+    const loadError = $derived(data.error);
 </script>
 
 <Screen>
@@ -35,10 +16,8 @@
     <PageHeader kanji="連" icon={railIcon("/settings/assistants")} eyebrow="Settings" title="Assistants" />
     {/snippet}
     <div class="max-w-[720px] mx-auto px-12 pt-8 pb-16" data-testid="settings-assistants">
-        {#if loading}
-            <p class="text-sm text-ink-soft leading-normal">Loading…</p>
-        {:else if loadError}
-            <ScreenState status="error" error={loadError} onretry={() => void load()} />
+        {#if loadError}
+            <ScreenState status="error" error={loadError} onretry={() => void invalidateAll()} />
         {:else}
             <div
                 class="px-7 py-7 bg-paper-mute border border-paper-edge rounded-lg"

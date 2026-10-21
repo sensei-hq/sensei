@@ -24,10 +24,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct MappedRepo {
     pub repo_key: String,
-    /// Why filing the repository under its project failed (#299) — the
+    /// Why filing the repository under its workspace failed (#299) — the
     /// registration still stood. Absent on success and on a sync plan.
     #[serde(default)]
-    pub project_error: Option<String>,
+    pub workspace_error: Option<String>,
     /// The tenant's `{origin}/{slug}` discovery key — for logs and display.
     pub tenant: String,
     /// The tenant's uuid. What gets stored in `sensei.repositories.tenant_id`,
@@ -199,16 +199,16 @@ pub struct RepoInput<'a> {
     pub repo_key: &'a str,
     pub remote_url: Option<&'a str>,
     pub name: &'a str,
-    /// Its sensei project (#299): the dōjō files the mapped repository under it.
+    /// Its workspace (#299, D12): the dōjō files the mapped repository under it.
     /// Omitted, never `null`, when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub project: Option<RepoProjectInput<'a>>,
+    pub workspace: Option<RepoWorkspaceInput<'a>>,
 }
 
-/// A sensei project as a registration names it — the slug and name a relay run
+/// A workspace as a registration names it — the slug and name a relay run
 /// sends; the dōjō derives the classification from where the repository lives.
 #[derive(Debug, serde::Serialize)]
-pub struct RepoProjectInput<'a> {
+pub struct RepoWorkspaceInput<'a> {
     pub slug: &'a str,
     pub name: &'a str,
 }
@@ -563,6 +563,33 @@ pub struct ProvisionOutcome {
     /// Present only when the forge was genuinely read.
     #[serde(default)]
     pub visibility: Option<VisibilityCounts>,
+    /// The per-person forge mirror (#307 A2c): what it recorded, or why it could
+    /// not. Absent from a dōjō that does not mirror — see [`mirror_verdict`].
+    #[serde(default)]
+    pub roles: Option<RoleMirror>,
+}
+
+/// What the dōjō's per-person forge mirror did in one provision pass.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RoleMirror {
+    #[serde(default)]
+    pub tenants: Option<u32>,
+    #[serde(default)]
+    pub repositories: Option<u32>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// Whether the pass mirrored the member's repository roles: `(dōjōs, repositories)`,
+/// or the dōjō's own reason it could not. A pass that reports no mirror at all is
+/// an error too — "nothing said" is never read as "done".
+pub fn mirror_verdict(out: &ProvisionOutcome) -> Result<(u32, u32), String> {
+    match &out.roles {
+        Some(RoleMirror { error: Some(e), .. }) => Err(e.clone()),
+        Some(RoleMirror { tenants: Some(t), repositories: Some(r), .. }) => Ok((*t, *r)),
+        Some(_) => Err("the dōjō reported an incomplete role mirror".to_string()),
+        None => Err("the dōjō did not report a role mirror".to_string()),
+    }
 }
 
 /// Read the provisioning result, and treat "I could not do it" as a failure.
@@ -870,6 +897,29 @@ mod tests {
         assert_eq!((v.captured, v.failed, v.deferred), (3, 2, 40));
     }
 
+    // #307 A2c/A2d: the provision pass also mirrors the member's repository roles;
+    // its result is the dōjō's report, decoded as given.
+    #[test]
+    fn the_role_mirror_result_is_read_from_the_pass() {
+        let body = serde_json::json!({ "synced": true, "tenants": [],
+            "roles": { "tenants": 4, "repositories": 200 } });
+        let out = provision_verdict(&body.to_string()).expect("ok");
+        assert_eq!(mirror_verdict(&out), Ok((4, 200)));
+    }
+
+    #[test]
+    fn a_failed_or_unreported_mirror_is_an_error_not_a_success() {
+        let failed = serde_json::json!({ "synced": true, "tenants": [],
+            "roles": { "error": "GitHub read failed (502)" } });
+        let out = provision_verdict(&failed.to_string()).expect("the pass itself is ok");
+        assert_eq!(mirror_verdict(&out), Err("GitHub read failed (502)".to_string()));
+
+        // An older dōjō that does not mirror reports nothing — never read as done.
+        let silent = serde_json::json!({ "synced": true, "tenants": [] });
+        let out = provision_verdict(&silent.to_string()).expect("ok");
+        assert!(mirror_verdict(&out).unwrap_err().contains("did not report"));
+    }
+
     #[test]
     fn a_body_without_synced_fails_loudly_rather_than_being_assumed_good() {
         // `synced` is documented as never omitted. If that ever stops holding,
@@ -898,7 +948,7 @@ mod activation_union {
 
     fn repo(key: &str, tenant: &str, disabled: &[&str]) -> MappedRepo {
         MappedRepo {
-            project_error: None,
+            workspace_error: None,
             repo_key: key.into(),
             tenant: tenant.into(),
             tenant_id: format!("t-{tenant}"),
@@ -1008,33 +1058,34 @@ mod activation_decode {
 }
 
 #[cfg(test)]
-mod repo_input_project_tests {
+mod repo_input_workspace_tests {
     use super::*;
 
-    // #299: a repository's sensei project travels with its registration, and
+    // #299, D12: a repository's workspace travels with its registration, and
     // only when there is one — never as `null`, which the dōjō reads as present.
     #[test]
-    fn a_project_is_sent_when_known_and_omitted_when_not() {
+    fn a_workspace_is_sent_when_known_and_omitted_when_not() {
         let with = RepoInput {
             repo_key: "github.com/a/b",
             remote_url: None,
             name: "b",
-            project: Some(RepoProjectInput { slug: "sensei", name: "sensei" }),
+            workspace: Some(RepoWorkspaceInput { slug: "sensei", name: "sensei" }),
         };
         let v = serde_json::to_value(&with).unwrap();
-        assert_eq!(v["project"], serde_json::json!({ "slug": "sensei", "name": "sensei" }));
+        assert_eq!(v["workspace"], serde_json::json!({ "slug": "sensei", "name": "sensei" }));
+        assert!(v.get("project").is_none(), "the old key is gone from the wire");
         let without =
-            RepoInput { repo_key: "github.com/a/b", remote_url: None, name: "b", project: None };
-        assert!(serde_json::to_value(&without).unwrap().get("project").is_none());
+            RepoInput { repo_key: "github.com/a/b", remote_url: None, name: "b", workspace: None };
+        assert!(serde_json::to_value(&without).unwrap().get("workspace").is_none());
     }
 
     #[test]
     fn a_filing_failure_on_a_mapped_repository_is_read() {
         let r: RegisterResult = serde_json::from_str(
             r#"{"mapped":[{"repo_key":"github.com/a/b","tenant":"organization/a","tenant_id":"t","repo_id":"r",
-                "project_error":"not a member"}],"unmapped":[]}"#,
+                "workspace_error":"not a member"}],"unmapped":[]}"#,
         )
         .unwrap();
-        assert_eq!(r.mapped[0].project_error.as_deref(), Some("not a member"));
+        assert_eq!(r.mapped[0].workspace_error.as_deref(), Some("not a member"));
     }
 }

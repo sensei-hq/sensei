@@ -5,11 +5,6 @@ kind: functional
 module: project
 status: consolidated
 updated: 2026-08-08
-consolidates:
-  - ../../analysis/2026-07-31-ftr-friction-and-constitution-distillation.md
-  - ../../analysis/2026-08-04-metrics.md
-  - ../../analysis/2026-08-04-metrics-catalog.md
-  - ../../analysis/2026-08-05-ai-delivery-metrics-research.md
 reuses:
   - ../../spec/pipeline/ftr.md
   - ../../spec/pipeline/impact.md
@@ -32,11 +27,10 @@ tags: [metrics, ftr, rework, trends, retro, insights, project]
 > what can I do about it · how do I make it better.** A number that can't answer
 > all three is noise, and we don't ship noise.
 
-This doc consolidates four analyses that never became a feature:
-[FTR friction](../../history/analysis/2026-07-31-ftr-friction-and-constitution-distillation.md),
-[Metrics & agentic behavior](../../history/analysis/2026-08-04-metrics.md),
-[the Metrics catalog](../../history/analysis/2026-08-04-metrics-catalog.md), and
-[the AI-delivery-metrics research](../../history/analysis/2026-08-05-ai-delivery-metrics-research.md).
+This doc consolidates four analyses that never became a feature — FTR friction,
+Metrics & agentic behavior, the Metrics catalog (now [`catalog.md`](catalog.md)),
+and the AI-delivery-metrics research; the originals were deleted on 2026-10-21
+and live in git history.
 The **data model + computation** is the design step that follows this
 consolidation — see [`spec/pipeline/metrics.md`](../../spec/pipeline/metrics.md).
 
@@ -57,7 +51,7 @@ It is not a productivity dashboard. Raw output is, per the research, often
 
 We surveyed the metrics the industry circulates for "AI's impact on delivery"
 and **adopt none of the benchmark numbers.** The
-[research](../../history/analysis/2026-08-05-ai-delivery-metrics-research.md) is blunt:
+research is blunt:
 the METR 2025 RCT found AI made experienced developers **19% slower while they
 believed it made them ~20% faster** (a ~39-pt perception gap); vendor
 "throughput/stability" figures swing 10× between sources; "AI rework 35–40% /
@@ -101,7 +95,7 @@ ability to **prove first-time-right and low rework on real delivery data.**
 whose first attempt landed without a correction. Every metric is judged by
 whether it makes FTR go up or exposes why it went down.
 
-The [friction analysis](../../history/analysis/2026-07-31-ftr-friction-and-constitution-distillation.md)
+The friction analysis
 found the load-bearing patterns:
 
 - **Friction concentrates in big, multi-surface repos** — cross-cutting changes.
@@ -149,7 +143,7 @@ owns the rule store. Keeping the loop here is why `memory_promotion`,
 
 Metrics group into families, each computed at a **cadence** (session · daily ·
 project · run · tool · account). The
-[catalog](../../history/analysis/2026-08-04-metrics-catalog.md) is the buildable source
+[catalog](catalog.md) is the buildable source
 of truth (definition · formula · source column · coverage-today), governed by the
 principle **"measure, then keep what helps": you can't keep what you can't
 compute, so honest coverage comes first.**
@@ -316,6 +310,4 @@ section above — with governance as the consumer of its learned rules.)*
 
 - [[spec/pipeline/metrics]] (design) · [[spec/pipeline/ftr]] ·
   [[spec/pipeline/impact]] · [[spec/pipeline/signals]] ·
-  [[blueprints/2026-08-06-project-quality-metrics]] · [[features/04-project]] ·
-  [[analysis/2026-08-05-ai-delivery-metrics-research]] ·
-  [[analysis/2026-07-31-ftr-friction-and-constitution-distillation]]
+  [[features/04-project]]

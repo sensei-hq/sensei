@@ -722,18 +722,18 @@ strictly better.
 ## F2 — BLOCKING. The seat gate is keyed on the wrong grain
 
 §II.5 denies when there is "no active seat for `(tenant, user)`". `dojo.seats`
-is keyed `(user_id, namespace_id)` — **per project, not per tenant** — with
+is keyed `(user_id, namespace_id)` — **per workspace, not per tenant** — with
 `namespace_id NOT NULL REFERENCES sensei.namespaces`.
 
 Two consequences the predicate cannot express as written:
 
-1. The gate must be evaluated per project, not per tenant.
-2. **A seat cannot exist before the project does**, and the project is created
+1. The gate must be evaluated per workspace, not per tenant.
+2. **A seat cannot exist before the workspace does**, and the workspace is created
    by the very sync the seat is gating. The ordering is circular.
 
-Resolve by deciding what the first sync of a new private project does: create
+Resolve by deciding what the first sync of a new private workspace does: create
 the namespace and an unbilled seat pending confirmation, or deny until the
-project is created through the console. It cannot be left implicit.
+workspace is created through the console. It cannot be left implicit.
 
 ## F3 — BLOCKING. Nothing creates a seat
 
@@ -750,7 +750,7 @@ Needs an explicit answer: auto-seat on first activity up to `seats_included`
 
 §II.5 keys the gate on `repo.visibility`. `dojo.seats.namespace_id` documents
 that "its visibility (private/public) decides whether this participation is
-billable". A private repo inside a public project — or the reverse — has two
+billable". A private repo inside a public workspace — or the reverse — has two
 answers.
 
 State which is authoritative. Suggest: **the repo**, because it is the thing
@@ -835,9 +835,9 @@ visibility "decides whether this participation is billable", and it carries
 `last_active_at`. It is a measurement.
 
 Entitlement is a **new** table. Splitting them dissolves the circularity in F2:
-participation rows appear from ordinary work (public repos and projects sync
+participation rows appear from ordinary work (public repos and workspaces sync
 without any subscription), and the private gate is a separate entitlement check
-that never has to exist before the project does.
+that never has to exist before the workspace does.
 
 ## IV.1 The flow, end to end
 
@@ -894,7 +894,7 @@ namespace governs billability.**
 
 > **CORRECTED 2026-08-28 — this was only half the gate.** Everything below
 > answers *may this sync?* Nothing here answers *did anyone choose to?*, and the
-> two are independent. See `docs/requirements/repository-sharing.md`.
+> two are independent. See `docs/history/requirements/repository-sharing.md`.
 
 **Two questions, both required.** A repository syncs only when entitlement AND
 election both say yes.
@@ -1079,7 +1079,7 @@ redirect table.
 - **F8 — RESOLVED, and it inverts the concern.** The daemon does receive
   `provider_token` from the exchange and **persists it to the OS keychain**
   (`dojo_client/session.rs::store_provider_token`, keyed
-  `provider_token.<persona>`), already reports `canReadOrgs` in
+  `credentials.<persona>` with the dōjō session — one item per persona since #302), already reports `canReadOrgs` in
   `/api/auth/status`, and already uses it (`github_verified_emails`). A
   `provider_refresh_token` slot exists too.
 

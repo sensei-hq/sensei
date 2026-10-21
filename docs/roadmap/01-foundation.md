@@ -4,9 +4,9 @@ The floor: provisioning (M1), preferences (M2), capture (M3), the code graph
 (M4), inference routing (M5), the data model (M6). Status legend:
 [`README.md`](README.md).
 
-> Per-module statuses are filled in Phase 3 from the legacy coverage map
-> (`../history/features/coverage-map.md`) and the plan gap analysis
-> (`../history/plan/`). Structure is final.
+> Per-module statuses are filled in Phase 3 from the legacy coverage map and the
+> plan gap analysis (both deleted on 2026-10-21; they live in git history).
+> Structure is final.
 
 | ID | Module | One-line "done" | Status |
 |---|---|---|---|
@@ -21,7 +21,7 @@ The floor: provisioning (M1), preferences (M2), capture (M3), the code graph
 
 | Gap | What | Priority |
 |---|---|---|
-| A-1 | app is kanji-only; the kanji ⇄ solar toggle the mockups + rokkit support is not wired (M2) | P3 |
+| ~~A-1~~ | ~~app is kanji-only~~ — the kanji ⇄ icons switch is live (`ui.glyphs`, Settings → General; #133) | — |
 | A-2 | the personal-preference surface is narrower than the configuration the app already supports (M2) | P3 |
 | C-11 | transcript-scanning review not scoped as a task (M3) | P1 |
 | C-13 | Claude "mods" (supersedes plugin + hooks) — install path + migration not verified (M3) | P1 |

@@ -58,7 +58,7 @@ Feature: Dōjō Consoles — the built personal screens
   Scenario: the personal landing renders the work-first view
     Given a signed-in user (with or without memberships)
     When the landing renders
-    Then "your work" (projects, needs-you, relay) is primary and "My Dōjōs" is secondary
+    Then "your work" (workspaces, needs-you, relay) is primary and "My Dōjōs" is secondary
 
   NO TEST
   Scenario: the personal Relay screen shows live runs
@@ -73,8 +73,8 @@ Feature: Dōjō Consoles — the built personal screens
     Then rule packs are shown with level and non-negotiable badge
 
   NO TEST
-  Scenario: the personal Preview shows a project's effective constitution
-    Given a project with a resolved constitution
+  Scenario: the personal Preview shows a workspace's effective constitution
+    Given a workspace with a resolved constitution
     When the user opens /preview
     Then it shows which ladder levels contributed, conflicts settled, and locks
 
@@ -85,7 +85,8 @@ Feature: Dōjō Consoles — the built personal screens
     Then their personal constitution is shown
 
   NO TEST
-  Scenario: the org-switcher popover shows Relay · you — all Dōjōs + memberships + Create/Join
+  Scenario: the org-switcher popover shows Relay · you — all Dōjōs + memberships
     Given a user with multiple memberships
     When they open the org-switcher
-    Then it shows the pinned Relay row, one row per membership, Your Dōjōs, and Create/Join
+    Then it shows the pinned Relay row, one row per membership, and Your Dōjōs
+    And it offers no "Create or join" entry (retired by D11/D20; OrgSwitcher.svelte still shows it — a leftover to remove)

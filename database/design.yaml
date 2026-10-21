@@ -135,11 +135,25 @@ apply:
     # Drops the per-owner policies on dojo.projects while its old `user_id`
     # column still exists, so the #299 reshape can drop it. No-op afterwards.
     - apply/before/dojo_projects_shared.sql
+    # Drops what blocks narrowing dojo.tenant_origin (#307 D11) while it still
+    # has `team`; the reconcile re-applies it. No-op afterwards.
+    - apply/before/dojo_tenant_origin_narrowed.sql
+    # Renames dojo.projects & co. to workspaces in place (#307 D12), keeping
+    # their rows; dbd would otherwise recreate them empty. No-op afterwards.
+    - apply/before/dojo_workspaces_renamed.sql
+    # Deletes pending invites that hold a plain token (#311), only while the
+    # `token` column still exists. No-op afterwards.
+    - apply/before/dojo_invites_token_hashed.sql
   after:
     - apply/after/realtime_publication.sql
     # USAGE on `dojo` for the API roles (+ service_role's table grants) — what
     # used to be a manual Supabase deploy step. No-op where `dojo` is absent.
     - apply/after/dojo_api_grants.sql
+    # Drops functions the design no longer has — reconcile prunes orphaned
+    # tables but not functions. No-op once they are gone.
+    - apply/after/retired_functions.sql
+    # Marks pre-#309 memberships org provisioning made as `provisioned`. Idempotent.
+    - apply/after/membership_source_backfill.sql
 
 import:
   staging:

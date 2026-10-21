@@ -18,6 +18,7 @@
     } from "./helpers.js";
     import { LogsPageState } from "./state.svelte.js";
     import { Eyebrow, Kanji, StatusDot } from "$lib/components";
+    import ModalShell from "$lib/components/ModalShell.svelte";
     import { Button } from "@rokkit/ui";
 
     let { data }: { data: PageData } = $props();
@@ -325,26 +326,18 @@
     {@const s = state.session}
     {@const si = s.system_info}
     {@const bt = s.traces.filter(isBootstrapTrace)}
-    <div
-        class="modal-overlay fixed inset-0 flex items-center justify-center z-30 p-6"
-        role="dialog"
-        aria-modal="true"
-        onclick={(e) => {
-            if (e.target === e.currentTarget) state.closeModal();
-        }}
-        onkeydown={(e) => {
-            if (e.key === "Escape") state.closeModal();
-        }}
-        tabindex="-1"
+    <ModalShell
+        open
+        component="report-modal"
+        labelledBy="report-modal-title"
+        onClose={() => state.closeModal()}
+        cardClass="w-[84vw] max-w-[960px] max-h-[90vh] bg-paper-soft rounded-xl border border-paper-edge flex flex-col"
     >
-        <div
-            class="modal w-[84vw] max-w-[960px] max-h-[90vh] bg-paper-soft rounded-xl border border-paper-edge flex flex-col"
-        >
             <div
                 class="flex items-start justify-between pt-4 pb-3 px-7 border-b border-paper-edge shrink-0"
             >
                 <div>
-                    <div class="display text-lg font-normal mb-1">
+                    <div id="report-modal-title" class="display text-lg font-normal mb-1">
                         Report session
                     </div>
                     <div class="text-xs text-ink-soft">
@@ -423,8 +416,7 @@
                     </div>
                 </div>
             </div>
-        </div>
-    </div>
+    </ModalShell>
 {/if}
 
 <style>
@@ -476,15 +468,5 @@
     /* Outline button hover */
     .outline-btn:hover {
         background: var(--paper-mute);
-    }
-
-    /* Modal overlay backdrop — semantic scrim token (no hardcoded rgba). */
-    .modal-overlay {
-        background: var(--scrim);
-    }
-
-    /* Modal drop shadow — semantic shadow token (no hardcoded rgba). */
-    .modal {
-        box-shadow: 0 24px 60px color-mix(in oklch, var(--shadow-tint) 40%, transparent);
     }
 </style>

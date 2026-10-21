@@ -2,7 +2,7 @@
 
 > **The visual perspective.** The flows a human walks through sensei — drawn as
 > diagrams so the shape is obvious at a glance. Journeys sit between the
-> [requirements](../history/requirements/README.md) (what/why) and the
+> [requirements](../prd/README.md) (what/why) and the
 > [mockups](../mockups/) (pixel-level screens): they show *how the segments
 > connect into a path*.
 

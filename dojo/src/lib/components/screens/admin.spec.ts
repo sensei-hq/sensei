@@ -56,7 +56,7 @@ describe('ScrRoleSurfaces — Members & Roles / Policies / Audit tabs', () => {
 		// three maintainers in the fixture → three "maintainer" role tags.
 		expect(getAllByText('maintainer').length).toBe(3);
 		expect(getAllByText('admin').length).toBeGreaterThanOrEqual(1);
-		expect(getAllByText('developer').length).toBe(2);
+		expect(getAllByText('contributor').length).toBe(2);
 	});
 
 	it('the members header CTA reads Invite', () => {
@@ -81,7 +81,7 @@ describe('ScrRoleSurfaces — Members & Roles / Policies / Audit tabs', () => {
 		// Policies tab — the additive-role banner + a role policy card.
 		await fireEvent.click(getByText('Policies'));
 		// Now part of the section header's description run, not a Banner title.
-		expect(getByText(/Roles are additive and derived from git\./)).toBeTruthy();
+		expect(getByText(/Roles are additive — a role only ever adds capability\./)).toBeTruthy();
 		expect(getByText('authors governance · triages')).toBeTruthy();
 		expect(getByText('Role policies')).toBeTruthy();
 		// the members table is gone.

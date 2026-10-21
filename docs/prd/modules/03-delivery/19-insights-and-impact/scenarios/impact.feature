@@ -1,20 +1,20 @@
 Feature: Insights & Impact — the impact endpoint and the unbuilt tables
  
    # NO TEST: get_project_impact_endpoint
-   Scenario: the project impact endpoint returns the verdict, trend and source memory
-    Given a project with FTR history and a verdict
+   Scenario: the workspace impact endpoint returns the verdict, trend and source memory
+    Given a workspace with FTR history and a verdict
     When the impact endpoint is called
     Then it returns the verdict, the trend markers and the source memory link
 
   # NO TEST: list_impact_verdicts
-  Scenario: listing impact verdicts returns the project's verdicts
-    Given a project with several impact verdicts
+  Scenario: listing impact verdicts returns the workspace's verdicts
+    Given a workspace with several impact verdicts
     When the list endpoint is called
     Then it returns all verdicts
 
   # NO TEST: create_impact_verdict
   Scenario: creating an impact verdict stores it
-    Given a project
+    Given a workspace
     When an impact verdict is created
     Then it is stored and can be listed
 
@@ -52,10 +52,10 @@ Feature: Insights & Impact — the impact endpoint and the unbuilt tables
     This is unbuilt — no `impact_regressions` table in DDL.
 
   NO TEST
-  Scenario: GET /api/impact returns the cross-project impact summary
+  Scenario: GET /api/impact returns the cross-workspace impact summary
     Given the impact endpoint is built
     When it is called
-    Then it returns the cross-project summary
+    Then it returns the cross-workspace summary
     This is unbuilt — no `GET /api/impact` route.
 
   # gap: C-8

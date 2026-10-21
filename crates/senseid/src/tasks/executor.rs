@@ -156,6 +156,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::BackfillCoverage => {
                 handlers::metrics::coverage::run_backfill(ctx, task).await
             }
+            TaskKind::TrackerDiscover => crate::tracker::discover::run_task(ctx, task).await,
         }
     };
     let cap = task.kind.watchdog_timeout();

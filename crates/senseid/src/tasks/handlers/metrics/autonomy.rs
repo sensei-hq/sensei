@@ -39,9 +39,8 @@
 //! (a usage-limit reset, a blocking question) from one that genuinely died. The
 //! watchdog crashes only `stalled` runs and never `paused`/`blocked` ones, and the
 //! `Crashed` event detail carries only `{"note": "exhausted bounded recovery",
-//! "attempts": N}` — no "was waiting" flag. `docs/analysis/2026-08-04-deep-dive/
-//! 01-autonomy-babysitting-roadblocks.md` states these crashes are "indistinguish-
-//! able from a real crash"; the classifying signal is a future P0 fix, not present
+//! "attempts": N}` — no "was waiting" flag, so these crashes are indistinguishable
+//! from a real crash; the classifying signal is a future P0 fix, not present
 //! today. Rather than fabricate a proxy (e.g. treating every killed-at-cap run as a
 //! false crash, which silently drops the "was waiting" qualifier), the metric is
 //! SKIPPED — its registry key simply yields no rows until the signal exists. This

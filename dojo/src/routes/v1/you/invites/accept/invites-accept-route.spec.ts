@@ -12,7 +12,12 @@ class AdminError extends Error {
 	}
 }
 
-const mocks = vi.hoisted(() => ({ resolveCaller: vi.fn(), acceptInvite: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	resolveCaller: vi.fn(),
+	acceptInvite: vi.fn(),
+	acceptAttemptsLeft: vi.fn(),
+	recordAcceptFailure: vi.fn()
+}));
 
 vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({ client: 'service' }) }));
 vi.mock('$lib/server/dojo-auth', () => ({
@@ -20,7 +25,12 @@ vi.mock('$lib/server/dojo-auth', () => ({
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } })
 }));
-vi.mock('$lib/server/invites-data', () => ({ acceptInvite: mocks.acceptInvite, AdminError }));
+vi.mock('$lib/server/invites-data', () => ({
+	acceptInvite: mocks.acceptInvite,
+	acceptAttemptsLeft: mocks.acceptAttemptsLeft,
+	recordAcceptFailure: mocks.recordAcceptFailure,
+	AdminError
+}));
 
 const route = await import('./+server');
 
@@ -39,6 +49,8 @@ function ev(body: unknown) {
 beforeEach(() => {
 	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', email: 'ada@acme.co', accessToken: 'jwt-A' });
 	mocks.acceptInvite.mockClear().mockResolvedValue({ tenant_id: 't1', role: 'contributor' });
+	mocks.acceptAttemptsLeft.mockReset().mockResolvedValue(10);
+	mocks.recordAcceptFailure.mockReset().mockResolvedValue(undefined);
 });
 
 describe('POST /v1/you/invites/accept', () => {
@@ -70,5 +82,29 @@ describe('invite acceptance is the system\'s', () => {
 	it('accepts with the service role, named — the joining person has no membership yet', async () => {
 		await route.POST(ev({ token: 'tok' }));
 		expect(mocks.acceptInvite.mock.calls[0][0]).toEqual({ client: 'service' });
+	});
+});
+
+// #311: failed accepts are counted per person; with none left the route refuses
+// before any invite is read, and each failed accept is recorded.
+describe('accept attempts are bounded (#311)', () => {
+	it('refuses with 429 when the caller has no attempts left, reading no invite', async () => {
+		mocks.acceptAttemptsLeft.mockResolvedValueOnce(0);
+		const res = await route.POST(ev({ token: 'tok' }));
+		expect(res.status).toBe(429);
+		expect(mocks.acceptInvite).not.toHaveBeenCalled();
+		expect(mocks.acceptAttemptsLeft).toHaveBeenCalledWith({ client: 'service' }, 'u1', expect.any(Number));
+	});
+
+	it('records a failed accept, and still says why it failed', async () => {
+		mocks.acceptInvite.mockRejectedValueOnce(new AdminError(404, 'invalid or expired invite'));
+		const res = await route.POST(ev({ token: 'nope' }));
+		expect(res.status).toBe(404);
+		expect(mocks.recordAcceptFailure).toHaveBeenCalledWith({ client: 'service' }, 'u1');
+	});
+
+	it('a successful accept records no failure', async () => {
+		expect((await route.POST(ev({ token: 'tok' }))).status).toBe(200);
+		expect(mocks.recordAcceptFailure).not.toHaveBeenCalled();
 	});
 });

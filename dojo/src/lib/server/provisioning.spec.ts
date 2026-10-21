@@ -11,6 +11,7 @@ import {
 	ensureProvisioned,
 	provisionWithToken,
 	refreshForgeVisibility,
+	mirrorRepositoryRoles,
 	MAX_VISIBILITY_REFRESH_PER_PASS
 } from './provisioning';
 import type { ForgeFacts } from './forge-github';
@@ -60,6 +61,18 @@ function tables(seed: Partial<Record<string, FakeTable>> = {}): Record<string, F
 			rows: [],
 			uniques: [{ columns: ['repository_id', 'branch'] }],
 			...seed.repository_graph_branches
+		},
+		// The per-person forge mirror (#307 A2c); its own rules are proven in
+		// database/tests/dojo/repository_roles_mirror_principal.sql.
+		'rpc:mirror_principal_repository_roles': {
+			rows: [],
+			...seed['rpc:mirror_principal_repository_roles']
+		},
+		// Leaving an org ends the membership provisioning made (#309); its own rules
+		// are proven in database/tests/dojo/membership_departure.sql.
+		'rpc:reconcile_org_memberships': {
+			rows: [],
+			...seed['rpc:reconcile_org_memberships']
 		}
 	};
 }
@@ -70,7 +83,8 @@ const FACTS: ForgeFacts = {
 	orgs: [
 		{ id: '11', login: 'sensei-hq', role: 'admin' },
 		{ id: '22', login: 'acme', role: 'member' }
-	]
+	],
+	orgsComplete: true
 };
 
 beforeEach(() => resetFakeIds());
@@ -1110,5 +1124,107 @@ describe('claimTenantIfOwner — a forge owner signing in IS the claim', () => {
 		} as never;
 		const { claimTenantIfOwner } = await import('./provisioning');
 		await expect(claimTenantIfOwner(failing, 't-acme', ALICE, 'admin')).rejects.toThrow();
+	});
+});
+
+// #307 A2c: the per-person forge mirror. A member's own token tells the dōjō their
+// permission on every repository they can see; provisioning records it for each
+// dōjō they belong to — only after a complete, successful read.
+describe('mirrorRepositoryRoles — the per-person forge mirror', () => {
+	const OTHER = { id: 'm-other', tenant_id: 't-other', user_id: PRINCIPAL, role: 'contributor' };
+	const REVOKED = { id: 'm-gone', tenant_id: 't-gone', user_id: PRINCIPAL, role: 'admin', disabled_at: '2026-01-01T00:00:00.000Z' };
+	const reposFetch = (status: number, body: unknown) =>
+		(async () => ({ ok: status >= 200 && status < 300, status, json: async () => body }) as Response) as unknown as typeof fetch;
+	const REPOS = [
+		{ full_name: 'Sensei-HQ/dbd', permissions: { maintain: true, push: true, pull: true } },
+		{ full_name: 'sensei-hq/gateway', permissions: { pull: true } }
+	];
+
+	it('mirrors the read into every dōjō the person is an ACTIVE member of', async () => {
+		const db = fakeDojoDb(
+			tables({
+				memberships: { rows: [MINE, OTHER, REVOKED] },
+				'rpc:mirror_principal_repository_roles': { rows: [] }
+			})
+		);
+		const out = await mirrorRepositoryRoles(db as never, PRINCIPAL, 'tok', reposFetch(200, REPOS));
+
+		const entries = [
+			{ repo_key: 'github.com/sensei-hq/dbd', permission: 'maintain' },
+			{ repo_key: 'github.com/sensei-hq/gateway', permission: 'read' }
+		];
+		expect(db.rpcCalls).toEqual([
+			{ fn: 'mirror_principal_repository_roles', args: { p_principal: PRINCIPAL, p_tenant: 't-mine', p_entries: entries } },
+			{ fn: 'mirror_principal_repository_roles', args: { p_principal: PRINCIPAL, p_tenant: 't-other', p_entries: entries } }
+		]);
+		expect(out).toEqual({ tenants: 2, repositories: 2 });
+	});
+
+	it('a failed read mirrors nothing — an empty list would revoke every role', async () => {
+		const db = fakeDojoDb(tables({ memberships: { rows: [MINE] } }));
+		await expect(mirrorRepositoryRoles(db as never, PRINCIPAL, 'tok', reposFetch(502, null))).rejects.toThrow(/502/);
+		expect(db.rpcCalls).toEqual([]);
+	});
+
+	it('provisioning reports the mirror, and a failed mirror does not fail the sign-in', async () => {
+		const GH_USER = { id: 4242, login: 'devuser', name: 'Dev User', email: 'j@example.com' };
+		const fetchAll = (reposStatus: number) =>
+			(async (url: string | URL | Request) => {
+				const u = String(url);
+				const [status, body] = u.includes('/user/repos')
+					? [reposStatus, REPOS]
+					: u.includes('/memberships/orgs')
+						? [200, []]
+						: [200, GH_USER];
+				return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
+			}) as unknown as typeof fetch;
+
+		const ok = await provisionWithToken(fakeDojoDb(tables()) as never, PRINCIPAL, 'tok', {}, fetchAll(200));
+		expect(ok.synced).toBe(true);
+		expect(ok.roles).toEqual({ tenants: 1, repositories: 2 });
+
+		const failed = await provisionWithToken(fakeDojoDb(tables()) as never, PRINCIPAL, 'tok', {}, fetchAll(502));
+		expect(failed.synced).toBe(true);
+		expect(failed.roles?.error).toMatch(/502/);
+		expect(failed.roles?.tenants).toBeUndefined();
+	});
+});
+
+// #309: repository roles follow the forge (D5), and so must the org membership
+// provisioning made. After a COMPLETE read of the person's orgs, provisioning
+// asks the database to end the provisioned memberships of orgs the read left out
+// (and restore ones that ended by leaving); after an incomplete read it asks
+// nothing — an org it could not read must not look like an org they left.
+describe('ensureProvisioned — leaving an org ends the membership it made (#309)', () => {
+	it('after a complete read, reconciles against exactly the org dōjōs it proved', async () => {
+		const db = fakeDojoDb(tables());
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		const calls = db.rpcCalls.filter((c) => c.fn === 'reconcile_org_memberships');
+		expect(calls).toEqual([
+			{
+				fn: 'reconcile_org_memberships',
+				args: { p_principal: PRINCIPAL, p_provider: 'github', p_kept: out.tenants.map((t) => t.id) }
+			}
+		]);
+		expect(out.tenants).toHaveLength(2);
+	});
+
+	it('after an incomplete read, ends nothing', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, { ...FACTS, orgsComplete: false });
+		expect(db.rpcCalls.filter((c) => c.fn === 'reconcile_org_memberships')).toEqual([]);
+	});
+
+	it('marks the memberships it makes in org dōjōs as provisioned', async () => {
+		const db = fakeDojoDb(tables());
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		const orgIds = new Set(out.tenants.map((t) => t.id));
+		const rows = db.tables.memberships.rows.filter((m) => orgIds.has(m.tenant_id as string));
+		expect(rows.map((m) => m.source)).toEqual(['provisioned', 'provisioned']);
+	});
+
+	it('a failure to reconcile is an error, not a silent pass', async () => {
+		const db = fakeDojoDb(tables({ 'rpc:reconcile_org_memberships': { rows: [], error: { message: 'boom' } } }));
+		await expect(ensureProvisioned(db as never, PRINCIPAL, FACTS)).rejects.toThrow();
 	});
 });

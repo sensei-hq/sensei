@@ -32,7 +32,7 @@
 	const kitDojos = $derived(toKitDojos(data.memberships));
 	const activeOrg = $derived(slug ? orgBySlug(data.memberships, slug) : undefined);
 	const role = $derived(
-		activeOrg ? roleKey(activeOrg.role) : data.org ? roleKey(data.org.role) : 'developer'
+		activeOrg ? roleKey(activeOrg.role) : data.org ? roleKey(data.org.role) : 'contributor'
 	);
 
 	const context = $derived<'you' | 'org'>(isOrg ? 'org' : 'you');

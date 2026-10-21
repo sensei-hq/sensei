@@ -9,7 +9,7 @@ duplicate, leaving 89. The production-readiness items
 
 1. **Ship what is already done.** A merge and a release close issues with no new code.
 2. **Answer the decision-only issues.** Some issues need a decision, not code; recording it closes them.
-3. **The user-visible break first:** Settings → Projects.
+3. **The user-visible break first:** Settings → Workspaces.
 4. **Small remainders.** A partial with under about half a day left closes for very little effort.
 5. **Clusters:** one change that closes several issues.
 6. **Make the test suite and CI trustworthy** before the larger indexer work.
@@ -31,7 +31,7 @@ duplicate, leaving 89. The production-readiness items
 | `deploy-dojo` + live check of user-scoped metrics | #240 |
 | Write `dojo_memberships.sync_status` from the sync, or retire it; drop the 2026-08-29 held row | #184 |
 
-## Wave 1 — Settings → Projects / Repositories (#271, #269, #144)
+## Wave 1 — Settings → Workspaces / Repositories (#271, #269, #144)
 
 **Status 2026-10-19: built and verified on live data.**
 - **Data:**
@@ -39,22 +39,22 @@ duplicate, leaving 89. The production-readiness items
   - The 13,346 orphan keyless rows were pruned on the live DB.
 - **Quality role:** test-only repositories are tagged `quality` (650ae365).
 - **UI:** repository cards, the icon, roles saved with rollback, a sticky header, search, and a note on
-  projects with no repository (7f533892).
+  workspaces with no repository (7f533892).
 - **Derived roles:** a repository card shows the roles the scan inferred for its packages, so a
   monorepo no longer reads "Unassigned" (030592ee).
 - **Modules stay modules:** the watcher's rescan wrote every subfolder as `folder` and demoted a
-  workspace's packages. It now writes the pipeline's kind, from one shared rule (ffc79fc6).
-- **#144 stays open** and moves to wave 3. It is about the project metrics view, not Settings.
+  package workspace's members. It now writes the pipeline's kind, from one shared rule (ffc79fc6).
+- **#144 moved to wave 3** (the workspace metrics view, not Settings) and **closed 2026-10-20** there.
 - **Clearing a role:** a `null` role clears it; before, it was a 200 that changed nothing (e777d692).
 - **Live inspect** (`app/e2e/tests-inspect/settings-projects-inspect.spec.ts`):
-  - 3 projects placed, 1 repository each.
+  - 3 workspaces placed, 1 repository each.
   - 130 collapsed as having no repository on this machine.
   - Search narrows the list.
 
 Measured 2026-10-18:
 - `sensei.repositories` holds **13,504 rows for 2 indexed checkouts**.
 - 13,346 of them have no `repo_key` and no folder.
-- 5,618 of those are still linked into projects, e.g. `fitness-assistant` has 596.
+- 5,618 of those are still linked into workspaces, e.g. `fitness-assistant` has 596.
 - They are left over from folders pruned when watch roots were removed. Their repository rows and
   `repositories_in_projects` links were never pruned.
 
@@ -62,11 +62,11 @@ The settings screen lists them as repositories.
 
 1. **Data (red first):**
    - Prune repository rows that no folder references and that have no `repo_key`, together with
-     their project links.
+     their workspace links.
    - Make the folder prune take its repository row with it, so this cannot recur.
-   - What a project whose folders are all gone becomes was decided 2026-10-19: neither. They stay
+   - What a workspace whose folders are all gone becomes was decided 2026-10-19: neither. They stay
      collapsed until the full re-index (wave 9) brings their checkouts back.
-2. **API:** a project lists only repositories and subtrees that have a live checkout.
+2. **API:** a workspace lists only repositories and subtrees that have a live checkout.
 3. **UI (#271 items 2–7):**
    - repository cards
    - the icon rendered as an icon, not a path
@@ -74,7 +74,7 @@ The settings screen lists them as repositories.
    - a sticky header
    - a search filter
 4. **Quality role (#269, #271 item 3):** add it, auto-assigned to test-only repositories.
-5. **#144:** a project with no repository says that `scope=repo` metrics need git history.
+5. **#144:** a workspace with no repository says that `scope=repo` metrics need git history.
 
 ## Wave 2 — decisions only (no code; each closes or narrows an issue)
 
@@ -113,11 +113,11 @@ The settings screen lists them as repositories.
   - ~~#213~~ **Closed 2026-10-19**: commit-msg and `--stdin` scanning, the right line number, and the
     self-test in every commit.
 - **App:**
-  - #133: **slices 1–3b live** (the `ui.glyphs` switch by context, both rails, `ROLES`, the default project
+  - #133: **slices 1–3b live** (the `ui.glyphs` switch by context, both rails, `ROLES`, the default workspace
     mark, Instruments, all 22 screen headers, a 106-kanji vocabulary, every mark through `<Kanji>`). The app
     is complete; the dōjō follows a `dojo-glyphs` choice everywhere, from the shared `packages/glyphs`
     vocabulary (140 kanji). **Implementation complete**; open on two decisions: the dōjō default (kanji, as
-    shipped on develop, or icons) and project glyphs in icon mode. Solar Bold Duotone icons beside every kanji, one preference,
+    shipped on develop, or icons) and workspace glyphs in icon mode. Solar Bold Duotone icons beside every kanji, one preference,
     `fields` derived in one place, across the app and the dōjō (scope expanded 2026-10-19).
   - ~~#135~~ **Closed 2026-10-19**: the menu item opens `/help`; the page lists only keys that are bound.
   - ~~#96~~ **Closed 2026-10-19**: next run, avg, last error, and a per-worker log tail (a
@@ -134,11 +134,11 @@ The settings screen lists them as repositories.
     `configured: null` + `key_error`, and image generation answers 503 "unreadable", not 400 "not configured".
   - ~~#286~~ **Closed 2026-10-20**: `tryListGatewayRouters`; a failed read is the Providers error state.
   - ~~#85~~ **Closed 2026-10-20**: Overview hotspots and patterns in use; the overview/patterns reads fail as
-    errors, not as an all-quiet project.
-  - ~~#287~~ **Closed 2026-10-20**: rework is placed by path inside the project's repositories and counted once per event (617 → 371 rows, none outside). The Patterns view folds the unreviewed rows into one "rework hotspots" anti-pattern, grouped by directory and ranked by peak re-edits (618 anti-patterns → 2 live).
+    errors, not as an all-quiet workspace.
+  - ~~#287~~ **Closed 2026-10-20**: rework is placed by path inside the workspace's repositories and counted once per event (617 → 371 rows, none outside). The Patterns view folds the unreviewed rows into one "rework hotspots" anti-pattern, grouped by directory and ranked by peak re-edits (618 anti-patterns → 2 live).
   - ~~#288~~ **Closed 2026-10-20**: every app read is the daemon's answer or an error the screen shows. 72 `get(path, fallback)` reads → 0, the legacy `get` is deleted, and a spec guards it. Found and fixed along the way: a fabricated 404, a fabricated warning dot, an Accept that skipped its artifact, Settings saving defaults over the user's settings, a scan marked done by a silent daemon, a refused role committed as done, and three endless re-fetch loops. Each screen was verified live.
-  - ~~#291~~ **Closed 2026-10-20**: "Tools used" moved to project Instruments (its metric, `unused_tools`, was retired). Live: 24 tools = daemon.
-  - ~~#144~~ **Closed 2026-10-20**: a repo-less project (130 of 133 here; zero metric rows each) says why it has
+  - ~~#291~~ **Closed 2026-10-20**: "Tools used" moved to workspace Instruments (its metric, `unused_tools`, was retired). Live: 24 tools = daemon.
+  - ~~#144~~ **Closed 2026-10-20**: a repo-less workspace (130 of 133 here; zero metric rows each) says why it has
     no metrics.
   - #149: **experiment run 2026-10-20, criterion not met** — without `parent_id` the >50-file giants grew
     (22,484 → 24,258 nodes); they are dense call/reference cores. Reverted. Awaiting a decision: Leiden/Louvain
@@ -150,13 +150,15 @@ The settings screen lists them as repositories.
     Removing the existing 167,932 awaits the user's OK.
 - **Dōjō:**
   - #132: steps 1–2 done. No literal `font-size` remains in the dōjō (a spec guards it); sign-in verified at 13/11px. Step 3 (mockup compare) started: the sign-in left pane now follows the mockup, replacing an "Acme Corp" fixture (#241). The right pane's extra password form and placeholder remain.
-  - **#293 screen structure (user, 2026-10-20):** every screen keeps presentation | state | load/save apart, uses the shared shell (fixed header over one scroll body) and rokkit before any custom duplicate. Audits filed as #293 with the ordered list. Step 0: `Screen` (with `fill` for list-and-detail screens) holds all 48 app screens and neither window `<main>` scrolls (522b8092, 47 probed live); `Screen` is now shared from `packages/ui` and holds all 22 dōjō screens (c9f1e0d7); the dōjō routes and AppShell are next, then the dōjō shell, then separation and rokkit.
+  - **#293 screen structure (user, 2026-10-20):** every screen keeps presentation | state | load/save apart, uses the shared shell (fixed header over one scroll body) and rokkit before any custom duplicate. Audits filed as #293 with the ordered list. Step 0: `Screen` (with `fill` for list-and-detail screens) holds all 48 app screens and neither window `<main>` scrolls (522b8092, 47 probed live); `Screen` is now shared from `packages/ui` and holds all 22 dōjō screens (c9f1e0d7); the dōjō routes and AppShell are next, then the dōjō shell, then separation and rokkit. Step 1 (separation): app instruments (c290f38e), workspace memories (6c815eea), consolidation (ac1da700), workspace impact (3541ee2f), settings/* (5a1cb297), metric detail (e749b380) and the sessions pages → one screen (bae2126f) done — app step 1 complete; four hid a failed write, the metrics loaders a failed registry read (ee2b0f4c). Dōjō step 1: `you/[section]` (9f11df08), `org/[slug]/[section]` (785279a6), the run deep link (a0b8aaf4), inbox answers really sent (#305, bf16a437 — on develop; live on the local dōjō, production after the next release) and one run view (3d443b1b) — **step 1 done for both apps**. Next: step 2 (rokkit first); step 3 dead code adds `segmentsToPlan`, `planProgress`.
+  - #304 (found via #293): 26 app writes (of 28) still use the swallowing `post`/`put`/`del` helpers; converted screen by screen, then the helpers deleted with a guard (as #288 did for `get`).
   - #294 (found 2026-10-20 connecting `jerrythomas`): one pending PKCE verifier per daemon, so two sign-ins clobber each other (`bad_code_verifier` + `no sign-in in progress`). Key pending flows by state.
   - ~~#295~~ closed 2026-10-20 (06482d85): `sensei auth status` lists every identity, keychain verdict first; `sensei auth approve` added. Live.
-  - #296 (user): the default identity follows the global git identity — done on develop (e341e26c); resolves to `jerrythomas` here; endpoint check waits on a daemon install.
-  - #302: one keychain item per identity, so approval asks once (queued after #299).
-  - **#301 (user, 2026-10-20): sign in → sync must just work.** Auto-elect a connected identity's repositories (opt-out, not opt-in); keep the subscription gate for private org repos (decided); surface an unreadable credential first (#283, #295); Team-ID signing (#282); projects from sync (#299); sign-in in the system browser with an account guard (#300, decided). Live: the first pass that reached the dōjō today mapped 22, allowed 0. Fixed so far: personal tenants get their owner's forge connection (f111fe41) — all 34 personal repos were `no_connection`; a user's repositories are elected by default, opt-out holds (2d92a632; local: 31 of the user's repos sync). Both await a release + dōjō deploy. #300: sign-in in the system browser + account guard done on develop (1a132009, 5d776bee).
-  - #298: project Instruments takes 11–28s to open — `mcp-tool-stats` pairs every tool call in the DB through `session_tool_calls` (measured; filter pushdown reaches only half the view).
+  - ~~#296~~ closed 2026-10-20: the default identity follows the global git identity (e341e26c). Live on 0.15.0: `/api/auth/personas` default = `jerrythomas`.
+  - #299 S3 done on develop (99cddc18): a run names its workspace by slug + constitution; per-recipient classification removed. Closes with the live sync evidence (#301).
+  - ~~#302~~ **Closed 2026-10-21**: one keychain item per identity (`credentials.<slot>`, 17302c40); the migration was seen live after one approval (old items gone, `credentials.<slot>` present).
+  - **#301 (user, 2026-10-20): sign in → sync must just work.** Auto-elect a connected identity's repositories (opt-out, not opt-in); keep the subscription gate for private org repos (decided); surface an unreadable credential first (#283, #295); Team-ID signing (#282); workspaces from sync (#299); sign-in in the system browser with an account guard (#300, decided). Live: the first pass that reached the dōjō today mapped 22, allowed 0. Fixed so far: personal tenants get their owner's forge connection (f111fe41) — all 34 personal repos were `no_connection`; a user's repositories are elected by default, opt-out holds (2d92a632; local: 31 of the user's repos sync). Released in **v0.15.0** with #299 S1/S2 and #300 (1a132009, 5d776bee); the dōjō production reshape is deployed and `dbd diff` is clean (run 39496401704). Live proof waits on keychain approval + one dōjō sign-in + a sync pass.
+  - #298: workspace Instruments takes 11–28s to open — `mcp-tool-stats` pairs every tool call in the DB through `session_tool_calls` (measured; filter pushdown reaches only half the view).
   - #297: the dōjō sign-in page drops Supabase's `#error` fragment (the user saw a blank form after a linking failure).
   - #106: last fixture imports, plus a vitest guard.
   - #191: kavach 1.2.0.
@@ -179,7 +181,7 @@ The settings screen lists them as repositories.
 
 - #178 (B1): bound the parse stack.
 - #188 (B2): surface watchdog abandonment. Measured 300–1,800 a day in early October.
-- C1: `public.logs` size (no issue yet; with #194).
+- ~~C1~~: `public.logs` size — #180, closed.
 - #125: 68 orphaned transcript turn sets.
 - #161: typed rows, remainder.
 - #123: VS Code adapter A5/A6, Track B.
@@ -209,13 +211,13 @@ The settings screen lists them as repositories.
 
 ## Wave 8 — epics and features
 
-#43, #44, #45, #46, #47, #81, #85, #91, #102, #105, #108, #111, #114, #115, #116/#119, #121, #122,
+#43, #44, #45, #46, #47, #81, #91, #102, #105, #108, #111, #114, #115, ~~#116/#119~~ (closed 2026-10-21: #116's create flow is retired; invites and GitHub-org provisioning shipped; R5 is #308), #121, #122,
 #131, #239, #241, #266, #268 and #39. Order these by product priority, not by closure count.
 
 ## Wave 9 — the full re-index (after waves 0–8)
 
 Held back until most of the issues above are resolved, because a full scan is slow.
-- It brings back the projects with no checkout on this machine (130 on 2026-10-19).
+- It brings back the workspaces with no checkout on this machine (130 on 2026-10-19).
 - **Before running it:** time a full scan stage by stage and set a budget, so the wait is
   measured rather than guessed.
 

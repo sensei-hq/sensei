@@ -21,7 +21,7 @@ these are authored fresh under `prd/assets/diagrams/` as `dNN-<slug>.svg`.
 | D12 | Gate vs improvement split | reorg §9.3 | 🚧 Phase 4 |
 | D13 | Own-baseline ratchet | reorg §9.4 | 🚧 Phase 4 |
 | D14 | Platform matrix — macOS / Linux / Windows adapter model | reorg §10 | 🚧 Phase 4 |
-| D15 | Module map — 29 modules across 5 planes | `../modules/README.md` | 🚧 Phase 4 |
+| D15 | Module map — 30 modules across 5 planes | `../modules/README.md` | 🚧 Phase 4 |
 
 Rules (reorg §7.3): self-contained (no external CSS, no D3, no JS); monochrome-
 with-one-accent, matching the design system; every level of the LOD diagrams is

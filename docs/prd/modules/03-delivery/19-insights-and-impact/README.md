@@ -9,7 +9,7 @@ manager / delivery lead ([persona 6](../../../03-personas.md#6--manager--deliver
 
 Insights & Impact turns the signal stream into a **verdict on the assistant's
 effectiveness** and a **narration the user can trust**. It measures whether sensei's
-advice moved the project's FTR up or down, composes a honest headline/body/revision
+advice moved the workspace's FTR up or down, composes a honest headline/body/revision
 for each case, and surfaces the evidence (the memory or recommendation that drove
 it) so the user can verify. The job is **no fabricated consensus, no fabricated
 zero** — if there's no signal, say nothing; if the delta is within ±0.05, say
@@ -20,7 +20,7 @@ why.*
 > **Status honesty.** The verdict engine, the narration cache, and the model
 > insight ranking are built. **The `insights` table, `applied_recommendations`,
 > `impact_regressions`, and `GET /api/impact` are unbuilt** — they appear in the
-> legacy screen spec but have no DDL and no code. The per-project impact endpoint
+> legacy screen spec but have no DDL and no code. The per-workspace impact endpoint
 > (`GET /api/projects/{id}/impact`) exists and is tested; the observatory-level
 > `/api/insights` also exists.
 
@@ -30,7 +30,7 @@ why.*
   the verdict variants `used` / `partial` / `ignored` → `positive` / `neutral` /
   `negative` with idempotent memory creation; the narration cache (key =
   sha256(kind + canonical json)); model insight ranking (winner / no winner logic);
-  per-project impact endpoint; observatory tool-insights endpoint.
+  per-workspace impact endpoint; observatory tool-insights endpoint.
 - Out: the `insights` table (does not exist in DDL); `applied_recommendations`
   table; `impact_regressions` table; `GET /api/impact` (unbuilt); the planner
   baseline/ratchet (C-1 → M20).
@@ -42,7 +42,7 @@ why.*
 - **Daemon** — `verdicts.rs` (`MeasureVerdicts`, `compose_headline`,
   `compose_body`, `suggested_revision`); `model_insight.rs`; `tasks/handlers/verdicts.rs`;
   `api/handlers/project_detail.rs` (impact endpoints).
-- **App** — project Impact pane; observatory Insights lane.
+- **App** — workspace Impact pane; observatory Insights lane.
 - **Data** — `sensei.project_ftr_metrics` (view `project_metrics`), `sensei.memories`
   (promoted by verdict), `activity.sessions`, `narration_cache` (key = sha256).
 
@@ -84,7 +84,7 @@ why.*
 - The narration cache hits on identical inputs; a changed input is a miss.
 - Model insight ranks correctly and declines when the lead is too small or samples
   are too few.
-- The project impact endpoint returns the verdict, the trend markers, and the
+- The workspace impact endpoint returns the verdict, the trend markers, and the
   source memory link.
 
 ```bash
@@ -117,7 +117,7 @@ curl -s http://localhost:7744/api/projects/$ID/impact | jq '.verdict, .headline,
   `applied_recommendations` / `impact_regressions` unbuilt → M19 (touches M16
   Impact pane).
 - [C-1](../../../../reorg.md) — planner baseline/ratchet (M20) feeds the baseline
-  FTR that `MeasureVerdicts` reads; until C-1 lands, `baseline_ftr` is project
+  FTR that `MeasureVerdicts` reads; until C-1 lands, `baseline_ftr` is workspace
   creation FTR.
 - [M-7 / M-8 / M-9](../../../../reorg.md) (M8) — no registered metric reads
   impact/verdict data.

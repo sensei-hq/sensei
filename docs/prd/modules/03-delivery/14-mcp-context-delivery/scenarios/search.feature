@@ -50,7 +50,7 @@ Feature: MCP & Context Delivery — hybrid search, ranking and the grep fallback
 
   # pinned: content_grep_is_case_insensitive_bounded_and_excludes
   Scenario: content grep is case-insensitive, bounded and excluding
-    Given a content grep over a project
+    Given a content grep over a workspace
     When it runs
     Then it matches case-insensitively, is bounded, and honours exclusions
 
@@ -92,6 +92,6 @@ Feature: MCP & Context Delivery — hybrid search, ranking and the grep fallback
 
   NO TEST
   Scenario: thin graph coverage surfaces a coverage-gap hint, not an empty answer
-    Given a project whose edges are thin
+    Given a workspace whose edges are thin
     When a structural search finds nothing
     Then the response says coverage is thin rather than "no callers"

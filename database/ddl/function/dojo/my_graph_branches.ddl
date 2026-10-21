@@ -5,7 +5,7 @@ set search_path to dojo, extensions;
 -- no others (#225; graph-sync.md §9).
 --
 -- Gated like the write (the caller's verdict says sync_enabled), not like the
--- team read: a member on no team owning the project may still sync, and under
+-- team read: a member on no team owning the workspace may still sync, and under
 -- the table's read policy their daemon would learn of no branch and push nothing.
 --
 -- SECURITY DEFINER: repository_graph_branches' row policy is the team read.

@@ -7,12 +7,43 @@
  * submenu (scope ladder + governance gating). Extracted into a class so it can
  * be unit-tested with a `*-state.spec.svelte.ts`.
  *
- * The component keeps the network + navigation (invalidateAll) — this class
- * only holds the view state and the pure transitions around those calls, so
- * the whole thing is testable without a transport.
+ * It also runs the screen's actions — propose and decide a share batch,
+ * generalise, widen — with the API and the reload handed in, so the whole thing
+ * is testable without a transport. Every failure is shown, never swallowed.
  */
 import { SvelteSet, SvelteMap } from 'svelte/reactivity';
+import { failureReason, type ApiResult } from '$lib/api.js';
 import type { ProjectMemory } from '$lib/types.js';
+
+/** The writes the screen makes — injected so a spec can fail them. */
+export interface MemoriesApi {
+    tryCreateMemoryShareBatch: (projectId: string, memoryIds: string[]) => Promise<ApiResult<{ id: string }>>;
+    tryDecideMemoryShareBatch: (
+        projectId: string,
+        batchId: string,
+        status: BatchDecision,
+    ) => Promise<ApiResult<void>>;
+    generaliseMemory: (id: string) => Promise<ApiResult<unknown>>;
+    promoteMemory: (id: string, body: { gov_scope: string }) => Promise<ApiResult<unknown>>;
+}
+
+export type BatchDecision = 'approved' | 'rejected' | 'withdrawn';
+
+/** Re-read the screen's load after a write (the page passes invalidateAll). */
+export type Reload = () => Promise<unknown>;
+
+/** What a failed generalise means to the user, by status. */
+export function generaliseMessage(status: number): string {
+    if (status === 503) return "couldn't generalise this right now — the model was unavailable. try again.";
+    if (status === 422) return 'this memory has no content to generalise.';
+    return "couldn't generalise this right now. try again.";
+}
+
+/** What a refused widen means to the user, by status. */
+export function widenMessage(status: number): string {
+    if (status === 409) return "this memory isn't promotable yet.";
+    return "couldn't widen this right now. try again.";
+}
 
 /** Semantic chip tone — the component maps this to utility classes. */
 export type ChipTone = 'success' | 'neutral' | 'accent';
@@ -244,5 +275,100 @@ export class ProjectMemoriesState {
     finishPromote(id: string): void {
         this.#promoting.delete(id);
         this.closeWiden();
+    }
+
+    // ── Share batch ──────────────────────────────────────────────────────────
+
+    /** Memory ids ticked for the next share batch. */
+    readonly selected = new SvelteSet<string>();
+    creating = $state(false);
+    /** Why the last propose failed; the selection is kept so it can be retried. */
+    batchError = $state<string | null>(null);
+    #deciding = new SvelteSet<string>();
+    #decideErrors = new SvelteMap<string, string>();
+    /** The row whose What / Because / Consequence drawer is open. */
+    openedMemoryId = $state<string | null>(null);
+
+    readonly openedMemory = $derived(
+        this.openedMemoryId ? this.memories.find((m) => m.id === this.openedMemoryId) ?? null : null,
+    );
+
+    toggleSelected(id: string): void {
+        if (this.selected.has(id)) this.selected.delete(id);
+        else this.selected.add(id);
+    }
+
+    /** Stage every generalised (ready) memory for the next batch. */
+    reviewNextBatch(): void {
+        this.selected.clear();
+        for (const m of this.ready) this.selected.add(m.id);
+    }
+
+    async proposeBatch(api: MemoriesApi, projectId: string, reload: Reload): Promise<void> {
+        if (this.selected.size === 0 || !projectId) return;
+        this.creating = true;
+        this.batchError = null;
+        const res = await api.tryCreateMemoryShareBatch(projectId, Array.from(this.selected));
+        if (res.ok) {
+            this.selected.clear();
+            await reload();
+        } else {
+            this.batchError = `The batch was not proposed: ${failureReason(res.error)}`;
+        }
+        this.creating = false;
+    }
+
+    isDeciding(batchId: string): boolean {
+        return this.#deciding.has(batchId);
+    }
+
+    decideError(batchId: string): string | null {
+        return this.#decideErrors.get(batchId) ?? null;
+    }
+
+    async decide(api: MemoriesApi, projectId: string, batchId: string, status: BatchDecision, reload: Reload): Promise<void> {
+        if (!projectId) return;
+        this.#deciding.add(batchId);
+        this.#decideErrors.delete(batchId);
+        const res = await api.tryDecideMemoryShareBatch(projectId, batchId, status);
+        if (res.ok) await reload();
+        else this.#decideErrors.set(batchId, `Not ${status}: ${failureReason(res.error)}`);
+        this.#deciding.delete(batchId);
+    }
+
+    // ── Generalise / widen actions ───────────────────────────────────────────
+
+    /** Rewrite a memory stack-agnostic (the model takes 1–4s). On success the
+     *  reload flips its chip; on failure the original stays and the row says why. */
+    async generalise(api: MemoriesApi, id: string, reload: Reload): Promise<void> {
+        this.startGeneralise(id);
+        const res = await api.generaliseMemory(id);
+        if (res.ok) {
+            await reload();
+            this.finishGeneralise(id);
+        } else {
+            this.failGeneralise(id, generaliseMessage(res.error.status));
+        }
+    }
+
+    /** Pick a rung: the user's own scope widens at once; a governed one waits
+     *  for `confirmWiden`. */
+    async pickScope(api: MemoriesApi, id: string, rung: ScopeRung, reload: Reload): Promise<void> {
+        if (this.chooseScope(rung) === 'proceed') await this.#widen(api, id, rung.scope, reload);
+    }
+
+    async confirmWiden(api: MemoriesApi, id: string, reload: Reload): Promise<void> {
+        if (this.pendingScope) await this.#widen(api, id, this.pendingScope, reload);
+    }
+
+    async #widen(api: MemoriesApi, id: string, scope: string, reload: Reload): Promise<void> {
+        this.startPromote(id);
+        const res = await api.promoteMemory(id, { gov_scope: scope });
+        if (res.ok) {
+            this.finishPromote(id);
+            await reload();
+        } else {
+            this.failPromote(id, widenMessage(res.error.status));
+        }
     }
 }

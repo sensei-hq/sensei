@@ -2,383 +2,153 @@
     import { onMount, untrack } from "svelte";
     import { page } from "$app/state";
     import { appState } from "$lib/appstate.svelte.js";
-    import { senseiApi, readOutcome } from "$lib/api.js";
-    import type { ObservatoryFtr } from "$lib/types.js";
+    import { senseiApi } from "$lib/api.js";
     import { ftrReadLabel } from "$lib/ftr.js";
-    import { loadReplaySessions, type ReplaySession } from "./replay-sessions";
-    import TabBar from "$lib/components/TabBar.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
     import ScreenState from "$lib/components/ScreenState.svelte";
     import SignalCard from "$lib/components/SignalCard.svelte";
-    import { Eyebrow, Kanji, PageHeader, Screen } from "$lib/components";
+    import { Eyebrow, Kanji, Screen } from "$lib/components";
     import { Button, Select } from "@rokkit/ui";
     import { mcp, toolVerdict } from "$lib/state/mcp.svelte.js";
     import { buildPlaygroundGroups, serversByFamily, type PlaygroundTool } from "./playground-groups.js";
     import { INSTRUMENT_TABS, kindMark } from "./instrument-marks";
     import { glyphMode } from "$lib/glyphs";
     import ToolHealthCard from "./ToolHealthCard.svelte";
-    import type {
-        McpToolManifest, SessionToolCall, SessionReplayCall, ToolHealthSource,
-    } from "$lib/types.js";
+    import { InstrumentsState } from "./instruments-state.svelte";
+    import {
+        collapsedFor, filterGroups, fmtDate, fmtDuration, fmtPayload, heroCopy as heroCopyFor,
+        initialTab, pickToolDefaults as defaultsFor,
+    } from "./instruments-view";
+    import type { ToolHealthSource } from "$lib/types.js";
 
-    type Tool = McpToolManifest;
-    type SessionRow = ReplaySession;
+    // Presentation only: the screen's state is InstrumentsState, the tool
+    // catalogue is the mcp store, and the pure view logic is instruments-view.
+    const api = $derived(senseiApi(appState.port));
 
-    // All catalogue data lives on the mcp store — page is pure presentation.
+    // A deep link from the Sessions digest — /instruments?tab=replay&session={id} —
+    // opens Replay with that session preselected once the list loads.
+    const sessionParam = untrack(() => page.url.searchParams.get("session"));
+    const ins = new InstrumentsState(initialTab(untrack(() => page.url.searchParams.get("tab"))));
+    let honoredSessionParam = false;
+
     const tools = $derived(mcp.tools);
     const toolStats = $derived(mcp.toolStats);
     const toolSignals = $derived(mcp.toolSignals);
     const loading = $derived(mcp.catalogStatus === 'loading' || mcp.catalogStatus === 'idle');
-
-    // Health (insights) tab — L1 source grid + derived header KPIs. The grid
-    // rows come connected-first from the store; the KPIs derive from the same
-    // rows so the header never drifts from the cards below it.
+    // The Health KPIs derive from the same rows as the grid, so they never drift.
     const toolsHealth = $derived(mcp.toolsHealth);
     const healthKpis = $derived(mcp.toolsHealthKpis);
-    // Holistic 14-day first-try rate for the L1 KPI header (一 first-try).
-    // Sourced from GET /api/observatory/ftr, page-local like the replay list.
-    // null until the fetch resolves so the card shows "—" rather than a
-    // fabricated 0%.
-    let holisticFtr = $state<{ data: ObservatoryFtr | null; error: string | null } | null>(null);
-    // null = L1 overview grid; a source = L2 per-tool drill for that card.
-    let activeSource = $state<ToolHealthSource | null>(null);
-    function openSource(source: ToolHealthSource) {
-        activeSource = source;
-    }
+    const selectedInsight = $derived(ins.selectedInsightTool ? mcp.insightFor(ins.selectedInsightTool) : undefined);
 
-    // Honor a deep-link from the Sessions digest (Slot 6):
-    // /instruments?tab=replay&session={id}. The session is preselected once
-    // the replay list loads (see the effect below). Session-id resolves
-    // through GET /api/sessions/{id} inside loadSessionReplay.
-    const tabParam = untrack(() => page.url.searchParams.get("tab"));
-    const sessionParam = untrack(() => page.url.searchParams.get("session"));
-    let tab = $state(
-        tabParam === "replay" || tabParam === "insights" ? tabParam : "playground",
-    );
-    let honoredSessionParam = false;
-    let kindFilter = $state<'all' | 'query' | 'action'>('all');
-    // `selectedTool` is $derived from `selectedToolId` + the sensei catalog
-    // below; kept reactive so a catalog reload doesn't strand a stale ref.
-    let toolResult = $state<string>("");
-    let toolParams = $state<Record<string, string>>({});
-    let executing = $state(false);
-
-    // Replay tab state — session list stays local (small, page-scoped);
-    // timelines cache in the mcp store keyed by session id. Calls carry the
-    // #90 verdict / confidence / verdictReason on the new Replay endpoint
-    // (#84 Slice C), so we widen the type to SessionReplayCall.
-    let replaySessions = $state<SessionRow[]>([]);
-    let selectedSessionId = $state<string | null>(null);
-    let sessionCalls = $state<SessionReplayCall[]>([]);
-    let sessionSummary = $state<{ used: number; partial: number; ignored: number; total: number }>({
-        used: 0, partial: 0, ignored: 0, total: 0,
-    });
-    let replayLoading = $state(false);
-    // Why the session list could not be read (#288).
-    let replayError = $state<string | null>(null);
-    // Whether the list has been read (successfully or not). The effects below
-    // re-run on every change to what they read, so "empty" cannot mean "not yet
-    // read" — an empty or failed read would re-fetch forever. Retry clears it.
-    let replayLoaded = $state(false);
-    // Why the selected session's replay could not be read (#288) — not
-    // "No tool calls in this session."
-    let replayDetailError = $state<string | null>(null);
-    let selectedCall = $state<SessionReplayCall | null>(null);
-
-    // Insights tab — the newer cached tool_insights table is loaded lazily
-    // when the tab is first opened. Selecting a tool row expands its
-    // metrics detail.
-    let selectedInsightTool = $state<string | null>(null);
-    const selectedInsight = $derived(
-        selectedInsightTool ? mcp.insightFor(selectedInsightTool) : undefined,
-    );
-
-    // #84 T2 — discovered MCP servers. Sensei's own tools and every
-    // discovered server are groups in the left rail (instruments-simple.jsx);
-    // the discovered ones sit in a section grouped by assistant, each with an
-    // on/off toggle. A server's tools load lazily when its group expands.
+    // Sensei's own tools and every discovered server are groups in the left rail;
+    // a discovered server's tools load when its group first expands.
     const discoveredServers = $derived(mcp.mcpServers);
     const discoveredByFamily = $derived(serversByFamily(discoveredServers));
-
-    let collapsedGroups = $state<Record<string, boolean>>({});
-    let toolSearch = $state('');
-    let refreshingServers = $state(false);
-    /** The last refused toggle or failed scan, in words; cleared on success. */
-    let serversError = $state<string | null>(null);
-
     const playgroundGroups = $derived(
         buildPlaygroundGroups(tools, discoveredServers, mcp.serverToolManifests, mcp.serverToolErrors),
     );
-
-    // Search-filtered view of groups. Ql matches on tool name OR summary.
-    const filteredGroups = $derived.by(() => {
-        const ql = toolSearch.trim().toLowerCase();
-        if (!ql) return playgroundGroups;
-        return playgroundGroups
-            .map((g) => ({
-                ...g,
-                tools: g.tools.filter((t) =>
-                    t.name.toLowerCase().includes(ql) || t.summary.toLowerCase().includes(ql)
-                ),
-            }))
-            .filter((g) => g.tools.length > 0);
-    });
-
-    // Effective collapse state: search auto-expands any group with hits.
-    const effectiveCollapsed = $derived.by(() => {
-        const ql = toolSearch.trim().toLowerCase();
-        if (ql) {
-            return Object.fromEntries(filteredGroups.map((g) => [g.id, false]));
-        }
-        return collapsedGroups;
-    });
-
-    // Flat list of visible tools for focus-pick fallback.
+    const filteredGroups = $derived(filterGroups(playgroundGroups, ins.toolSearch));
+    const effectiveCollapsed = $derived(collapsedFor(filteredGroups, ins.collapsedGroups, ins.toolSearch));
     const visibleFlat = $derived(filteredGroups.flatMap((g) => g.tools));
 
-    let selectedToolId = $state<string | null>(null);
     const focusedGroupAndTool = $derived.by(() => {
         const byId = new Map(playgroundGroups.flatMap((g) => g.tools.map((t) => [t.id, { group: g, tool: t }])));
-        if (selectedToolId && byId.has(selectedToolId)) {
-            return byId.get(selectedToolId)!;
-        }
+        if (ins.selectedToolId && byId.has(ins.selectedToolId)) return byId.get(ins.selectedToolId)!;
         const first = visibleFlat[0];
-        if (first && byId.has(first.id)) return byId.get(first.id)!;
-        return null;
+        return first ? byId.get(first.id) ?? null : null;
     });
     const focusedGroup = $derived(focusedGroupAndTool?.group ?? null);
     const focusedTool = $derived(focusedGroupAndTool?.tool ?? null);
-
-    // Bridge to legacy state used by executeTool. `selectedTool` mirrors
-    // the sensei-manifest Tool shape (structured inputs + example) when
-    // focus lands on a sensei tool; for discovered-server tools we don't
-    // have the manifest yet, so the inputs block renders as "No inputs".
+    // A sensei tool has a manifest (structured inputs + example); a discovered
+    // server's tool does not, so its inputs read "No inputs".
     const selectedTool = $derived(
         focusedTool?.mcp === 'sensei' ? tools.find((t) => t.name === focusedTool.name) ?? null : null,
     );
 
+    // Tabs and kind marks carry a kanji AND an icon (#133). The third tab reads
+    // "Health"; its id stays 'insights' so bookmarks and test ids don't churn.
+    const instrumentTabs = INSTRUMENT_TABS;
+    const glyphs = $derived(glyphMode(appState.config));
+    const kindTone = (kind: PlaygroundTool['kind']) =>
+        kind === 'action' ? 'accent' : kind === 'query' ? 'success' : 'muted';
+    const currentTab = $derived(instrumentTabs.find((t) => t.id === ins.tab) ?? instrumentTabs[0]);
+    const heroCopy = $derived(heroCopyFor(ins.tab));
+
+    function pickToolDefaults(tool: PlaygroundTool): Record<string, string> {
+        const manifest = tool.mcp === 'sensei' ? tools.find((t) => t.name === tool.name) ?? null : null;
+        return defaultsFor(manifest, appState.activeProjectId || null);
+    }
+
+    function openSource(source: ToolHealthSource) {
+        ins.activeSource = source;
+    }
+
     function toggleGroup(id: string) {
-        // Discovered server: trigger lazy tool load on first expand.
-        const isNowExpanded = collapsedGroups[id];
-        collapsedGroups = { ...collapsedGroups, [id]: !collapsedGroups[id] };
+        const expanding = ins.collapsedGroups[id];
+        ins.collapsedGroups = { ...ins.collapsedGroups, [id]: !ins.collapsedGroups[id] };
         const group = playgroundGroups.find((g) => g.id === id);
-        if (isNowExpanded && group?.source === 'discovered' && group.serverId && !mcp.serverToolManifests[group.serverId]) {
+        if (expanding && group?.source === 'discovered' && group.serverId && !mcp.serverToolManifests[group.serverId]) {
             void mcp.loadServerTools(group.serverId);
         }
     }
 
     async function refreshDiscoveredServers() {
-        refreshingServers = true;
+        ins.refreshingServers = true;
         try {
-            serversError = await mcp.refreshMcpServers();
+            ins.serversError = await mcp.refreshMcpServers();
         } finally {
-            refreshingServers = false;
+            ins.refreshingServers = false;
         }
     }
 
     async function toggleServer(serverId: string, enabled: boolean) {
-        serversError = await mcp.toggleMcpServer(serverId, enabled);
+        ins.serversError = await mcp.toggleMcpServer(serverId, enabled);
     }
 
-    // Default: sensei expanded, all discovered servers collapsed.
+    function executeTool() {
+        if (selectedTool) void ins.execute(api, selectedTool.name);
+    }
+
+    function selectReplaySession(sessionId: string) {
+        void ins.selectReplaySession(mcp, sessionId);
+    }
+
+    // Default: sensei expanded, every discovered server collapsed.
     $effect(() => {
         for (const g of playgroundGroups) {
-            if (!(g.id in collapsedGroups)) {
-                collapsedGroups = { ...collapsedGroups, [g.id]: g.source !== 'sensei' };
+            if (!(g.id in untrack(() => ins.collapsedGroups))) {
+                ins.collapsedGroups = { ...untrack(() => ins.collapsedGroups), [g.id]: g.source !== 'sensei' };
             }
         }
-    });
-
-    // Custom tab set matching the mockup (docs/mockups/Sensei/lib/instruments.jsx).
-    // Tabs and kind marks carry a kanji AND an icon (#133); the data lives in
-    // instrument-marks.ts. The third tab is labelled "Health" — 'insights' is
-    // kept as its id so bookmarks / e2e testids don't churn.
-    const instrumentTabs = INSTRUMENT_TABS;
-    const glyphs = $derived(glyphMode(appState.config));
-    const kindTone = (kind: PlaygroundTool['kind']) =>
-        kind === 'action' ? 'accent' : kind === 'query' ? 'success' : 'muted';
-
-    // Playground search — narrows the visible tool list on top of the kind
-    // filter. Applied client-side so filter changes are instant.
-    let toolQuery = $state('');
-
-    const currentTab = $derived(instrumentTabs.find((t) => t.id === tab) ?? instrumentTabs[0]);
-    // Per-tab hero copy (tagline + sub). Matches the phrasing in
-    // docs/mockups/Sensei/lib/instruments.jsx.
-    const heroCopy = $derived(
-        tab === 'replay'   ? { tagline: 'Every instrument call, in order.',
-                                sub: "Step through the tools the assistant reached for during a session. Pure request + response — what was asked, what came back, how long it took." } :
-        tab === 'insights' ? { tagline: 'Toolset health.',
-                                sub: "How your instruments are performing — usage, effectiveness signals, and where the assistant is under- or over-reaching." } :
-        { tagline: "Sensei · what your instruments can do.",
-          sub: "Sensei's own MCP + every server discovered from your assistant configs. Try each tool interactively; sensei never wraps third-party MCPs — it just surfaces them." }
-    );
-
-    // Filter tools by the active kind chip AND the search query. Both are
-    // applied client-side so switches are instant with no daemon round-trip.
-    const visibleTools = $derived.by(() => {
-        const q = toolQuery.trim().toLowerCase();
-        return tools.filter((t) =>
-            (kindFilter === 'all' || t.kind === kindFilter) &&
-            (q === '' || t.name.toLowerCase().includes(q) || (t.summary ?? '').toLowerCase().includes(q))
-        );
     });
 
     onMount(() => {
         void mcp.loadCatalog();
     });
 
-    async function executeTool() {
-        if (!selectedTool) return;
-        executing = true;
-        toolResult = "";
-        const api = senseiApi(appState.port);
-        const result = await api.mcpCallTool(selectedTool.name, toolParams);
-        toolResult = JSON.stringify(result, null, 2);
-        executing = false;
-    }
-
-    /**
-     * Pre-fill common tool-input keys so the user isn't forced to type
-     * the active project name on every tool click. `repoId` defaults to
-     * the currently-active project. Anything else stays empty and shows
-     * placeholder from the manifest.
-     *
-     * Fixes the "execute returns empty result" symptom: sensei tools
-     * that take a `repoId` return `{"callees":[]}` etc. when the input
-     * doesn't match a real project name. Curl verification: valid
-     * repoId=sensei with name=extract_deps → 18 callees; wrong project
-     * name → empty. Defaulting to the active project makes the
-     * happy-path work without user interaction.
-     */
-    function pickToolDefaults(tool: PlaygroundTool): Record<string, string> {
-        const source = tool.mcp === 'sensei'
-            ? tools.find((t) => t.name === tool.name)
-            : null;
-        const params: Record<string, string> = {};
-        if (!source) return params;
-        for (const input of source.inputs ?? []) {
-            if (input.key === 'repoId') {
-                // Prefer the user's active project; otherwise fall back to
-                // the input's placeholder (usually 'sensei') so the field
-                // isn't blank on first click. Empty repoId → empty result.
-                params[input.key] = appState.activeProjectId
-                    || input.placeholder
-                    || input.default
-                    || 'sensei';
-            } else if (input.default != null) {
-                params[input.key] = String(input.default);
-            } else if (input.placeholder) {
-                // For sensei's own tools the placeholder is a concrete
-                // known-good example (e.g. 'process_event' for a symbol
-                // arg). Pre-filling makes execute-on-first-click work
-                // without the user having to guess.
-                params[input.key] = input.placeholder;
-            }
-        }
-        return params;
-    }
-
-    // Load the session list once the Replay tab is first opened. Subsequent
-    // tab switches skip the fetch since the list rarely changes mid-session.
-    async function ensureReplaySessionsLoaded() {
-        if (replayLoaded || replayLoading) return;
-        replayLoading = true;
-        const read = await loadReplaySessions(senseiApi(appState.port));
-        replaySessions = read.sessions;
-        replayError = read.error;
-        replayLoaded = true;
-        replayLoading = false;
-    }
-
-    async function selectReplaySession(sessionId: string) {
-        selectedSessionId = sessionId;
-        selectedCall = null;
-        sessionCalls = [];
-        sessionSummary = { used: 0, partial: 0, ignored: 0, total: 0 };
-        replayLoading = true;
-        // #84 T2 Slice C — Replay endpoint with #90 verdicts joined. First
-        // open triggers `classify: true` so verdicts populate in one round-
-        // trip; subsequent selects hit the cache.
-        const read = await mcp.loadSessionReplay(sessionId, { classify: true });
-        replayDetailError = read.error;
-        if (read.replay) {
-            sessionCalls = read.replay.calls;
-            sessionSummary = read.replay.summary;
-        }
-        replayLoading = false;
-    }
-
-    // Load the holistic 14-day FTR once, lazily, for the Health L1 header.
-    // Page-local (mirrors ensureReplaySessionsLoaded) — the mcp store owns
-    // tool data, this is observatory-wide.
-    async function ensureHolisticFtrLoaded() {
-        if (holisticFtr != null) return;
-        const api = senseiApi(appState.port);
-        holisticFtr = readOutcome(await api.tryGetObservatoryFtr());
-    }
-
-    // Kick off session loading the first time Replay is visible; and load
-    // the tool_insights cache the first time Insights is visible. Playground
-    // gets a lazy load of the discovered MCP servers panel.
-    //
-    // Depends on `tab` ONLY. Each load reads its own status before fetching, so
-    // a tracked call re-ran this effect on every status change — and a load
-    // that failed ('loading' → 'error', still not 'ready') re-fetched without
-    // end against a failing daemon. A failed read is retried from its error
-    // state's Retry, not by this effect.
+    // Each tab's reads, the first time it opens. Depends on the tab ONLY: each
+    // load checks its own status, and tracking that re-ran a failed read without
+    // end. A failed read is retried from its error state.
     $effect(() => {
-        const current = tab;
+        const current = ins.tab;
         untrack(() => {
-            if (current === 'playground') {
-                void mcp.loadMcpServers();
-            }
-            if (current === 'replay') {
-                void ensureReplaySessionsLoaded();
-            }
+            if (current === 'playground') void mcp.loadMcpServers();
+            if (current === 'replay') void ins.loadReplaySessions(api);
             if (current === 'insights') {
-                // L1 grid + L2 drill data. loadCatalog (onMount) already primed
-                // toolStats/toolSignals for the L2 pane.
                 void mcp.loadToolsHealth();
                 void mcp.loadInsights();
-                void ensureHolisticFtrLoaded();
+                void ins.loadHolisticFtr(api);
             }
         });
     });
 
-    // Preselect the deep-linked session once the replay list is available.
-    // Runs at most once — re-fires only while waiting for the list to load.
+    // Preselect the deep-linked session once the list is read — at most once.
     $effect(() => {
-        if (honoredSessionParam || !sessionParam || tab !== 'replay') return;
-        if (!replayLoaded) {
-            void ensureReplaySessionsLoaded();
-            return;
-        }
+        if (honoredSessionParam || !sessionParam || ins.tab !== 'replay') return;
+        if (!ins.replayLoaded) return;
         honoredSessionParam = true;
-        void selectReplaySession(sessionParam);
+        selectReplaySession(sessionParam);
     });
-
-    // Format request/response payloads for the detail pane — pretty JSON
-    // when we have an object, raw string otherwise.
-    function fmtPayload(value: unknown): string {
-        if (value == null) return '—';
-        if (typeof value === 'string') return value;
-        try {
-            return JSON.stringify(value, null, 2);
-        } catch {
-            return String(value);
-        }
-    }
-
-    function fmtDuration(ms: number | null): string {
-        if (ms == null) return '—';
-        if (ms < 1000) return `${ms} ms`;
-        return `${(ms / 1000).toFixed(2)} s`;
-    }
-
-    function fmtDate(iso: string): string {
-        return new Date(iso).toLocaleString();
-    }
 </script>
 
 <!-- #84 T2 UI — Instruments custom shell matching
@@ -408,7 +178,7 @@
         </div>
         <div class="flex px-7 border-b border-paper-edge" role="tablist" aria-label="Instruments tabs" data-testid="instrument-tabs">
             {#each instrumentTabs as t}
-                {@const on = t.id === tab}
+                {@const on = t.id === ins.tab}
                 <button
                     class="flex items-center gap-2 py-3 px-4 bg-transparent border-none cursor-pointer"
                     class:text-ink={on}
@@ -417,7 +187,7 @@
                     role="tab"
                     aria-selected={on}
                     data-testid={`instrument-tab-${t.id}`}
-                    onclick={() => (tab = t.id)}
+                    onclick={() => (ins.tab = t.id)}
                 >
                     <Kanji char={t.kanji} icon={t.icon} mode={glyphs} size="sm" tone={on ? 'accent' : 'muted'} />
                     <span class="display text-sm">{t.label}</span>
@@ -431,7 +201,7 @@
          edges (no centered max-w wrapper any more). -->
     <div>
 
-        {#if tab === "playground"}
+        {#if ins.tab === "playground"}
             {#if mcp.catalogError}
                 <!-- The tool catalog could not be read (#288) — sensei's own tools
                      would otherwise just be missing from the rail. -->
@@ -445,7 +215,7 @@
                  preview. Sensei's own tools sit as the first (always-installed)
                  group; every discovered MCP server (Slice A) is its own group
                  with tools hydrated lazily on expand via Slice B's probe. -->
-            {@const running = executing}
+            {@const running = ins.executing}
             <div class="grid grid-cols-[300px_1fr] min-h-[600px] border-t border-paper-edge" data-testid="playground-body">
                 <!-- ── Left rail — search + MCP tree ────────────────────────────── -->
                 <aside class="bg-paper-soft border-r border-paper-edge flex flex-col overflow-hidden">
@@ -456,11 +226,11 @@
                             type="text"
                             class="border-none outline-none bg-transparent text-sm text-ink flex-1"
                             placeholder="search tools…"
-                            bind:value={toolSearch}
+                            bind:value={ins.toolSearch}
                             data-testid="tool-search"
                         />
-                        {#if toolSearch}
-                            <button class="text-xs text-ink-faint bg-transparent border-none cursor-pointer" onclick={() => (toolSearch = '')} aria-label="Clear search">×</button>
+                        {#if ins.toolSearch}
+                            <button class="text-xs text-ink-faint bg-transparent border-none cursor-pointer" onclick={() => (ins.toolSearch = '')} aria-label="Clear search">×</button>
                         {/if}
                     </div>
 
@@ -512,7 +282,7 @@
                                         <button
                                             class="w-full grid grid-cols-[32px_14px_1fr] gap-1 py-1 pl-1 pr-3 text-left bg-transparent border-none cursor-pointer"
                                             style="border-left: {active ? '2px solid var(--accent)' : '2px solid transparent'};"
-                                            onclick={() => { selectedToolId = tool.id; toolResult = ''; toolParams = pickToolDefaults(tool); }}
+                                            onclick={() => ins.pickTool(tool.id, pickToolDefaults(tool))}
                                             data-testid={`tool-row-${tool.name}`}
                                             data-tool-kind={tool.kind}
                                         >
@@ -531,7 +301,7 @@
                     {/snippet}
 
                     <div class="overflow-auto flex-1 py-1">
-                        {#if filteredGroups.length === 0 && toolSearch}
+                        {#if filteredGroups.length === 0 && ins.toolSearch}
                             <div class="text-center text-sm text-ink-faint py-4 px-3">
                                 no tools match.
                             </div>
@@ -542,8 +312,8 @@
 
                         <section class="mt-3 pt-3 border-t border-paper-edge" data-testid="discovered-servers">
                             <div class="px-3 pb-1"><Eyebrow>Discovered MCP servers</Eyebrow></div>
-                            {#if serversError}
-                                <p class="px-3 py-1 text-xs text-danger" data-testid="servers-error">{serversError}</p>
+                            {#if ins.serversError}
+                                <p class="px-3 py-1 text-xs text-danger" data-testid="servers-error">{ins.serversError}</p>
                             {/if}
                             {#if mcp.mcpServersStatus === 'error'}
                                 <p class="px-3 py-1 text-xs text-danger" data-testid="servers-load-error">
@@ -556,7 +326,7 @@
                             {/if}
                             {#each discoveredByFamily as fam (fam.family)}
                                 {@const shown = fam.servers
-                                    .map((s) => ({ server: s, group: filteredGroups.find((g) => g.id === s.id) }))
+                                    .map((srv) => ({ server: srv, group: filteredGroups.find((g) => g.id === srv.id) }))
                                     .filter((x) => x.group)}
                                 {#if shown.length > 0}
                                     <div class="mb-1" data-testid={`servers-family-${fam.family}`}>
@@ -572,13 +342,13 @@
 
                     <!-- Footer — MCP + tool counts + refresh -->
                     <div class="border-t border-paper-edge flex justify-between items-center gap-2 py-2 px-3 text-xs text-ink-faint">
-                        <span>{playgroundGroups.length} MCPs · {playgroundGroups.reduce((s, g) => s + g.tools.length, 0)} tools</span>
+                        <span>{playgroundGroups.length} MCPs · {playgroundGroups.reduce((n, g) => n + g.tools.length, 0)} tools</span>
                         <button
                             class="text-xs text-ink-mute bg-transparent border-none cursor-pointer"
                             onclick={refreshDiscoveredServers}
-                            disabled={refreshingServers}
+                            disabled={ins.refreshingServers}
                             data-testid="refresh-servers"
-                        >{refreshingServers ? 'scanning…' : '+ scan'}</button>
+                        >{ins.refreshingServers ? 'scanning…' : '+ scan'}</button>
                     </div>
                 </aside>
 
@@ -637,15 +407,15 @@
                                             {#if input.kind === 'enum' && input.options}
                                                 <Select
                                                     items={input.options}
-                                                    value={toolParams[input.key]}
-                                                    onchange={(v) => (toolParams[input.key] = v as string)}
+                                                    value={ins.toolParams[input.key]}
+                                                    onchange={(v) => (ins.toolParams[input.key] = v as string)}
                                                 />
                                             {:else}
                                                 <input
                                                     type={input.kind === 'number' ? 'number' : 'text'}
                                                     class="py-1 px-2 text-sm border border-paper-edge rounded bg-paper text-ink font-mono outline-none"
                                                     placeholder={input.placeholder ?? input.default ?? ''}
-                                                    bind:value={toolParams[input.key]}
+                                                    bind:value={ins.toolParams[input.key]}
                                                 />
                                             {/if}
                                         </label>
@@ -666,7 +436,9 @@
                                 <div class="flex-1"></div>
                                 {#if running}
                                     <span class="font-mono text-xs text-ink-mute">calling …</span>
-                                {:else if toolResult}
+                                {:else if ins.toolError}
+                                    <span class="font-mono text-xs text-danger" data-testid="tool-error">{ins.toolError}</span>
+                                {:else if ins.toolResult}
                                     <span class="font-mono text-xs text-success">200 ok</span>
                                 {/if}
                             </div>
@@ -675,17 +447,17 @@
                         <!-- Response panel -->
                         <div>
                             <div class="text-xs uppercase tracking-wide text-ink-mute mb-1">
-                                Response{!toolResult ? ' · preview' : ''}
+                                Response{!ins.toolResult ? ' · preview' : ''}
                             </div>
                             <pre
                                 class="font-mono text-xs leading-normal py-3 px-3 m-0 bg-paper-soft border border-paper-edge rounded whitespace-pre-wrap overflow-auto max-h-[360px]"
-                                class:text-ink={toolResult}
-                                class:text-ink-soft={!toolResult}
-                                class:opacity-70={!toolResult}
+                                class:text-ink={ins.toolResult}
+                                class:text-ink-soft={!ins.toolResult}
+                                class:opacity-70={!ins.toolResult}
                                 class:border-l-accent={isAction}
                                 class:border-l-success={tool.kind === 'query'}
                                 style="border-left-width: 2px; border-left-color: {isAction ? 'var(--accent)' : tool.kind === 'query' ? 'var(--success)' : 'var(--ink-mute)'};"
-                            >{toolResult || '—'}</pre>
+                            >{ins.toolResult || '—'}</pre>
                         </div>
                     {:else}
                         <div class="text-center text-sm text-ink-faint py-6">
@@ -694,23 +466,23 @@
                     {/if}
                 </main>
             </div>
-        {:else if tab === "replay"}
+        {:else if ins.tab === "replay"}
             <!-- Replay body — matches instruments.jsx InstrumentsReplay (used
                  by InstrumentsReplaySimple with simple=true). 300px session
                  picker sidebar + main pane with summary strip + timeline+
                  detail grid. Timeline entries use the mockup's [22px | 38px |
                  1fr | auto] grid (index / offset / tool name / dot+ms). -->
-            {#if replayLoading && replaySessions.length === 0}
+            {#if ins.replayLoading && ins.replaySessions.length === 0}
                 <p class="text-sm text-ink-soft px-7 py-5">Loading sessions…</p>
-            {:else if replayError}
+            {:else if ins.replayError}
                 <div class="px-7 py-5">
                     <ScreenState
                         status="error"
-                        error={replayError}
-                        onretry={() => { replayLoaded = false; void ensureReplaySessionsLoaded(); }}
+                        error={ins.replayError}
+                        onretry={() => void ins.retryReplaySessions(api)}
                     />
                 </div>
-            {:else if replaySessions.length === 0}
+            {:else if ins.replaySessions.length === 0}
                 <EmptyState
                     kanji="録"
                     title="No sessions recorded yet"
@@ -723,8 +495,8 @@
                         <div class="text-xs uppercase tracking-wide text-ink-mute pt-3 pb-2 px-3">
                             sessions
                         </div>
-                        {#each replaySessions as session (session.id)}
-                            {@const on = selectedSessionId === session.id}
+                        {#each ins.replaySessions as session (session.id)}
+                            {@const on = ins.selectedSessionId === session.id}
                             <button
                                 class="w-full text-left bg-transparent border-none cursor-pointer py-2 px-3"
                                 class:bg-paper={on}
@@ -759,30 +531,30 @@
 
                     <!-- ── Detail ─────────────────────────────────────── -->
                     <main class="overflow-auto pt-5 pb-6 px-6">
-                        {#if selectedSessionId == null}
+                        {#if ins.selectedSessionId == null}
                             <p class="text-sm text-ink-soft">Pick a session on the left.</p>
-                        {:else if replayLoading}
+                        {:else if ins.replayLoading}
                             <p class="text-sm text-ink-soft">Loading timeline…</p>
                         {:else}
                             <!-- Session summary strip -->
                             <div class="grid grid-cols-[auto_auto_auto_auto_1fr] items-baseline gap-5 mb-4 pb-3 border-b border-paper-edge">
                                 <div>
                                     <div class="display text-base mb-1">
-                                        {replaySessions.find((s) => s.id === selectedSessionId)?.task ?? selectedSessionId}
+                                        {ins.replaySessions.find((r) => r.id === ins.selectedSessionId)?.task ?? ins.selectedSessionId}
                                     </div>
-                                    <div class="font-mono text-xs text-ink-mute">{selectedSessionId}</div>
+                                    <div class="font-mono text-xs text-ink-mute">{ins.selectedSessionId}</div>
                                 </div>
                                 <div>
                                     <div class="text-xs uppercase tracking-wide text-ink-faint">calls</div>
-                                    <div class="display text-base mt-1">{sessionCalls.length}</div>
+                                    <div class="display text-base mt-1">{ins.sessionCalls.length}</div>
                                 </div>
                                 <div>
                                     <div class="text-xs uppercase tracking-wide text-ink-faint">used</div>
-                                    <div class="display text-base text-success mt-1">{sessionSummary.used}</div>
+                                    <div class="display text-base text-success mt-1">{ins.sessionSummary.used}</div>
                                 </div>
                                 <div>
                                     <div class="text-xs uppercase tracking-wide text-ink-faint">ignored</div>
-                                    <div class="display text-base text-ink-mute mt-1">{sessionSummary.ignored}</div>
+                                    <div class="display text-base text-ink-mute mt-1">{ins.sessionSummary.ignored}</div>
                                 </div>
                                 <span></span>
                             </div>
@@ -792,15 +564,15 @@
                                 <!-- Timeline -->
                                 <div>
                                     <div class="text-xs uppercase tracking-wide text-ink-mute mb-2">
-                                        timeline ({sessionCalls.length})
+                                        timeline ({ins.sessionCalls.length})
                                     </div>
-                                    {#if replayDetailError}
-                                        <p class="text-xs text-danger" data-testid="replay-detail-error">Could not read this session's tool calls: {replayDetailError}</p>
-                                    {:else if sessionCalls.length === 0}
+                                    {#if ins.replayDetailError}
+                                        <p class="text-xs text-danger" data-testid="replay-detail-error">Could not read this session's tool calls: {ins.replayDetailError}</p>
+                                    {:else if ins.sessionCalls.length === 0}
                                         <p class="text-xs text-ink-soft">No tool calls in this session.</p>
                                     {:else}
-                                        {#each sessionCalls as call, i (call.callId)}
-                                            {@const on = selectedCall?.callId === call.callId}
+                                        {#each ins.sessionCalls as call, i (call.callId)}
+                                            {@const on = ins.selectedCall?.callId === call.callId}
                                             {@const kindColor = call.verdict === 'used' ? 'var(--success)' : call.verdict === 'partial' ? 'var(--warning)' : call.verdict === 'ignored' ? 'var(--ink-mute)' : 'var(--accent)'}
                                             <button
                                                 class="w-full grid grid-cols-[22px_38px_1fr_auto] gap-2 items-center py-2 pl-3 pr-2 text-left border rounded-sm cursor-pointer"
@@ -808,7 +580,7 @@
                                                 class:border-paper-edge={on}
                                                 class:border-transparent={!on}
                                                 style="background: {on ? 'var(--paper-soft)' : 'transparent'};"
-                                                onclick={() => (selectedCall = call)}
+                                                onclick={() => (ins.selectedCall = call)}
                                             >
                                                 <span class="font-mono text-xs text-ink-mute" style='font-feature-settings: "tnum";'>{i + 1}</span>
                                                 <span class="font-mono text-xs text-ink-mute truncate" style='font-feature-settings: "tnum";'>
@@ -828,10 +600,10 @@
 
                                 <!-- Detail: request + response panels matching CallDetailSimple -->
                                 <div class="flex flex-col gap-3">
-                                    {#if !selectedCall}
+                                    {#if !ins.selectedCall}
                                         <p class="text-sm text-ink-soft">Select a call to see request + response.</p>
                                     {:else}
-                                        {@const call = selectedCall}
+                                        {@const call = ins.selectedCall}
                                         {@const kindGlyph = call.verdict === 'used' ? '用' : call.verdict === 'partial' ? '部' : call.verdict === 'ignored' ? '無' : call.success === false ? '✗' : '問'}
                                         {@const kindColor = call.verdict === 'used' ? 'text-success' : call.verdict === 'partial' ? 'text-warning' : call.verdict === 'ignored' ? 'text-ink-mute' : 'text-accent'}
                                         <div class="flex items-baseline justify-between pb-3 border-b border-paper-edge">
@@ -883,15 +655,15 @@
                  still all-source today, so the drill header labels that honestly
                  rather than faking per-source scoping. -->
             <div class="px-7 py-6">
-                {#if activeSource}
+                {#if ins.activeSource}
                     <button
                         type="button"
                         class="bg-transparent border-none cursor-pointer p-0 mb-4 text-sm text-ink-mute"
-                        onclick={() => (activeSource = null)}
+                        onclick={() => (ins.activeSource = null)}
                         data-testid="tool-health-back"
                     >← all sources</button>
                     <div class="flex items-baseline gap-2 mb-4">
-                        <h3 class="display text-base font-normal m-0">{activeSource.name}</h3>
+                        <h3 class="display text-base font-normal m-0">{ins.activeSource.name}</h3>
                         <span class="font-mono text-xs text-ink-mute">
                             · all sources · scoping per source coming
                         </span>
@@ -952,7 +724,7 @@
             )}
             {@render KpiCard(
                 '一', 'first-try rate',
-                ftrReadLabel(holisticFtr),
+                ftrReadLabel(ins.holisticFtr),
                 'holistic · 14d',
             )}
         </div>
@@ -973,8 +745,8 @@
             {#each toolsHealth as source (source.source_type + ':' + source.source_key)}
                 <ToolHealthCard
                     {source}
-                    active={activeSource?.source_type === source.source_type
-                        && activeSource?.source_key === source.source_key}
+                    active={ins.activeSource?.source_type === source.source_type
+                        && ins.activeSource?.source_key === source.source_key}
                     onopen={openSource}
                 />
             {/each}
@@ -999,13 +771,13 @@
             description="Tool usage statistics appear after your assistant sessions call sensei tools. Start a session to begin tracking."
         />
     {:else}
-        {@const totalCalls = toolStats.reduce((s, t) => s + t.call_count, 0)}
-        {@const totalErrors = toolStats.reduce((s, t) => s + t.error_count, 0)}
-        {@const warnTools = toolSignals.filter((s) => s.variant === 'warn').length}
+        {@const totalCalls = toolStats.reduce((n, t) => n + t.call_count, 0)}
+        {@const totalErrors = toolStats.reduce((n, t) => n + t.error_count, 0)}
+        {@const warnTools = toolSignals.filter((sig) => sig.variant === 'warn').length}
         <!-- Dormant = signals-side "unused" (no calls in window), not just
              zero call_count on the aggregate row. The aggregate keeps
              historical rows; the signal derives from last_used_at. -->
-        {@const dormantTools = toolSignals.filter((s) => s.variant === 'unused').length}
+        {@const dormantTools = toolSignals.filter((sig) => sig.variant === 'unused').length}
 
         <!-- ── KPI row — 4 cards, one per key metric ────────────────── -->
         <div class="grid grid-cols-4 gap-3 mb-5">
@@ -1094,7 +866,7 @@
             </div>
             {#each toolStats as stat (stat.tool_name)}
                 {@const errorRate = stat.call_count > 0 ? stat.error_count / stat.call_count : 0}
-                {@const expanded = selectedInsightTool === stat.tool_name}
+                {@const expanded = ins.selectedInsightTool === stat.tool_name}
                 {@const verdict = toolVerdict(stat.call_count, stat.error_count)}
                 <button
                     type="button"
@@ -1102,7 +874,7 @@
                     class:bg-paper-mute={expanded}
                     data-testid={`insights-row-${stat.tool_name}`}
                     aria-expanded={expanded}
-                    onclick={() => (selectedInsightTool = expanded ? null : stat.tool_name)}
+                    onclick={() => (ins.selectedInsightTool = expanded ? null : stat.tool_name)}
                 >
                     <span class="font-mono text-xs">{stat.tool_name}</span>
                     <span class="text-right font-mono text-xs">{stat.call_count}</span>

@@ -9,7 +9,9 @@ import {
 	fetchGithubUser,
 	fetchGithubOrgs,
 	fetchGithubFacts,
-	fetchGithubRepoFacts
+	fetchGithubRepoFacts,
+	fetchGithubRepoPermissions,
+	permissionOf
 } from './forge-github';
 
 /** A fetch stub that answers by URL substring and records the calls. */
@@ -70,7 +72,7 @@ describe('fetchGithubUser', () => {
 });
 
 describe('fetchGithubOrgs', () => {
-	it('returns id + login + role for each active membership', async () => {
+	it('returns id + login + role for each active membership, and says the read was complete', async () => {
 		const { fn, calls } = fakeFetch({
 			'/user/memberships/orgs': {
 				body: [
@@ -79,10 +81,13 @@ describe('fetchGithubOrgs', () => {
 				]
 			}
 		});
-		expect(await fetchGithubOrgs('tok', fn)).toEqual([
-			{ id: '11', login: 'sensei-hq', role: 'admin' },
-			{ id: '22', login: 'acme', role: 'member' }
-		]);
+		expect(await fetchGithubOrgs('tok', fn)).toEqual({
+			orgs: [
+				{ id: '11', login: 'sensei-hq', role: 'admin' },
+				{ id: '22', login: 'acme', role: 'member' }
+			],
+			complete: true
+		});
 		expect(calls[0].url).toContain('/user/memberships/orgs');
 	});
 
@@ -97,13 +102,12 @@ describe('fetchGithubOrgs', () => {
 				]
 			}
 		});
-		expect(await fetchGithubOrgs('tok', fn)).toEqual([
-			{ id: '22', login: 'acme', role: 'member' }
-		]);
+		expect((await fetchGithubOrgs('tok', fn)).orgs).toEqual([{ id: '22', login: 'acme', role: 'member' }]);
 	});
 
-	it('skips an entry with no stable id or no login rather than guessing', async () => {
+	it('skips an entry with no stable id or no login rather than guessing — and the read is then incomplete', async () => {
 		// A connection is a claim of identity; a guessed one is worse than none (F7).
+		// An org it could not read must not look like an org the person left (#309).
 		const { fn } = fakeFetch({
 			'/user/memberships/orgs': {
 				body: [
@@ -113,7 +117,10 @@ describe('fetchGithubOrgs', () => {
 				]
 			}
 		});
-		expect(await fetchGithubOrgs('tok', fn)).toEqual([{ id: '44', login: 'good', role: 'member' }]);
+		expect(await fetchGithubOrgs('tok', fn)).toEqual({
+			orgs: [{ id: '44', login: 'good', role: 'member' }],
+			complete: false
+		});
 	});
 
 	it('treats any role that is not admin as member', async () => {
@@ -122,20 +129,39 @@ describe('fetchGithubOrgs', () => {
 				body: [{ state: 'active', role: 'billing_manager', organization: { id: 1, login: 'a' } }]
 			}
 		});
-		expect((await fetchGithubOrgs('tok', fn))[0].role).toBe('member');
+		expect((await fetchGithubOrgs('tok', fn)).orgs[0].role).toBe('member');
+	});
+
+	it('reads every page — someone in more than 100 orgs is in all of them (#309)', async () => {
+		const page1 = Array.from({ length: 100 }, (_, i) => ({
+			state: 'active',
+			role: 'member',
+			organization: { id: i + 1, login: `org-${i + 1}` }
+		}));
+		const { fn, calls } = fakeFetch({
+			'&page=1': { body: page1 },
+			'&page=2': { body: [{ state: 'active', role: 'admin', organization: { id: 101, login: 'org-101' } }] }
+		});
+		const got = await fetchGithubOrgs('tok', fn);
+		expect(got.orgs).toHaveLength(101);
+		expect(got.complete).toBe(true);
+		expect(calls.map((c) => c.url)).toEqual([
+			expect.stringContaining('&page=1'),
+			expect.stringContaining('&page=2')
+		]);
 	});
 
 	it('throws 502 on a non-2xx — never an empty list', async () => {
 		// The difference matters enormously: [] means "you are in no orgs", which
-		// a de-provisioning pass would later act on (§IV.6). An API outage must
-		// never be spelled the same way as "the user left everything".
+		// a de-provisioning pass acts on (#309). An API outage must never be
+		// spelled the same way as "the user left everything".
 		const { fn } = fakeFetch({ '/user/memberships/orgs': { status: 500, body: {} } });
 		await expect(fetchGithubOrgs('tok', fn)).rejects.toMatchObject({ status: 502 });
 	});
 
-	it('returns [] when the body is not an array', async () => {
+	it('throws when the body is not a list — an unreadable answer is not "in no orgs"', async () => {
 		const { fn } = fakeFetch({ '/user/memberships/orgs': { body: { message: 'weird' } } });
-		expect(await fetchGithubOrgs('tok', fn)).toEqual([]);
+		await expect(fetchGithubOrgs('tok', fn)).rejects.toMatchObject({ status: 502 });
 	});
 });
 
@@ -224,6 +250,7 @@ describe('fetchGithubFacts', () => {
 		expect(facts.provider).toBe('github');
 		expect(facts.user.id).toBe('4242');
 		expect(facts.orgs).toEqual([{ id: '11', login: 'sensei-hq', role: 'admin' }]);
+		expect(facts.orgsComplete).toBe(true);
 	});
 
 	it('throws rather than returning a partial when either read fails', async () => {
@@ -233,5 +260,52 @@ describe('fetchGithubFacts', () => {
 			'/user': { body: USER_OK }
 		});
 		await expect(fetchGithubFacts('tok', fn)).rejects.toBeInstanceOf(AdminError);
+	});
+});
+
+// #307 A2c: a member's own permission on every repository they can see — what the
+// per-person forge mirror records. A partial list would CLEAR roles on the
+// repositories it missed, so the read is all or nothing.
+describe('permissionOf', () => {
+	it('takes the highest permission GitHub reports', () => {
+		expect(permissionOf({ admin: true, maintain: true, push: true, triage: true, pull: true })).toBe('admin');
+		expect(permissionOf({ admin: false, maintain: true, push: true, pull: true })).toBe('maintain');
+		expect(permissionOf({ push: true, pull: true })).toBe('write');
+		expect(permissionOf({ triage: true, pull: true })).toBe('triage');
+		expect(permissionOf({ pull: true })).toBe('read');
+		expect(permissionOf({})).toBeNull();
+		expect(permissionOf(undefined)).toBeNull();
+	});
+});
+
+describe('fetchGithubRepoPermissions', () => {
+	const repo = (n: number, perms: Record<string, boolean> = { push: true, pull: true }) => ({
+		full_name: `Acme/Repo-${n}`,
+		permissions: perms
+	});
+
+	it('reads every page and keys each repository as the daemon does', async () => {
+		const page1 = Array.from({ length: 100 }, (_, i) => repo(i));
+		const { fn, calls } = fakeFetch({
+			'&page=1': { body: page1 },
+			'&page=2': { body: [repo(100, { admin: true, pull: true }), { full_name: 'Acme/no-perms' }] }
+		});
+		const got = await fetchGithubRepoPermissions('tok', fn);
+		expect(got).toHaveLength(101);
+		expect(got[0]).toEqual({ repo_key: 'github.com/acme/repo-0', permission: 'write' });
+		expect(got[100]).toEqual({ repo_key: 'github.com/acme/repo-100', permission: 'admin' });
+		expect(calls.map((c) => c.url).every((u) => u.includes('/user/repos'))).toBe(true);
+	});
+
+	it('a failed page fails the whole read — never a partial list', async () => {
+		const page1 = Array.from({ length: 100 }, (_, i) => repo(i));
+		const { fn } = fakeFetch({ '&page=1': { body: page1 }, '&page=2': { status: 502, body: null } });
+		await expect(fetchGithubRepoPermissions('tok', fn)).rejects.toThrow(/502/);
+	});
+
+	it('more repositories than it will page through fails rather than truncates', async () => {
+		const full = Array.from({ length: 100 }, (_, i) => repo(i));
+		const { fn } = fakeFetch({ '&page=': { body: full } });
+		await expect(fetchGithubRepoPermissions('tok', fn)).rejects.toThrow(/more than/);
 	});
 });

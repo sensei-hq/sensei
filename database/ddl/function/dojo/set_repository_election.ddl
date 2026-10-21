@@ -1,7 +1,7 @@
 set search_path to dojo, extensions;
 
 -- Elect (or un-elect) one repository for sharing, as the signed-in person (#236;
--- access matrix "Projects and repositories").
+-- access matrix "Workspaces and repositories").
 --
 -- Decides from the CALLER's own verdict row of dojo.all_my_repositories — the
 -- row dojo.my_repositories() returns them — so who holds the authority and

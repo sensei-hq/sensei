@@ -39,7 +39,7 @@ pub struct DojoClient {
 
 /// What a membership's tenant calls present: the person's session, the only
 /// credential the dōjō accepts (#236 step 4,
-/// docs/history/plan/2026-10-12-dojo-device-plane-as-person.md).
+/// docs/spec/dojo/access-matrix.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TenantCredential {
     /// The persona's session — minted fresh per call from its Keychain slot.
@@ -868,7 +868,7 @@ mod tests {
             pause_reason: None,
             heartbeat_at: None,
             project_slug: None,
-            project: None,
+            workspace: None,
         };
         c.publish_session_update(&update)
             .await
@@ -1032,7 +1032,7 @@ mod tests {
             pause_reason: None,
             heartbeat_at: None,
             project_slug: None,
-            project: None,
+            workspace: None,
         };
         c.publish_session_update(&update).await.expect("session publish ok");
 
@@ -1135,7 +1135,7 @@ mod tests {
             pause_reason: None,
             heartbeat_at: Some("2026-07-24T10:05:00Z".into()),
             project_slug: None,
-            project: None,
+            workspace: None,
         };
         let id = c
             .publish_session_update_returning_id(&update)

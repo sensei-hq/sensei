@@ -12,6 +12,7 @@ mod auth;
 mod doctor;
 mod managed;
 mod scaffold;
+mod tracker;
 
 fn cfg() -> &'static SenseiConfig {
     sensei_bootstrap::config()
@@ -95,6 +96,12 @@ enum Commands {
 
     /// Show daemon status
     Status,
+
+    /// Issue-tracker connections (Jira) for a project
+    Tracker {
+        #[command(subcommand)]
+        cmd: tracker::TrackerCmd,
+    },
 
     /// Scan a folder and index all repos
     Scan {
@@ -275,6 +282,7 @@ fn main() -> ExitCode {
             restart_daemon(port.unwrap_or_else(|| cfg().daemon_port))
         }
         Some(Commands::Status) => daemon_cmd("status", None),
+        Some(Commands::Tracker { cmd }) => std::process::exit(tracker::run(cmd)),
         Some(Commands::Scan { path, force }) => scan(&path, force),
         Some(Commands::Scaffold { what, path }) => scaffold_cmd(what, path.as_deref()),
         Some(Commands::Index { cmd }) => match cmd {

@@ -829,6 +829,32 @@ async fn a_recomputed_row_is_pushed_again() {
     assert_eq!(after_recompute, 1, "and re-enters it when the value changes");
 }
 
+/// #307 A2d: the forge mirror's cadence keys on the last ATTEMPT, so a mirror
+/// that keeps failing waits its interval instead of re-reading GitHub every cycle.
+#[tokio::test]
+async fn the_last_attempt_is_read_back_for_a_mark_and_absent_before_any() {
+    let s = pg_store().await;
+    let key = format!("persona-{}", uuid::Uuid::new_v4());
+    let mark = crate::db::pg_store::sync::SyncMark {
+        entity: "forge_mirror",
+        key: &key,
+        direction: "pull",
+    };
+
+    let before = s.sync_attempted_at(&mark).await.unwrap();
+    s.mark_sync_error(&mark, "GitHub read failed (502)").await.unwrap();
+    let after = s.sync_attempted_at(&mark).await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = $1")
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert!(before.is_none(), "never attempted");
+    assert!(after.is_some(), "a failed attempt is still an attempt");
+}
+
 #[tokio::test]
 async fn a_sync_error_keeps_when_the_sides_last_agreed() {
     // synced_at must survive a failure. Clearing it would leave no way to tell

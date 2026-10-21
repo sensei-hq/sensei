@@ -18,8 +18,8 @@
 alter table dojo.repository_metrics enable row level security;
 
 -- The authorization path, as a policy rather than as endpoint code:
---   principal → team_members → team → team_projects → project
---             → repositories_in_projects → repository
+--   principal → team_members → team → team_workspaces → workspace
+--             → repositories_in_workspaces → repository
 --
 -- Being a member of the tenant is deliberately NOT enough. Access is granted at
 -- the TEAM, so an org member outside the relevant team sees nothing — which is
@@ -41,6 +41,6 @@ create policy repository_metrics_no_client_write on dojo.repository_metrics
 -- Table-level SELECT grant for the `authenticated` read path. RLS filters WHICH
 -- rows; the grant is what lets the role touch the table at all — without it the
 -- policy above is dead code and every read fails with "permission denied"
--- rather than returning an authorised subset. Same pairing as dojo.projects and
+-- rather than returning an authorised subset. Same pairing as dojo.workspaces and
 -- dojo.relay_inbox.
 grant select on dojo.repository_metrics to authenticated;

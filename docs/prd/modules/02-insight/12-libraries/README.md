@@ -6,16 +6,16 @@ team developer ([persona 2](../../../03-personas.md#2--team-developer--the-inher
 
 ## Purpose
 
-Every project depends on things the assistant has never seen — private Cursor
+Every workspace depends on things the assistant has never seen — private Cursor
 plugins, an in-house `@acme/design-system` UI kit — and things it has vaguely seen at
 wrong versions (React 19 vs React 17 API drift). Libraries closes that gap with a
 detect → wrap → query → watch loop: sensei detects unmanaged dependencies, indexes
-their docs (pinned to the project's lockfile version), lets the user **wrap** a
+their docs (pinned to the workspace's lockfile version), lets the user **wrap** a
 library to control how sensei tracks it, answers queries (`search_lib_docs`) against
 the indexed pages, and watches for upgrades so docs and call sites don't silently
 drift. Heavily-used libraries gain generated **skills** ("how do I set up kavach
 auth?"). The user feels this module as *the assistant knows how to use this library,
-correctly, for this project's version*.
+correctly, for this workspace's version*.
 
 > **Status honesty (2026-10-14).** The storage names in this doc were aspirational:
 > pages, skills and agents are all rows in **`sensei.library_content`** (`kind`), not
@@ -27,7 +27,7 @@ correctly, for this project's version*.
 
 - In: detection of unmanaged dependencies + wrap-me workflow; doc ingestion from
   `llms.txt`/`llms-full.txt`, repo trees, published API refs, registries, and source
-  AST (for internal libs); version pinning from the project lockfile + re-index on
+  AST (for internal libs); version pinning from the workspace lockfile + re-index on
   bump; skill generation above a usage threshold; library-upgrade drift surfacing;
   `sensei.libraries`, `sensei.library_versions`, `sensei.library_content`
   (kind: `page | skill | agent`), `sensei.library_packages`.
@@ -41,7 +41,7 @@ correctly, for this project's version*.
   `get_library_skill`, `list_library_agents`, `get_duplicates` (shared). **No
   `wrap_library` tool exists** (gap `G-LIB-WRAP`).
 - **API** — `crates/senseid/src/api/handlers/libraries.rs`; Libraries screens
-  (Observatory + project), add-library progress, version-pin chip.
+  (Observatory + workspace), add-library progress, version-pin chip.
 - **Daemon** — manifest readers (`adapters/manifest*.rs`), version pinning
   (`libraries/version.rs`), doc/source ingestion (`libraries/docs_source.rs`), skill +
   agent generation (`libraries/advisory.rs`), drift watch (via M11).
@@ -58,7 +58,7 @@ correctly, for this project's version*.
 - **Idempotent ingestion.** Re-ingesting a library **supersedes** pages on the
   composite key — never doubles them.
 - **Version pin follows the lockfile** (`package-lock.json`, `Cargo.lock`,
-  `poetry.lock`, `go.sum`, …). A project bump (via the M3 watcher) triggers re-index
+  `poetry.lock`, `go.sum`, …). A workspace bump (via the M3 watcher) triggers re-index
   at the new version; older pages stay marked `superseded` for 30d retention so
   historical queries work.
 - **Skill threshold.** `usage_count_14d ≥ SKILL_MIN` (default 25) before skill
@@ -76,7 +76,7 @@ correctly, for this project's version*.
 |---|---|---|
 | Library pages | per-component indexed docs | search_lib_docs "Toggle disabled" → rokkit page (+) |
 | Wrap-me card | unmanaged dependency with real usage | "kavach is imported in 12 files — wrap it?" |
-| Version-pin chip | lockfile-resolved version per project | "rokkit 1.4.2 (superseded 1.3.x)" |
+| Version-pin chip | lockfile-resolved version per workspace | "rokkit 1.4.2 (superseded 1.3.x)" |
 | Generated skills | how-to / convention / migration | "migrate kavach v0→v1" |
 | Upgrade drift | call-site signature changes across versions | Traceability items on bump |
 

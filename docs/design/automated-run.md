@@ -10,8 +10,8 @@ created: 2026-07-26
 related:
   - docs/design/agentic-execution-team.md   # D-EXEC-TEAM — the daemon-owned end-state (phase 2+)
   - docs/design/local-agent-coordinator.md  # D-COORD — task-typed router (phase 2 insertion point)
-  - docs/plan/relay-engine.md               # relay run engine (P0–P6) — the substrate we ride
-  - docs/plan/operating-model.md            # §3.4 Planner · §3.7 Execution · §3.11 three planes
+  - docs/history/plan/relay-engine.md               # relay run engine (P0–P6) — the substrate we ride
+  - docs/history/plan/operating-model.md            # §3.4 Planner · §3.7 Execution · §3.11 three planes
 ---
 
 # Automated runs — phase 1 (Claude-CLI-driven)

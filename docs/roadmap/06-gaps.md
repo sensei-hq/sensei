@@ -2,7 +2,7 @@
 
 The consolidated, IDed list of every known gap across the product — one line,
 its evidence, its priority, and the module it blocks. This replaces the old
-`plan/README.md` G1–G10 numbering and the `production-readiness.md` A–H
+plan gap analysis's G1–G10 numbering and the `production-readiness.md` A–H
 (now `07-quality.md`), which are absorbed here.
 
 > **Status:** the register's full population is **Phase 3** of the reorg
@@ -31,7 +31,7 @@ evidence is a suspicion, and gets labelled so.
 
 | ID | Module | One line | Evidence | Priority |
 |---|---|---|---|---|
-| A-1 | M2 · M17 | app is kanji-only; the kanji ⇄ solar toggle the mockups + rokkit support is not wired | decision 10; reorg §12.10 | P3 |
+| ~~A-1~~ | M2 · M17 | ~~app is kanji-only~~ — the kanji ⇄ icons switch is live (`ui.glyphs`, Settings → General; #133) | decision 10; reorg §12.10 | — |
 | A-2 | M2 | the personal-preference surface is narrower than the config the app already supports | decision 10 | P3 |
 | G-1 | M17 | graph/layered view unreadable at granular scale — no L0/L1/L2 level of detail | reorg §9.7 | P1 |
 | G-2 | M4 · M2 · M3 | indexer has no ignore mechanism (no `.senseiignore` reader, no ignore config); it walks committed mockups / vendored / generated code and skews the graph + metrics. Ignore is stored repo config synced via the Dōjō, **seeded from the repo's own ignore sources** (`.gitignore`, qlty `.qlty/qlty.toml` `exclude_patterns`) — not a dotfile | decision 2026-10-13 | P2 |
@@ -59,15 +59,15 @@ evidence is a suspicion, and gets labelled so.
 | ACP-4 | M21 | No streaming response handling in relay | streaming not parsed in transcript or relay | P2 |
 | ACP-5 | M21 | Permission/gate flow not implemented for ACP | only Claude hooks have gate logic | P2 |
 | ACP-6 | M21 | Model selection via ACP not wired | ACP supports; not used | P3 |
-| T-1 | T3 | tracker adapters (Jira/ADO) mockup-only; 2/7 gates buildable now, 2 scoped-read, 3 on #156 | reorg §9.2 | P1 |
-| T-2 | T2 | join/membership flow dead ("Join" → 403) | plan gap analysis | P1 |
-| F-3 | T1 | Dōjō sync never worked | production-readiness → `07-quality.md` | P1 |
+| T-1 | T3 | tracker adapters: the daemon-side Jira adapter is built (PR #274); Azure Boards and GitHub Issues are not, and a workspace has one tracker, not several (D23). Gates: 1 of 7 buildable now, 2 need scoped reads, 4 on #156 | reorg §9.2 | P1 |
+| ~~T-2~~ | T2 | ~~join/membership flow dead~~ — resolved by #307 A3 invites (7e547a19) | plan gap analysis | — |
+| F-3 | T1 | Dōjō sync works against the local dōjō; production unverified (needs an enrolled daemon); #184 open | production-readiness → `07-quality.md` | P1 |
 | D-11 | P2 | website presents unbuilt as shipped (one claim already dropped) | site↔product audit | P2 |
 | D-12 | P0(deps) | dependency drift: `@rokkit/*`, `@kavach/*` held back by lockfiles | production-readiness | P3 |
 | D-13 | P0(deps) | 28 medium osv advisories (transitive; none code-fixable) | production-readiness | P3 |
 | P-5 | P1 | Makefile/Homebrew macOS-only; Linux/Windows service + data-dir design first | reorg §10.3 | P1 |
 | G-MEM-FEEDBACK | M9 | LLM-facing memory feedback tools (`report_memory_use`, `report_learning`) do not exist; feedback is HTTP-only (`…/reinforce`, `…/challenge`) | M9 status honesty; tool registry | P1 |
-| G-MEM-SCOPE | M9 | `memory_scope` has no `user` / `org` rung; the cross-project and org-overlay ladder is designed, not built | M9 `memory_scope` enum vs doc ladder | P1 |
+| G-MEM-SCOPE | M9 | `memory_scope` has no `user` / `org` rung; the cross-workspace and org-overlay ladder is designed, not built | M9 `memory_scope` enum vs doc ladder | P1 |
 | G-PATTERN-STORE | M10 | `sensei.pattern_choices` / `sensei.pattern_registries` have no DDL; chosen options cannot persist | M10 status honesty; DDL inventory | P1 |
 | G-TRACE-STORE | M11 | `sensei.trace_links` / `sensei.doc_lint_findings` have no DDL; bidirectional links and doc-doctor findings cannot persist | M11 status honesty; DDL inventory | P1 |
 | G-TRACE-TOOL | M11 | `get_trace_links` is not a registered MCP tool | M11 status honesty; tool registry | P1 |
@@ -75,15 +75,37 @@ evidence is a suspicion, and gets labelled so.
 | G-LIB-WRAP | M12 | no `wrap_library` MCP tool; the wrap-me workflow has no write surface | M12 status honesty; tool registry | P2 |
 | G-DOJO-AUDIT | M16 | no `/api/dojo-binding` endpoint; the About screen's Dōjō binding is opt-in only | M16 Surfaces; route inventory | P2 |
 | G-IMPACT-TEST | M19 | impact/insights endpoints and tables (`applied_recommendations`, `impact_regressions`, `insights`) unbuilt | M19 scenarios all `NO TEST` | P2 |
-| G-BILLING-DATA | T4 | billing tables (`billing_accounts`, `seats`, `subscriptions`, `active_contributors`, `invoices`) planned only | T4 status honesty; DDL inventory | P2 |
+| G-BILLING-DATA | T4 | `dojo.billing_accounts` and `dojo.seats` exist with the billing route; no payment provider, no invoice or subscription tables | T4 status honesty; DDL inventory | P2 |
 | G-COST-LEDGER | M5 | `inference_calls` table (cost/usage ledger) does not exist in DDL or code | M5 status honesty; DDL inventory | P2 |
+
+## Security and production gaps (2026-10-21)
+
+From a review of what #307 and this week's work left open (user: "document and
+address the gaps"). Ordered by risk; each is a GitHub issue.
+
+| ID | Gap | Issue | Priority |
+|---|---|---|---|
+| ~~G-SEC-1~~ | ~~An admin who leaves the GitHub org keeps their dōjō admin role~~ — fixed (ede5da58): a complete org read ends provisioned memberships the org no longer lists; invited members untouched | #309 closed | — |
+| G-SEC-2 | The dōjō has no secret store, yet D14/D21 hand it shared integration credentials | #310 | P1 (before Wave C) |
+| ~~G-SEC-3~~ | ~~Invite tokens in plain text, accepts unbounded~~ — fixed (f607bf0a): hash only, 429 after 10 failures in 15 min | #311 closed | — |
+| G-SEC-4 | Relay approval gates fail open on a lost or garbled reply — fail-open is a deliberate contract; the gate never loosens the engine's verdict. Options A/B/C put to the user (recommended C: fail closed for hard-block categories in unattended runs) | #312 | P1 (decision) |
+| G-SEC-5 | Viewer metric reads must be aggregate-only (D6, D8); grants, revokes and exports are not audited (T6) | #313 | P1 (with T6) |
+| G-OPS-1 | Nothing in the dōjō plane verified in production — sync, Relay, push (D27; #184, #299, #301) | #314 | P0 |
+| G-OPS-2 | develop far ahead of main; the next release runs a destructive dōjō reconcile — count, back up, rehearse on a copy. **Rehearsed 2026-10-21** on a prod copy: found and fixed a missing-table failure in the rename hook (55b5753d); two passes green, counts held. Waits on the user's go to release | #315 | P0 (before release) |
+| G-FUN-1 | CI / DORA data need a puller that does not depend on a daemon being online (dōjō polling or webhooks) | #316 | P2 (Wave D) |
+| G-FUN-2 | Every daemon pulls a shared tracker — deduplicate before the mirrors drift (D22) | #317 | P2 |
+| G-FUN-3 | Code lags the decisions — part 1 done (5da293d5: contributor, no create-a-dōjō, no self_hosted); left: the team governance scope (D25, waits on client/stack scopes), one tracker per project (D23, needs design) | #318 | P1 |
+| G-FUN-4 | No email for invites, revocations, expiries | #319 | P2 |
+| G-FUN-5 | No retention / deletion rules for client data, departed members, viewer exports | #320 | P2 |
+| G-OPS-3 | No error monitoring or alerting; no production backup plan; qlty out of minutes | #321 | P2 |
 
 ## Remaining population (Phase 3)
 
 The full register from [`../reorg.md`](../reorg.md) §12 spans the F- (faults),
-P- (perf: e2e 23/130 red, `public.logs` 25 GB of a 37 GB DB, silent 1000% zoom
-graphs), D- (doc conflicts and claims), T- (test coverage: no Rust tests in CI,
-e2e flame-outs), M- (#153/#154/#155) and X- (backlog table) families. Each row
+P- (perf: silent 1000% zoom graphs), D- (doc conflicts and claims), T- (test
+coverage: e2e flame-outs) and X- (backlog table) families. Closed since reorg §12
+was written: the e2e 23/130 reds (#134), `public.logs` at 25 GB (#180), no Rust
+tests in CI (#182), and the M- metric defects #153, #154 and #155. Each row
 will name the module it blocks, so a plane file and this register always agree.
 
 ## How a gap closes

@@ -1,6 +1,6 @@
 //! The Rust adapter's compiler step: rust-analyzer's answers, read through
 //! [`crate::indexer::lang::compiler`], turned into the identities this indexer
-//! mints (docs/plan/2026-10-13-indexer-full-call-placement.md).
+//! mints (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
 //!
 //! A library target (the language's own `core`/`std`/`alloc`, or a dependency)
 //! is named, never opened: a [`Form::Lib`] of the crate and a path written the way Rust
@@ -62,6 +62,12 @@ impl CompilerEngine for RustEngine {
             args: vec!["which".into(), "rust-analyzer".into()],
             cwd: project_root.to_string(),
         }
+    }
+
+    /// Without rustup (a nix or distro toolchain), the `rust-analyzer` on `PATH`
+    /// is that toolchain's own.
+    fn compiler_on_path(&self) -> Option<&'static str> {
+        Some("rust-analyzer")
     }
 
     /// Rust sources and the manifests and lockfile that shape their build.
@@ -354,6 +360,7 @@ mod engine_tests {
         assert_eq!(which.program, "rustup");
         assert_eq!(which.args, ["which", "rust-analyzer"]);
         assert_eq!(which.cwd, "/repo");
+        assert_eq!(RUST_ENGINE.compiler_on_path(), Some("rust-analyzer"), "the no-rustup fallback");
         let run =
             RUST_ENGINE.compile("/opt/ra/rust-analyzer", "/repo", "/tmp/out.scip", "/tmp/ra.json");
         assert_eq!(run.program, "/opt/ra/rust-analyzer");

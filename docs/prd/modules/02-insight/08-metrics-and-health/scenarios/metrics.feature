@@ -70,7 +70,7 @@ Feature: Metrics & Health — registry, values, roll-ups, health and gating
   # pinned: get_project_metrics_excludes_a_retired_metric
   Scenario: a retired metric never renders
     Given a retired metric
-    When project metrics are read
+    When workspace metrics are read
     Then it is absent from the results
 
   # pinned: project_health_normalizes_by_direction_and_weight
@@ -112,13 +112,13 @@ Feature: Metrics & Health — registry, values, roll-ups, health and gating
 
   # pinned: get_project_ftr_absent_is_null_not_zero
   Scenario: an absent metric reads as null, not zero
-    Given a project with no ftr values
+    Given a workspace with no ftr values
     When its ftr is fetched
     Then the value is null
 
   # pinned: no_fabricated_zero_ftr_in_metrics_surfaces
   Scenario: no metrics surface fabricates a zero
-    Given a project with sparse data
+    Given a workspace with sparse data
     When every metrics surface renders
     Then no fabricated zero ftr appears anywhere
 

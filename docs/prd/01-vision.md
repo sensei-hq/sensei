@@ -19,8 +19,8 @@ things a human can act on: **memories** that stick, **patterns** worth reusing,
 **guards** worth adopting, and a clear picture of **when the pairing worked and
 when it didn't**. It is not a productivity dashboard — it is a **retrospective
 loop for a pair (you + your assistant) that otherwise never gets one**. The
-Observatory shows *today's one thing*; the project window shows *what this
-project learned*; the Dōjō (SaaS) extends the same loop across a team without
+Observatory shows *today's one thing*; the workspace window shows *what this
+workspace learned*; the Dōjō (SaaS) extends the same loop across a team without
 leaking client work.
 
 ## North-star metric — FTR
@@ -72,31 +72,31 @@ flowchart TD
     end
     subgraph S2["02 · First run &amp; Preferences 名"]
         direction LR
-        f1[point at real folders] --> f2[projects appear] --> f3[tune the defaults]
+        f1[point at real folders] --> f2[workspaces appear] --> f3[tune the defaults]
     end
     subgraph S3["03 · Observatory — daily use 家"]
         direction LR
         o1[today's one thing] --> o2[act on it] --> o3[stay in control of what leaves]
     end
-    subgraph S4["04 · The project window 雲"]
+    subgraph S4["04 · The workspace window 雲"]
         direction LR
-        p1[work inside one project] --> p2[trust what it learned] --> p3[before any of it travels]
+        p1[work inside one workspace] --> p2[trust what it learned] --> p3[before any of it travels]
     end
     S1 --> S2 --> S3 --> S4
-    D[["Dōjō — cross-cutting SaaS layer<br/>(threads through Observatory + Project,<br/>never a linear 5th segment)"]]
+    D[["Dōjō — cross-cutting SaaS layer<br/>(threads through Observatory + Workspace,<br/>never a linear 5th segment)"]]
     S3 -.-> D
     S4 -.-> D
 ```
 
 **Value before setup** is literal: the first thing the user does is see *their
-own projects*. The entry point stays deliberately minimal so getting started is
+own workspaces*. The entry point stays deliberately minimal so getting started is
 simple; the full configuration surface (Preferences) is reachable at any time to
 adjust how sensei behaves and which features and support are enabled — tuning
 never blocks the first run.
 
 ### The loops inside the daily app
 
-The Observatory and project window are not flat screens — each domain is a small
+The Observatory and workspace window are not flat screens — each domain is a small
 retrospective loop of its own (mockup: *"Module lifecycles — the loops inside
 the daily app"*): **Security &amp; guards · Architecture · Testing · Style &amp;
 conventions · Memory · Traceability · Impact · Libraries · Insights.** Each
@@ -117,7 +117,7 @@ source: [`mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sens
   session control. Any signed-in phone or console **subscribes** and picks the
   session up — no pairing, no install, no open ports. A responsive **PWA** is the
   surface; a thin native wrapper adds push + offline.
-- **Watch, don't babysit.** A cross-Dōjō Projects home ranked by *what's blocked
+- **Watch, don't babysit.** A cross-Dōjō Workspaces home ranked by *what's blocked
   on me*; you're pulled in only at a **gate** (approve the exact command), a
   **decision** (3–4 options + a free reply), or to **chat** the run back on course.
 - **Free for individuals, paid where shared.** The individual loop is free; the
@@ -128,14 +128,14 @@ Relay extends the north-star: a run you can't supervise can't be corrected — i
 keeps the pair (and the fleet) legible and steerable at a distance. Detail:
 [journeys/dojo → Relay](../journeys/dojo.md#relay--away-from-keyboard-through-the-dōjō).
 
-## The business model — free where public or personal
+## The business model — open source, with a paid tier
 
-The line is drawn by **who the knowledge is for**, not by features. A **public /
-open-source** Dōjō and your **personal** solo Dōjō are **free forever** — full
-governance, full Relay. Payment begins only when a Dōjō is **private and shared**
-by a team or org: you pay to *coordinate a group's private knowledge* and for the
-control a business needs (self-hosting, SSO, audit) — never to use sensei, never
-for tokens (inference is BYO-key and local). Tiers + open pricing questions:
+**The code is open source** and stays that way: anyone can run sensei and a Dōjō
+themselves (D24). The **hosted** Dōjō is free for every Dōjō (D20) — sensei serves the
+individual, and every Dōjō gets its shared basics. **The benefits of the paid tier**
+are the features a team pays for on the hosted Dōjō: **gating**, **integrations**
+(trackers, CI) and **consolidated metrics**, plus the control a business needs (SSO,
+audit) — never to use sensei, never for tokens (inference is BYO-key and local). Tiers + open pricing questions:
 [journeys/dojo → Business model](../journeys/dojo.md#business-model--free-where-public-or-personal).
 
 ## Why it's worth building — one loop, not two products
@@ -180,7 +180,7 @@ one, we call it out.
 
 | # | Theme | What it means |
 |---|---|---|
-| 1 | **Value before setup** | First interaction shows the user their own projects — not a wizard. |
+| 1 | **Value before setup** | First interaction shows the user their own workspaces — not a wizard. |
 | 2 | **One decision, one default** | The same verb set everywhere — **Apply · Review · Dismiss** — recommended one highlighted, others one keystroke away. |
 | 3 | **Discoverability of depth** | Nothing important hidden behind a one-liner; Preferences is searchable; the sidebar clusters with a Focus mode. |
 | 4 | **Trust through proof** | No claim without a receipt — confidence scores, regression notes, before/after FTR. The user verifies; they don't take our word. |
@@ -196,6 +196,6 @@ one, we call it out.
 ## Read next
 
 - [`02-objectives.md`](02-objectives.md) — the WHAT, broken down per segment + the Dōjō layer, with measurable outcomes.
-- [`modules/README.md`](modules/README.md) — the 29 modules that turn this vision into buildable specs.
+- [`modules/README.md`](modules/README.md) — the 30 modules that turn this vision into buildable specs.
 - [`../roadmap/README.md`](../roadmap/README.md) — where the implementation stands against this vision: per-module status, ranked gaps, sequencing.
 - [`../architecture/README.md`](../architecture/README.md) — how the layers realise this.

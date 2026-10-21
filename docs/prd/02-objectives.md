@@ -27,12 +27,12 @@ expose why it moved?**
 
 ## 02 · First run &amp; Preferences 名
 
-**Point sensei at real folders, watch projects appear, then tune what defaults got wrong.**
+**Point sensei at real folders, watch workspaces appear, then tune what defaults got wrong.**
 
 | # | Objective | Met when |
 |---|---|---|
-| F1 | **Value before setup** (theme 1) | First interaction shows the user's own discovered projects — not a wizard |
-| F2 | Discover real projects from real folders | Pointing at `~/Developer` yields correctly-classified repos (one repo = one project = one owner) |
+| F1 | **Value before setup** (theme 1) | First interaction shows the user's own discovered workspaces — not a wizard |
+| F2 | Discover real workspaces from real folders | Pointing at `~/Developer` yields correctly-classified repos (one repo = one workspace = one owner) |
 | F3 | Tuning is available, never blocking | Every default (scan roots, assistants, providers, inference, libraries) is adjustable in a searchable Preferences surface |
 
 ## 03 · Observatory — daily use 家
@@ -47,13 +47,13 @@ expose why it moved?**
 | O4 | The user controls what leaves the machine (theme 5) | Nothing is shared without an explicit Dōjō membership + preview |
 | O5 | The module loops each offer an action | Security · Architecture · Testing · Style · Memory · Traceability · Impact · Libraries · Insights each observe → find → offer one action |
 
-## 04 · The project window 雲
+## 04 · The workspace window 雲
 
-**Work inside one project end-to-end and trust what sensei learned here before any of it travels.**
+**Work inside one workspace end-to-end and trust what sensei learned here before any of it travels.**
 
 | # | Objective | Met when |
 |---|---|---|
-| P1 | A trustworthy per-project overview | Overview shows FTR, top recommendation, memory/drift counts — all real, no fabricated numbers |
+| P1 | A trustworthy per-workspace overview | Overview shows FTR, top recommendation, memory/drift counts — all real, no fabricated numbers |
 | P2 | Learned knowledge is inspectable | Memories, patterns, traceability, libraries, impact are all viewable with provenance |
 | P3 | Nothing travels unseen | Sharing a finding upstream always previews what leaves and what's stripped |
 
@@ -63,11 +63,13 @@ expose why it moved?**
 
 **Extend the same retrospective loop across a team without leaking client work.**
 The Dōjō is not a linear "segment 5" — it threads through the Observatory and the
-project window (the developer's flows live **in the Observatory**) and adds a web
-**console**. **Every user logs into the Dōjō** — developer · maintainer · admin ·
-lead; the team benefit is primary, but a developer in multiple teams gets a
-developer console view too. The Dōjō (service + console) deploys **in-house or as
-SaaS**. Its core principles (from the journey map):
+workspace window (the developer's flows live **in the Observatory**) and adds a web
+**console**. **Every user logs into the Dōjō** — contributor · maintainer · lead ·
+admin (D1); the team benefit is primary, but a developer in multiple teams gets a
+contributor console view too. The web Dōjō keeps **Relay and an inbox for contributors**:
+tickets assigned to you in the tracker mirror sit under the relay session that carries
+their key, and tickets with no session yet are listed below them. The Dōjō is a **hosted
+service** — there is no self-hosting (Q14). A dōjō comes from a git integration — a GitHub or Azure DevOps organization, or another provider — and an import may land as workspaces in one dōjō (D20). Its core principles (from the journey map):
 **identity is the discovery · pull never push · never blind, always preview ·
 one universal strip · specificity wins conflicts.**
 
@@ -80,7 +82,7 @@ client-precedence as the tiebreaker.
 ```mermaid
 flowchart LR
     d1[Discover<br/>my org runs a Dōjō] --> d2[Authenticate<br/>SSO · OAuth · device-code]
-    d2 --> d3[Bind project → org] --> d4[A finding forms<br/>memory / pattern / guard]
+    d2 --> d3[Bind workspace → org] --> d4[A finding forms<br/>memory / pattern / guard]
     d4 --> d5[Share upstream<br/>right attribution + confidentiality]
     d5 --> d6[Watch it travel] --> d7[Receive downstream<br/>approved org knowledge where I work]
 ```
@@ -98,7 +100,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    a1[Stand up<br/>our own infra] --> a2[Connect identity<br/>OIDC / SAML + git OAuth]
+    a1[Import the dōjō<br/>from a git integration<br/>free tier; plan chosen later in billing] --> a2[Connect identity<br/>OIDC / SAML + git OAuth]
     a2 --> a3[Provision members<br/>right roles, fast] --> a4[Scopes &amp; policies<br/>hierarchy + attribution/confidentiality]
     a4 --> a5[Monitor<br/>keep the Dōjō healthy]
 ```
@@ -142,9 +144,9 @@ Visual: [`journeys/relay.md`](../journeys/relay.md).
 
 | # | Objective | Met when |
 |---|---|---|
-| R1 | Plan a long run **modularly** | a project has one active plan = **phases → features · checkpoints · gates** |
+| R1 | Plan a long run **modularly** | a workspace has one active plan = **phases → features · checkpoints · gates** |
 | R2 | Runs are **non-blocking** (auto mode) | development proceeds without waiting; the human is pulled in only at a gate or a stall |
-| R3 | Status is legible **remotely** | project-level *done · doing · next* on the phone; a stalled track **nudges** |
+| R3 | Status is legible **remotely** | workspace-level *done · doing · next* on the phone; a stalled track **nudges** |
 | R4 | Human-in-the-loop is **minimal + exact** | a gate shows the **exact command** to approve, or a **decision as 3–4 options + a free reply** |
 | R5 | **Zero-knowledge** by construction | agents run on the user's hardware; the coordinator publishes only *filtered status* through the relay — never code or transcripts |
 | R6 | **Secure pairing + permissions** | an encrypted pairing round-trip; explicit, revocable permissions bound what the relay can do |

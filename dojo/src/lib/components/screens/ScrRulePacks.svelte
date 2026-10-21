@@ -17,8 +17,16 @@
 	// state (captured before the local flip) — so the page persists it to /v1.
 	let {
 		packs = [],
+		error = null,
 		onToggle
-	}: { packs?: KitRulePack[]; onToggle?: (pack: KitRulePack, adopt: boolean) => void } = $props();
+	}: {
+		packs?: KitRulePack[];
+		/** Why the last adopt or drop did not land. */
+		error?: string | null;
+		/** Persist the change; resolving `false` means it did not land, and the
+		 *  row flips back. */
+		onToggle?: (pack: KitRulePack, adopt: boolean) => void | Promise<boolean | void>;
+	} = $props();
 
 	// Seed the adopt-toggle state ONCE from the page-load props (a navigation
 	// re-mounts the screen), so the adopted/available split persists as the
@@ -33,10 +41,11 @@
 		else expanded.add(id);
 	}
 
-	function adopt(pack: KitRulePack) {
+	async function adopt(pack: KitRulePack) {
 		const desired = !pack.adopted; // captured before the optimistic flip
 		packState.toggle(pack.id);
-		onToggle?.(pack, desired);
+		// A change the dōjō refused is put back — the row shows what is recorded.
+		if ((await onToggle?.(pack, desired)) === false) packState.toggle(pack.id);
 	}
 </script>
 
@@ -54,6 +63,9 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+		{#if error}
+			<p role="alert" class="text-sm text-danger m-0">{error}</p>
+		{/if}
 		<ListSection
 			icon="check-circle"
 			iconToneClass="text-success"

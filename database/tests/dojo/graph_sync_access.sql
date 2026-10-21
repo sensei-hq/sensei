@@ -22,8 +22,8 @@
 -- WHAT BREAKS THIS TEST: a slice that appends instead of replacing; a replace
 -- that touches another file; an older commit rolling a file back; a stale
 -- manifest pruning; a tenant taken from the input; a repository the caller may
--- not sync accepted; any session write grant; a reader outside the repository's
--- teams seeing rows.
+-- not sync accepted; any session write grant; a reader with no role on the
+-- repository seeing rows.
 
 begin;
 
@@ -64,19 +64,15 @@ insert into dojo.repository_graph_branches (repository_id, tenant_id, branch, is
   ('92000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-00000000014a', 'main',       true,  null),
   ('92000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-00000000014c', 'main',       true,  null);
 
--- ola is on team X, which owns project P holding repository 1; eve is
--- on no team, so she reads nothing.
-insert into dojo.projects (id, tenant_id, slug, name) values
+-- ola contributes to repository 1 (in workspace P); eve has no role on it, so she
+-- reads nothing (#307 D5 — access lives on repositories).
+insert into dojo.workspaces (id, tenant_id, slug, name) values
   ('c0000000-0000-4000-8000-0000000000b1',
-   'b0000000-0000-4000-8000-00000000014a', 'ztest-gs-p', 'project P');
-insert into dojo.teams (id, tenant_id, name) values
-  ('d0000000-0000-4000-8000-0000000000b1', 'b0000000-0000-4000-8000-00000000014a', 'ztest gs team X');
-insert into dojo.team_members (team_id, principal_id, role) values
-  ('d0000000-0000-4000-8000-0000000000b1', 'a0000000-0000-4000-8000-000000000142', 'contributor');
-insert into dojo.team_projects (team_id, project_id) values
-  ('d0000000-0000-4000-8000-0000000000b1', 'c0000000-0000-4000-8000-0000000000b1');
-insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id) values
+   'b0000000-0000-4000-8000-00000000014a', 'ztest-gs-p', 'workspace P');
+insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant_id) values
   ('c0000000-0000-4000-8000-0000000000b1', '92000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000014a');
+insert into dojo.repository_roles (repository_id, principal_id, forge_permission, forge_role) values
+  ('92000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000142', 'write', 'contributor');
 
 set local role authenticated;
 
@@ -258,7 +254,7 @@ begin
     if n <> 2 then raise exception 'two branches: main''s manifest pruned production''s files (% left of 2)', n; end if;
 
     -- ── hashes: what the dōjō holds, readable by whoever may sync it ─────────
-    -- ola can sync repository 1 (she is also on its team, but the read must not
+    -- ola can sync repository 1 (she also has a role on it, but the read must not
     -- depend on that — see the eve case below).
     select count(*) into n from dojo.graph_file_hashes(repo, 'main');
     if n <> (select count(*) from dojo.graph_files where repository_id = repo and branch = 'main') then
@@ -294,15 +290,15 @@ begin
     exception when insufficient_privilege then null;
     end;
 
-    -- ── read: the tenant admin reads; a contributor on no team does not ──────
-    -- (ola reads as a member of the team owning the project, which every check
-    -- above relied on.)
+    -- ── read: the tenant admin reads; a contributor with no role on it does not ─
+    -- (ola reads through her role on the repository, which every check above
+    -- relied on.)
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000141"}', true);
     select count(*) into n from dojo.graph_nodes where repository_id = repo;
     if n = 0 then raise exception 'read: the tenant admin should read the repository''s graph'; end if;
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000143"}', true);
     select count(*) into n from dojo.graph_nodes where repository_id = repo;
-    if n <> 0 then raise exception 'read: a contributor on no team owning the repository read % node(s)', n; end if;
+    if n <> 0 then raise exception 'read: a contributor with no role on the repository read % node(s)', n; end if;
     -- …yet she may SYNC it (the organisation shares its private repositories), so
     -- her daemon must see what the dōjō holds, or it re-pushes every file forever.
     select count(*) into n from dojo.graph_file_hashes(repo, 'main');

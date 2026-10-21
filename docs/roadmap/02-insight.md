@@ -4,13 +4,13 @@ Observation → understanding: analyzer (M7), metrics/health (M8), memory (M9),
 patterns (M10), traceability (M11), libraries (M12), governance (M13). Status
 legend: [`README.md`](README.md).
 
-> Per-module statuses are filled in Phase 3 from the legacy coverage map
-> (`../history/features/coverage-map.md`) and the plan gap analysis
-> (`../history/plan/`). Structure is final.
+> Per-module statuses are filled in Phase 3 from the legacy coverage map and the
+> plan gap analysis (both deleted on 2026-10-21; they live in git history).
+> Structure is final.
 
 | ID | Module | One-line "done" | Status |
 |---|---|---|---|
-| M7 | Analyzer & Signals | Every project has fresh derived signals on a schedule | 🚧 Phase 3 |
+| M7 | Analyzer & Signals | Every workspace has fresh derived signals on a schedule | 🚧 Phase 3 |
 | M8 | Metrics & Health | Every advertised metric computes, is rated, and cannot lie by omission — master-detail, explicit gating eligibility, coverage-gated presentation | 🚧 Phase 3 |
 | M9 | Memory & Knowledge | A proven lesson becomes a durable, promoted memory | 🚧 Phase 3 |
 | M10 | Patterns & Conventions | Recurring practice (good and bad) is detected and named | 🚧 Phase 3 |
@@ -25,7 +25,7 @@ legend: [`README.md`](README.md).
 | M-7 | metrics have no master-detail model and no `gating` field; gating eligibility is undefined per metric (M8) | P1 |
 | M-8 | coverage-gated presentation absent — thin metrics read as strong (M8; #155 generalised) | P1 |
 | M-9 | no per-metric design/coverage record tying a metric to its chart and level of detail (M8) | P1 |
-| D-6 | metric doc defects (#153 `churn_rate`, #154 `time_to_useful_result` rating units) | P2 |
+| D-6 | metric doc defects (#153 `churn_rate`, #154 `time_to_useful_result` rating units) — **closed** 2026-10-19 | — |
 
 Also in the legacy register: #156 architecture-metrics family (unblocks T3's
 layer/cycle/zone-of-pain gates) is WIP in a separate backlog session (decision 8).

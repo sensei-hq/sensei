@@ -3,7 +3,7 @@ Feature: Agentic Execution — the designed autonomous loop (all unbuilt)
   # gap: agentic-unbuilt
   NO TEST
   Scenario: an agent run is created from a goal
-    Given a goal and a project
+    Given a goal and a workspace
     When an agent run is created
     Then it stores the goal and the initial plan graph
     This is unbuilt — no agent_runs table, no agents crate.
@@ -18,7 +18,7 @@ Feature: Agentic Execution — the designed autonomous loop (all unbuilt)
 
   # gap: agentic-unbuilt
   NO TEST
-  Scenario: the verifier runs the project's test/lint/build commands
+  Scenario: the verifier runs the workspace's test/lint/build commands
     Given a step that produced code changes
     When the verifier runs
     Then it executes the actual test/lint/build and returns pass/fail/partial

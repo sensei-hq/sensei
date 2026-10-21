@@ -43,4 +43,19 @@ test('impact and traceability show the daemon totals', async ({ tauriPage }) => 
   console.log(`[inspect] sensei traceability "${header}" (daemon ${own.total}/${own.drifted}/${own.broken})`);
   expect(errs).toBe(0);
   expect(header).toContain(`${own.total} tracked · ${own.drifted} drifted · ${own.broken} broken`);
+
+  // #293: the project Impact tab — its measured total and the impact log's
+  // pending entries are the daemon's, and its log form is idle.
+  const measured = (await json(`/api/projects/${sensei!.id}/impact`)).length;
+  const { verdicts } = await json(`/api/projects/${sensei!.id}/impact-verdicts`);
+  const pending = verdicts.filter((v: { verdict: string }) => v.verdict === 'pending').length;
+  await navigateToScreen(tauriPage, `/project/${sensei!.id}/impact`, '[data-impact-total], [data-screen-state="error"]', 30_000);
+  const tab = (await tauriPage.evaluate(`({
+    total: document.querySelector('[data-impact-total]')?.getAttribute('data-impact-total') ?? null,
+    pending: document.querySelectorAll('[data-testid^="impact-pending-"]').length - (document.querySelector('[data-testid="impact-pending-list"]') ? 1 : 0),
+    errors: document.querySelectorAll('[data-screen-state="error"], [data-testid="impact-log-error"]').length,
+    button: !!document.querySelector('[data-testid="impact-log-button"]'),
+  })`)) as { total: string | null; pending: number; errors: number; button: boolean };
+  console.log(`[inspect] sensei impact ${JSON.stringify(tab)} (daemon ${measured} measured, ${pending} pending of ${verdicts.length})`);
+  expect(tab).toEqual({ total: String(measured), pending, errors: 0, button: true });
 });

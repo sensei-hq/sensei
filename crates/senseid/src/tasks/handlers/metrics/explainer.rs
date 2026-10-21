@@ -16,7 +16,7 @@
 //! logged and skipped — the value is already persisted, so a failed explainer
 //! never fails the compute task (never wedges the queue) and never fabricates.
 //! Rides the planner's per-day `Some(D)` tasks (backfill + trailing-window refresh
-//! + today); the decision record is `docs/analysis/metric-explainability-generation.md`.
+//! + today); the decision record is `docs/history/analysis/metric-explainability-generation.md`.
 
 use crate::analysis::metric_day_explainer::{MetricDayFacts, explain};
 use crate::tasks::executor::TaskContext;

@@ -37,6 +37,7 @@ pub(crate) mod stance;
 pub(crate) mod tasks;
 pub(crate) mod tool_signals;
 pub(crate) mod tools_health;
+pub(crate) mod trackers;
 pub(crate) mod upgrades;
 pub(crate) mod verdicts;
 pub(crate) mod workspace;

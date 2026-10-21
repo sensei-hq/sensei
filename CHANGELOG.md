@@ -15,6 +15,47 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-10-21
+
+### Added
+
+- **Jira, from sensei** (#274). Connect a Jira Cloud site; sensei syncs it
+  read-only, links AI sessions to tickets, and shows AI usage per ticket and
+  sprint (project Integrations and Sprints screens, routes and CLI).
+- **Repository roles follow the forge** (#307 A2, D5). The dōjō mirrors each
+  person's repository roles from GitHub (refreshed every 6 hours); an admin may
+  override one. Access follows repository roles, not teams.
+- **Viewers** (#307 A1/A3, D8). An admin invites someone into the dōjō as a
+  viewer, then grants them a workspace: a read-only window for managers and
+  clients. Members & Roles gains the invite screen and the Viewers tab.
+- **Teams as groupings** (#307 A3, D7). Admins create teams, manage members and
+  grant a workspace to everyone on a team at once. A team grants nothing by
+  itself.
+- **One item per identity in the keychain** (#302), so approval asks once.
+
+### Changed
+
+- **BREAKING — the dōjō says workspace** (#307 R2a, D12). `dojo.projects` and
+  its links are now workspaces, renamed in place; the `/v1` wire, the
+  registration body and the daemon's dōjō client say `workspace`.
+- **BREAKING — a dōjō is an organization's or a person's** (#307 R1, D11). The
+  hand-made (`team`) dōjō, "Create or join" and the self-hosted flag are gone
+  (#318); the `developer` role is `contributor`.
+- One run view in the dōjō and one screen layout across the app (#293 step 1).
+
+### Fixed
+
+- **Leaving the GitHub org ends the membership org provisioning made** (#309);
+  invited members are untouched, and rejoining restores it.
+- **Invite tokens are stored only as a hash**, and failed accepts are limited to
+  10 per 15 minutes (#311).
+- The workspace rename tolerates a database that never had the viewer grants —
+  found by rehearsing this release on a copy of production (#315).
+- An answer in the inbox is sent to the run's own dōjō (#305); a `/you/runs/<id>`
+  link opens that run.
+- Linux: opaque native menu bar and project windows (#306).
+- An unread metrics registry is the page's error, not an empty catalogue (#288).
+
 ## [0.15.0] — 2026-10-20
 
 ### Added

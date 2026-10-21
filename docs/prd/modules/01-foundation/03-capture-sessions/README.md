@@ -7,7 +7,7 @@
 
 Capture is the front door of the whole system — nothing sensei knows about the developer's
 work exists without it. Four paths feed the pipeline: a one-shot filesystem scan that turns
-real folders into repos and multi-repo projects; a continuous root-watcher that keeps the
+real folders into repos and multi-repo workspaces; a continuous root-watcher that keeps the
 graph current without manual re-scans; git branch-switch handling that flips the view to the
 checked-out branch; and assistant-event capture that turns every session into a stream of
 events (session start, prompt, tool call, tool result, session end). Sessions materialise
@@ -18,7 +18,7 @@ The user's experience: *point sensei at a folder once and it just keeps knowing*
 
 ## In scope / out of scope
 
-- In: root-based folder/project scan (incremental, content-hash); multi-repo project
+- In: root-based folder/workspace scan (incremental, content-hash); multi-repo workspace
   detection + suggestion + merge/split; the root-watcher with restart reconciliation; branch
   versioning (active-only default, copy-on-switch); assistant-event capture via per-family
   adapters (Claude Code live, Zed read-only, custom via MCP `log_event`); event
@@ -40,7 +40,7 @@ The user's experience: *point sensei at a folder once and it just keeps knowing*
   children; Claude Code hook plugin at `marketplace/plugins/sensei/hooks/`; the Claude Code
   usage mod `marketplace/plugins/sensei/hooks/usage.ts`; transcript readers implementing
   `TranscriptAdapter` (`crates/senseid/src/transcript/{claude,opencode,zed,copilot_cli,cursor,vscode}.rs`).
-- **App** — Observatory project list shows discovered projects and multi-repo suggestions;
+- **App** — Observatory workspace list shows discovered workspaces and multi-repo suggestions;
   Sessions list reads `activity.sessions`.
 
 ## Data invariants
@@ -49,7 +49,7 @@ The user's experience: *point sensei at a folder once and it just keeps knowing*
   unchanged since the last scan is skipped end-to-end (incremental).
 - `sensei.folders` — one row per discovered repo/folder under a root
   (`path, name, kind, project_id?, scan_state, content_hash, stack, manifest_summary`);
-  `sensei.projects` is the logical grouping — a folder reaches its project only through the
+  `sensei.projects` is the logical grouping — a folder reaches its workspace only through the
   junction (`folders.repository_id → repositories_in_projects → projects`), never a column of
   its own.
 - Watch roots have **one watcher per active root**; file events are debounced (default
@@ -155,8 +155,8 @@ Closing a dash is adapter work against this contract, not a new design ([C-25](.
 
 | Signal | Source | Consumer |
 |---|---|---|
-| Discovered repo/project rows | scan | every screen; Project window Overview |
-| Multi-repo suggestion card | scan analyzer | Observatory Projects pane |
+| Discovered repo/workspace rows | scan | every screen; Workspace window Overview |
+| Multi-repo suggestion card | scan analyzer | Observatory Workspaces pane |
 | `activity.assistant_events` rows | adapters / hooks | analyzer materialisation |
 | `activity.sessions` rows (ftr, corrections, analyzed_at) | materialisation | FTR, Sessions, replay |
 | Branch indicator ("main / feat-x") | branch scan-mode | code-graph + impact views |
@@ -198,7 +198,7 @@ curl -s http://localhost:7744/api/sessions/$CLIENT_ID | jq '.id'   # same sessio
 
 ## Wrong gate
 
-- **Every folder becomes its own project** — multi-repo detection never fires.
+- **Every folder becomes its own workspace** — multi-repo detection never fires.
 - **Suggestion cards re-appear immediately after dismiss** — no staleness persistence.
 - **Events arrive but sessions never materialise** — analyzer tick or the client-session
   join is broken.
@@ -215,7 +215,7 @@ curl -s http://localhost:7744/api/sessions/$CLIENT_ID | jq '.id'   # same sessio
 - **A missing token or cost figure stored as `0`** — absence must stay NULL.
 - **A figure read from a second source when the first misses** — provenance unknowable.
 - **Cache reads folded into fresh input** — inflates any cost read off tokens ~8×.
-- **Merging two projects loses FTR history** — session project_id attribution must survive a merge.
+- **Merging two workspaces loses FTR history** — session project_id attribution must survive a merge.
 
 ## Scenarios
 
@@ -240,7 +240,7 @@ curl -s http://localhost:7744/api/sessions/$CLIENT_ID | jq '.id'   # same sessio
 
 - [spec/pipeline/capture](../../../../spec/pipeline/capture.md) — the four paths, branch
   versioning, adapter trait, locked decisions (legacy depth, folds here).
-- [features/04-project.md](../../../../features/04-project.md) — project grouping story.
+- [features/04-project.md](../../../../features/04-project.md) — workspace grouping story.
 - [prd/01-vision.md §The core loop](../../../01-vision.md#the-core-loop) —
   [prd/02-objectives.md](../../../02-objectives.md) §03 Observatory.
 - Crate: `crates/senseid/src/{scan,watcher,adapters}`; memories: project_incremental_indexing,

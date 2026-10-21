@@ -57,7 +57,7 @@ schema and has no `pgvector`.
 | `nodes` | every column the views read: `kind`, `name`, `fqn`, `parent` (by key), `line_start/end`, `is_exported`, `is_test`, `signature`, `description`, `docstring`, `language`, `community_id`, `tags`, `props` | the diagrams read these |
 | `edges` | `kind`, source (by key), target (by key, or `target_name` when unresolved), `confidence`, `resolved_via`, `unresolved_reason`, `props.occurrences` | the diagrams read these; unresolved edges are part of the graph |
 | `schema_*` | on the node they describe, inside its slice; a ref's target as a node key | the schema view |
-| `folders` | **does not travel** | measured 2026-10-14: the diagram views join `folders` only to reach a node's checkout for project membership — on the dōjō that is `tenant → team → projects → repositories`, which already exists. Every node, edge and file hangs off the checkout folder itself |
+| `folders` | **does not travel** | measured 2026-10-14: the diagram views join `folders` only to reach a node's checkout for workspace membership — on the dōjō that is `tenant → team → projects → repositories`, which already exists. Every node, edge and file hangs off the checkout folder itself |
 | `nodes.embedding` | **does not travel** | no `pgvector` on the dōjō; search there is a later decision |
 | `nodes.content` | **does not travel** | empty today; source text is not graph |
 | `folders.abs_path`, `remote_urls`, `branch` | **do not travel** | machine-local; the repository is already identified by `repo_key` |
@@ -170,7 +170,7 @@ push is the files that changed.
    then change one file and confirm exactly its slice moves.
 
 The dōjō's diagram screens are the next issue: they need dōjō loaders over
-these tables, scoped tenant → team → projects. The local state classes and
+these tables, scoped tenant → team → workspaces. The local state classes and
 components are reusable; the loaders are not.
 
 ## 7. Done gate

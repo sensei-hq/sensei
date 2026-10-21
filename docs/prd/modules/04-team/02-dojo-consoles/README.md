@@ -8,8 +8,8 @@ engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--cli
 
 ## Purpose
 
-The Dōjō Consoles are the **four role-scoped surfaces** (developer · maintainer ·
-admin · lead) that make the Dōjō usable for each person's job. They are **additive
+The Dōjō Consoles are the **four role-scoped surfaces** (contributor · maintainer ·
+lead · admin, D1) that make the Dōjō usable for each person's job. They are **additive
 grants**, not a single admin/not switch — a maintainer (governance) needn't be an
 admin (roles/policies), and vice-versa. The personal landing ("your work") is
 always primary; the consoles are what you open *inside* an org context. The job
@@ -19,7 +19,7 @@ things I can't touch.*
 
 The maintainer's console is not a viewer — it is where the constitution is
 **authored**: the stance, the rules, the shared skills / agents / commands, and
-a project's learnings, written once at a **scope** and composed down the ladder
+a workspace's learnings, written once at a **scope** and composed down the ladder
 for everyone below. That half of the console is specified in
 [The governance authoring surface](#the-governance-authoring-surface).
 
@@ -27,45 +27,55 @@ for everyone below. That half of the console is specified in
 > enum, role ladder in `dojo-auth.ts`), the personal screens (`/you/*`, Relay,
 > Library, Preview) are built and tested. The **org context `/org/[slug]` exists**
 > (`dojo/src/routes/(app)/org/[slug]/+page.svelte` + `/projects` + `/[section]`)
-> but the **four role-scoped surfaces within it are unbuilt** (gap T-2). The current
-> `/console/*` screens are a flat shell — they don't role-gate. The org-switcher
-> popover is built (top bar: "Relay · you — all Dōjōs" + one row per membership +
-> "Your Dōjōs" + "＋ Create or join").
+> and the **four role-scoped surfaces within it are built and role-gated**
+> (`dojo/src/lib/nav.ts` `navForOrg`; gap T-2 resolved, #307 A3 invites). The
+> org-switcher popover is built (top bar: "Relay · you — all Dōjōs" + one row per
+> membership + "Your Dōjōs"). Its "＋ Create or join" entry is retired by D11/D20 — a
+> dōjō comes from a git integration — but `dojo/src/lib/components/kit/OrgSwitcher.svelte`
+> still shows it: a known leftover to remove.
 
 ## In scope / out of scope
 
 - In: the four role definitions and their additive grants:
-  - **Developer** (default) — read-mostly: see projects in jurisdiction, preview
-    a project's effective constitution, view members.
+  - **Contributor** (default) — read-mostly: see workspaces in jurisdiction, preview
+    a workspace's effective constitution, view members. A device-code sign-in maps to
+    contributor; there is no "read-only" role.
   - **Maintainer** — **manage governance at org level**: author rules/stance on
     the ladder, triage/approve findings, manage knowledge.
   - **Lead** — client engagements, confidentiality, audit trail.
   - **Admin** — **change member roles + access policies**: members, identities/SSO,
     scopes & precedence, billing.
   - The **org context `/org/[slug]` exists** (`+page.svelte` + `/projects` +
-    `/[section]`) with its own nav pane (projects, governance,
-    role surfaces); the **four role-scoped surfaces within it are unbuilt** (gap T-2).
+    `/[section]`) with its own nav pane (workspaces, governance,
+    role surfaces); the **four role-scoped surfaces within it are built and role-gated** (T-2 resolved).
   - **The governance authoring surface** (`/org/[slug]/governance`, maintainer):
     the **scope ladder** (free personal ladder vs the paid company ladder), the
     **stance** axes, the **five authored artifact kinds** (rules · skills ·
-    agents · commands · project learnings), *defined-here vs inherited*
+    agents · commands · workspace learnings), *defined-here vs inherited*
     rendering with explicit override labels, the **constitution library** entry
     point, the **onboarding preview**, and **playbook-learning proposal
     review** — specified in full below.
   - The personal screens that are already built: `/you/projects`, `/you/inbox`,
-    `/you/relay`, `/library`, `/preview`, `/me`.
-- Out: the federation backbone (T1), project planning against trackers (T3),
+    `/you/relay`, `/library`, `/preview`, `/me`. The **inbox** carries Relay for
+    contributors (Q10, amended 2026-10-21): tickets assigned to you from the tracker
+    mirror sit under the relay session that carries their key; tickets with no session
+    yet are listed below.
+  - The **viewer shell** (T6) is a non-role surface: a viewer is not a member and gets
+    none of the role consoles.
+- Out: the federation backbone (T1), workspace planning against trackers (T3),
   billing/metering (T4).
 
 ## Surfaces
 
-- **App (target routes)** — `/org/[slug]` (org home: projects in jurisdiction);
+- **App (target routes)** — `/org/[slug]` (org home: workspaces in jurisdiction);
   `/org/[slug]/governance` (ladder config — maintainer);
-  `/org/[slug]/projects/[id]` (project preview: which ladder levels built the
+  `/org/[slug]/projects/[id]` (workspace preview: which ladder levels built the
   constitution);
   `/org/[slug]/members`, `/identities`, `/policies`, `/billing` (admin);
   `/org/[slug]/triage`, `/approvals`, `/knowledge` (maintainer);
-  `/org/[slug]/engagements`, `/incidents`, `/audit` (lead).
+  `/org/[slug]/engagements`, `/incidents`, `/audit` (lead). **Two audit screens, kept
+  apart (D19):** Clients › **Client audit** — the confidentiality ledger (lead) — and Admin ›
+  **Audit** — who did what in the dōjō (admin). Different data, different owners.
 - **App (built personal)** — `/` (personal landing: your work + My Dōjōs);
   `/you/projects`, `/you/inbox`, `/you/relay`, `/library`, `/preview`, `/me`.
 - **Mockup (authoring source of record)** — `mockups/Sensei/lib/dojo/dojo-governance.jsx`
@@ -80,7 +90,7 @@ for everyone below. That half of the console is specified in
   `governance.rs` (resolution, cached 5 min); `get_rules` / `get_layered_context`
   MCP tools.
 - **Data** — `dojo.memberships` (user_id, org_id, role, kind), `dojo.member_role`
-  enum (`member < contributor < lead < maintainer < admin`), `dojo.shared_rules`,
+  enum (`contributor < maintainer < lead < admin`), `dojo.shared_rules`,
   `dojo.tenants`, `dojo.audit_log`, `dojo.audit_events`; plus the governance
   ladder the authoring surface writes against: `sensei.scopes` (levels
   `general` … `repository`, `level` = most-specific-wins), `sensei.namespaces`
@@ -91,16 +101,23 @@ for everyone below. That half of the console is specified in
 
 - **Lead.** Grants are **additive** — the union of a user's roles is what they
   see. A maintainer + admin sees both governance and roles/policies.
+- **Lead.** **Per-person lists ("By developer") show only where the reader is a
+  maintainer or above on the repositories behind them** (D6). Teams are reporting groups:
+  a team caption never binds a workspace (D7, D13).
 - **Lead.** The personal landing is **always reachable** — the org-switcher
   popover has "Relay · you — all Dōjōs" pinned at top.
-- **Lead.** Role floor: `member < contributor < lead < maintainer < admin`.
+- **Lead.** Role floor: `contributor < maintainer < lead < admin` (`dojo.member_role`; canonical since 2026-10-21).
   A role reveals its surfaces; the union is what you see.
 - **Lead.** Client binding **excludes employer** — the owning org wins ordinary
   conflicts; the employer's mandatory rules remain a floor.
 - **Lead.** **You author against a scope, not a document.** Every authored
-  artifact carries the scope it was written at. Scopes compose from self up to
-  the root, and a **Project or Team scope additionally inherits from every Stack
-  scope** — stacks cross-cut the ladder rather than sitting on it.
+  artifact carries the scope it was written at. A dōjō's governance levels are
+  **dōjō → workspace → repository** (D25); scopes compose from self up to the
+  dōjō. A **stack** — a tech stack's rules and packs (React, Rust, …) — is not a
+  level: it is **applied at a level** — the dōjō, a workspace or a repository —
+  and its rules apply from there like any rule written at that level (D29). Teams are not a
+  governance level — they are reporting only (D13). An individual's own rules
+  live in sensei, not in the dōjō.
 - **Lead.** **Composition is most-specific-wins**, and it is not the first line
   of resolution: confidentiality resolves first, then a mandatory (★) lock that
   no narrower scope may relax, then specificity — T1's three-step order.
@@ -126,22 +143,25 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 
 | Rail group | Kanji | Example | Marker |
 |---|---|---|---|
-| Personal | 己 | My projects | free |
-| Company (Org) | 社 | Company | **paid** · *your employer* |
+| Personal | 己 | My workspaces | free |
+| Dōjō (Company) | 社 | Company | **paid** · *your employer* |
 | Client | 客 | Globex | **paid** · *engagement · not your employer* |
-| Team | 組 | Payments · Web | **paid** |
-| Project | 件 | personal-site · lumen-auth · billing-svc | *(none)* |
-| Stack | 技 | Rust · React | free |
+| Workspace | 件 | personal-site · lumen-auth · billing-svc | *(none)* |
+| Repository | — | lumen-auth-api · billing-svc-web | *(none)* |
 
-- **Two ladders share one list**: a free personal ladder (*Personal → Project →
-  Stack*) for individuals and the paid company ladder (*Company → Client → Team
-  → Project*) for the shared team plane. The rail marks **Company · Client ·
-  Team** paid; **Project carries no marker** (not even under a paid team).
+- **The dōjō ladder is dōjō → workspace → repository, most specific wins** (D25):
+  a rule at the dōjō applies everywhere in it, a workspace rule to that group of
+  repositories, a repository rule to one repository. There is **no Team rung** —
+  teams are reporting only (D13).
+- **Personal is not a dōjō level.** The Personal group shows an individual's own
+  rules in sensei; they stay theirs and are
+  never authored by the dōjō. The rail marks **Dōjō · Client** paid;
+  **Workspace and Repository carry no marker**.
 - **Company vs Client is derived per-user from membership** — never chosen.
-- **Composition**: walk `parent` from the scope to the root, then append
-  **every** Stack scope when the scope is a Project or Team — so `lumen-auth`
-  composes as *lumen-auth → Payments → Company → Rust · React*. Stacks
-  cross-cut; they are not a rung you sit under.
+- **Composition**: walk `parent` from the scope to the root — so a repository
+  composes as *lumen-auth-api → lumen-auth → Company*. A stack (a tech stack's rules
+  and packs) applied at any of those levels (say React at `lumen-auth`) contributes its rules at that level
+  (D29); it is never a rung of its own.
 - The rail badge counts **rules + skills only** at each scope — an empty scope
   reads blank rather than counting agents and commands.
 - Desktop: rail grouped by kind. Mobile: the same scopes as a wrapping pill row.
@@ -166,8 +186,8 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 - Each dial shows **the consequence of the stop selected**, not generic help text.
 - **An unauthored scope defaults to the middle stop on every dial** — *Balanced ·
   Opt-in · 2 approvals*. A locally changed stop wins over the stored one.
-- **Stance resolves most-specific-first**: a project's stance beats its team's,
-  which beats the default (`most_specific_scoped_stance_beats_default_and_lower_rungs`).
+- **Stance resolves most-specific-first**: a repository's stance beats its
+  workspace's, which beats its dōjō's, which beats the default (`most_specific_scoped_stance_beats_default_and_lower_rungs`).
 - **A scope can also be *strict*.** Under a strict stance **every dial fails
   closed** — every autonomous action is refused unless explicitly permitted
   (`strict_fails_closed_on_every_dial`). The authoring mock has no strict control,
@@ -176,9 +196,9 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
   prints the 盾 line unconditionally in the stance header (even at personal
   scope) — a mockup simplification; the requirement is the *floor*, not the label.
 - **Stance ≠ sprint gates.** Autonomy is *approval for a risky agent step*; the
-  code-health gates in [T3](../03-dojo-project-planning/README.md) are
+  code-health gates in [T3](../03-dojo-workspace-planning/README.md) are
   code-derived and delta-scoped. Two mechanisms, one word.
-- Worked examples — *Payments*: **Gate often** · **Automatic** · **Consensus**.
+- Worked examples — *Company*: **Gate often** · **Automatic** · **Consensus**.
   *lumen-auth*: **Gate often** · **Opt-in** · **Consensus**.
 
 ### The five artifact kinds
@@ -189,7 +209,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 | 技 | Shared skills | Add skill | here · inherited | local rows carry an *edit* affordance |
 | 問 | Agents & personas | Add agent | here · inherited | as above |
 | 令 | Commands | Add command | here · inherited | as above |
-| 憶 | Memory & learnings · this project | Add learning | here only | **project scopes only**; each row carries a tag (`3rd time`, `settled`, `gotcha`) |
+| 憶 | Memory & learnings · this workspace | Add learning | here only | **workspace scopes only**; each row carries a tag (`3rd time`, `settled`, `gotcha`) |
 
 - **Four rule types here**: `guard` 守 · `principle` 理 · `pattern` 紋 · `anti` 禁
   (chipped *anti-pattern*). That is **not** the six-family vocabulary the rule
@@ -201,7 +221,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 - A section header reads `N here · M inherited`; empty copy renders only when
   **both** are zero, so a scope that authored nothing but inherits five still
   lists them.
-- The memory section is gated on `kind === "Project"` — an org, team or stack
+- The memory section is gated on `kind === "Project"` — a dōjō or repository
   scope renders no memory section at all.
 
 ### Defined here, inherited, overridden
@@ -212,15 +232,15 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
   labelled `overridden here` in danger. **Both stay listed** — the collision is
   shown, not resolved by hiding.
 - Attribution is **first-wins along the chain**: nearer scopes are walked before
-  ancestors, and cross-cutting stack scopes come last.
+  ancestors; an adopted pack's rules are attributed to the level that adopted it.
 
 ### What a new developer inherits
 
 - A summary card counts the **composed** set — rules · skills · agents ·
-  commands · (learnings, project only) — deduplicated across the whole chain, so
+  commands · (learnings, workspace only) — deduplicated across the whole chain, so
   the number is *unique artifacts*, not a sum of lists.
-- It names the chain: *"Composed down the ladder — this scope plus **Payments ·
-  Company · Rust · React**"* and states delivery: *"Delivered to their
+- It names the chain: *"Composed down the ladder — this scope plus **Company ·
+  Rust · React**"* and states delivery: *"Delivered to their
   Observatory the moment they connect."*
 - **Preview onboarding** expands to a per-scope breakdown (one row per
   contributing scope) and closes with *"Composed by specificity — a more
@@ -261,9 +281,9 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 
 | Element | Meaning | Worked example |
 |---|---|---|
-| Org context nav | projects / governance / members / triage / engagements | maintainer sees governance + triage |
+| Org context nav | workspaces / governance / members / triage / engagements | maintainer sees governance + triage |
 | Role badge | the user's role in this org | `maintainer` |
-| Scope rail | the ladder, grouped by kind, paid-marked, with a rules+skills count | `組 Payments · paid · 4` · `客 Globex · paid · engagement` |
+| Scope rail | the ladder, grouped by kind, paid-marked, with a rules+skills count | `社 Company · paid · 4` · `客 Globex · paid · engagement` |
 | Scope chip | which scope you are authoring | `件 lumen-auth · Project` |
 | Stance dial | the selected stop **and** its consequence | `Sharing → Automatic: lessons past the confidence bar are sent up on a cadence` |
 | Artifact section | what is authored here vs inherited | `2 here · 5 inherited` |
@@ -298,10 +318,10 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
   floor updates immediately in `resolveTenantAccess`.
 - A lead opens `/org/[slug]/engagements` and sees client engagements with
   confidentiality pinned; the audit trail is immutable.
-- A developer opens `/org/[slug]` and sees projects in jurisdiction; clicking
+- A contributor opens `/org/[slug]` and sees workspaces in jurisdiction; clicking
   one drills to `/org/[slug]/projects/[id]` previewing which ladder levels built
   the constitution.
-- The personal landing (`/`) shows "your work" (projects, needs-you, relay) as
+- The personal landing (`/`) shows "your work" (workspaces, needs-you, relay) as
   primary and "My Dōjōs" with role badges as secondary.
 
 ```bash
@@ -315,7 +335,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - **A maintainer sees the admin surfaces (members/roles/policies)** — role-gating
   regressed.
 - **An admin cannot change a member's role** — `resolveTenantAccess` regressed.
-- **A developer can author governance** — role-gating regressed.
+- **A contributor can author governance** — role-gating regressed.
 - **A shadowed artifact disappears instead of reading `overridden here`** —
   collision display regressed (hiding beats surfacing).
 - **The inheritance count is a plain sum that double-counts an artifact written
@@ -324,8 +344,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   authorable.
 - **An accepted playbook proposal never becomes a rule at that scope** — the
   loop's accept path regressed.
-- **A project under a team omits the stack scopes from its inherited set** —
-  cross-cutting stacks dropped.
+- **A stack applied at a level does not reach the scopes below it** — applying
+  a stack regressed (D29).
 - **An unauthored scope shows a stance other than the middle stop** — default
   drift.
 - **The personal landing shows the management overview instead of "your work"**
@@ -340,7 +360,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   four role consoles and their surfaces (pinned for built personal screens,
   `NO TEST` / `# gap: T-2` for org context).
 - [`scenarios/dojo-consoles-gaps.feature`](scenarios/dojo-consoles-gaps.feature) —
-  the unbuilt org context role surfaces (`NO TEST` / `# gap: T-2`).
+  the org context role surfaces (built; `NO TEST` until pinned).
 - [`scenarios/dojo-governance-authoring.feature`](scenarios/dojo-governance-authoring.feature) —
   the authoring surface: ladder, stance, artifact kinds, inherit/override
   rendering, onboarding preview, library, playbook proposals (`NO TEST` /
@@ -348,14 +368,16 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ## Open gaps
 
-- [T-2](../../../../roadmap/06-gaps.md) — join/membership flow: magic-link
-  creates `auth.users` but no membership; "Join" dead → every console surface
-  403s (P1). Blocks T2 consoles.
-- [T-1](../../../../roadmap/06-gaps.md) — T3's tracker adapters (Jira / ADO)
-  exist only in mockup (P1).
+- [T-2](../../../../roadmap/06-gaps.md) — join/membership flow. **Resolved**:
+  invites (#307 A3) and GitHub-org provisioning create memberships; the role
+  surfaces are built and role-gated.
+- [T-1](../../../../roadmap/06-gaps.md) — T3's tracker adapters: the daemon-side
+  Jira adapter exists (PR #274); Azure Boards and GitHub Issues do not.
+- **"＋ Create or join"** in `OrgSwitcher.svelte` — retired by D11/D20, still
+  rendered; remove it.
 - Epic [#91](https://github.com/sensei-hq/sensei/issues/91) — the authoring
   surface is **specified here but unbuilt**; the org-context route it lives on is
-  itself blocked by T-2, and the rules editor's save is still presentational
+  built, and the rules editor's save is still presentational
   (`D-4`, reorg §12.4 — the dojo2 ladder / stance / rule-pack sections are
   fixture-only).
 - **Route to reconcile** — this spec and
@@ -375,6 +397,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   derived from namespace membership.
 - **Library reachability** — the ponytail pack is seeded but nothing adopts it
   (M13's C-2 follow-on); "Browse library" is the surface that would close it.
+- **Client scopes under D25's dōjō → workspace → repository ladder — undecided.**
+  Stack scopes are retired as levels (D29): a stack — a tech stack's rules and packs — is applied at a level (dōjō, workspace or repository).
+  The code still groups rules as *Company · Teams · Stacks* (#318).
+- **The code still carries a Team rung** (retired by D25): `sensei.scopes` seeds
+  `team` (level 50, `database/import/staging/scopes.jsonl`), `gov_scope` accepts
+  `team` (`crates/mcp`), and the dōjō's `constitution-map.ts` / `org-ladder-view.ts`
+  / `library-data.ts` group rules as *Company · Teams · Stacks*.
 - **Strict stance has no control** — M13 pins `strict_fails_closed_on_every_dial`,
   but the authoring mock exposes only the three 3-stop dials; *strict* must be
   either derived from the stops or given a control of its own.

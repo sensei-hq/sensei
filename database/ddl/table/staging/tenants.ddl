@@ -18,6 +18,5 @@ create table tenants (
 , scope         text        -- cast to dojo.tenant_scope on import
 , name          text
 , dojo_url      text
-, self_hosted   boolean
 , modified_at   timestamptz not null default now()
 );

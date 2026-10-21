@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 
 # Decisions
@@ -22,6 +22,14 @@ summed into sessions.
 |---|---|---|
 | **Transcript reading defaults to ON — supersedes #218's default** | A missing `transcripts.consent.<source>` key means yes; an explicit `off` means no. The per-assistant switch in Settings → Assistants stays. When reading is off, the metrics that depend on it say so instead of going blank. | Core functionality (token, cost and session metrics) depends on it, and #218's default left every metric blank without saying why. The switch stays because a user can have real grounds (client confidentiality, an employer's rule). Open: whether to allow off at all. Recorded, not yet decided. |
 | **Token usage is linked per turn, counted once, sourced** | `activity.turn_usage` holds one row per turn: the split counts, the model and `agent_id`, which sources saw it (hook, transcript, both) and whether they agreed. Main-loop hook turns (`turn.complete` without `agentId`) pair with transcript turns by order and time; agreeing usage is one value, and disagreement is flagged, never averaged. Subagent turns come from hooks (sidechain transcripts are not ingested). `sessions.tokens_*` are sums over it. | History needs transcripts; live sessions and subagents need hooks. The two must not double-count. No shared id exists: the hook's `turnId` is not in the transcript, and the transcript's `requestId` is not in the hook. Rejected: hooks only (loses history); transcripts only (blank without consent, no subagents); one total per source per session (no subagent attribution, no per-turn check). |
+
+---
+
+## 2026-10-17 — Rust compiler located without rustup (nix / distro toolchains)
+
+| Decision | Locked answer | Why / rejected |
+|---|---|---|
+| **`PATH` fallback for the compiler binary** | `CompilerEngine::compiler_on_path()` (default `None`). The Rust engine names `rust-analyzer`. The session runs `rustup which rust-analyzer` **first**. Only if that fails does it take the first **executable** `rust-analyzer` on `PATH`, resolved to an **absolute path** (`compiler_session::resolve_compiler`). | A nix toolchain ships `rust-analyzer` with no `rustup`, so every rust-analyzer compile failed on Linux/nix (6 tests, and the indexer's Rust references). The rule "located, never assumed on PATH" stands where a manager exists. The fallback is still a *located* absolute path, never a bare name. Rejected: `sh -c 'rustup which … \|\| command -v …'`, because there's no `sh` on Windows (planned). Rejected: dropping rustup, because rustup's pinned-toolchain answer is the right one when it's present. |
 
 ---
 
@@ -61,7 +69,7 @@ to the mockup (`dojo2-project.jsx`) and reorg §9 as the single source.
 | **The ratchet is own-baseline, for readings that can't be delta-scoped** | Gates are delta-scoped where possible (new violations, changed functions, guarded paths); the ratchet covers project-level readings by comparing against the project's **own trailing baseline**, and advances only when a reading improves **and holds**. Not FTR-based. | reorg §9.3–9.4; the ratchet was previously mis-attached to FTR. |
 
 Full requirements: [`design/integrations-and-gating-requirements.md`](design/integrations-and-gating-requirements.md) ·
-folded into [`prd/modules/04-team/03-dojo-project-planning/README.md`](prd/modules/04-team/03-dojo-project-planning/README.md).
+folded into [`prd/modules/04-team/03-dojo-workspace-planning/README.md`](prd/modules/04-team/03-dojo-workspace-planning/README.md).
 
 ---
 
@@ -132,8 +140,7 @@ So the test for a settled decision is not "is there a reason written down" but
 
 ## 2026-07-24 — Auto-buildout decisions locked (P0–P5)
 
-Locked with Dev ahead of the phased unattended build-out. Full context:
-[`history/analysis/2026-07-24-auto-buildout-readiness.md`](history/analysis/2026-07-24-auto-buildout-readiness.md) §4.
+Locked with Dev ahead of the phased unattended build-out.
 
 | Decision | Locked answer | Why / rejected |
 |---|---|---|
@@ -162,8 +169,8 @@ writes the evidence, and waits.
 
 ## 2026-07-25 — Coverage-audit scope calls
 
-Resolved during the mockup/journey/doc/code coverage audit (see
-[`history/features/coverage-map.md`](history/features/coverage-map.md)). These set what gets built next.
+Resolved during the mockup/journey/doc/code coverage audit (current build status
+lives in [`roadmap/README.md`](roadmap/README.md)). These set what gets built next.
 
 | Decision | Locked answer | Why / rejected |
 |---|---|---|

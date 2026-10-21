@@ -1,5 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { parseNewInvite, createInvite, acceptInvite, AdminError, type DojoClient } from './invites-data';
+import {
+	parseNewInvite,
+	createInvite,
+	acceptInvite,
+	hashInviteToken,
+	acceptAttemptsLeft,
+	recordAcceptFailure,
+	AdminError,
+	type DojoClient
+} from './invites-data';
+import { createHash } from 'node:crypto';
+
+const sha256 = (t: string) => createHash('sha256').update(t).digest('hex');
 
 // A chainable stub with an ordered result queue: each terminal (`.single()` /
 // `.maybeSingle()` / `.is()`) shifts the next result, in call order. Captures the
@@ -13,7 +25,8 @@ function makeDb(...results: { data?: unknown; error: unknown }[]) {
 		updates: { table?: string; payload: Record<string, unknown> }[];
 		eqs: [string, unknown][];
 		selects: string[];
-	} = { inserts: [], updates: [], eqs: [], selects: [] };
+		rpcs: { fn: string; args: Record<string, unknown> }[];
+	} = { inserts: [], updates: [], eqs: [], selects: [], rpcs: [] };
 	const b: Record<string, unknown> = {};
 	b.from = (t: string) => {
 		captured.table = t;
@@ -38,6 +51,10 @@ function makeDb(...results: { data?: unknown; error: unknown }[]) {
 	b.single = () => Promise.resolve(shift());
 	b.maybeSingle = () => Promise.resolve(shift());
 	b.is = () => Promise.resolve(shift());
+	b.rpc = (fn: string, args: Record<string, unknown>) => {
+		captured.rpcs.push({ fn, args });
+		return Promise.resolve(shift());
+	};
 	return { db: b as unknown as DojoClient, captured };
 }
 
@@ -50,13 +67,20 @@ describe('parseNewInvite', () => {
 		expect(parseNewInvite({ email: 'Ada@Acme.CO', kind: 'client' })).toEqual({
 			email: 'ada@acme.co',
 			role: 'contributor',
-			kind: 'client'
+			kind: 'client',
+			access: 'member'
 		});
 		expect(parseNewInvite({ email: 'a@b.co', role: 'lead', kind: 'employer' }).role).toBe('lead');
 	});
 	it('rejects a garbage email or bad kind (400)', () => {
 		expect(() => parseNewInvite({ email: 'nope', kind: 'client' })).toThrow();
 		expect(() => parseNewInvite({ email: 'a@b.co', kind: 'wizard' })).toThrow();
+	});
+	// #307 D8: a manager or client is invited INTO the dōjō as a viewer — not a
+	// member — before an admin grants them the view of selected projects.
+	it('reads a viewer invite, and refuses an access it does not know', () => {
+		expect(parseNewInvite({ email: 'cfo@acme.co', kind: 'client', access: 'viewer' }).access).toBe('viewer');
+		expect(() => parseNewInvite({ email: 'a@b.co', kind: 'client', access: 'owner' })).toThrow();
 	});
 });
 
@@ -66,13 +90,15 @@ describe('createInvite', () => {
 			data: { id: 'inv1', token: 'tok', email: 'a@b.co', role: 'contributor', expires_at: FUTURE },
 			error: null
 		});
-		const out = await createInvite(db, 't1', 'admin-uid', { email: 'a@b.co', role: 'contributor', kind: 'client' }, NOW);
+		const out = await createInvite(db, 't1', 'admin-uid', { email: 'a@b.co', role: 'contributor', kind: 'client', access: 'member' }, NOW);
 		expect(out.id).toBe('inv1');
 		const payload = captured.inserts[0].payload;
 		expect(captured.inserts[0].table).toBe('invites');
-		expect(payload).toMatchObject({ tenant_id: 't1', email: 'a@b.co', role: 'contributor', kind: 'client', invited_by: 'admin-uid' });
-		expect(typeof payload.token).toBe('string');
-		expect((payload.token as string).length).toBeGreaterThan(20); // crypto.randomUUID
+		expect(payload).toMatchObject({ tenant_id: 't1', email: 'a@b.co', role: 'contributor', kind: 'client', access: 'member', invited_by: 'admin-uid' });
+		// Only a hash of the bearer is stored (#311): the token itself never lands in the row.
+		expect(payload.token).toBeUndefined();
+		expect(out.token.length).toBeGreaterThan(20); // crypto.randomUUID
+		expect(payload.token_hash).toBe(sha256(out.token));
 		expect(Date.parse(payload.expires_at as string)).toBe(NOW + 7 * 24 * 60 * 60 * 1000);
 	});
 	// The token is a bearer: no session reads it back (the invites read grant leaves
@@ -82,9 +108,9 @@ describe('createInvite', () => {
 			data: { id: 'inv1', email: 'a@b.co', role: 'contributor', expires_at: FUTURE },
 			error: null
 		});
-		const out = await createInvite(db, 't1', 'admin-uid', { email: 'a@b.co', role: 'contributor', kind: 'client' }, NOW);
-		expect(out.token).toBe(captured.inserts[0].payload.token);
-		for (const cols of captured.selects) expect(cols).not.toMatch(/\btoken\b/);
+		const out = await createInvite(db, 't1', 'admin-uid', { email: 'a@b.co', role: 'contributor', kind: 'client', access: 'member' }, NOW);
+		expect(sha256(out.token)).toBe(captured.inserts[0].payload.token_hash);
+		for (const cols of captured.selects) expect(cols).not.toMatch(/\btoken/);
 	});
 });
 
@@ -134,14 +160,74 @@ describe('acceptInvite — every gate fails closed, none provisions unless all p
 			{ error: null } // accepted stamp
 		);
 		const out = await acceptInvite(db, 'u1', 'ADA@acme.co', 'tok', NOW);
-		expect(out).toEqual({ tenant_id: 't1', role: 'contributor' });
+		expect(out).toEqual({ tenant_id: 't1', role: 'contributor', access: 'member' });
 		// membership provisioned at the invited role for the caller
 		expect(captured.inserts[0]).toMatchObject({
 			table: 'memberships',
 			payload: { tenant_id: 't1', user_id: 'u1', role: 'contributor', kind: 'client' }
 		});
-		// single-use stamp, guarded on accepted_at IS NULL
+		// single-use stamp, guarded on accepted_at IS NULL; the hash goes with it (#311)
 		expect(captured.updates[0]).toMatchObject({ table: 'invites' });
 		expect(captured.updates[0].payload.accepted_at).toBeTruthy();
+		expect(captured.updates[0].payload).toHaveProperty('token_hash', null);
+		// looked up by the token's hash, never the token
+		expect(captured.eqs).toContainEqual(['token_hash', sha256('tok')]);
+		expect(captured.eqs.find(([c]) => c === 'token')).toBeUndefined();
+	});
+
+	it('a viewer invite makes the person a dōjō viewer — never a member', async () => {
+		const { db, captured } = makeDb(
+			invite({ access: 'viewer', invited_by: 'admin-1' }), // loadInvite
+			{ data: null, error: null }, // add_dojo_viewer
+			{ error: null } // accepted stamp
+		);
+		const out = await acceptInvite(db, 'u9', 'ada@acme.co', 'tok', NOW);
+		expect(out).toEqual({ tenant_id: 't1', role: null, access: 'viewer' });
+		expect(captured.rpcs).toEqual([
+			{ fn: 'add_dojo_viewer', args: { p_tenant: 't1', p_principal: 'u9', p_invited_by: 'admin-1', p_email: 'ada@acme.co' } }
+		]);
+		expect(captured.inserts.filter((i) => i.table === 'memberships')).toEqual([]);
+		expect(captured.updates[0].payload.accepted_at).toBeTruthy();
+	});
+});
+
+describe('hashInviteToken (#311)', () => {
+	it('is the hex SHA-256 of the token', async () => {
+		expect(await hashInviteToken('tok')).toBe(sha256('tok'));
+	});
+});
+
+// #311: failed accepts are counted per person; ten in fifteen minutes and the
+// next attempt is refused before any invite is read.
+describe('accept attempts (#311)', () => {
+	it('counts the caller\'s failures in the last 15 minutes', async () => {
+		const { db, captured } = makeDb();
+		(db as unknown as { gte: unknown }).gte = (c: string, v: unknown) => {
+			captured.eqs.push([c, v]);
+			return Promise.resolve({ count: 3, error: null });
+		};
+		expect(await acceptAttemptsLeft(db, 'u1', NOW)).toBe(7);
+		expect(captured.table).toBe('invite_accept_failures');
+		expect(captured.eqs).toContainEqual(['principal_id', 'u1']);
+		expect(captured.eqs).toContainEqual(['failed_at', new Date(NOW - 15 * 60 * 1000).toISOString()]);
+	});
+
+	it('never goes below zero, and a failed count is an error, not a free pass', async () => {
+		const many = makeDb();
+		(many.db as unknown as { gte: unknown }).gte = () => Promise.resolve({ count: 25, error: null });
+		expect(await acceptAttemptsLeft(many.db, 'u1', NOW)).toBe(0);
+		const broken = makeDb();
+		(broken.db as unknown as { gte: unknown }).gte = () => Promise.resolve({ count: null, error: { message: 'boom' } });
+		await expect(acceptAttemptsLeft(broken.db, 'u1', NOW)).rejects.toMatchObject({ status: 500 });
+	});
+
+	it('records a failure for the caller', async () => {
+		const { db, captured } = makeDb({ error: null });
+		(db as unknown as { insert: unknown }).insert = (p: Record<string, unknown>) => {
+			captured.inserts.push({ table: captured.table, payload: p });
+			return Promise.resolve({ error: null });
+		};
+		await recordAcceptFailure(db, 'u1');
+		expect(captured.inserts).toEqual([{ table: 'invite_accept_failures', payload: { principal_id: 'u1' } }]);
 	});
 });

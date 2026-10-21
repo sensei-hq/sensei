@@ -28,15 +28,15 @@ export interface RepoInput {
 	repo_key: string;
 	remote_url?: string | null;
 	name?: string | null;
-	/** The sensei project this repository belongs to, as the daemon names it — a
+	/** The sensei workspace this repository belongs to, as the daemon names it — a
 	 *  mapped repository is filed under it (#299). Absent: file nothing. */
-	project?: RepoProject | null;
+	workspace?: RepoWorkspace | null;
 }
 
-/** A sensei project, as the daemon sends it: the slug and name a relay run
+/** A sensei workspace, as the daemon sends it: the slug and name a relay run
  *  carries, so the two paths file the same `(user_id, slug)` row. No
  *  classification — the database derives it from where the repository lives. */
-export interface RepoProject {
+export interface RepoWorkspace {
 	slug: string;
 	name: string;
 }
@@ -52,10 +52,10 @@ export interface MappedRepo {
 	 *  invalidate. */
 	tenant_id: string;
 	repo_id: string;
-	/** The project the repository was filed under (#299), when one was sent. */
-	project_id?: string;
-	/** Why filing it under its project failed — the registration still stands. */
-	project_error?: string;
+	/** The workspace the repository was filed under (#299), when one was sent. */
+	workspace_id?: string;
+	/** Why filing it under its workspace failed — the registration still stands. */
+	workspace_error?: string;
 }
 
 /**
@@ -184,17 +184,17 @@ export async function registerRepositories(db: DojoClient, repos: RepoInput[]): 
 			tenant_id: row.tenant_id as string,
 			repo_id: row.repository_id as string
 		};
-		if (repo.project) {
-			// File it under its sensei project (#299). A failure is reported on the
+		if (repo.workspace) {
+			// File it under its sensei workspace (#299). A failure is reported on the
 			// repository, not thrown: the registration DID happen, and the daemon
 			// logs the reason rather than losing both.
-			const filed = await db.rpc('file_repository_project', {
+			const filed = await db.rpc('file_repository_workspace', {
 				p_repository_id: entry.repo_id,
-				p_slug: repo.project.slug,
-				p_name: repo.project.name
+				p_slug: repo.workspace.slug,
+				p_name: repo.workspace.name
 			});
-			if (filed.error) entry.project_error = filed.error.message;
-			else entry.project_id = filed.data as string;
+			if (filed.error) entry.workspace_error = filed.error.message;
+			else entry.workspace_id = filed.data as string;
 		}
 		mapped.push(entry);
 	}

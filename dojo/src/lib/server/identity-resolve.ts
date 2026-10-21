@@ -101,11 +101,37 @@ export async function resolveDisplayNames(
 	const unique = [
 		...new Set(((members.data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id))
 	];
-	if (unique.length === 0) return new Map();
+	return namesOf(db, unique);
+}
+
+/**
+ * Resolve the names of a tenant's dōjō VIEWERS (#307 D8) — people in the dōjō who
+ * are not members, so {@link resolveDisplayNames} would not name them. Scoped the
+ * same way: only ids that are viewers of `tenantId` resolve.
+ */
+export async function resolveViewerNames(
+	db: DojoClient,
+	tenantId: string,
+	principalIds: string[]
+): Promise<Map<string, ResolvedName>> {
+	const requested = [...new Set(principalIds.filter((id) => typeof id === 'string' && id.length > 0))];
+	if (requested.length === 0) return new Map();
+	const viewers = await db
+		.from('dojo_viewers')
+		.select('principal_id')
+		.eq('tenant_id', tenantId)
+		.in('principal_id', requested);
+	if (viewers.error) throw new AdminError(500, viewers.error.message);
+	return namesOf(db, ((viewers.data ?? []) as Array<{ principal_id: string }>).map((v) => v.principal_id));
+}
+
+/** The best name for each of `principalIds`, already scoped by the caller. */
+async function namesOf(db: DojoClient, principalIds: string[]): Promise<Map<string, ResolvedName>> {
+	if (principalIds.length === 0) return new Map();
 	const { data, error } = await db
 		.from('identities')
 		.select(IDENTITY_NAME_COLS)
-		.in('principal_id', unique);
+		.in('principal_id', principalIds);
 	if (error) throw new AdminError(500, error.message);
 	const byPrincipal = new Map<string, IdentityNameRow[]>();
 	for (const r of (data ?? []) as unknown as IdentityNameRow[]) {

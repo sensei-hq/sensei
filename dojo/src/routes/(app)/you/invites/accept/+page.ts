@@ -15,14 +15,16 @@ export const load: PageLoad = async ({ url, fetch, parent }) => {
 	const back = youHref('dojos');
 	if (!token) return { error: 'This invite link is missing its token.', back };
 
-	let tenantId: string;
+	let result: Awaited<ReturnType<typeof acceptInvite>>;
 	try {
-		const result = await acceptInvite(token, { fetch, accessToken });
-		tenantId = result.tenant_id;
+		result = await acceptInvite(token, { fetch, accessToken });
 	} catch (e) {
 		if (e instanceof ClientApiError) return { error: e.message, back };
 		throw e;
 	}
-	// Success — into the dōjō you just joined (orgBySlug resolves it by tenant id).
-	redirect(303, orgHref(tenantId));
+	// A viewer (#307 D8) is not a member, so the org would bounce them: they land on
+	// their projects, where the ones an admin grants them appear.
+	if (result.access === 'viewer') redirect(303, youHref('projects'));
+	// A member — into the dōjō you just joined (orgBySlug resolves it by tenant id).
+	redirect(303, orgHref(result.tenant_id));
 };

@@ -2,7 +2,8 @@
  * #288 against the REAL daemon: the Instruments store's reads land — the
  * Playground's sensei group lists the daemon's tools, Health shows one card per
  * tools-health source, and a session's Replay timeline has the daemon's calls —
- * with no error state. Read from the DOM: the sign-in overlay (#283) is modal
+ * with no error state, and a Playground call shows the daemon's answer (#293:
+ * the call used to show `{}` when it failed). Read from the DOM: the sign-in overlay (#283) is modal
  * while it is up. Run: `bun run test:inspect -- instruments-store`.
  */
 import { expect, test } from '../fixtures';
@@ -20,6 +21,19 @@ test('instruments shows the daemon reads', async ({ tauriPage }) => {
     .poll(() => tauriPage.evaluate(`document.querySelector('[data-testid="mcp-group-toggle-sensei"] .font-mono.text-xs.text-ink-faint')?.textContent?.trim() ?? null`), { timeout: 30_000 })
     .toBe(String(tools));
   const playground = (await tauriPage.evaluate(errors)) as number;
+
+  // A read-only query with no inputs: the panel shows what the daemon answers.
+  const expected = await (await fetch(`${DAEMON_URL}/api/mcp/call`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'list_projects', params: {} }),
+  })).json();
+  await tauriPage.evaluate(`document.querySelector('[data-testid="tool-row-list_projects"]')?.click()`);
+  await tauriPage.evaluate(`document.querySelector('[data-testid="tool-execute"]')?.click()`);
+  await expect
+    .poll(() => tauriPage.evaluate(`document.querySelector('[data-testid="tool-error"]')?.textContent ?? (document.body.textContent.includes('200 ok') ? 'ok' : null)`), { timeout: 30_000 })
+    .toBe('ok');
+  const shown = JSON.parse((await tauriPage.evaluate(`[...document.querySelectorAll('pre')].map((p) => p.textContent).find((t) => t.trim().startsWith('{')) ?? 'null'`)) as string);
+  expect(shown).toEqual(expected);
 
   await tauriPage.evaluate(`document.querySelector('[data-testid="instrument-tab-insights"]')?.click()`);
   await expect
@@ -45,6 +59,6 @@ test('instruments shows the daemon reads', async ({ tauriPage }) => {
     .toBe(String(replay.calls.length));
   const rep = (await tauriPage.evaluate(errors)) as number;
 
-  console.log(`\n[inspect] instruments: sensei tools ${tools}, sources ${sources}, replay ${session.id.slice(0, 8)} ${replay.calls.length} calls; errors ${[playground, health, rep]}`);
+  console.log(`\n[inspect] instruments: sensei tools ${tools}, list_projects ${JSON.stringify(expected).length}B shown, sources ${sources}, replay ${session.id.slice(0, 8)} ${replay.calls.length} calls; errors ${[playground, health, rep]}`);
   expect([playground, health, rep]).toEqual([0, 0, 0]);
 });

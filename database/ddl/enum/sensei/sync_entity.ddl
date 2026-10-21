@@ -24,4 +24,8 @@ create type sync_entity as enum (
     -- One tracked branch of a repository's shared code graph (#225), keyed
     -- `<repo_key>@<branch>`: one checkout's push, or why it was not pushed.
   , 'repository_graph'
+    -- The per-person forge mirror (#307 A2d), keyed on the persona's keychain slot:
+    -- when the daemon last asked the dōjō to mirror that member's repository roles
+    -- from their forge token, and whether it could.
+  , 'forge_mirror'
 );

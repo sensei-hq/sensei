@@ -79,15 +79,8 @@
 							</div>
 							<div class="mt-2 flex flex-wrap items-center gap-3">
 								<span class="mono text-ink-soft text-xs">
-									{#if o.host === 'self'}
-										<span class="text-ink-faint">self-hosted · </span>{o.url}
-									{:else}
-										<span class="text-ink-faint">sensei-hq.com/</span>{o.url}
-									{/if}
+									<span class="text-ink-faint">sensei-hq.com/</span>{o.url}
 								</span>
-								<Chip toneClass={o.host === 'self' ? 'text-ink-soft' : 'text-ink-mute'}>
-									{o.host === 'self' ? '基 self-hosted' : '雲 SaaS'}
-								</Chip>
 							</div>
 						</div>
 						<div
@@ -158,9 +151,7 @@
 				<KanjiToken char="鍵" size="inherit" toneClass="" class="text-accent text-sm" />
 				<span
 					>Roles are derived from your GitHub org &amp; repo access, then refined inside each Dōjō.
-					Organizations not on GitHub are namespaced
-					<b class="text-ink-soft font-semibold">other/&lt;org&gt;</b> and sign in by magic link; self-hosted
-					Dōjōs keep their own URL.</span
+					A dōjō comes from your git provider's organization, or from an invite.</span
 				>
 			</div>
 		</div>

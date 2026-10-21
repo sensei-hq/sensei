@@ -1,5 +1,5 @@
 //! THE TASK LAYER'S HALF OF THE COMPILER STEP — the IO an adapter describes and
-//! never performs (docs/plan/2026-10-13-indexer-full-call-placement.md).
+//! never performs (docs/history/plan/2026-10-13-indexer-full-call-placement.md).
 //!
 //! An adapter declares its compiler ([`CompilerEngine`]): how to find the
 //! project a package belongs to, how to compile it, how a resolved symbol becomes
@@ -358,7 +358,13 @@ async fn compile(
         .chain(fingerprint.chars().take(16))
         .collect();
     let root_str = root.to_string_lossy();
-    let compiler = run(&engine.locate_compiler(&root_str), LOCATE_TIMEOUT).await?;
+    let path_var = std::env::var_os("PATH");
+    let compiler = resolve_compiler(
+        &engine.locate_compiler(&root_str),
+        engine.compiler_on_path(),
+        path_var.as_deref(),
+    )
+    .await?;
     let compiler = compiler.trim();
     if compiler.is_empty() {
         return Err("the compiler's binary could not be located".to_string());
@@ -393,6 +399,53 @@ async fn compile(
 }
 
 /// Run an adapter's invocation, bounded by `timeout`; its stdout on success.
+/// The absolute path of `name` in the first `PATH` directory that holds it as
+/// an executable file. `None` when no directory does.
+fn find_on_path(name: &str, path_var: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let candidates = |dir: PathBuf| {
+        let plain = dir.join(name);
+        // Windows resolves `rust-analyzer` as `rust-analyzer.exe`.
+        let exe = cfg!(windows).then(|| dir.join(format!("{name}.exe")));
+        std::iter::once(plain).chain(exe)
+    };
+    std::env::split_paths(path_var?)
+        .filter(|dir| dir.is_absolute())
+        .flat_map(candidates)
+        .find(|p| is_executable(p))
+}
+
+fn is_executable(p: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(p) else { return false };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// The compiler's binary: the engine's locator first; if that cannot answer, the
+/// engine's `PATH` fallback (resolved to an absolute path), else the locator's error.
+async fn resolve_compiler(
+    locate: &Invocation,
+    on_path: Option<&str>,
+    path_var: Option<&std::ffi::OsStr>,
+) -> Result<String, String> {
+    match run(locate, LOCATE_TIMEOUT).await {
+        Ok(out) => Ok(out),
+        Err(located) => on_path
+            .and_then(|name| find_on_path(name, path_var))
+            .map(|p| p.to_string_lossy().into_owned())
+            .ok_or(located),
+    }
+}
+
 async fn run(inv: &Invocation, timeout: std::time::Duration) -> Result<String, String> {
     let child = tokio::process::Command::new(&inv.program)
         .args(&inv.args)
@@ -482,6 +535,91 @@ fn read_declarations(repo_root: &Path, abs: &Path) -> Result<Arc<FileFacts>, Rea
 
 #[cfg(test)]
 mod tests {
+
+    // ── Locating the compiler without its toolchain manager ─────────────────
+
+    /// A directory holding an executable `name` (and a non-executable `decoy`).
+    fn bin_dir(name: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(name);
+        std::fs::write(&exe, "#!/bin/sh\necho ok\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::write(dir.path().join("decoy"), "not executable").unwrap();
+            std::fs::set_permissions(
+                dir.path().join("decoy"),
+                std::fs::Permissions::from_mode(0o644),
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn find_on_path_returns_the_first_executable_by_absolute_path() {
+        let (empty, a, b) = (tempfile::tempdir().unwrap(), bin_dir("tool"), bin_dir("tool"));
+        let path = std::env::join_paths([empty.path(), a.path(), b.path()]).unwrap();
+        let found = find_on_path("tool", Some(&path)).unwrap();
+        assert_eq!(found, a.path().join("tool"));
+        assert!(found.is_absolute());
+        assert_eq!(find_on_path("missing", Some(&path)), None);
+        assert_eq!(find_on_path("tool", None), None, "no PATH, no fallback");
+        #[cfg(unix)]
+        assert_eq!(
+            find_on_path("decoy", Some(&path)),
+            None,
+            "a non-executable file is not a compiler"
+        );
+    }
+
+    fn locate(program: &str) -> Invocation {
+        Invocation { program: program.into(), args: vec![], cwd: "/".into() }
+    }
+
+    #[tokio::test]
+    async fn the_locator_wins_when_it_answers() {
+        let echo = Invocation {
+            program: "sh".into(),
+            args: vec!["-c".into(), "echo /opt/ra".into()],
+            cwd: "/".into(),
+        };
+        let dir = bin_dir("rust-analyzer");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        assert_eq!(
+            resolve_compiler(&echo, Some("rust-analyzer"), Some(&path)).await.unwrap().trim(),
+            "/opt/ra"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_its_manager_the_compiler_is_found_on_path() {
+        let dir = bin_dir("rust-analyzer");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let got = resolve_compiler(
+            &locate("definitely-not-rustup-xyz"),
+            Some("rust-analyzer"),
+            Some(&path),
+        )
+        .await;
+        assert_eq!(got, Ok(dir.path().join("rust-analyzer").to_string_lossy().into_owned()));
+    }
+
+    #[tokio::test]
+    async fn with_no_fallback_the_locators_error_stands() {
+        let dir = bin_dir("rust-analyzer");
+        let path = std::env::join_paths([dir.path()]).unwrap();
+        let none = resolve_compiler(&locate("definitely-not-rustup-xyz"), None, Some(&path)).await;
+        assert!(none.as_ref().is_err_and(|e| e.contains("definitely-not-rustup-xyz")), "{none:?}");
+        let absent =
+            resolve_compiler(&locate("definitely-not-rustup-xyz"), Some("nope-xyz"), Some(&path))
+                .await;
+        assert!(
+            absent.as_ref().is_err_and(|e| e.contains("definitely-not-rustup-xyz")),
+            "{absent:?}"
+        );
+    }
     use super::*;
 
     /// A real repository on disk: the definition is read back through the Rust

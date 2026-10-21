@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { SessionRow } from '$lib/types.js';
 import {
+  sessionsCopy,
+  medianLabel,
   quality,
   sessionTitle,
   durationMinutes,
@@ -316,5 +318,42 @@ describe('chart / cycler vocab', () => {
     expect(rangeDays('7d')).toBe(7);
     expect(rangeDays('30d')).toBe(30);
     expect(rangeDays('90d')).toBe(90);
+  });
+});
+
+// #293: Observatory and project Sessions are one screen; only the words differ.
+describe('sessionsCopy', () => {
+  it('speaks of the week across projects in the observatory', () => {
+    const c = sessionsCopy(null);
+    expect(c.eyebrow).toBe('Observatory · Sessions');
+    expect(c.title).toBe('The shape of your week.');
+    expect(c.acrossProjects).toBe(true);
+    expect(c.kanji).toBe('録');
+  });
+
+  it('speaks of one project in its window', () => {
+    const c = sessionsCopy('atlas');
+    expect(c.eyebrow).toBe('atlas · sessions');
+    expect(c.title).toBe('The shape of this project.');
+    expect(c.acrossProjects).toBe(false);
+    expect(c.emptyDescription).toContain('on this project');
+  });
+});
+
+// The median duration said "—" when sessions were short: under a minute
+// rounds to 0, which read as "no data".
+describe('medianLabel', () => {
+  it('says there is no median only when no session has a duration', () => {
+    expect(medianLabel(null)).toBe('—');
+  });
+  it('says under a minute rather than nothing', () => {
+    expect(medianLabel(0)).toBe('<1m');
+  });
+  it('formats a real median', () => {
+    expect(medianLabel(20)).toBe('20m');
+    expect(medianLabel(75)).toBe('1h 15m');
+  });
+  it('is null when no session carries a duration', () => {
+    expect(computeTotals([]).medianMins).toBeNull();
   });
 });

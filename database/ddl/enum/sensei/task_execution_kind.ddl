@@ -87,6 +87,7 @@ create type task_execution_kind as enum (
 , 'publish_relay_segments'
 , 'advance_run'
 , 'publish_run'
+, 'tracker_discover'
   -- ── RETIRED (see header) ──
 , 'build_connections'
 , 'resolve_edges'

@@ -6,11 +6,10 @@ set search_path to dojo, sensei, extensions;
 -- dojo.current_principal_id().
 --
 -- A tenant OWNS the namespace its key names: `organization/<slug>` owns
--- `organization:<slug>`, `team/<slug>` owns `team:<slug>` (a personal tenant
--- owns none: there is no `personal` namespace scope). Derived, never
--- claimed — an organization tenant is forge-proven and a team's key cannot take
--- an organization's name (decision 2026-10-12), so nobody can own a namespace by
--- naming it first. `p_namespaces` are the daemon folder's `scope_key:slug`
+-- `organization:<slug>` (a personal tenant owns none: there is no `personal`
+-- namespace scope; and a dōjō is only ever one of the two, #307 D11). Derived,
+-- never claimed — an organization tenant is forge-proven (decision 2026-10-12),
+-- so nobody can own a namespace by naming it first. `p_namespaces` are the daemon folder's `scope_key:slug`
 -- pairs; only the tenant's own among them resolve.
 create or replace function dojo.tenant_pack_rules(p_tenant uuid, p_namespaces text[])
     returns table (

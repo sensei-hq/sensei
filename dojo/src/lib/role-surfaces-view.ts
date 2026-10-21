@@ -17,10 +17,13 @@ export interface RoleSurfaceTab {
 	title: string;
 	/** The primary-CTA label for this tab. */
 	cta: string;
+	/** The SectionHead description — what this tab is. */
+	description: string;
 }
 
-/** The three role-surface tabs (mockup `tabs` in ScrRoleSurfaces). Members &
- *  Roles · Policies · Audit — in nav order. */
+/** The role-surface tabs (mockup `tabs` in ScrRoleSurfaces). Members & Roles ·
+ *  Viewers (#307 D8 — people invited as viewers, not members) · Teams (D7) ·
+ *  Policies · Audit. */
 export const ROLE_SURFACE_TABS: readonly RoleSurfaceTab[] = [
 	{
 		id: 'members',
@@ -28,7 +31,29 @@ export const ROLE_SURFACE_TABS: readonly RoleSurfaceTab[] = [
 		icon: 'users-group-rounded',
 		eyebrow: 'admin',
 		title: 'Members & Roles',
-		cta: 'Invite'
+		cta: 'Invite',
+		description:
+			'Roles are additive and mirror the forge, per repository. contributor → maintainer → lead → admin. A role only ever adds capability.'
+	},
+	{
+		id: 'viewers',
+		label: 'Viewers',
+		icon: 'eye',
+		eyebrow: 'admin',
+		title: 'Viewers',
+		cta: 'Invite',
+		description:
+			'Managers and clients invited to view — not members, with no repository access. They read only the projects you grant them.'
+	},
+	{
+		id: 'teams',
+		label: 'Teams',
+		icon: 'users-group-two-rounded',
+		eyebrow: 'admin',
+		title: 'Teams',
+		cta: 'New team',
+		description:
+			'Groups of members for reports by team and for granting a project to many people at once. A team grants no access — repository roles do.'
 	},
 	{
 		id: 'policies',
@@ -36,7 +61,8 @@ export const ROLE_SURFACE_TABS: readonly RoleSurfaceTab[] = [
 		icon: 'shield-check',
 		eyebrow: 'admin',
 		title: 'Role policies',
-		cta: 'New policy'
+		cta: 'New policy',
+		description: 'Roles are additive — a role only ever adds capability. What each role may do in this dōjō.'
 	},
 	{
 		id: 'audit',
@@ -44,7 +70,8 @@ export const ROLE_SURFACE_TABS: readonly RoleSurfaceTab[] = [
 		icon: 'clipboard-list',
 		eyebrow: 'admin',
 		title: 'Audit log',
-		cta: 'Export'
+		cta: 'Export',
+		description: 'Who changed what in this dōjō, and when.'
 	}
 ];
 

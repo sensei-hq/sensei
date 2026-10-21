@@ -140,6 +140,27 @@ impl PgStore {
         Ok(())
     }
 
+    /// When this mark was last ATTEMPTED, successfully or not — `None` if never.
+    /// What a cadence keys on, so a thing that keeps failing waits its interval
+    /// rather than retrying every cycle.
+    pub async fn sync_attempted_at(
+        &self,
+        m: &SyncMark<'_>,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+        let row: Option<(Option<chrono::DateTime<chrono::Utc>>,)> = sqlx_core::query_as::query_as(
+            "SELECT attempted_at FROM sensei.sync_state \
+              WHERE entity = $1::sensei.sync_entity AND entity_key = $2 \
+                AND direction = $3::sensei.sync_direction",
+        )
+        .bind(m.entity)
+        .bind(m.key)
+        .bind(m.direction)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("sync_attempted_at: {e}"))?;
+        Ok(row.and_then(|(t,)| t))
+    }
+
     /// Record that a sync attempt failed.
     ///
     /// `synced_at` is deliberately NOT cleared: it still says when the two sides

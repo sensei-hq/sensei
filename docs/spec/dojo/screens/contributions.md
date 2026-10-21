@@ -4,7 +4,7 @@
 
 - Route: `/you/contributions` = `(app)/you/[section]/+page.svelte` (`section === 'contributions'` branch) + `[section]/+page.ts`
 - Mockup: dojo2-app.jsx `ScrContributions` (L862) — board "1d · Contributions — shared upstream + approved for you"
-- Access axis: **user/membership-primary** — canonical `entity-access-model.md` §3 row 2: "Projects, contributions (`/you`) … Primary axis = User." What you shared (upstream) + what's approved for you (downstream), across ALL your dōjōs; keyed off the user, not one tenant.
+- Access axis: **user/membership-primary** — canonical `entity-access-model.md` §3 row 2: "Workspaces, contributions (`/you`) … Primary axis = User." What you shared (upstream) + what's approved for you (downstream), across ALL your dōjōs; keyed off the user, not one tenant.
 - Status: **STUB** — the screen (`ScrContributions.svelte` + `personal-view.tallyContributions`) is built and faithful, but the loader returns empty arrays + a zeroed stat. No `/v1` contributions endpoint feeds it.
 
 ## Elements → data (contract)

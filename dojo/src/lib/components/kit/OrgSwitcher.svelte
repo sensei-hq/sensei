@@ -31,8 +31,8 @@
 		onpick?.(slug);
 	}
 
-	// "All organizations" / "Create or join" both leave the switcher for the org
-	// index (/orgs) — the picker where a dōjō is browsed, joined, or created.
+	// "All organizations" leaves the switcher for the org index (/orgs). No dōjō is
+	// made by hand — it comes from a git integration (D11, D20).
 	function goOrgs() {
 		open = false;
 		goto('/orgs');
@@ -155,15 +155,6 @@
 				{/each}
 			</div>
 
-			<button
-				type="button"
-				role="menuitem"
-				onclick={goOrgs}
-				class="border-paper-edge text-ink-soft flex w-full cursor-pointer items-center gap-2 border-t bg-transparent text-left text-sm"
-				style="padding: 12px"
-			>
-				<span class="text-accent" aria-hidden="true">＋</span> Create or join a dōjō
-			</button>
 		</div>
 	{/if}
 </div>

@@ -1,5 +1,5 @@
 -- A person's daemon contributes an artifact, as them (#236 step 4,
--- docs/plan/2026-10-12-dojo-device-plane-as-person.md).
+-- docs/spec/dojo/access-matrix.md).
 --
 -- POST artifacts inserts one submission: into a tenant the caller is an active
 -- member of, attributed to the caller, awaiting triage. Publishing, approving and

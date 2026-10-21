@@ -14,6 +14,7 @@ import {
 	type DojoClient,
 	type NewMemberInput
 } from './admin-data';
+import { looksLikeEmail } from '../admin-view';
 
 export { AdminError };
 export type { DojoClient };
@@ -26,15 +27,13 @@ export interface NewInviteInput {
 	email: string;
 	role: string;
 	kind: string;
+	/** `member` makes a membership at `role`; `viewer` (#307 D8) makes the person a
+	 *  dōjō viewer — not a member — whom an admin then grants selected projects. */
+	access: InviteAccess;
 }
 
-/** A minimal, conservative email check — a single `@` with non-empty local and
- *  domain parts. The real proof-of-ownership is Supabase auth at accept time;
- *  this only rejects obvious garbage before issuing. */
-function looksLikeEmail(s: string): boolean {
-	const at = s.indexOf('@');
-	return at > 0 && at < s.length - 1 && !s.includes(' ');
-}
+export type InviteAccess = 'member' | 'viewer';
+const INVITE_ACCESS: readonly InviteAccess[] = ['member', 'viewer'];
 
 /** Validate a create-invite body into a {@link NewInviteInput}, or throw
  *  AdminError(400). `email` required + shaped; `role` a member_role (default
@@ -47,7 +46,11 @@ export function parseNewInvite(body: Record<string, unknown>): NewInviteInput {
 	if (!(MEMBERSHIP_KINDS as readonly string[]).includes(kind)) {
 		throw new AdminError(400, 'kind must be employer, client, community, or personal');
 	}
-	return { email, role, kind };
+	const access = body.access === undefined ? 'member' : body.access;
+	if (!(INVITE_ACCESS as readonly unknown[]).includes(access)) {
+		throw new AdminError(400, 'access must be member or viewer');
+	}
+	return { email, role, kind, access: access as InviteAccess };
 }
 
 /**
@@ -64,6 +67,7 @@ export async function createInvite(
 	nowMs: number
 ): Promise<{ id: string; token: string; email: string; role: string; expires_at: string }> {
 	const token = crypto.randomUUID();
+	const tokenHash = await hashInviteToken(token);
 	const expiresAt = new Date(nowMs + INVITE_TTL_MS).toISOString();
 	const { data, error } = await db
 		.from('invites')
@@ -72,12 +76,14 @@ export async function createInvite(
 			email: input.email,
 			role: input.role,
 			kind: input.kind,
-			token,
+			access: input.access,
+			// Only a hash of the bearer is stored (#311); the admin is handed the token.
+			token_hash: tokenHash,
 			invited_by: invitedBy,
 			expires_at: expiresAt
 		})
-		// Not `token`: no session reads an invite's token back (the read grant leaves
-		// it out, #236). The admin is handed the one minted above.
+		// Not `token_hash`: no session reads it back (the read grant leaves it out,
+		// #236). The admin is handed the token minted above.
 		.select('id, email, role, expires_at')
 		.single();
 	if (error) throw new AdminError(500, error.message);
@@ -91,6 +97,8 @@ interface InviteRow {
 	email: string;
 	role: string;
 	kind: string;
+	access: InviteAccess;
+	invited_by: string;
 	expires_at: string;
 	accepted_at: string | null;
 }
@@ -99,8 +107,8 @@ async function loadInvite(db: DojoClient, token: string): Promise<InviteRow> {
 	if (!token) throw new AdminError(400, 'token is required');
 	const { data, error } = await db
 		.from('invites')
-		.select('id, tenant_id, email, role, kind, expires_at, accepted_at')
-		.eq('token', token)
+		.select('id, tenant_id, email, role, kind, access, invited_by, expires_at, accepted_at')
+		.eq('token_hash', await hashInviteToken(token))
 		.maybeSingle();
 	if (error) throw new AdminError(500, error.message);
 	if (!data) throw new AdminError(404, 'invalid or expired invite');
@@ -116,7 +124,8 @@ async function loadInvite(db: DojoClient, token: string): Promise<InviteRow> {
  *  - the authenticated caller's email matches the invite (else 403 — the real
  *    authorization gate; a leaked token can't be redeemed by anyone else).
  * On success, provisions the membership at the invited role (reusing addMember)
- * and stamps `accepted_at` (single-use). Returns the tenant + role joined.
+ * — or, for a viewer invite (#307 D8), records a dōjō viewer, never a membership —
+ * and stamps `accepted_at` (single-use). Returns the tenant and what was joined.
  */
 export async function acceptInvite(
 	db: DojoClient,
@@ -124,7 +133,7 @@ export async function acceptInvite(
 	callerEmail: string | null,
 	token: string,
 	nowMs: number
-): Promise<{ tenant_id: string; role: string }> {
+): Promise<{ tenant_id: string; role: string | null; access: InviteAccess }> {
 	const invite = await loadInvite(db, token);
 	if (invite.accepted_at) throw new AdminError(409, 'invite already used');
 	if (Date.parse(invite.expires_at) < nowMs) throw new AdminError(410, 'invite expired');
@@ -133,20 +142,69 @@ export async function acceptInvite(
 	if (!callerEmail || callerEmail.trim().toLowerCase() !== invite.email.trim().toLowerCase()) {
 		throw new AdminError(403, 'this invite is for a different email');
 	}
-	// Provision the membership at the invited role (addMember guards a duplicate).
-	await addMember(db, invite.tenant_id, {
-		user_id: userId,
-		kind: invite.kind,
-		authenticated_via: 'sso',
-		// The DB stores a valid `dojo.member_role`; narrow the string to the union.
-		role: invite.role as NewMemberInput['role']
-	});
-	// Single-use: stamp accepted (guarded so a race can't re-stamp).
+	if (invite.access === 'viewer') {
+		// A viewer is in the dōjō but is not a member: no member surface, no
+		// repository — an admin grants them the view of selected projects.
+		const { error } = await db.rpc('add_dojo_viewer', {
+			p_tenant: invite.tenant_id,
+			p_principal: userId,
+			p_invited_by: invite.invited_by,
+			// The email they were invited at, and just proved by signing in — what
+			// names a viewer who has no forge identity (#307 D8).
+			p_email: invite.email.trim().toLowerCase()
+		});
+		if (error) throw new AdminError(500, error.message);
+	} else {
+		// Provision the membership at the invited role (addMember guards a duplicate).
+		await addMember(db, invite.tenant_id, {
+			user_id: userId,
+			kind: invite.kind,
+			authenticated_via: 'sso',
+			// The DB stores a valid `dojo.member_role`; narrow the string to the union.
+			role: invite.role as NewMemberInput['role']
+		});
+	}
+	// Single-use: stamp accepted (guarded so a race can't re-stamp), and drop the
+	// token's hash — an accepted invite needs no bearer (#311).
 	const { error } = await db
 		.from('invites')
-		.update({ accepted_at: new Date(nowMs).toISOString() })
+		.update({ accepted_at: new Date(nowMs).toISOString(), token_hash: null })
 		.eq('id', invite.id)
 		.is('accepted_at', null);
 	if (error) throw new AdminError(500, error.message);
-	return { tenant_id: invite.tenant_id, role: invite.role };
+	return invite.access === 'viewer'
+		? { tenant_id: invite.tenant_id, role: null, access: 'viewer' }
+		: { tenant_id: invite.tenant_id, role: invite.role, access: 'member' };
 }
+
+/** The hex SHA-256 of an invite token — what the row stores and the accept path
+ *  looks up (#311). The token itself is a bearer and is never stored. */
+export async function hashInviteToken(token: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Failed accepts allowed per person within the window before further attempts
+ *  are refused (#311). The token is unguessable; this bounds the guessing anyway. */
+export const ACCEPT_FAILURE_LIMIT = 10;
+const ACCEPT_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+
+/** How many more failed accepts the caller has in the current window (never
+ *  below 0). A failed count is an error — never a free pass. */
+export async function acceptAttemptsLeft(db: DojoClient, principalId: string, nowMs: number): Promise<number> {
+	const since = new Date(nowMs - ACCEPT_FAILURE_WINDOW_MS).toISOString();
+	const { count, error } = await db
+		.from('invite_accept_failures')
+		.select('principal_id', { count: 'exact', head: true })
+		.eq('principal_id', principalId)
+		.gte('failed_at', since);
+	if (error) throw new AdminError(500, error.message);
+	return Math.max(0, ACCEPT_FAILURE_LIMIT - (count ?? 0));
+}
+
+/** Record one failed accept by the caller (#311). */
+export async function recordAcceptFailure(db: DojoClient, principalId: string): Promise<void> {
+	const { error } = await db.from('invite_accept_failures').insert({ principal_id: principalId });
+	if (error) throw new AdminError(500, error.message);
+}
+

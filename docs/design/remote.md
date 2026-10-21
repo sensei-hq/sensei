@@ -7,7 +7,7 @@ type: design
 Behind-the-scenes design for the [Relay](../features/06-relay.md) away-from-keyboard
 surface. The feature doc says what the user sees (plan · execute · watch · decide);
 this says how the run engine, control channel, and (future) custom orchestrator work,
-and where the code lives. Full end-to-end spec: `docs/plan/relay-engine.md`.
+and where the code lives. Full end-to-end spec: `docs/history/plan/relay-engine.md`.
 
 ## Run engine (daemon-owned)
 
@@ -24,7 +24,7 @@ and where the code lives. Full end-to-end spec: `docs/plan/relay-engine.md`.
 - Limit parsing: `run_limits.rs` — recognizes Claude Code's CLI-text rate/weekly
   limit message (not a structured 429), computes `paused_until = reset + jitter`
   against local wall-clock. Gateway-routed calls normalize their own 429s
-  separately (`gateway-embedded`, per `docs/plan/relay-engine.md` §8).
+  separately (`gateway-embedded`, per `docs/history/plan/relay-engine.md` §8).
 - Watchdog: `run_watchdog.rs` is the pure escalation ladder
   (`running → stalled → recover (bounded) → crashed`); `tasks/watchdog_scheduler.rs`
   is the DB-writing caller. Heartbeat-ownership invariant: `advance_run`
@@ -35,7 +35,7 @@ and where the code lives. Full end-to-end spec: `docs/plan/relay-engine.md`.
 - Shipped: P3.2 (tick scaffolding + heartbeat/housekeeping), P3.3a/b (agent spawn
   + off-by-default drive), P3.4 (limit parse/pause), P3.6 (watchdog/crashed). All
   on `develop`, gated behind `SENSEI_RUN_DRIVE` — not yet enabled for a live pilot
-  (that's a P2-relay exit-criterion in `docs/plan/2026-07-20-phases-1-3-plan.md`).
+  (that's P3.2 in [`phases.md`](phases.md)).
 
 ## Control channel — hooks as the bridge
 
@@ -49,7 +49,7 @@ and where the code lives. Full end-to-end spec: `docs/plan/relay-engine.md`.
 - Wire contract: `crates/dojo-protocol/src/relay.rs` — `RelayRunStatus`,
   `RelayInboxItem` (payload = stripped prompt + rokkit form schema), enums kept
   in lock-step with the `dojo.*` DDL by `*_db_strings_match_ddl` tests.
-- The blocking `PreToolUse` hook is task **B** in `docs/plan/relay-engine.md`
+- The blocking `PreToolUse` hook is task **B** in `docs/history/plan/relay-engine.md`
   §5/§9 — bounded by the hook's own timeout (~60s), one tier below the P3
   owned-process model (indefinite gate hold, `RunDriver` owns stdin/stdout).
 - A queued **nudge** rides the same rails inverted (daemon stores it, next
@@ -84,8 +84,8 @@ and where the code lives. Full end-to-end spec: `docs/plan/relay-engine.md`.
 
 ## Future: custom orchestrator (Phase 6, design-stage — no code yet)
 
-- Not yet built; tracked as **P6** in `docs/plan/2026-07-20-phases-1-3-plan.md`
-  and `docs/plan/relay-engine.md` §7/§9 (P5 multi-assistant → P6 team relay is
+- Not yet built; tracked as the orchestrator after Phase 4 in [`phases.md`](phases.md)
+  and in `docs/history/plan/relay-engine.md` §7/§9 (P5 multi-assistant → P6 team relay is
   the *relay* track; the *orchestrator* is a separate, later replacement for
   manual `sensei:` playbook invocation — needs its own feature doc + story
   breakdown before build starts).

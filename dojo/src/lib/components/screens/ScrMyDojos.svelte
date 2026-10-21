@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Screen } from '@sensei/ui';
 	import { Button } from '@rokkit/ui';
-	import { SectionHead, Btn, ListSection, MyDojoRow, EmptyState } from '$lib/components/kit';
+	import { SectionHead, ListSection, MyDojoRow, EmptyState } from '$lib/components/kit';
 	import type { KitDojo } from '$lib/components/kit/types';
 	import { groupDojos } from '$lib/personal-view';
 
@@ -9,20 +9,19 @@
 	// employer → clients → communities (empty groups dropped). A dōjō is how a
 	// team shares what it learns; your role in each is derived from git and only
 	// ever adds capability — working solo needs none of them. Degrades to an
-	// honest empty state when you have no memberships (DJ1). Presentational: the
-	// page supplies the memberships (kit fixtures this chunk); `onOpen` bubbles a
-	// row open and `onCreateOrJoin` fires the create/join affordance.
+	// empty state when you have no memberships (DJ1). A dōjō is an organization's
+	// or a person's and arrives through GitHub or an invite — none is made by hand
+	// (#307 D11). Presentational: the page supplies the memberships; `onOpen`
+	// bubbles a row open.
 	let {
 		dojos = [],
 		onOpen,
-		onCreateOrJoin,
 		onSyncGithub,
 		syncing = false,
 		syncMessage = null
 	}: {
 		dojos?: KitDojo[];
 		onOpen?: (dojo: KitDojo) => void;
-		onCreateOrJoin?: () => void;
 		/** Re-read the memberships from GitHub; offered only when given. */
 		onSyncGithub?: () => void;
 		/** A sync is in flight. */
@@ -60,7 +59,6 @@
 								{syncing ? 'Syncing…' : 'Sync from GitHub'}
 							</Button>
 						{/if}
-						<Btn size="sm" icon="add-circle" onclick={onCreateOrJoin}>Create or join</Btn>
 					</div>
 				{/snippet}
 			</SectionHead>
@@ -76,12 +74,9 @@
 				</ListSection>
 			{/each}
 		{:else}
-			<EmptyState kanji="空" title="No memberships yet — create or join a Dōjō.">
-				You can work entirely solo — your rules and projects stay on your machine. Join a dōjō when a
-				team wants to share what it learns.
-				{#snippet action()}
-					<Btn size="sm" icon="add-circle" onclick={onCreateOrJoin}>Create or join a dōjō</Btn>
-				{/snippet}
+			<EmptyState kanji="空" title="No dōjōs yet.">
+				A dōjō comes from your GitHub organizations, or an invite — each organization you belong to has
+				one, and you have a personal one. Sync from GitHub to set them up. Working solo needs none of them.
 			</EmptyState>
 		{/if}
 	</div>

@@ -40,7 +40,7 @@ describe('org home loader — the needs band', () => {
 	});
 
 	it('below maintainer the band is not theirs: nothing is asked, nothing shown', async () => {
-		const data = await run('developer');
+		const data = await run('contributor');
 		expect(listTriage).not.toHaveBeenCalled();
 		expect(data.needs).toEqual([]);
 	});

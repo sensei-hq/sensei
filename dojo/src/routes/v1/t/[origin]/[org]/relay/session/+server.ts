@@ -1,7 +1,7 @@
 // GET/POST /v1/t/{origin}/{org}/relay/session — a run's filtered status snapshot.
 // POST = the daemon publishing status (as the person — #236 step 4; upsert by
 // run_id); GET = the
-// phone/console reading it (Supabase-JWT plane). See docs/plan/relay-engine.md §6.
+// phone/console reading it (Supabase-JWT plane). See docs/history/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { asOwner } from '$lib/server/relay-owner';
@@ -9,7 +9,7 @@ import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantCaller, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
 import { resolveProjectNamespaceId, openOrRefreshSeat } from '$lib/server/billing-data';
-import { attachRunToProject, fileRunUnderProject } from '$lib/server/projects-data';
+import { attachRunToWorkspace, fileRunUnderWorkspace } from '$lib/server/workspaces-data';
 
 const COLS =
 	'id, run_id, title, goal, status, progress_done, progress_total, current_phase, current_feature, last_event_at, paused_until, pause_reason, heartbeat_at, started_at, completed_at';
@@ -24,7 +24,7 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const runId = str(body.run_id);
 		if (!runId) return apiError(400, 'run_id is required');
-		// The run and its project are the person's; the seat is billing's (system).
+		// The run and its workspace are the person's; the seat is billing's (system).
 		const db = callerDb(caller);
 		const status = str(body.status) ?? 'running';
 		const title = str(body.title) ?? '';
@@ -106,18 +106,18 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 			if (platform?.context?.waitUntil) platform.context.waitUntil(seatWork);
 		}
 
-		// The run's project (#299). A run is a person's sessions IN a project — it
-		// never creates one. It attaches to the shared project the sync filed in
+		// The run's workspace (#299, D12). A run is a person's sessions IN a workspace —
+		// it never creates one. It attaches to the shared workspace the sync filed in
 		// this dōjō (recording the run time and the daemon-resolved constitution),
 		// then files the session under it (#252) so its team sees THAT it runs.
-		// No such project yet → the session stays under none. Best-effort and
+		// No such workspace yet → the session stays under none. Best-effort and
 		// fail-open, like the seat: this must never break relay federation.
-		const project = body.project as Record<string, unknown> | null | undefined;
-		if (project && str(project.slug)) {
-			const projWork = attachRunToProject(db, caller.tenantId, str(project.slug) as string, project.constitution)
-				.then((projectId) => (projectId ? fileRunUnderProject(db, data.id as string, projectId) : undefined))
+		const workspace = body.workspace as Record<string, unknown> | null | undefined;
+		if (workspace && str(workspace.slug)) {
+			const workspaceWork = attachRunToWorkspace(db, caller.tenantId, str(workspace.slug) as string, workspace.constitution)
+				.then((workspaceId) => (workspaceId ? fileRunUnderWorkspace(db, data.id as string, workspaceId) : undefined))
 				.catch(() => {});
-			if (platform?.context?.waitUntil) platform.context.waitUntil(projWork);
+			if (platform?.context?.waitUntil) platform.context.waitUntil(workspaceWork);
 		}
 
 		return Response.json({ id: data.id });

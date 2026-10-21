@@ -135,5 +135,4 @@ new rokkit component. This screen ships on what exists today.
 
 ## Related
 
-- [Observatory Diagrams gap analysis](../../history/analysis/2026-09-30-observatory-diagrams-gap-analysis.md)
 - rokkit#165 — drill-down events, which this screen will adopt when it lands

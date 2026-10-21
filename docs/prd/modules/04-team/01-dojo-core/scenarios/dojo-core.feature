@@ -97,9 +97,9 @@ Feature: Dōjō Core — membership, routing, federation and governance resoluti
     Then it fails closed (routes nowhere)
 
   # pinned: employer_bound_project_ignores_a_client_membership_elsewhere
-  Scenario: an employer-bound project ignores a client membership elsewhere
-    Given a project bound to an employer Dōjō, and the user has a client membership for another repo
-    When the binding is inferred for the employer-bound project
+  Scenario: an employer-bound workspace ignores a client membership elsewhere
+    Given a workspace bound to an employer Dōjō, and the user has a client membership for another repo
+    When the binding is inferred for the employer-bound workspace
     Then it ignores the client membership
 
   # pinned: client_and_employer_never_both_receive_client_work
@@ -140,7 +140,7 @@ Feature: Dōjō Core — membership, routing, federation and governance resoluti
 
   # pinned: absolute_paths_all_forms_stripped
   Scenario: absolute paths in all forms are stripped
-    Given absolute paths (/home/user/project, C:\Users\project, etc.)
+    Given absolute paths (/home/user/project, C:\Users\workspace, etc.)
     When the anonymizer runs
     Then all absolute path forms are stripped
 
@@ -151,8 +151,8 @@ Feature: Dōjō Core — membership, routing, federation and governance resoluti
     Then they are all stripped
 
   # pinned: client_and_person_and_project_are_stripped
-  Scenario: client, person, and project identifiers are stripped
-    Given text with client names, person names, project names
+  Scenario: client, person, and workspace identifiers are stripped
+    Given text with client names, person names, workspace names
     When the anonymizer runs
     Then they are stripped
 

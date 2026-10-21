@@ -376,11 +376,13 @@ struct IngestOutcome {
     turns: u32,
     /// Project to (re)analyze because a historical session was synthesized (#75).
     analyze_project: Option<uuid::Uuid>,
+    /// The client session whose turns were written, when any were.
+    session_id: Option<String>,
 }
 
 impl IngestOutcome {
     fn skipped() -> Self {
-        Self { skipped: true, turns: 0, analyze_project: None }
+        Self { skipped: true, turns: 0, analyze_project: None, session_id: None }
     }
 }
 
@@ -537,7 +539,8 @@ async fn ingest_one(
     //    a re-run backfills columns added after the session was first captured.
     //    Idempotent; a miss leaves the column untouched (never a fabricated value).
     set_session_metadata(pg, &session_id, &parsed).await;
-    Ok(IngestOutcome { skipped: false, turns, analyze_project })
+    let session_id = (turns > 0).then(|| session_id.clone());
+    Ok(IngestOutcome { skipped: false, turns, analyze_project, session_id })
 }
 
 /// Persist a session's inference model + token usage from the already-parsed
@@ -887,6 +890,13 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // FTR/churn/correction signals (#75). AnalyzeProject is idempotent + incremental.
     if let Some(project_id) = outcome.analyze_project {
         ctx.queue.enqueue(Task::new(TaskKind::AnalyzeProject, "", &project_id.to_string())).await;
+    }
+    // New turns may name a ticket the tracker hasn't synced yet (tracker spec R11).
+    // A failure here costs only latency: the next full sync links it.
+    if let Some(sid) = &outcome.session_id
+        && let Err(e) = crate::tracker::discover::after_ingest(ctx.pg(), &ctx.queue, sid).await
+    {
+        tracing::warn!("ingest: could not queue tracker discovery: {e}");
     }
     Ok(outcome.turns)
 }

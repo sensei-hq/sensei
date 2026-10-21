@@ -7,8 +7,7 @@
 // Scope vocabulary + precedence come from `sensei.scopes` (key · level 0→70, higher =
 // more specific): general·user·organization·client·technology·team·project·repository.
 // Ladder glyphs match the kit (社 Company · 客 Client · 己 Personal · 件 Project · 技
-// Stack) and section groups (社 Company · 組 Teams · 技 Stacks). See
-// docs/blueprints/2026-07-27-dojo-w1-wiring-slice-pattern.md.
+// Stack) and section groups (社 Company · 組 Teams · 技 Stacks).
 
 import type {
 	KitLadderRung,

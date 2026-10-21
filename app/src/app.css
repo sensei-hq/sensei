@@ -39,8 +39,8 @@
 /*
  * Hardcoded background fallback for the Tauri webview.
  *
- * `tauri.conf.json` has `transparent: true` (+ window_vibrancy on macOS),
- * so the window paints nothing on its own. The body MUST always have an
+ * On macOS the main window is transparent (+ window_vibrancy, see
+ * `src-tauri/src/lib.rs`), so the window paints nothing on its own. The body MUST always have an
  * opaque background or the desktop wallpaper shows through and the page
  * appears blank.
  *

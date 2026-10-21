@@ -133,7 +133,7 @@ export function blockedSummary(gates: RelayGate[]): {
  * Deep-link for a gate's row — the run detail route, or null when the run id is
  * missing / the all-zeros uuid (no orphan link). The detail page has no per-gate
  * anchor yet, so this points at the run; add a `#…` fragment here if `[run_id]`
- * grows one. Mirrors RelayGateCard's runHref.
+ * grows one.
  */
 export function gateHref(gate: RelayGate): string | null {
 	return gate.run_id && gate.run_id !== ZERO_UUID ? `/you/runs/${gate.run_id}` : null;

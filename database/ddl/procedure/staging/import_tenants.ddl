@@ -24,7 +24,7 @@ set search_path to staging, dojo, extensions;
 create or replace procedure import_tenants()
 language plpgsql as $$
 begin
-  insert into dojo.tenants (id, key, origin, slug, dojo, scope, name, dojo_url, self_hosted, updated_at)
+  insert into dojo.tenants (id, key, origin, slug, dojo, scope, name, dojo_url, updated_at)
   select
       stg.id::uuid
     , stg.key
@@ -34,7 +34,6 @@ begin
     , coalesce(stg.scope, 'private')::dojo.tenant_scope
     , stg.name
     , stg.dojo_url
-    , coalesce(stg.self_hosted, false)
     , coalesce(stg.modified_at, now())
   from staging.tenants stg
   where stg.key is not null
@@ -46,7 +45,6 @@ begin
     , scope       = excluded.scope
     , name        = excluded.name
     , dojo_url    = excluded.dojo_url
-    , self_hosted = excluded.self_hosted
     , updated_at  = excluded.updated_at
   where excluded.updated_at >= dojo.tenants.updated_at;
 end;

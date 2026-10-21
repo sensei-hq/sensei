@@ -101,4 +101,22 @@ describe('project sessions screen', () => {
     expect(container.querySelector('[data-testid="session-list"], [data-testid="chart-body"], [data-testid="mini-numbers"]')).toBeNull();
     expect(container.querySelector('[data-testid="range-chips"]')).not.toBeNull();
   });
+
+  // #293: one Sessions screen with the Observatory; a project's totals line
+  // names no project count.
+  it('totals this project without an "across N projects" split', () => {
+    const data = $state({
+      project: { name: 'alpha' },
+      projectId: 'proj-alpha',
+      sessions: [row({ id: 'a1' }), row({ id: 'a2' })],
+      range: '7d' as const,
+      error: null as string | null,
+    });
+    const { container, destroy } = mountComponent(Page, { data } as never);
+    cleanup.push(destroy);
+    const totals = container.querySelector('[data-testid="quality-tally"]')?.parentElement?.textContent ?? '';
+    expect(totals).toMatch(/2\s+sessions\s+·\s+median/);
+    expect(totals).not.toContain('across');
+    expect(container.querySelector('[data-testid="project-sessions"]')).not.toBeNull();
+  });
 });

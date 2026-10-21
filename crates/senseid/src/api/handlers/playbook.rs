@@ -61,7 +61,7 @@ pub(crate) async fn recommend_playbook(
             };
             // Bounded inputs to the heuristic fallback — see `heuristic_axes` doc comment
             // for why `has_existing_code`/`blast` stay simple params here rather than a
-            // full code-graph-derived blast-radius (deferred; docs/plan/2026-07-19-frontdoor-intake-design.md §"risk").
+            // full code-graph-derived blast-radius (deferred; docs/features/front-door/brief.md, the `risk` axis).
             let has_existing_code = body["has_existing_code"].as_bool().unwrap_or(true);
             let blast = body["blast"].as_i64().unwrap_or(0);
             let cls = classify_chunk(&state, chunk, has_existing_code, blast).await;
@@ -196,8 +196,8 @@ pub(crate) async fn recommend_playbook(
 /// Deterministic fallback — also the classifier when the gateway is unavailable.
 ///
 /// `has_existing_code` and `blast` are deliberately simple bounded inputs (not a
-/// full code-graph-derived blast-radius — see docs/plan/2026-07-19-frontdoor-intake-design.md
-/// §"risk" for the deferred fuller derivation via callers/community reach).
+/// full code-graph-derived blast-radius — see docs/features/front-door/brief.md
+/// (the `risk` axis) for the deferred fuller derivation via callers/community reach).
 pub(crate) fn heuristic_axes(text: &str, has_existing_code: bool, blast: i64) -> Axes {
     let t = text.to_lowercase();
     let lifecycle = if has_existing_code { Lifecycle::Stable } else { Lifecycle::Greenfield };

@@ -7,6 +7,11 @@ status: agreed — decisions folded 2026-10-13
 
 # Docs reorg — step 1 proposal (agreed)
 
+> **Note (2026-10-21):** most of the files this doc moves into `docs/history/`
+> were later deleted at the user's request and live in git history
+> (`git log --diff-filter=D --name-only -- docs/history`); see
+> [`history/README.md`](history/README.md) for the few that remain.
+
 > **Agreed 2026-10-13.** The structure below is signed off and the open
 > questions are answered (§16). No PRD or roadmap documents have been written
 > yet — execution is phased (§13): Phase 1 scaffolds the tree, then module
@@ -641,7 +646,7 @@ register above is the closed list of SVGs — nothing else gets hand-drawn.
 
 ### 8.2 Naming conventions for the new tree
 
-- Module folders: `prd/modules/<kebab-name>/` (e.g. `code-graph`, `governance`, `dojo-project-planning`).
+- Module folders: `prd/modules/<kebab-name>/` (e.g. `code-graph`, `governance`, `dojo-workspace-planning`).
 - Roadmap files: one per plane (`01-foundation.md`, `02-insight.md`, `03-delivery.md`, `04-team.md`, `05-platform.md`).
 - Diagrams: `prd/assets/diagrams/dNN-<slug>.svg`.
 - History: `history/<origin>/<original-name>` — keep the original filename so `git log --follow` and external links survive.

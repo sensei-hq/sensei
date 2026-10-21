@@ -3,9 +3,9 @@
 Distribution (P1), website (P2), harness/CI (P3). Status legend:
 [`README.md`](README.md).
 
-> Per-module statuses are filled in Phase 3 from the legacy coverage map
-> (`../history/features/coverage-map.md`) and the plan gap analysis
-> (`../history/plan/`). Structure is final.
+> Per-module statuses are filled in Phase 3 from the legacy coverage map and the
+> plan gap analysis (both deleted on 2026-10-21; they live in git history).
+> Structure is final.
 
 | ID | Module | One-line "done" | Status |
 |---|---|---|---|
@@ -28,5 +28,5 @@ Full register: [`06-gaps.md`](06-gaps.md).
 
 P1's three-target design is written before the implementation distributes across
 macOS / Linux / Windows (decision 7, reorg §10.3). P2 is written after the
-roadmap statuses so its claims trace to evidence. P3's e2e suite has known reds
-(T-3) that block green-main claims.
+roadmap statuses so its claims trace to evidence. P3's e2e reds were triaged and
+baselined in #134 (closed 2026-10-18); a green-main claim still rests on that baseline.

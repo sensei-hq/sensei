@@ -40,6 +40,15 @@ describe('openProjectWindow', () => {
     expect(label.slice('project-'.length)).not.toContain('-');
   });
 
+  it('opens an opaque window with the overlay titlebar', async () => {
+    await openProjectWindow('abc-def-1234', 'My Project');
+    const opts = (MockWebviewWindow as any).mock.calls[0][1];
+    // A transparent window leaves the Linux GTK menu bar see-through.
+    expect(opts.transparent).toBeFalsy();
+    expect(opts.titleBarStyle).toBe('overlay');
+    expect(opts.hiddenTitle).toBe(true);
+  });
+
   it('sets focus on existing window instead of opening a new one', async () => {
     const fakeWin = { setFocus: mockSetFocus, once: mockOnce };
     (MockWebviewWindow as any).getByLabel = vi.fn().mockResolvedValue(fakeWin);

@@ -19,8 +19,8 @@ none of it. This states how a table, a column, an index and a foreign key become
 graph facts, where the source is dbd's `SchemaModel` v2 or an ORM layer, and what
 is deliberately not attempted yet.
 
-The measurements behind it are in
-[`docs/analysis/2026-09-27-entity-graph-feasibility.md`](../../history/analysis/2026-09-27-entity-graph-feasibility.md).
+The measurements behind it came from an entity-graph feasibility analysis
+(deleted 2026-10-21; it lives in git history).
 
 ## The one rule this rests on
 

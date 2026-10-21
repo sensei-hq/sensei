@@ -1,15 +1,10 @@
 set search_path to dojo, extensions;
 
--- A group within a tenant. ACCESS is granted here, not at the tenant.
---
--- A company runs several teams on different projects, so "everyone in the org
--- can see every repository's numbers" is exactly what this level exists to
--- prevent. Tenant membership is billing and identity; team membership is access.
---
--- Every tenant gets a DEFAULT team containing everyone on creation, so a small
--- org never encounters the concept — the schema is here from the start (adding
--- it later would be an access migration, which is the kind that goes wrong
--- quietly), while the management UI arrives when it is wanted.
+-- A named group of a dōjō's members (#307 D7): for "by team" reports and for
+-- granting the workspace viewer to many people at once. A team grants NO access —
+-- repository roles do (D5); this superseded the 2026-10-12 design in which team
+-- membership was the access path. Written through dojo.create_team / rename_team /
+-- delete_team (admins).
 create table if not exists teams (
   id          uuid        primary key default gen_random_uuid()
 , tenant_id   uuid        not null references dojo.tenants(id) on delete cascade
@@ -23,14 +18,8 @@ create unique index if not exists teams_one_default_per_tenant
     on teams(tenant_id) where is_default;
 
 comment on table teams is
-'A group within a tenant, and the level at which repository access is granted.
-Every tenant has exactly one default team so the concept can be ignored until an
-admin needs it.';
+'A named group of a dōjō''s members, for reports and bulk viewer grants (#307 D7).
+Grants no access — repository roles do (D5). RLS in policies/dojo/teams.sql.';
 
-alter table teams enable row level security;
-drop policy if exists teams_service_only on teams;
-create policy teams_service_only on teams
-    for all to authenticated, anon
-    using (false) with check (false);
 comment on column teams.is_default
-     is 'The auto-created catch-all. Exactly one per tenant, enforced below: two defaults would make "who is in the fallback team" ambiguous.';
+     is 'Reserved for a catch-all team; at most one per tenant. Unused since teams carry no access (#307 D7).';

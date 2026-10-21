@@ -15,7 +15,7 @@ Early on it says *"Still listening…"* and offers **no action at all**; once th
 enough signal it switches to a mature mood. The user feels this as *one thing today,
 with its receipt* — not a dashboard to maintain.
 
-> **Status honesty.** Today, the projects index, insights, sessions, memories and
+> **Status honesty.** Today, the workspaces index, insights, sessions, memories and
 > logs are real. Two surfaces are **mock-only / roadmap**: **Consolidation**
 > (`/consolidation`) and **Insights Reasoning** (`/insights/{id}/reasoning`) — neither
 > has a route in `routes.rs`. And the doc-declared `sensei.ftr_daily` table is absent
@@ -26,9 +26,9 @@ with its receipt* — not a dashboard to maintain.
 ## In scope / out of scope
 
 - In: **Today** (`/`) — one hero koan + ≤3 supporting insights + the adopted lane +
-  FTR chip/trend + ≤5 recent sessions, with the early/mature mood switch; **Projects**
-  (`/projects`) — the index of projects with health, filter chips
-  (All/Active/Dormant/Archived), grid/list toggle, search, open → project window;
+  FTR chip/trend + ≤5 recent sessions, with the early/mature mood switch; **Workspaces**
+  (`/projects`) — the index of workspaces with health, filter chips
+  (All/Active/Dormant/Archived), grid/list toggle, search, open → workspace window;
   **Insights** (`/insights`) — tri-column Now/Soon/Settled server bucketing with
   one-decision-one-default triage; **Memories** (`/memories`) — human curation of the
   memory pool (What/Why/How/Where anatomy + a 7-day usage strip + the promotion
@@ -41,8 +41,8 @@ with its receipt* — not a dashboard to maintain.
   (`/insights/{id}/reasoning`) — routes are not in `routes.rs`; roadmap/mockup only
   (see gaps). Any knowledge-base browsing UX — Insights is action-first, not a KB.
   The **Diagrams sub-tree** (`structure`, `layers`, `cycles`, `neighbourhood`, `schema`,
-  `world`) is **part of Atlas (M17)**, not Observatory — they share the same core graph
-  API and data invariants. The deep project window (M16), Atlas (M17), Instruments (M18)
+  `world`) is **part of the Code map (M17)**, not Observatory — they share the same core graph
+  API and data invariants. The deep workspace window (M16), Code map (M17), Instruments (M18)
   and Impact (M19) are peer surfaces with their own specs.
 
 ## Surfaces
@@ -51,7 +51,7 @@ with its receipt* — not a dashboard to maintain.
   `/tool-usage` · `/tool-signals` · `/tool-insights` · `/model-effectiveness`.
 - **API — Insights** — `GET /api/insights`; Apply → `POST
   /api/projects/{project_id}/recommendations/{rec_id}/accept`; Dismiss → `…/reject`.
-- **API — Projects** — `GET /api/projects` (index) · `/{id}/ftr` · `/quality-signals`
+- **API — Workspaces** — `GET /api/projects` (index) · `/{id}/ftr` · `/quality-signals`
   · `/maturity` · `/ftr-daily` · `/teachings` · `/hotspots`.
 - **API — Sessions** — `GET /api/sessions` · `/{id}` · `/{id}/tool-timeline` ·
   `/{id}/replay`.
@@ -62,13 +62,13 @@ with its receipt* — not a dashboard to maintain.
   `GET|POST /api/dojo/memberships`; `GET /api/dojo/sync-state`; `GET /api/upgrades`
   (+ `/apply`, `/mute`, `/pin`); `GET|POST /api/logs`; `GET /api/tasks/scheduled` +
   `PATCH /api/tasks/scheduled/{id}`.
-- **App** — `app/src/routes/(observatory)/{today,projects,insights,sessions,memories,
+- **App** — `app/src/routes/(observatory)/{today,workspaces,insights,sessions,memories,
   logs,dojo,upgrades}/+page.svelte`.
 
 ## Data invariants
 
 - **Lead.** Maturity is a daemon decision, reused. `dataMaturity = maturity_signal(
-  watched, has_insights, MATURITY_TARGET)` aggregated across active projects;
+  watched, has_insights, MATURITY_TARGET)` aggregated across active workspaces;
   `mature ⇔ watched ≥ target AND has_insights`; never a UI heuristic or a hardcoded
   count (`crates/senseid/src/maturity.rs`).
 - **Lead.** Early is a feature, not an empty state. With insufficient signal the
@@ -97,8 +97,8 @@ with its receipt* — not a dashboard to maintain.
 | Adopted lane (≤5) | what sensei did on the user's behalf | `Canvas smoothing pattern → rule · lumen-studio` |
 | FTR chip | 14-day rolling first-turn resolution | `78%, up 6 pts` |
 | Triage stats | Now · Soon · Settled counts | `{now} · {soon} · {settled}` |
-| Project status dot | warning if `warn`; success if `!warn && ftr14d ≥ 0.8`; else ink-mute | `warning` |
-| Session row | time · project · duration · corrections · ftr · outcome | `09:14 · sensei · 42m · 0 corrections · ✓ FTR · completed` |
+| Workspace status dot | warning if `warn`; success if `!warn && ftr14d ≥ 0.8`; else ink-mute | `warning` |
+| Session row | time · workspace · duration · corrections · ftr · outcome | `09:14 · sensei · 42m · 0 corrections · ✓ FTR · completed` |
 
 ## Done gate
 
@@ -158,7 +158,7 @@ curl -s http://localhost:7744/api/insights | jq '{now: (.now|length), soon: (.so
 
 - [features/03-observatory.md](../../../../features/03-observatory.md) — the UX half
   (legacy depth; stays live — spans Delivery and Team).
-- [spec/screen/observatory-*](../../../../spec/screen/) — today, projects, sessions,
+- [spec/screen/observatory-*](../../../../spec/screen/) — today, workspaces, sessions,
   insights, memories, collective, dojo-connections, upgrades, logs, consolidation;
   plus `insights-reasoning.md`.
 - [spec/pipeline/insights](../../../../spec/pipeline/insights.md) — narration-cache and

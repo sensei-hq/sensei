@@ -5,7 +5,7 @@ import { listTriage } from '$lib/triage-data';
 import { toKitNeeds } from '$lib/triage-map';
 import { rankOf, K2_ROLE_RANK } from '$lib/nav';
 import type { KitNeed } from '$lib/components/kit/types';
-import { listProjects, DojoApiError } from '$lib/client-data';
+import { listWorkspaces, DojoApiError } from '$lib/client-data';
 import { toKitProjects } from '$lib/projects-map';
 import type { KitProject } from '$lib/components/kit/types';
 
@@ -29,7 +29,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	let projects: KitProject[] = [];
 	let projectsError: string | null = null;
 	try {
-		projects = toKitProjects(await listProjects(org.url, { fetch, accessToken }));
+		projects = toKitProjects(await listWorkspaces(org.url, { fetch, accessToken }));
 	} catch (e) {
 		projectsError = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
 	}

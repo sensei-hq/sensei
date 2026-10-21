@@ -6,7 +6,9 @@ version: '0.5'
 processes:
   daemon:
     description: senseid daemon on :7744 (debug build)
-    command: cargo run -p senseid
+    # The checkout's own DDL, not the published release's: a branch's schema
+    # changes deploy on start, and the boot upgrade never reverts them.
+    command: SENSEI_DDL_DIR="$PWD/database" cargo run -p senseid
     readiness_probe:
       http_get:
         host: 127.0.0.1

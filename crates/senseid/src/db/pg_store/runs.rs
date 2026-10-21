@@ -545,26 +545,4 @@ impl PgStore {
             .map_err(|e| e.to_string())?;
         Ok(row.map(|(slug,)| slug))
     }
-
-    /// The run's project as `(slug, name)` for the dōjō `dojo.projects` display row:
-    /// the project-scope namespace slug (as [`run_project_slug`]) plus the project's
-    /// display name (`sensei.projects.name`). Both are the user's own project
-    /// metadata, federated as-is. `None` when the run has no bound project namespace.
-    pub async fn run_project_info(
-        &self,
-        run_id: &uuid::Uuid,
-    ) -> Result<Option<(String, String)>, String> {
-        let sql = format!(
-            "SELECT n.slug, p.name FROM activity.runs r \
-               JOIN sensei.projects p ON p.id = r.project_id {} \
-              WHERE r.id = $1 LIMIT 1",
-            super::PROJECT_NAMESPACE_JOIN
-        );
-        let row: Option<(String, String)> = sqlx_core::query_as::query_as(&sql)
-            .bind(run_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(row)
-    }
 }

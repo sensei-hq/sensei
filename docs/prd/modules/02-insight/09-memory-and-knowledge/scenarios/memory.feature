@@ -69,8 +69,8 @@ Feature: Memory & Knowledge — formation, scoping, lifecycle, retrieval
     Then only the matching memories are returned
 
   # pinned: assemble_context_blends_three_scopes
-  Scenario: retrieval blends project, user and org scopes with the tighter one winning
-    Given memories at project, user and org scope
+  Scenario: retrieval blends workspace, user and org scopes with the tighter one winning
+    Given memories at workspace, user and org scope
     When the session context is assembled
     Then each scope contributes
     And the tighter scope wins on a signature conflict
@@ -101,9 +101,9 @@ Feature: Memory & Knowledge — formation, scoping, lifecycle, retrieval
     And violations are not treated as skips
 
   # pinned: project_learned_convention_scopes_to_its_own_project_not_general
-  Scenario: a project-scoped memory never leaks to another project
-    Given a learned convention in one project
-    When another project's context is assembled
+  Scenario: a workspace-scoped memory never leaks to another workspace
+    Given a learned convention in one workspace
+    When another workspace's context is assembled
     Then the convention is absent
 
   # pinned: save_memory_rejects_a_secret_and_does_not_leak_it
@@ -120,10 +120,10 @@ Feature: Memory & Knowledge — formation, scoping, lifecycle, retrieval
     Then the lifecycle completes end to end
 
   # pinned: promote_memory_prefers_project_over_cwd_folder
-  Scenario: an explicit promotion resolves to the project scope
+  Scenario: an explicit promotion resolves to the workspace scope
     Given a promotion request from a session
     When it is routed
-    Then the project scope is preferred over the working folder
+    Then the workspace scope is preferred over the working folder
 
   # pinned: signature_is_order_independent_and_stable
   Scenario: consolidation merges by a stable, order-independent signature

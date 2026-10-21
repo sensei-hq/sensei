@@ -8,8 +8,8 @@
 - Status: **PARTIAL** — the two-panel master-detail is built and reads REAL `/v1` relay data, but (a) it filters ONE tenant not user-wide (canon violation), (b) the list rail has no plan-pips / repo / realtime, (c) the ask card is the old `RelayGateCard`, not the mockup `AskCard`.
 
 > **Do not duplicate — align + fill gaps.** Two pending plans already own most of this screen:
-> `docs/plan/2026-07-27-dojo-inbox-mockup-fidelity.md` (element→data for the EXISTING single-tenant
-> flow, no model change) and `docs/design/2026-07-27-dojo-relay-rls-membership-function.md`
+> `docs/history/plan/2026-07-27-dojo-inbox-mockup-fidelity.md` (element→data for the EXISTING single-tenant
+> flow, no model change) and `docs/history/design/2026-07-27-dojo-relay-rls-membership-function.md`
 > (the membership-derived RLS + user-wide read that makes it canon-correct). This spec references
 > both, does not restate their tables, and adds only what they leave open (access-axis correction,
 > AskCard fidelity, gate↔task linkage, conversation/pause/observatory, list-rail realtime).
@@ -26,7 +26,7 @@ Live: `(inbox)/+layout.ts` → `guardTenantScope(tenantKey…)` → `listRuns(tk
 | `{n} need you` (right) | `needTotal` | `Σ row.needs` from `listGates` (non-chat/nudge kinds) | have | via list refresh |
 | filter subtabs | `K2_FILTERS` needs/running/done/all | `FILTERS` (needs/running/**finished**/all) + `filterInbox()` | have | — |
 | row status dot | tone by state | `relay_sessions.status` → `inboxStatus()` | have | via realtime (G4) |
-| row **repo** (top-left) | `lumen-auth` | run's project — **NOT persisted in dōjō** (`relay_sessions` has no project col; daemon sends `project_slug`, POST discards it). See fidelity-plan §4. | plumb | — |
+| row **repo** (top-left) | `lumen-auth` | run's workspace — **NOT persisted in dōjō** (`relay_sessions` has no workspace col; daemon sends `project_slug`, POST discards it). See fidelity-plan §4. | plumb | — |
 | row age (top-right) | `2m` | `relay_sessions.last_event_at` → `age()` | have | via realtime |
 | row title (2-line) | task title | `goal ?? title` (`toKitRun`); fidelity-plan A4: kill `project: current_feature ?? title` dup | bind | — |
 | row why-line | `3 need you` / `no heartbeat` | gates count / `status==stalled` (`attention`) | have | via realtime |
@@ -113,7 +113,7 @@ type Ask = { id; kind; glyph; label; blocking; prompt; context?; options: string
 **Components** (pure, semantic, own styles + `md:` — fidelity verified per component)
 - `RelayList` — left rail: `SectionHead` + filter tabs + `RelayCard[]` from `relayInboxState.shown`;
   `onselect → state.select`. (replaces `ScrInbox` wrapper)
-- `RelayCard` — one `RelaySession`: dot · project · age · 2-line title · why-line ·
+- `RelayCard` — one `RelaySession`: dot · workspace · age · 2-line title · why-line ·
   `PlanPips(session.plan)` · done/total; `selected` style. **Mockup-match + `md:` live here.**
   (replaces `InboxRow`/`K2InboxRow`)
 - `RunDetail` — right panel: header (session id · meta · status) · progress · `SubTabs` ·
@@ -144,7 +144,7 @@ inbox strings live in `messages/en.json`, e.g. `m.inbox_title()` "Inbox", `m.inb
 1. **Access axis (canon-blocking)** — list reads one tenant (`listRuns(tenantKey)`); canon says user-wide across ALL memberships. Fix per RLS design: `owns_membership(membership_id)` RLS + Worker read stops hard-filtering `tenant_id` for the personal surface. Also drops `relay_sessions.user_id` (re-ownership bug).
 2. **Ask card fidelity** — restyle `RelayGateCard` → mockup `AskCard` (fidelity-plan B8): kanji header, numbered-options-into-input, free-text + Send-answer, "run holds until you answer". Add wire-kind→glyph map (4 mockup kinds vs 5 wire kinds).
 3. **List-rail plan-pips** — inbox load must batch `getSegments(runId)` per run → `segmentsToPlan` → `PlanPips` (fidelity-plan A6). Title-dedup (A4).
-4. **Repo / project name** — persist `project_slug` (daemon already sends it) as one nullable col on `relay_sessions`; return in GET; map to `KitRun.project` (fidelity-plan §4). Feeds row A2 + meta B4.
+4. **Repo / workspace name** — persist `project_slug` (daemon already sends it) as one nullable col on `relay_sessions`; return in GET; map to `KitRun.project` (fidelity-plan §4). Feeds row A2 + meta B4.
 5. **Selected-task detail block** in the Plan tab (fidelity-plan B9). Model into meta (B4).
 6. **Gate↔task linkage** — render "holds {task} →" from `relay_inbox.segment_id`; wire cross-tab `onShowInPlan`.
 7. **List-rail realtime** — subscribe the rail so runs stream in (currently only the open detail refreshes).
@@ -152,7 +152,7 @@ inbox strings live in `messages/en.json`, e.g. `m.inbox_title()` "Inbox", `m.inb
 
 ## Open questions (for Dev)
 1. Ship the canon access-axis correction (user-wide read + drop `user_id`, per the RLS design) as part of this screen, or land mockup-fidelity first (single-tenant) and refactor after? The fidelity plan explicitly scopes NO model change; the RLS design is the model change. [JT] Yes and the tenant_id as well as per our discussion
-2. Repo/project name — persist `project_slug` on `relay_sessions` now (one nullable col), or leave the row/meta repo-less until a project registry exists? (Confidentiality note: `project_slug` crossing the boundary must obey universal source-dereference, §5 — is the slug already dereferenced on the daemon publish path?) [JT] project name is fine, projects are user + tenant scoped so the RLS restriction should prevent corss tenant or use projects from appearing.
+2. Repo/project name — persist `project_slug` on `relay_sessions` now (one nullable col), or leave the row/meta repo-less until a workspace registry exists? (Confidentiality note: `project_slug` crossing the boundary must obey universal source-dereference, §5 — is the slug already dereferenced on the daemon publish path?) [JT] workspace name is fine, workspaces are user + tenant scoped so the RLS restriction should prevent corss tenant or use workspaces from appearing.
 3. The 4 mockup ask kinds (approval/choice/recovery/clarification) vs 5 wire kinds (approval/decision/chat/nudge/stall) — confirm the glyph/label mapping (esp. stall→recovery 阻, nudge→? ). [JT] Use suitable solar icons instead of kanji. Users are used to simple icons. mockup ask kinds are more readable. I would suggest [approve|choose|resume|chat] stalled is state -> resume is action. Did i use verbs? consistency is key. Status and action are going to be different. 
 4. Conversation tab: is human→sensei chat in scope for this screen (wire `sendNudge`), or does it stay the honest-empty placeholder until a chat channel is federated? [jT] Dojo is primarily a away from keys interface. So simple text box, one line response is what `chat` indicates. It is a short clarification or reframing of the response when choices are unclear or user wants to provide a different direction. We could use rokkit schema based forms for the bulleted options and optional freeform answer. so instead of writing 1,2, 3 in response user can select an option and behind the scenes the response is sent.
 5. "Open in Observatory" — deep-link into the desktop app, or drop the button on web? [jt] deep link.

@@ -1,26 +1,26 @@
 Feature: Analyzer — the incremental scheduler tick and enrichment contract
 
   # pinned: projects_due_picks_new_then_only_advanced
-  Scenario: the scheduler picks only projects with genuinely new sessions
-    Given a warm daemon with several indexed projects
-    And some projects have sessions newer than the persisted watermark
+  Scenario: the scheduler picks only workspaces with genuinely new sessions
+    Given a warm daemon with several indexed workspaces
+    And some workspaces have sessions newer than the persisted watermark
     And others have none
     When the analyzer tick runs
-    Then only the projects with new sessions are due
-    And the unchanged projects are not re-analyzed
+    Then only the workspaces with new sessions are due
+    And the unchanged workspaces are not re-analyzed
 
   # pinned: due_project_enqueues_analyze_and_doc_drift
-  Scenario: a due project enqueues its analysis work
-    Given a project that is due
+  Scenario: a due workspace enqueues its analysis work
+    Given a workspace that is due
     When the tick resolves it
     Then an AnalyzeProject task is enqueued
     And a doc-drift scan is enqueued for it
 
   # pinned: watermark_survives_serialize_roundtrip
   Scenario: the watermark survives a daemon restart
-    Given a persisted per-project watermark
+    Given a persisted per-workspace watermark
     When the daemon restarts and the watermark is restored
-    Then only projects newer than the restored watermark are due
+    Then only workspaces newer than the restored watermark are due
 
   # pinned: deserialize_watermark_tolerates_garbage
   Scenario: a corrupted watermark entry is dropped, not fatal
@@ -32,7 +32,7 @@ Feature: Analyzer — the incremental scheduler tick and enrichment contract
   Scenario: the daily full refresh fires only on an elapsed interval
     Given the last full refresh is older than the interval
     When the tick evaluates
-    Then a full refresh is due for every project
+    Then a full refresh is due for every workspace
 
   # pinned: global_passes_classify_before_aggregate_tool_insights
   Scenario: global passes classify before aggregate tool insights run
@@ -103,11 +103,11 @@ Feature: Analyzer — the incremental scheduler tick and enrichment contract
   Scenario: a model-preference insight surfaces a clear winner
     Given two models with enough qualifying sessions
     When model insight is derived
-    Then a clear-winner recommendation is emitted for the project
+    Then a clear-winner recommendation is emitted for the workspace
 
   # gap: M7
-  Scenario: the low-signal chip notes thin projects instead of guessing
-    Given a project whose sessions are sparse
+  Scenario: the low-signal chip notes thin workspaces instead of guessing
+    Given a workspace whose sessions are sparse
     When the insight surface renders
     Then a low-signal note is shown with the real session count
     And no fabricated "low FTR" is implied

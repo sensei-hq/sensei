@@ -1,11 +1,11 @@
 // Unit tests for the org Projects wire→kit mapper (`projects-map.ts`).
 import { describe, expect, it } from 'vitest';
 import { toKitProject, toKitProjects } from './projects-map';
-import type { ProjectRow } from './client-data';
+import type { WorkspaceRow } from './client-data';
 
 const NOW = new Date('2026-07-30T00:00:00Z');
 
-function row(over: Partial<ProjectRow> = {}): ProjectRow {
+function row(over: Partial<WorkspaceRow> = {}): WorkspaceRow {
 	return {
 		id: 'p1',
 		tenant_id: 't1',

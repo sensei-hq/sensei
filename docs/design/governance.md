@@ -80,7 +80,7 @@ scope level desc → mandatory-lock → dedup, cached 5 min
 
 - Auth plane: `dojo/src/lib/server/dojo-auth.ts` (`resolveTenantAccess`,
   role/access-floor logic) — Supabase JWT → `dojo.memberships.user_id` → role →
-  access floor (`member < contributor < lead < maintainer < admin`). *This is
+  access floor (`contributor < maintainer < lead < admin`). *This is
   the Worker port of the removed `dojo-mind` Rust auth plane.*
 - Membership types (employer · client · community · personal) bind a project
   to exactly one dōjō; a finding routes only there; client takes precedence —

@@ -4,7 +4,7 @@
 > set and (via M20) the planner/baseline work.
 > **Sources:** `mockups/Sensei/lib/dojo2/dojo2-project.jsx` (Integrations · Targets ·
 > Sprints tabs), `mockups/Sensei/lib/relay/relay-planner.jsx` (plan · gates ·
-> decisions), `reorg.md` §9.1–9.5, `prd/modules/04-team/03-dojo-project-planning/`,
+> decisions), `reorg.md` §9.1–9.5, `prd/modules/04-team/03-dojo-workspace-planning/`,
 > `prd/modules/03-delivery/20-planner-and-baseline/`.
 > **Companion:** [`project-management-detailed-requirements.md`](project-management-detailed-requirements.md)
 > (the M16 window this table sits behind).
@@ -13,6 +13,30 @@ This document fleshes out the **tracker integration** and **gating** requirement
 to the depth the mockup implies but the current T3 spec does not yet carry. It
 also records three places where T3's spec **contradicts its own design source**
 (§6) — those need a decision before the spec can be called complete.
+
+---
+
+## 0 · Resolution (user, 2026-10-21)
+
+These settle the open questions below and override §5 where they differ.
+
+- **External integrations are read-only; we pull.** Trackers (Jira, Azure Boards,
+  GitHub Issues) and CI (GitHub Actions, Azure Pipelines) are read, never written —
+  §2.6 and the §6.2 decision stand, and there is no export action.
+- **The dōjō owns them.** A connection is made once per project **in the dōjō**,
+  which holds the credential and mirrors the tickets, sprints and pipeline runs;
+  sensei reads the mirror. Connecting from sensei writes the connection to the dōjō.
+  The §5 tables and API therefore live in the **dōjō** (`dojo.*`, `/v1/t/{tenant}/…`),
+  not in `sensei.*` / `/api/…` as first proposed.
+- **Sensei ⇄ dōjō is two-way sync.** Projects, teams, roles and connections may be
+  created or changed on either side and arrive on the other; the dōjō is the
+  authority on conflict, and sensei says when a local change lost.
+- **Releases and DORA** are specified in T5
+  ([`prd/modules/04-team/05-releases-and-dora/`](../prd/modules/04-team/05-releases-and-dora/README.md)):
+  deployments from CI with git tags as the fallback, production incidents, the five
+  keys, and **release gates** — the §3 targets evaluated over a release's change set.
+
+Plan: [`roadmap/09-dojo-expansion.md`](../roadmap/09-dojo-expansion.md) · epic #307.
 
 ---
 
@@ -289,7 +313,7 @@ gating model — no separate gate semantics.
 
 ---
 
-## 5 · Data model & API shape (proposed)
+## 5 · Data model & API shape (proposed — moves to the dōjō, see §0)
 
 > **Nothing here is built.** `sensei.runs` / `sensei.run_events` exist; plan,
 > baseline, target and tracker tables do not (C-1, T-1).
@@ -331,7 +355,7 @@ GET   /api/projects/{id}/sessions/unlinked
 
 > **Resolved 2026-10-14** — decided in [`decisions.md`](../decisions.md)
 > (“T3 tracker & gating reconciliation”) and folded into
-> [`prd/modules/04-team/03-dojo-project-planning/`](../prd/modules/04-team/03-dojo-project-planning/README.md).
+> [`prd/modules/04-team/03-dojo-workspace-planning/`](../prd/modules/04-team/03-dojo-workspace-planning/README.md).
 > The findings are kept below as the record of what was wrong.
 
 ### 6.1 The seven targets don't match, and FTR is gated
@@ -447,8 +471,8 @@ carries):
 
 - [`project-management-detailed-requirements.md`](project-management-detailed-requirements.md) — the M16 window; its Integrations tab is this doc's §2.
 - [`diagrams-zoom-pan-detail-requirements.md`](diagrams-zoom-pan-detail-requirements.md) — the diagram surfaces the scorecard's trends sit beside.
-- [`../prd/modules/04-team/03-dojo-project-planning/README.md`](../prd/modules/04-team/03-dojo-project-planning/README.md) — the T3 spec this feeds.
+- [`../prd/modules/04-team/03-dojo-workspace-planning/README.md`](../prd/modules/04-team/03-dojo-workspace-planning/README.md) — the T3 spec this feeds.
 - [`../prd/modules/03-delivery/20-planner-and-baseline/README.md`](../prd/modules/03-delivery/20-planner-and-baseline/README.md) — `PlanGraph`, baseline, ratchet (C-1).
-- [`../prd/modules/03-delivery/16-project-window/README.md`](../prd/modules/03-delivery/16-project-window/README.md) — the Tasks tab (unbuilt).
+- [`../prd/modules/03-delivery/16-workspace-window/README.md`](../prd/modules/03-delivery/16-workspace-window/README.md) — the Tasks tab (unbuilt).
 - [`../reorg.md`](../reorg.md) §9 — the canonical gate/improvement + ratchet design.
 - [`../mockups/Sensei/lib/dojo2/dojo2-project.jsx`](../mockups/Sensei/lib/dojo2/dojo2-project.jsx) · [`relay-planner.jsx`](../mockups/Sensei/lib/relay/relay-planner.jsx) — visual source (never edited).

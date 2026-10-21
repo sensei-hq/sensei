@@ -1,5 +1,5 @@
 -- Registering a repository as the signed-in person (#236 step 3; access matrix
--- "Projects and repositories": a member registers, the daemon reports).
+-- "Workspaces and repositories": a member registers, the daemon reports).
 --
 -- dojo.register_repository maps a repository to the ONE tenant of the caller's
 -- that its forge org is connected to, and files it there. It reads every

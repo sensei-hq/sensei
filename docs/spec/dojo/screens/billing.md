@@ -16,7 +16,7 @@
 | Current-plan card · plan | `b.plan` | as above (`dojo.billing_accounts.plan`) | have/plumb | no |
 | Current-plan card · renews | `b.renews` | `shortDate(billing_accounts.period_end)` when set, else fixture `'Aug 1'` | have/plumb | no |
 | Current-plan card · $/seat | `b.perSeat` | **FIXTURE** (`fixtures.ts billing.perSeat`; no pricing-catalog table) | plumb | no |
-| Billable seats · count | `b.seatsActive` | `res.usage.seats_used` — **LIVE**: `server/billing-data.ts summarizeSeatUsage(loadActiveSeatRows)` = unique users with an active `dojo.seats` row on a **private** `sensei.namespaces` project (deduped) | have | no |
+| Billable seats · count | `b.seatsActive` | `res.usage.seats_used` — **LIVE**: `server/billing-data.ts summarizeSeatUsage(loadActiveSeatRows)` = unique users with an active `dojo.seats` row on a **private** `sensei.namespaces` workspace (deduped) | have | no |
 | Billable seats · read-only sub | `b.seatsReadonly` | **FIXTURE** | plumb | no |
 | This-month card · total | `monthly = seatsActive × perSeat` | `billing-view.ts monthlyTotal` — live seats × **fixture** perSeat (half-real; "updated live" label is load-time, not push) | have/plumb | no |
 | Tier cards (Free/Team/Enterprise) | `b.tiers[]` | **FIXTURE** (`KitBillingTier[]`; kanji/price/lines/current/dark). No pricing-catalog source | plumb | no |
@@ -28,7 +28,7 @@
 - **Loader:** `dojo/src/routes/(app)/org/[slug]/[section]/+page.ts`, `guardedFor('billing', billingFor(slug), getBilling, res => toKitBilling(billingFor(slug), res))`. The fixture (`billingFor` = the illustrative catalog) is the base; the live GET overlays only `seatsActive` (+ plan/renews when an account exists). Degrades to the pure fixture + `billingError` on failure.
 - **Read route:** `dojo/src/routes/v1/t/[origin]/[org]/billing/+server.ts` (GET, ADMIN) → `server/billing-data.ts`: `summarizeSeatUsage(loadActiveSeatRows(tenantId))` + `getBillingAccount(tenantId)`. Returns `{ account, usage }`.
   - `loadActiveSeatRows` — `dojo.seats` (active, `ended_at IS NULL`) × `sensei.namespaces` (visibility/name/slug), cross-schema two-query join; only `visibility='private'` seats count; orphan seats dropped.
-  - `usage.billable_users[]` — the per-user private-project breakdown (the defensible count) is returned but **not surfaced** on the screen.
+  - `usage.billable_users[]` — the per-user private-workspace breakdown (the defensible count) is returned but **not surfaced** on the screen.
 - **Recompute route:** same `billing/+server.ts` POST → `refreshSeatsUsed` upserts `dojo.billing_accounts.seats_used` + `seats_computed_at`. Not called from this screen.
 - **Client:** `admin-data.ts getBilling` (types `BillingResponse`/`BillingAccount`/`BillingUsage`). **Mapper:** `billing-map.ts`. **View helpers:** `billing-view.ts` (`monthlyTotal`, `relayTone`, `tierCtaLabel`).
 
@@ -43,7 +43,7 @@
 1. **Pricing is fixture.** `perSeat`, `tiers`, `relayRows` have no table — the whole revenue surface except the seat count is illustrative. A pricing catalog (or hardcoded product config) + a payment provider is D-BILLING follow-on.
 2. **Invoices are fixture** — no invoice table, no Stripe/provider. The list is decorative until billing is wired.
 3. **`monthlyTotal` mixes live × fixture** — the dollar figure is not authoritative (live seats, fixture rate). Flag as illustrative until `perSeat` is real.
-4. **Seat breakdown unused** — `usage.billable_users[]` (who consumes each seat + which private projects) is the defensible detail; the mockup has no drill-down. Consider surfacing it (per the admin console's "count is defensible" intent).
+4. **Seat breakdown unused** — `usage.billable_users[]` (who consumes each seat + which private workspaces) is the defensible detail; the mockup has no drill-down. Consider surfacing it (per the admin console's "count is defensible" intent).
 5. **Recompute not exposed** — the POST recompute path exists but no UI triggers it; seat count is whatever the GET computes at load (already live, so low priority).
 
 ## Open questions (for Dev)
@@ -68,7 +68,7 @@ type BillingTier = { id: string; kanji: string; price: string; lines: string[]; 
 type RelayRow = { label: string; free: string; paid: string }
 type Invoice = { id: string; date: string; amount: string; status: string }
 ```
-`seats.active` + `billableUsers` are the **real, defensible** parts (live `dojo.seats × sensei.namespaces` private-project count). `perSeat`, `tiers`, `relayRows`, `invoices` are `null`/empty-tolerant on purpose — no pricing catalog + no payment provider, so Load returns the illustrative fixture and the UI flags it rather than fabricating authoritative revenue.
+`seats.active` + `billableUsers` are the **real, defensible** parts (live `dojo.seats × sensei.namespaces` private-workspace count). `perSeat`, `tiers`, `relayRows`, `invoices` are `null`/empty-tolerant on purpose — no pricing catalog + no payment provider, so Load returns the illustrative fixture and the UI flags it rather than fabricating authoritative revenue.
 
 **State** — `billing-state.svelte.ts` → `billingState`
 - data: `billing: Billing | null`
@@ -77,7 +77,7 @@ type Invoice = { id: string; date: string; amount: string; status: string }
 
 **Load** — `billing.ts` → `loadBilling(tenantKey, slug)`
 - mock-first: the fixture catalog (tiers / relay / invoices / perSeat) + mock `SeatUsage` — matches the illustrative `ScrBilling`
-- real (later, body-swap only): existing ADMIN GET `…/billing` (see APIs above) → `summarizeSeatUsage(loadActiveSeatRows)` (unique users on active private-project seats) + `getBillingAccount` (`dojo.billing_accounts.plan`/`period_end`) overlaying live `seats.active` + plan/renews onto the fixture. `perSeat`/`tiers`/`relayRows`/`invoices` stay fixture until a **pricing catalog** + **payment provider** exist (WS-3). Recompute POST already exists.
+- real (later, body-swap only): existing ADMIN GET `…/billing` (see APIs above) → `summarizeSeatUsage(loadActiveSeatRows)` (unique users on active private-workspace seats) + `getBillingAccount` (`dojo.billing_accounts.plan`/`period_end`) overlaying live `seats.active` + plan/renews onto the fixture. `perSeat`/`tiers`/`relayRows`/`invoices` stay fixture until a **pricing catalog** + **payment provider** exist (WS-3). Recompute POST already exists.
 
 **Components** (pure, semantic, own styles + `md:` — no `K2*`)
 - `BillingConsole` shell — 3-col grids collapsing to 1-col (`md:`)

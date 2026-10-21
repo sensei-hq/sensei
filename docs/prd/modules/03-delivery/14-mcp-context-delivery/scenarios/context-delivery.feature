@@ -2,7 +2,7 @@ Feature: MCP & Context Delivery — pack assembly, scopes and the token budget
 
   # pinned: assemble_context_blends_three_scopes
   Scenario: context assembles from three scopes
-    Given memories at global, stack and project scope
+    Given memories at global, stack and workspace scope
     When the context is assembled
     Then all three scopes are blended
 
@@ -19,14 +19,14 @@ Feature: MCP & Context Delivery — pack assembly, scopes and the token budget
     Then the hint leads the bundle
 
   # pinned: mcp_proxy_knowledge_context_and_rules_resolve_by_project_name
-  Scenario: context and rules resolve by project name
-    Given a project name rather than an id
+  Scenario: context and rules resolve by workspace name
+    Given a workspace name rather than an id
     When context and rules are requested
-    Then both resolve by the project name
+    Then both resolve by the workspace name
 
   # pinned: scoped_search_includes_child_folders
   Scenario: a scoped search includes child folders
-    Given a project with child folders
+    Given a workspace with child folders
     When a scoped search runs
     Then results include the child folders
 

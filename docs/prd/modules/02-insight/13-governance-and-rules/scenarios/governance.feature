@@ -26,7 +26,7 @@ Feature: Governance & Rules — resolution, personal file, promotion, enforcemen
 
   # pinned: render_empty_ruleset_has_placeholder_not_sections
   Scenario: an empty ruleset renders a placeholder, not empty sections
-    Given a project with no rules
+    Given a workspace with no rules
     When its ruleset is rendered
     Then a placeholder is shown rather than blank sections
 
@@ -73,7 +73,7 @@ Feature: Governance & Rules — resolution, personal file, promotion, enforcemen
   Scenario: rules resolve per repository through the MCP surface
     Given a repository name and its rules
     When get_rules is called through the proxy
-    Then the rules resolve for that project
+    Then the rules resolve for that workspace
 
   # pinned: accept_as_rule_materializes_a_memory_and_records_provenance
   Scenario: a promoted memory becomes a rule with provenance

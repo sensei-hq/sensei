@@ -20,7 +20,7 @@ a repo the team has history on" (persona 2).
   resolvers with dependency-aware order and fallback remedies; hardware-tier detection and
   model provisioning for the tier; the probing / remediating / all-green splash states; the
   Re-check entry in the Observatory; Tauri sidecar bootstrap in app-only mode.
-- Out: folder and project scanning (M3); the free-navigation preferences surface (M2); the
+- Out: folder and workspace scanning (M3); the free-navigation preferences surface (M2); the
   first-run scan screen (M2); dojo auto-discover (M3).
 
 ## Surfaces

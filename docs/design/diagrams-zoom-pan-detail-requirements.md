@@ -261,7 +261,7 @@ interface DiagramPrefs {
 ## Related Documents
 
 - `docs/design/transcript-adapter-pattern.md` — adapter pattern (not directly related)
-- `docs/prd/modules/03-delivery/17-atlas/README.md` — Atlas module spec
+- `docs/prd/modules/03-delivery/17-code-map/README.md` — Code map module spec
 - `docs/prd/modules/01-foundation/04-code-graph/README.md` — Indexer spec
 - `docs/roadmap/06-gaps.md` — G-1 (L0/L1/L2), F-4 (resolution)
 - `app/node_modules/@rokkit/graph/dist/*` — rokkit Graph implementation reference
