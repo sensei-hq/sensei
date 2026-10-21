@@ -19,7 +19,12 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** check run 39676172084; then #307 R2b (page URLs and words) — read roadmap/09 R2b first.
+**Next command:** land #307 R2b (an agent is renaming the dōjō UI in a worktree — review its diff, run `bun run check` + `bun run test`, then fast-forward develop). Confirm placement floor run 39676172084. Then R3a (D30: schema too).
+**R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
+extension_projects; 19 `project_id`-style columns (activity, history, inference, sensei) + staging.memories.project_name;
+17 views (project_metric_*, project_*); fn sole_project_of; enums project_maturity + 'project' in entity_scope,
+memory_scope, sync_entity; task kinds analyze_project / compute_project_metrics / compile_projects. Keep: dbd.* (dbd's
+word); extension_scope 'project' if it is Claude Code's scope (check).
 
 **Open questions:**
 - Client scope as a governance level: retire it (recommended)?
