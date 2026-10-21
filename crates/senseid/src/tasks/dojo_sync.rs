@@ -101,6 +101,63 @@ fn needs_forge_capture(denied: &[crate::dojo_client::user_plane::DeniedRepo]) ->
     denied.iter().any(|d| CAPTURE_FIXES.contains(&d.reason.as_str()))
 }
 
+/// How often the dōjō re-mirrors a member's repository roles from their forge
+/// token (#307 A2d). Sign-in mirrors too; this keeps a permission change on the
+/// forge from waiting for the next sign-in.
+const ROLE_MIRROR_EVERY: chrono::TimeDelta = chrono::TimeDelta::hours(6);
+
+/// The `sensei.sync_entity` value the forge mirror is recorded against, keyed on
+/// the persona's keychain slot.
+const MIRROR_ENTITY: &str = "forge_mirror";
+
+/// Whether the forge mirror is due: never attempted, or last ATTEMPTED at least
+/// [`ROLE_MIRROR_EVERY`] ago. Keyed on the attempt, not the success, so a mirror
+/// that keeps failing waits its interval instead of re-reading the forge every
+/// cycle. Pure.
+fn role_mirror_due(
+    last_attempt: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    last_attempt.is_none_or(|t| now - t >= ROLE_MIRROR_EVERY)
+}
+
+/// Ask the dōjō to re-mirror this member's repository roles when it is due, and
+/// record the outcome — the dōjō's own reason when it could not. Best-effort: it
+/// never fails the cycle, but it is never silent either.
+async fn refresh_role_mirror(pg: &PgStore, persona: &str, token: &str, plane: &dyn UserPlane) {
+    let mark = SyncMark { entity: MIRROR_ENTITY, key: persona, direction: "pull" };
+    let last = match pg.sync_attempted_at(&mark).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(persona, error = %e, "dojo_sync: could not read when roles were last mirrored");
+            return;
+        }
+    };
+    if !role_mirror_due(last, chrono::Utc::now()) {
+        return;
+    }
+    let outcome = match forge_token_for(persona).await {
+        Ok(provider) => plane
+            .provision(token, &provider)
+            .await
+            .and_then(|o| crate::dojo_client::user_plane::mirror_verdict(&o)),
+        Err(e) => Err(format!("no forge token to mirror roles with: {e}")),
+    };
+    let recorded = match outcome {
+        Ok((tenants, repositories)) => {
+            tracing::info!(persona, tenants, repositories, "dojo_sync: mirrored repository roles");
+            pg.mark_synced(&mark, None).await
+        }
+        Err(e) => {
+            tracing::warn!(persona, error = %e, "dojo_sync: repository roles not mirrored");
+            pg.mark_sync_error(&mark, &e).await
+        }
+    };
+    if let Err(e) = recorded {
+        tracing::warn!(persona, error = %e, "dojo_sync: could not record the role mirror");
+    }
+}
+
 /// The `sensei.sync_entity` value a whole-cycle plan fetch is recorded against.
 /// Keyed on the persona's KEYCHAIN SLOT (`personas.session_slot`), so two personas'
 /// failures stay distinguishable — never the label, which a sign-in rewrites.
@@ -313,6 +370,9 @@ async fn plan_persona(
     if let Err(e) = join_memberships(pg, persona, token, plane, &dojo_url()).await {
         tracing::warn!(persona, error = %e, "dojo_sync: joining memberships skipped");
     }
+
+    // #307 A2d: keep the member's repository roles current with the forge.
+    refresh_role_mirror(pg, persona, token, plane).await;
 
     // THE OFFER SET (§8a, finding B1): every locally-scanned repository with a
     // `repo_key` — what the user CLONED — and NOT gate 1's subset.
@@ -1022,6 +1082,16 @@ async fn recapture_and_replan(
 mod tests {
     use super::*;
 
+    // #307 A2d: the forge mirror refreshes on a cadence, not only at sign-in.
+    #[test]
+    fn the_role_mirror_is_due_when_never_run_or_older_than_its_interval() {
+        let now = chrono::Utc::now();
+        assert!(role_mirror_due(None, now), "never mirrored");
+        assert!(!role_mirror_due(Some(now - chrono::Duration::hours(5)), now));
+        assert!(role_mirror_due(Some(now - chrono::Duration::hours(7)), now));
+        assert!(role_mirror_due(Some(now - ROLE_MIRROR_EVERY), now), "due exactly at the interval");
+    }
+
     /// #283: a Keychain that would not answer is said as itself — the dōjō
     /// was never asked, so "dōjō unreachable" would send the user the wrong way.
     #[test]
@@ -1246,6 +1316,7 @@ mod tests {
                     synced: true,
                     reason: None,
                     visibility: Some(VisibilityCounts { captured: 1, ..Default::default() }),
+                    roles: None,
                 }),
             }
         }

@@ -563,6 +563,33 @@ pub struct ProvisionOutcome {
     /// Present only when the forge was genuinely read.
     #[serde(default)]
     pub visibility: Option<VisibilityCounts>,
+    /// The per-person forge mirror (#307 A2c): what it recorded, or why it could
+    /// not. Absent from a dōjō that does not mirror — see [`mirror_verdict`].
+    #[serde(default)]
+    pub roles: Option<RoleMirror>,
+}
+
+/// What the dōjō's per-person forge mirror did in one provision pass.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RoleMirror {
+    #[serde(default)]
+    pub tenants: Option<u32>,
+    #[serde(default)]
+    pub repositories: Option<u32>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// Whether the pass mirrored the member's repository roles: `(dōjōs, repositories)`,
+/// or the dōjō's own reason it could not. A pass that reports no mirror at all is
+/// an error too — "nothing said" is never read as "done".
+pub fn mirror_verdict(out: &ProvisionOutcome) -> Result<(u32, u32), String> {
+    match &out.roles {
+        Some(RoleMirror { error: Some(e), .. }) => Err(e.clone()),
+        Some(RoleMirror { tenants: Some(t), repositories: Some(r), .. }) => Ok((*t, *r)),
+        Some(_) => Err("the dōjō reported an incomplete role mirror".to_string()),
+        None => Err("the dōjō did not report a role mirror".to_string()),
+    }
 }
 
 /// Read the provisioning result, and treat "I could not do it" as a failure.
@@ -868,6 +895,29 @@ mod tests {
         let out = provision_verdict(&body.to_string()).expect("a synced pass is Ok");
         let v = out.visibility.expect("counts present when the forge was read");
         assert_eq!((v.captured, v.failed, v.deferred), (3, 2, 40));
+    }
+
+    // #307 A2c/A2d: the provision pass also mirrors the member's repository roles;
+    // its result is the dōjō's report, decoded as given.
+    #[test]
+    fn the_role_mirror_result_is_read_from_the_pass() {
+        let body = serde_json::json!({ "synced": true, "tenants": [],
+            "roles": { "tenants": 4, "repositories": 200 } });
+        let out = provision_verdict(&body.to_string()).expect("ok");
+        assert_eq!(mirror_verdict(&out), Ok((4, 200)));
+    }
+
+    #[test]
+    fn a_failed_or_unreported_mirror_is_an_error_not_a_success() {
+        let failed = serde_json::json!({ "synced": true, "tenants": [],
+            "roles": { "error": "GitHub read failed (502)" } });
+        let out = provision_verdict(&failed.to_string()).expect("the pass itself is ok");
+        assert_eq!(mirror_verdict(&out), Err("GitHub read failed (502)".to_string()));
+
+        // An older dōjō that does not mirror reports nothing — never read as done.
+        let silent = serde_json::json!({ "synced": true, "tenants": [] });
+        let out = provision_verdict(&silent.to_string()).expect("ok");
+        assert!(mirror_verdict(&out).unwrap_err().contains("did not report"));
     }
 
     #[test]
