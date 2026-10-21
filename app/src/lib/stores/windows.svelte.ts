@@ -45,14 +45,15 @@ export async function openProjectWindow(projectId: string, projectName: string):
       height: 820,
       minWidth: 900,
       minHeight: 600,
-      // Match the main window's chrome (tauri.conf.json): a transparent overlay
-      // titlebar with the macOS traffic lights floating top-left and no OS title
-      // text. `hiddenTitle` + `titleBarStyle: 'overlay'` require decorations to
-      // stay on — `decorations: false` (the old value) can't render the overlay
+      // Match the main window's chrome (tauri.conf.json): an overlay titlebar
+      // with the macOS traffic lights floating top-left and no OS title text.
+      // `hiddenTitle` + `titleBarStyle: 'overlay'` require decorations to stay
+      // on — `decorations: false` (the old value) can't render the overlay
       // titlebar, which left the traffic lights overlapping the content.
+      // Not `transparent`: only the main window gets vibrancy, and on Linux a
+      // transparent window leaves the GTK menu bar see-through.
       titleBarStyle: 'overlay',
       hiddenTitle: true,
-      transparent: true,
     });
   } catch (err) {
     openWindowsState.delete(projectId);
