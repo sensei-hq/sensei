@@ -15,13 +15,13 @@
 - #299 S3 done on develop (99cddc18): the relay payload names a project by slug + constitution only.
 - #302 done on develop (17302c40), debug daemon installed: one keychain item per identity. Needs one approval
   (two prompts this once) → verify `credentials.jerrythomas` present, old items gone; then close.
-- #293 step 1: instruments, project memories, consolidation, project impact, settings/*, metric detail done
-  (c290f38e … e749b380); next the two sessions pages → one. Step 2 after. #304: 26 writes still swallow failures (fix per screen).
+- #293 step 1 done for the app (c290f38e … bae2126f, 7 screens; sessions now one screen). Next: dōjō step 1 —
+  `you/[section]`, `org/[slug]/[section]`, `runs/[run_id]`. Step 2 after. #304: 26 writes still swallow failures (fix per screen).
 - #294, #297, #298.
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** after `sensei auth approve`: check the keychain migration (#302) and the sync (#301/#299); then #293 step 1 (sessions pages next).
+**Next command:** after `sensei auth approve`: check the keychain migration (#302) and the sync (#301/#299); then #293 step 1 in the dōjō (`you/[section]` first).
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
