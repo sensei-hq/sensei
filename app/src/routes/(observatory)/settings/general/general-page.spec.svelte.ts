@@ -2,6 +2,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mountComponent } from '$lib/test-mount.js';
 import Page from './+page.svelte';
+import { load } from './+page';
+
+const loaded = async () => (await (load as unknown as () => Promise<unknown>)()) as never;
 import { STORAGE_KEYS } from '$lib/storage-keys.js';
 
 // The page auto-saves its toggles from an $effect. Saving goes through
@@ -25,9 +28,10 @@ describe('Settings → General', () => {
         return new Response(JSON.stringify({}), { status: 200 });
       }),
     );
-    destroy = mountComponent(Page, {}).destroy;
+    destroy = mountComponent(Page, { data: await loaded() }).destroy;
     await new Promise((r) => setTimeout(r, 200));
-    expect(puts.length).toBeLessThanOrEqual(1);
+    // Nothing changed, so nothing is saved — the read is not written back.
+    expect(puts.length).toBe(0);
   });
 
   it('saves the system user name as the display name when none is set', async () => {
@@ -44,7 +48,7 @@ describe('Settings → General', () => {
         return new Response(JSON.stringify({}), { status: 200 });
       }),
     );
-    const m = mountComponent(Page, {});
+    const m = mountComponent(Page, { data: await loaded() });
     destroy = m.destroy;
     await new Promise((r) => setTimeout(r, 200));
     const field = m.container.querySelector('[data-testid="pref-display-name"]') as HTMLInputElement;

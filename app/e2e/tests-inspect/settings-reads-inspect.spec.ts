@@ -1,6 +1,6 @@
 /**
  * #288 against the REAL daemon: the Settings pages that read the daemon show
- * its answers — General's form, the installed extensions, the inference role
+ * its answers — General's form, the detected assistants, the installed extensions, the inference role
  * assignments — with no error state. Read from the DOM: the sign-in overlay
  * (#283) is modal while it is up. Run: `bun run test:inspect -- settings-reads`.
  */
@@ -19,6 +19,11 @@ test('settings pages show the daemon reads', async ({ tauriPage }) => {
   await expect.poll(() => tauriPage.evaluate(present('[data-testid="settings-general"]')), { timeout: 30_000 }).toBe(true);
   const general = (await tauriPage.evaluate(errors)) as number;
 
+  const detected: unknown[] = await (await fetch(`${DAEMON_URL}/api/assistants/detect`)).json();
+  await navigateTo(tauriPage, '/settings/assistants');
+  await expect.poll(() => tauriPage.evaluate(`document.querySelectorAll('[data-testid="settings-assistants"] .assistant-row').length`), { timeout: 30_000 }).toBe(detected.length);
+  const asst = (await tauriPage.evaluate(errors)) as number;
+
   await navigateTo(tauriPage, '/settings/extensions');
   await expect.poll(() => tauriPage.evaluate(`document.querySelectorAll('[data-testid^="ext-row-"]').length`), { timeout: 30_000 }).toBe(installed.length);
   const ext = (await tauriPage.evaluate(errors)) as number;
@@ -30,7 +35,7 @@ test('settings pages show the daemon reads', async ({ tauriPage }) => {
     `[...document.querySelectorAll('[data-testid^="inference-chain-members-"]')].length`,
   )) as number;
 
-  console.log(`\n[inspect] errors general/ext/inference ${[general, ext, inf]}; extensions ${installed.length}; roles with a chain ${rolesWithChain} (daemon ${assigned})`);
-  expect([general, ext, inf]).toEqual([0, 0, 0]);
+  console.log(`\n[inspect] errors general/assistants/ext/inference ${[general, asst, ext, inf]}; assistants ${detected.length}; extensions ${installed.length}; roles with a chain ${rolesWithChain} (daemon ${assigned})`);
+  expect([general, asst, ext, inf]).toEqual([0, 0, 0, 0]);
   expect(rolesWithChain).toBe(assigned);
 });
