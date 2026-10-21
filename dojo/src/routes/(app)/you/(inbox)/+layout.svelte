@@ -1,7 +1,10 @@
 <script lang="ts">
 	import RelayList from '$lib/relay/RelayList.svelte';
 	import RelayDetail from '$lib/relay/RelayDetail.svelte';
+	import { page } from '$app/state';
+	import { untrack } from 'svelte';
 	import { relayInboxState } from '$lib/relay/relay-inbox-state.svelte';
+	import { initialSelection } from '$lib/relay/relay-inbox-view';
 
 	// Inbox zone — two-panel master-detail (mockup ScrInbox). Left = RelayList over
 	// relayInboxState; right = RelayDetail for the selected run (in-page selection),
@@ -9,7 +12,7 @@
 	// The real user-wide sessions stream in from +layout.ts (fan-out over memberships)
 	// as `data.inbox`. An $effect — which never runs during SSR, so the rune singleton
 	// is not written there — marks the load begun, then settles it and auto-opens the
-	// first run so md+ is never blank. It re-runs when `invalidateAll()` refetches,
+	// first run — or the run a /you/runs/<id> link names — so md+ is never blank. It re-runs when `invalidateAll()` refetches,
 	// which is the error state's retry. `md+` shows both panels; `<md` shows the rail
 	// until a selection.
 	let { data, children } = $props();
@@ -21,7 +24,9 @@
 			if (stale) return;
 			if (outcome.ok) relayInboxState.loaded(outcome.result);
 			else relayInboxState.fail(outcome.message);
-			relayInboxState.select(relayInboxState.shown[0]?.id ?? null);
+			// Open the run a link names (/you/runs/<id>), else the first shown.
+			const named = untrack(() => page.params.run_id);
+			relayInboxState.select(initialSelection(relayInboxState.sessions, relayInboxState.shown, named));
 		});
 		return () => {
 			stale = true;
