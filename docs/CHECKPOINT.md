@@ -23,7 +23,7 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** #307 A2c — the per-person forge mirror (a member's token → /user/repos permissions → their repository_roles) at provision + sync. A2a (3a0712d9) + A2b (8de8639a) done: access follows repository roles.
+**Next command:** #307 A2d (daemon refreshes the forge mirror on a cadence) or A3 (teams as groupings + invites incl. viewer-only guests). A2 a–c done: repository roles, predicates off teams, per-person mirror (20248297, live).
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
