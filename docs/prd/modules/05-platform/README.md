@@ -33,7 +33,7 @@ statuses.
 
 Everyone who installs and everyone who evaluates from the website. P1's
 acceptance is platform-truthful: the reorg's platform matrix
-(`../../reorg.md` §10) is its spec input.
+(`../../../reorg.md` §10) is its spec input.
 
 ## Legacy sources
 

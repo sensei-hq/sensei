@@ -40,7 +40,7 @@ mistakes*.
   preference-as-memory (no separate preferences table for these).
 - Out: the correction-signal detection that seeds candidates (M7 analyzer); pattern
   machinery (M10); rule promotion from battle-tested memories (M13); Dōjō
-  upstream/downstream memory movement (T1–T4, via governance); user-side learnings
+  upstream/downstream memory movement (T1–T6, via governance); user-side learnings
   (deferred, called out below).
 
 ## Surfaces

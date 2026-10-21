@@ -42,11 +42,12 @@ would ship a regression stops and says why.*
 - Out: **deploying anything** — sensei never triggers, approves or blocks a pipeline
   run inside the CI system (read-only); **per-author DORA** (never); incident
   management (paging, on-call) — incidents are read from a tracker label or recorded
-  by hand; the fifth "generative culture" key (a survey, not a signal).
+  by hand; generative culture — a survey measure, not a signal, and not one of the five
+  keys (D9: the fifth key is rework rate).
 
 ## Surfaces
 
-- **Dōjō** — Workspace › **Releases** (drawn in the mockup, `dojo2-project.jsx`): the five keys, the three-part gate, deployments from main, and production incidents with "Record incident"; a **Releases** tab (deployments, the gate result of each,
+- **Dōjō** — Workspace › **Releases** (drawn in the mockup, `dojo2-project.jsx`): the five keys, the three-part gate, deployments from the production environment's branch (D18), and production incidents with "Record incident"; a **Releases** tab (deployments, the gate result of each,
   the scorecard) and a **Delivery** card with the five keys; the org **DORA** view
   (per workspace, per team, trailing 30/90 days); a **production incidents** list.
 - **Sensei** — the workspace window shows the latest release, its gate result and the

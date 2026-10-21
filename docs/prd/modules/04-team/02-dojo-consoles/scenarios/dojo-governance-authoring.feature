@@ -156,10 +156,10 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
     When one is accepted
     Then the section count drops to the two still pending
 
-  # gap: T-2
+  # resolved: T-2
   NO TEST
   Scenario: only a maintainer can author on the ladder
-    Given a user with developer role in the org
+    Given a user with contributor role in the org
     When they open the governance authoring surface
     Then they can read the composed constitution but cannot author
-    This is unbuilt — role-gating not wired.
+    The Govern group is gated at maintainer (navForOrg); the authoring surface itself is unbuilt (#91).

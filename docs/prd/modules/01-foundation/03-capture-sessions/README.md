@@ -18,7 +18,7 @@ The user's experience: *point sensei at a folder once and it just keeps knowing*
 
 ## In scope / out of scope
 
-- In: root-based folder/project scan (incremental, content-hash); multi-repo workspace
+- In: root-based folder/workspace scan (incremental, content-hash); multi-repo workspace
   detection + suggestion + merge/split; the root-watcher with restart reconciliation; branch
   versioning (active-only default, copy-on-switch); assistant-event capture via per-family
   adapters (Claude Code live, Zed read-only, custom via MCP `log_event`); event
@@ -155,7 +155,7 @@ Closing a dash is adapter work against this contract, not a new design ([C-25](.
 
 | Signal | Source | Consumer |
 |---|---|---|
-| Discovered repo/project rows | scan | every screen; Workspace window Overview |
+| Discovered repo/workspace rows | scan | every screen; Workspace window Overview |
 | Multi-repo suggestion card | scan analyzer | Observatory Workspaces pane |
 | `activity.assistant_events` rows | adapters / hooks | analyzer materialisation |
 | `activity.sessions` rows (ftr, corrections, analyzed_at) | materialisation | FTR, Sessions, replay |

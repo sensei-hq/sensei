@@ -64,12 +64,12 @@ expose why it moved?**
 **Extend the same retrospective loop across a team without leaking client work.**
 The Dōjō is not a linear "segment 5" — it threads through the Observatory and the
 workspace window (the developer's flows live **in the Observatory**) and adds a web
-**console**. **Every user logs into the Dōjō** — developer · maintainer · admin ·
-lead; the team benefit is primary, but a developer in multiple teams gets a
-developer console view too. The web Dōjō keeps **Relay and an inbox for contributors**:
+**console**. **Every user logs into the Dōjō** — contributor · maintainer · lead ·
+admin (D1); the team benefit is primary, but a developer in multiple teams gets a
+contributor console view too. The web Dōjō keeps **Relay and an inbox for contributors**:
 tickets assigned to you in the tracker mirror sit under the relay session that carries
 their key, and tickets with no session yet are listed below them. The Dōjō is a **hosted
-service** — there is no self-hosting (Q14). A dōjō is an organization's or a person's (D11). Its core principles (from the journey map):
+service** — there is no self-hosting (Q14). A dōjō comes from a git integration — a GitHub or Azure DevOps organization, or another provider — and an import may land as workspaces in one dōjō (D20). Its core principles (from the journey map):
 **identity is the discovery · pull never push · never blind, always preview ·
 one universal strip · specificity wins conflicts.**
 
@@ -82,7 +82,7 @@ client-precedence as the tiebreaker.
 ```mermaid
 flowchart LR
     d1[Discover<br/>my org runs a Dōjō] --> d2[Authenticate<br/>SSO · OAuth · device-code]
-    d2 --> d3[Bind project → org] --> d4[A finding forms<br/>memory / pattern / guard]
+    d2 --> d3[Bind workspace → org] --> d4[A finding forms<br/>memory / pattern / guard]
     d4 --> d5[Share upstream<br/>right attribution + confidentiality]
     d5 --> d6[Watch it travel] --> d7[Receive downstream<br/>approved org knowledge where I work]
 ```
@@ -100,7 +100,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    a1[Subscribe<br/>the org's dōjō] --> a2[Connect identity<br/>OIDC / SAML + git OAuth]
+    a1[Import the dōjō<br/>from a git integration<br/>free tier; plan chosen later in billing] --> a2[Connect identity<br/>OIDC / SAML + git OAuth]
     a2 --> a3[Provision members<br/>right roles, fast] --> a4[Scopes &amp; policies<br/>hierarchy + attribution/confidentiality]
     a4 --> a5[Monitor<br/>keep the Dōjō healthy]
 ```

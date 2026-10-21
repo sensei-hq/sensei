@@ -123,5 +123,4 @@ psql -A -t -c "select chain, provider, count(*) from sensei.inference_calls
   Preferences pane.
 - [prd/02-objectives.md](../../../02-objectives.md) §Cross-cutting ·
   [prd/01-vision.md §The core loop](../../../01-vision.md#the-core-loop).
-- Companion ideas: docs/archive/ideas/28-inference-gateway.md, 20-local-inference.md.
 - Crate: `gateway-embedded` @ `sensei-hq/gateway` 01d0ab2 (see memory project_p2_sweep_2026_07).

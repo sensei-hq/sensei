@@ -15,7 +15,7 @@
 - #299 S3 done on develop (99cddc18): the relay payload names a project by slug + constitution only.
 - #293 step 1 DONE for both apps (app c290f38e … bae2126f; dōjō 9f11df08, 785279a6, a0b8aaf4, 3d443b1b — one
   run view, activity shown). #305 closed (bf16a437, live on the local dōjō; production after the next release). Step 2 (rokkit) + step 3 dead code remain.
-- Dōjō expansion planned: epic #307, docs/roadmap/09-dojo-expansion.md (D1–D13, 2026-10-21); PRD T5 releases,
+- Dōjō expansion planned: epic #307, docs/roadmap/09-dojo-expansion.md (D1–D23, V1–V12, 2026-10-21); PRD T5 releases,
   DORA & release gates (5564841d). Wave A: A1–A3 done; Wave R (D11–D13) before A4.
 - #302 closed live (keychain migrated); #301/#299 verified on the LOCAL dōjō — production needs the daemon
   enrolled with dojo.sensei-hq.com (user step: Settings → Dōjō → Connection). Local dōjō verify: a minted magic link for the local layout-verify test account. Step 2 after. #304: 26 writes still swallow failures (fix per screen).
@@ -23,9 +23,10 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** none until the user answers the decision list: PR #274 vs D2; the viewer grant model (team grant, expiry, export, "outside", viewer shell); how far D12 reaches (scope keys); self-hosting code; branch scope; audit screens; diagrams list; #116; T4 plan selection after D11; the Zones/Impact icon. Then resume R2 from `git stash` ("R2a WIP: dōjō projects→workspaces", does not build). The local dōjō DB was converged back to develop's schema (2026-10-21; its 50 local workspaces dropped, saved in /tmp/r2/local-backup, re-filed by the next daemon sync); R2's before-hook renames in place when it lands. Done today: A1–A3, R1 (7478fe8d), the PRD change list (352c4f6d, 9e2e9579).
+**Next command:** `git stash list` → resume R2 from stash@{0} ("R2a WIP: dōjō projects→workspaces", does not build). The decision list is answered: #274 merged (c5e515c5) → D14/D21–D23; grants D15; scope keys D16; self-hosting D17; branches D18; audit + diagrams D19; T4 → D20; #116/#119 closed, R5 = #308. The local dōjō DB was converged back to develop's schema (2026-10-21; its 50 local workspaces dropped, saved in /tmp/r2/local-backup, re-filed by the next daemon sync); R2's before-hook renames in place when it lands. Done today: A1–A3, R1 (7478fe8d), the PRD change list (352c4f6d, 9e2e9579).
 
 **Open questions:**
+- Paywall wording ("private and shared"), the governance ladder's Team rung, k-anonymity ≥3 for knowledge, the production VAPID secret.
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
 - #149: communities — Leiden/Louvain (recommended) or hierarchy grouping?
 - #133: project glyphs in icon mode, and the dōjō glyph default (kanji recommended for both).

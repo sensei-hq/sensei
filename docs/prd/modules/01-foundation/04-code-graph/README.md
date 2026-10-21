@@ -94,8 +94,9 @@ modules. A pair with a static edge between the two modules is not hidden couplin
 - Sprint targets read **development**; release gates run in order **development → testing
   → production** — a break in testing predicts one in production. The Code map shows
   development by default and production for a release.
-- **Today:** `folders.branch` records the checked-out branch per checkout folder, as a
-  metrics-only seam. The code graph is **not** branch-aware yet.
+- **Today:** the dōjō's shared graph is per tracked branch (`dojo.repository_graph_branches`,
+  `dojo.graph_heads`; #225, closed). The local graph is not: `folders.branch` records the
+  checked-out branch per checkout folder, as a metrics-only seam.
 
 ## Data invariants
 
@@ -202,7 +203,7 @@ modules. A pair with a static edge between the two modules is not hidden couplin
 | **Fix 2** | Community-edge aggregation (`community_edges` view, `communities/info` relations) | P2 | Code map Wheel + Communities grouping |
 | **File roles** | config and generated roles are not tagged (test is `nodes.is_test`) | P2 | Code map role bar + L1 columns |
 | **Co-change mining** | pairwise co-change from `commit_files` (≤ 50 files a commit), rolled up to modules | P2 | Code map Hidden coupling |
-| **Branch scope** | graph not tagged by branch; no core-branch configuration or environment mapping | P1 | Graph sync, sprint vs release reads |
+| **Branch scope** | the local graph is not tagged by branch (the dōjō's is, #225); no environment mapping (D18) | P1 | Graph sync, sprint vs release reads |
 | **Fix 3** | DB views (`graph_edges_resolved`, `folder_tree`, `node_exports`) | P2 | API simplification |
 | **Git-subtree detection** | `git log --grep='git-subtree-dir:'` prefixes (marketplace/homebrew) | P2 | Scope dropdown |
 | **`is_exported` per adapter** | `pub`/`export`/`__all__`/`__tablename__`; TDD per adapter | P1 | Exports everywhere |

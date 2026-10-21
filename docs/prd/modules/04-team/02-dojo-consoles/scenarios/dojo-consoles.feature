@@ -85,7 +85,8 @@ Feature: Dōjō Consoles — the built personal screens
     Then their personal constitution is shown
 
   NO TEST
-  Scenario: the org-switcher popover shows Relay · you — all Dōjōs + memberships + Create/Join
+  Scenario: the org-switcher popover shows Relay · you — all Dōjōs + memberships
     Given a user with multiple memberships
     When they open the org-switcher
-    Then it shows the pinned Relay row, one row per membership, Your Dōjōs, and Create/Join
+    Then it shows the pinned Relay row, one row per membership, and Your Dōjōs
+    And it offers no "Create or join" entry (retired by D11/D20; OrgSwitcher.svelte still shows it — a leftover to remove)

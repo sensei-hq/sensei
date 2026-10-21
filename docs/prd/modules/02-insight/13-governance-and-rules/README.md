@@ -47,7 +47,7 @@ rules are the Team plane on top of the same primitives. The user feels this modu
   [Instruction delivery & stickiness](#instruction-delivery--stickiness); the
   solution-scope rule cascade.
 - Out: the Dōjō share plane — triage, distribution, tenant consoles, identity/SSO,
-  leak-guard, Collective commons (T1–T4, shares the same rule primitives up-stream);
+  leak-guard, Collective commons (T1–T6, shares the same rule primitives up-stream);
   the MCP `get_rules`/`get_layered_context` *consumer* surfaces in the assistant
   (interface here, delivery in the Assistant-plane modules).
 
@@ -274,7 +274,7 @@ psql -A -t -c "select max(modified_at) from sensei.memories
   stickiness](#instruction-delivery--stickiness).
 - [features/governance/feature.md](../../../../features/governance/feature.md) —
   grounding/stickiness story · [features/05-governance.md](../../../../features/05-governance.md) —
-  the Dōjō plane (folds with T1–T4, not here).
+  the Dōjō plane (folds with T1–T6, not here).
 - [spec/pipeline/memory](../../../../spec/pipeline/memory.md) — promotion path ·
   [spec/pipeline/patterns](../../../../spec/pipeline/patterns.md) — verifier
   conformance.

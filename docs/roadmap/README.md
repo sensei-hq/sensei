@@ -49,14 +49,14 @@ Priorities are per-module and revisited when a plane file changes. "Shipped"
 beats "designed": promotion to ✅ requires evidence (tests, e2e, live data), not
 a spec.
 
-## The board — all 29 modules at a glance
+## The board — all 30 modules at a glance
 
 | Plane | Modules | Status (Phase 3 populates the cells) |
 |---|---|---:|
 | Foundation | M1 Bootstrap · M2 Setup/Preferences · M3 Capture · M4 Code Graph · M5 Inference Gateway · M6 Storage/Data Model | [01-foundation.md](01-foundation.md) |
 | Insight | M7 Analyzer · M8 Metrics/Health · M9 Memory · M10 Patterns · M11 Traceability · M12 Libraries · M13 Governance | [02-insight.md](02-insight.md) |
-| Delivery | M14 MCP/Context · M15 Observatory · M16 Workspace Window · M17 Atlas · M18 Instruments · M19 Insights/Impact · M20 Planner · M21 Relay · M22 Agentic Execution | [03-delivery.md](03-delivery.md) |
-| Team | T1 Dōjō Core · T2 Consoles · T3 Workspace Planning · T4 Billing/Seats | [04-team.md](04-team.md) |
+| Delivery | M14 MCP/Context · M15 Observatory · M16 Workspace Window · M17 Code map · M18 Instruments · M19 Insights/Impact · M20 Planner · M21 Relay · M22 Agentic Execution | [03-delivery.md](03-delivery.md) |
+| Team | T1 Dōjō Core · T2 Consoles · T3 Workspace Planning · T4 Billing/Seats · T5 Releases/DORA · T6 Workspace Viewer | [04-team.md](04-team.md) |
 | Platform | P1 Distribution · P2 Website · P3 Harness/CI | [05-platform.md](05-platform.md) |
 
 ## Sequencing — what gates what
@@ -65,7 +65,7 @@ The dependency spine (from `../prd/01-vision.md`'s loop): **capture → graph �
 analyze → learn → deliver → measure FTR**. Each plane file lists its own gates;
 the cross-plane ones that matter now:
 
-- **M17 (Atlas L0/L1/L2) is a prerequisite for reading architecture metrics at
+- **M17 (Code map L0/L1/L2) is a prerequisite for reading architecture metrics at
   any scale** — reorg §9.7; the current layered render is unreadable (G-1).
 - **M8 (master-detail + gating eligibility) must land before T3 promises gates** —
   1 of T3's 7 gating targets is buildable today, 2 need scoped reads, 4 are

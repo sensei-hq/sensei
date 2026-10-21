@@ -26,16 +26,21 @@ this as *my Jira board and my quality gates speak the same language — the gate
 knows what the sprint actually changed, and it only ever asks for better.*
 
 > **Status honesty.** The gate/improvement split and the own-baseline ratchet are
-> designed in reorg §9.3–9.4. **The tracker adapters (Jira / ADO / GitHub Issues)
-> exist only in the mockup — nothing is built** (gap T-1, P1). Of the seven gating
+> designed in reorg §9.3–9.4. **A daemon-side Jira adapter is built** (PR #274, merged
+> c5e515c5: `crates/senseid/src/tracker/`, with `sensei.trackers`, `sprints` and
+> `tracker_tasks`); Azure Boards and GitHub Issues adapters are not (gap T-1). Of the seven gating
 > targets, **1 is buildable today** (hard-rule violations), **2 need a scoped read**
 > (coverage, changed-function complexity) and **4 are blocked** on the
 > architecture-metrics family (#156). The workspace window Tasks tab (M16) stays
 > unbuilt until planner persistence lands (C-1 → M20).
 
-> **Resolved 2026-10-21.** Tracker connections are **owned by the dōjō** (one per
-> workspace, shared by the team) and stay **read-only — the dōjō pulls**; sensei reads
-> the mirror through sensei ⇄ dōjō sync. The same targets, ladder and modes also gate
+> **Resolved 2026-10-21.** Trackers stay **read-only**, and **the daemon pulls** — each
+> person's daemon at that person's cadence (D22); the dōjō may later take webhooks. This
+> is the sensei-first path #274 built. **A credential stays local unless its owner marks
+> it shared**; a shared credential should be a service API key, and only a shared one
+> hands off to the dōjō (D14, D21). A workspace may have **several trackers** at
+> epic, sprint and task level (D23); the code allows one per project today
+> (`unique (project_id)` on `sensei.trackers`). The same targets, ladder and modes also gate
 > **releases** over their change set — see [T5](../05-releases-and-dora/README.md).
 
 ## In scope / out of scope
@@ -66,14 +71,15 @@ knows what the sprint actually changed, and it only ever asks for better.*
   the same lens list and Database · ER; each gated reading (layers, cycles, zone of pain,
   complexity) opens the lens that explains it; and the org console
   `/org/[slug]/projects/[id]/planning` (tracker connection, gate config, baseline
-  view, ratchet history) once the org context is wired (T-2).
+  view, ratchet history) — the org context is built (T-2 resolved); this page is not.
 - **Daemon** — `planner.rs` (v0 generate), `plan_graph.rs` (model),
   `runs.rs` (register plan, update task status, report outcome);
-  `dojo/routing.rs` (client binding for tracker scope). **Tracker adapters: not
-  present** (T-1).
+  `dojo/routing.rs` (client binding for tracker scope); `tracker/` (the Jira
+  adapter: connect, discover, sync, task linkage — PR #274). Azure Boards and GitHub
+  Issues adapters: not present (T-1).
 - **Data** — `sensei.runs`, `sensei.run_events`; `sensei.metrics` (the `target`
-  column is vestigial — a normalisation bound, not the gate config); **no tracker
-  tables yet** (T-1); `dojo.memberships` (role floor for who can configure gates —
+  column is vestigial — a normalisation bound, not the gate config); `sensei.trackers`,
+  `sensei.sprints`, `sensei.tracker_tasks` and their link tables (PR #274); `dojo.memberships` (role floor for who can configure gates —
   maintainer and up).
 
 ## Data invariants
@@ -230,13 +236,14 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ## Open gaps
 
-- [T-1](../../../../roadmap/06-gaps.md) — **tracker adapters (Jira / ADO / GitHub
-  Issues) exist only in mockup — nothing built** (P1). Blocks the T3 console.
-- [T-2](../../../../roadmap/06-gaps.md) — Dōjō join / membership — blocks the org
-  console and the role floor for gate configuration.
+- [T-1](../../../../roadmap/06-gaps.md) — **tracker adapters**: the daemon-side Jira
+  adapter is built (PR #274); Azure Boards and GitHub Issues are not, and a workspace
+  has one tracker, not several (D23).
+- [T-2](../../../../roadmap/06-gaps.md) — Dōjō join / membership — **resolved**; the
+  org context and its role floor are built.
 - [C-1](../../../../reorg.md) — planner DB persistence + baseline + ratchet (M20).
   Blocks the workspace window Tasks tab (M16).
-- Architecture-metrics family (#156, blocked on #146/#151/#152) — blocks 4 of 7
+- Architecture-metrics family (#156, blocked on #146/#152; #151 is closed) — blocks 4 of 7
   gating targets (layers, cycles, zone of pain, anti-patterns) and needs scoped
   reads for 2 more (coverage, changed-function complexity).
 

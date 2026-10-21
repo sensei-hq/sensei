@@ -30,7 +30,8 @@ as *numbers that don't lie, and say what they're for*.
   the **master-detail model + gating eligibility** (2026-10-13 decision 8,
   reorg §9.6 — the spec this module authors) and the per-metric design/coverage record
   (M-9); coverage-gated presentation (#155 generalised — M-8); the retired-feeds
-  accounting (#153 `churn_rate`, #154 `time_to_useful_result` — D-6).
+  accounting (D-6: #153 `churn_rate` and #154 `time_to_useful_result`, both fixed and closed
+  2026-10-19).
 - Out: the analyzer that produces per-session `sessions.ftr` (M7 — this module rolls
   it up); surfacing in the apps (overview/impact chips, health dial, radar — Delivery
   plane); DORA delivery metrics and release gates (specified in [T5](../../04-team/05-releases-and-dora/README.md); the five keys land in this module's plumbing); the
@@ -176,9 +177,9 @@ curl -s http://localhost:7744/api/projects/sensei/health \
   or cycle graph inside Metrics, grouped differently from the Code map's lens.
 - **Health rows stored** — the composite must stay a view; storing it reintroduces
   drift and backfill.
-- **Metric defected but still advertised** — #153 `churn_rate` (caption describes the
-  retired indexing feed) and #154 `time_to_useful_result` (rating scale in minutes,
-  value in seconds) are the standing examples (D-6).
+- **Metric defected but still advertised** — the examples were #153 `churn_rate` (caption
+  described the retired indexing feed) and #154 `time_to_useful_result` (rating scale in
+  minutes, value in seconds), both closed 2026-10-19 (D-6).
 
 ## Scenarios
 
@@ -193,8 +194,8 @@ curl -s http://localhost:7744/api/projects/sensei/health \
   generalised; P1).
 - [M-9](../../../../roadmap/06-gaps.md) — no per-metric design/coverage record tying
   a metric to its chart and LOD (P1).
-- D-6 — metric doc defects (#153 `churn_rate`, #154 `time_to_useful_result`; P2, see
-  [02-insight.md](../../../../roadmap/02-insight.md)). The #156 architecture-metrics
+- D-6 — metric doc defects: **closed** (#153 `churn_rate`, #154 `time_to_useful_result`,
+  both 2026-10-19; see [02-insight.md](../../../../roadmap/02-insight.md)). The #156 architecture-metrics
   family is WIP in a separate backlog session (decision 8) and unblocks T3's gates.
 
 ## Related

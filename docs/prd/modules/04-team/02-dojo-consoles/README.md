@@ -8,8 +8,8 @@ engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--cli
 
 ## Purpose
 
-The Dōjō Consoles are the **four role-scoped surfaces** (developer · maintainer ·
-admin · lead) that make the Dōjō usable for each person's job. They are **additive
+The Dōjō Consoles are the **four role-scoped surfaces** (contributor · maintainer ·
+lead · admin, D1) that make the Dōjō usable for each person's job. They are **additive
 grants**, not a single admin/not switch — a maintainer (governance) needn't be an
 admin (roles/policies), and vice-versa. The personal landing ("your work") is
 always primary; the consoles are what you open *inside* an org context. The job
@@ -27,10 +27,12 @@ for everyone below. That half of the console is specified in
 > enum, role ladder in `dojo-auth.ts`), the personal screens (`/you/*`, Relay,
 > Library, Preview) are built and tested. The **org context `/org/[slug]` exists**
 > (`dojo/src/routes/(app)/org/[slug]/+page.svelte` + `/projects` + `/[section]`)
-> but the **four role-scoped surfaces within it are unbuilt** (gap T-2). The current
-> `/console/*` screens are a flat shell — they don't role-gate. The org-switcher
-> popover is built (top bar: "Relay · you — all Dōjōs" + one row per membership +
-> "Your Dōjōs" + "＋ Create or join").
+> and the **four role-scoped surfaces within it are built and role-gated**
+> (`dojo/src/lib/nav.ts` `navForOrg`; gap T-2 resolved, #307 A3 invites). The
+> org-switcher popover is built (top bar: "Relay · you — all Dōjōs" + one row per
+> membership + "Your Dōjōs"). Its "＋ Create or join" entry is retired by D11/D20 — a
+> dōjō comes from a git integration — but `dojo/src/lib/components/kit/OrgSwitcher.svelte`
+> still shows it: a known leftover to remove.
 
 ## In scope / out of scope
 
@@ -45,7 +47,7 @@ for everyone below. That half of the console is specified in
     scopes & precedence, billing.
   - The **org context `/org/[slug]` exists** (`+page.svelte` + `/projects` +
     `/[section]`) with its own nav pane (workspaces, governance,
-    role surfaces); the **four role-scoped surfaces within it are unbuilt** (gap T-2).
+    role surfaces); the **four role-scoped surfaces within it are built and role-gated** (T-2 resolved).
   - **The governance authoring surface** (`/org/[slug]/governance`, maintainer):
     the **scope ladder** (free personal ladder vs the paid company ladder), the
     **stance** axes, the **five authored artifact kinds** (rules · skills ·
@@ -309,7 +311,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
   floor updates immediately in `resolveTenantAccess`.
 - A lead opens `/org/[slug]/engagements` and sees client engagements with
   confidentiality pinned; the audit trail is immutable.
-- A developer opens `/org/[slug]` and sees workspaces in jurisdiction; clicking
+- A contributor opens `/org/[slug]` and sees workspaces in jurisdiction; clicking
   one drills to `/org/[slug]/projects/[id]` previewing which ladder levels built
   the constitution.
 - The personal landing (`/`) shows "your work" (workspaces, needs-you, relay) as
@@ -326,7 +328,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - **A maintainer sees the admin surfaces (members/roles/policies)** — role-gating
   regressed.
 - **An admin cannot change a member's role** — `resolveTenantAccess` regressed.
-- **A developer can author governance** — role-gating regressed.
+- **A contributor can author governance** — role-gating regressed.
 - **A shadowed artifact disappears instead of reading `overridden here`** —
   collision display regressed (hiding beats surfacing).
 - **The inheritance count is a plain sum that double-counts an artifact written
@@ -351,7 +353,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   four role consoles and their surfaces (pinned for built personal screens,
   `NO TEST` / `# gap: T-2` for org context).
 - [`scenarios/dojo-consoles-gaps.feature`](scenarios/dojo-consoles-gaps.feature) —
-  the unbuilt org context role surfaces (`NO TEST` / `# gap: T-2`).
+  the org context role surfaces (built; `NO TEST` until pinned).
 - [`scenarios/dojo-governance-authoring.feature`](scenarios/dojo-governance-authoring.feature) —
   the authoring surface: ladder, stance, artifact kinds, inherit/override
   rendering, onboarding preview, library, playbook proposals (`NO TEST` /
@@ -359,14 +361,16 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ## Open gaps
 
-- [T-2](../../../../roadmap/06-gaps.md) — join/membership flow: magic-link
-  creates `auth.users` but no membership; "Join" dead → every console surface
-  403s (P1). Blocks T2 consoles.
-- [T-1](../../../../roadmap/06-gaps.md) — T3's tracker adapters (Jira / ADO)
-  exist only in mockup (P1).
+- [T-2](../../../../roadmap/06-gaps.md) — join/membership flow. **Resolved**:
+  invites (#307 A3) and GitHub-org provisioning create memberships; the role
+  surfaces are built and role-gated.
+- [T-1](../../../../roadmap/06-gaps.md) — T3's tracker adapters: the daemon-side
+  Jira adapter exists (PR #274); Azure Boards and GitHub Issues do not.
+- **"＋ Create or join"** in `OrgSwitcher.svelte` — retired by D11/D20, still
+  rendered; remove it.
 - Epic [#91](https://github.com/sensei-hq/sensei/issues/91) — the authoring
   surface is **specified here but unbuilt**; the org-context route it lives on is
-  itself blocked by T-2, and the rules editor's save is still presentational
+  built, and the rules editor's save is still presentational
   (`D-4`, reorg §12.4 — the dojo2 ladder / stance / rule-pack sections are
   fixture-only).
 - **Route to reconcile** — this spec and

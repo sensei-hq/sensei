@@ -31,7 +31,7 @@ depends on the rest producing honest data.
 ## Customer
 
 The Delivery plane (M14–M22) renders what this plane derives, and the Team plane
-(T1–T4) governs and shares it. The **metrics master-detail** and the **graph
+(T1–T6) governs and shares it. The **metrics master-detail** and the **graph
 level-of-detail** are the two 2026-10-13 additions that change how this plane is
 speced (reorg §9.6, §9.7).
 

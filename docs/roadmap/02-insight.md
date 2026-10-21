@@ -25,7 +25,7 @@ legend: [`README.md`](README.md).
 | M-7 | metrics have no master-detail model and no `gating` field; gating eligibility is undefined per metric (M8) | P1 |
 | M-8 | coverage-gated presentation absent — thin metrics read as strong (M8; #155 generalised) | P1 |
 | M-9 | no per-metric design/coverage record tying a metric to its chart and level of detail (M8) | P1 |
-| D-6 | metric doc defects (#153 `churn_rate`, #154 `time_to_useful_result` rating units) | P2 |
+| D-6 | metric doc defects (#153 `churn_rate`, #154 `time_to_useful_result` rating units) — **closed** 2026-10-19 | — |
 
 Also in the legacy register: #156 architecture-metrics family (unblocks T3's
 layer/cycle/zone-of-pain gates) is WIP in a separate backlog session (decision 8).

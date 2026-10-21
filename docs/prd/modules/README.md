@@ -44,6 +44,13 @@ and `spec/` tree. Until a module spec exists, its status lives in
   The module-owned dossiers `features/03-observatory.md` (M15), `features/04-project.md` (M16) and `features/06-relay.md` (M21)
   are stamped superseded; the shared pipeline specs (`spec/pipeline/{mcp-surface,context-delivery,semantic-search,impact,agent-execution,insights,benchmarks,...}`)
   stay live until their modules fold.
+- **Team — ✅ all six authored.** T1 [`01-dojo-core/`](04-team/01-dojo-core/README.md) ·
+  T2 [`02-dojo-consoles/`](04-team/02-dojo-consoles/README.md) · T3 [`03-dojo-workspace-planning/`](04-team/03-dojo-workspace-planning/README.md) ·
+  T4 [`04-billing-seats/`](04-team/04-billing-seats/README.md) (T1–T4 2026-10-13) · T5 [`05-releases-and-dora/`](04-team/05-releases-and-dora/README.md) ·
+  T6 [`06-workspace-viewer/`](04-team/06-workspace-viewer/README.md) (T5–T6 2026-10-21). Each owns a `scenarios/` `.feature` set.
+- **Platform — ✅ all three authored 2026-10-13.** P1 [`01-distribution/`](05-platform/01-distribution/README.md) ·
+  P2 [`02-website/`](05-platform/02-website/README.md) · P3 [`03-harness-ci/`](05-platform/03-harness-ci/README.md).
+  Each owns a `scenarios/` `.feature` set.
 
 ## The module-spec template
 

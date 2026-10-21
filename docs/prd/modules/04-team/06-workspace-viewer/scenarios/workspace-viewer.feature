@@ -1,12 +1,12 @@
 Feature: Workspace viewer — a granted, read-only window on one workspace's outcomes
 
-  # pinned: database/tests/dojo/workspace_viewers.sql
+  # pinned: database/tests/dojo/project_viewers.sql
   Scenario: someone is in the dōjō before they are granted a workspace
     Given a person who is neither a member of the dōjō nor invited into it as a viewer
     When an admin grants them a workspace
     Then the grant is refused with "invite them to this dōjō as a viewer first"
 
-  # pinned: database/tests/dojo/workspace_viewers.sql
+  # pinned: database/tests/dojo/project_viewers.sql
   Scenario: a viewer invited into the dōjō is not a member and reads no repository
     Given a person who accepted a viewer invite
     And an admin granted them one workspace

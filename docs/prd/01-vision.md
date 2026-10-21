@@ -72,18 +72,18 @@ flowchart TD
     end
     subgraph S2["02 · First run &amp; Preferences 名"]
         direction LR
-        f1[point at real folders] --> f2[projects appear] --> f3[tune the defaults]
+        f1[point at real folders] --> f2[workspaces appear] --> f3[tune the defaults]
     end
     subgraph S3["03 · Observatory — daily use 家"]
         direction LR
         o1[today's one thing] --> o2[act on it] --> o3[stay in control of what leaves]
     end
-    subgraph S4["04 · The project window 雲"]
+    subgraph S4["04 · The workspace window 雲"]
         direction LR
-        p1[work inside one project] --> p2[trust what it learned] --> p3[before any of it travels]
+        p1[work inside one workspace] --> p2[trust what it learned] --> p3[before any of it travels]
     end
     S1 --> S2 --> S3 --> S4
-    D[["Dōjō — cross-cutting SaaS layer<br/>(threads through Observatory + Project,<br/>never a linear 5th segment)"]]
+    D[["Dōjō — cross-cutting SaaS layer<br/>(threads through Observatory + Workspace,<br/>never a linear 5th segment)"]]
     S3 -.-> D
     S4 -.-> D
 ```
@@ -196,6 +196,6 @@ one, we call it out.
 ## Read next
 
 - [`02-objectives.md`](02-objectives.md) — the WHAT, broken down per segment + the Dōjō layer, with measurable outcomes.
-- [`modules/README.md`](modules/README.md) — the 29 modules that turn this vision into buildable specs.
+- [`modules/README.md`](modules/README.md) — the 30 modules that turn this vision into buildable specs.
 - [`../roadmap/README.md`](../roadmap/README.md) — where the implementation stands against this vision: per-module status, ranked gaps, sequencing.
 - [`../architecture/README.md`](../architecture/README.md) — how the layers realise this.

@@ -95,8 +95,8 @@ curl -s http://localhost:7744/api/preferences/cues | jq 'length' # non-negative;
 
 ## Open gaps
 
-- [A-1](../../../../roadmap/06-gaps.md) — app is kanji-only; the kanji ⇄ solar toggle the mockups
-  and rokkit support is not wired (P3).
+- [A-1](../../../../roadmap/06-gaps.md) — the kanji ⇄ solar toggle: **resolved**. The app
+  stores it as `ui.glyphs` (Settings → General); the dōjō's account menu has Theme and Glyphs.
 - [A-2](../../../../roadmap/06-gaps.md) — the personal-preference surface is narrower than the
   configuration the app already supports (P3).
 - No registered gap for profile-name preservation (regression check lives in the Done gate above).

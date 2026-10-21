@@ -1,76 +1,76 @@
-Feature: Dōjō Consoles — the unbuilt org context role surfaces
+Feature: Dōjō Consoles — the org context role surfaces (built; not yet pinned)
 
-  # gap: T-2
+  # resolved: T-2
   NO TEST
   Scenario: the org context /org/[slug] exists with its own nav pane
     Given a user with an org membership
     When they click the org in My Dōjōs
     Then they land on /org/[slug] with a nav pane for workspaces, governance, and role surfaces
-    This is unbuilt — org screens currently live flat under /console/*.
+    Built — /org/[slug]/[section], nav from navForOrg in dojo/src/lib/nav.ts.
 
-  # gap: T-2
+  # resolved: T-2
   NO TEST
   Scenario: a maintainer sees governance authoring in the org context
     Given a user with maintainer role
     When they open /org/[slug]/governance
     Then they can author stance (autonomy, sharing, review, anonymization) + rules/skills/agents/commands
-    This is unbuilt — role-gating not wired.
+    The Govern group is gated at maintainer (navForOrg); the authoring surface itself is unbuilt (#91).
 
-  # gap: T-2
+  # resolved: T-2
   NO TEST
   Scenario: a maintainer sees triage and approvals in the org context
     Given a user with maintainer role
     When they open /org/[slug]/triage
     Then they see findings awaiting review with auto-approve scores and can decide
-    This is unbuilt — role-gating not wired.
+    Built — the Govern group is gated at maintainer (navForOrg).
 
-  # gap: T-2
+  # resolved: T-2
   NO TEST
   Scenario: a maintainer sees knowledge management in the org context
     Given a user with maintainer role
     When they open /org/[slug]/knowledge
     Then they can manage the org's knowledge base
-    This is unbuilt — role-gating not wired.
+    Built — the Govern group is gated at maintainer (navForOrg).
 
-  # gap: T-2
+  # resolved: T-2
   NO TEST
   Scenario: an admin sees members, identities, policies, and billing in the org context
     Given a user with admin role
     When they open the org context
     Then they see /members, /identities, /policies, /billing
-    This is unbuilt — role-gating not wired.
+    Built — the Admin group is gated at admin (navForOrg).
 
-  # gap: T-2
+  # resolved: T-2
   NO TEST
   Scenario: a lead sees engagements, incidents, and audit in the org context
     Given a user with lead role
     When they open the org context
     Then they see /engagements, /incidents, /audit
-    This is unbuilt — role-gating not wired.
+    Built — the Clients group is gated at lead (navForOrg).
 
-  # gap: T-2
+  # resolved: T-2
   NO TEST
-  Scenario: a developer sees read-mostly surfaces in the org context
-    Given a user with developer role
+  Scenario: a contributor sees read-mostly surfaces in the org context
+    Given a user with contributor role
     When they open the org context
     Then they can read workspaces in jurisdiction, preview a workspace's constitution, and view members
-    This is unbuilt — role-gating not wired.
+    Built — the Overview group has no role floor (navForOrg).
 
-  # gap: T-2
+  # gap: #307 A4
   NO TEST
   Scenario: a workspace drill shows which ladder levels built its constitution
     Given a workspace in the org's jurisdiction
     When a user clicks it in /org/[slug]
     Then /org/[slug]/projects/[id] shows which ladder levels contributed, conflicts settled, and locks
-    This is unbuilt — the /console/preview demo is a placeholder.
+    Not built — the org workspace drill-in still reads fixtures (#307 A4).
 
-  # gap: T-2
+  # resolved: T-2
   NO TEST
   Scenario: a user with multiple roles sees the union of their surfaces
     Given a user who is both maintainer and admin in an org
     When they open the org context
     Then they see both governance and roles/policies surfaces
-    This is unbuilt — additive grants not wired.
+    Built — the ladder is additive, so a higher role sees every lower role's groups (navForOrg).
 
   # gap: T-2
   NO TEST

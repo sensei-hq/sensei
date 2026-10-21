@@ -95,8 +95,11 @@ Structure, Cycles, Hidden coupling and Complexity work at every level and keep t
 level and selection when you switch between them. Wheel, Zones and the Matrix are L0
 views: switching to one returns to L0 and keeps the selection.
 
-In icon mode (`sensei.iconStyle = icons`, reorg §12.10, gap A-1) the lens marks and the
-search glyph use their icons, as everywhere else.
+The Code map follows the app's **theme mode** (light / dark / system) and its **kanji ⇄
+icons** preference (`ui.glyphs`; gap A-1, resolved). In icon mode the lens marks and the
+search glyph use their icons, as everywhere else. The mockups read `sensei.theme` and
+`sensei.iconStyle`; the implementation must read the app's theme mode and `ui.glyphs`
+instead.
 
 ## Keeping it readable
 
@@ -131,7 +134,8 @@ layers histogram).
 ## Branches
 
 The map reads the latest code graph of the synced branch in view (M4 §Branch scope):
-**develop** by default, for sprint work; **main** when looking at a release.
+the **development** environment's branch by default, for sprint work; **production**'s
+when looking at a release (D18).
 
 ## Surfaces
 
@@ -241,7 +245,8 @@ curl -s "http://localhost:7744/api/projects/$ID/diagrams/zones" | jq '.coverage'
 - **Open:** whether Zones' abstractness reads interfaces / traits per language. It
   needs the architecture-metrics family (#156); until then the lens is marked
   illustrative.
-- [A-1](../../../../roadmap/06-gaps.md) — the kanji ⇄ icon toggle is not wired (P3).
+- [A-1](../../../../roadmap/06-gaps.md) — the kanji ⇄ icon toggle: **resolved** (`ui.glyphs`);
+  the Code map must read it, not the mockups' `sensei.iconStyle`.
 - [F-4](../../../../reorg.md) (M4) — thin graph resolution undercuts every lens.
 - [D-7](../../../../reorg.md) (T3 · M8) — architecture-metric targets blocked
   (#156 ← #146/#151/#152).

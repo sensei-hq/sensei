@@ -30,7 +30,7 @@ next release held and why — without asking the team for a status deck.*
   grant per person on the team at that moment — and reports can group "by team". A team
   grants nothing by itself and never owns a workspace.
 - **D15.** Grants carry an expiry and an export flag; only an admin marks a viewer as outside
-  the organization (the relationship enum); the viewer shell is built.
+  the organization (the relationship enum); the viewer shell is to be built (D15).
 - **D10.** Aggregates over one contributor are shown, and so is a per-repository split when one
   person works on that repository.
 - **V1–V12 (2026-10-21)** — under *Decisions taken* below.
@@ -59,10 +59,11 @@ next release held and why — without asking the team for a status deck.*
   workspace's viewers — not built (A4).
 - **Email** — invite, revoke notice. *Not built:* the invite is a link the admin shares.
 - **Data (built)** — `dojo.dojo_viewers(tenant_id, principal_id, invited_by, email, joined_at)`
-  (in the dōjō as a viewer, not a member) and `dojo.workspace_viewers(workspace_id,
-  principal_id, granted_by, granted_at)` (the grant); reads go through `can_read_workspace`
+  (in the dōjō as a viewer, not a member) and `dojo.project_viewers(project_id,
+  principal_id, granted_by, granted_at)` (the grant); reads go through `dojo.can_read_project`
   ([access matrix](../../../../spec/dojo/access-matrix.md)). A team grant writes one row per
-  person on the team at the time; it outlives the team.
+  person on the team at the time; it outlives the team. These are the code's names today;
+  R2 renames them to `workspace_viewers` / `can_read_workspace`.
 - **Data (decided, D15 — to build)** — a grant gains an **expiry** (`expires_at`) and an
   **export flag** (`can_export`); a viewer's **relationship** (employer · client · community ·
   personal) is set **by an admin only** and marks who is outside the organization — someone

@@ -20,8 +20,12 @@ free tier real**. The user feels this as *I only pay when my team actually uses
 the shared Dōjō, and the free tier isn't a trial.*
 
 > **Status honesty.** The pricing model and tier table are designed (features/07-pricing.md).
-> **Nothing is built** — no billing integration, no metering, no invoices, no
-> payment processor. The mockup `dojo-billing.jsx` uses hardcoded example data.
+> **Built:** the billing account and seat tables (`dojo.billing_accounts`,
+> `dojo.seats`, live usage from `dojo.tenant_seat_usage`), GET/POST
+> `/v1/t/[origin]/[org]/billing` (admin-only: the account plus live per-seat usage;
+> POST refreshes the cached seat count), and the org's **Plan & billing** section at
+> `/org/[slug]/billing`, which reads that route. **Not built:** a payment provider,
+> invoices, plan changes. The mockup `dojo-billing.jsx` uses hardcoded example data.
 > The website has a live GitHub Sponsors link. The free tier intent exists but
 > the website says "free during preview" (not the final "free forever" claim).
 
@@ -41,12 +45,14 @@ the shared Dōjō, and the free tier isn't a trial.*
 - **App** — `/org/[slug]/billing` (admin: choose or change the plan, current plan, active contributor count, invoices, payment method,
   usage history, upgrade/downgrade).
 - **Daemon** — **none yet** (metering/aggregation not built).
-- **Worker API (planned)** — `/v1/t/{tenant}/billing/*` (plan, metering,
-  invoices, payment).
-- **Data (planned)** — `dojo.tenants` (plan, status, billing_anchor);
-  `dojo.subscriptions` (stripe_customer_id, price_id, status);
-  `dojo.active_contributors` (tenant, user, window_start, window_end, count);
-  `dojo.invoices` (tenant, stripe_invoice_id, amount, period, status).
+- **Worker API (built)** — `GET/POST /v1/t/[origin]/[org]/billing`: the account and
+  live seat usage; POST recomputes `seats_used`. **Planned:** plan change, invoices,
+  payment.
+- **Data (built)** — `dojo.billing_accounts` (one per tenant: plan, status,
+  seats_included, seats_used, `external_customer_ref` — NULL until a provider is
+  chosen, period); `dojo.seats` (one row per user's active participation; a seat is
+  billable on a private namespace); `dojo.tenant_seat_usage` (the live count).
+  **Planned:** invoices and a provider subscription.
 
 ## Data invariants
 
@@ -86,7 +92,7 @@ the shared Dōjō, and the free tier isn't a trial.*
 - GitHub Sponsors link is present and functional.
 
 ```bash
-# Not implemented — placeholder
+# Built: the account and live seat usage (admin only); no provider, no invoices
 curl -s -H "Authorization: Bearer $TOKEN" \
   "https://dojo.sensei-hq.com/v1/t/org/sensei-hq/billing" | jq
 ```
@@ -104,13 +110,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 - [`scenarios/billing-seats.feature`](scenarios/billing-seats.feature) — the
   tier model, active contributor metering, plan selection, billing portal
-  (all `NO TEST` — nothing built).
+  (all `NO TEST` — the account, seats and billing route are built but not pinned here).
 
 ## Open gaps
 
 - **Active contributor definition** — how is "active" defined (seat metering)?
 - **Fair-use limits, storage caps, non-profit/education pricing?**
-- **Payment processor integration** — none selected.
+- **Payment processor integration** — none selected (`external_customer_ref` stays NULL).
 - **Metering aggregation** — daemon-side not built.
 
 ## Related
@@ -122,6 +128,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - [mockups/Sensei/lib/dojo/dojo-billing.jsx](../../../../mockups/Sensei/lib/dojo/dojo-billing.jsx)
   — visual source (tier table + per-seat example, hardcoded data).
 - [mockups/Sensei/lib/dojo/dojo-saas.jsx](../../../../mockups/Sensei/lib/dojo/dojo-saas.jsx)
-  — SaaS entry: sign-in · orgs · create Dōjō (plan choice).
+  — SaaS entry: sign-in · orgs · create Dōjō (plan choice). Superseded: a dōjō comes
+  from a git integration on the free tier and the plan is chosen in billing (D20).
 - [prd/01-vision.md §Business model](../../../01-vision.md) · [prd/03-personas.md §4,5](../../../03-personas.md).
-- Crates: **none yet** — Worker: `dojo/src/routes/(app)/org/[slug]/billing/`.
+- Crates: **none yet** — Worker: `dojo/src/routes/v1/t/[origin]/[org]/billing/+server.ts`;
+  the org section is `/org/[slug]/billing`, served by `dojo/src/routes/(app)/org/[slug]/[section]/`.

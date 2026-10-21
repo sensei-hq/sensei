@@ -17,7 +17,7 @@
 
 Memberships, routing, preview and the universal strip (T1); the role consoles
 (T2 — the four Dōjō roles live in [`02-objectives.md`](../../02-objectives.md) §Dōjō:
-developer · maintainer · org admin · **lead**, alongside the manager and
+contributor < maintainer < **lead** < admin (D1), alongside the manager and
 client / workspace viewpoints);
 workspace planning against external trackers (Jira / ADO read-only) with
 **delta-scoped, ratchet-fair quality gates** (T3, reorg §9); the free-where-public
@@ -26,8 +26,9 @@ pipelines, the five DORA keys and **release gates** that hold a release to the T
 targets over its change set (T5).
 
 **Resolved 2026-10-21** ([roadmap/09](../../../roadmap/09-dojo-expansion.md)): external
-systems (trackers, CI) are connected and owned by the **dōjō**, per workspace, and are
-**read-only — the dōjō pulls**; **sensei ⇄ dōjō is two-way sync** for workspaces, teams,
+systems (trackers, CI) are **read-only**; a credential stays local unless its owner marks it
+shared, and a shared service key hands off to the **dōjō** (D14, D21); each daemon pulls its
+trackers at its person's cadence (D22); **sensei ⇄ dōjō is two-way sync** for workspaces, teams,
 roles and connections, with the dōjō the authority on conflict. The canonical role
 ladder is `contributor < maintainer < lead < admin`.
 

@@ -126,6 +126,7 @@ suspicious module and must say why in its spec.
 Preferences are a persona concern, not a Module-2 footnote: the current app
 serves everyone in **kanji** icons, while the mockups already support switching
 between **kanji ⇄ solar** styles via rokkit's data-driven components. That toggle
-is a gap in the current app (reorg §12.10 A-1) and personal preferences must
+was gap A-1 (reorg §12.10) and is resolved: the app stores it as `ui.glyphs`
+(Settings → General), and the dōjō's account menu has Theme and Glyphs. Personal preferences must
 extend to cover the configurations the app already supports (A-2). Personas
 declare intent; the preference surface carries it.

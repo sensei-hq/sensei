@@ -59,7 +59,7 @@ evidence is a suspicion, and gets labelled so.
 | ACP-4 | M21 | No streaming response handling in relay | streaming not parsed in transcript or relay | P2 |
 | ACP-5 | M21 | Permission/gate flow not implemented for ACP | only Claude hooks have gate logic | P2 |
 | ACP-6 | M21 | Model selection via ACP not wired | ACP supports; not used | P3 |
-| T-1 | T3 | tracker adapters (Jira/ADO) mockup-only; 2/7 gates buildable now, 2 scoped-read, 3 on #156 | reorg §9.2 | P1 |
+| T-1 | T3 | tracker adapters: the daemon-side Jira adapter is built (PR #274); Azure Boards and GitHub Issues are not, and a workspace has one tracker, not several (D23). Gates: 1 of 7 buildable now, 2 need scoped reads, 4 on #156 | reorg §9.2 | P1 |
 | ~~T-2~~ | T2 | ~~join/membership flow dead~~ — resolved by #307 A3 invites (7e547a19) | plan gap analysis | — |
 | F-3 | T1 | Dōjō sync works against the local dōjō; production unverified (needs an enrolled daemon); #184 open | production-readiness → `07-quality.md` | P1 |
 | D-11 | P2 | website presents unbuilt as shipped (one claim already dropped) | site↔product audit | P2 |
@@ -75,15 +75,16 @@ evidence is a suspicion, and gets labelled so.
 | G-LIB-WRAP | M12 | no `wrap_library` MCP tool; the wrap-me workflow has no write surface | M12 status honesty; tool registry | P2 |
 | G-DOJO-AUDIT | M16 | no `/api/dojo-binding` endpoint; the About screen's Dōjō binding is opt-in only | M16 Surfaces; route inventory | P2 |
 | G-IMPACT-TEST | M19 | impact/insights endpoints and tables (`applied_recommendations`, `impact_regressions`, `insights`) unbuilt | M19 scenarios all `NO TEST` | P2 |
-| G-BILLING-DATA | T4 | billing tables (`billing_accounts`, `seats`, `subscriptions`, `active_contributors`, `invoices`) planned only | T4 status honesty; DDL inventory | P2 |
+| G-BILLING-DATA | T4 | `dojo.billing_accounts` and `dojo.seats` exist with the billing route; no payment provider, no invoice or subscription tables | T4 status honesty; DDL inventory | P2 |
 | G-COST-LEDGER | M5 | `inference_calls` table (cost/usage ledger) does not exist in DDL or code | M5 status honesty; DDL inventory | P2 |
 
 ## Remaining population (Phase 3)
 
 The full register from [`../reorg.md`](../reorg.md) §12 spans the F- (faults),
-P- (perf: e2e 23/130 red, `public.logs` 25 GB of a 37 GB DB, silent 1000% zoom
-graphs), D- (doc conflicts and claims), T- (test coverage: no Rust tests in CI,
-e2e flame-outs), M- (#153/#154/#155) and X- (backlog table) families. Each row
+P- (perf: silent 1000% zoom graphs), D- (doc conflicts and claims), T- (test
+coverage: e2e flame-outs) and X- (backlog table) families. Closed since reorg §12
+was written: the e2e 23/130 reds (#134), `public.logs` at 25 GB (#180), no Rust
+tests in CI (#182), and the M- metric defects #153, #154 and #155. Each row
 will name the module it blocks, so a plane file and this register always agree.
 
 ## How a gap closes

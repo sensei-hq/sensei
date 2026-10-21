@@ -44,7 +44,7 @@ duplicate, leaving 89. The production-readiness items
   monorepo no longer reads "Unassigned" (030592ee).
 - **Modules stay modules:** the watcher's rescan wrote every subfolder as `folder` and demoted a
   package workspace's members. It now writes the pipeline's kind, from one shared rule (ffc79fc6).
-- **#144 stays open** and moves to wave 3. It is about the workspace metrics view, not Settings.
+- **#144 moved to wave 3** (the workspace metrics view, not Settings) and **closed 2026-10-20** there.
 - **Clearing a role:** a `null` role clears it; before, it was a 200 that changed nothing (e777d692).
 - **Live inspect** (`app/e2e/tests-inspect/settings-projects-inspect.spec.ts`):
   - 3 workspaces placed, 1 repository each.
@@ -211,7 +211,7 @@ The settings screen lists them as repositories.
 
 ## Wave 8 — epics and features
 
-#43, #44, #45, #46, #47, #81, #91, #102, #105, #108, #111, #114, #115, #116/#119 (#116's "create a dōjō" half is void after D11 — scope to decide), #121, #122,
+#43, #44, #45, #46, #47, #81, #91, #102, #105, #108, #111, #114, #115, ~~#116/#119~~ (closed 2026-10-21: #116's create flow is retired; invites and GitHub-org provisioning shipped; R5 is #308), #121, #122,
 #131, #239, #241, #266, #268 and #39. Order these by product priority, not by closure count.
 
 ## Wave 9 — the full re-index (after waves 0–8)

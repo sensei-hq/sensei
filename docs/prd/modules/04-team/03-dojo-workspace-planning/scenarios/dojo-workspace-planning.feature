@@ -134,9 +134,8 @@ Feature: Dōjō Workspace Planning — gate/improvement split, targets, and the 
     Given a maintainer/admin in the org context
     When they open /org/[slug]/projects/[id]/planning
     Then they see tracker sync status, gate config, the baseline, and the ratchet history
-    This is unbuilt — org context not wired (T-2).
-MD
-echo "feature 1: $(wc -l < docs/prd/modules/04-team/03-dojo-workspace-planning/scenarios/dojo-workspace-planning.feature) lines"
+    This is unbuilt — the org context is built (T-2 resolved), this page is not.
+
   NO TEST
   Scenario: a reading from a partial index is not evaluated
     Given a repository still indexing

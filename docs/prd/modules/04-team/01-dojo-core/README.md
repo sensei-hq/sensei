@@ -21,17 +21,19 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 > contribution/accumulation/triage/approval/distribute pipeline, the Worker `/v1`
 > API (rules, artifacts, triage, audit, knowledge), anonymization (origin-based
 > strip + universal strip), and the dojo_protocol wire are built and tested.
-> The **role-scoped surfaces** (developer/maintainer/lead/admin) are **not
-> wired yet** — the org context `/org/[slug]` with its own nav (workspaces, ladder
-> config, role surfaces) is target (gap T-2). The "create a Dōjō + starter
-> constitution" flow is unbuilt. The free personal ladder exists for solo users.
+> The **role-scoped surfaces** (contributor/maintainer/lead/admin) are built: the
+> org context `/org/[slug]/[section]` has its own nav, gated by role
+> (`dojo/src/lib/nav.ts` `navForOrg`); gap T-2 is resolved (#307 A3: invites). The
+> hand-made "create a Dōjō + starter constitution" flow is retired (D11/D20; R1
+> 7478fe8d) — a dōjō comes from a git integration (#308). The free personal ladder
+> exists for solo users.
 
 ## In scope / out of scope
 
 - In: membership kinds (employer · client · community · personal) + role
   ladder (`contributor < maintainer < lead < admin` — `dojo.member_role`, canonical since 2026-10-21); the `dojo`
   schema (`repositories`, `repository_elections`, `repository_metrics`,
-  `memberships`, `shared_rules`, `tenants`, `tenant_scopes`);
+  `memberships`, `shared_rules`, `tenants`; `tenant_scopes` is planned, not built);
   routing (`dojo/routing.rs` — client binding routes to client Dōjō and excludes
   employer; employer binding routes to employer; personal is the fallback);
   the federation wire (`dojo_protocol` — rules + artifacts push/pull);
@@ -58,11 +60,12 @@ feels this as *I sign in once, and the right rules just work — wherever I code
   `dojo/relay_*.rs` (constitution, workspace, run, nudge); `governance.rs`
   (resolution); `attribution.rs` (origin-based strip).
 - **App** — `dojo/src/routes/(app)/you/*` (personal landing); `dojo/src/routes/(app)/org/[slug]/*`
-  (org context — target); `dojo/src/routes/v1/*` (Worker API); sign-in
+  (org context, role-gated sections via `[section]`); `dojo/src/routes/v1/*` (Worker API); sign-in
   (GitHub, magic-link).
 - **Data** — `dojo.repositories` (visibility: public/private/not-captured),
   `repository_elections`, `repository_metrics`, `memberships`, `shared_rules`,
-  `tenants`, `tenant_scopes`, `audit_log`, `audit_events`, `engagements`.
+  `tenants`, `audit_log`, `audit_events`, `engagements` (`tenant_scopes` is
+  planned, not built).
 
 ## Data invariants
 
@@ -91,7 +94,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 | Element | Meaning | Worked example |
 |---|---|---|
 | Membership kind | employer / client / community / personal | `employer` |
-| Role floor | member / contributor / lead / maintainer / admin | `maintainer` |
+| Role floor | `contributor < maintainer < lead < admin` | `maintainer` |
 | Tenant | the Dōjō this repo federates to | `dojo.sensei-hq.com/t/org/sensei-hq` |
 | Effective rules | resolved ladder for this repo | 12 rules (3 company, 2 workspace, 7 personal) |
 | Contribution | a shareable finding | `memory#m-42 → rule (mandatory)` |
@@ -136,20 +139,21 @@ curl -s "https://dojo.sensei-hq.com/v1/t/org/sensei-hq/rules/resolved?repo=..." 
   routing, federation, contribution pipeline, anonymization, governance
   resolution (pinned).
 - [`scenarios/dojo-core-gaps.feature`](scenarios/dojo-core-gaps.feature) — the
-  unbuilt org context `/org/[slug]`, create-Dōjō flow, role-scoped surfaces
-  (`NO TEST` / `# gap: T-2`).
+  org context `/org/[slug]`, a dōjō imported from a git integration, role-scoped
+  surfaces, and the Dōjō → member rule sync (F-3).
 
 ## Open gaps
 
-- [T-2](../../../../roadmap/06-gaps.md) — join/membership flow: magic-link
-  creates `auth.users` but no membership; "Join" dead → every console surface
-  403s (P1). Blocks T2 consoles.
-- [F-3](../../../../roadmap/06-gaps.md) — Dōjō sync never worked (reorg §12)
-  (P1). Member-facing consequence: a Dōjō-authored rule never reaches the
-  member's `get_rules`, so the shared half of governance silently no-ops
-  (the wrong gate below; scenario in `dojo-core-gaps.feature`).
-- **Create a Dōjō + starter constitution** — unbuilt.
-- **Role-scoped surfaces** (developer/maintainer/lead/admin) — unbuilt.
+- [T-2](../../../../roadmap/06-gaps.md) — join/membership flow. **Resolved**:
+  invites (#307 A3) and GitHub-org provisioning create memberships, and the org
+  sections are built and role-gated.
+- [F-3](../../../../roadmap/06-gaps.md) — Dōjō sync (reorg §12). Works against the
+  local dōjō; **production is unverified**. Member-facing consequence if it
+  breaks: a Dōjō-authored rule never reaches the member's `get_rules`, so the
+  shared half of governance silently no-ops (the wrong gate above; scenario in
+  `dojo-core-gaps.feature`).
+- **A dōjō from a git integration** (D20) — not built; tracked by #308. The
+  hand-made create flow is retired (R1).
 
 ## Related
 

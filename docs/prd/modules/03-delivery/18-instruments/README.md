@@ -29,7 +29,7 @@ see exactly what sensei did and whether it worked.*
   tool/response timeline with per-call verdicts); the verdict classifier and its
   list/summary; the tools-health grid + refresh; per-tool signals (usage → unused /
   warn / opportunity / win, curated); and the MCP server/tool listing.
-- Out: the code graph and Atlas (M17); per-workspace Impact (M19); the planner (M20);
+- Out: the code graph and the Code map (M17); per-workspace Impact (M19); the planner (M20);
   **the benchmark runner (C-5, not built)**; the mobile relay surfaces (M21).
 
 ## Surfaces

@@ -9,7 +9,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 
 | # | Question | Decision |
 |---|---|---|
-| D1 | Which role ladder is canonical? | **The database enum**: `contributor < maintainer < lead < admin` — what RLS enforces. The PRD (`member < contributor < lead < maintainer < admin`) and the mockup (`developer < …`) are updated to match. Workspace-scoped roles raise within this ladder. |
+| D1 | Which role ladder is canonical? | **The database enum**: `contributor < maintainer < lead < admin` — what RLS enforces. The PRD (`member < contributor < lead < maintainer < admin`) and the mockup (`developer < …`) are updated to match. |
 | D2 | Where do integrations live? | **The dōjō owns them.** Connected once per workspace in the dōjō, credentials held by the dōjō, shared by the team. The daemon pulls what they mirror through sync; connecting from sensei forwards to the dōjō. Supersedes the daemon-local `sensei.trackers` proposal in `docs/design/integrations-and-gating-requirements.md` §5. |
 | D3 | Does "both ways" include writing to trackers (Jira, Azure Boards, GitHub Issues — the work-item systems whose tickets and sprints a session links to)? | **No — dōjō ⇄ sensei only.** Workspaces, teams, roles and connections sync both ways between the dōjō and sensei; Jira / ADO / GitHub stay read-only (the 2026-10-14 decision stands). |
 | D4 | Where do DORA signals come from? | **CI APIs plus git tags.** Deployments from GitHub Actions and Azure Pipelines through the integrations, git tags as the fallback; a production-incident entity, separate from today's confidentiality `dojo.incidents`, for time to restore and change failure rate. |
@@ -20,10 +20,10 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D9 | Four DORA keys or five? | **Five** — rework rate (DORA 2024) joins deployment frequency, lead time, change failure rate and time to restore. |
 | D10 | Hide aggregates over very small groups? | **No.** An aggregate over one contributor is shown; revisit only if comparison charts across people or teams are added. |
 | D11 | What kinds of dōjō are there? (2026-10-21, third round) | *(Revised by D20: a dōjō comes from a git integration, and an import may land as workspaces in one dōjō.)* **Two: an organization's, or a personal one.** A dōjō is the tenant — the owner. There is no hand-made dōjō: `dojo.create_dojo`, the `team` tenant origin, `team/<slug>` keys and the `team:<slug>` pack namespace are retired. |
-| D12 | What is a "workspace"? | **A workspace** — a group of repositories. Renamed everywhere, in one slice: the database, the API, the daemon's sync, both apps and the docs (sensei and the dōjō are both pre-v1). "Workspace" stops being a term. |
+| D12 | What is a "project"? | **A workspace** — a group of repositories. Renamed everywhere, in one slice: the database, the API, the daemon's sync, both apps and the docs (sensei and the dōjō are both pre-v1). **"Project" stops being a term.** |
 | D13 | What does linking a team to a workspace do? | **Reporting only.** "Teams work on workspaces": the link says which team works on which workspace, so reports split by team. It grants nothing — access stays on repositories (D5) and viewer grants (D8). |
 | D14 | Who owns an integration's credential? (2026-10-21, fourth round) | **The dōjō — one credential for the workspace.** When sensei is set up first on a developer's machine and the integration is configured there, it **hands off to the dōjō without a second configuration**; from then on the dōjō owns it and sensei reads through the dōjō. Refines D2. |
-| D15 | The viewer grant model? | A team grant is **one grant per person on the team at that moment** (as built). Grants gain an **expiry** and an **export flag**. **Only an admin marks a viewer as outside the organization**, through the relationship enum (employer · client · community · personal); someone outside never exports. The **viewer shell** (`/v/{tenant}`) is built. |
+| D15 | The viewer grant model? | A team grant is **one grant per person on the team at that moment** (as built). Grants gain an **expiry** and an **export flag**. **Only an admin marks a viewer as outside the organization**, through the relationship enum (employer · client · community · personal); someone outside never exports. The **viewer shell** (`/v/{tenant}`) is **to be built**. |
 | D16 | How far does D12 reach? | **Into stored values too**: the governance ladder's `project` level, pack namespaces and artifact scopes become `workspace`, converted in R3. |
 | D17 | Self-hosting? | **None**, in the PRD and in code: the `self_hosted` column and the self-hosted badge go (R2). |
 | D18 | Which branches does sensei read? | **Three environments — production · testing · development —** each mapped to whatever branch a repository uses (`main`/`master`, `test`/`qa`, `develop`/`dev`). Production defaults to the forge's **default branch**; an unmapped environment **falls back to production**. Release gates run in order development → testing → production (a break in testing predicts one in production); sprint targets read development. |
@@ -64,8 +64,8 @@ dōjō, then production), and keeps presentation | state | load apart with rokki
 
 ### Wave R — one vocabulary (D11, D12), before A4
 
-D12 renames "workspace" to **workspace** everywhere, and D11 retires the hand-made dōjō. Both land before
-A4, so the writable workspaces are built under their real name. Sized 2026-10-21: "workspace" appears in
+D12 renames "project" to **workspace** everywhere, and D11 retires the hand-made dōjō. Both land before
+A4, so the writable workspaces are built under their real name. Sized 2026-10-21: "project" appears in
 ~290 crate files (~7.3k lines), ~260 app files (~2.5k), ~160 dōjō files (~1.3k), ~490 docs (~6.4k);
 `sensei.projects` and ~30 related tables, views and functions; `dojo.projects` and its links. Each
 slice builds, passes and ships on its own.
@@ -85,7 +85,7 @@ slice builds, passes and ships on its own.
   org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
   the free tier; the plan is chosen in billing. *Needs its own design pass before code.*
 - **R4 · The words.** PRD, specs, guides, `docs/llms`, both `SKILL.md` copies, agents, the website.
-  Generic English ("the workspace's README", a Cargo workspace) stays.
+  Generic English ("the project's README", a Cargo project) stays.
 
 ### Wave A — the dōjō can author workspaces, teams and roles
 
