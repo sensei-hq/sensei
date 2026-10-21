@@ -37,6 +37,7 @@ is a bug in the policy.
 | **member** | an ACTIVE membership in the tenant (`memberships.disabled_at is null`) | The floor for every tenant-scoped cell. A missing or disabled membership is **no access**, never "level 0". |
 | **contributor · maintainer · lead · admin** | `memberships.role` (`dojo.member_role`) | The TENANT role. `admin` is "management": policy, identity, billing, provisioning. A tenant-role `lead` guards client confidentiality (engagements, incidents, audit ledger). |
 | **team member / team lead** | `dojo.team_members` (+ `.role = 'lead'`) on a team that owns the project (`dojo.team_projects`) | The PROJECT relationship. "A lead's projects" means projects owned by a team on which the principal's team role is `lead`. |
+| **project role** (#307 A1) | `dojo.project_members.role` on one project, checked by `dojo.project_role_at_least` | What a person may DO on that project — manage its people now; edit its targets and close its sprints later. The effective role is the higher of the tenant role and the project role: it **only raises**, never lowers, and is never `admin` (dōjō-wide). It grants **no data visibility** — who sees cross-user project data stays the team relationship above. |
 | **daemon** | the signed-in persona's session, presented by the daemon for the memberships that persona joined (step 4) | Same principal, same matrix. There is no device credential: any other bearer is a 401. |
 
 **The tenant roles are ordered** `contributor < maintainer < lead < admin` —
