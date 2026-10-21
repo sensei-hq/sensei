@@ -1,5 +1,5 @@
 -- Teams as groupings (#307 A3, D7): a named group of a dōjō's members, for "by
--- team" reports and for granting the project viewer to many people at once. A
+-- team" reports and for granting the workspace viewer to many people at once. A
 -- team grants NO access — repository roles do (D5).
 --
 -- WHAT BREAKS THIS TEST: a non-admin creating, renaming, deleting or changing a
@@ -22,14 +22,14 @@ insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via)
   ('b0000000-0000-4000-8000-00000000034a', 'a0000000-0000-4000-8000-000000000342', 'contributor', 'employer', 'github_oauth'),
   ('b0000000-0000-4000-8000-00000000034a', 'a0000000-0000-4000-8000-000000000343', 'maintainer', 'employer', 'github_oauth'),
   ('b0000000-0000-4000-8000-00000000034b', 'a0000000-0000-4000-8000-000000000344', 'admin', 'employer', 'github_oauth'),
-  -- ada also administers U, so only the same-dōjō rule can stop a T team being granted on U's project.
+  -- ada also administers U, so only the same-dōjō rule can stop a T team being granted on U's workspace.
   ('b0000000-0000-4000-8000-00000000034b', 'a0000000-0000-4000-8000-000000000341', 'admin', 'employer', 'github_oauth');
-insert into dojo.projects (id, tenant_id, slug, name, classification) values
+insert into dojo.workspaces (id, tenant_id, slug, name, classification) values
   ('c0000000-0000-4000-8000-000000000341', 'b0000000-0000-4000-8000-00000000034a', 'ztest-tg-p', 'p', 'company'),
   ('c0000000-0000-4000-8000-000000000342', 'b0000000-0000-4000-8000-00000000034b', 'ztest-tg-q', 'q', 'company');
 insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
   ('90000000-0000-4000-8000-000000000341', 'b0000000-0000-4000-8000-00000000034a', 'github.com/ztest-tg/r', 'r', 'github');
-insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id) values
+insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant_id) values
   ('c0000000-0000-4000-8000-000000000341', '90000000-0000-4000-8000-000000000341', 'b0000000-0000-4000-8000-00000000034a');
 
 set local role authenticated;
@@ -97,21 +97,21 @@ begin
     select count(*) into n from dojo.teams where tenant_id = t;
     if n <> 0 then raise exception 'an outsider saw % of the dōjō''s teams', n; end if;
     begin
-        perform dojo.grant_project_viewer_to_team(p, team);
+        perform dojo.grant_workspace_viewer_to_team(p, team);
         raise exception 'an admin of another dōjō granted viewers here';
     exception when insufficient_privilege then null;
     end;
 
     -- The admin grants the viewer on p to the whole team at once.
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000341"}', true);
-    perform dojo.grant_project_viewer_to_team(p, team);
-    select count(*) into n from dojo.project_viewers where project_id = p;
+    perform dojo.grant_workspace_viewer_to_team(p, team);
+    select count(*) into n from dojo.workspace_viewers where workspace_id = p;
     if n <> 2 then raise exception 'a team grant made % viewers, expected 2', n; end if;
 
-    -- A team cannot grant on another dōjō's project.
+    -- A team cannot grant on another dōjō's workspace.
     begin
-        perform dojo.grant_project_viewer_to_team(q, team);
-        raise exception 'a team was granted a viewer on another dōjō''s project';
+        perform dojo.grant_workspace_viewer_to_team(q, team);
+        raise exception 'a team was granted a viewer on another dōjō''s workspace';
     exception when insufficient_privilege then null;
     end;
 
@@ -123,7 +123,7 @@ begin
     select count(*) into n from dojo.teams where id = team;
     if n <> 0 then raise exception 'a deleted team is still there'; end if;
     -- A viewer grant made through a team outlives the team: it was granted to people.
-    select count(*) into n from dojo.project_viewers where project_id = p;
+    select count(*) into n from dojo.workspace_viewers where workspace_id = p;
     if n <> 2 then raise exception 'deleting the team revoked % viewer grants', 2 - n; end if;
 end $$;
 

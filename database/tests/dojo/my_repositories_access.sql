@@ -1,5 +1,5 @@
 -- A person's repositories and sync verdicts, as them (#236 step 3; access matrix
--- "Projects and repositories"; entity model §3).
+-- "Workspaces and repositories"; entity model §3).
 --
 -- dojo.all_my_repositories computes each (repository, member) verdict from facts
 -- a plain member may not read — the tenant's billing account, its share policy,

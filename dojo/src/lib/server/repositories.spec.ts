@@ -63,7 +63,7 @@ describe('registerRepositories', () => {
 		const db = {
 			rpc: (fn: string, args: Record<string, unknown>) => {
 				calls.push({ fn, args });
-				const answer = () => (fn === 'file_repository_project' ? fileAnswer(args) : respond(args));
+				const answer = () => (fn === 'file_repository_workspace' ? fileAnswer(args) : respond(args));
 				// `.single()` for a row-returning function, awaited directly for a
 				// scalar one — as supabase-js offers both.
 				return {
@@ -156,26 +156,26 @@ describe('registerRepositories', () => {
 		expect(out.unmapped).toHaveLength(1);
 	});
 
-	// #299 (decided: one dōjō project per sensei project): the daemon sends each
-	// repository's sensei project, and a mapped repository is filed under it.
-	const PROJECT = { slug: 'sensei', name: 'sensei' };
+	// #299 (decided: one dōjō workspace per sensei workspace): the daemon sends each
+	// repository's sensei workspace, and a mapped repository is filed under it.
+	const WORKSPACE = { slug: 'sensei', name: 'sensei' };
 
-	it('files a mapped repository under the project the daemon sent', async () => {
+	it('files a mapped repository under the workspace the daemon sent', async () => {
 		const { db, calls } = rpcDb(filed);
-		const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api', project: PROJECT }]);
+		const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api', workspace: WORKSPACE }]);
 		expect(calls[1]).toEqual({
-			fn: 'file_repository_project',
+			fn: 'file_repository_workspace',
 			// No classification: the database derives it from where the repository lives.
 			args: { p_repository_id: 'r-github.com/acme/api', p_slug: 'sensei', p_name: 'sensei' }
 		});
-		expect(out.mapped[0]).toMatchObject({ repo_key: 'github.com/acme/api', project_id: 'p-sensei' });
+		expect(out.mapped[0]).toMatchObject({ repo_key: 'github.com/acme/api', workspace_id: 'p-sensei' });
 	});
 
-	it('files nothing for a repository sent without a project', async () => {
+	it('files nothing for a repository sent without a workspace', async () => {
 		const { db, calls } = rpcDb(filed);
 		const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api' }]);
 		expect(calls.map((c) => c.fn)).toEqual(['register_repository']);
-		expect(out.mapped[0].project_id).toBeUndefined();
+		expect(out.mapped[0].workspace_id).toBeUndefined();
 	});
 
 	it('files nothing for a repository that did not map', async () => {
@@ -183,7 +183,7 @@ describe('registerRepositories', () => {
 			data: { tenant_id: null, tenant_key: null, repository_id: null, reason: 'no_connection' },
 			error: null
 		}));
-		await registerRepositories(db, [{ repo_key: 'github.com/acme/api', project: PROJECT }]);
+		await registerRepositories(db, [{ repo_key: 'github.com/acme/api', workspace: WORKSPACE }]);
 		expect(calls.map((c) => c.fn)).toEqual(['register_repository']);
 	});
 
@@ -192,9 +192,9 @@ describe('registerRepositories', () => {
 		fileAnswer = () => ({ data: null, error: { message: 'not a member of this repository\'s tenant' } });
 		try {
 			const { db } = rpcDb(filed);
-			const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api', project: PROJECT }]);
-			expect(out.mapped[0]).toMatchObject({ repo_key: 'github.com/acme/api', project_error: "not a member of this repository's tenant" });
-			expect(out.mapped[0].project_id).toBeUndefined();
+			const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api', workspace: WORKSPACE }]);
+			expect(out.mapped[0]).toMatchObject({ repo_key: 'github.com/acme/api', workspace_error: "not a member of this repository's tenant" });
+			expect(out.mapped[0].workspace_id).toBeUndefined();
 		} finally {
 			fileAnswer = saved;
 		}

@@ -128,9 +128,9 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
             .map(crate::dojo::relay_constitution::compose_constitution),
         None => None,
     };
-    // The project the run is in — the same for every dōjō, which attaches the
-    // session to the shared project the sync filed (#299).
-    update.project =
+    // The workspace the run is in — the same for every dōjō, which attaches the
+    // session to the shared workspace the sync filed (#299, D12).
+    update.workspace =
         crate::dojo::relay_run_project::run_project(update.project_slug.clone(), constitution);
 
     let mut published = 0u32;

@@ -280,19 +280,19 @@ pub struct RelaySessionUpdate {
     /// Optional + backward-compatible: absent → no seat is touched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_slug: Option<String>,
-    /// The project the run is in, so the dōjō attaches the session to it (and
-    /// shows its constitution). Optional + backward-compatible.
+    /// The workspace the run is in (D12), so the dōjō attaches the session to it
+    /// (and shows its constitution). Optional: absent → the session stays under none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project: Option<RelayProjectInfo>,
+    pub workspace: Option<RelayWorkspaceInfo>,
 }
 
-/// The project a run is in, by its namespace slug. A run never creates a
-/// project: the dōjō finds the shared one the sync filed (#299), which owns its
+/// The workspace a run is in, by its namespace slug. A run never creates a
+/// workspace: the dōjō finds the shared one the sync filed (#299), which owns its
 /// name, classification and phase.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RelayProjectInfo {
+pub struct RelayWorkspaceInfo {
     pub slug: String,
-    /// The project's resolved constitution (the daemon composes it locally from
+    /// The workspace's resolved constitution (the daemon composes it locally from
     /// the folder's namespaces + packs). Federated so the dōjō can DISPLAY the
     /// "before you start" preview without re-resolving. Optional + backward-
     /// compatible: absent → the dōjō shows its "resolves in your editor" state.
@@ -475,10 +475,10 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn a_run_names_its_project_by_slug_alone() {
-        // #299: the dōjō owns a project's name, classification and phase (the sync
-        // files it); a run only says which project it is in.
-        let p = RelayProjectInfo { slug: "sensei-hq".into(), constitution: None };
+    fn a_run_names_its_workspace_by_slug_alone() {
+        // #299, D12: the dōjō owns a workspace's name, classification and phase
+        // (the sync files it); a run only says which workspace it is in.
+        let p = RelayWorkspaceInfo { slug: "sensei-hq".into(), constitution: None };
         assert_eq!(serde_json::to_value(&p).unwrap(), json!({ "slug": "sensei-hq" }));
     }
 
@@ -582,7 +582,7 @@ mod tests {
             pause_reason: Some("weekly cap".into()),
             heartbeat_at: Some("2026-07-16T10:04:30Z".into()),
             project_slug: None,
-            project: None,
+            workspace: None,
         };
         let js = serde_json::to_string(&u).unwrap();
         let back: RelaySessionUpdate = serde_json::from_str(&js).unwrap();
@@ -595,6 +595,14 @@ mod tests {
         assert!(v.get("project_slug").is_none(), "None project_slug is omitted");
 
         // With a project set, the slug rides the wire (drives seat attribution).
+        // D12: the run's workspace rides the wire under `workspace`, never `project`.
+        let placed = RelaySessionUpdate {
+            workspace: Some(RelayWorkspaceInfo { slug: "sensei-hq".into(), constitution: None }),
+            ..u.clone()
+        };
+        let pv = serde_json::to_value(&placed).unwrap();
+        assert_eq!(pv["workspace"], json!({ "slug": "sensei-hq" }));
+        assert!(pv.get("project").is_none(), "the old key is gone from the wire");
         let seated = RelaySessionUpdate { project_slug: Some("my-proj".into()), ..u };
         let jv: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&seated).unwrap()).unwrap();

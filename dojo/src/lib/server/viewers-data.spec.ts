@@ -1,9 +1,9 @@
 // The dōjō's viewers (#307 A3, D8): people invited in as viewers — not members —
-// and the projects an admin has granted each. The admin lists them, removes one,
-// and grants or revokes a project. Refusals keep the status the database meant.
+// and the workspaces an admin has granted each. The admin lists them, removes one,
+// and grants or revokes a workspace. Refusals keep the status the database meant.
 import { describe, it, expect } from 'vitest';
 import { fakeDojoDb, type FakeTable } from './fake-dojo-db';
-import { listDojoViewers, removeDojoViewer, grantProjectView, revokeProjectView } from './viewers-data';
+import { listDojoViewers, removeDojoViewer, grantWorkspaceView, revokeWorkspaceView } from './viewers-data';
 import { AdminError, type DojoClient } from './admin-data';
 
 const T = 'tenant-t';
@@ -18,19 +18,19 @@ function db(over: Record<string, FakeTable> = {}) {
 				{ tenant_id: 'other', principal_id: 'elsewhere', joined_at: '2026-10-21T00:00:00Z' }
 			]
 		},
-		projects: {
+		workspaces: {
 			rows: [
 				{ id: 'p1', tenant_id: T, name: 'Payments' },
 				{ id: 'p2', tenant_id: T, name: 'Search' },
 				{ id: 'px', tenant_id: 'other', name: 'Not ours' }
 			]
 		},
-		project_viewers: {
+		workspace_viewers: {
 			rows: [
-				{ project_id: 'p1', principal_id: 'boss' },
-				{ project_id: 'p2', principal_id: 'boss' },
-				{ project_id: 'px', principal_id: 'boss' },
-				{ project_id: 'p1', principal_id: 'a-member' }
+				{ workspace_id: 'p1', principal_id: 'boss' },
+				{ workspace_id: 'p2', principal_id: 'boss' },
+				{ workspace_id: 'px', principal_id: 'boss' },
+				{ workspace_id: 'p1', principal_id: 'a-member' }
 			]
 		},
 		identities: {
@@ -40,15 +40,15 @@ function db(over: Record<string, FakeTable> = {}) {
 			]
 		},
 		'rpc:remove_dojo_viewer': { rows: [] },
-		'rpc:grant_project_viewer': { rows: [] },
-		'rpc:revoke_project_viewer': { rows: [] },
+		'rpc:grant_workspace_viewer': { rows: [] },
+		'rpc:revoke_workspace_viewer': { rows: [] },
 		...over
 	}));
 }
 const asClient = (f: ReturnType<typeof fakeDojoDb>) => f as unknown as DojoClient & typeof f;
 
 describe('listDojoViewers', () => {
-	it("lists the dōjō's viewers with their names and the dōjō's projects granted to each", async () => {
+	it("lists the dōjō's viewers with their names and the dōjō's workspaces granted to each", async () => {
 		const got = await listDojoViewers(db(), T);
 		expect(got).toEqual([
 			{
@@ -56,13 +56,13 @@ describe('listDojoViewers', () => {
 				display_name: 'The Boss',
 				email: 'boss@example.com',
 				joined_at: '2026-10-20T00:00:00Z',
-				projects: [
+				workspaces: [
 					{ id: 'p1', name: 'Payments' },
 					{ id: 'p2', name: 'Search' }
 				]
 			},
 			// No identity: named by the email they were invited at.
-			{ principal_id: 'client', display_name: null, email: 'client@example.com', joined_at: '2026-10-21T00:00:00Z', projects: [] }
+			{ principal_id: 'client', display_name: null, email: 'client@example.com', joined_at: '2026-10-21T00:00:00Z', workspaces: [] }
 		]);
 	});
 
@@ -70,7 +70,7 @@ describe('listDojoViewers', () => {
 		await expect(listDojoViewers(db({ dojo_viewers: { rows: [], error: { message: 'boom' } } }), T)).rejects.toThrow(
 			AdminError
 		);
-		await expect(listDojoViewers(db({ project_viewers: { rows: [], error: { message: 'boom' } } }), T)).rejects.toThrow(
+		await expect(listDojoViewers(db({ workspace_viewers: { rows: [], error: { message: 'boom' } } }), T)).rejects.toThrow(
 			AdminError
 		);
 	});
@@ -83,21 +83,21 @@ describe('viewer writes', () => {
 		expect(d.rpcCalls).toEqual([{ fn: 'remove_dojo_viewer', args: { p_tenant: T, p_principal: 'boss' } }]);
 	});
 
-	it("grant and revoke name the project and the person, for this dōjō's projects only", async () => {
+	it("grant and revoke name the workspace and the person, for this dōjō's workspaces only", async () => {
 		const d = db();
-		await grantProjectView(d, T, 'p2', 'client');
-		await revokeProjectView(d, T, 'p1', 'boss');
+		await grantWorkspaceView(d, T, 'p2', 'client');
+		await revokeWorkspaceView(d, T, 'p1', 'boss');
 		expect(d.rpcCalls).toEqual([
-			{ fn: 'grant_project_viewer', args: { p_project: 'p2', p_principal: 'client' } },
-			{ fn: 'revoke_project_viewer', args: { p_project: 'p1', p_principal: 'boss' } }
+			{ fn: 'grant_workspace_viewer', args: { p_workspace: 'p2', p_principal: 'client' } },
+			{ fn: 'revoke_workspace_viewer', args: { p_workspace: 'p1', p_principal: 'boss' } }
 		]);
-		await expect(grantProjectView(d, T, 'px', 'client')).rejects.toMatchObject({ status: 404 });
+		await expect(grantWorkspaceView(d, T, 'px', 'client')).rejects.toMatchObject({ status: 404 });
 	});
 
 	it('keeps the status the database meant', async () => {
-		const refused = (code: string) => db({ 'rpc:grant_project_viewer': { rows: [], error: { code, message: 'no' } } });
-		await expect(grantProjectView(refused('42501'), T, 'p1', 'x')).rejects.toMatchObject({ status: 403 });
+		const refused = (code: string) => db({ 'rpc:grant_workspace_viewer': { rows: [], error: { code, message: 'no' } } });
+		await expect(grantWorkspaceView(refused('42501'), T, 'p1', 'x')).rejects.toMatchObject({ status: 403 });
 		// Not in the dōjō: invite them as a viewer first.
-		await expect(grantProjectView(refused('23503'), T, 'p1', 'x')).rejects.toMatchObject({ status: 409 });
+		await expect(grantWorkspaceView(refused('23503'), T, 'p1', 'x')).rejects.toMatchObject({ status: 409 });
 	});
 });

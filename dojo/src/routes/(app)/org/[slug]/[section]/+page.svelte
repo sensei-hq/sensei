@@ -20,14 +20,14 @@
 	import {
 		setMemberRole,
 		removeViewer,
-		grantProjectView,
-		revokeProjectView,
+		grantWorkspaceView,
+		revokeWorkspaceView,
 		createTeam,
 		renameTeam,
 		deleteTeam,
 		addTeamMember,
 		removeTeamMember,
-		grantTeamProjectView
+		grantTeamWorkspaceView
 	} from '$lib/admin-data';
 	import {
 		createIncident,
@@ -84,14 +84,14 @@
 			closeEngagement: (id) => updateEngagement(tk(), id, { status: 'ended' }, opts()),
 			removeEngagement: (id) => deleteEngagement(tk(), id, opts()),
 			removeViewer: (pid) => removeViewer(tk(), pid, opts()),
-			grantView: (pid, projectId) => grantProjectView(tk(), pid, projectId, opts()),
-			revokeView: (pid, projectId) => revokeProjectView(tk(), pid, projectId, opts()),
+			grantView: (pid, projectId) => grantWorkspaceView(tk(), pid, projectId, opts()),
+			revokeView: (pid, projectId) => revokeWorkspaceView(tk(), pid, projectId, opts()),
 			saveTeam: (teamId, name) =>
 				teamId ? renameTeam(tk(), teamId, name, opts()) : createTeam(tk(), name, opts()),
 			deleteTeam: (teamId) => deleteTeam(tk(), teamId, opts()),
 			addTeamMember: (teamId, pid) => addTeamMember(tk(), teamId, pid, opts()),
 			removeTeamMember: (teamId, pid) => removeTeamMember(tk(), teamId, pid, opts()),
-			grantTeamView: (teamId, projectId) => grantTeamProjectView(tk(), teamId, projectId, opts())
+			grantTeamView: (teamId, projectId) => grantTeamWorkspaceView(tk(), teamId, projectId, opts())
 		},
 		invalidateAll
 	);

@@ -1,7 +1,7 @@
 // A dōjō's teams (#307 A3, D7): named groups of its members, for "by team"
-// reports and for granting a project's view to many people at once. A team
+// reports and for granting a workspace's view to many people at once. A team
 // grants no access. The admin lists, creates, renames and deletes teams, puts
-// members on them, and grants a project to a whole team. Every write goes
+// members on them, and grants a workspace to a whole team. Every write goes
 // through the database's functions; a refusal keeps its status.
 import { describe, it, expect } from 'vitest';
 import { fakeDojoDb, type FakeTable } from './fake-dojo-db';
@@ -12,7 +12,7 @@ import {
 	deleteTeam,
 	addTeamMember,
 	removeTeamMember,
-	grantTeamProjectView
+	grantTeamWorkspaceView
 } from './teams-data';
 import { AdminError, type DojoClient } from './admin-data';
 
@@ -43,13 +43,13 @@ function db(over: Record<string, FakeTable> = {}) {
 		identities: {
 			rows: [{ principal_id: 'ada', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }]
 		},
-		projects: { rows: [{ id: 'p1', tenant_id: T }, { id: 'px', tenant_id: 'other' }] },
+		workspaces: { rows: [{ id: 'p1', tenant_id: T }, { id: 'px', tenant_id: 'other' }] },
 		'rpc:create_team': { rows: [{ id: 'new-team' }] },
 		'rpc:rename_team': { rows: [] },
 		'rpc:delete_team': { rows: [] },
 		'rpc:add_team_member': { rows: [] },
 		'rpc:remove_team_member': { rows: [] },
-		'rpc:grant_project_viewer_to_team': { rows: [] },
+		'rpc:grant_workspace_viewer_to_team': { rows: [] },
 		...over
 	});
 	return f as unknown as DojoClient & typeof f;
@@ -89,17 +89,17 @@ describe('team writes', () => {
 		await renameTeam(d, T, 'tm1', 'Payments & Billing');
 		await addTeamMember(d, T, 'tm1', 'dev');
 		await removeTeamMember(d, T, 'tm1', 'dev');
-		await grantTeamProjectView(d, T, 'tm1', 'p1');
+		await grantTeamWorkspaceView(d, T, 'tm1', 'p1');
 		await deleteTeam(d, T, 'tm1');
 		expect(d.rpcCalls.map((c) => [c.fn, c.args])).toEqual([
 			['rename_team', { p_team: 'tm1', p_name: 'Payments & Billing' }],
 			['add_team_member', { p_team: 'tm1', p_principal: 'dev' }],
 			['remove_team_member', { p_team: 'tm1', p_principal: 'dev' }],
-			['grant_project_viewer_to_team', { p_project: 'p1', p_team: 'tm1' }],
+			['grant_workspace_viewer_to_team', { p_workspace: 'p1', p_team: 'tm1' }],
 			['delete_team', { p_team: 'tm1' }]
 		]);
 		await expect(deleteTeam(d, T, 'tmx')).rejects.toMatchObject({ status: 404 });
-		await expect(grantTeamProjectView(d, T, 'tm1', 'px')).rejects.toMatchObject({ status: 404 });
+		await expect(grantTeamWorkspaceView(d, T, 'tm1', 'px')).rejects.toMatchObject({ status: 404 });
 	});
 
 	it('keeps the status the database meant', async () => {

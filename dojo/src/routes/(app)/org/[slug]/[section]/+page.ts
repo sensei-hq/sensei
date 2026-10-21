@@ -9,13 +9,13 @@ import {
 	listIncidents,
 	getKnowledge,
 	listClientAuditLedger,
-	listProjects,
+	listWorkspaces,
 	DojoApiError,
 	type Engagement,
 	type Incident,
 	type KnowledgeLibraryWire,
 	type ClientAuditEntry,
-	type ProjectRow
+	type WorkspaceRow
 } from '$lib/client-data';
 import { listTriage, type TriageRow } from '$lib/triage-data';
 import { toViewerViews, type DojoViewerView, type DojoViewerWire, type ViewerProjectView } from '$lib/viewers-view';
@@ -181,7 +181,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 				guardTenantScope<AuditEvent[]>(tenantKey, [], (tk) => listAudit(tk, opts)),
 				// The Viewers tab (#307 D8): the dōjō's viewers and what they can be granted.
 				guardTenantScope<DojoViewerWire[]>(tenantKey, [], (tk) => listViewers(tk, opts)),
-				guardTenantScope<ProjectRow[]>(tenantKey, [], (tk) => listProjects(tk, opts)),
+				guardTenantScope<WorkspaceRow[]>(tenantKey, [], (tk) => listWorkspaces(tk, opts)),
 				// The Teams tab (#307 D7).
 				guardTenantScope<TeamWire[]>(tenantKey, [], (tk) => listTeams(tk, opts))
 			]);
@@ -243,10 +243,10 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 
 	// Projects (org) — the tenant's dojo.projects (daemon-populated on relay runs).
 	// Real read; honest-empty until populated — NOT the orgProjectsFor(slug) fixture.
-	const projectsRes = await guardedFor<ProjectRow[], KitProject[]>(
+	const projectsRes = await guardedFor<WorkspaceRow[], KitProject[]>(
 		'projects',
 		[],
-		(tk) => listProjects(tk, opts),
+		(tk) => listWorkspaces(tk, opts),
 		toKitProjects
 	);
 

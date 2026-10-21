@@ -12,3 +12,14 @@ drop function if exists dojo.add_dojo_viewer(uuid, uuid, uuid);
 
 -- 2026-10-21 (#307 D11): a dōjō is an organization's or a person's; none is made by hand.
 drop function if exists dojo.create_dojo(text, text, dojo.membership_kind);
+
+-- 2026-10-21 (#307 D12): a project is a workspace. The renamed functions replace these.
+drop function if exists dojo.administers_project(uuid);
+drop function if exists dojo.attach_run_to_project(uuid, text, jsonb);
+drop function if exists dojo.can_read_project(uuid);
+drop function if exists dojo.file_repository_project(uuid, text, text);
+drop function if exists dojo.grant_project_viewer_to_team(uuid, uuid);
+drop function if exists dojo.grant_project_viewer(uuid, uuid);
+drop function if exists dojo.is_project_viewer(uuid);
+drop function if exists dojo.project_in_my_dojo_or_none(uuid);
+drop function if exists dojo.revoke_project_viewer(uuid, uuid);

@@ -13,15 +13,15 @@ import {
 	upsertPolicy,
 	listViewers,
 	removeViewer,
-	grantProjectView,
-	revokeProjectView,
+	grantWorkspaceView,
+	revokeWorkspaceView,
 	listTeams,
 	createTeam,
 	renameTeam,
 	deleteTeam,
 	addTeamMember,
 	removeTeamMember,
-	grantTeamProjectView
+	grantTeamWorkspaceView
 } from '$lib/admin-data';
 
 // A fake fetch that records the call and returns a canned JSON response. Mirrors
@@ -197,18 +197,18 @@ describe("the dōjō's viewers (#307 D8)", () => {
 	it('removes one, and grants and revokes a project (ids encoded)', async () => {
 		const { fn, calls } = fakeFetch(204, null);
 		await removeViewer('personal/acme', 'v/1', { fetch: fn });
-		await grantProjectView('personal/acme', 'v/1', 'p/1', { fetch: fn });
-		await revokeProjectView('personal/acme', 'v/1', 'p/1', { fetch: fn });
+		await grantWorkspaceView('personal/acme', 'v/1', 'p/1', { fetch: fn });
+		await revokeWorkspaceView('personal/acme', 'v/1', 'p/1', { fetch: fn });
 		expect(calls.map((c) => [c.init?.method, c.url])).toEqual([
 			['DELETE', `${dojoApiUrl}/v1/t/personal/acme/viewers/v%2F1`],
-			['PUT', `${dojoApiUrl}/v1/t/personal/acme/viewers/v%2F1/projects/p%2F1`],
-			['DELETE', `${dojoApiUrl}/v1/t/personal/acme/viewers/v%2F1/projects/p%2F1`]
+			['PUT', `${dojoApiUrl}/v1/t/personal/acme/viewers/v%2F1/workspaces/p%2F1`],
+			['DELETE', `${dojoApiUrl}/v1/t/personal/acme/viewers/v%2F1/workspaces/p%2F1`]
 		]);
 	});
 
 	it('surfaces a refusal with its reason', async () => {
 		const { fn } = fakeFetch(409, { error: 'invite them to this dōjō as a viewer first' });
-		await expect(grantProjectView('personal/acme', 'v1', 'p1', { fetch: fn })).rejects.toThrow(
+		await expect(grantWorkspaceView('personal/acme', 'v1', 'p1', { fetch: fn })).rejects.toThrow(
 			'invite them to this dōjō as a viewer first'
 		);
 	});
@@ -227,7 +227,7 @@ describe("the dōjō's teams (#307 D7)", () => {
 		await renameTeam('personal/acme', 't/1', 'Core', { fetch: fn });
 		await addTeamMember('personal/acme', 't/1', 'u/1', { fetch: fn });
 		await removeTeamMember('personal/acme', 't/1', 'u/1', { fetch: fn });
-		await grantTeamProjectView('personal/acme', 't/1', 'p/1', { fetch: fn });
+		await grantTeamWorkspaceView('personal/acme', 't/1', 'p/1', { fetch: fn });
 		await deleteTeam('personal/acme', 't/1', { fetch: fn });
 		const base = `${dojoApiUrl}/v1/t/personal/acme/teams`;
 		expect(calls.map((c) => [c.init?.method, c.url, c.init?.body ?? null])).toEqual([
@@ -235,7 +235,7 @@ describe("the dōjō's teams (#307 D7)", () => {
 			['PATCH', `${base}/t%2F1`, JSON.stringify({ name: 'Core' })],
 			['PUT', `${base}/t%2F1/members/u%2F1`, null],
 			['DELETE', `${base}/t%2F1/members/u%2F1`, null],
-			['PUT', `${base}/t%2F1/projects/p%2F1`, null],
+			['PUT', `${base}/t%2F1/workspaces/p%2F1`, null],
 			['DELETE', `${base}/t%2F1`, null]
 		]);
 	});

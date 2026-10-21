@@ -11,7 +11,7 @@
 -- `authenticated` can see it, which is what this file does.
 --
 -- WHAT BREAKS THIS TEST: reverting any of the three surfaces to compare against
--- the login id — `dojo.projects`'s policy to `user_id = auth.uid()`,
+-- the login id — `dojo.workspaces`'s policy to `user_id = auth.uid()`,
 -- `dojo.owns_membership` to `m.user_id = auth.uid()`, or deleting
 -- `dojo.current_principal_id()`. Each turns a visible row invisible.
 
@@ -37,17 +37,17 @@ insert into dojo.memberships (id, tenant_id, user_id, kind, authenticated_via, r
   ('eeeeeeee-5555-5555-5555-555555555555', 'cccccccc-3333-3333-3333-333333333333',
    'bbbbbbbb-2222-2222-2222-222222222222', 'employer', 'github_oauth', 'contributor');
 
--- A project is shared (#299): read through its repository's access. Alice is
+-- A workspace is shared (#299): read through its repository's access. Alice is
 -- the tenant's ADMIN, so she reads it — but only once her login resolves to her
 -- principal, which is what a tenant-role check compares. Bob, a contributor on
 -- no team, does not.
-insert into dojo.projects (id, tenant_id, slug, name) values
+insert into dojo.workspaces (id, tenant_id, slug, name) values
   ('cccccccc-0000-0000-0000-00000000000f', 'cccccccc-3333-3333-3333-333333333333',
-   'rls-fixture-p', 'the shared project');
+   'rls-fixture-p', 'the shared workspace');
 insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
   ('cccccccc-0000-0000-0000-00000000000e', 'cccccccc-3333-3333-3333-333333333333',
    'github.com/ztest-rls-fixture/p', 'p', 'github');
-insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id) values
+insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant_id) values
   ('cccccccc-0000-0000-0000-00000000000f', 'cccccccc-0000-0000-0000-00000000000e',
    'cccccccc-3333-3333-3333-333333333333');
 
@@ -68,24 +68,24 @@ declare
     owns_own   boolean;
     owns_other boolean;
 begin
-    -- 1. Alice, the tenant admin, sees the project. Fails when a policy compares
+    -- 1. Alice, the tenant admin, sees the workspace. Fails when a policy compares
     --    a principal id to a login id: her admin role never matches.
     select count(*) into mine
-      from dojo.projects where slug = 'rls-fixture-p';
+      from dojo.workspaces where slug = 'rls-fixture-p';
     if mine <> 1 then
         raise exception
-            'dojo.projects RLS: Alice (tenant admin) should see the project, saw % row(s). %',
+            'dojo.workspaces RLS: Alice (tenant admin) should see the workspace, saw % row(s). %',
             mine, 'The policy is not resolving auth.uid() to a principal id.';
     end if;
 
     -- 2. …and Bob does not. Guards the opposite failure — a policy relaxed into
-    --    `using (true)` would satisfy assertion 1 and leak every project.
+    --    `using (true)` would satisfy assertion 1 and leak every workspace.
     perform set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222"}', true);
     select count(*) into theirs
-      from dojo.projects where slug = 'rls-fixture-p';
+      from dojo.workspaces where slug = 'rls-fixture-p';
     if theirs <> 0 then
         raise exception
-            'dojo.projects RLS: Bob (contributor, no team) must not see the project, saw % row(s).',
+            'dojo.workspaces RLS: Bob (contributor, no team) must not see the workspace, saw % row(s).',
             theirs;
     end if;
     perform set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-111111111111"}', true);

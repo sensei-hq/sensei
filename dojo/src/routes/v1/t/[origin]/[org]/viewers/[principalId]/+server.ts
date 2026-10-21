@@ -1,5 +1,5 @@
 // DELETE /v1/t/{origin}/{org}/viewers/{principalId} — remove a viewer from the
-// dōjō, and their project views here (#307 A3, D8). ADMIN floor; the database
+// dōjō, and their workspace views here (#307 A3, D8). ADMIN floor; the database
 // function decides, with the caller's own JWT. 204 on success.
 import { ACCESS } from '$lib/server/dojo-auth';
 import { tenantRoute, noContent } from '$lib/server/tenant-route';

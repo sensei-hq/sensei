@@ -1,7 +1,7 @@
 set search_path to dojo, extensions;
 
 -- Register one repository the signed-in person's daemon found (#236; access
--- matrix "Projects and repositories": a member registers).
+-- matrix "Workspaces and repositories": a member registers).
 --
 -- Maps the repository to the ONE tenant of the caller's that its forge org is
 -- connected to, and files it there — or returns why not:

@@ -12,9 +12,9 @@ import {
 	listAuditArtifacts,
 	listEngagements,
 	listIncidents,
-	listProjects,
-	listUserProjects,
-	getProjectConstitution,
+	listWorkspaces,
+	listUserWorkspaces,
+	getWorkspaceConstitution,
 	listContributions,
 	adoptContribution,
 	createInvite,
@@ -51,39 +51,39 @@ describe('client-data reuses the shared dojo base url', () => {
 	});
 });
 
-describe('listProjects / listUserProjects — tenant vs user-wide reads', () => {
-	it('listProjects GETs the tenant-scoped projects path', async () => {
+describe('listWorkspaces / listUserWorkspaces — tenant vs user-wide reads', () => {
+	it('listWorkspaces GETs the tenant-scoped workspaces path', async () => {
 		const projects = [{ id: 'p1' }];
-		const { fn, calls } = fakeFetch(200, { projects });
-		expect(await listProjects('github/globex', { fetch: fn })).toEqual(projects);
-		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/github/globex/projects`);
+		const { fn, calls } = fakeFetch(200, { workspaces: projects });
+		expect(await listWorkspaces('github/globex', { fetch: fn })).toEqual(projects);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/github/globex/workspaces`);
 	});
 
-	it('listUserProjects GETs the user-wide /v1/you/projects path (no tenant)', async () => {
+	it('listUserWorkspaces GETs the user-wide /v1/you/workspaces path (no tenant)', async () => {
 		const projects = [{ id: 'p1' }, { id: 'p2' }];
-		const { fn, calls } = fakeFetch(200, { projects });
-		const out = await listUserProjects({ fetch: fn });
+		const { fn, calls } = fakeFetch(200, { workspaces: projects });
+		const out = await listUserWorkspaces({ fetch: fn });
 		expect(out).toEqual(projects);
-		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/projects`);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/workspaces`);
 		expect(calls[0].init?.method ?? 'GET').toBe('GET');
 	});
 
-	it('listUserProjects unwraps to [] on a missing envelope key (honest-empty)', async () => {
+	it('listUserWorkspaces unwraps to [] on a missing envelope key (honest-empty)', async () => {
 		const { fn } = fakeFetch(200, {});
-		expect(await listUserProjects({ fetch: fn })).toEqual([]);
+		expect(await listUserWorkspaces({ fetch: fn })).toEqual([]);
 	});
 
-	it('getProjectConstitution GETs the per-project constitution path, by project id (#299)', async () => {
+	it('getWorkspaceConstitution GETs the per-workspace constitution path, by workspace id (#299)', async () => {
 		// By id: a slug is unique only within one dōjō.
 		const constitution = { rules: [], conflicts: [], locks: 0 };
 		const { fn, calls } = fakeFetch(200, { constitution });
-		expect(await getProjectConstitution('proj-1', { fetch: fn })).toEqual(constitution);
-		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/projects/proj-1/constitution`);
+		expect(await getWorkspaceConstitution('proj-1', { fetch: fn })).toEqual(constitution);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/workspaces/proj-1/constitution`);
 	});
 
-	it('getProjectConstitution returns null when none is federated (honest-empty)', async () => {
+	it('getWorkspaceConstitution returns null when none is federated (honest-empty)', async () => {
 		const { fn } = fakeFetch(200, { constitution: null });
-		expect(await getProjectConstitution('proj-1', { fetch: fn })).toBeNull();
+		expect(await getWorkspaceConstitution('proj-1', { fetch: fn })).toBeNull();
 	});
 
 	it('listContributions GETs /v1/you/contributions and unwraps { mine, downstream }', async () => {

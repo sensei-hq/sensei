@@ -32,7 +32,7 @@ app-level authz: admin floor to issue, email-match to accept) — no client-dire
 access.';
 
 comment on column dojo.invites.access
-     is 'member: accepting makes a membership at `role`. viewer (#307 D8): accepting makes the person a dōjō viewer — not a member — whom an admin then grants the view of selected projects.';
+     is 'member: accepting makes a membership at `role`. viewer (#307 D8): accepting makes the person a dōjō viewer — not a member — whom an admin then grants the view of selected workspaces.';
 comment on column dojo.invites.email
      is 'The invited email. The accept path requires the authenticated caller''s email to match (case-insensitive) — the real authorization gate, not the token.';
 comment on column dojo.invites.token

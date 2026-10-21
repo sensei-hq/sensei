@@ -257,8 +257,8 @@ axes as (
              --     decides WHICH RULES APPLY to a repo. Three of its four
              --     referents are rule packs, adoptions and shared rules; seats is
              --     the odd one out, billing against a rule scope.
-             --   * A `(project, …)` namespace is NOT `dojo.projects`. Live: 311
-             --     project namespaces against 146 projects. They share a word.
+             --   * A `(project, …)` namespace is NOT `dojo.workspaces`. Live: 311
+             --     project namespaces against 146 workspaces (#307 D12).
              --
              -- So this was never a grain to reconcile; the seat model keys on the
              -- wrong concept. Re-keying it is its own slice — see docs/backlog.md.

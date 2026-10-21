@@ -1,4 +1,4 @@
--- Who sees THAT a run is going on a project (#252; docs/spec/dojo/access-matrix.md
+-- Who sees THAT a run is going on a workspace (#252; docs/spec/dojo/access-matrix.md
 -- "Relay" — run status row).
 --
 -- | caller                                  | sees                                   |
@@ -10,13 +10,13 @@
 -- | member of another tenant)               |                                        |
 --
 -- Status only: `dojo.peer_run_status` returns no title, goal, phase or feature —
--- relay CONTENT stays the owner's (#249). A project is a SHARED item (#299): a
--- run may be filed under any project in a dōjō the runner is a member of, and
+-- relay CONTENT stays the owner's (#249). A workspace is a SHARED item (#299): a
+-- run may be filed under any workspace in a dōjō the runner is a member of, and
 -- never under one in a dōjō they are not.
 --
 -- WHAT BREAKS THIS TEST: returning a content column; dropping the repository-role clause;
 -- letting a tenant lead or another tenant's admin see runs; letting a session's
--- project_id name a project in a dōjō the runner is not a member of.
+-- workspace_id name a workspace in a dōjō the runner is not a member of.
 
 begin;
 
@@ -44,26 +44,26 @@ insert into dojo.memberships (id, tenant_id, user_id, role, kind, authenticated_
   ('e0000000-0000-4000-8000-000000000036', 'b0000000-0000-4000-8000-00000000003a', 'a0000000-0000-4000-8000-000000000036', 'admin',       'employer', 'github_oauth'),
   ('e0000000-0000-4000-8000-000000000037', 'b0000000-0000-4000-8000-00000000003b', 'a0000000-0000-4000-8000-000000000037', 'admin',       'employer', 'github_oauth');
 
--- Project P holds repository RP: dave maintains it, mia contributes. Nobody has a
+-- Workspace P holds repository RP: dave maintains it, mia contributes. Nobody has a
 -- role on Q's repositories (it has none).
 -- R lives in U, where alice is not a member.
-insert into dojo.projects (id, tenant_id, slug, name) values
+insert into dojo.workspaces (id, tenant_id, slug, name) values
   ('c0000000-0000-4000-8000-0000000000a1',
-   'b0000000-0000-4000-8000-00000000003a', 'ztest-peer-p', 'project P'),
+   'b0000000-0000-4000-8000-00000000003a', 'ztest-peer-p', 'workspace P'),
   ('c0000000-0000-4000-8000-0000000000a2',
-   'b0000000-0000-4000-8000-00000000003a', 'ztest-peer-q', 'project Q'),
+   'b0000000-0000-4000-8000-00000000003a', 'ztest-peer-q', 'workspace Q'),
   ('c0000000-0000-4000-8000-0000000000a3',
-   'b0000000-0000-4000-8000-00000000003b', 'ztest-peer-r', 'project R');
+   'b0000000-0000-4000-8000-00000000003b', 'ztest-peer-r', 'workspace R');
 insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
   ('90000000-0000-4000-8000-0000000000b1', 'b0000000-0000-4000-8000-00000000003a', 'github.com/ztest-peer/rp', 'rp', 'github');
-insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id) values
+insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant_id) values
   ('c0000000-0000-4000-8000-0000000000a1', '90000000-0000-4000-8000-0000000000b1', 'b0000000-0000-4000-8000-00000000003a');
 insert into dojo.repository_roles (repository_id, principal_id, forge_permission, forge_role) values
   ('90000000-0000-4000-8000-0000000000b1', 'a0000000-0000-4000-8000-000000000032', 'maintain', 'maintainer'),
   ('90000000-0000-4000-8000-0000000000b1', 'a0000000-0000-4000-8000-000000000033', 'write',    'contributor');
 
--- Runs, by last digit: 1 alice on P · 2 alice on no project · 3 zed on Q.
-insert into dojo.relay_sessions (membership_id, run_id, title, goal, status, project_id) values
+-- Runs, by last digit: 1 alice on P · 2 alice on no workspace · 3 zed on Q.
+insert into dojo.relay_sessions (membership_id, run_id, title, goal, status, workspace_id) values
   ('e0000000-0000-4000-8000-000000000031', 'f0000000-0000-4000-8000-000000000001', 'secret title', 'secret goal', 'running', 'c0000000-0000-4000-8000-0000000000a1'),
   ('e0000000-0000-4000-8000-000000000031', 'f0000000-0000-4000-8000-000000000002', 'secret title', 'secret goal', 'running', null),
   ('e0000000-0000-4000-8000-000000000034', 'f0000000-0000-4000-8000-000000000003', 'secret title', 'secret goal', 'paused',  'c0000000-0000-4000-8000-0000000000a2');
@@ -105,20 +105,20 @@ begin
     end loop;
 end $$;
 
--- ── a session is filed under a project in a dōjō the runner belongs to ───────
+-- ── a session is filed under a workspace in a dōjō the runner belongs to ───────
 do $$
 begin
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000031"}', true);
     begin
-        update dojo.relay_sessions set project_id = 'c0000000-0000-4000-8000-0000000000a3'
+        update dojo.relay_sessions set workspace_id = 'c0000000-0000-4000-8000-0000000000a3'
          where run_id = 'f0000000-0000-4000-8000-000000000002';
-        raise exception 'relay_sessions: alice filed her run under a project in a dōjō she is not in';
+        raise exception 'relay_sessions: alice filed her run under a workspace in a dōjō she is not in';
     exception when insufficient_privilege or check_violation then null;
     end;
-    -- Any project of her own dōjō is fine — projects are shared, not anyone's.
-    update dojo.relay_sessions set project_id = 'c0000000-0000-4000-8000-0000000000a2'
+    -- Any workspace of her own dōjō is fine — workspaces are shared, not anyone's.
+    update dojo.relay_sessions set workspace_id = 'c0000000-0000-4000-8000-0000000000a2'
      where run_id = 'f0000000-0000-4000-8000-000000000002';
-    update dojo.relay_sessions set project_id = 'c0000000-0000-4000-8000-0000000000a1'
+    update dojo.relay_sessions set workspace_id = 'c0000000-0000-4000-8000-0000000000a1'
      where run_id = 'f0000000-0000-4000-8000-000000000002';
 end $$;
 

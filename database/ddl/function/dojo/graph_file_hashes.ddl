@@ -6,7 +6,7 @@ set search_path to dojo, extensions;
 -- The daemon diffs its own files against this to push only what changed. Gated
 -- like the WRITE, not the team read: whoever may sync the repository (their own
 -- verdict row says sync_enabled) may read it — a member on no team owning the
--- project would otherwise see nothing, and re-push every file every cycle.
+-- workspace would otherwise see nothing, and re-push every file every cycle.
 -- Paths and hashes only; no node, edge or content leaves through here.
 --
 -- SECURITY DEFINER: graph_files' row policy is the team read.

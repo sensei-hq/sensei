@@ -1,7 +1,7 @@
 set search_path to dojo, extensions;
 
 -- A named group of a dōjō's members (#307 D7): for "by team" reports and for
--- granting the project viewer to many people at once. A team grants NO access —
+-- granting the workspace viewer to many people at once. A team grants NO access —
 -- repository roles do (D5); this superseded the 2026-10-12 design in which team
 -- membership was the access path. Written through dojo.create_team / rename_team /
 -- delete_team (admins).

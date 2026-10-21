@@ -24,10 +24,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct MappedRepo {
     pub repo_key: String,
-    /// Why filing the repository under its project failed (#299) — the
+    /// Why filing the repository under its workspace failed (#299) — the
     /// registration still stood. Absent on success and on a sync plan.
     #[serde(default)]
-    pub project_error: Option<String>,
+    pub workspace_error: Option<String>,
     /// The tenant's `{origin}/{slug}` discovery key — for logs and display.
     pub tenant: String,
     /// The tenant's uuid. What gets stored in `sensei.repositories.tenant_id`,
@@ -199,16 +199,16 @@ pub struct RepoInput<'a> {
     pub repo_key: &'a str,
     pub remote_url: Option<&'a str>,
     pub name: &'a str,
-    /// Its sensei project (#299): the dōjō files the mapped repository under it.
+    /// Its workspace (#299, D12): the dōjō files the mapped repository under it.
     /// Omitted, never `null`, when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub project: Option<RepoProjectInput<'a>>,
+    pub workspace: Option<RepoWorkspaceInput<'a>>,
 }
 
-/// A sensei project as a registration names it — the slug and name a relay run
+/// A workspace as a registration names it — the slug and name a relay run
 /// sends; the dōjō derives the classification from where the repository lives.
 #[derive(Debug, serde::Serialize)]
-pub struct RepoProjectInput<'a> {
+pub struct RepoWorkspaceInput<'a> {
     pub slug: &'a str,
     pub name: &'a str,
 }
@@ -948,7 +948,7 @@ mod activation_union {
 
     fn repo(key: &str, tenant: &str, disabled: &[&str]) -> MappedRepo {
         MappedRepo {
-            project_error: None,
+            workspace_error: None,
             repo_key: key.into(),
             tenant: tenant.into(),
             tenant_id: format!("t-{tenant}"),
@@ -1058,33 +1058,34 @@ mod activation_decode {
 }
 
 #[cfg(test)]
-mod repo_input_project_tests {
+mod repo_input_workspace_tests {
     use super::*;
 
-    // #299: a repository's sensei project travels with its registration, and
+    // #299, D12: a repository's workspace travels with its registration, and
     // only when there is one — never as `null`, which the dōjō reads as present.
     #[test]
-    fn a_project_is_sent_when_known_and_omitted_when_not() {
+    fn a_workspace_is_sent_when_known_and_omitted_when_not() {
         let with = RepoInput {
             repo_key: "github.com/a/b",
             remote_url: None,
             name: "b",
-            project: Some(RepoProjectInput { slug: "sensei", name: "sensei" }),
+            workspace: Some(RepoWorkspaceInput { slug: "sensei", name: "sensei" }),
         };
         let v = serde_json::to_value(&with).unwrap();
-        assert_eq!(v["project"], serde_json::json!({ "slug": "sensei", "name": "sensei" }));
+        assert_eq!(v["workspace"], serde_json::json!({ "slug": "sensei", "name": "sensei" }));
+        assert!(v.get("project").is_none(), "the old key is gone from the wire");
         let without =
-            RepoInput { repo_key: "github.com/a/b", remote_url: None, name: "b", project: None };
-        assert!(serde_json::to_value(&without).unwrap().get("project").is_none());
+            RepoInput { repo_key: "github.com/a/b", remote_url: None, name: "b", workspace: None };
+        assert!(serde_json::to_value(&without).unwrap().get("workspace").is_none());
     }
 
     #[test]
     fn a_filing_failure_on_a_mapped_repository_is_read() {
         let r: RegisterResult = serde_json::from_str(
             r#"{"mapped":[{"repo_key":"github.com/a/b","tenant":"organization/a","tenant_id":"t","repo_id":"r",
-                "project_error":"not a member"}],"unmapped":[]}"#,
+                "workspace_error":"not a member"}],"unmapped":[]}"#,
         )
         .unwrap();
-        assert_eq!(r.mapped[0].project_error.as_deref(), Some("not a member"));
+        assert_eq!(r.mapped[0].workspace_error.as_deref(), Some("not a member"));
     }
 }

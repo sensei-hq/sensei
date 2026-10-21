@@ -90,17 +90,17 @@ describe('POST /v1/you/repositories', () => {
 		]);
 	});
 
-	// #299: each repository's sensei project reaches registerRepositories. Dropping
-	// it here is how a synced repository would silently never show a project.
-	it('passes each repository\'s project through', async () => {
-		const project = { slug: 'sensei', name: 'sensei' };
-		await register.POST(post({ repos: [{ repo_key: 'github.com/acme/api', project }] }));
-		expect(mocks.registerRepositories.mock.calls[0][1][0].project).toEqual(project);
+	// #299: each repository's sensei workspace reaches registerRepositories. Dropping
+	// it here is how a synced repository would silently never show a workspace.
+	it('passes each repository\'s workspace through', async () => {
+		const workspace = { slug: 'sensei', name: 'sensei' };
+		await register.POST(post({ repos: [{ repo_key: 'github.com/acme/api', workspace }] }));
+		expect(mocks.registerRepositories.mock.calls[0][1][0].workspace).toEqual(workspace);
 	});
 
-	it('400s on a malformed project rather than dropping it', async () => {
-		for (const project of [{ slug: '', name: 'x' }, { slug: 's' }, 'sensei']) {
-			const res = await register.POST(post({ repos: [{ repo_key: 'github.com/acme/api', project }] }));
+	it('400s on a malformed workspace rather than dropping it', async () => {
+		for (const workspace of [{ slug: '', name: 'x' }, { slug: 's' }, 'sensei']) {
+			const res = await register.POST(post({ repos: [{ repo_key: 'github.com/acme/api', workspace }] }));
 			expect(res.status).toBe(400);
 		}
 		expect(mocks.registerRepositories).not.toHaveBeenCalled();

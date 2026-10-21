@@ -1,5 +1,5 @@
 // PATCH  /v1/t/{origin}/{org}/teams/{teamId} {name} — rename a team (admins).
-// DELETE /v1/t/{origin}/{org}/teams/{teamId} — delete it; the project views it
+// DELETE /v1/t/{origin}/{org}/teams/{teamId} — delete it; the workspace views it
 //        granted were granted to people, and stay (#307 A3, D7).
 import { ACCESS } from '$lib/server/dojo-auth';
 import { tenantRoute, nameFrom, noContent } from '$lib/server/tenant-route';

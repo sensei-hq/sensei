@@ -2,7 +2,7 @@
 // docs/spec/dojo/access-matrix.md).
 //
 // POST session / segments / inbox and GET inbox resolve the caller through
-// resolveTenantCaller: the relay rows (and the run's project) are read and
+// resolveTenantCaller: the relay rows (and the run's workspace) are read and
 // written with the person's JWT, so the policies in database/policies/dojo/
 // decide. A caller with no session is refused — the service role never stands
 // in. The seat stays the system's (billing bookkeeping).
@@ -136,9 +136,9 @@ describe('the daemon’s relay calls run as the person (#236 step 4)', () => {
 		});
 	}
 
-	it('session POST attaches the run to its shared project as the person, and keeps the seat the system’s', async () => {
-		// #299: a run never creates a project — it attaches to the shared one the
-		// sync filed, through attach_run_to_project, as the person.
+	it('session POST attaches the run to its shared workspace as the person, and keeps the seat the system’s', async () => {
+		// #299: a run never creates a workspace — it attaches to the shared one the
+		// sync filed, through attach_run_to_workspace, as the person.
 		caller = { ...base, accessToken: 'jwt' };
 		session.queue({ data: null, error: null }, { data: { id: 's1' }, error: null }, { data: 'proj-1', error: null });
 		system.queue({ data: null, error: null });
@@ -146,30 +146,30 @@ describe('the daemon’s relay calls run as the person (#236 step 4)', () => {
 		const platform = { context: { waitUntil: (p: Promise<unknown>) => scheduled.push(p) } };
 		const res = await sessionPOST(
 			ev({
-				body: { run_id: 'run-1', project_slug: 'acme-api', project: { slug: 'acme/api', name: 'api' } },
+				body: { run_id: 'run-1', project_slug: 'acme-api', workspace: { slug: 'acme/api', name: 'api' } },
 				platform
 			})
 		);
 		await Promise.all(scheduled);
 		expect(res.status).toBe(200);
-		expect(session.tables).toContain('rpc:attach_run_to_project');
-		expect(session.tables).not.toContain('projects');
-		expect(system.tables).not.toContain('rpc:attach_run_to_project');
-		// #252: the run is then filed under that project, as the person.
-		expect(session.tables.slice(session.tables.indexOf('rpc:attach_run_to_project'))).toContain('relay_sessions');
+		expect(session.tables).toContain('rpc:attach_run_to_workspace');
+		expect(session.tables).not.toContain('workspaces');
+		expect(system.tables).not.toContain('rpc:attach_run_to_workspace');
+		// #252: the run is then filed under that workspace, as the person.
+		expect(session.tables.slice(session.tables.indexOf('rpc:attach_run_to_workspace'))).toContain('relay_sessions');
 		expect(system.tables).toContain('namespaces');
 		expect(session.tables).not.toContain('namespaces');
 	});
 
-	it('session POST files no project when the dōjō has none yet', async () => {
+	it('session POST files no workspace when the dōjō has none yet', async () => {
 		caller = { ...base, accessToken: 'jwt' };
 		session.queue({ data: null, error: null }, { data: { id: 's1' }, error: null }, { data: null, error: null });
 		system.queue({ data: null, error: null });
 		const scheduled: Promise<unknown>[] = [];
 		const platform = { context: { waitUntil: (p: Promise<unknown>) => scheduled.push(p) } };
-		await sessionPOST(ev({ body: { run_id: 'run-1', project: { slug: 'acme/api', name: 'api' } }, platform }));
+		await sessionPOST(ev({ body: { run_id: 'run-1', workspace: { slug: 'acme/api', name: 'api' } }, platform }));
 		await Promise.all(scheduled);
-		const after = session.tables.slice(session.tables.indexOf('rpc:attach_run_to_project') + 1);
+		const after = session.tables.slice(session.tables.indexOf('rpc:attach_run_to_workspace') + 1);
 		expect(after).not.toContain('relay_sessions');
 	});
 });

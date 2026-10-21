@@ -4,7 +4,7 @@
 -- admin reads the identities of the tenant's ACTIVE members and of its dōjō
 -- viewers (#307 D8). Nobody writes one from their session: binding a forge
 -- account needs that forge's proof, which is provisioning's (the system's) job.
--- Covered by database/tests/dojo/tenancy_access.sql and project_viewers.sql.
+-- Covered by database/tests/dojo/tenancy_access.sql and workspace_viewers.sql.
 alter table dojo.identities enable row level security;
 
 -- Replaces the deny-all from when the table was server-only.

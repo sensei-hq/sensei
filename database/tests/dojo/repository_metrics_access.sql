@@ -4,7 +4,7 @@
 -- | row                 | sees it                                                      |
 -- |---------------------|--------------------------------------------------------------|
 -- | scope = repo        | anyone with a role on the repository (#307 D5); a tenant      |
--- |                     | admin. Projects have no owner (#299): shared items.          |
+-- |                     | admin. Workspaces have no owner (#299): shared items.          |
 -- | scope = user, own   | its own person, always                                       |
 -- | scope = user, other | a MAINTAINER or above on the repository (#307 D6); an admin  |
 --
@@ -12,7 +12,7 @@
 --
 -- WHAT BREAKS THIS TEST: requiring a role for own rows; letting a contributor
 -- read another's user-scoped rows; treating the TENANT lead as a repository
--- maintainer; dropping the admin clause; reintroducing a project-owner or team
+-- maintainer; dropping the admin clause; reintroducing a workspace-owner or team
 -- clause.
 
 begin;
@@ -41,20 +41,20 @@ insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via)
   ('b0000000-0000-4000-8000-00000000002b', 'a0000000-0000-4000-8000-000000000026', 'admin',       'employer', 'github_oauth'),
   ('b0000000-0000-4000-8000-00000000002a', 'a0000000-0000-4000-8000-000000000027', 'contributor', 'employer', 'github_oauth');
 
--- Project P holds repository R (alice contributes, dave maintains).
--- Project Q holds repository S (nobody has a role on it).
-insert into dojo.projects (id, tenant_id, slug, name) values
+-- Workspace P holds repository R (alice contributes, dave maintains).
+-- Workspace Q holds repository S (nobody has a role on it).
+insert into dojo.workspaces (id, tenant_id, slug, name) values
   ('c0000000-0000-4000-8000-0000000000f2',
-   'b0000000-0000-4000-8000-00000000002a', 'ztest-metrics-p', 'project P'),
+   'b0000000-0000-4000-8000-00000000002a', 'ztest-metrics-p', 'workspace P'),
   ('c0000000-0000-4000-8000-0000000000f3',
-   'b0000000-0000-4000-8000-00000000002a', 'ztest-metrics-q', 'project Q');
+   'b0000000-0000-4000-8000-00000000002a', 'ztest-metrics-q', 'workspace Q');
 
 insert into dojo.repositories (id, tenant_id, repo_key, name, provider) values
   ('90000000-0000-4000-8000-0000000000a1', 'b0000000-0000-4000-8000-00000000002a',
    'github.com/ztest/r', 'r', 'github'),
   ('90000000-0000-4000-8000-0000000000a2', 'b0000000-0000-4000-8000-00000000002a',
    'github.com/ztest/s', 's', 'github');
-insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id) values
+insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant_id) values
   ('c0000000-0000-4000-8000-0000000000f2', '90000000-0000-4000-8000-0000000000a1', 'b0000000-0000-4000-8000-00000000002a'),
   ('c0000000-0000-4000-8000-0000000000f3', '90000000-0000-4000-8000-0000000000a2', 'b0000000-0000-4000-8000-00000000002a');
 -- Repository roles, as the forge mirror leaves them.

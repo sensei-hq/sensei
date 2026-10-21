@@ -22,7 +22,7 @@
 
 use crate::runs::{Run, RunEvent, RunEventKind};
 use dojo_protocol::relay::{
-    RelayConstitution, RelayProjectInfo, RelaySegment, RelaySessionUpdate, SegmentState,
+    RelayConstitution, RelaySegment, RelaySessionUpdate, RelayWorkspaceInfo, SegmentState,
 };
 
 /// A short, single-line label bounded to `max` chars (ellipsized). Keeps the
@@ -108,7 +108,7 @@ pub fn run_to_session_update(
         // Set by the impure federation path (publish_run) from the run's project;
         // the pure projection has no DB to resolve the namespace slug / project row.
         project_slug: None,
-        project: None,
+        workspace: None,
     }
 }
 
@@ -205,8 +205,8 @@ fn phase_event_state(kind: RunEventKind) -> Option<SegmentState> {
 pub fn run_project(
     slug: Option<String>,
     constitution: Option<RelayConstitution>,
-) -> Option<RelayProjectInfo> {
-    slug.map(|slug| RelayProjectInfo { slug, constitution })
+) -> Option<RelayWorkspaceInfo> {
+    slug.map(|slug| RelayWorkspaceInfo { slug, constitution })
 }
 
 /// Progress rollup for the session update from projected plan segments:

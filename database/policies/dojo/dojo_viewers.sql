@@ -2,7 +2,7 @@
 --
 -- A viewer sees their own rows; the dōjō's admins see its viewers. Writes go
 -- through dojo.add_dojo_viewer (service_role, the invite accept) and
--- dojo.remove_dojo_viewer (admins). Covered by database/tests/dojo/project_viewers.sql.
+-- dojo.remove_dojo_viewer (admins). Covered by database/tests/dojo/workspace_viewers.sql.
 alter table dojo.dojo_viewers enable row level security;
 
 grant select on dojo.dojo_viewers to authenticated;

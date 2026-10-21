@@ -1,5 +1,5 @@
 // Route tests for a dōjō's teams (#307 A3, D7): list, create, rename, delete,
-// membership and a team-wide project grant. ADMIN floor; the caller's own JWT;
+// membership and a team-wide workspace grant. ADMIN floor; the caller's own JWT;
 // a refusal keeps its status. Store mocked.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
 	deleteTeam: vi.fn(),
 	addTeamMember: vi.fn(),
 	removeTeamMember: vi.fn(),
-	grantTeamProjectView: vi.fn()
+	grantTeamWorkspaceView: vi.fn()
 }));
 
 vi.mock('$lib/server/dojo-supabase', () => ({
@@ -39,7 +39,7 @@ vi.mock('$lib/server/admin-data', () => ({ AdminError }));
 const list = await import('./+server');
 const one = await import('./[teamId]/+server');
 const member = await import('./[teamId]/members/[principalId]/+server');
-const project = await import('./[teamId]/projects/[projectId]/+server');
+const workspace = await import('./[teamId]/workspaces/[workspaceId]/+server');
 
 const ev = (params: Record<string, string> = {}, body?: unknown) =>
 	({
@@ -70,7 +70,7 @@ describe('the teams routes', () => {
 		await one.DELETE(ev({ teamId: 'tm1' }));
 		await member.PUT(ev({ teamId: 'tm1', principalId: 'u1' }));
 		await member.DELETE(ev({ teamId: 'tm1', principalId: 'u1' }));
-		await project.PUT(ev({ teamId: 'tm1', projectId: 'p1' }));
+		await workspace.PUT(ev({ teamId: 'tm1', workspaceId: 'p1' }));
 		for (const call of mocks.resolveTenantAccess.mock.calls.slice(1)) expect(call[4]).toBe(4);
 	});
 
@@ -88,8 +88,8 @@ describe('the teams routes', () => {
 		expect(mocks.addTeamMember).toHaveBeenCalledWith(USER, 't1', 'tm1', 'u1');
 		expect((await member.DELETE(ev({ teamId: 'tm1', principalId: 'u1' }))).status).toBe(204);
 		expect(mocks.removeTeamMember).toHaveBeenCalledWith(USER, 't1', 'tm1', 'u1');
-		expect((await project.PUT(ev({ teamId: 'tm1', projectId: 'p1' }))).status).toBe(204);
-		expect(mocks.grantTeamProjectView).toHaveBeenCalledWith(USER, 't1', 'tm1', 'p1');
+		expect((await workspace.PUT(ev({ teamId: 'tm1', workspaceId: 'p1' }))).status).toBe(204);
+		expect(mocks.grantTeamWorkspaceView).toHaveBeenCalledWith(USER, 't1', 'tm1', 'p1');
 	});
 
 	it('a body without a name is a 400 before anything is written', async () => {

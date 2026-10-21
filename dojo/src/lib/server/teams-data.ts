@@ -1,5 +1,5 @@
 // A dōjō's teams (#307 A3, D7) — named groups of its members, for "by team"
-// reports and for granting a project's read-only view to many people at once. A
+// reports and for granting a workspace's read-only view to many people at once. A
 // team grants no access; repository roles do. Admins manage them through the
 // database's own functions (which decide who may), and a refusal keeps the status
 // the database meant. Fails closed: a failed read is an error, never an empty list.
@@ -88,7 +88,7 @@ export async function renameTeam(db: DojoClient, tenantId: string, teamId: strin
 	await named(p_name, () => callFn(db, 'rename_team', { p_team: teamId, p_name }));
 }
 
-/** Delete a team. The project views it granted were granted to people, and stay. */
+/** Delete a team. The workspace views it granted were granted to people, and stay. */
 export async function deleteTeam(db: DojoClient, tenantId: string, teamId: string): Promise<void> {
 	await requireTeam(db, tenantId, teamId);
 	await callFn(db, 'delete_team', { p_team: teamId });
@@ -110,14 +110,14 @@ export async function removeTeamMember(
 	await callFn(db, 'remove_team_member', { p_team: teamId, p_principal: principalId });
 }
 
-/** Grant everyone now on the team the view of one of the dōjō's projects. */
-export async function grantTeamProjectView(
+/** Grant everyone now on the team the view of one of the dōjō's workspaces. */
+export async function grantTeamWorkspaceView(
 	db: DojoClient,
 	tenantId: string,
 	teamId: string,
-	projectId: string
+	workspaceId: string
 ): Promise<void> {
 	await requireTeam(db, tenantId, teamId);
-	await requireInTenant(db, 'projects', tenantId, projectId, 'project');
-	await callFn(db, 'grant_project_viewer_to_team', { p_project: projectId, p_team: teamId });
+	await requireInTenant(db, 'workspaces', tenantId, workspaceId, 'workspace');
+	await callFn(db, 'grant_workspace_viewer_to_team', { p_workspace: workspaceId, p_team: teamId });
 }

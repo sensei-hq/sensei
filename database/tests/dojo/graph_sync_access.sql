@@ -64,12 +64,12 @@ insert into dojo.repository_graph_branches (repository_id, tenant_id, branch, is
   ('92000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-00000000014a', 'main',       true,  null),
   ('92000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-00000000014c', 'main',       true,  null);
 
--- ola contributes to repository 1 (in project P); eve has no role on it, so she
+-- ola contributes to repository 1 (in workspace P); eve has no role on it, so she
 -- reads nothing (#307 D5 — access lives on repositories).
-insert into dojo.projects (id, tenant_id, slug, name) values
+insert into dojo.workspaces (id, tenant_id, slug, name) values
   ('c0000000-0000-4000-8000-0000000000b1',
-   'b0000000-0000-4000-8000-00000000014a', 'ztest-gs-p', 'project P');
-insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id) values
+   'b0000000-0000-4000-8000-00000000014a', 'ztest-gs-p', 'workspace P');
+insert into dojo.repositories_in_workspaces (workspace_id, repository_id, tenant_id) values
   ('c0000000-0000-4000-8000-0000000000b1', '92000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000014a');
 insert into dojo.repository_roles (repository_id, principal_id, forge_permission, forge_role) values
   ('92000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000142', 'write', 'contributor');

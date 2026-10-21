@@ -16,20 +16,20 @@ import {
 	listMyRepositories,
 	registerRepositories,
 	type RepoInput,
-	type RepoProject
+	type RepoWorkspace
 } from '$lib/server/repositories';
 
 /** Accept only well-formed entries. A repo with no key has no identity, and
  *  registering it under a derived one would invent the very thing `repo_key`
  *  exists to make machine- and user-independent. */
-/** A repository's sensei project (#299). Malformed is a 400, never dropped:
- *  dropping it is how a synced repository would silently show no project. */
-function parseProject(raw: unknown, repoKey: string): RepoProject {
+/** A repository's sensei workspace (#299). Malformed is a 400, never dropped:
+ *  dropping it is how a synced repository would silently show no workspace. */
+function parseWorkspace(raw: unknown, repoKey: string): RepoWorkspace {
 	const p = (raw ?? {}) as Record<string, unknown>;
 	const slug = typeof p.slug === 'string' ? p.slug.trim() : '';
 	const name = typeof p.name === 'string' ? p.name.trim() : '';
 	if (!slug || !name) {
-		throw new AdminError(400, `the project sent for ${repoKey} needs a slug and a name`);
+		throw new AdminError(400, `the workspace sent for ${repoKey} needs a slug and a name`);
 	}
 	return { slug, name };
 }
@@ -49,7 +49,7 @@ function parseRepos(body: Record<string, unknown>): RepoInput[] {
 			remote_url: typeof r.remote_url === 'string' ? r.remote_url : null,
 			name: typeof r.name === 'string' ? r.name : null
 		};
-		if (r.project != null) repo.project = parseProject(r.project, key);
+		if (r.workspace != null) repo.workspace = parseWorkspace(r.workspace, key);
 		out.push(repo);
 	}
 	return out;

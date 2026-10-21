@@ -1,5 +1,5 @@
 -- Electing a repository for sharing, as the signed-in person (#236 step 3;
--- access matrix "Projects and repositories": repository elections R/W own (user
+-- access matrix "Workspaces and repositories": repository elections R/W own (user
 -- authority), R/W tenant for an admin (org authority)).
 --
 -- dojo.set_repository_election decides from the CALLER's own verdict row (the

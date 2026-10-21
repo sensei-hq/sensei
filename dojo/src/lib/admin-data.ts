@@ -178,7 +178,7 @@ async function sendJson<T>(
 
 const viewerPath = (principalId: string) => `/viewers/${encodeURIComponent(principalId)}`;
 const grantPath = (principalId: string, projectId: string) =>
-	`${viewerPath(principalId)}/projects/${encodeURIComponent(projectId)}`;
+	`${viewerPath(principalId)}/workspaces/${encodeURIComponent(projectId)}`;
 
 /** `GET …/viewers` — the dōjō's viewers, each with the projects granted to them (admin). */
 export async function listViewers(tenantKey: string, opts: DojoCallOpts = {}): Promise<DojoViewerWire[]> {
@@ -190,8 +190,8 @@ export async function removeViewer(tenantKey: string, principalId: string, opts:
 	await sendJson(adminUrl(tenantKey, viewerPath(principalId)), 'DELETE', undefined, opts);
 }
 
-/** `PUT …/viewers/{id}/projects/{project}` — grant the view of one of the dōjō's projects. */
-export async function grantProjectView(
+/** `PUT …/viewers/{id}/workspaces/{project}` — grant the view of one of the dōjō's projects. */
+export async function grantWorkspaceView(
 	tenantKey: string,
 	principalId: string,
 	projectId: string,
@@ -200,8 +200,8 @@ export async function grantProjectView(
 	await sendJson(adminUrl(tenantKey, grantPath(principalId, projectId)), 'PUT', undefined, opts);
 }
 
-/** `DELETE …/viewers/{id}/projects/{project}` — revoke it. */
-export async function revokeProjectView(
+/** `DELETE …/viewers/{id}/workspaces/{project}` — revoke it. */
+export async function revokeWorkspaceView(
 	tenantKey: string,
 	principalId: string,
 	projectId: string,
@@ -256,13 +256,13 @@ export async function removeTeamMember(
 }
 
 /** Grant everyone now on the team the view of one of the dōjō's projects. */
-export async function grantTeamProjectView(
+export async function grantTeamWorkspaceView(
 	tenantKey: string,
 	teamId: string,
 	projectId: string,
 	opts: DojoCallOpts = {}
 ): Promise<void> {
-	await sendJson(adminUrl(tenantKey, `${teamPath(teamId)}/projects/${encodeURIComponent(projectId)}`), 'PUT', undefined, opts);
+	await sendJson(adminUrl(tenantKey, `${teamPath(teamId)}/workspaces/${encodeURIComponent(projectId)}`), 'PUT', undefined, opts);
 }
 
 // members ──────────────────────────────────────────────────────────────────────

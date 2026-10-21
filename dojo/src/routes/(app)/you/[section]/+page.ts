@@ -3,7 +3,7 @@ import type { PageLoad } from './$types';
 import { YOU_SECTIONS, labelForSection } from '$lib/nav';
 import { toKitDojos } from '$lib/chrome';
 import {
-	listUserProjects,
+	listUserWorkspaces,
 	listContributions,
 	listLibraryPacks,
 	listMyRepos,
@@ -35,7 +35,7 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 	let projectsError: string | null = null;
 	if (section === 'projects') {
 		try {
-			projects = toKitProjects(await listUserProjects({ fetch, accessToken }));
+			projects = toKitProjects(await listUserWorkspaces({ fetch, accessToken }));
 		} catch (e) {
 			projectsError = e instanceof ClientApiError ? e.message : 'could not reach the dojo service';
 		}
