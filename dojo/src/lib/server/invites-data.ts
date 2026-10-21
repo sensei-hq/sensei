@@ -14,6 +14,7 @@ import {
 	type DojoClient,
 	type NewMemberInput
 } from './admin-data';
+import { looksLikeEmail } from '../admin-view';
 
 export { AdminError };
 export type { DojoClient };
@@ -33,14 +34,6 @@ export interface NewInviteInput {
 
 export type InviteAccess = 'member' | 'viewer';
 const INVITE_ACCESS: readonly InviteAccess[] = ['member', 'viewer'];
-
-/** A minimal, conservative email check — a single `@` with non-empty local and
- *  domain parts. The real proof-of-ownership is Supabase auth at accept time;
- *  this only rejects obvious garbage before issuing. */
-function looksLikeEmail(s: string): boolean {
-	const at = s.indexOf('@');
-	return at > 0 && at < s.length - 1 && !s.includes(' ');
-}
 
 /** Validate a create-invite body into a {@link NewInviteInput}, or throw
  *  AdminError(400). `email` required + shaped; `role` a member_role (default

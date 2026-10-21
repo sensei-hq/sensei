@@ -15,6 +15,7 @@
 import type { dojoDb } from './dojo-supabase';
 import { resolveDisplayNames } from './identity-resolve';
 import { refusalStatus } from './db-refusal';
+import { MEMBERSHIP_KINDS } from '../admin-view';
 
 /** The supabase-js client returned by `dojoDb()` (scoped to the `dojo` schema). */
 export type DojoClient = ReturnType<typeof dojoDb>;
@@ -316,8 +317,8 @@ export interface NewMemberInput {
 	attribution_default?: string;
 }
 
-/** The membership kinds — `dojo.membership_kind`. */
-export const MEMBERSHIP_KINDS = ['employer', 'client', 'community', 'personal'] as const;
+/** The membership kinds — `dojo.membership_kind` (shared with the client invite form). */
+export { MEMBERSHIP_KINDS };
 
 /**
  * Provision a membership (`POST …/members`) — the port of dojo-mind's

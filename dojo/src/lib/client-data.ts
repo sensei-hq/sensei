@@ -573,19 +573,20 @@ export async function provisionFromForge(opts: DojoCallOpts = {}): Promise<Provi
  *  `ClientApiError` on a non-2xx (403 below admin, 400 invalid). */
 export async function createInvite(
 	tenantKey: string,
-	input: { email: string; role?: string; kind: string },
+	input: { email: string; role?: string; kind: string; access?: 'member' | 'viewer' },
 	opts: DojoCallOpts = {}
 ): Promise<{ id: string; token: string; email: string; role: string; expires_at: string }> {
 	return sendJson(clientUrl(tenantKey, '/invites'), 'POST', input, opts);
 }
 
 /** `POST /v1/you/invites/accept` — the invitee redeems an invite by its token
- *  (F3b). Returns `{ tenant_id, role }` on success. Throws `ClientApiError` on a
+ *  (F3b). Returns `{ tenant_id, role, access }` on success — a viewer invite
+ *  (#307 D8) has `role: null` and `access: 'viewer'`. Throws `ClientApiError` on a
  *  gate rejection (403 email-mismatch, 410 expired, 409 used, 404 unknown). */
 export async function acceptInvite(
 	token: string,
 	opts: DojoCallOpts = {}
-): Promise<{ tenant_id: string; role: string }> {
+): Promise<{ tenant_id: string; role: string | null; access: 'member' | 'viewer' }> {
 	return sendJson(youUrl('/invites/accept'), 'POST', { token }, opts);
 }
 

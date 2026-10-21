@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
 	import ScrOrgLadder from '$lib/components/screens/ScrOrgLadder.svelte';
 	import ScrProjects from '$lib/components/screens/ScrProjects.svelte';
 	import ScrTriage from '$lib/components/screens/ScrTriage.svelte';
@@ -24,9 +25,11 @@
 		getIncident,
 		updateEngagement,
 		deleteEngagement,
-		createEngagement
+		createEngagement,
+		createInvite
 	} from '$lib/client-data';
 	import { OrgSectionState } from '$lib/org-section-state.svelte';
+	import { InviteState } from '$lib/invite-state.svelte';
 	import { toKitIncidentDetail } from '$lib/incidents-map';
 	import type { KitProject } from '$lib/components/kit/types';
 
@@ -71,6 +74,8 @@
 		},
 		invalidateAll
 	);
+	// The admin invite (#307 A3): member or viewer; the accept link is on this origin.
+	const invite = new InviteState((input) => createInvite(tk(), input, opts()), page.url.origin);
 </script>
 
 <svelte:head><title>{data.title} · {data.orgName} · Dōjō</title></svelte:head>
@@ -122,6 +127,7 @@
 		audit={data.auditLog}
 		me={viewer}
 		onSetRole={(m, role) => org.setRole(m, role)}
+		{invite}
 	/>
 {:else if data.section === 'scopes'}
 	<ScrScopes orgName={data.orgName} owners={data.scopeOwners} />

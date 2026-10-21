@@ -11,6 +11,9 @@
 	} from '$lib/components/kit';
 	import type { KitMember, KitRolePolicy, KitChatTurn } from '$lib/components/kit/types';
 	import { ROLE_SURFACE_TABS, resolveTab } from '$lib/role-surfaces-view';
+	import { MEMBER_ROLES } from '$lib/admin-view';
+	import type { InviteState } from '$lib/invite-state.svelte';
+	import InvitePanel from './InvitePanel.svelte';
 
 	// The admin Members & Roles / Policies / Audit surface (mockup
 	// ScrRoleSurfaces) — ONE screen the org nav shares between two ids: the
@@ -27,7 +30,8 @@
 		policies = [],
 		audit = [],
 		me = 'You',
-		onSetRole
+		onSetRole,
+		invite
 	}: {
 		orgName: string;
 		tab?: string;
@@ -38,11 +42,11 @@
 		/** Change a member's role (admin). Called with the row + the chosen role;
 		 *  absent = read-only (fixture render). The row must carry a `userId`. */
 		onSetRole?: (member: KitMember, role: string) => void;
+		/** The admin invite (#307 A3) — the Members tab's Invite button opens it;
+		 *  absent = the button does nothing (fixture render). */
+		invite?: InviteState;
 	} = $props();
 
-	/** The additive role ladder the set-role picker offers (matches
-	 *  `dojo.member_role`). */
-	const ROLE_OPTIONS = ['contributor', 'maintainer', 'lead', 'admin'];
 
 	// The active tab. The nav shares this one screen between the `members` and
 	// `audit` ids, so a members↔audit navigation changes the `tab` prop from the
@@ -69,7 +73,11 @@
 				description="Roles are additive and derived from git. developer → maintainer → lead → admin. A role only ever adds capability."
 			>
 				{#snippet right()}
-					<Btn size="sm" icon="add-circle">{current.cta}</Btn>
+					<Btn
+						size="sm"
+						icon="add-circle"
+						onclick={active === 'members' ? () => invite?.start() : undefined}>{current.cta}</Btn
+					>
 				{/snippet}
 			</SectionHead>
 		</div>
@@ -95,6 +103,9 @@
 		</div>
 
 		{#if active === 'members'}
+			{#if invite?.open}
+				<InvitePanel {invite} />
+			{/if}
 			<!-- Members & Roles — the git-derived role + dōjō-override table. -->
 			<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 				{#each members as m (m.name)}
@@ -122,7 +133,7 @@
 								value={m.role}
 								onchange={(e) => onSetRole?.(m, (e.currentTarget as HTMLSelectElement).value)}
 							>
-								{#each ROLE_OPTIONS as r (r)}
+								{#each MEMBER_ROLES as r (r)}
 									<option value={r}>{r}</option>
 								{/each}
 							</select>

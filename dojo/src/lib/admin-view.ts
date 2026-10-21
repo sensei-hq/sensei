@@ -42,6 +42,17 @@ export const MEMBER_ROLES: readonly string[] = [
 	'admin'
 ] as const;
 
+/** The membership kinds — `dojo.membership_kind`. */
+export const MEMBERSHIP_KINDS = ['employer', 'client', 'community', 'personal'] as const;
+
+/** A minimal, conservative email check — a single `@` with non-empty local and
+ *  domain parts. The real proof-of-ownership is Supabase auth at accept time;
+ *  this only rejects obvious garbage before issuing an invite. */
+export function looksLikeEmail(s: string): boolean {
+	const at = s.indexOf('@');
+	return at > 0 && at < s.length - 1 && !s.includes(' ');
+}
+
 // ── auth method => label + kanji ─────────────────────────────────────────────
 
 const PROVIDER_LABELS: Record<string, string> = {
