@@ -19,6 +19,9 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D8 | What is a project role? | **A read-only managerial viewer**: metrics, dashboards and reports for the project, aggregated or split by repository — for higher management and clients. **Admins grant it**, and only to someone already in the dōjō: a member, or a **dōjō viewer** — a person (often in the organization but not a contributor, e.g. a manager or a client) explicitly invited into the dōjō as a viewer, which is not a membership and reads no repository. The dōjō invite comes first; the per-project grant second (revised 2026-10-21). Not an access-management role. |
 | D9 | Four DORA keys or five? | **Five** — rework rate (DORA 2024) joins deployment frequency, lead time, change failure rate and time to restore. |
 | D10 | Hide aggregates over very small groups? | **No.** An aggregate over one contributor is shown; revisit only if comparison charts across people or teams are added. |
+| D11 | What kinds of dōjō are there? (2026-10-21, third round) | **Two: an organization's, or a personal one.** A dōjō is the tenant — the owner. There is no hand-made dōjō: `dojo.create_dojo`, the `team` tenant origin, `team/<slug>` keys and the `team:<slug>` pack namespace are retired. |
+| D12 | What is a "project"? | **A workspace** — a group of repositories. Renamed everywhere, in one slice: the database, the API, the daemon's sync, both apps and the docs (sensei and the dōjō are both pre-v1). "Project" stops being a term. |
+| D13 | What does linking a team to a workspace do? | **Reporting only.** "Teams work on workspaces": the link says which team works on which workspace, so reports split by team. It grants nothing — access stays on repositories (D5) and viewer grants (D8). |
 
 Already decided elsewhere and kept: **the dōjō wins on conflict** (`docs/spec/2026-08-24-platform-restructure.md` Q1);
 an `origin` column stops push/pull loops (`docs/spec/2026-08-24-shared-schema-and-sync-design.md`).
@@ -39,6 +42,26 @@ creator (`database/ddl/table/dojo/projects.ddl`); the sync keeps filing reposito
 
 Each wave depends only on earlier ones. Every slice ships with tests, is verified live (the local
 dōjō, then production), and keeps presentation | state | load apart with rokkit first (#293).
+
+### Wave R — one vocabulary (D11, D12), before A4
+
+D12 renames "project" to **workspace** everywhere, and D11 retires the hand-made dōjō. Both land before
+A4, so the writable workspaces are built under their real name. Sized 2026-10-21: "project" appears in
+~290 crate files (~7.3k lines), ~260 app files (~2.5k), ~160 dōjō files (~1.3k), ~490 docs (~6.4k);
+`sensei.projects` and ~30 related tables, views and functions; `dojo.projects` and its links. Each
+slice builds, passes and ships on its own.
+
+- **R1 · Retire the hand-made dōjō (D11).** Drop `dojo.create_dojo`, the `team` tenant origin, the
+  `team:<slug>` pack namespace and the "create a dōjō" path in the dōjō UI and API; a dōjō comes only
+  from an organization or a person.
+- **R2 · The dōjō says workspace.** `dojo.projects` → `dojo.workspaces` with its links, viewer grants,
+  team links (reporting only, D13), predicates, policies and tests; the `/v1` paths and payloads; the
+  dōjō UI. The daemon's dōjō client and relay payload change in the same release (they share the wire).
+- **R3 · Sensei says workspace.** `sensei.projects` and its tables, views and functions; the daemon's
+  routes and pipeline; the MCP tools (`list_projects`, `use_project`, `get_project_summary`, …) and the
+  plugin, skills and hooks that call them; the desktop app.
+- **R4 · The words.** PRD, specs, guides, `docs/llms`, both `SKILL.md` copies, agents, the website.
+  Generic English ("the project's README", a Cargo project) stays.
 
 ### Wave A — the dōjō can author projects, teams and roles
 
