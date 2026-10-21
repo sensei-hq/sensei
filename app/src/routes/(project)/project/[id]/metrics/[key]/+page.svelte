@@ -2,20 +2,8 @@
     import { page } from '$app/state';
     import { Kanji, Eyebrow, Screen } from '$lib/components';
     import {
-        buildSignals,
-        familyLookup,
-        groupSignals,
-        seriesValues,
-        seriesDistribution,
-        densifySeries,
-        metricYDomain,
         chartKindForType,
-        defaultWindowForGrain,
-        historyNote,
-        metricAbout,
-        linkifyMetrics,
         formatMetricValue,
-        metricTickFormatter,
         TREND_TEXT,
         GRADE_CLASS,
     } from '$lib/metrics/metric-view.js';
@@ -24,92 +12,15 @@
     import AboutMetric from '../AboutMetric.svelte';
     import DatapointDrilldown from '../DatapointDrilldown.svelte';
     import ActionItems from '../ActionItems.svelte';
-    import { buildActionItems } from '../action-items.js';
+    import { MetricDetailState } from './metric-detail-state.svelte.js';
 
     let { data } = $props();
 
+    // Presentation only: MetricDetailState derives everything from the load and
+    // holds the chart window and the selected point.
+    const md = new MetricDetailState(() => data);
     const projectId = $derived(page.params.id ?? '');
-    const signals = $derived(buildSignals(data.rows, familyLookup(data.registry), data.narrative));
-    const groups = $derived(groupSignals(signals));
-    const selected = $derived(signals.find((s) => s.key === data.selectedKey) ?? null);
-    // The static "about this metric" reference (purpose / how-to-read / formula),
-    // from the selected metric's registry row + the series' formula facet.
-    const selectedRow = $derived(data.rows.find((r) => r.metric === data.selectedKey));
-    const about = $derived(metricAbout(selectedRow, data.formula));
-    // Linkify any companion metric named in `how_to_read` (e.g. FTR's
-    // "Companion: rework ratio") to that metric's detail.
-    const howToReadSegments = $derived(
-        about ? linkifyMetrics(about.howToRead, data.registry, data.selectedKey) : [],
-    );
-
-    const values = $derived(seriesValues(data.series));
-    const distribution = $derived(seriesDistribution(values));
-    // Key-aware, not type-only: maintainability/duplication are typed `ratio` but
-    // live inside 0-0.005, so a type-only formatter renders every axis tick as
-    // "0.00". They read per-1,000-lines here, matching their grade bands and
-    // headline rate.
-    const format = $derived(metricTickFormatter(selected?.key ?? '', selected?.type ?? 'count'));
-
-    // Densified {date,value|null}[] for the chart (absent periods → gaps) and a
-    // fixed y-domain per metric type (a flat series stays flat, not a mountain).
-    const fullChartSeries = $derived(densifySeries(data.series, data.grain));
-    // Per-grain window: default to the last N periods (daily 7 / weekly 4 /
-    // monthly 3), with a movable start. Empty periods stay as gaps (densified
-    // nulls). Reset to the grain default when the metric or grain changes.
-    let windowStart = $state<number | null>(null);
-    $effect(() => {
-        void data.grain;
-        void data.selectedKey;
-        windowStart = null;
-    });
-    const defaultStart = $derived.by(() => {
-        const w = defaultWindowForGrain(data.grain);
-        return w == null ? 0 : Math.max(0, fullChartSeries.length - w);
-    });
-    const effectiveStart = $derived(windowStart ?? defaultStart);
-    const maxStart = $derived(Math.max(0, fullChartSeries.length - 2));
-    const chartSeries = $derived(fullChartSeries.slice(effectiveStart));
-
-    const yDomain = $derived(metricYDomain(selected?.type ?? 'count', values));
-    const note = $derived(historyNote(fullChartSeries));
-    const caption = $derived(note ? `${note} · ${data.grain}` : '');
-
-    // The selected datapoint index — defaults to the latest defined point, and a
-    // chart click moves it. Drives the highlight + the evidence panel's day.
-    let selectedIndex = $state<number | null>(null);
-    $effect(() => {
-        // Re-default when the series changes (metric / grain switch): last point.
-        let last: number | null = null;
-        for (let i = chartSeries.length - 1; i >= 0; i--) {
-            if (chartSeries[i].value != null) { last = i; break; }
-        }
-        selectedIndex = last;
-    });
-    // The selected point's day — only at daily grain, where a chart slot IS a day
-    // the drill-down can load; at coarser grains the drill-down keeps its own
-    // day selector (a week/month start isn't a daily session date).
-    const selectedDay = $derived(
-        data.grain === 'daily' && selectedIndex != null
-            ? (chartSeries[selectedIndex]?.date ?? null)
-            : null,
-    );
-
-    // Phase E: metric-specific actions — the pending recommendations relevant to
-    // THIS metric (heuristic keyword match on its key / name / family), replacing
-    // the old project-wide panel that duplicated Impact. Honest-empty when none
-    // are specific to this metric.
-    const metricTerms = $derived(
-        [data.selectedKey, selected?.name, selected?.familyLabel]
-            .filter((t): t is string => !!t)
-            .map((t) => t.toLowerCase()),
-    );
-    const relevantRecs = $derived(
-        data.recommendations.filter((r) => {
-            const hay = `${r.title ?? ''} ${r.why ?? ''} ${r.impact ?? ''}`.toLowerCase();
-            return metricTerms.some((t) => hay.includes(t));
-        }),
-    );
-    const actionItems = $derived(buildActionItems(relevantRecs));
+    const selected = $derived(md.selected);
 
     const GRAINS = [
         { id: 'daily', label: 'Daily' },
@@ -150,7 +61,7 @@
                 class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[260px_1fr] bg-paper-soft border border-paper-edge rounded-lg overflow-hidden"
             >
                 <div class="overflow-auto min-h-0">
-                    <SignalRail {groups} selectedKey={data.selectedKey} {projectId} {distribution} {format} />
+                    <SignalRail groups={md.groups} selectedKey={data.selectedKey} {projectId} distribution={md.distribution} format={md.format} />
                 </div>
 
                 <div class="overflow-auto min-h-0 p-6 md:p-8 flex flex-col gap-6">
@@ -191,8 +102,8 @@
                             </div>
                         </div>
 
-                        {#if about}
-                            <AboutMetric {about} {howToReadSegments} {projectId} />
+                        {#if md.about}
+                            <AboutMetric about={md.about} howToReadSegments={md.howToReadSegments} {projectId} />
                         {/if}
 
                         {#if data.seriesError}
@@ -201,32 +112,32 @@
                             </p>
                         {:else}
                             <DetailChart
-                                series={chartSeries}
-                                {yDomain}
-                                {format}
+                                series={md.chartSeries}
+                                yDomain={md.yDomain}
+                                format={md.format}
                                 color={selected.color}
-                                {caption}
+                                caption={md.caption}
                                 kind={chartKindForType(selected.type)}
-                                {selectedIndex}
-                                onselect={(i) => (selectedIndex = i)}
+                                selectedIndex={md.selectedIndex}
+                                onselect={(i) => md.pick(i)}
                             />
 
-                            {#if fullChartSeries.length > 2}
+                            {#if md.fullChartSeries.length > 2}
                                 <div class="flex items-center gap-3 text-xs text-ink-mute px-1">
                                     <span class="shrink-0">Start</span>
                                     <input
                                         type="range"
                                         min="0"
-                                        max={maxStart}
-                                        value={effectiveStart}
-                                        oninput={(e) => (windowStart = Number(e.currentTarget.value))}
+                                        max={md.maxStart}
+                                        value={md.effectiveStart}
+                                        oninput={(e) => md.moveWindow(Number(e.currentTarget.value))}
                                         class="flex-1 h-1 cursor-pointer"
                                         style="accent-color: var(--accent)"
                                         aria-label="Chart start period"
                                         data-component="chart-window"
                                     />
                                     <span class="shrink-0 tabular-nums"
-                                        >{chartSeries.length} of {fullChartSeries.length}
+                                        >{md.chartSeries.length} of {md.fullChartSeries.length}
                                         {data.grain === 'daily'
                                             ? 'days'
                                             : data.grain === 'weekly'
@@ -247,7 +158,7 @@
                                     seriesError={data.dailySeriesError}
                                     projectId={projectId}
                                     metricKey={data.selectedKey}
-                                    {selectedDay}
+                                    selectedDay={md.selectedDay}
                                 />
                             {/key}
                         {/if}
@@ -262,7 +173,7 @@
                             </p>
                         </div>
 
-                        <ActionItems items={actionItems} error={data.recommendationsError} />
+                        <ActionItems items={md.actionItems} error={data.recommendationsError} />
                     {:else}
                         <div class="text-sm text-ink-mute py-8">
                             That signal isn’t computed for this project — pick one from the list.
