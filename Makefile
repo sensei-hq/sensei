@@ -773,6 +773,20 @@ tap-push:
 	rm -rf "$$tmpdir"
 
 # Sync marketplace/ files to sensei-hq/marketplace.
+# The sensei plugin's hooks are typed by the engine's `claude-code` module, which
+# only Claude Code writes. The repo carries a copy so `tsc -p marketplace` and
+# the placement floor resolve them (user decision, 2026-10-21). Refresh it after
+# a Claude Code update from the file the engine lays beside a loaded mod, or the
+# one the plugin-authoring skill names:
+#   make plugin-types src=<path to claude-code.d.ts or .claude-plugin/types/claude-code/index.d.ts>
+.PHONY: plugin-types
+plugin-types:
+	@if [ -z "$(src)" ]; then echo "Usage: make plugin-types src=<engine-written claude-code .d.ts>"; exit 1; fi
+	@head -1 "$(src)" | grep -q '^// Written by Claude Code ' || { echo "Error: $(src) is not a file Claude Code wrote"; exit 1; }
+	@cp "$(src)" marketplace/plugins/sensei/.claude-plugin/types/claude-code/index.d.ts
+	@echo "plugin types: $$(head -1 "$(src)" | sed 's#^// ##')"
+	@crates/senseid/ts-driver/node_modules/.bin/tsc -p marketplace
+
 marketplace-push:
 	@tmpdir=$$(mktemp -d) && \
 	git clone git@github.com:sensei-hq/marketplace.git "$$tmpdir" 2>&1 && \
