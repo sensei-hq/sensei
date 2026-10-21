@@ -18,11 +18,13 @@ import {
 	type ProjectRow
 } from '$lib/client-data';
 import { listTriage, type TriageRow } from '$lib/triage-data';
+import { toViewerViews, type DojoViewerView, type DojoViewerWire, type ViewerProjectView } from '$lib/viewers-view';
 import {
 	listMembers,
 	listPolicies,
 	listIdentities,
 	listAudit,
+	listViewers,
 	getHealth,
 	getBilling,
 	type Membership,
@@ -165,14 +167,21 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	let members: KitMember[] = [];
 	let rolePolicies: KitRolePolicy[] = toKitRolePolicies();
 	let auditLog: KitChatTurn[] = [];
+	let viewers: DojoViewerView[] = [];
+	let viewerProjects: ViewerProjectView[] = [];
 	let membersError: string | null = null;
 	if (section === 'members' || section === 'audit') {
 		try {
-			const [m, p, a] = await Promise.all([
+			const [m, p, a, v, pr] = await Promise.all([
 				guardTenantScope<Membership[]>(tenantKey, [], (tk) => listMembers(tk, opts)),
 				guardTenantScope<Policy[]>(tenantKey, [], (tk) => listPolicies(tk, opts)),
-				guardTenantScope<AuditEvent[]>(tenantKey, [], (tk) => listAudit(tk, opts))
+				guardTenantScope<AuditEvent[]>(tenantKey, [], (tk) => listAudit(tk, opts)),
+				// The Viewers tab (#307 D8): the dōjō's viewers and what they can be granted.
+				guardTenantScope<DojoViewerWire[]>(tenantKey, [], (tk) => listViewers(tk, opts)),
+				guardTenantScope<ProjectRow[]>(tenantKey, [], (tk) => listProjects(tk, opts))
 			]);
+			viewers = toViewerViews(v.value);
+			viewerProjects = pr.value.map((row) => ({ id: row.id, name: row.name }));
 			members = toKitMembers(m.value, { self: user?.id ?? undefined });
 			rolePolicies = toKitRolePolicies(p.value);
 			auditLog = toKitAuditThread(a.value);
@@ -280,6 +289,8 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		members,
 		rolePolicies,
 		auditLog,
+		viewers,
+		viewerProjects,
 		membersError,
 		scopeOwners: scopeOwnersFor(slug),
 		identity: identityRes.value,

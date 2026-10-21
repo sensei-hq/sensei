@@ -17,7 +17,7 @@
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
 	import { orgHref, labelForSection } from '$lib/nav';
 	import { requireTenant } from '$lib/org-guard';
-	import { setMemberRole } from '$lib/admin-data';
+	import { setMemberRole, removeViewer, grantProjectView, revokeProjectView } from '$lib/admin-data';
 	import {
 		createIncident,
 		updateIncident,
@@ -70,7 +70,10 @@
 			openIncident: async (id) => toKitIncidentDetail(await getIncident(tk(), id, opts())),
 			newEngagement: (clientName) => createEngagement(tk(), { client_name: clientName }, opts()),
 			closeEngagement: (id) => updateEngagement(tk(), id, { status: 'ended' }, opts()),
-			removeEngagement: (id) => deleteEngagement(tk(), id, opts())
+			removeEngagement: (id) => deleteEngagement(tk(), id, opts()),
+			removeViewer: (pid) => removeViewer(tk(), pid, opts()),
+			grantView: (pid, projectId) => grantProjectView(tk(), pid, projectId, opts()),
+			revokeView: (pid, projectId) => revokeProjectView(tk(), pid, projectId, opts())
 		},
 		invalidateAll
 	);
@@ -128,6 +131,11 @@
 		me={viewer}
 		onSetRole={(m, role) => org.setRole(m, role)}
 		{invite}
+		viewers={data.viewers}
+		viewerProjects={data.viewerProjects}
+		onGrantView={(v, projectId) => org.grantView(v, projectId)}
+		onRevokeView={(v, projectId) => org.revokeView(v, projectId)}
+		onRemoveViewer={(v) => org.removeViewer(v)}
 	/>
 {:else if data.section === 'scopes'}
 	<ScrScopes orgName={data.orgName} owners={data.scopeOwners} />

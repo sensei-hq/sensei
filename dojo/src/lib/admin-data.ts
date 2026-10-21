@@ -24,6 +24,7 @@
 
 import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from './dojo-api';
 import type { DojoCallOpts } from './dojo-api';
+import type { DojoViewerWire } from './viewers-view';
 
 // Re-export the shared error under the admin name so admin screens `instanceof`
 // against a local symbol without reaching into the shared module directly.
@@ -156,10 +157,10 @@ async function getJson<T>(url: string, opts: DojoCallOpts): Promise<T> {
 	return parseJson<T>(res);
 }
 
-/** A body-carrying request (POST/PATCH/DELETE) with the bearer + JSON headers. */
+/** A body-carrying request (POST/PUT/PATCH/DELETE) with the bearer + JSON headers. */
 async function sendJson<T>(
 	url: string,
-	method: 'POST' | 'PATCH' | 'DELETE',
+	method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
 	body: unknown,
 	opts: DojoCallOpts
 ): Promise<T> {
@@ -170,6 +171,42 @@ async function sendJson<T>(
 		body: body === undefined ? undefined : JSON.stringify(body)
 	});
 	return parseJson<T>(res);
+}
+
+// viewers (#307 D8) ────────────────────────────────────────────────────────────
+
+const viewerPath = (principalId: string) => `/viewers/${encodeURIComponent(principalId)}`;
+const grantPath = (principalId: string, projectId: string) =>
+	`${viewerPath(principalId)}/projects/${encodeURIComponent(projectId)}`;
+
+/** `GET …/viewers` — the dōjō's viewers, each with the projects granted to them (admin). */
+export async function listViewers(tenantKey: string, opts: DojoCallOpts = {}): Promise<DojoViewerWire[]> {
+	return (await getJson<{ viewers: DojoViewerWire[] }>(adminUrl(tenantKey, '/viewers'), opts)).viewers;
+}
+
+/** `DELETE …/viewers/{id}` — remove a viewer from the dōjō, and their project views. */
+export async function removeViewer(tenantKey: string, principalId: string, opts: DojoCallOpts = {}): Promise<void> {
+	await sendJson(adminUrl(tenantKey, viewerPath(principalId)), 'DELETE', undefined, opts);
+}
+
+/** `PUT …/viewers/{id}/projects/{project}` — grant the view of one of the dōjō's projects. */
+export async function grantProjectView(
+	tenantKey: string,
+	principalId: string,
+	projectId: string,
+	opts: DojoCallOpts = {}
+): Promise<void> {
+	await sendJson(adminUrl(tenantKey, grantPath(principalId, projectId)), 'PUT', undefined, opts);
+}
+
+/** `DELETE …/viewers/{id}/projects/{project}` — revoke it. */
+export async function revokeProjectView(
+	tenantKey: string,
+	principalId: string,
+	projectId: string,
+	opts: DojoCallOpts = {}
+): Promise<void> {
+	await sendJson(adminUrl(tenantKey, grantPath(principalId, projectId)), 'DELETE', undefined, opts);
 }
 
 // members ──────────────────────────────────────────────────────────────────────

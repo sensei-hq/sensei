@@ -62,3 +62,27 @@ describe('ScrRoleSurfaces — the Invite button', () => {
 		expect(queryByLabelText('Email')).toBeTruthy();
 	});
 });
+
+describe('ScrRoleSurfaces — the Viewers tab', () => {
+	afterEach(cleanup);
+
+	it("lists the dōjō's viewers, and its Invite button starts a viewer invite", async () => {
+		const s = new InviteState(vi.fn(), 'https://dojo.test');
+		const { getByRole, getByText } = render(ScrRoleSurfaces, {
+			props: {
+				orgName: 'Acme',
+				tab: 'members',
+				invite: s,
+				viewers: [{ principalId: 'v1', name: 'The Boss', email: null, projects: [] }],
+				viewerProjects: []
+			}
+		});
+		await fireEvent.click(getByRole('tab', { name: 'Viewers' }));
+		await tick();
+		expect(getByText('The Boss')).toBeTruthy();
+		await fireEvent.click(getByRole('button', { name: 'Invite' }));
+		await tick();
+		expect(s.open).toBe(true);
+		expect(s.draft.access).toBe('viewer');
+	});
+});

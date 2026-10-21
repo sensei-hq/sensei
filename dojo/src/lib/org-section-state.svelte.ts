@@ -3,6 +3,7 @@
 // and session; this runs it, reloads on success, and says why on failure.
 import { DojoApiError } from '$lib/client-data';
 import type { KitEngagement, KitIncident, KitIncidentDetail, KitMember } from '$lib/components/kit/types';
+import type { DojoViewerView } from '$lib/viewers-view';
 
 /** The console writes, already bound to the org's tenant and session token. */
 export interface OrgActions {
@@ -14,6 +15,10 @@ export interface OrgActions {
 	newEngagement: (clientName: string) => Promise<unknown>;
 	closeEngagement: (id: string) => Promise<unknown>;
 	removeEngagement: (id: string) => Promise<unknown>;
+	/** The dōjō's viewers (#307 D8). */
+	removeViewer: (principalId: string) => Promise<unknown>;
+	grantView: (principalId: string, projectId: string) => Promise<unknown>;
+	revokeView: (principalId: string, projectId: string) => Promise<unknown>;
 }
 
 /** Re-read the section's load (the page passes invalidateAll). */
@@ -79,4 +84,10 @@ export class OrgSectionState {
 	newEngagement = (clientName: string) => this.#act(() => this.actions.newEngagement(clientName));
 	closeEngagement = (e: KitEngagement) => this.#act(() => this.actions.closeEngagement(e.id));
 	removeEngagement = (e: KitEngagement) => this.#act(() => this.actions.removeEngagement(e.id));
+
+	/** Admin — remove a dōjō viewer, and their project views here (#307 D8). */
+	removeViewer = (v: DojoViewerView) => this.#act(() => this.actions.removeViewer(v.principalId));
+	/** Admin — grant / revoke a viewer's view of one of the dōjō's projects. */
+	grantView = (v: DojoViewerView, projectId: string) => this.#act(() => this.actions.grantView(v.principalId, projectId));
+	revokeView = (v: DojoViewerView, projectId: string) => this.#act(() => this.actions.revokeView(v.principalId, projectId));
 }

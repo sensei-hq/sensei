@@ -10,7 +10,11 @@ import {
 	listPolicies,
 	patchPolicy,
 	setMemberRole,
-	upsertPolicy
+	upsertPolicy,
+	listViewers,
+	removeViewer,
+	grantProjectView,
+	revokeProjectView
 } from '$lib/admin-data';
 
 // A fake fetch that records the call and returns a canned JSON response. Mirrors
@@ -172,5 +176,33 @@ describe('listAudit', () => {
 	it('returns an empty array when the envelope has no events', async () => {
 		const { fn } = fakeFetch(200, {});
 		expect(await listAudit('t/x', { fetch: fn })).toEqual([]);
+	});
+});
+
+describe("the dōjō's viewers (#307 D8)", () => {
+	it('lists them', async () => {
+		const row = { principal_id: 'v/1', display_name: null, email: 'v@x.co', joined_at: 't', projects: [] };
+		const { fn, calls } = fakeFetch(200, { viewers: [row] });
+		expect(await listViewers('personal/acme', { fetch: fn })).toEqual([row]);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/personal/acme/viewers`);
+	});
+
+	it('removes one, and grants and revokes a project (ids encoded)', async () => {
+		const { fn, calls } = fakeFetch(204, null);
+		await removeViewer('personal/acme', 'v/1', { fetch: fn });
+		await grantProjectView('personal/acme', 'v/1', 'p/1', { fetch: fn });
+		await revokeProjectView('personal/acme', 'v/1', 'p/1', { fetch: fn });
+		expect(calls.map((c) => [c.init?.method, c.url])).toEqual([
+			['DELETE', `${dojoApiUrl}/v1/t/personal/acme/viewers/v%2F1`],
+			['PUT', `${dojoApiUrl}/v1/t/personal/acme/viewers/v%2F1/projects/p%2F1`],
+			['DELETE', `${dojoApiUrl}/v1/t/personal/acme/viewers/v%2F1/projects/p%2F1`]
+		]);
+	});
+
+	it('surfaces a refusal with its reason', async () => {
+		const { fn } = fakeFetch(409, { error: 'invite them to this dōjō as a viewer first' });
+		await expect(grantProjectView('personal/acme', 'v1', 'p1', { fetch: fn })).rejects.toThrow(
+			'invite them to this dōjō as a viewer first'
+		);
 	});
 });

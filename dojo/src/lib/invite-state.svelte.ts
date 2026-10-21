@@ -71,8 +71,9 @@ export class InviteState {
 		private readonly origin: string
 	) {}
 
-	start(): void {
-		this.draft = emptyDraft();
+	/** Open a fresh draft — a viewer invite when started from the Viewers tab. */
+	start(access: InviteAccess = 'member'): void {
+		this.draft = { ...emptyDraft(), access };
 		this.error = null;
 		this.issued = null;
 		this.open = true;

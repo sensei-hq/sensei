@@ -41,6 +41,12 @@ describe('InviteState', () => {
 		expect(s.open).toBe(false);
 	});
 
+	it('starting from the Viewers tab presets a viewer invite', () => {
+		const s = new InviteState(vi.fn(), 'https://d');
+		s.start('viewer');
+		expect(s.draft.access).toBe('viewer');
+	});
+
 	it('issues the invite and shows the link to share', async () => {
 		const create = vi.fn().mockResolvedValue(issued);
 		const s = new InviteState(create, 'https://d');

@@ -14,6 +14,8 @@
 	import { MEMBER_ROLES } from '$lib/admin-view';
 	import type { InviteState } from '$lib/invite-state.svelte';
 	import InvitePanel from './InvitePanel.svelte';
+	import ViewersList from './ViewersList.svelte';
+	import type { DojoViewerView, ViewerProjectView } from '$lib/viewers-view';
 
 	// The admin Members & Roles / Policies / Audit surface (mockup
 	// ScrRoleSurfaces) — ONE screen the org nav shares between two ids: the
@@ -31,7 +33,12 @@
 		audit = [],
 		me = 'You',
 		onSetRole,
-		invite
+		invite,
+		viewers = [],
+		viewerProjects = [],
+		onGrantView,
+		onRevokeView,
+		onRemoveViewer
 	}: {
 		orgName: string;
 		tab?: string;
@@ -45,6 +52,12 @@
 		/** The admin invite (#307 A3) — the Members tab's Invite button opens it;
 		 *  absent = the button does nothing (fixture render). */
 		invite?: InviteState;
+		/** The dōjō's viewers (#307 D8) and the projects they can be granted. */
+		viewers?: DojoViewerView[];
+		viewerProjects?: ViewerProjectView[];
+		onGrantView?: (viewer: DojoViewerView, projectId: string) => void;
+		onRevokeView?: (viewer: DojoViewerView, projectId: string) => void;
+		onRemoveViewer?: (viewer: DojoViewerView) => void;
 	} = $props();
 
 
@@ -70,13 +83,15 @@
 		<div class="px-4 pt-4 md:px-8 md:pt-8">
 			<SectionHead
 				kanji="規" eyebrow={orgName + ' · ' + current.eyebrow} title={current.title}
-				description="Roles are additive and derived from git. developer → maintainer → lead → admin. A role only ever adds capability."
+				description={current.description}
 			>
 				{#snippet right()}
 					<Btn
 						size="sm"
 						icon="add-circle"
-						onclick={active === 'members' ? () => invite?.start() : undefined}>{current.cta}</Btn
+						onclick={active === 'members' || active === 'viewers'
+							? () => invite?.start(active === 'viewers' ? 'viewer' : 'member')
+							: undefined}>{current.cta}</Btn
 					>
 				{/snippet}
 			</SectionHead>
@@ -144,6 +159,18 @@
 					</div>
 				{/each}
 			</div>
+		{:else if active === 'viewers'}
+			{#if invite?.open}
+				<InvitePanel {invite} />
+			{/if}
+			<!-- Viewers (#307 D8) — invited as viewers, not members; granted projects. -->
+			<ViewersList
+				{viewers}
+				projects={viewerProjects}
+				onGrant={onGrantView}
+				onRevoke={onRevokeView}
+				onRemove={onRemoveViewer}
+			/>
 		{:else if active === 'policies'}
 			<!-- Policies — the additive role-policy grid. -->
 			<div class="flex flex-col gap-3">

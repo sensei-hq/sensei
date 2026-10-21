@@ -15,6 +15,9 @@ function actions(over: Partial<OrgActions> = {}): OrgActions {
 		newEngagement: vi.fn().mockResolvedValue(undefined),
 		closeEngagement: vi.fn().mockResolvedValue(undefined),
 		removeEngagement: vi.fn().mockResolvedValue(undefined),
+		removeViewer: vi.fn().mockResolvedValue(undefined),
+		grantView: vi.fn().mockResolvedValue(undefined),
+		revokeView: vi.fn().mockResolvedValue(undefined),
 		...over
 	} as OrgActions;
 }
@@ -29,6 +32,20 @@ describe('OrgSectionState', () => {
 		expect(a.reportIncident).toHaveBeenCalledWith('outage');
 		expect(reload).toHaveBeenCalledOnce();
 		expect(s.actionError).toBeNull();
+	});
+
+	it("the dōjō's viewers: remove, grant and revoke a project, each reloading (#307 D8)", async () => {
+		const a = actions();
+		const reload = vi.fn().mockResolvedValue(undefined);
+		const s = new OrgSectionState(a, reload);
+		const v = { principalId: 'v1', name: null, email: 'v@x.co', projects: [] };
+		await s.grantView(v, 'p1');
+		await s.revokeView(v, 'p1');
+		await s.removeViewer(v);
+		expect(a.grantView).toHaveBeenCalledWith('v1', 'p1');
+		expect(a.revokeView).toHaveBeenCalledWith('v1', 'p1');
+		expect(a.removeViewer).toHaveBeenCalledWith('v1');
+		expect(reload).toHaveBeenCalledTimes(3);
 	});
 
 	it('says why a write failed, and does not reload', async () => {
