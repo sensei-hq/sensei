@@ -25,6 +25,8 @@
 do $$
 declare
     r record;
+    pair text[];
+    renamed oid[];
 begin
     if to_regclass('dojo.projects') is null or to_regclass('dojo.workspaces') is not null then
         return;
@@ -37,14 +39,17 @@ begin
         execute format('drop policy if exists %I on dojo.%I', r.policyname, r.tablename);
     end loop;
 
-    alter table dojo.projects                 rename to workspaces;
-    alter table dojo.repositories_in_projects rename to repositories_in_workspaces;
-    alter table dojo.project_viewers          rename to workspace_viewers;
-    alter table dojo.team_projects            rename to team_workspaces;
-
-    alter table dojo.repositories_in_workspaces rename column project_id to workspace_id;
-    alter table dojo.workspace_viewers          rename column project_id to workspace_id;
-    alter table dojo.team_workspaces            rename column project_id to workspace_id;
+    -- A table the database never had (production predates the viewer grants)
+    -- is left to dbd to create.
+    alter table dojo.projects rename to workspaces;
+    foreach pair slice 1 in array array[['repositories_in_projects', 'repositories_in_workspaces'],
+                                        ['project_viewers', 'workspace_viewers'],
+                                        ['team_projects', 'team_workspaces']] loop
+        if to_regclass('dojo.' || pair[1]) is not null then
+            execute format('alter table dojo.%I rename to %I', pair[1], pair[2]);
+            execute format('alter table dojo.%I rename column project_id to workspace_id', pair[2]);
+        end if;
+    end loop;
 
     -- A leftover workspace_* type that no column uses (a database that once held
     -- this rename and was converged back) would block the type rename: drop it.
@@ -58,18 +63,21 @@ begin
     alter type dojo.project_phase          rename to workspace_phase;
 
     -- Constraint and index names follow (a constraint's rename renames its index),
-    -- on the four renamed tables only.
+    -- on the renamed tables only.
+    select array_agg(oid) into renamed
+      from (select to_regclass('dojo.' || t)::oid as oid
+              from unnest(array['workspaces', 'repositories_in_workspaces',
+                                'workspace_viewers', 'team_workspaces']) t) x
+     where oid is not null;
     for r in select c.conrelid::regclass as rel, c.conname
                from pg_constraint c
-              where c.conrelid in ('dojo.workspaces'::regclass, 'dojo.repositories_in_workspaces'::regclass,
-                                   'dojo.workspace_viewers'::regclass, 'dojo.team_workspaces'::regclass)
+              where c.conrelid = any(renamed)
                 and c.conname like '%project%' loop
         execute format('alter table %s rename constraint %I to %I', r.rel, r.conname,
                        replace(replace(r.conname, 'projects', 'workspaces'), 'project', 'workspace'));
     end loop;
     for r in select i.relname from pg_index x join pg_class i on i.oid = x.indexrelid
-              where x.indrelid in ('dojo.workspaces'::regclass, 'dojo.repositories_in_workspaces'::regclass,
-                                   'dojo.workspace_viewers'::regclass, 'dojo.team_workspaces'::regclass)
+              where x.indrelid = any(renamed)
                 and i.relname like '%project%' loop
         execute format('alter index dojo.%I rename to %I', r.relname,
                        replace(replace(r.relname, 'projects', 'workspaces'), 'project', 'workspace'));
