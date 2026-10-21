@@ -85,7 +85,7 @@ address the gaps"). Ordered by risk; each is a GitHub issue.
 
 | ID | Gap | Issue | Priority |
 |---|---|---|---|
-| G-SEC-1 | An admin who leaves the GitHub org keeps their dōjō admin role — repository roles follow the forge (D5), the dōjō role does not | #309 | P0 |
+| ~~G-SEC-1~~ | ~~An admin who leaves the GitHub org keeps their dōjō admin role~~ — fixed (ede5da58): a complete org read ends provisioned memberships the org no longer lists; invited members untouched | #309 closed | — |
 | G-SEC-2 | The dōjō has no secret store, yet D14/D21 hand it shared integration credentials | #310 | P1 (before Wave C) |
 | G-SEC-3 | Invite tokens stored in plain text; the accept endpoint is not rate-limited | #311 | P1 |
 | G-SEC-4 | Relay approval gates fail open on a lost or garbled reply | #312 | P1 |
