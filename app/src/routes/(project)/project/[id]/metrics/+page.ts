@@ -29,21 +29,23 @@ export const load: PageLoad = async ({ params }) => {
     // A fetch FAILURE surfaces as an error state — never an empty grid that
     // hides a broken daemon (no-fabrication). Honest-empty (a project with no
     // computed metrics yet) returns error: null with an empty rows array.
-    if (!metricsRes.ok) {
-        return {
-            rows: [],
-            registry: [],
-            series: {} as Record<string, (number | null)[]>,
-            narrative: null as MetricsNarrative | null,
-            health: null as ProjectHealth | null,
-            correlations: [] as MetricCorrelation[],
-            history,
-            error: metricsRes.error.message,
-        };
-    }
+    // The registry alone carries each metric's family, which the grid groups by;
+    // an unread one is not an empty catalogue (#288).
+    const unread = (error: string) => ({
+        rows: [],
+        registry: [],
+        series: {} as Record<string, (number | null)[]>,
+        narrative: null as MetricsNarrative | null,
+        health: null as ProjectHealth | null,
+        correlations: [] as MetricCorrelation[],
+        history,
+        error,
+    });
+    if (!metricsRes.ok) return unread(metricsRes.error.message);
+    if (!registryRes.ok) return unread(registryRes.error.message);
 
     const rows = metricsRes.data.metrics ?? [];
-    const registry = registryRes.ok ? (registryRes.data.metrics ?? []) : [];
+    const registry = registryRes.data.metrics ?? [];
     const narrative = metricsRes.data.narrative ?? null;
 
     // One series per metric, fetched in parallel. A missing/failed series just

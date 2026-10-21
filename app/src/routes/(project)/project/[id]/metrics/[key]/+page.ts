@@ -45,9 +45,12 @@ export const load: PageLoad = async ({ params, url }) => {
         recommendationsError: null as string | null,
     };
     if (!metricsRes.ok) return { ...empty, error: metricsRes.error.message };
+    // The registry names each metric's family and formula; an unread one is not
+    // an empty catalogue (#288).
+    if (!registryRes.ok) return { ...empty, error: registryRes.error.message };
 
     const rows = metricsRes.data.metrics ?? [];
-    const registry = registryRes.ok ? (registryRes.data.metrics ?? []) : [];
+    const registry = registryRes.data.metrics ?? [];
     const narrative = metricsRes.data.narrative ?? null;
 
     // The chart reads the series at the toggled grain; the datapoint drill-down
