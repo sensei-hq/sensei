@@ -5,7 +5,7 @@
 -- dojo.create_dojo function that made them are gone.
 --
 -- WHAT BREAKS THIS TEST: any tenant origin besides personal and organization;
--- dojo.create_dojo existing; the retired spellings ('org', 'team', an `org`
+-- dojo.create_dojo existing; a self_hosted flag on a tenant (D17); the retired spellings ('org', 'team', an `org`
 -- column) accepted again; a person and an org of one name colliding.
 
 begin;
@@ -19,6 +19,12 @@ begin
      where n.nspname = 'dojo' and t.typname = 'tenant_origin';
     if got is distinct from 'personal,organization' then
         raise exception 'dojo.tenant_origin is [%], expected [personal,organization]', got;
+    end if;
+
+    -- D17: no self-hosting product, so a tenant carries no self-hosted flag.
+    if exists (select 1 from information_schema.columns
+                where table_schema = 'dojo' and table_name = 'tenants' and column_name = 'self_hosted') then
+        raise exception 'dojo.tenants still has self_hosted (D17)';
     end if;
 
     if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace

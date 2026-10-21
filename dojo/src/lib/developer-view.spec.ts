@@ -27,7 +27,6 @@ function membership(id: string, kind: OrgKind): DojoOrg {
 		kanji: '社',
 		name: id,
 		kind,
-		host: 'saas',
 		url: `github/${id}`,
 		role: 'Contributor',
 		from: 'test',

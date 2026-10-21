@@ -10,7 +10,7 @@ alter table dojo.tenants enable row level security;
 -- Replaces the deny-all from when the table was server-only.
 drop policy if exists tenants_service_only on dojo.tenants;
 
-grant select (id, key, origin, slug, dojo, scope, name, dojo_url, self_hosted, created_at, updated_at)
+grant select (id, key, origin, slug, dojo, scope, name, dojo_url, created_at, updated_at)
     on dojo.tenants to authenticated;
 
 drop policy if exists tenants_read_member on dojo.tenants;

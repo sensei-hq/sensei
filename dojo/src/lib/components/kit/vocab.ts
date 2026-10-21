@@ -85,7 +85,7 @@ export interface RoleTone {
 
 /** Additive membership role — developer · maintainer · lead · admin. */
 export const K2_ROLE: Record<string, RoleTone> = {
-	developer: { kanji: '士', label: 'developer', icon: 'code' },
+	contributor: { kanji: '士', label: 'contributor', icon: 'code' },
 	maintainer: { kanji: '掟', label: 'maintainer', icon: 'settings' },
 	lead: { kanji: '客', label: 'lead', icon: 'user' },
 	admin: { kanji: '任', label: 'admin', icon: 'shield' }

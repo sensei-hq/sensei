@@ -56,7 +56,7 @@ describe('ScrRoleSurfaces — Members & Roles / Policies / Audit tabs', () => {
 		// three maintainers in the fixture → three "maintainer" role tags.
 		expect(getAllByText('maintainer').length).toBe(3);
 		expect(getAllByText('admin').length).toBeGreaterThanOrEqual(1);
-		expect(getAllByText('developer').length).toBe(2);
+		expect(getAllByText('contributor').length).toBe(2);
 	});
 
 	it('the members header CTA reads Invite', () => {

@@ -21,7 +21,7 @@ export function roleKey(label: string | null | undefined): string {
 		case 'maintainer':
 			return 'maintainer';
 		default:
-			return 'developer';
+			return 'contributor';
 	}
 }
 

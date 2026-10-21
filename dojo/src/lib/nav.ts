@@ -101,13 +101,13 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 /** Additive role rank — a group shows when the viewer's role reaches its floor
  *  (mockup `K2_ROLE_RANK`). */
 export const K2_ROLE_RANK: Record<string, number> = {
-	developer: 0,
+	contributor: 0,
 	maintainer: 1,
 	lead: 2,
 	admin: 3
 };
 
-/** The rank of a role, flooring an unknown/absent role to developer (0). */
+/** The rank of a role, flooring an unknown/absent role to contributor (0) — the D1 ladder. */
 export function rankOf(role: string | null | undefined): number {
 	return role != null && K2_ROLE_RANK[role] != null ? K2_ROLE_RANK[role] : 0;
 }

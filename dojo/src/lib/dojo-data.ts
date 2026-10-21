@@ -25,14 +25,12 @@
  *  What remains is what the forge actually states — organisation, or person.
  *  There is no third kind: no dōjō is made by hand (#307 D11). */
 export type OrgKind = 'Organization' | 'Personal';
-export type OrgHost = 'self' | 'saas';
 
 export interface DojoOrg {
 	id: string;
 	kanji: string;
 	name: string;
 	kind: OrgKind;
-	host: OrgHost;
 	url: string;
 	role: string;
 	from: string;
@@ -69,7 +67,6 @@ export const orgs: DojoOrg[] = [
 		kanji: '社',
 		name: 'Acme Corp',
 		kind: 'Organization',
-		host: 'self',
 		url: 'dojo.acme.internal',
 		role: 'Org admin',
 		from: 'GitHub · org owner',
@@ -82,7 +79,6 @@ export const orgs: DojoOrg[] = [
 		kanji: '客',
 		name: 'Globex',
 		kind: 'Organization',
-		host: 'saas',
 		url: 'github/globex',
 		role: 'Maintainer',
 		from: 'GitHub · repo admin',
@@ -94,7 +90,6 @@ export const orgs: DojoOrg[] = [
 		kanji: '客',
 		name: 'Initech',
 		kind: 'Organization',
-		host: 'saas',
 		url: 'other/initech',
 		role: 'Contributor',
 		from: 'Magic link · invited',
@@ -106,7 +101,6 @@ export const orgs: DojoOrg[] = [
 		kanji: '群',
 		name: 'Rust Guild',
 		kind: 'Organization',
-		host: 'saas',
 		url: 'github/rust-guild',
 		role: 'Read-only',
 		from: 'GitHub · member',
@@ -118,7 +112,6 @@ export const orgs: DojoOrg[] = [
 		kanji: '己',
 		name: 'Personal',
 		kind: 'Personal',
-		host: 'saas',
 		url: 'github/keiko-t',
 		role: 'Owner',
 		from: 'GitHub · you',

@@ -57,8 +57,8 @@ describe('NAV_YOU — the personal zone (inbox model)', () => {
 });
 
 describe('navForOrg — additive role rank filtering', () => {
-	it('a developer sees only the role-free Overview group', () => {
-		const groups = navForOrg('developer');
+	it('a contributor sees only the role-free Overview group', () => {
+		const groups = navForOrg('contributor');
 		expect(groups.map((g) => g.group)).toEqual(['Overview']);
 	});
 
@@ -79,13 +79,14 @@ describe('navForOrg — additive role rank filtering', () => {
 		]);
 	});
 
-	it('an unknown role floors to developer rank', () => {
+	it('an unknown role floors to contributor rank', () => {
 		expect(navForOrg('nobody').map((g) => g.group)).toEqual(['Overview']);
 		expect(navForOrg(undefined).map((g) => g.group)).toEqual(['Overview']);
 	});
 
-	it('ranks developer < maintainer < lead < admin', () => {
-		expect(K2_ROLE_RANK.developer).toBeLessThan(K2_ROLE_RANK.maintainer);
+	it('ranks contributor < maintainer < lead < admin (D1)', () => {
+		expect(K2_ROLE_RANK.contributor).toBeLessThan(K2_ROLE_RANK.maintainer);
+		expect(K2_ROLE_RANK.developer).toBeUndefined();
 		expect(K2_ROLE_RANK.maintainer).toBeLessThan(K2_ROLE_RANK.lead);
 		expect(K2_ROLE_RANK.lead).toBeLessThan(K2_ROLE_RANK.admin);
 	});

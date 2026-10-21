@@ -63,7 +63,7 @@ describe('toKitMember / toKitMembers', () => {
 describe('toKitRolePolicies', () => {
 	it('returns the additive ladder regardless of tenant policies', () => {
 		const ladder = toKitRolePolicies([]);
-		expect(ladder.map((r) => r.id)).toEqual(['developer', 'maintainer', 'lead', 'admin']);
+		expect(ladder.map((r) => r.id)).toEqual(['contributor', 'maintainer', 'lead', 'admin']);
 	});
 });
 

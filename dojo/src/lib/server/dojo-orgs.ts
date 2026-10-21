@@ -17,7 +17,6 @@ type TenantRow = {
 	key: string;
 	slug: string;
 	name: string | null;
-	self_hosted: boolean;
 	/** `personal` | `organization` — the only kinds of dōjō (#307 D11). Drives the DISPLAYED kind. */
 	origin?: string | null;
 };
@@ -30,7 +29,7 @@ type TenantRow = {
 // `origin` is here because the DISPLAY kind derives from it. Omitting it would
 // read `undefined` and silently label every dōjō an Organization — including
 // personal ones — with nothing to indicate the column was simply never fetched.
-export const TENANT_COLS = 'id, key, slug, name, self_hosted, origin';
+export const TENANT_COLS = 'id, key, slug, name, origin';
 const ROLE_LABEL: Record<string, string> = {
 	admin: 'Admin',
 	maintainer: 'Maintainer',
@@ -119,7 +118,6 @@ export function tenantToOrg(t: TenantRow, role: string, _kind?: string | null): 
 		kanji: orgKindKanji(orgKind),
 		name: t.name ?? t.slug,
 		kind: orgKind,
-		host: t.self_hosted ? 'self' : 'saas',
 		url: t.key,
 		role: ROLE_LABEL[role] ?? role,
 		from: `member · ${role}`

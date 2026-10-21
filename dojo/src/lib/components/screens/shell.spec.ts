@@ -18,7 +18,6 @@ const acme: DojoOrg = {
 	kanji: '社',
 	name: 'Acme Corp',
 	kind: 'Organization',
-	host: 'self',
 	url: 'dojo.acme.internal',
 	role: 'Admin',
 	from: 'GitHub · org owner',
@@ -30,7 +29,6 @@ const globex: DojoOrg = {
 	kanji: '社',
 	name: 'Globex',
 	kind: 'Organization',
-	host: 'saas',
 	url: 'github/globex',
 	role: 'Maintainer',
 	from: 'GitHub · repo admin',
@@ -96,19 +94,16 @@ describe('dojo shell — org switcher lists memberships', () => {
 		expect(getAllByText('Your work').length).toBeGreaterThan(0);
 	});
 
-	it('offers "All organizations" + "Create or join" entries that route to /orgs', async () => {
-		const { getByText, getAllByText } = render(OrgSwitcher, {
+	it('offers "All organizations" (routes to /orgs) and no way to make a dōjō by hand (D11, D20)', async () => {
+		const { getByText, getAllByText, queryByText } = render(OrgSwitcher, {
 			props: { context: 'you', dojos: toKitDojos([acme]), onpick: vi.fn() }
 		});
 		await fireEvent.click(getAllByText('Your work')[0].closest('button')!);
-		// both /orgs entries render and are live buttons (not dead anchors).
 		const all = getByText('All organizations').closest('button')!;
-		const create = getByText('Create or join a dōjō').closest('button')!;
 		expect(all).toBeTruthy();
-		expect(create).toBeTruthy();
+		expect(queryByText(/Create or join/)).toBeNull();
 		// clicking navigates (goto is stubbed to a no-op under vitest) — no throw.
 		await fireEvent.click(all);
-		await fireEvent.click(create);
 	});
 });
 
