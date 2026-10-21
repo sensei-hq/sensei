@@ -23,7 +23,7 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** `git stash list` → resume R2 from stash@{0} ("R2a WIP: dōjō projects→workspaces", does not build). The decision list is answered: #274 merged (c5e515c5) → D14/D21–D23; grants D15; scope keys D16; self-hosting D17; branches D18; audit + diagrams D19; T4 → D20; #116/#119 closed, R5 = #308. The local dōjō DB was converged back to develop's schema (2026-10-21; its 50 local workspaces dropped, saved in /tmp/r2/local-backup, re-filed by the next daemon sync); R2's before-hook renames in place when it lands. Done today: A1–A3, R1 (7478fe8d), the PRD change list (352c4f6d, 9e2e9579).
+**Next command:** gaps first, by priority (user: "document and address the gaps"): #309 a departed org admin keeps the dōjō role (P0, code) — then #311 invite tokens hashed + rate limit, #312 relay gates fail closed, #318 code lags decisions. #314/#315 (production verification, release rehearsal) need the user's production access. Then #307 R2b (page URLs and words, D17), R3. Done today: R2a (65eede4d), #274 merged, archive pruned, D1–D27, gap register #309–#321.
 
 **Open questions:**
 - Answered 2026-10-21: D24 (open source; benefits of the paid tier), D25 (governance dōjō → workspace → repository), D26 (k-anonymity stays), D27 (production Relay/push untested → #314).

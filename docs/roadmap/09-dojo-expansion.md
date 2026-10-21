@@ -77,7 +77,7 @@ slice builds, passes and ships on its own.
 - **R1 · Retire the hand-made dōjō (D11).** *Done (7478fe8d).* Drop `dojo.create_dojo`, the `team` tenant origin, the
   `team:<slug>` pack namespace and the "create a dōjō" path in the dōjō UI and API; a dōjō comes only
   from an organization or a person.
-- **R2 · The dōjō says workspace.** Also removes self-hosting from the dōjō (D17: `tenants.self_hosted`, the self-hosted badge). `dojo.projects` → `dojo.workspaces` with its links, viewer grants,
+- **R2 · The dōjō says workspace.** *R2a done (65eede4d): schema (renamed in place), server, `/v1` wire, the daemon's dōjō client. R2b next: page URLs and screen words; D17 self-hosting removal.* Also removes self-hosting from the dōjō (D17: `tenants.self_hosted`, the self-hosted badge). `dojo.projects` → `dojo.workspaces` with its links, viewer grants,
   team links (reporting only, D13), predicates, policies and tests; the `/v1` paths and payloads; the
   dōjō UI. The daemon's dōjō client and relay payload change in the same release (they share the wire).
 - **R3 · Sensei says workspace.** Includes the stored values (D16): the ladder's `project` level, pack namespaces and artifact scopes, converted. `sensei.projects` and its tables, views and functions; the daemon's
