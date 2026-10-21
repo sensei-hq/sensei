@@ -19,9 +19,16 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D8 | What is a workspace role? | **A read-only managerial viewer**: metrics, dashboards and reports for the workspace, aggregated or split by repository — for higher management and clients. **Admins grant it**, and only to someone already in the dōjō: a member, or a **dōjō viewer** — a person (often in the organization but not a contributor, e.g. a manager or a client) explicitly invited into the dōjō as a viewer, which is not a membership and reads no repository. The dōjō invite comes first; the per-workspace grant second (revised 2026-10-21). Not an access-management role. |
 | D9 | Four DORA keys or five? | **Five** — rework rate (DORA 2024) joins deployment frequency, lead time, change failure rate and time to restore. |
 | D10 | Hide aggregates over very small groups? | **No.** An aggregate over one contributor is shown; revisit only if comparison charts across people or teams are added. |
-| D11 | What kinds of dōjō are there? (2026-10-21, third round) | **Two: an organization's, or a personal one.** A dōjō is the tenant — the owner. There is no hand-made dōjō: `dojo.create_dojo`, the `team` tenant origin, `team/<slug>` keys and the `team:<slug>` pack namespace are retired. |
+| D11 | What kinds of dōjō are there? (2026-10-21, third round) | *(Revised by D20: a dōjō comes from a git integration, and an import may land as workspaces in one dōjō.)* **Two: an organization's, or a personal one.** A dōjō is the tenant — the owner. There is no hand-made dōjō: `dojo.create_dojo`, the `team` tenant origin, `team/<slug>` keys and the `team:<slug>` pack namespace are retired. |
 | D12 | What is a "workspace"? | **A workspace** — a group of repositories. Renamed everywhere, in one slice: the database, the API, the daemon's sync, both apps and the docs (sensei and the dōjō are both pre-v1). "Workspace" stops being a term. |
 | D13 | What does linking a team to a workspace do? | **Reporting only.** "Teams work on workspaces": the link says which team works on which workspace, so reports split by team. It grants nothing — access stays on repositories (D5) and viewer grants (D8). |
+| D14 | Who owns an integration's credential? (2026-10-21, fourth round) | **The dōjō — one credential for the workspace.** When sensei is set up first on a developer's machine and the integration is configured there, it **hands off to the dōjō without a second configuration**; from then on the dōjō owns it and sensei reads through the dōjō. Refines D2. |
+| D15 | The viewer grant model? | A team grant is **one grant per person on the team at that moment** (as built). Grants gain an **expiry** and an **export flag**. **Only an admin marks a viewer as outside the organization**, through the relationship enum (employer · client · community · personal); someone outside never exports. The **viewer shell** (`/v/{tenant}`) is built. |
+| D16 | How far does D12 reach? | **Into stored values too**: the governance ladder's `project` level, pack namespaces and artifact scopes become `workspace`, converted in R3. |
+| D17 | Self-hosting? | **None**, in the PRD and in code: the `self_hosted` column and the self-hosted badge go (R2). |
+| D18 | Which branches does sensei read? | **Three environments — production · testing · development —** each mapped to whatever branch a repository uses (`main`/`master`, `test`/`qa`, `develop`/`dev`). Production defaults to the forge's **default branch**; an unmapped environment **falls back to production**. Release gates run in order development → testing → production (a break in testing predicts one in production); sprint targets read development. |
+| D19 | Audit screens and the Diagrams list? | **Keep both** audit screens (Admin › Audit: who did what; Clients › Client audit: the confidentiality ledger). The Diagrams list is **one flat list**. |
+| D20 | Where does a dōjō come from, and what does it cost? (revises D11) | **From a git integration** — a GitHub organization, an Azure DevOps organization, or another — never from nothing. When an import would make too many dōjōs, or the provider's groups fit workspaces better (Azure), the import lands **as workspaces in one dōjō**: an admin creates the dōjō by giving the org's URL, or says which imported units are dōjōs and which are workspaces. **Every dōjō gets the free tier**; billing (chosen in the org's billing page, not at creation) pays for what is beyond it — gating, integrations, consolidated metrics in the dōjō. Sensei serves the individual; shared views and gates are the dōjō's. |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -63,12 +70,17 @@ slice builds, passes and ships on its own.
 - **R1 · Retire the hand-made dōjō (D11).** *Done (7478fe8d).* Drop `dojo.create_dojo`, the `team` tenant origin, the
   `team:<slug>` pack namespace and the "create a dōjō" path in the dōjō UI and API; a dōjō comes only
   from an organization or a person.
-- **R2 · The dōjō says workspace.** `dojo.projects` → `dojo.workspaces` with its links, viewer grants,
+- **R2 · The dōjō says workspace.** Also removes self-hosting from the dōjō (D17: `tenants.self_hosted`, the self-hosted badge). `dojo.projects` → `dojo.workspaces` with its links, viewer grants,
   team links (reporting only, D13), predicates, policies and tests; the `/v1` paths and payloads; the
   dōjō UI. The daemon's dōjō client and relay payload change in the same release (they share the wire).
-- **R3 · Sensei says workspace.** `sensei.projects` and its tables, views and functions; the daemon's
+- **R3 · Sensei says workspace.** Includes the stored values (D16): the ladder's `project` level, pack namespaces and artifact scopes, converted. `sensei.projects` and its tables, views and functions; the daemon's
   routes and pipeline; the MCP tools (`list_projects`, `use_project`, `get_project_summary`, …) and the
   plugin, skills and hooks that call them; the desktop app.
+- **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
+  provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
+  (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
+  org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
+  the free tier; the plan is chosen in billing. *Needs its own design pass before code.*
 - **R4 · The words.** PRD, specs, guides, `docs/llms`, both `SKILL.md` copies, agents, the website.
   Generic English ("the workspace's README", a Cargo workspace) stays.
 

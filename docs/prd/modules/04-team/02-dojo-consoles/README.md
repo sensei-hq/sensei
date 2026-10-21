@@ -71,7 +71,9 @@ for everyone below. That half of the console is specified in
   constitution);
   `/org/[slug]/members`, `/identities`, `/policies`, `/billing` (admin);
   `/org/[slug]/triage`, `/approvals`, `/knowledge` (maintainer);
-  `/org/[slug]/engagements`, `/incidents`, `/audit` (lead).
+  `/org/[slug]/engagements`, `/incidents`, `/audit` (lead). **Two audit screens, kept
+  apart (D19):** Clients › **Client audit** — the confidentiality ledger (lead) — and Admin ›
+  **Audit** — who did what in the dōjō (admin). Different data, different owners.
 - **App (built personal)** — `/` (personal landing: your work + My Dōjōs);
   `/you/projects`, `/you/inbox`, `/you/relay`, `/library`, `/preview`, `/me`.
 - **Mockup (authoring source of record)** — `mockups/Sensei/lib/dojo/dojo-governance.jsx`

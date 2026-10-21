@@ -89,9 +89,11 @@ revisited only if comparison charts across people or teams are added.
 ## Release gates
 
 A **release** is a production deployment candidate: the change set between the last
-successful production deployment and the candidate commit. Release gates read the
-**production-mapped branch (main)**; sprint targets read the integration branch (develop) —
-the sync branch scope in M4. Its gate has three parts,
+successful production deployment and the candidate commit. A release passes its gate in
+each **environment in order — development → testing → production** (D18): a break in
+testing predicts one in production. Production deployments come from the production branch
+(the forge's default branch unless mapped); sprint targets read development — M4's branch
+scope. Its gate has three parts,
 all evaluated **before** the release is recorded as shippable in the dōjō and shown
 in sensei:
 

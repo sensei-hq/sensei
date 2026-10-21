@@ -7,8 +7,10 @@ engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--cli
 ## Purpose
 
 Billing & Seats is the **business layer**: a private shared Dōjō can be
-subscribed and metered. The model is **free for individuals and open source**;
-**paid per active contributor** for organizations; read-only members are free;
+subscribed and metered. **Every dōjō gets the free tier** (D20); billing pays for
+what is beyond it — **gating, integrations and consolidated metrics in the dōjō** —
+**per active contributor**. Sensei itself serves the individual; the shared views and
+gates are the dōjō's. The model stays **free for individuals and open source**; read-only members are free;
 GitHub Sponsors is optional support. There is **no separate Enterprise tier** —
 SSO/SCIM, audit retention, SLA become options on the paid org tier. There is no
 self-hosting (Q14). **Viewers and invited guests are never metered** — only active
@@ -27,7 +29,8 @@ the shared Dōjō, and the free tier isn't a trial.*
 
 - In: the three tiers (Free individuals/OSS · Paid organizations · GitHub
   Sponsors support); **active contributor metering** (definition, detection,
-  invoicing); plan selection at Dōjō creation; billing portal in org context
+  invoicing); plan selection in the org's billing page (a dōjō arrives from a git
+  integration on the free tier — D20); billing portal in org context
   (`/org/[slug]/billing` — admin surface); the **no-Enterprise decision** (fold
   SSO/SCIM, audit retention, SLA into paid org options).
 - Out: the federation backbone (T1), role consoles (T2), workspace planning (T3),
@@ -35,8 +38,7 @@ the shared Dōjō, and the free tier isn't a trial.*
 
 ## Surfaces
 
-- **App** — `/org/new` (create Dōjō + choose plan); `/org/[slug]/billing`
-  (admin: current plan, active contributor count, invoices, payment method,
+- **App** — `/org/[slug]/billing` (admin: choose or change the plan, current plan, active contributor count, invoices, payment method,
   usage history, upgrade/downgrade).
 - **Daemon** — **none yet** (metering/aggregation not built).
 - **Worker API (planned)** — `/v1/t/{tenant}/billing/*` (plan, metering,
@@ -57,8 +59,8 @@ the shared Dōjō, and the free tier isn't a trial.*
   options on the paid org tier.
 - **Lead.** **Viewers and invited guests are never metered** (T6) — a seat is an active
   contributor.
-- **Lead.** Plan selection happens at **Dōjō creation** — the `/org/new` flow
-  includes the tier choice.
+- **Lead.** **Every dōjō starts on the free tier**; the plan is chosen in the org's
+  billing page, never at creation — a dōjō arrives from a git integration (D20).
 - **Lead.** The billing portal is **admin-only** in the org context.
 
 ## Signals shown
@@ -74,8 +76,8 @@ the shared Dōjō, and the free tier isn't a trial.*
 
 ## Done gate
 
-- A user creates a Dōjō at `/org/new`, chooses Free or Paid, and the plan is
-  recorded on the tenant.
+- A dōjō imported from a git integration starts on Free; an admin chooses Paid in
+  the billing page, and the plan is recorded on the tenant.
 - The billing portal (`/org/[slug]/billing`) shows the current plan, active
   contributor count, invoices, and payment method (admin only).
 - Active contributors are metered correctly (definition implemented); invoices

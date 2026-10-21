@@ -61,10 +61,17 @@ Feature: Code graph retrieval — the API contract the Workspace window and the 
 
   # gap: branch scope
   NO TEST
-  Scenario: only core branches sync, and the latest push per branch wins
-    Given core branches main and develop, with main mapped to production
+  Scenario: only environment branches sync, and the latest push per branch wins
+    Given production mapped to main and development mapped to develop
     When graphs are pushed for main, develop and a feature branch
-    Then the main and develop graphs are synced, each tagged with its branch
+    Then the main and develop graphs are synced, each tagged with its environment
     And the feature branch graph is not synced
     When develop is pushed again
     Then the newer develop graph replaces the older one
+
+  # gap: branch scope
+  NO TEST
+  Scenario: an unmapped environment falls back to production
+    Given a repository whose default branch is master and no testing or development mapping
+    When a sprint target reads development
+    Then it reads master's graph

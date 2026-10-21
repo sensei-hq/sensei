@@ -20,12 +20,11 @@
 | external → dōjō | **read-only pull** | trackers (Jira, Azure Boards, GitHub Issues) and CI (GitHub Actions, Azure Pipelines) — the dōjō reads; nothing writes back |
 
 **Branch scope (user, 2026-10-21; target — not in code).** Code graphs are tagged by branch and the
-latest push per branch wins. Sensei syncs only the configured **core branches** — main and
-develop (the initial default, read from git) plus one more — each mapped to an environment
-(main → production). Sprint targets read the integration branch (develop); release gates read
-the production-mapped branch (main) — T3 and T5. Today the graph is not branch-aware
-(`folders.branch` only feeds metrics); the third branch and a repository with no develop are
-open questions.
+latest push per branch wins. Sensei syncs only the branches mapped to the three environments —
+**production · testing · development** (D18) — each mapped to whatever branch the repository uses;
+production defaults to the forge's default branch and an unmapped environment falls back to it.
+Sprint targets read development; release gates run development → testing → production — T3 and
+T5. Today the graph is not branch-aware (`folders.branch` only feeds metrics).
 
 Plan: [`roadmap/09-dojo-expansion.md`](../../roadmap/09-dojo-expansion.md) (Wave B) · epic #307.
 

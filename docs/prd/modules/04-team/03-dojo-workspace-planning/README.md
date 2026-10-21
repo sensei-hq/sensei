@@ -90,8 +90,8 @@ knows what the sprint actually changed, and it only ever asks for better.*
   the workspace's own baseline; targets 1, 3, 4 and 7 stay delta-scoped at 0 (V4).
 - **Lead.** **A reading from an incomplete index is not evaluated** — it reads *not
   measured* and can neither block nor pass a close (V12).
-- **Lead.** **Sprint targets read the integration branch (develop); release gates read
-  the production-mapped branch (main)** — see T5 and the sync branch scope (M4).
+- **Lead.** **Sprint targets read the development environment's branch** (falling back
+  to production's — D18); release gates run development → testing → production (T5, M4).
 - **Lead.** **Inheritance is most-specific-wins** across **Dōjō → Workspace → Sprint
   → Task type → Task**; a target with no value at a scope **inherits** the nearest
   ancestor's.

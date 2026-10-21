@@ -144,7 +144,7 @@ echo "feature 1: $(wc -l < docs/prd/modules/04-team/03-dojo-workspace-planning/s
     Then its index-derived targets read "not measured" and neither block nor pass the close
 
   NO TEST
-  Scenario: sprint targets read develop, release gates read main
-    Given a workspace whose repositories sync develop and main
+  Scenario: sprint targets read the development branch
+    Given a workspace whose repositories map development to develop and production to main
     When a sprint target is evaluated
-    Then it reads the develop branch's latest graph
+    Then it reads develop's latest graph

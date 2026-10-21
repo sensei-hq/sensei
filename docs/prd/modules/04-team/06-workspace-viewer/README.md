@@ -26,8 +26,11 @@ next release held and why — without asking the team for a status deck.*
   access) explicitly invited into the dōjō as a viewer, which is not a membership. The dōjō
   invite comes first; the per-workspace grant second.
 - **D6.** Viewers see aggregates and per-repository splits, **never per-person**.
-- **D7, D13.** Teams are groupings: a grant can go to everyone on a team at once, and reports
-  can group "by team". A team grants nothing by itself and never owns a workspace.
+- **D7, D13, D15.** Teams are groupings: a grant can go to everyone on a team at once — one
+  grant per person on the team at that moment — and reports can group "by team". A team
+  grants nothing by itself and never owns a workspace.
+- **D15.** Grants carry an expiry and an export flag; only an admin marks a viewer as outside
+  the organization (the relationship enum); the viewer shell is built.
 - **D10.** Aggregates over one contributor are shown, and so is a per-repository split when one
   person works on that repository.
 - **V1–V12 (2026-10-21)** — under *Decisions taken* below.
@@ -60,8 +63,11 @@ next release held and why — without asking the team for a status deck.*
   principal_id, granted_by, granted_at)` (the grant); reads go through `can_read_workspace`
   ([access matrix](../../../../spec/dojo/access-matrix.md)). A team grant writes one row per
   person on the team at the time; it outlives the team.
-- **Data (proposed)** — `can_export` and `expires_at` on a grant (V9, expiry); an audit row for
-  every grant, change, revoke, export and first open.
+- **Data (decided, D15 — to build)** — a grant gains an **expiry** (`expires_at`) and an
+  **export flag** (`can_export`); a viewer's **relationship** (employer · client · community ·
+  personal) is set **by an admin only** and marks who is outside the organization — someone
+  outside never exports, whatever the flag says. An audit row for every grant, change, revoke,
+  export and first open.
 
 ## Data invariants
 
@@ -103,7 +109,7 @@ next release held and why — without asking the team for a status deck.*
 | V6 | Few deploys? | Shown with the count; flagged **low sample** under 5 deploys in the window. |
 | V7 | One-person repository? | Shown (D10). |
 | V8 | Who grants? | Admins only (D8). |
-| V9 | Export for someone outside the organization? | **Never.** Internal viewers export if the grant allows it. |
+| V9 | Export for someone outside the organization? | **Never.** Internal viewers export if the grant allows it. Who is outside is an admin's call, through the relationship (D15). |
 | V10 | Repository health text? | Generated from counts; a maintainer may add a note, shown with their name. |
 | V11 | Milestones and scope changes? | From the tracker — Jira versions / epics, ADO milestones — through the T3 mirror. |
 | V12 | A target read from a partial index? | **Not evaluated** — reads *not measured* until indexing completes. |
@@ -118,6 +124,7 @@ next release held and why — without asking the team for a status deck.*
 - A repository at 62% indexed shows coverage and complexity as *not measured* and does not
   count them in the headline.
 - Revoking a grant ends the viewer's next request with "access ended", and the trail records it.
+- A grant past its expiry reads as revoked.
 
 ## Wrong gate
 
@@ -127,6 +134,7 @@ next release held and why — without asking the team for a status deck.*
 - A partial index counts toward the headline.
 - A lead or maintainer can grant viewer access.
 - Someone is granted a workspace without first being in the dōjō.
+- Anyone but an admin can mark a viewer as inside or outside the organization.
 
 ## Open gaps
 

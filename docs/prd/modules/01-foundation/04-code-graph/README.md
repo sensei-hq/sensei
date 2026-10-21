@@ -87,12 +87,13 @@ modules. A pair with a static edge between the two modules is not hidden couplin
 ## Branch scope
 
 - Code graphs are **tagged by branch**. For each branch, the latest push wins.
-- sensei syncs only the configured **core branches**: **main** and **develop** (the
-  initial default, read from git) plus one more. Each core branch maps to an
-  environment; **main → production**.
-- Sprint targets read the integration branch (develop); release gates read the
-  production-mapped branch (main). The Code map shows develop by default and main for
-  a release.
+- sensei syncs only the branches mapped to its three **environments** — **production ·
+  testing · development** (D18). Each repository maps them to whatever branch it uses
+  (`main`/`master`, `test`/`qa`, `develop`/`dev`). Production defaults to the forge's
+  **default branch**; an unmapped environment **falls back to production**.
+- Sprint targets read **development**; release gates run in order **development → testing
+  → production** — a break in testing predicts one in production. The Code map shows
+  development by default and production for a release.
 - **Today:** `folders.branch` records the checked-out branch per checkout folder, as a
   metrics-only seam. The code graph is **not** branch-aware yet.
 

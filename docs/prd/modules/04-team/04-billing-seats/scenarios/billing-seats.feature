@@ -1,16 +1,15 @@
 Feature: Billing & Seats — tier model, metering, and billing portal (all unbuilt)
 
   NO TEST
-  Scenario: a user creates a Dōjō and chooses the Free tier
-    Given a signed-in user at /org/new
-    When they choose "Free — individuals & open source"
-    Then the Dōjō is created with the Free plan, no billing required
+  Scenario: a dōjō starts on the free tier
+    Given a dōjō imported from a git integration
+    Then it is on the Free plan, with no billing required
 
   NO TEST
-  Scenario: a user creates a Dōjō and chooses the Paid tier
-    Given a signed-in user at /org/new
+  Scenario: an admin moves a dōjō to Paid in the billing page
+    Given an admin of a Free dōjō at /org/[slug]/billing
     When they choose "Paid — organizations & teams"
-    Then the Dōjō is created with the Paid plan and billing setup begins
+    Then gating, integrations and consolidated metrics unlock and billing setup begins
 
   NO TEST
   Scenario: the Free tier allows individuals and open source forever
