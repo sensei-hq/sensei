@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { SessionRow } from '$lib/types.js';
 import {
   sessionsCopy,
+  medianLabel,
   quality,
   sessionTitle,
   durationMinutes,
@@ -336,5 +337,23 @@ describe('sessionsCopy', () => {
     expect(c.title).toBe('The shape of this project.');
     expect(c.acrossProjects).toBe(false);
     expect(c.emptyDescription).toContain('on this project');
+  });
+});
+
+// The median duration said "—" when sessions were short: under a minute
+// rounds to 0, which read as "no data".
+describe('medianLabel', () => {
+  it('says there is no median only when no session has a duration', () => {
+    expect(medianLabel(null)).toBe('—');
+  });
+  it('says under a minute rather than nothing', () => {
+    expect(medianLabel(0)).toBe('<1m');
+  });
+  it('formats a real median', () => {
+    expect(medianLabel(20)).toBe('20m');
+    expect(medianLabel(75)).toBe('1h 15m');
+  });
+  it('is null when no session carries a duration', () => {
+    expect(computeTotals([]).medianMins).toBeNull();
   });
 });

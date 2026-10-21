@@ -22,7 +22,7 @@
   import {
     CHART_VARIANTS,
     SESSION_RANGES,
-    compactDuration,
+    medianLabel,
     replayHref,
     type SessionsCopy,
     type ChartVariant,
@@ -40,7 +40,7 @@
   const miniChartMode = $derived(
     (digest.miniMode === 'numbers' ? 'trend' : digest.miniMode) as Exclude<MiniMode, 'numbers'>,
   );
-  const medianLabel = $derived(totals.medianMins > 0 ? compactDuration(totals.medianMins) : '—');
+  const median = $derived(medianLabel(totals.medianMins));
 
   // Chip metadata + cycler glyphs (kanji per mode).
   const CHIP_META: Record<ChartVariant, { kanji: string; sub: string }> = {
@@ -121,7 +121,7 @@
             {@render stat('bg-accent', totals.ugly, 'abandoned')}
             <div class="w-px bg-paper-edge"></div>
             <div class="text-center min-w-[56px]">
-              <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{medianLabel}</div>
+              <div class="display text-lg leading-none text-ink" style='font-feature-settings: "tnum";'>{median}</div>
               <div class="text-xs uppercase tracking-[0.12em] text-ink-faint mt-1">median</div>
             </div>
           </div>
@@ -161,7 +161,7 @@
       <span class="text-sm text-ink">
         <span class="display text-lg" style='font-feature-settings: "tnum";'>{totals.count}</span>
         session{totals.count === 1 ? '' : 's'}{copy.acrossProjects ? ` across ${totals.projects} project${totals.projects === 1 ? '' : 's'}` : ''}
-        · median {medianLabel}
+        · median {median}
       </span>
       <span class="flex-1"></span>
       <span class="text-xs" data-testid="quality-tally">

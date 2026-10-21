@@ -72,6 +72,13 @@ export function durationMinutes(startedAt: string, completedAt: string | null): 
 }
 
 /** Compact duration label: "12m" / "1h 04m" / "2h" / "—". */
+/** The median duration as the totals show it: "—" only when no session has a
+ *  duration, "<1m" for short ones (which round to 0). */
+export function medianLabel(mins: number | null): string {
+  if (mins == null) return '—';
+  return mins < 1 ? '<1m' : compactDuration(mins);
+}
+
 export function compactDuration(mins: number | null): string {
   if (mins == null) return '—';
   if (mins < 60) return `${mins}m`;
@@ -329,7 +336,9 @@ export interface DigestTotals {
   bad: number;
   ugly: number;
   neutral: number;
-  medianMins: number;
+  /** Median duration in whole minutes; 0 is under a minute, null is no
+   *  session with a duration. */
+  medianMins: number | null;
   /** Total tokens over sessions carrying usage, and the per-session median.
    *  Null when NO visible session carried tokens (honest — not a 0 stat). */
   totalTokens: number | null;
@@ -348,7 +357,7 @@ export function computeTotals(sessions: EnrichedSession[]): DigestTotals {
     bad: tone('bad'),
     ugly: tone('ugly'),
     neutral: tone('neutral'),
-    medianMins: Math.round(median(durations)),
+    medianMins: durations.length ? Math.round(median(durations)) : null,
     totalTokens: tokenVals.length ? tokenVals.reduce((a, t) => a + t, 0) : null,
     medianTokens: tokenVals.length ? Math.round(median(tokenVals)) : null,
   };
