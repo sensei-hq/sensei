@@ -23,7 +23,7 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** none until the user answers the decision list (PR #274 vs D2; viewer grant model; how far D12 reaches; self-hosting code; branch scope; audit screens; diagrams list; #116 scope). Then finish the PRD edits that depend on them and resume R2 from `git stash` ("R2a WIP: dōjō projects→workspaces" — DB + server mid-rename, does not build). Local dōjō DB is ALREADY on the workspace schema (reconciled before the stash), so develop's dōjō code fails against it until R2 lands or the DB is reset. Done: A1–A3, R1 (7478fe8d), PRD workspace rename + T6 (uncommitted → this tick).
+**Next command:** none until the user answers the decision list: PR #274 vs D2; the viewer grant model (team grant, expiry, export, "outside", viewer shell); how far D12 reaches (scope keys); self-hosting code; branch scope; audit screens; diagrams list; #116; T4 plan selection after D11; the Zones/Impact icon. Then resume R2 from `git stash` ("R2a WIP: dōjō projects→workspaces", does not build). The local dōjō DB is ALREADY on the workspace schema, so develop's dōjō code fails against it until R2 lands. Done today: A1–A3, R1 (7478fe8d), the PRD change list (352c4f6d, 9e2e9579).
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
