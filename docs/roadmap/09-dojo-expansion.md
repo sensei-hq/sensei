@@ -85,6 +85,20 @@ slice builds, passes and ships on its own.
 - **R3 · Sensei says workspace.** Includes the stored values (D16): the ladder's `project` level, pack namespaces and artifact scopes, converted. `sensei.projects` and its tables, views and functions; the daemon's
   routes and pipeline; the MCP tools (`list_projects`, `use_project`, `get_project_summary`, …) and the
   plugin, skills and hooks that call them; the desktop app.
+  *Sized 2026-10-21: ~13,700 occurrences — database 1.9k, daemon 7.8k, app 3.1k, MCP 0.5k, plugin 0.2k, CLI 0.2k.*
+  **The rule:** rename sensei's own concept; **never another system's word.** These stay `project`:
+  Claude Code's config scopes (`mcp_servers.scope` `user|project`, `extension_scope`, i.e. `.mcp.json` in the
+  repo), Jira's project (a board key), a forge's project (Azure DevOps), and English ("projection").
+  Slices, each green on develop, all in one release (the app and the daemon share `/api`):
+  - **R3a · database.** `sensei.projects`, `repositories_in_projects`, `service_projects`, `extension_projects`
+    and their columns, renamed in place by an apply/before hook (as R2a); D16's stored values (the ladder
+    level, `memory_scope`, `entity_scope`, `sync_entity`, pack namespaces, artifact scopes) converted in the
+    same hook. Rehearse on a copy of a real daemon database, twice.
+  - **R3b · daemon + app together.** `pg_store`, the `/api/projects` routes → `/api/workspaces`, the pipeline,
+    and the app's clients, screens and words in the same change.
+  - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
+    `get_workspace_summary`, …), the plugin's hooks and skills that call them, both `SKILL.md` copies, and
+    `sensei` CLI words.
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
