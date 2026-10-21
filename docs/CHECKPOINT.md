@@ -23,7 +23,7 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** #307 A3 (teams as groupings + invites incl. viewer-only guests). A2 a–d done (A2d 6aa2d690: live check needs a daemon install + one keychain approval per identity). Viewer mockups reviewed — corrections sent to the user (designer side).
+**Next command:** #307 A3b — viewer-only guest invites (D8: an invite that grants project viewer(s), no membership), then the Teams / People screens. A3a teams-as-groupings done (f01422ee). A2d live check pending a daemon install.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
