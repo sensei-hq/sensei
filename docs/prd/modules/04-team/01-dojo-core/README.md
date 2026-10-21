@@ -11,7 +11,7 @@ engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--cli
 Dōjō Core is the **federation backbone**: it routes a contributor's local sensei
 knowledge to the right Dōjō, applies the org's governance, and returns the
 resolved constitution — all without leaking client work. The Dōjō is **optional**
-(there is always a personal ladder); a solo user gets a free personal Dōjō with
+(an individual's own rules live in sensei — D25); a solo user gets a free personal Dōjō with
 no plan. The job is **one wire protocol, one membership model, one resolution
 engine** — the developer installs sensei, signs in with GitHub or a magic link,
 and the Dōjō resolves their effective rules for every repo they touch. The user
@@ -25,8 +25,9 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 > org context `/org/[slug]/[section]` has its own nav, gated by role
 > (`dojo/src/lib/nav.ts` `navForOrg`); gap T-2 is resolved (#307 A3: invites). The
 > hand-made "create a Dōjō + starter constitution" flow is retired (D11/D20; R1
-> 7478fe8d) — a dōjō comes from a git integration (#308). The free personal ladder
-> exists for solo users.
+> 7478fe8d) — a dōjō comes from a git integration (#308). An individual's own
+> rules in sensei stay theirs (D25); a dōjō's governance levels are dōjō →
+> workspace → repository.
 
 ## In scope / out of scope
 
@@ -96,7 +97,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 | Membership kind | employer / client / community / personal | `employer` |
 | Role floor | `contributor < maintainer < lead < admin` | `maintainer` |
 | Tenant | the Dōjō this repo federates to | `dojo.sensei-hq.com/t/org/sensei-hq` |
-| Effective rules | resolved ladder for this repo | 12 rules (3 company, 2 workspace, 7 personal) |
+| Effective rules | resolved ladder for this repo | 12 rules (3 dōjō, 2 workspace, 7 personal) |
 | Contribution | a shareable finding | `memory#m-42 → rule (mandatory)` |
 | Triage | auto-approve / human / reject | `auto-approve score 0.87` |
 | Audit | immutable event | `promote rule#r-12 by u-3` |

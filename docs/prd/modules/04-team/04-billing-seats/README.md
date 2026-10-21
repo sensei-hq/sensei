@@ -6,7 +6,7 @@ engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--cli
 
 ## Purpose
 
-Billing & Seats is the **business layer**: a private shared Dōjō can be
+Billing & Seats is the **business layer**: a hosted Dōjō can be
 subscribed and metered. **Every dōjō gets the free tier** (D20); billing pays for
 what is beyond it — **gating, integrations and consolidated metrics in the dōjō** —
 **per active contributor**. Sensei itself serves the individual; the shared views and

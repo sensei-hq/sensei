@@ -2,11 +2,12 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
-  Scenario: the scope rail groups both ladders and marks which kinds are paid
-    Given a maintainer with a personal Dōjō and a company Dōjō
+  Scenario: the scope rail groups the dōjō ladder and marks which kinds are paid
+    Given a maintainer with their own rules in sensei and a company Dōjō
     When they open the governance authoring surface
-    Then scopes are grouped Personal · Company · Client · Team · Workspace · Stack
-    And Company · Client · Team are marked paid while Personal and Stack read free
+    Then scopes are grouped Personal · Dōjō · Client · Workspace · Repository · Stack
+    And there is no Team group
+    And Dōjō · Client are marked paid while Personal and Stack read free
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
@@ -19,10 +20,17 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: a workspace inherits from its parents and from every stack scope
-    Given a workspace under a team, with two stack scopes defined elsewhere
+    Given a workspace under the dōjō, with two stack scopes defined elsewhere
     When the inherited set is composed
-    Then the team and its ancestors contribute
+    Then the dōjō contributes
     And each stack scope contributes too
+
+  # gap: dojo-authoring-surface (epic #91)
+  NO TEST
+  Scenario: a repository rule is the most specific level of the dōjō ladder
+    Given a rule authored at the dōjō, at a workspace, and at one of its repositories
+    When the rules for that repository are composed
+    Then the repository's rule wins over the workspace's, which wins over the dōjō's
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
@@ -78,17 +86,17 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: learnings are authored at workspace scope only
-    Given a workspace with recorded learnings and a team above it with none
+    Given a workspace with recorded learnings and the dōjō above it with none
     When both scopes render
     Then the workspace shows Memory & learnings with each learning's tag
-    And the team shows no memory section
+    And the dōjō shows no memory section
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: an inherited item is dimmed and attributed to its source scope
-    Given a workspace whose team authored a pattern
+    Given a workspace whose dōjō authored a pattern at the dōjō level
     When the rules section renders
-    Then the pattern is dimmed and attributed to the team
+    Then the pattern is dimmed and attributed to the dōjō
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
@@ -115,7 +123,7 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: the inheritance summary names every scope that contributes
-    Given a workspace under a team under a company, plus stack scopes
+    Given a repository in a workspace under the dōjō, plus stack scopes
     When the summary renders
     Then it reads "this scope plus" and names each contributing scope
 

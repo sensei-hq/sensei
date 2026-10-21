@@ -11,7 +11,7 @@
 |---|---|---|---|---|
 | Header "Constitution" + "New rule" | `ladder.openNew` | opens RuleEditor (local `$state`) | have | no |
 | Banner 掟 | static copy | — | have | no |
-| Left rail sections (Company/Teams/Stacks) | `ladder.groups` | **FIXTURE** `orgConstitutionFor(slug)`. Real → `rulesToSections(ConstitutionRule[])` over `dojo.shared_rules ⋈ sensei.namespaces` grouped by `scope_key`, ordered by `sensei.scopes.level`. | bind→plumb | no |
+| Left rail sections (Dōjō/Workspaces/Repositories/Stacks — D25: dōjō → workspace → repository, most specific wins; no Team rung, teams are reporting only) | `ladder.groups` | **FIXTURE** `orgConstitutionFor(slug)`. Real → `rulesToSections(ConstitutionRule[])` over `dojo.shared_rules ⋈ sensei.namespaces` grouped by `scope_key`, ordered by `sensei.scopes.level`. **Code still groups Company/Teams/Stacks** (`LADDER_GROUPS`, `constitution-map.ts` maps `team` level 50) — retire the Teams group, add Workspaces/Repositories. Client and Stack under D25 — undecided. | bind→plumb | no |
 | Section "N rules · M pack" caption | `s.rules.length` / `s.packs.length` | `shared_rules` per namespace / `rule_pack_adoptions` per namespace | bind→plumb | no |
 | Right: "Rule packs for this stack" + "Adopt pack" | `section.packs[]` (string[]) | **FIXTURE**. Real → `sensei.rule_pack_adoptions ⋈ rule_packs.name` for the stack namespace. "Adopt pack" = noop. | bind→plumb | no |
 | Right: section rules (RuleRow) | `section.rules[]` | `dojo.shared_rules.title` (→ `text`); `enforcement='mandatory'` → hard ★ (`isHardRule`) | bind→plumb | no |
@@ -76,7 +76,8 @@ above for the tables/endpoints (not restated).
 **Domain types** (UI-shaped; the Load layer maps wire → these):
 ```ts
 // KitConstitutionSection { id; kanji; scope; group; caption; packs?: string[]; rules?: KitRule[] }
-//   ← rulesToSections(ConstitutionRule[]) — grouped Company/Teams/Stacks, broad→specific
+//   ← rulesToSections(ConstitutionRule[]) — grouped Dōjō/Workspaces/Repositories/Stacks (D25), broad→specific
+//     (code today: Company/Teams/Stacks — the Teams group is retired)
 // KitRule       { kanji; text; hard; level }   ← hard = isHardRule(enforcement==='mandatory')
 // RuleFamily    { kanji; label }               ← RULE_FAMILIES (守/紋/理/検/技/盾) for the editor
 // EditorTarget  { rule?: KitRule }             ← RuleEditor: absent rule ⇒ add-new

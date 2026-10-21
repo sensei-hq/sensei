@@ -111,9 +111,12 @@ for everyone below. That half of the console is specified in
 - **Lead.** Client binding **excludes employer** — the owning org wins ordinary
   conflicts; the employer's mandatory rules remain a floor.
 - **Lead.** **You author against a scope, not a document.** Every authored
-  artifact carries the scope it was written at. Scopes compose from self up to
-  the root, and a **Workspace or Team scope additionally inherits from every Stack
-  scope** — stacks cross-cut the ladder rather than sitting on it.
+  artifact carries the scope it was written at. A dōjō's governance levels are
+  **dōjō → workspace → repository** (D25); scopes compose from self up to the
+  dōjō, and a **Workspace scope additionally inherits from every Stack scope** —
+  stacks cross-cut the ladder rather than sitting on it. Teams are not a
+  governance level — they are reporting only (D13). An individual's own rules
+  live in sensei, not in the dōjō.
 - **Lead.** **Composition is most-specific-wins**, and it is not the first line
   of resolution: confidentiality resolves first, then a mandatory (★) lock that
   no narrower scope may relax, then specificity — T1's three-step order.
@@ -140,20 +143,25 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 | Rail group | Kanji | Example | Marker |
 |---|---|---|---|
 | Personal | 己 | My workspaces | free |
-| Company (Org) | 社 | Company | **paid** · *your employer* |
+| Dōjō (Company) | 社 | Company | **paid** · *your employer* |
 | Client | 客 | Globex | **paid** · *engagement · not your employer* |
-| Team | 組 | Payments · Web | **paid** |
 | Workspace | 件 | personal-site · lumen-auth · billing-svc | *(none)* |
+| Repository | — | lumen-auth-api · billing-svc-web | *(none)* |
 | Stack | 技 | Rust · React | free |
 
-- **Two ladders share one list**: a free personal ladder (*Personal → Workspace →
-  Stack*) for individuals and the paid company ladder (*Company → Client → Team
-  → Workspace*) for the shared team plane. The rail marks **Company · Client ·
-  Team** paid; **Workspace carries no marker** (not even under a paid team).
+- **The dōjō ladder is dōjō → workspace → repository, most specific wins** (D25):
+  a rule at the dōjō applies everywhere in it, a workspace rule to that group of
+  repositories, a repository rule to one repository. There is **no Team rung** —
+  teams are reporting only (D13).
+- **Personal is not a dōjō level.** The Personal group shows an individual's own
+  rules in sensei (*Personal → Workspace → Stack*); they stay theirs and are
+  never authored by the dōjō. The rail marks **Dōjō · Client** paid;
+  **Workspace and Repository carry no marker**.
 - **Company vs Client is derived per-user from membership** — never chosen.
 - **Composition**: walk `parent` from the scope to the root, then append
-  **every** Stack scope when the scope is a Workspace or Team — so `lumen-auth`
-  composes as *lumen-auth → Payments → Company → Rust · React*. Stacks
+  **every** Stack scope when the scope is a Workspace — so `lumen-auth`
+  composes as *lumen-auth → Company → Rust · React*, and a repository under it as
+  *lumen-auth-api → lumen-auth → Company → Rust · React*. Stacks
   cross-cut; they are not a rung you sit under.
 - The rail badge counts **rules + skills only** at each scope — an empty scope
   reads blank rather than counting agents and commands.
@@ -179,8 +187,8 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 - Each dial shows **the consequence of the stop selected**, not generic help text.
 - **An unauthored scope defaults to the middle stop on every dial** — *Balanced ·
   Opt-in · 2 approvals*. A locally changed stop wins over the stored one.
-- **Stance resolves most-specific-first**: a workspace's stance beats its team's,
-  which beats the default (`most_specific_scoped_stance_beats_default_and_lower_rungs`).
+- **Stance resolves most-specific-first**: a repository's stance beats its
+  workspace's, which beats its dōjō's, which beats the default (`most_specific_scoped_stance_beats_default_and_lower_rungs`).
 - **A scope can also be *strict*.** Under a strict stance **every dial fails
   closed** — every autonomous action is refused unless explicitly permitted
   (`strict_fails_closed_on_every_dial`). The authoring mock has no strict control,
@@ -191,7 +199,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 - **Stance ≠ sprint gates.** Autonomy is *approval for a risky agent step*; the
   code-health gates in [T3](../03-dojo-workspace-planning/README.md) are
   code-derived and delta-scoped. Two mechanisms, one word.
-- Worked examples — *Payments*: **Gate often** · **Automatic** · **Consensus**.
+- Worked examples — *Company*: **Gate often** · **Automatic** · **Consensus**.
   *lumen-auth*: **Gate often** · **Opt-in** · **Consensus**.
 
 ### The five artifact kinds
@@ -214,8 +222,8 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 - A section header reads `N here · M inherited`; empty copy renders only when
   **both** are zero, so a scope that authored nothing but inherits five still
   lists them.
-- The memory section is gated on `kind === "Project"` — an org, team or stack
-  scope renders no memory section at all.
+- The memory section is gated on `kind === "Project"` — a dōjō, repository or
+  stack scope renders no memory section at all.
 
 ### Defined here, inherited, overridden
 
@@ -232,8 +240,8 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 - A summary card counts the **composed** set — rules · skills · agents ·
   commands · (learnings, workspace only) — deduplicated across the whole chain, so
   the number is *unique artifacts*, not a sum of lists.
-- It names the chain: *"Composed down the ladder — this scope plus **Payments ·
-  Company · Rust · React**"* and states delivery: *"Delivered to their
+- It names the chain: *"Composed down the ladder — this scope plus **Company ·
+  Rust · React**"* and states delivery: *"Delivered to their
   Observatory the moment they connect."*
 - **Preview onboarding** expands to a per-scope breakdown (one row per
   contributing scope) and closes with *"Composed by specificity — a more
@@ -276,7 +284,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 |---|---|---|
 | Org context nav | workspaces / governance / members / triage / engagements | maintainer sees governance + triage |
 | Role badge | the user's role in this org | `maintainer` |
-| Scope rail | the ladder, grouped by kind, paid-marked, with a rules+skills count | `組 Payments · paid · 4` · `客 Globex · paid · engagement` |
+| Scope rail | the ladder, grouped by kind, paid-marked, with a rules+skills count | `社 Company · paid · 4` · `客 Globex · paid · engagement` |
 | Scope chip | which scope you are authoring | `件 lumen-auth · Project` |
 | Stance dial | the selected stop **and** its consequence | `Sharing → Automatic: lessons past the confidence bar are sent up on a cadence` |
 | Artifact section | what is authored here vs inherited | `2 here · 5 inherited` |
@@ -337,7 +345,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   authorable.
 - **An accepted playbook proposal never becomes a rule at that scope** — the
   loop's accept path regressed.
-- **A workspace under a team omits the stack scopes from its inherited set** —
+- **A workspace under the dōjō omits the stack scopes from its inherited set** —
   cross-cutting stacks dropped.
 - **An unauthored scope shows a stance other than the middle stop** — default
   drift.
@@ -390,6 +398,12 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   derived from namespace membership.
 - **Library reachability** — the ponytail pack is seeded but nothing adopts it
   (M13's C-2 follow-on); "Browse library" is the surface that would close it.
+- **Client and Stack scopes under D25's dōjō → workspace → repository ladder —
+  undecided.**
+- **The code still carries a Team rung** (retired by D25): `sensei.scopes` seeds
+  `team` (level 50, `database/import/staging/scopes.jsonl`), `gov_scope` accepts
+  `team` (`crates/mcp`), and the dōjō's `constitution-map.ts` / `org-ladder-view.ts`
+  / `library-data.ts` group rules as *Company · Teams · Stacks*.
 - **Strict stance has no control** — M13 pins `strict_fails_closed_on_every_dial`,
   but the authoring mock exposes only the three 3-stop dials; *strict* must be
   either derived from the stops or given a control of its own.

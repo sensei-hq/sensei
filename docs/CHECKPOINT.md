@@ -26,7 +26,7 @@
 **Next command:** `git stash list` → resume R2 from stash@{0} ("R2a WIP: dōjō projects→workspaces", does not build). The decision list is answered: #274 merged (c5e515c5) → D14/D21–D23; grants D15; scope keys D16; self-hosting D17; branches D18; audit + diagrams D19; T4 → D20; #116/#119 closed, R5 = #308. The local dōjō DB was converged back to develop's schema (2026-10-21; its 50 local workspaces dropped, saved in /tmp/r2/local-backup, re-filed by the next daemon sync); R2's before-hook renames in place when it lands. Done today: A1–A3, R1 (7478fe8d), the PRD change list (352c4f6d, 9e2e9579).
 
 **Open questions:**
-- Paywall wording ("private and shared"), the governance ladder's Team rung, k-anonymity ≥3 for knowledge, the production VAPID secret.
+- Answered 2026-10-21: D24 (open source; benefits of the paid tier), D25 (governance dōjō → workspace → repository), D26 (k-anonymity stays), D27 (production Relay/push untested → #314).
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
 - #149: communities — Leiden/Louvain (recommended) or hierarchy grouping?
 - #133: project glyphs in icon mode, and the dōjō glyph default (kanji recommended for both).

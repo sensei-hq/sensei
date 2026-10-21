@@ -128,14 +128,14 @@ Relay extends the north-star: a run you can't supervise can't be corrected — i
 keeps the pair (and the fleet) legible and steerable at a distance. Detail:
 [journeys/dojo → Relay](../journeys/dojo.md#relay--away-from-keyboard-through-the-dōjō).
 
-## The business model — free where public or personal
+## The business model — open source, with a paid tier
 
-The line is drawn by **who the knowledge is for**, not by features. A **public /
-open-source** Dōjō and your **personal** solo Dōjō are **free forever** — full
-governance, full Relay. Payment begins only when a Dōjō is **private and shared**
-by a team or org: you pay to *coordinate a group's private knowledge* and for the
-control a business needs (SSO, audit) — never to use sensei, never
-for tokens (inference is BYO-key and local). Tiers + open pricing questions:
+**The code is open source** and stays that way: anyone can run sensei and a Dōjō
+themselves (D24). The **hosted** Dōjō is free for every Dōjō (D20) — sensei serves the
+individual, and every Dōjō gets its shared basics. **The benefits of the paid tier**
+are the features a team pays for on the hosted Dōjō: **gating**, **integrations**
+(trackers, CI) and **consolidated metrics**, plus the control a business needs (SSO,
+audit) — never to use sensei, never for tokens (inference is BYO-key and local). Tiers + open pricing questions:
 [journeys/dojo → Business model](../journeys/dojo.md#business-model--free-where-public-or-personal).
 
 ## Why it's worth building — one loop, not two products

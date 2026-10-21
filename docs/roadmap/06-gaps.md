@@ -78,6 +78,27 @@ evidence is a suspicion, and gets labelled so.
 | G-BILLING-DATA | T4 | `dojo.billing_accounts` and `dojo.seats` exist with the billing route; no payment provider, no invoice or subscription tables | T4 status honesty; DDL inventory | P2 |
 | G-COST-LEDGER | M5 | `inference_calls` table (cost/usage ledger) does not exist in DDL or code | M5 status honesty; DDL inventory | P2 |
 
+## Security and production gaps (2026-10-21)
+
+From a review of what #307 and this week's work left open (user: "document and
+address the gaps"). Ordered by risk; each is a GitHub issue.
+
+| ID | Gap | Issue | Priority |
+|---|---|---|---|
+| G-SEC-1 | An admin who leaves the GitHub org keeps their dōjō admin role — repository roles follow the forge (D5), the dōjō role does not | #309 | P0 |
+| G-SEC-2 | The dōjō has no secret store, yet D14/D21 hand it shared integration credentials | #310 | P1 (before Wave C) |
+| G-SEC-3 | Invite tokens stored in plain text; the accept endpoint is not rate-limited | #311 | P1 |
+| G-SEC-4 | Relay approval gates fail open on a lost or garbled reply | #312 | P1 |
+| G-SEC-5 | Viewer metric reads must be aggregate-only (D6, D8); grants, revokes and exports are not audited (T6) | #313 | P1 (with T6) |
+| G-OPS-1 | Nothing in the dōjō plane verified in production — sync, Relay, push (D27; #184, #299, #301) | #314 | P0 |
+| G-OPS-2 | develop far ahead of main; the next release runs a destructive dōjō reconcile — count, back up, rehearse on a copy | #315 | P0 (before release) |
+| G-FUN-1 | CI / DORA data need a puller that does not depend on a daemon being online (dōjō polling or webhooks) | #316 | P2 (Wave D) |
+| G-FUN-2 | Every daemon pulls a shared tracker — deduplicate before the mirrors drift (D22) | #317 | P2 |
+| G-FUN-3 | Code lags the decisions: `developer` role, "Create or join", `self_hosted`, one tracker per project | #318 | P1 |
+| G-FUN-4 | No email for invites, revocations, expiries | #319 | P2 |
+| G-FUN-5 | No retention / deletion rules for client data, departed members, viewer exports | #320 | P2 |
+| G-OPS-3 | No error monitoring or alerting; no production backup plan; qlty out of minutes | #321 | P2 |
+
 ## Remaining population (Phase 3)
 
 The full register from [`../reorg.md`](../reorg.md) §12 spans the F- (faults),
