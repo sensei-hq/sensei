@@ -9,17 +9,19 @@
 - #312 built (4fcea9de, D28): an unanswered hard-block in an unattended run is denied. Live proof comes with the next release.
 - Placement floor (nightly, red since 10-19): @sensei/glyphs (5981faab, tsconfig: ES5 had no Set) and
   @sensei/marketplace (356ce9a0, vendored engine `claude-code` types — user decision; `make plugin-types src=…`
-  refreshes them). Local floor passes; CI re-run dispatched on develop (run 39676172084).
+  refreshes them). CI re-run on develop green (run 39676172084).
+- #307 R2b done (f080e38a, e6c58885): the dōjō's pages say workspace; fixed the Viewers tab's R2a drift (shipped in
+  v0.16.0, no prod viewers yet — needs the next release). Verified live on the local dōjō.
 - #313 closed (6dad1e33): grant changes audited in-transaction; a viewer reads no one else (SQL-pinned). Verified live
   on the local dōjō through the API (2 audit rows for 4 calls).
 
 **Remaining:**
-- Confirm the placement floor's CI re-run is green.
 - #314 (user steps: enrol the daemon with production, prod URL env, VAPID + Worker secrets, phone test).
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** land #307 R2b (an agent is renaming the dōjō UI in a worktree — review its diff, run `bun run check` + `bun run test`, then fast-forward develop). Confirm placement floor run 39676172084. Then R3a (D30: schema too).
+**Next command:** R3a (D30: schema too) — write the apply/before rename hook + its SQL test, rehearse on a COPY of the
+daemon DB (`make db-backup` first), then pg_store in the same change.
 **R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
 extension_projects; 19 `project_id`-style columns (activity, history, inference, sensei) + staging.memories.project_name;
 17 views (project_metric_*, project_*); fn sole_project_of; enums project_maturity + 'project' in entity_scope,
