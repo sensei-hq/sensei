@@ -9,11 +9,11 @@ org admin
 
 A project's **release pipelines** are read into the dōjō, so every deployment is a
 record: what shipped, from which commit, to which environment, and whether it
-held. From those records the dōjō computes the four **DORA** keys and holds each
+held. From those records the dōjō computes the five **DORA** keys and holds each
 release to a **release gate** — the T3 code targets, evaluated over everything the
 release carries, plus the checks that say the release is safe to ship.
 
-> **A release ships only what passed; the four keys say how the delivery is going.**
+> **A release ships only what passed; the five keys say how the delivery is going.**
 
 The user feels this as *I can see how often we ship, how long a change takes to
 reach production, how often it breaks and how fast we recover — and a release that
@@ -35,7 +35,7 @@ would ship a regression stops and says why.*
 - In: **pipeline connections** (on T3's per-project integrations: GitHub Actions,
   Azure Pipelines; git tags as fallback); **deployment records** (project, repo,
   commit, environment, started/finished, outcome); **production incidents** (opened,
-  restored, severity, linked deployment); the **four DORA keys** per project and per
+  restored, severity, linked deployment); the **five DORA keys** per project and per
   team, with trailing windows; **release gates** (the T3 targets over the release's
   change set + release-readiness checks + the stability guardrail); a **release
   scorecard**; the **DORA view** in the dōjō and in sensei.
@@ -47,19 +47,19 @@ would ship a regression stops and says why.*
 ## Surfaces
 
 - **Dōjō** — project detail: a **Releases** tab (deployments, the gate result of each,
-  the scorecard) and a **Delivery** card with the four keys; the org **DORA** view
+  the scorecard) and a **Delivery** card with the five keys; the org **DORA** view
   (per project, per team, trailing 30/90 days); a **production incidents** list.
 - **Sensei** — the project window shows the latest release, its gate result and the
-  four keys (pulled from the dōjō); a release that is blocked names the failing
+  five keys (pulled from the dōjō); a release that is blocked names the failing
   target.
 - **Data (proposed, dōjō)** — `dojo.pipeline_connections` (on the C1 connection model),
   `dojo.deployments`, `dojo.production_incidents`, `dojo.release_gates` (resolved
   result per release); the keys as rows in the existing metric plumbing
   (`repository_metrics`, `metric_activations`).
 
-## The four keys
+## The five keys
 
-All four are computed per **project** (and rolled up per **team**), over a trailing
+All five are computed per **project** (and rolled up per **team**), over a trailing
 window, from deployments to the **production** environment.
 
 | Key | Definition | Signal |
@@ -68,6 +68,15 @@ window, from deployments to the **production** environment.
 | Lead time for changes | median time from a commit's first appearance to its first successful production deployment | commit timestamps (git) × `deployments.commit` ancestry |
 | Change failure rate | share of production deployments that caused a production incident or were rolled back | `production_incidents.deployment_id`, rollback deployments |
 | Time to restore | median time from a production incident opening to its restore | `production_incidents.opened_at → restored_at` |
+| Rework rate | share of production deployments that were unplanned fixes for a user-facing defect (DORA 2024) | a deployment whose change set closes a tracker ticket of type Bug, or that ships from a hotfix branch or tag — the project's convention, set on its integrations; with neither signal, "not measured" |
+
+Five keys, not the classic four (user, 2026-10-21): rework rate is DORA's 2024 addition
+and sits with change failure rate on the stability side. Each key shows the number of
+deployments it is computed from, and "not measured" is never a zero.
+
+**Group size.** A key is shown however few people contributed — an aggregate over one
+contributor is still an aggregate, never a per-person view (user, 2026-10-21). This is
+revisited only if comparison charts across people or teams are added.
 
 ## Release gates
 
@@ -84,8 +93,8 @@ in sensei:
    **production incident** is open on the project; a release that misses a `block`
    target cannot be marked shippable without a note (maintainer and up).
 3. **Stability guardrail (proposed default: `warn`).** When the project's trailing
-   change failure rate is over its threshold, or time to restore is over its
-   threshold, the release gate says so. `warn` surfaces it; `block` is opt-in per
+   change failure rate, time to restore or rework rate is over its threshold, the
+   release gate says so. `warn` surfaces it; `block` is opt-in per
    project.
 
 ## Data invariants
@@ -94,7 +103,7 @@ in sensei:
   deployments; sensei never triggers, cancels or approves a CI run.
 - **Lead.** **A gate reads the release's change set** — delta-scoped as in T3 — never
   an absolute project-level ratio.
-- **Lead.** **The four keys are delivery insights, never per-author.** They roll up by
+- **Lead.** **The five keys are delivery insights, never per-author.** They roll up by
   project and team only.
 - **Lead.** **Only the stability guardrail turns a key into a gate**, and only when a
   project opts it into `block`.
@@ -107,7 +116,7 @@ in sensei:
 ## Done gate
 
 - A project with a GitHub Actions or Azure Pipelines connection lists its production
-  deployments, and the four keys match a hand count over the same window.
+  deployments, and the five keys match a hand count over the same window.
 - A project with only git tags lists releases from the tags and says the keys are
   tag-derived.
 - A release whose change set adds a hard-rule violation is blocked and names the

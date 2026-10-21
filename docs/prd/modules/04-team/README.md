@@ -7,10 +7,10 @@
 | ID | Module | One-line "done" | Spec |
 |---|---|---|---|
 | T1 | Dōjō Core | Knowledge travels up, is governed, and comes back down | [`README`](01-dojo-core/README.md) · [`dojo-core`](01-dojo-core/scenarios/dojo-core.feature) · [`dojo-core-gaps`](01-dojo-core/scenarios/dojo-core-gaps.feature) |
-| T2 | Dōjō Consoles | All four roles (developer · maintainer · admin · lead) have a live console | [`README`](02-dojo-consoles/README.md) · [`dojo-consoles`](02-dojo-consoles/scenarios/dojo-consoles.feature) · [`dojo-consoles-gaps`](02-dojo-consoles/scenarios/dojo-consoles-gaps.feature) |
+| T2 | Dōjō Consoles | All four roles (contributor · maintainer · lead · admin) have a live console | [`README`](02-dojo-consoles/README.md) · [`dojo-consoles`](02-dojo-consoles/scenarios/dojo-consoles.feature) · [`dojo-consoles-gaps`](02-dojo-consoles/scenarios/dojo-consoles-gaps.feature) |
 | T3 | Dōjō Project Planning | A project plans against its tracker and gates on code health | [`README`](03-dojo-project-planning/README.md) · [`dojo-project-planning`](03-dojo-project-planning/scenarios/dojo-project-planning.feature) · [`dojo-project-planning-gaps`](03-dojo-project-planning/scenarios/dojo-project-planning-gaps.feature) |
 | T4 | Billing & Seats | A private shared Dōjō can be subscribed and metered | [`README`](04-billing-seats/README.md) · [`billing-seats`](04-billing-seats/scenarios/billing-seats.feature) |
-| T5 | Releases, DORA & Release Gates | Deployments are read from CI, the four DORA keys are computed, and a release that would ship a regression is held | [`README`](05-releases-and-dora/README.md) · [`releases-and-dora`](05-releases-and-dora/scenarios/releases-and-dora.feature) |
+| T5 | Releases, DORA & Release Gates | Deployments are read from CI, the five DORA keys are computed, and a release that would ship a regression is held | [`README`](05-releases-and-dora/README.md) · [`releases-and-dora`](05-releases-and-dora/scenarios/releases-and-dora.feature) |
 
 ## What this plane owns
 
@@ -21,7 +21,7 @@ client / project viewpoints);
 project planning against external trackers (Jira / ADO read-only) with
 **delta-scoped, ratchet-fair quality gates** (T3, reorg §9); the free-where-public
 business model with payment for private shared coordination (T4); and release
-pipelines, the four DORA keys and **release gates** that hold a release to the T3
+pipelines, the five DORA keys and **release gates** that hold a release to the T3
 targets over its change set (T5).
 
 **Resolved 2026-10-21** ([roadmap/09](../../../roadmap/09-dojo-expansion.md)): external

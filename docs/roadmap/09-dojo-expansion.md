@@ -17,6 +17,8 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D6 | Who sees per-person data for a repository? | **The person, and maintainers and above on that repository.** Project viewers see aggregates and per-repository splits, never per-person. |
 | D7 | What are teams for? | **Groupings, not access** — named groups of people for "by team" reports and for granting project-viewer access in bulk. Never a source of repository access, so no default team owns projects. |
 | D8 | What is a project role? | **A read-only managerial viewer**: metrics, dashboards and reports for the project, aggregated or split by repository — for higher management and clients. **Admins grant it**, to a dōjō member or to an outsider invited as a viewer-only guest who sees nothing else. Not an access-management role. |
+| D9 | Four DORA keys or five? | **Five** — rework rate (DORA 2024) joins deployment frequency, lead time, change failure rate and time to restore. |
+| D10 | Hide aggregates over very small groups? | **No.** An aggregate over one contributor is shown; revisit only if comparison charts across people or teams are added. |
 
 Already decided elsewhere and kept: **the dōjō wins on conflict** (`docs/spec/2026-08-24-platform-restructure.md` Q1);
 an `origin` column stops push/pull loops (`docs/spec/2026-08-24-shared-schema-and-sync-design.md`).
@@ -80,8 +82,8 @@ Specified in the PRD as [T5](../prd/modules/04-team/05-releases-and-dora/README.
   deployments; git tags are the fallback.
 - **D-2 · Production incidents.** An entity separate from confidentiality incidents: opened, restored,
   linked to the deployment that caused it.
-- **D-3 · The four keys.** Deployment frequency, lead time for changes, change failure rate and time to
-  restore as metrics in the existing plumbing; a DORA view in the dōjō and in sensei.
+- **D-3 · The five keys.** Deployment frequency, lead time for changes, change failure rate, time to
+  restore and rework rate (D9) as metrics in the existing plumbing; a DORA view in the dōjō and in sensei.
 - **D-4 · Release gates.** T3's targets, ladder (gaining a **Release** scope) and modes
   evaluated over a release's change set; release readiness (green pipeline, no open
   blocking production incident); the stability guardrail (change failure rate / time to

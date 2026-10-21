@@ -10,10 +10,10 @@ Status legend: [`README.md`](README.md).
 | ID | Module | One-line "done" | Status |
 |---|---|---|---|
 | T1 | Dōjō Core | Knowledge travels up, is governed, and comes back down | 🚧 Phase 3 |
-| T2 | Dōjō Consoles | All four roles (developer · maintainer · admin · lead) have a live console | 🚧 Phase 3 |
+| T2 | Dōjō Consoles | All four roles (contributor · maintainer · lead · admin) have a live console | 🚧 Phase 3 |
 | T3 | Dōjō Project Planning | A project plans against its tracker and gates on code health | 🚧 Phase 3 |
 | T4 | Billing & Seats | A private shared Dōjō can be subscribed and metered | 🚧 Phase 3 |
-| T5 | Releases, DORA & Release Gates | Deployments are read from CI, the four keys are computed, and a release that would ship a regression is held | ⛔ not built — [09-dojo-expansion](09-dojo-expansion.md) Wave D |
+| T5 | Releases, DORA & Release Gates | Deployments are read from CI, the five DORA keys are computed, and a release that would ship a regression is held | ⛔ not built — [09-dojo-expansion](09-dojo-expansion.md) Wave D |
 
 ## Known gaps affecting this plane
 

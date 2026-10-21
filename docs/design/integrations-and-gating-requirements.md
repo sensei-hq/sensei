@@ -33,7 +33,7 @@ These settle the open questions below and override §5 where they differ.
   authority on conflict, and sensei says when a local change lost.
 - **Releases and DORA** are specified in T5
   ([`prd/modules/04-team/05-releases-and-dora/`](../prd/modules/04-team/05-releases-and-dora/README.md)):
-  deployments from CI with git tags as the fallback, production incidents, the four
+  deployments from CI with git tags as the fallback, production incidents, the five
   keys, and **release gates** — the §3 targets evaluated over a release's change set.
 
 Plan: [`roadmap/09-dojo-expansion.md`](../roadmap/09-dojo-expansion.md) · epic #307.

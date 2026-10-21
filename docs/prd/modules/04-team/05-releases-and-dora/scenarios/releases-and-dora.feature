@@ -1,4 +1,4 @@
-Feature: Releases, DORA & release gates — deployments read from CI, the four keys, gated releases
+Feature: Releases, DORA & release gates — deployments read from CI, the five keys, gated releases
 
   # gap: D-1
   NO TEST
@@ -24,7 +24,7 @@ Feature: Releases, DORA & release gates — deployments read from CI, the four k
     Given a project with no pipeline connection and release tags in git
     When the Releases tab opens
     Then the releases come from the tags
-    And the four keys say they are tag-derived
+    And the five keys say they are tag-derived
     This is unbuilt.
 
   # gap: D-1
@@ -38,10 +38,11 @@ Feature: Releases, DORA & release gates — deployments read from CI, the four k
 
   # gap: D-3
   NO TEST
-  Scenario: the four keys match a hand count
+  Scenario: the five keys match a hand count
     Given a project's production deployments and production incidents over 30 days
     When the Delivery card is read
-    Then deployment frequency, lead time, change failure rate and time to restore match a hand count over the same window
+    Then deployment frequency, lead time, change failure rate, time to restore and rework rate match a hand count over the same window
+    And each key shows the number of deployments it is computed from
     And no key is shown per author
     This is unbuilt.
 
@@ -96,4 +97,13 @@ Feature: Releases, DORA & release gates — deployments read from CI, the four k
     Given a project whose latest release was blocked in the dōjō
     When the project window opens in sensei
     Then it shows the release, its blocked gate and the failing target
+    This is unbuilt.
+
+  # gap: D-3
+  NO TEST
+  Scenario: rework rate counts unplanned fixes, and says when it cannot tell
+    Given a project whose production deployments include two that close Bug tickets
+    When the Delivery card is read
+    Then rework rate counts those two over all production deployments in the window
+    And a project with neither a tracker nor a hotfix convention shows rework rate as "not measured"
     This is unbuilt.
