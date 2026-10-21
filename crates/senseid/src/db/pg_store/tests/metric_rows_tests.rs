@@ -59,14 +59,14 @@ async fn upsert_project_metric_is_idempotent() {
 
     // Backdate modified_at so the second upsert's bump is observable.
     sqlx_core::query::query(
-        "UPDATE sensei.project_metrics SET modified_at = now() - interval '1 hour' WHERE id = $1",
+        "UPDATE sensei.workspace_metrics SET modified_at = now() - interval '1 hour' WHERE id = $1",
     )
     .bind(id1)
     .execute(s.pool())
     .await
     .unwrap();
     let (before,): (chrono::DateTime<chrono::Utc>,) =
-        query_as("SELECT modified_at FROM sensei.project_metrics WHERE id = $1")
+        query_as("SELECT modified_at FROM sensei.workspace_metrics WHERE id = $1")
             .bind(id1)
             .fetch_one(s.pool())
             .await
@@ -90,8 +90,8 @@ async fn upsert_project_metric_is_idempotent() {
     assert_eq!(id1, id2, "same identity upserts the same row (no duplicate)");
 
     let (n,): (i64,) = query_as(
-        "SELECT count(*) FROM sensei.project_metrics
-              WHERE metric_id = $1 AND project_id = $2 AND computed_on = $3 AND grain = 'daily'",
+        "SELECT count(*) FROM sensei.workspace_metrics
+              WHERE metric_id = $1 AND workspace_id = $2 AND computed_on = $3 AND grain = 'daily'",
     )
     .bind(mid)
     .bind(pid)
@@ -102,7 +102,7 @@ async fn upsert_project_metric_is_idempotent() {
     assert_eq!(n, 1, "one row per identity — the second upsert updated in place");
 
     let (value, props, source, after): (f64, serde_json::Value, String, chrono::DateTime<chrono::Utc>) =
-            query_as("SELECT value::float8, props, source::text, modified_at FROM sensei.project_metrics WHERE id = $1")
+            query_as("SELECT value::float8, props, source::text, modified_at FROM sensei.workspace_metrics WHERE id = $1")
                 .bind(id1).fetch_one(s.pool()).await.unwrap();
     assert_eq!(value, 0.75, "value updated to the second upsert's");
     assert_eq!(props, serde_json::json!({"numerator": 3, "denominator": 4}), "props updated");
@@ -115,7 +115,7 @@ async fn upsert_project_metric_is_idempotent() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -232,7 +232,7 @@ async fn resolve_folder_from_path_uses_aliases() {
     assert_eq!(
         s.resolve_folder_by_path(&abs_path).await.unwrap(),
         Some((fid, pid)),
-        "a live folders.abs_path resolves to (folder_id, project_id)"
+        "a live folders.abs_path resolves to (folder_id, workspace_id)"
     );
     assert_eq!(
         s.resolve_folder_by_path(&alias).await.unwrap(),
@@ -268,7 +268,7 @@ async fn resolve_folder_from_path_uses_aliases() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -341,7 +341,7 @@ async fn get_project_metrics_reads_views() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -397,7 +397,7 @@ async fn replacing_deactivations_forgets_the_ones_no_longer_listed() {
         "an empty plan clears every deactivation"
     );
 
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -475,7 +475,7 @@ async fn a_pct_metric_without_numerator_props_still_yields_a_value() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -541,7 +541,7 @@ async fn get_project_metrics_excludes_a_retired_metric() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -587,7 +587,7 @@ async fn get_project_sessions_for_day_scopes_day_and_measurable() {
     ) {
         sqlx_core::query::query(
                 "INSERT INTO activity.sessions
-                    (folder_id, project_id, client_session_id, task, outcome, ftr, turns, corrections, summary, started_at)
+                    (folder_id, workspace_id, client_session_id, task, outcome, ftr, turns, corrections, summary, started_at)
                  VALUES ($1, $2, $3, $4, $5::sensei.session_outcome, $6, $7, $8, $9, $10)")
                 .bind(fid).bind(pid).bind(cs).bind(task).bind(outcome).bind(ftr)
                 .bind(turns).bind(corr).bind(summary).bind(at)
@@ -668,7 +668,7 @@ async fn get_project_sessions_for_day_scopes_day_and_measurable() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = ANY($1)")
         .bind(vec![pid, other_pid])
         .execute(s.pool())
         .await
@@ -676,7 +676,7 @@ async fn get_project_sessions_for_day_scopes_day_and_measurable() {
 }
 
 /// Phase 8.1: both FTR getters read `project_metrics` (via
-/// `project_metric_daily`), NOT the retired `sensei.ftr_daily` /
+/// `workspace_metric_daily`), NOT the retired `sensei.ftr_daily` /
 /// `sensei.project_ftr_metrics` views. Seeds daily `ftr` rows across the 14d,
 /// 7d, and prior-14d windows and asserts the re-sourced values + unchanged
 /// response shape.
@@ -814,7 +814,7 @@ async fn ftr_getters_read_project_metrics() {
     );
 
     // cleanup — project_metrics rows cascade from the project (ftr metric kept).
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -855,7 +855,7 @@ async fn get_project_ftr_absent_is_null_not_zero() {
     assert_eq!(ftr["sessions7d"].as_i64(), Some(0), "sessions7d is an honest 0 (a count)");
     assert!(ftr["ftrTrend"].as_array().is_some_and(|a| a.is_empty()), "no sessions → empty trend");
     assert_eq!(s.get_project_ftr_rate(&pid).await.unwrap(), None, "rate helper is None on no data");
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -921,7 +921,7 @@ async fn ftr14d_window_reaches_the_8_to_13_day_band() {
         "rate helper (14d) includes it too"
     );
 
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -1008,7 +1008,7 @@ async fn holistic_ftr_daily_pools_not_average_of_rates() {
     // day (robust to other rows), and assert the getter matches POOLED, not avg.
     let (sum_num, sum_den, avg_rate): (f64, i64, f64) = query_as(
             "SELECT SUM((props->>'numerator')::float8), SUM((props->>'denominator')::int8)::int8, AVG(value)::float8 \
-               FROM sensei.project_metric_daily WHERE metric = 'ftr' AND date = $1",
+               FROM sensei.workspace_metric_daily WHERE metric = 'ftr' AND date = $1",
         ).bind(day).fetch_one(s.pool()).await.unwrap();
     let pooled = sum_num / sum_den as f64;
     assert!(
@@ -1025,7 +1025,7 @@ async fn holistic_ftr_daily_pools_not_average_of_rates() {
         "seed makes pooled ({pooled}) differ from avg-of-rates ({avg_rate}) — so the check above is a real discriminator"
     );
 
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = ANY($1)")
         .bind(vec![p1, p2])
         .execute(s.pool())
         .await

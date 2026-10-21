@@ -1,15 +1,15 @@
 set search_path to sensei, extensions;
 
-CREATE OR REPLACE VIEW sensei.project_libraries_resolved AS
+CREATE OR REPLACE VIEW sensei.workspace_libraries_resolved AS
 SELECT
     l.*,
     pl.enabled,
-    pl.props          AS project_props,
+    pl.props          AS workspace_props,
     pl.modified_at    AS associated_at,
     CASE
-        WHEN pl.project_id IS NULL THEN 'global'
-        ELSE 'project'
+        WHEN pl.workspace_id IS NULL THEN 'global'
+        ELSE 'workspace'
     END               AS scope,
-    pl.project_id     AS scoped_project_id
+    pl.workspace_id   AS scoped_workspace_id
 FROM sensei.libraries l
 JOIN sensei.library_enablement pl ON pl.library_id = l.id;

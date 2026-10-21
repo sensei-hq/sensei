@@ -28,7 +28,7 @@ impl PgStore {
         }
         let (present,): (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(DISTINCT metric_id)
-           FROM sensei.project_metrics
+           FROM sensei.workspace_metrics
           WHERE repository_id = $1
             AND metric_id = ANY($2)
             AND scope = 'repo'

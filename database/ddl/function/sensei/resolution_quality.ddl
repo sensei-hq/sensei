@@ -1,9 +1,9 @@
 set search_path to sensei, extensions;
 
--- How one project's edges turned out, decomposed by LANGUAGE as well as by kind
+-- How one workspace's edges turned out, decomposed by LANGUAGE as well as by kind
 -- and verdict (#235).
 --
--- `graph_placement` already decomposes by (project, edge_kind, verdict, reason
+-- `graph_placement` already decomposes by (workspace, edge_kind, verdict, reason
 -- code) and already splits a reason into `normal` / `fault` / `refusal`. That
 -- taxonomy is good and this does not replace it. What it lacks is the one axis
 -- that makes a corpus-wide number READABLE: the language the edge was written
@@ -19,10 +19,10 @@ set search_path to sensei, extensions;
 -- A FUNCTION, not a view, for the same reason `component_zones` is: the join to
 -- `nodes` for the source language costs 4m20s corpus-wide and the predicate has
 -- to be structural rather than hoped-for. Even so this is an ANALYSIS query, not
--- a screen query — expect seconds to minutes depending on the project.
+-- a screen query — expect seconds to minutes depending on the workspace.
 drop function if exists resolution_quality(uuid) cascade;
 
-create or replace function resolution_quality(p_project_id uuid)
+create or replace function resolution_quality(p_workspace_id uuid)
 returns table (
   language       text
 , package        text
@@ -48,17 +48,17 @@ as $fn$
          , ed.kind::text                      as edge_kind
          , ed.resolved_via
          , ed.unresolved_reason
-      from sensei.folder_projects fp
+      from sensei.folder_workspaces fp
       cross join lateral (
         -- The LATERAL + fence `structure_edges` documents. Without it the
-        -- planner reads all 3.3M edges instead of this project's slice.
+        -- planner reads all 3.3M edges instead of this workspace's slice.
         select e2.kind, e2.source_id, e2.resolved_via, e2.unresolved_reason
           from sensei.edges e2
          where e2.folder_id = fp.folder_id
          offset 0
       ) ed
       join sensei.nodes sn on sn.id = ed.source_id
-     where fp.project_id = p_project_id
+     where fp.workspace_id = p_workspace_id
   )
   select e.language
        , e.package
@@ -96,7 +96,7 @@ $fn$;
 
 comment on function resolution_quality(uuid) is
 'Resolution decomposed by (language, edge kind, verdict, reason code) for one
-project — the instrument that makes a change to the indexer ATTRIBUTABLE.
+workspace — the instrument that makes a change to the indexer ATTRIBUTABLE.
 
 WHY THE LANGUAGE AXIS IS THE WHOLE POINT. A corpus-wide percentage mixes two
 different defects. Measured 2026-10-06: `calls` places at 29.6% across the
@@ -126,11 +126,11 @@ macro expansion, the external boundary), `normal` is a placement that went well.
 
 THIS DOES NOT REPLACE `graph_placement`. That view answers the same question
 corpus-wide without the language join, which is far cheaper, and it computes
-`pct_of_project` for a summary bar. Use it for a screen; use this for a
+`pct_of_workspace` for a summary bar. Use it for a screen; use this for a
 decision about where to spend indexer effort.
 
 AN ANALYSIS QUERY, NOT A SCREEN QUERY. The join to `nodes` for the source
-language costs 4m20s corpus-wide; per project it is seconds to minutes. Nothing
+language costs 4m20s corpus-wide; per workspace it is seconds to minutes. Nothing
 on a latency budget should call it.
 
 Common queries:

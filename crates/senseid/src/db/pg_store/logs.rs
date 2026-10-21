@@ -199,7 +199,7 @@ impl PgStore {
               WHERE s.analyzed_at IS NOT NULL
                 AND s.started_at < now() - (interval '1 day' * $1)
                 AND (EXISTS (SELECT 1
-                               FROM sensei.project_metrics pm
+                               FROM sensei.workspace_metrics pm
                                JOIN sensei.metrics m ON m.id = pm.metric_id
                                JOIN sensei.folders rf ON rf.id = s.repo_folder_id
                               WHERE pm.repository_id = rf.repository_id

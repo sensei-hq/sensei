@@ -375,14 +375,14 @@ struct IngestOutcome {
     skipped: bool,
     turns: u32,
     /// Project to (re)analyze because a historical session was synthesized (#75).
-    analyze_project: Option<uuid::Uuid>,
+    analyze_workspace: Option<uuid::Uuid>,
     /// The client session whose turns were written, when any were.
     session_id: Option<String>,
 }
 
 impl IngestOutcome {
     fn skipped() -> Self {
-        Self { skipped: true, turns: 0, analyze_project: None, session_id: None }
+        Self { skipped: true, turns: 0, analyze_workspace: None, session_id: None }
     }
 }
 
@@ -529,7 +529,7 @@ async fn ingest_one(
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
-    let analyze_project = if needs_synth {
+    let analyze_workspace = if needs_synth {
         synthesize_session(pg, &parsed, &session_id, adapter.family()).await
     } else {
         None
@@ -540,7 +540,7 @@ async fn ingest_one(
     //    Idempotent; a miss leaves the column untouched (never a fabricated value).
     set_session_metadata(pg, &session_id, &parsed).await;
     let session_id = (turns > 0).then(|| session_id.clone());
-    Ok(IngestOutcome { skipped: false, turns, analyze_project, session_id })
+    Ok(IngestOutcome { skipped: false, turns, analyze_workspace, session_id })
 }
 
 /// Persist a session's inference model + token usage from the already-parsed
@@ -585,7 +585,7 @@ async fn set_session_metadata(
 /// Historical-bootstrap (#75): if this session has no events yet (not
 /// live-captured / not already imported), reconstruct it from the transcript —
 /// resolve the project from a cwd, create the session, and synthesize its event
-/// stream so `analyze_project` can enrich it. Returns the project to analyze.
+/// stream so `analyze_workspace` can enrich it. Returns the project to analyze.
 async fn synthesize_session(
     pg: &crate::db::pg_store::PgStore,
     parsed: &ParsedTranscript,
@@ -887,9 +887,9 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
     }
     let outcome = ingest_one(ctx.pg(), adapter.as_ref(), &task.path).await?;
     // A freshly-synthesized historical session needs enrichment to light up its
-    // FTR/churn/correction signals (#75). AnalyzeProject is idempotent + incremental.
-    if let Some(project_id) = outcome.analyze_project {
-        ctx.queue.enqueue(Task::new(TaskKind::AnalyzeProject, "", &project_id.to_string())).await;
+    // FTR/churn/correction signals (#75). AnalyzeWorkspace is idempotent + incremental.
+    if let Some(project_id) = outcome.analyze_workspace {
+        ctx.queue.enqueue(Task::new(TaskKind::AnalyzeWorkspace, "", &project_id.to_string())).await;
     }
     // New turns may name a ticket the tracker hasn't synced yet (tracker spec R11).
     // A failure here costs only latency: the next full sync links it.
@@ -1167,7 +1167,7 @@ mod tests {
         );
         let (project_id, backfilled, historical, provider, model, tokens_in, tokens_out, meta_synced):
             SessionRow = sqlx_core::query_as::query_as(
-            "SELECT project_id, backfilled, (started_at < now() - interval '1 day'), provider, model, tokens_in, tokens_out, meta_synced_at IS NOT NULL FROM activity.sessions WHERE client_session_id=$1"
+            "SELECT workspace_id, backfilled, (started_at < now() - interval '1 day'), provider, model, tokens_in, tokens_out, meta_synced_at IS NOT NULL FROM activity.sessions WHERE client_session_id=$1"
         ).bind(&sid).fetch_one(pg.pool()).await.unwrap();
         assert_eq!(project_id, Some(pid), "attributed to the project resolved from cwd");
         assert!(backfilled, "flagged backfilled");
@@ -1256,7 +1256,7 @@ mod tests {
             .execute(pool)
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id=$1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id=$1")
             .bind(pid)
             .execute(pool)
             .await

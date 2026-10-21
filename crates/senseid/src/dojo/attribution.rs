@@ -187,9 +187,9 @@ pub enum RedactionKind {
 /// testable without a database.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectIdentifiers {
-    /// `sensei.projects.name`.
+    /// `sensei.workspaces.name`.
     pub project_name: Option<String>,
-    /// `sensei.projects.client` (the client/org name).
+    /// `sensei.workspaces.client` (the client/org name).
     pub client_name: Option<String>,
     /// Repo names — folder names + names parsed from git remote urls.
     pub repo_names: Vec<String>,

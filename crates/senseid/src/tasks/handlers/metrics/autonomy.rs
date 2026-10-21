@@ -333,8 +333,8 @@ mod tests {
         // scope=user, identity/commit_sha NULL, grain daily.
         let repo = repository_for_folder(pg, &fid).await;
         let (repo_grain_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics \
-              WHERE project_id = $1 AND repository_id = $2 AND scope = 'user'::sensei.metric_scope \
+            "SELECT count(*) FROM sensei.workspace_metrics \
+              WHERE workspace_id = $1 AND repository_id = $2 AND scope = 'user'::sensei.metric_scope \
                 AND identity IS NULL AND commit_sha IS NULL \
                 AND grain = 'daily'::sensei.metric_grain",
         )
@@ -358,7 +358,7 @@ mod tests {
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 2, "re-run recomputes the same rows");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(written, 0, "no events/runs in the window → zero rows written");
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -423,7 +423,7 @@ mod tests {
         );
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -506,7 +506,7 @@ mod tests {
         );
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -658,7 +658,7 @@ mod tests {
         // attribution stays project-local.
         let repo_a = repository_for_folder(pg, &fid_a).await;
         let (a_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1 AND repository_id = $2",
+            "SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1 AND repository_id = $2",
         )
         .bind(pid_a)
         .bind(repo_a)
@@ -719,8 +719,8 @@ mod tests {
         // Both daily rows are stamped `computed_on = day` (the true occurrence day,
         // 60 days ago) — proof the past-dated rows reach the daily roll-up.
         let (days,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.computed_on = $2 \
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND pm.grain = 'daily' AND pm.computed_on = $2 \
                 AND m.key IN ('interruption_rate', 'run_completion')",
         )
         .bind(pid)
@@ -747,7 +747,7 @@ mod tests {
         let again = compute(&ctx, &pid.to_string(), Some(day)).await.unwrap();
         assert_eq!(again, 2, "re-running the same day backfills in place");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -803,8 +803,8 @@ mod tests {
 
         // The daily row is stamped `computed_on = the client-ts day`, NOT today.
         let (hist_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'interruption_rate' AND pm.grain = 'daily' \
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'interruption_rate' AND pm.grain = 'daily' \
                 AND pm.computed_on = $2",
         )
         .bind(pid)
@@ -819,8 +819,8 @@ mod tests {
 
         // Nothing filed on today (the created_at day) — the anchor is the ts, period.
         let (today_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'interruption_rate' AND pm.grain = 'daily' \
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'interruption_rate' AND pm.grain = 'daily' \
                 AND pm.computed_on = current_date",
         )
         .bind(pid)

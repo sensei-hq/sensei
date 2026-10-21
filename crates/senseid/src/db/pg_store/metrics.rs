@@ -96,7 +96,7 @@ impl PgStore {
                SELECT r.id AS rec_id,
                       AVG(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8 AS current_ftr
                  FROM inference.recommendations r
-                 JOIN activity.sessions s ON s.project_id = r.project_id
+                 JOIN activity.sessions s ON s.workspace_id = r.workspace_id
                                          AND s.started_at > r.acted_at
                 WHERE r.status = 'accepted'
                   AND r.verdict = 'pending'
@@ -244,8 +244,8 @@ impl PgStore {
         {
             sqlx_core::query_as::query_as(
                 "SELECT d.date, d.value::float8, (d.props->>'denominator')::int8
-                   FROM sensei.project_metric_daily d
-                  WHERE d.metric = 'ftr' AND d.project_id = $1 AND d.date >= (current_date - $2::int)
+                   FROM sensei.workspace_metric_daily d
+                  WHERE d.metric = 'ftr' AND d.workspace_id = $1 AND d.date >= (current_date - $2::int)
                   ORDER BY d.date"
             ).bind(pid).bind(days).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
         } else {
@@ -253,7 +253,7 @@ impl PgStore {
                 "SELECT d.date,
                         (SUM((d.props->>'numerator')::float8) / NULLIF(SUM((d.props->>'denominator')::float8), 0))::float8 AS ftr_rate,
                         SUM((d.props->>'denominator')::int8)::int8 AS session_count
-                   FROM sensei.project_metric_daily d
+                   FROM sensei.workspace_metric_daily d
                   WHERE d.metric = 'ftr' AND d.date >= (current_date - $1::int)
                   GROUP BY d.date ORDER BY d.date"
             ).bind(days).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
@@ -270,8 +270,8 @@ impl PgStore {
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, String, i64, i64)> = sqlx_core::query_as::query_as(
             "SELECT folder, file_path, edit_count, correction_count
-             FROM sensei.project_hotspots
-             WHERE project_id = $1 AND last_event_at >= (now() - ($2::int || ' days')::interval)
+             FROM sensei.workspace_hotspots
+             WHERE workspace_id = $1 AND last_event_at >= (now() - ($2::int || ' days')::interval)
              ORDER BY (edit_count + correction_count) DESC LIMIT 20",
         )
         .bind(project_id)
@@ -290,7 +290,7 @@ impl PgStore {
     ) -> Result<serde_json::Value, String> {
         let row: Option<(f64, Option<f64>, i64, Option<f64>)> = sqlx_core::query_as::query_as(
             "SELECT ftr_7d::float8, pattern_compliance::float8, open_drift_count, test_pass_rate::float8
-             FROM sensei.project_quality_signals WHERE project_id = $1"
+             FROM sensei.workspace_quality_signals WHERE workspace_id = $1"
         ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(match row {
             Some((ftr, compliance, drift, tests)) => serde_json::json!({
@@ -343,11 +343,11 @@ impl PgStore {
         // repository in NO project (NULL project_id) cannot be a cell, and is not
         // read — decoding it failed the whole portfolio with a 500.
         let obs: Vec<(uuid::Uuid, chrono::NaiveDate, String, f64)> = sqlx_core::query_as::query_as(
-            "SELECT pm.project_id, pm.computed_on, m.key, pm.value::float8 \
-               FROM sensei.project_metrics pm \
+            "SELECT pm.workspace_id, pm.computed_on, m.key, pm.value::float8 \
+               FROM sensei.workspace_metrics pm \
                JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id IS NOT NULL \
-                AND ($1::uuid IS NULL OR pm.project_id = $1) \
+              WHERE pm.workspace_id IS NOT NULL \
+                AND ($1::uuid IS NULL OR pm.workspace_id = $1) \
                 AND pm.grain = 'daily' \
                 AND pm.scope = 'user' AND pm.value IS NOT NULL",
         )
@@ -404,7 +404,7 @@ impl PgStore {
             "SELECT jsonb_build_object( \
                  'metric', metric, 'name', metric_name, 'family', family, \
                  'value', value, 'rating', rating, 'weight', weight) \
-               FROM sensei.metric_ratings WHERE project_id = $1 \
+               FROM sensei.metric_ratings WHERE workspace_id = $1 \
               ORDER BY family::text, metric",
         )
         .bind(project_id)
@@ -413,7 +413,7 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         let health: Option<(i32, i32, serde_json::Value)> = sqlx_core::query_as::query_as(
             "SELECT health_score, rated_metrics, components \
-               FROM sensei.project_health_score WHERE project_id = $1",
+               FROM sensei.workspace_health_score WHERE workspace_id = $1",
         )
         .bind(project_id)
         .fetch_optional(&self.pool)
@@ -426,7 +426,7 @@ impl PgStore {
         // The score's own history, oldest-first, so the hero readout can show a
         // trend + sparkline instead of falling back to FTR. Weekly: the score is a
         // weighted roll-up of ratings, and a daily series of it is mostly noise.
-        // Read from `project_health_trend` (a view over the same rating facts), so
+        // Read from `workspace_health_trend` (a view over the same rating facts), so
         // there is no stored-and-recomputed second copy of the number.
         //
         // BOUNDED to the last `HEALTH_TREND_WEEKS`. The view keeps every period, so
@@ -437,8 +437,8 @@ impl PgStore {
         let trend: Vec<(chrono::NaiveDate, i32)> = sqlx_core::query_as::query_as(
             "SELECT period, health_score FROM ( \
                  SELECT period, health_score \
-                   FROM sensei.project_health_trend \
-                  WHERE project_id = $1 AND grain = 'weekly' \
+                   FROM sensei.workspace_health_trend \
+                  WHERE workspace_id = $1 AND grain = 'weekly' \
                   ORDER BY period DESC \
                   LIMIT $2 \
              ) recent \
@@ -535,9 +535,9 @@ impl PgStore {
     ) -> Result<Vec<(uuid::Uuid, String, f64)>, String> {
         let rows: Vec<(uuid::Uuid, String, f64)> = sqlx_core::query_as::query_as(
             "SELECT pm.id, m.key, pm.value::float8
-               FROM sensei.project_metrics pm
+               FROM sensei.workspace_metrics pm
                JOIN sensei.metrics         m ON m.id = pm.metric_id
-              WHERE pm.project_id = $1
+              WHERE pm.workspace_id = $1
                 AND m.task_name   = $2
                 AND pm.grain      = 'daily'
                 AND pm.scope      = 'user'
@@ -568,8 +568,8 @@ impl PgStore {
     ) -> Result<Option<f64>, String> {
         let row: Option<(f64,)> = sqlx_core::query_as::query_as(
             "SELECT d.value::float8
-               FROM sensei.project_metric_daily d
-              WHERE d.project_id = $1
+               FROM sensei.workspace_metric_daily d
+              WHERE d.workspace_id = $1
                 AND d.metric     = $2
                 AND d.date       < $3
               ORDER BY d.date DESC
@@ -600,8 +600,8 @@ impl PgStore {
                   , count(*) FILTER (WHERE s.outcome = 'completed'::sensei.session_outcome)::int8   AS completed
                   , count(*) FILTER (WHERE s.ftr)::int8                                             AS first_try
                FROM activity.sessions s
-               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id
-              WHERE fp.project_id = $1
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = s.folder_id
+              WHERE fp.workspace_id = $1
                 AND s.outcome   IS NOT NULL
                 AND s.outcome   <> 'empty'::sensei.session_outcome
                 AND date_trunc('day', s.started_at)::date = $2",
@@ -626,7 +626,7 @@ impl PgStore {
         explainer: &str,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "UPDATE sensei.project_metrics
+            "UPDATE sensei.workspace_metrics
                 SET props       = props || jsonb_build_object('explainer', $2::text),
                     modified_at = now()
               WHERE id = $1",
@@ -995,7 +995,7 @@ impl PgStore {
     /// rows) and keeps the newest `date` per metric (`DISTINCT ON`), joining
     /// `sensei.metrics` for name/type/unit/direction/purpose/how_to_read. Empty
     /// when the project has no daily rows yet (honest-empty, not a failure). Trend
-    /// (prior/delta over `project_metric_trend`) is deferred to the Phase 7
+    /// (prior/delta over `workspace_metric_trend`) is deferred to the Phase 7
     /// endpoint.
     pub async fn get_project_metrics(
         &self,
@@ -1011,9 +1011,9 @@ impl PgStore {
             "SELECT DISTINCT ON (d.metric)
                     d.metric, d.date, d.value::float8, d.props,
                     m.name, m.type::text, m.unit, m.direction::text, m.purpose, m.how_to_read
-               FROM sensei.project_metric_daily d
+               FROM sensei.workspace_metric_daily d
                JOIN sensei.metrics m ON m.key = d.metric
-              WHERE d.project_id = $1 AND {}
+              WHERE d.workspace_id = $1 AND {}
               ORDER BY d.metric, d.date DESC",
             Self::ACTIVE_METRIC_PREDICATE,
         );
@@ -1078,8 +1078,8 @@ impl PgStore {
             sqlx_core::query_as::query_as(
                 "SELECT DISTINCT ON (metric)
                         metric, period, value::float8, prior::float8, delta::float8, direction::text
-                   FROM sensei.project_metric_trend
-                  WHERE project_id = $1
+                   FROM sensei.workspace_metric_trend
+                  WHERE workspace_id = $1
                   ORDER BY metric, period DESC",
             )
             .bind(project_id)
@@ -1100,7 +1100,7 @@ impl PgStore {
     }
 
     /// The time series for ONE metric of a project at a chosen `grain`, read from
-    /// the matching roll-up view: `daily` → `project_metric_daily` (raw stored
+    /// the matching roll-up view: `daily` → `workspace_metric_daily` (raw stored
     /// values); `weekly`/`monthly`/`quarterly` → the roll-up view that re-derives
     /// each period from sums (Σnum/Σden for ratio/pct — NEVER the mean of daily
     /// ratios). `grain` MUST be one of `daily`|`weekly`|`monthly`|`quarterly`; any
@@ -1128,16 +1128,16 @@ impl PgStore {
         // so coarser grains select a literal NULL — the explainer is a per-day
         // artifact and is never rolled up. No user string reaches the SQL.
         let (view, period_col, explainer_col) = match grain {
-            "daily" => ("sensei.project_metric_daily", "date", "props->>'explainer'"),
-            "weekly" => ("sensei.project_metric_weekly", "period", "null::text"),
-            "monthly" => ("sensei.project_metric_monthly", "period", "null::text"),
-            "quarterly" => ("sensei.project_metric_quarterly", "period", "null::text"),
+            "daily" => ("sensei.workspace_metric_daily", "date", "props->>'explainer'"),
+            "weekly" => ("sensei.workspace_metric_weekly", "period", "null::text"),
+            "monthly" => ("sensei.workspace_metric_monthly", "period", "null::text"),
+            "quarterly" => ("sensei.workspace_metric_quarterly", "period", "null::text"),
             other => return Err(format!("invalid grain: {other:?}")),
         };
         let sql = format!(
             "SELECT {period_col} AS period, value::float8, direction::text, {explainer_col} AS explainer
                FROM {view}
-              WHERE project_id = $1 AND metric = $2
+              WHERE workspace_id = $1 AND metric = $2
               ORDER BY {period_col}",
         );
         let rows: Vec<(chrono::NaiveDate, f64, String, Option<String>)> =
@@ -1204,8 +1204,8 @@ impl PgStore {
     ) -> Result<std::collections::HashMap<String, Vec<f64>>, String> {
         let rows: Vec<(String, f64)> = sqlx_core::query_as::query_as(
             "SELECT metric, value::float8
-               FROM sensei.project_metric_daily
-              WHERE project_id = $1
+               FROM sensei.workspace_metric_daily
+              WHERE workspace_id = $1
               ORDER BY metric, date",
         )
         .bind(project_id)
@@ -1261,7 +1261,7 @@ impl PgStore {
             "SELECT provider, model, count(*) AS sessions,
                     count(*) FILTER (WHERE ftr)::int8 AS ftr_sessions
                FROM activity.sessions
-              WHERE project_id = $1 AND model IS NOT NULL AND analyzed_at IS NOT NULL
+              WHERE workspace_id = $1 AND model IS NOT NULL AND analyzed_at IS NOT NULL
               GROUP BY provider, model",
         )
         .bind(project_id)
@@ -1295,8 +1295,8 @@ impl PgStore {
                    (sum((props->>'numerator')::float8) FILTER (WHERE date > current_date - 28 AND date <= current_date - 14)
                       / nullif(sum((props->>'denominator')::float8) FILTER (WHERE date > current_date - 28 AND date <= current_date - 14), 0))::float8,
                    coalesce(sum((props->>'denominator')::int8) FILTER (WHERE date > current_date - 7), 0)::int8
-                 FROM sensei.project_metric_daily
-                 WHERE metric = 'ftr' AND project_id = $1"
+                 FROM sensei.workspace_metric_daily
+                 WHERE metric = 'ftr' AND workspace_id = $1"
             ).bind(project_id)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
 
@@ -1308,7 +1308,7 @@ impl PgStore {
                 "SELECT date_trunc('day', started_at)::date AS day,
                         AVG(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8 AS daily_ftr
                  FROM activity.sessions
-                 WHERE project_id = $1 AND outcome IS NOT NULL AND outcome <> 'empty'::sensei.session_outcome AND started_at > now() - interval '14d'
+                 WHERE workspace_id = $1 AND outcome IS NOT NULL AND outcome <> 'empty'::sensei.session_outcome AND started_at > now() - interval '14d'
                  GROUP BY day ORDER BY day"
             ).bind(project_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -1333,8 +1333,8 @@ impl PgStore {
         let row: (Option<f64>,) = sqlx_core::query_as::query_as(
             "SELECT (sum((props->>'numerator')::float8)
                        / nullif(sum((props->>'denominator')::float8), 0))::float8
-               FROM sensei.project_metric_daily
-              WHERE metric = 'ftr' AND project_id = $1 AND date > current_date - 14",
+               FROM sensei.workspace_metric_daily
+              WHERE metric = 'ftr' AND workspace_id = $1 AND date > current_date - 14",
         )
         .bind(project_id)
         .fetch_one(&self.pool)

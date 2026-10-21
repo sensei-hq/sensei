@@ -111,7 +111,7 @@ pub enum TaskKind {
     ReconcileRepoMetadata,
     /// Enrich a project's sessions from the captured hook-event stream —
     /// derive turns/corrections/outcome/ftr/duration/module (analyzer L0, #66).
-    AnalyzeProject,
+    AnalyzeWorkspace,
     /// LLM process-quality pass over a project's un-scored transcripts — spec
     /// depth/deviation + refuted-findings + incomplete-analysis into
     /// `sessions.props.process` + evidence (spec 2026-08-20). Local reasoning
@@ -121,7 +121,7 @@ pub enum TaskKind {
     /// Scan a project's doc nodes for backtick identifier mentions that no
     /// longer resolve to a live code node, materialising `inference.drift_items`
     /// (analyzer-driven counterpart to the manual `/drift/scan` endpoint).
-    /// Per-project: `path` carries the project id, exactly like `AnalyzeProject`.
+    /// Per-project: `path` carries the project id, exactly like `AnalyzeWorkspace`.
     ScanDocDrift,
     /// Dispatcher: enqueue one `IngestCapture` per changed transcript
     /// so ingestion chunks + interleaves with other work (#73).
@@ -197,13 +197,13 @@ pub enum TaskKind {
     /// `task_name`, e.g. `"session_outcomes"`) rides in `task.path`, the project
     /// id in `task.folder_path`, and the frozen `as_of` in `task.as_of` — one kind
     /// handles every group (the group is payload, not enum), which is why there is
-    /// no `TaskKind` per group. Enqueued by the `ComputeProjectMetrics` parent;
+    /// no `TaskKind` per group. Enqueued by the `ComputeWorkspaceMetrics` parent;
     /// dispatched to `handlers::metrics::compute_group`, which schedules + seals
     /// each day via `sensei.metric_watermarks`.
     ComputeGroupMetrics,
     /// Metrics pipeline (watermark engine): the per-project HEALTH barrier — a
     /// SEPARATE kind from [`TaskKind::ComputeGroupMetrics`] because it must run
-    /// AFTER the base groups land. The `ComputeProjectMetrics` parent enqueues it
+    /// AFTER the base groups land. The `ComputeWorkspaceMetrics` parent enqueues it
     /// `blocked_by` the project's `ComputeGroupMetrics` child ids (project id in
     /// `task.folder_path`); dispatched to `handlers::metrics::compute_health`.
     ComputeHealth,
@@ -215,7 +215,7 @@ pub enum TaskKind {
     /// `sensei.metric_watermarks`, so a re-tick recomputes only today + any gaps.
     /// Enqueued each tick by `metrics_scheduler`; dispatched to
     /// `handlers::metrics::compute_project`.
-    ComputeProjectMetrics,
+    ComputeWorkspaceMetrics,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -324,10 +324,10 @@ impl TaskKind {
         Self::IndexLibraryPage,
         Self::IngestCaptures,
         Self::IngestCapture,
-        Self::AnalyzeProject,
+        Self::AnalyzeWorkspace,
         Self::AnalyzeSessionProcess,
         Self::ReconcileRepoMetadata,
-        Self::ComputeProjectMetrics,
+        Self::ComputeWorkspaceMetrics,
         Self::ComputeGroupMetrics,
         Self::ComputeHealth,
         Self::BackfillCoverage,
@@ -537,8 +537,8 @@ impl TaskKind {
                 high_priority: false,
                 retryable: false,
             },
-            Self::AnalyzeProject => KindInfo {
-                name: "analyze_project",
+            Self::AnalyzeWorkspace => KindInfo {
+                name: "analyze_workspace",
                 pipeline: Pipeline::Activity,
                 stage: Stage::Derive,
                 budget_secs: 600,
@@ -561,8 +561,8 @@ impl TaskKind {
                 high_priority: false,
                 retryable: false,
             },
-            Self::ComputeProjectMetrics => KindInfo {
-                name: "compute_project_metrics",
+            Self::ComputeWorkspaceMetrics => KindInfo {
+                name: "compute_workspace_metrics",
                 pipeline: Pipeline::Metrics,
                 stage: Stage::Coordinate,
                 budget_secs: 180,
@@ -982,7 +982,7 @@ impl Task {
 
     /// Set the target `computed_on` day for a metrics compute (`ComputeGroupMetrics`).
     /// `None` (the default) is the incremental "today" run; `Some(D)` targets the
-    /// single historical day `D`. The `ComputeProjectMetrics` parent stamps the
+    /// single historical day `D`. The `ComputeWorkspaceMetrics` parent stamps the
     /// frozen `as_of` here on every `ComputeGroupMetrics` child.
     #[allow(dead_code)]
     pub fn with_as_of(mut self, as_of: chrono::NaiveDate) -> Self {
@@ -1077,7 +1077,7 @@ mod tests {
         assert_eq!(TaskKind::PublishRelaySegments.to_string(), "publish_relay_segments");
         assert_eq!(TaskKind::ComputeGroupMetrics.to_string(), "compute_group_metrics");
         assert_eq!(TaskKind::ComputeHealth.to_string(), "compute_health");
-        assert_eq!(TaskKind::ComputeProjectMetrics.to_string(), "compute_project_metrics");
+        assert_eq!(TaskKind::ComputeWorkspaceMetrics.to_string(), "compute_workspace_metrics");
     }
 
     #[test]
@@ -1090,7 +1090,7 @@ mod tests {
         assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
         assert_eq!(TaskKind::ComputeGroupMetrics.watchdog_timeout(), long);
         // The per-project parent only freezes as_of + enqueues → short bucket.
-        assert_eq!(TaskKind::ComputeProjectMetrics.watchdog_timeout(), short);
+        assert_eq!(TaskKind::ComputeWorkspaceMetrics.watchdog_timeout(), short);
         // The terminal barrier gets a WIDER budget: community detection on a huge
         // edge-heavy folder legitimately runs many minutes and must not be
         // watchdog-killed into a retry-timeout loop.
@@ -1166,7 +1166,7 @@ mod tests {
     #[test]
     fn typed_constructors_and_accessors_round_trip() {
         let pid = uuid::Uuid::new_v4();
-        let t = Task::for_project(TaskKind::AnalyzeProject, &pid);
+        let t = Task::for_project(TaskKind::AnalyzeWorkspace, &pid);
         assert_eq!(t.project_id().unwrap(), pid, "a project task reads its id back");
 
         let t = Task::for_capture(TaskKind::IngestCapture, "zed", "thread-1");
@@ -1183,10 +1183,10 @@ mod tests {
         // The failure this contract exists to surface. Before it, a folder path
         // handed to a project-scoped kind parsed as garbage deep inside a handler
         // — or worse, looked up nothing and read as "no data".
-        let t = Task::new(TaskKind::AnalyzeProject, "", "/not/a/uuid");
+        let t = Task::new(TaskKind::AnalyzeWorkspace, "", "/not/a/uuid");
         let err = t.project_id().unwrap_err();
         assert!(err.contains("expected a project id"), "got: {err}");
-        assert!(err.contains("analyze_project"), "the error names the kind: {err}");
+        assert!(err.contains("analyze_workspace"), "the error names the kind: {err}");
     }
 
     #[test]

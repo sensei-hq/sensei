@@ -138,7 +138,7 @@ impl RunEventKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Run {
     pub id: Uuid,
-    /// `sensei.projects(id)` the run belongs to; `NULL` after the project is
+    /// `sensei.workspaces(id)` the run belongs to; `NULL` after the project is
     /// deleted (`on delete set null`).
     pub project_id: Option<Uuid>,
     /// Path/ref of the committed plan doc the run executes. NOT NULL, defaults

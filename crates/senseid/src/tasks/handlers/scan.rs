@@ -1244,7 +1244,7 @@ mod tests {
         let phantom = ctx.pg().create_project("phantom-crate", None, None).await.unwrap();
         // Age it past the mid-population grace window so the prune can see it.
         sqlx_core::query::query(
-            "UPDATE sensei.projects SET modified_at = now() - interval '2 minutes' WHERE id=$1",
+            "UPDATE sensei.workspaces SET modified_at = now() - interval '2 minutes' WHERE id=$1",
         )
         .bind(phantom)
         .execute(ctx.pg().pool())
@@ -1276,14 +1276,14 @@ mod tests {
         // scan's reconcile prunes too), so assert on our specific rows below.
         ctx.pg().prune_empty_projects(60).await.unwrap();
         let (ph_alive,): (i64,) =
-            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.workspaces WHERE id=$1")
                 .bind(phantom)
                 .fetch_one(ctx.pg().pool())
                 .await
                 .unwrap();
         assert_eq!(ph_alive, 0, "empty phantom project deleted");
         let (live_alive,): (i64,) =
-            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.workspaces WHERE id=$1")
                 .bind(live)
                 .fetch_one(ctx.pg().pool())
                 .await

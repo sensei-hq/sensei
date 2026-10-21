@@ -686,7 +686,7 @@ mod tests {
         // — but after a repair pass MY nested standalone is guaranteed re-absorbed.
         audit_index_integrity(&pg, std::slice::from_ref(&root), true).await;
         let (kind, pid): (String, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
-            "SELECT kind::text, sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
+            "SELECT kind::text, sensei.sole_workspace_of(id) FROM sensei.folders WHERE id = $1",
         )
         .bind(s_fid)
         .fetch_one(pg.pool())

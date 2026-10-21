@@ -7,7 +7,7 @@ set search_path to sensei, extensions;
 -- individual memory rows every time.
 create table if not exists memory_share_batches (
   id             uuid                       primary key default gen_random_uuid()
-, project_id     uuid                       not null references sensei.projects(id) on delete cascade
+, workspace_id   uuid                       not null references sensei.workspaces(id) on delete cascade
 , status         memory_share_batch_status  not null default 'proposed'
 , note           text
 , created_at     timestamptz                not null default now()
@@ -19,20 +19,20 @@ create table if not exists memory_share_batches (
   )
 );
 
-create index if not exists memory_share_batches_project_idx
-    on memory_share_batches(project_id, status, created_at desc);
+create index if not exists memory_share_batches_workspace_idx
+    on memory_share_batches(workspace_id, status, created_at desc);
 
 create index if not exists memory_share_batches_proposed_idx
-    on memory_share_batches(project_id, created_at desc)
+    on memory_share_batches(workspace_id, created_at desc)
  where status = 'proposed';
 
 comment on table memory_share_batches is
-'Batched proposal to share memories from a project to the federation.
+'Batched proposal to share memories from a workspace to the federation.
 Users review a group of learned memories together and approve or reject
 the batch as a unit. On approve, the daemon iterates the linked members
 and pushes each to the configured DÅjÅ. Kept as a first-class
 entity (not a memory-status flag) so verdicts stay auditable and the
-UI can surface a per-project "pending review" queue.
+UI can surface a per-workspace "pending review" queue.
 - proposed: created, awaiting user decision
 - approved: user accepted — the federation writer picks it up
 - rejected: user declined
@@ -40,8 +40,8 @@ UI can surface a per-project "pending review" queue.
 
 comment on column memory_share_batches.id
      is 'Surrogate primary key (UUID).';
-comment on column memory_share_batches.project_id
-     is 'FK to projects — batches are always scoped to a single project.';
+comment on column memory_share_batches.workspace_id
+     is 'FK to workspaces — batches are always scoped to a single workspace.';
 comment on column memory_share_batches.status
      is 'Lifecycle stage. `proposed` and `withdrawn` have decided_at NULL; `approved` and `rejected` require decided_at.';
 comment on column memory_share_batches.note

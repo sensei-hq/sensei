@@ -335,7 +335,7 @@ async fn patterns_for_symbol_matches_by_file_and_is_honest_empty() {
     let file =
         pg.upsert_file_row(&fid, "src/routes/x.rs", 0, "src/routes/x.rs", None).await.unwrap();
     pg.execute_raw(&format!("INSERT INTO sensei.nodes(folder_id, kind, name, file_id, line_start, line_end) VALUES('{fid}','function'::sensei.node_kind,'my_handler','{file}',1,10)")).await.unwrap();
-    pg.execute_raw(&format!("INSERT INTO inference.detected_patterns(project_id, name, family, instance_count, instances) VALUES('{pid}','route-handler','route',1,'[{{\"file\":\"/_pfs/{u}/src/routes/x.rs\",\"line\":1}}]'::jsonb)")).await.unwrap();
+    pg.execute_raw(&format!("INSERT INTO inference.detected_patterns(workspace_id, name, family, instance_count, instances) VALUES('{pid}','route-handler','route',1,'[{{\"file\":\"/_pfs/{u}/src/routes/x.rs\",\"line\":1}}]'::jsonb)")).await.unwrap();
     // The symbol's file IS in the pattern's instances (abs↔rel reconciled) → match.
     let hit = pg.patterns_for_symbol(&pid, &[fid], "my_handler").await.unwrap();
     assert!(
@@ -358,12 +358,12 @@ async fn playbook_combo_trust_is_project_scoped() {
     // project A: two confirmed+attributed runs for (stable,bug,low, debug_flow): one ftr, one not → n=2, ftr=0.5
     for ftr in ["true", "false"] {
         pg.execute_raw(&format!(
-                "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, project_id) \
+                "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, workspace_id) \
                  values ('trust-test','stable','bug','low','debug_flow','t', true, {ftr}, '{proj_a}')")).await.unwrap();
     }
     // project B: one confirmed run, ftr true — must NOT bleed into A's trust
     pg.execute_raw(&format!(
-            "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, project_id) \
+            "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, workspace_id) \
              values ('trust-test','stable','bug','low','debug_flow','t', true, true, '{proj_b}')")).await.unwrap();
 
     // scoped to A: only A's 2 runs → n=2, ftr=0.5 (B's run excluded — trust is per-project, never global)

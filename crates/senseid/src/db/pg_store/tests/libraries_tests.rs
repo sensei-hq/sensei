@@ -83,7 +83,7 @@ async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
     let fid_a = create_test_folder(&s, &format!("vc-a-{suffix}")).await;
     let fid_b = create_test_folder(&s, &format!("vc-b-{suffix}")).await;
     // Attach folders to the project THROUGH THE PRODUCTION API, so membership
-    // reaches `repositories_in_projects`. The view resolves via `folder_projects`,
+    // reaches `repositories_in_workspaces`. The view resolves via `folder_workspaces`,
     // which reads only the junction — a raw `UPDATE … SET project_id` leaves it
     // with nothing to find and the assertion below would be measuring an empty
     // set rather than the exclusion rule it names.
@@ -264,7 +264,7 @@ async fn upsert_referenced_library_merges_props() {
 async fn project_library_promotion_shows_in_resolved_and_is_idempotent() {
     // #30: referenced_libraries (folder-grained) must roll up to
     // library_enablement so detected libs — incl. scoped @rokkit/* — show in
-    // project_libraries_resolved (the Projects screen). Was never populated.
+    // workspace_libraries_resolved (the Projects screen). Was never populated.
     let s = pg_store().await;
     let pid = s.ensure_test_project("proj-lib-promo").await.unwrap();
     let lib =
@@ -288,7 +288,7 @@ async fn ensure_test_project_is_namespaced_and_idempotent() {
     let s = pg_store().await;
     let a = s.ensure_test_project("dup-check").await.unwrap();
     let b = s.ensure_test_project("dup-check").await.unwrap();
-    assert_eq!(a, b, "repeated ensure_test_project must reuse one row, not create a new one");
+    assert_eq!(a, b, "repeated ensure_test_workspace must reuse one row, not create a new one");
     let proj = s.get_project(&a).await.unwrap().unwrap();
     assert_eq!(proj["name"], "_test:dup-check", "test projects must be _test:-namespaced");
     s.delete_project(&a).await.ok();

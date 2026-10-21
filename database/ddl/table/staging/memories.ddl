@@ -2,7 +2,7 @@ set search_path to staging, extensions;
 
 drop table if exists memories cascade;
 create table memories (
-  project_name          text
+  workspace_name        text
 , namespace_scope_key   text
 , namespace_slug        text
 , scope                 text
@@ -25,7 +25,7 @@ create table memories (
 
 comment on table staging.memories is
 'Staging buffer for sensei.memories. FK targets are carried as natural keys
-(project_name; namespace_scope_key + namespace_slug) and resolved to ids during
+(workspace_name; namespace_scope_key + namespace_slug) and resolved to ids during
 import. Enum columns are text here (cast during import). Loaded from
 import/staging/memories.jsonl (produced by export.memories) via dbd import, then
 CALL staging.import_memories() to move into sensei.memories.';

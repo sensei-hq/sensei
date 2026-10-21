@@ -175,7 +175,7 @@ impl PgStore {
                FROM sensei.playbook_run
               WHERE confirmed AND outcome_ftr IS NOT NULL
                 AND lifecycle=$1::sensei.chunk_lifecycle AND intent=$2::sensei.chunk_intent
-                AND risk=$3::sensei.chunk_risk AND playbook=$4 AND project_id=$5",
+                AND risk=$3::sensei.chunk_risk AND playbook=$4 AND workspace_id=$5",
         )
         .bind(lifecycle)
         .bind(intent)
@@ -216,7 +216,7 @@ impl PgStore {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.playbook_run
                (session_id, feature, lifecycle, intent, risk, rule_id, playbook, rationale, confirmed,
-                classified_by, model_fallback, project_id)
+                classified_by, model_fallback, workspace_id)
              VALUES ($1,$2,$3::sensei.chunk_lifecycle,$4::sensei.chunk_intent,$5::sensei.chunk_risk,$6,$7,$8,$9,$10,$11,$12)
              RETURNING id"
         ).bind(session_id).bind(feature).bind(lifecycle).bind(intent).bind(risk)

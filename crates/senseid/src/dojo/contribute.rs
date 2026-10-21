@@ -1771,7 +1771,7 @@ mod nothing_generalised_is_nothing_shareable {
             return;
         };
         let (project, tenant) = ("_test:dojo:preview_example", "github/acme-preview");
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE name = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE name = $1")
             .bind(project)
             .execute(pg.pool())
             .await

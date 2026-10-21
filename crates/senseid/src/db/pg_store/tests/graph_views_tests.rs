@@ -890,7 +890,7 @@ async fn project_file_count_is_the_distinct_files_its_declarations_sit_in() {
 
     let count = s.churn_project_file_count(&pid).await.unwrap();
 
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -938,7 +938,7 @@ async fn project_drift_reports_the_indexed_documents() {
         .unwrap();
     let after = s.get_project_drift(&pid).await.unwrap()["indexedDocs"].clone();
 
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await

@@ -1,6 +1,6 @@
 set search_path to sensei, extensions;
 
--- Composite project health over TIME — the bar chart + trend line series, and the
+-- Composite workspace health over TIME — the bar chart + trend line series, and the
 -- radar's spokes for any historical period.
 --
 -- Derived, never stored. The score is an INTERPRETATION of the metric facts
@@ -11,7 +11,7 @@ set search_path to sensei, extensions;
 --
 -- `health_score = round(20 × Σ(weight·rating) / Σ(weight))` over the RATED metrics
 -- of that period: rating is 0-5, so ×20 lands on 0-100 (spec R4). Identical shape
--- to `project_health_score` (the current, latest-only roll-up) because both read
+-- to `workspace_health_score` (the current, latest-only roll-up) because both read
 -- the same ratings — this one just keeps the period dimension instead of
 -- collapsing to the newest reading.
 --
@@ -23,8 +23,8 @@ set search_path to sensei, extensions;
 --
 -- `components` is the per-metric {rating, weight, name} for the period, so the
 -- radar can be drawn for any point on the trend, not just today.
-create or replace view project_health_trend as
-select f.project_id
+create or replace view workspace_health_trend as
+select f.workspace_id
      , f.grain
      , f.period
      , round(20.0 * sum(f.weighted) / nullif(sum(f.weight), 0))::int as health_score
@@ -53,11 +53,11 @@ select f.project_id
        , 3)            as coverage
   from sensei.metric_rating_facts f
  where f.rating is not null
- group by f.project_id, f.grain, f.period
+ group by f.workspace_id, f.grain, f.period
 having sum(f.weight) > 0;
 
-comment on view project_health_trend is
-'Composite 0-100 project health per (grain, period) — the bar chart + trend series.
+comment on view workspace_health_trend is
+'Composite 0-100 workspace health per (grain, period) — the bar chart + trend series.
 round(20 * SUM(weight*rating)/SUM(weight)) over the period''s RATED metrics, from the
 same ratings the radar uses (spec I5). Derived on read, so weight/scale tuning
 re-reads history with no backfill. NO row for a period with nothing rated

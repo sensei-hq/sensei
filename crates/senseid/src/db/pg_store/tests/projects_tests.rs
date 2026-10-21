@@ -12,8 +12,8 @@ async fn merge_projects_moves_folders_sessions_memories_and_deletes_source() {
     // Seed a memory attributed to the source project so we can prove it
     // survives the merge (only its project_id shifts).
     let mem_id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.memories(project_id, scope, type, title, content, origin)
-             VALUES($1, 'project'::sensei.memory_scope, 'convention'::sensei.memory_type, $2, 'body', 'user')
+            "INSERT INTO sensei.memories(workspace_id, scope, type, title, content, origin)
+             VALUES($1, 'workspace'::sensei.memory_scope, 'convention'::sensei.memory_type, $2, 'body', 'user')
              RETURNING id"
         ).bind(src).bind(format!("_test:merge_memory_{}", uuid::Uuid::new_v4()))
             .fetch_one(s.pool()).await.unwrap();
@@ -21,17 +21,18 @@ async fn merge_projects_moves_folders_sessions_memories_and_deletes_source() {
     s.merge_projects(&src, &tgt).await.unwrap();
 
     // Source project row is gone.
-    let src_exists: (bool,) =
-        sqlx_core::query_as::query_as("SELECT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)")
-            .bind(src)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
+    let src_exists: (bool,) = sqlx_core::query_as::query_as(
+        "SELECT EXISTS(SELECT 1 FROM sensei.workspaces WHERE id = $1)",
+    )
+    .bind(src)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert!(!src_exists.0, "source project should be deleted after merge");
 
     // The source's folder now lives under the target project.
     let (folder_project,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-        "SELECT sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
+        "SELECT sensei.sole_workspace_of(id) FROM sensei.folders WHERE id = $1",
     )
     .bind(src_folder)
     .fetch_one(s.pool())
@@ -41,7 +42,7 @@ async fn merge_projects_moves_folders_sessions_memories_and_deletes_source() {
 
     // The memory survived and points at the target.
     let (mem_project,): (Option<uuid::Uuid>,) =
-        sqlx_core::query_as::query_as("SELECT project_id FROM sensei.memories WHERE id = $1")
+        sqlx_core::query_as::query_as("SELECT workspace_id FROM sensei.memories WHERE id = $1")
             .bind(mem_id.0)
             .fetch_one(s.pool())
             .await
@@ -54,7 +55,7 @@ async fn merge_projects_moves_folders_sessions_memories_and_deletes_source() {
         .execute(s.pool())
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(tgt)
         .execute(s.pool())
         .await
@@ -68,7 +69,7 @@ async fn merge_projects_rejects_self_merge() {
         create_test_project_and_folder(&s, &format!("selfmerge_{}", uuid::Uuid::new_v4())).await;
     let err = s.merge_projects(&pid, &pid).await.unwrap_err();
     assert!(err.contains("must differ"), "got: {err}");
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -84,14 +85,15 @@ async fn merge_projects_errors_on_missing_ids() {
     let err = s.merge_projects(&ghost, &real).await.unwrap_err();
     assert!(err.contains("expected source + target to exist"), "got: {err}");
     // The real project is untouched.
-    let exists: (bool,) =
-        sqlx_core::query_as::query_as("SELECT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)")
-            .bind(real)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
+    let exists: (bool,) = sqlx_core::query_as::query_as(
+        "SELECT EXISTS(SELECT 1 FROM sensei.workspaces WHERE id = $1)",
+    )
+    .bind(real)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert!(exists.0);
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(real)
         .execute(s.pool())
         .await
@@ -317,7 +319,7 @@ async fn project_update_persists_widened_identity_fields() {
 
     // preferred_acp isn't in get_project's projection — read it directly.
     let (acp,): (Option<String>,) =
-        query_as("SELECT preferred_acp FROM sensei.projects WHERE id = $1")
+        query_as("SELECT preferred_acp FROM sensei.workspaces WHERE id = $1")
             .bind(id)
             .fetch_one(s.pool())
             .await
@@ -342,7 +344,7 @@ async fn set_project_icon_round_trips() {
 
 #[tokio::test]
 async fn project_update_rejects_unknown_maturity() {
-    // maturity is the sensei.project_maturity enum — an unknown value must
+    // maturity is the sensei.workspace_maturity enum — an unknown value must
     // be rejected (Err → 400 at the HTTP layer), never a raw cast 500, and
     // the row must be left untouched.
     let s = pg_store().await;
@@ -419,7 +421,7 @@ async fn get_or_create_project_by_name_is_idempotent() {
     assert_eq!(id1, id2, "same name must resolve to the same project id");
 
     let (count,): (i64,) =
-        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE name = $1")
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.workspaces WHERE name = $1")
             .bind(&name)
             .fetch_one(s.pool())
             .await
@@ -447,7 +449,7 @@ async fn get_or_create_adopts_folder_bearing_project_no_duplicate() {
     assert_eq!(resolved, keep, "must resolve to the folder-bearing project");
 
     let (count,): (i64,) =
-        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE name = $1")
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.workspaces WHERE name = $1")
             .bind(&name)
             .fetch_one(s.pool())
             .await
@@ -485,24 +487,25 @@ async fn heal_duplicate_name_projects_prunes_empty_dupe_idempotently() {
     // carrying a session so we can prove the heal reassigns FK rows.
     let phantom = s.create_project(&name, None, None).await.unwrap();
     let (sess,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO activity.sessions(folder_id, project_id, task) VALUES($1, $2, $3) RETURNING id"
+            "INSERT INTO activity.sessions(folder_id, workspace_id, task) VALUES($1, $2, $3) RETURNING id"
         ).bind(fid).bind(phantom).bind("_test:dupheal-session").fetch_one(s.pool()).await.unwrap();
 
     s.heal_duplicate_name_projects().await.unwrap();
 
     // Phantom gone, survivor stays.
-    let (phantom_exists,): (bool,) =
-        sqlx_core::query_as::query_as("SELECT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)")
-            .bind(phantom)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
+    let (phantom_exists,): (bool,) = sqlx_core::query_as::query_as(
+        "SELECT EXISTS(SELECT 1 FROM sensei.workspaces WHERE id = $1)",
+    )
+    .bind(phantom)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert!(!phantom_exists, "empty phantom should be pruned");
     assert!(s.get_project(&keep).await.unwrap().is_some(), "folder-bearing survivor must remain");
 
     // Survivor still owns its folder; the phantom's session followed it.
     let (folder_project,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-        "SELECT sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
+        "SELECT sensei.sole_workspace_of(id) FROM sensei.folders WHERE id = $1",
     )
     .bind(fid)
     .fetch_one(s.pool())
@@ -510,7 +513,7 @@ async fn heal_duplicate_name_projects_prunes_empty_dupe_idempotently() {
     .unwrap();
     assert_eq!(folder_project, Some(keep), "survivor keeps its folder");
     let (sess_project,): (Option<uuid::Uuid>,) =
-        sqlx_core::query_as::query_as("SELECT project_id FROM activity.sessions WHERE id = $1")
+        sqlx_core::query_as::query_as("SELECT workspace_id FROM activity.sessions WHERE id = $1")
             .bind(sess)
             .fetch_one(s.pool())
             .await
@@ -525,7 +528,7 @@ async fn heal_duplicate_name_projects_prunes_empty_dupe_idempotently() {
     // a re-run leaves it untouched.
     s.heal_duplicate_name_projects().await.unwrap();
     let (count,): (i64,) =
-        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE name = $1")
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.workspaces WHERE name = $1")
             .bind(&name)
             .fetch_one(s.pool())
             .await
@@ -581,7 +584,7 @@ async fn heal_leaves_two_folder_bearing_same_name_projects() {
         "second folder-bearing project must survive"
     );
     let (count,): (i64,) =
-        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE name = $1")
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.workspaces WHERE name = $1")
             .bind(&name)
             .fetch_one(s.pool())
             .await

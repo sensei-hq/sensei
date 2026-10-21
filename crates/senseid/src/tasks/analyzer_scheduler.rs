@@ -1,7 +1,7 @@
 //! Analyzer scheduler (#67).
 //!
 //! A long-lived tokio task (mirroring `progress_emitter::spawn`) that wakes on
-//! an interval and enqueues `TaskKind::AnalyzeProject` for every project whose
+//! an interval and enqueues `TaskKind::AnalyzeWorkspace` for every project whose
 //! sessions have changed since it was last analyzed — so session enrichment
 //! (#66, L0) and the downstream analyzer layers run on their own as sessions
 //! accrue. The on-demand path is the API enqueueing the same task directly.
@@ -62,13 +62,13 @@ pub fn projects_due(
 /// against a real queue without driving the scheduler's infinite `run` loop.
 ///
 /// Both tasks ride the same due signal (new activity, or the daily full
-/// refresh): `AnalyzeProject` enriches sessions and derives signals, and
+/// refresh): `AnalyzeWorkspace` enriches sessions and derives signals, and
 /// `ScanDocDrift` refreshes `inference.drift_items` so doc-drift populates on
 /// its own instead of only via the manual `/drift/scan` endpoint. The drift
 /// writer dedups + resolves in place, so re-running per due tick is safe and
 /// bounded to active projects.
 async fn enqueue_due_project(queue: &TaskQueue, pid: &uuid::Uuid) {
-    queue.enqueue(Task::new(TaskKind::AnalyzeProject, "", &pid.to_string())).await;
+    queue.enqueue(Task::new(TaskKind::AnalyzeWorkspace, "", &pid.to_string())).await;
     queue.enqueue(Task::new(TaskKind::ScanDocDrift, "", &pid.to_string())).await;
 }
 
@@ -321,7 +321,7 @@ mod tests {
         let pid = uuid::Uuid::new_v4();
         enqueue_due_project(&queue, &pid).await;
 
-        // Exactly two tasks, both targeting this project: AnalyzeProject +
+        // Exactly two tasks, both targeting this project: AnalyzeWorkspace +
         // ScanDocDrift (doc-drift rides the same due signal).
         assert_eq!(queue.status().await.pending, 2);
         let mut kinds: Vec<TaskKind> = Vec::new();
@@ -331,7 +331,7 @@ mod tests {
             kinds.push(t.kind);
         }
         kinds.sort_by_key(|k| k.to_string());
-        assert_eq!(kinds, vec![TaskKind::AnalyzeProject, TaskKind::ScanDocDrift]);
+        assert_eq!(kinds, vec![TaskKind::AnalyzeWorkspace, TaskKind::ScanDocDrift]);
     }
 
     #[tokio::test]

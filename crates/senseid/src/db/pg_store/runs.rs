@@ -8,7 +8,7 @@ impl PgStore {
     pub async fn create_run(&self, new: &NewRun) -> Result<uuid::Uuid, String> {
         let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.runs
-                (project_id, plan_ref, goal, dojo_session_id, max_concurrency,
+                (workspace_id, plan_ref, goal, dojo_session_id, max_concurrency,
                  author_name, author_email, plan_graph)
              VALUES($1, COALESCE($2, ''), $3, $4, COALESCE($5, 1), $6, $7, $8) RETURNING id",
         )
@@ -157,7 +157,7 @@ impl PgStore {
             String,
             String,
         )> = sqlx_core::query_as::query_as(&format!(
-            "{} WHERE project_id = $1 AND status IN ('running', 'stalled') \
+            "{} WHERE workspace_id = $1 AND status IN ('running', 'stalled') \
              ORDER BY started_at DESC LIMIT 1",
             Self::RUN_SELECT
         ))
@@ -510,7 +510,7 @@ impl PgStore {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.id
                FROM activity.runs r
-               JOIN sensei.folder_projects fp ON fp.project_id = r.project_id
+               JOIN sensei.folder_workspaces fp ON fp.workspace_id = r.workspace_id
                JOIN sensei.folders f ON f.id = fp.folder_id
               WHERE r.id = $1
               LIMIT 1",
@@ -534,7 +534,7 @@ impl PgStore {
         // disagreed with project membership, as eight did.
         let sql = format!(
             "SELECT n.slug FROM activity.runs r \
-               JOIN sensei.projects p ON p.id = r.project_id {} \
+               JOIN sensei.workspaces p ON p.id = r.workspace_id {} \
               WHERE r.id = $1 LIMIT 1",
             super::PROJECT_NAMESPACE_JOIN
         );

@@ -15,7 +15,7 @@
 //! - **Re-analyze** — clear the analyzer scheduler's full-refresh watermark
 //!   (`analyzer.last_full_refresh`) so its next tick re-analyzes every active
 //!   project via the existing daily-refresh path, rather than duplicating the
-//!   per-project `AnalyzeProject` enqueue loop.
+//!   per-project `AnalyzeWorkspace` enqueue loop.
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -32,7 +32,7 @@ create table if not exists dojo_inbox (
 , kind               text        not null    -- principle | pattern | prompt | guard | skill | agent
 , title              text        not null
 , body               text        not null
-, scope              jsonb       not null default '{}'   -- ArtifactScope {company,team,project,stack}
+, scope              jsonb       not null default '{}'   -- ArtifactScope {company,team,workspace,stack}
 , attribution        jsonb       not null default '{}'   -- Attribution {mode,author,org,anonymous_id}
 , state              text        not null default 'pending'
       check (state in ('pending', 'applied', 'muted', 'pinned'))

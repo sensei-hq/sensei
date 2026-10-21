@@ -1,7 +1,7 @@
 //! Metrics compute handlers — the watermark engine dispatch.
 //!
 //! Three task kinds drive the per-project metric compute:
-//! - [`ComputeProjectMetrics`](crate::tasks::TaskKind::ComputeProjectMetrics) — the
+//! - [`ComputeWorkspaceMetrics`](crate::tasks::TaskKind::ComputeWorkspaceMetrics) — the
 //!   per-project PARENT. [`compute_project`] freezes one `as_of` for the wave and
 //!   enqueues one [`ComputeGroupMetrics`](crate::tasks::TaskKind::ComputeGroupMetrics)
 //!   child per active base group plus the
@@ -98,7 +98,7 @@ pub(super) async fn is_historical(
 }
 
 /// Test-only routing probe: records WHICH handler last ran on the current thread,
-/// so the executor's dispatch test can assert `ComputeProjectMetrics → compute_project`,
+/// so the executor's dispatch test can assert `ComputeWorkspaceMetrics → compute_project`,
 /// `ComputeGroupMetrics → compute_group`, and `ComputeHealth → compute_health` by
 /// IDENTITY (the day-keyed/honest-empty paths return `Ok(0)` for an empty project, so a
 /// swapped match arm would otherwise stay green). Thread-local so it's isolated per
@@ -202,7 +202,7 @@ impl MetricGroup {
 
 /// `ComputeGroupMetrics` handler: the per-(project, group) CHILD. The metric group
 /// rides in `task.path`, the project id in `task.folder_path`, and the frozen
-/// `as_of` (shared by every child of one `ComputeProjectMetrics` wave) in
+/// `as_of` (shared by every child of one `ComputeWorkspaceMetrics` wave) in
 /// `task.as_of`. Delegates to [`planner::compute_group`], which partitions the group
 /// by cadence — SNAPSHOT (`knowledge`/`tool`) → one today-only rolling compute (no
 /// watermark); DAY-KEYED (`session_outcomes`/`autonomy`/`churn`/`quality`) →
@@ -243,7 +243,7 @@ pub async fn compute_health(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
     health::compute(ctx, &task.folder_path, task.as_of).await
 }
 
-/// `ComputeProjectMetrics` handler: the per-project PARENT that schedules the compute
+/// `ComputeWorkspaceMetrics` handler: the per-project PARENT that schedules the compute
 /// wave. The project id rides in `task.folder_path`. Delegates to
 /// [`planner::compute_project`], which freezes a single `as_of` for the whole wave
 /// (so every child sees the same day), enqueues ONE `ComputeGroupMetrics` child per
@@ -336,7 +336,7 @@ mod tests {
         // `planner`).
         let ctx = make_ctx().await;
         let pid = uuid::Uuid::new_v4().to_string();
-        let task = Task::new(TaskKind::ComputeProjectMetrics, &pid, "");
+        let task = Task::new(TaskKind::ComputeWorkspaceMetrics, &pid, "");
         let enqueued = compute_project(&ctx, &task).await.unwrap();
         let status = ctx.queue.status().await;
         assert_eq!(

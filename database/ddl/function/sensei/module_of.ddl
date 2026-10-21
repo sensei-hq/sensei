@@ -38,7 +38,7 @@ comment on function module_of(text, text) is
 'The module a symbol belongs to, as one string — `<package>/<top module segment>`.
 
 TWO ARGUMENTS, NOT ONE, AND THAT IS THE POINT. A bare module name is not unique
-within a project: measured 2026-10-05 on project `sensei`, 922 (package, module)
+within a workspace: measured 2026-10-05 on workspace `sensei`, 922 (package, module)
 pairs collapse to 914 distinct module names, so 6 names are reused across
 packages (`lib` appears under more than one web package, `core::config` under
 more than one crate). Keying on the name alone merges unrelated modules into one

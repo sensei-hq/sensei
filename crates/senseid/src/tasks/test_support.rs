@@ -293,7 +293,7 @@ pub(crate) async fn seed_project_folder_at(
         .await
         .unwrap();
     // AND THE JUNCTION, through the production primitive. Since #210 membership
-    // lives in `sensei.repositories_in_projects`, and `folder_projects` — which
+    // lives in `sensei.repositories_in_projects`, and `folder_workspaces` — which
     // every migrated view resolves through — reads ONLY that. A fixture that
     // sets `folders.project_id` alone models a state production can no longer
     // produce, so the view under test reads nothing and the test asserts
@@ -352,7 +352,7 @@ pub(crate) async fn seed_repo_ai_start(
 ) -> uuid::Uuid {
     let started_at: chrono::DateTime<chrono::Utc> = started_at_rfc3339.parse().unwrap();
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO activity.sessions (folder_id, repo_folder_id, project_id, started_at) \
+        "INSERT INTO activity.sessions (folder_id, repo_folder_id, workspace_id, started_at) \
          VALUES ($1, $1, $2, $3) RETURNING id",
     )
     .bind(fid)
@@ -383,7 +383,7 @@ pub(crate) async fn repository_for_folder(pg: &PgStore, folder_id: &uuid::Uuid) 
 /// Seed a SECOND repository into an existing project: a git-kind checkout folder at a
 /// distinct `abs_path` (`/_test/metrics-{uniq}-b`) with its own `sensei.repositories`
 /// row (repo_key `test/{uniq}-b`), wired to `project_id`. The multi-repo pooling test
-/// uses this so a project spans two repositories and the `project_metric_daily` view
+/// uses this so a project spans two repositories and the `workspace_metric_daily` view
 /// pools their repo-grain rows (Σnum/Σden). Returns `(folder_id2, repository_id2)`.
 /// [`cleanup_metrics_fixture`] deletes the repo row (it walks every folder in the
 /// project); pass `folder_id2` as a fixture `fid` to also clear the folder.
@@ -414,8 +414,8 @@ pub(crate) async fn link_repository_to_project(
     .await
     .unwrap();
     // AND THE JUNCTION, through the production primitive — see
-    // `seed_project_folder_at`. `folder_projects` reads only
-    // `repositories_in_projects`, so setting `folders.project_id` alone leaves the
+    // `seed_project_folder_at`. `folder_workspaces` reads only
+    // `repositories_in_workspaces`, so setting `folders.project_id` alone leaves the
     // view under test with nothing to find.
     pg.link_project_repository(project_id, repository_id).await.unwrap();
 }
@@ -461,8 +461,8 @@ pub(crate) async fn seed_bare_repository(
     .await
     .unwrap();
     // AND THE JUNCTION, through the production primitive — see
-    // `seed_project_folder_at`. `folder_projects` reads only
-    // `repositories_in_projects`, so setting `folders.project_id` alone leaves the
+    // `seed_project_folder_at`. `folder_workspaces` reads only
+    // `repositories_in_workspaces`, so setting `folders.project_id` alone leaves the
     // view under test with nothing to find.
     pg.link_project_repository(project_id, &rid).await.unwrap();
     rid
@@ -502,7 +502,7 @@ pub(crate) async fn seed_second_repository(
         .await
         .unwrap();
     // AND THE JUNCTION, through the production primitive. Since #210 membership
-    // lives in `sensei.repositories_in_projects`, and `folder_projects` — which
+    // lives in `sensei.repositories_in_projects`, and `folder_workspaces` — which
     // every migrated view resolves through — reads ONLY that. A fixture that
     // sets `folders.project_id` alone models a state production can no longer
     // produce, so the view under test reads nothing and the test asserts
@@ -571,7 +571,7 @@ pub(crate) async fn seed_metrics_session(
     started_at: chrono::DateTime<chrono::Utc>,
 ) -> uuid::Uuid {
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO activity.sessions (folder_id, repo_folder_id, project_id, outcome, ftr, corrections, started_at) \
+        "INSERT INTO activity.sessions (folder_id, repo_folder_id, workspace_id, outcome, ftr, corrections, started_at) \
          VALUES ($1, $1, $2, $3::sensei.session_outcome, $4, $5, $6) RETURNING id",
     )
     .bind(fid)
@@ -679,7 +679,7 @@ pub(crate) async fn seed_memory(
     created_at: chrono::DateTime<chrono::Utc>,
 ) -> uuid::Uuid {
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO sensei.memories (project_id, type, title, content, created_at) \
+        "INSERT INTO sensei.memories (workspace_id, type, title, content, created_at) \
          VALUES ($1, 'decision'::sensei.memory_type, 'test-memory', 'test-content', $2) RETURNING id",
     )
     .bind(project_id)
@@ -781,7 +781,7 @@ pub(crate) async fn seed_metrics_client_session(
     started_at: chrono::DateTime<chrono::Utc>,
 ) -> uuid::Uuid {
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO activity.sessions (folder_id, project_id, repo_folder_id, client_session_id, started_at) \
+        "INSERT INTO activity.sessions (folder_id, workspace_id, repo_folder_id, client_session_id, started_at) \
          VALUES ($1, $2, $1, $3, $4) RETURNING id",
     )
     .bind(fid)
@@ -873,7 +873,7 @@ pub(crate) async fn seed_run(
     started_at: chrono::DateTime<chrono::Utc>,
 ) -> uuid::Uuid {
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO activity.runs (project_id, status, started_at) \
+        "INSERT INTO activity.runs (workspace_id, status, started_at) \
          VALUES ($1, $2::sensei.run_status, $3) RETURNING id",
     )
     .bind(project_id)
@@ -912,7 +912,7 @@ pub(crate) async fn purge_runs(pg: &PgStore, project_ids: &[&uuid::Uuid]) {
         return;
     }
     let ids: Vec<uuid::Uuid> = project_ids.iter().map(|p| **p).collect();
-    sqlx_core::query::query("DELETE FROM activity.runs WHERE project_id = ANY($1)")
+    sqlx_core::query::query("DELETE FROM activity.runs WHERE workspace_id = ANY($1)")
         .bind(&ids)
         .execute(pg.pool())
         .await
@@ -956,14 +956,14 @@ pub(crate) async fn cleanup_metrics_fixture(
     // end (folders.repository_id is ON DELETE SET NULL, so the ordering is safe).
     let repo_ids: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
         "SELECT DISTINCT f.repository_id FROM sensei.folders f \
-           JOIN sensei.folder_projects fp ON fp.folder_id = f.id \
-          WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL",
+           JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id \
+          WHERE fp.workspace_id = $1 AND f.repository_id IS NOT NULL",
     )
     .bind(pid)
     .fetch_all(pg.pool())
     .await
     .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(pg.pool())
         .await
@@ -996,8 +996,8 @@ pub(crate) async fn daily_project_metric_rows(
 ) -> Vec<(String, f64, serde_json::Value)> {
     sqlx_core::query_as::query_as(
         "SELECT m.key, pm.value::float8, pm.props \
-           FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-          WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' \
+           FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+          WHERE pm.workspace_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' \
           ORDER BY m.key",
     )
     .bind(pid)
@@ -1072,7 +1072,7 @@ pub async fn seed_file(
 ///
 /// The difference did not matter while `folders.project_id` existed, because a
 /// folder carried its project directly. Since #211 the project is the
-/// REPOSITORY's (`folders.repository_id` → `repositories_in_projects` →
+/// REPOSITORY's (`folders.repository_id` → `repositories_in_workspaces` →
 /// `projects`), so a folder with no repository can hold no project at all:
 /// `set_folder_project` records the props and nothing else, and every scoping
 /// read comes back empty.

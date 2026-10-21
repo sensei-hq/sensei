@@ -303,7 +303,7 @@ fn batch_per_tick(cfg: Option<String>) -> i64 {
 }
 
 /// Handler: score up to the batch cap of a project's un-scored measurable
-/// sessions. `task.path` carries the project id (mirrors `AnalyzeProject`).
+/// sessions. `task.path` carries the project id (mirrors `AnalyzeWorkspace`).
 /// Returns the number of sessions scored (watermarked) this run — including
 /// all-N/A ones, which ARE progress (they won't be retried). A model failure on
 /// a session leaves it un-watermarked (retried next tick) and does not count.

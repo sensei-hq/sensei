@@ -33,6 +33,49 @@ async fn memory_create_and_get() {
         .unwrap();
 }
 
+/// #307 R3a: the database stores a workspace-scoped memory as `workspace`,
+/// while the API that wrote it — and every read handed back to it — still
+/// says `project` until R3b moves the API.
+#[tokio::test]
+async fn a_project_scope_is_stored_as_workspace_and_read_back_as_project() {
+    let s = pg_store().await;
+    let pid = s
+        .create_project(&format!("_test:mem_scope-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
+    let id = s
+        .create_memory(&MemoryRow {
+            project_id: Some(&pid),
+            scope: "project",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_scope",
+            content: "c",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
+        .await
+        .unwrap();
+    let (stored,): (String,) =
+        sqlx_core::query_as::query_as("SELECT scope::text FROM sensei.memories WHERE id = $1")
+            .bind(id)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(stored, "workspace", "the database says workspace");
+    assert_eq!(s.get_memory(&id).await.unwrap().unwrap()["scope"], "project");
+    let listed = s.list_memories(Some(pid), None, Some("project"), 10).await.unwrap();
+    assert_eq!(listed.len(), 1, "a `project` filter finds the workspace-scoped row");
+    assert_eq!(listed[0]["scope"], "project");
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn create_memory_persists_spine_slot_and_feature() {
     let s = pg_store().await;
@@ -68,7 +111,7 @@ async fn create_memory_persists_spine_slot_and_feature() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -494,7 +537,7 @@ async fn accept_as_rule_rejects_non_rule_action_and_title_body_override() {
         .execute(s.pool())
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM inference.recommendations WHERE project_id=$1")
+    sqlx_core::query::query("DELETE FROM inference.recommendations WHERE workspace_id=$1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -828,7 +871,7 @@ async fn seed_regressed_rec_with_memory(
     .unwrap();
     for _ in 0..3 {
         sqlx_core::query::query(
-            "INSERT INTO activity.sessions (folder_id, project_id, outcome, ftr, started_at)
+            "INSERT INTO activity.sessions (folder_id, workspace_id, outcome, ftr, started_at)
                  VALUES ($1, $2, 'corrected'::sensei.session_outcome, false, now())",
         )
         .bind(fid)
@@ -843,7 +886,7 @@ async fn seed_regressed_rec_with_memory(
 async fn cleanup_regressed_fixture(s: &PgStore, proj_id: &uuid::Uuid) {
     // Sessions FK to the folder (persisted), not the project, so drop them
     // explicitly; delete_project cascades recs, memories(+outcomes), patterns.
-    sqlx_core::query::query("DELETE FROM activity.sessions WHERE project_id = $1")
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE workspace_id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await
@@ -1487,7 +1530,7 @@ async fn repositories_for_project_lists_repos_primary_first() {
         .execute(s.pool())
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -1531,12 +1574,12 @@ async fn project_patterns_fold_unreviewed_rework_into_hotspots() {
         .collect();
     anti.sort();
 
-    sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE project_id = $1")
+    sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE workspace_id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await

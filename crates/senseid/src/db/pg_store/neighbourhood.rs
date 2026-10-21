@@ -93,7 +93,7 @@ impl PgStore {
         let row: Option<NeighbourNodeRow> = sqlx_core::query_as::query_as(
             "SELECT id, name, kind, fqn, language, file_path, line_start, locality
                FROM sensei.graph_nodes
-              WHERE id = $2 AND $1 = ANY(project_ids)",
+              WHERE id = $2 AND $1 = ANY(workspace_ids)",
         )
         .bind(project_id)
         .bind(node_id)
@@ -127,8 +127,8 @@ impl PgStore {
                       , sum({CALL_SITES})::bigint
                       , bool_and({walkable})
                    FROM sensei.edges e
-                   JOIN sensei.folder_projects fp ON fp.folder_id = e.folder_id
-                                                 AND fp.project_id = $1
+                   JOIN sensei.folder_workspaces fp ON fp.folder_id = e.folder_id
+                                                 AND fp.workspace_id = $1
                    JOIN sensei.nodes n ON n.id = e.source_id
                   WHERE e.kind = 'calls' AND e.target_id = ANY($2)
                   GROUP BY 1, 2",
@@ -138,11 +138,11 @@ impl PgStore {
                 "SELECT e.source_id, e.target_id
                       , sum({CALL_SITES})::bigint
                       , bool_and({walkable} AND EXISTS (
-                            SELECT 1 FROM sensei.folder_projects tp
-                             WHERE tp.folder_id = n.folder_id AND tp.project_id = $1))
+                            SELECT 1 FROM sensei.folder_workspaces tp
+                             WHERE tp.folder_id = n.folder_id AND tp.workspace_id = $1))
                    FROM sensei.edges e
-                   JOIN sensei.folder_projects fp ON fp.folder_id = e.folder_id
-                                                 AND fp.project_id = $1
+                   JOIN sensei.folder_workspaces fp ON fp.folder_id = e.folder_id
+                                                 AND fp.workspace_id = $1
                    JOIN sensei.nodes n ON n.id = e.target_id
                   WHERE e.kind = 'calls' AND e.source_id = ANY($2)
                   GROUP BY 1, 2",
@@ -199,8 +199,8 @@ impl PgStore {
             "SELECT count(*) FILTER (WHERE e.source_id = $2)::bigint
                   , count(*) FILTER (WHERE e.target_name = $3)::bigint
                FROM sensei.edges e
-               JOIN sensei.folder_projects fp ON fp.folder_id = e.folder_id
-                                             AND fp.project_id = $1
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = e.folder_id
+                                             AND fp.workspace_id = $1
               WHERE e.kind = 'calls' AND e.target_id IS NULL
                 AND e.unresolved_reason = ANY($4)
                 AND (e.source_id = $2 OR e.target_name = $3)",

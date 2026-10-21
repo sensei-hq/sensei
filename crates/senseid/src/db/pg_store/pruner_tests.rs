@@ -308,7 +308,7 @@ async fn a_prune_leaves_an_unrelated_empty_project_alone() {
         .unwrap();
     // Old enough that no grace window protects it — only the scope can.
     sqlx_core::query::query(
-        "UPDATE sensei.projects SET modified_at = now() - interval '1 day' WHERE id = $1",
+        "UPDATE sensei.workspaces SET modified_at = now() - interval '1 day' WHERE id = $1",
     )
     .bind(bystander)
     .execute(pg.pool())

@@ -17,8 +17,8 @@ set search_path to sensei, extensions;
 --   * `direction` = 'neutral'  — no better/worse (R7 / I2)
 --   * `value` null             — no reading (I1: exclude, never rate 0)
 --
--- One row per (project, metric, grain, period). Each grain rates the value ALREADY
--- rolled up for that period by the project_metric_* ladder, which is type-aware
+-- One row per (workspace, metric, grain, period). Each grain rates the value ALREADY
+-- rolled up for that period by the workspace_metric_* ladder, which is type-aware
 -- (ratio/pct = Σnumerator/Σdenominator, count sums, duration averages). Rating the
 -- rolled-up reading is not the same as averaging daily ratings — for any ratio
 -- metric the latter would weight a quiet day equally with a busy one and drift from
@@ -27,16 +27,16 @@ set search_path to sensei, extensions;
 -- `weighted` carries weight × rating so the roll-ups above are a plain SUM.
 create or replace view metric_rating_facts as
 with readings as (
-    select d.project_id, d.metric, 'daily'::text   as grain, d.date   as period, d.value
-      from sensei.project_metric_daily d
+    select d.workspace_id, d.metric, 'daily'::text   as grain, d.date   as period, d.value
+      from sensei.workspace_metric_daily d
     union all
-    select w.project_id, w.metric, 'weekly'::text  as grain, w.period as period, w.value
-      from sensei.project_metric_weekly w
+    select w.workspace_id, w.metric, 'weekly'::text  as grain, w.period as period, w.value
+      from sensei.workspace_metric_weekly w
     union all
-    select mo.project_id, mo.metric, 'monthly'::text as grain, mo.period as period, mo.value
-      from sensei.project_metric_monthly mo
+    select mo.workspace_id, mo.metric, 'monthly'::text as grain, mo.period as period, mo.value
+      from sensei.workspace_metric_monthly mo
 )
-select r.project_id
+select r.workspace_id
      , r.metric
      , m.name   as metric_name
      , m.family
@@ -67,7 +67,7 @@ select r.project_id
   ) rating;
 
 comment on view metric_rating_facts is
-'Per (project, metric, grain, period) 0-5 rating of the period''s rolled-up reading —
+'Per (workspace, metric, grain, period) 0-5 rating of the period''s rolled-up reading —
 the SINGLE rating expression the radar spokes and every health grain read, so they
 cannot disagree (spec I5). grain is daily/weekly/monthly. NULL rating = not rated (no
 scale / weight 0 / neutral direction / no reading) and must be excluded from a

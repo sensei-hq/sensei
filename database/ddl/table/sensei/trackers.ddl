@@ -1,10 +1,10 @@
 set search_path to sensei, extensions;
 
--- One issue-tracker connection (a board) per sensei project, and one project
+-- One issue-tracker connection (a board) per sensei workspace, and one workspace
 -- per board. Spec: docs/spec/daemon/tracker-jira-linkage.md R1-R3.
 create table if not exists trackers (
   id               uuid          primary key default gen_random_uuid()
-, project_id       uuid          not null references sensei.projects(id) on delete cascade
+, workspace_id     uuid          not null references sensei.workspaces(id) on delete cascade
 , kind             tracker_kind  not null
 , base_url         text          not null
 , account          text          not null
@@ -17,15 +17,15 @@ create table if not exists trackers (
 , last_error       tracker_error
 , discovered_through timestamptz not null default now()
 , created_at       timestamptz   not null default now()
-, unique (project_id)
+, unique (workspace_id)
 , unique (kind, base_url, board_ref)
 );
 
 comment on table trackers is
-'An issue-tracker board connected to a sensei project: one tracker per project (one sprint calendar) and one project per board. Read-only mirror source for sensei.sprints / sensei.tracker_tasks. The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its project) tombstones that entry via the tracker_secret_tombstone trigger.';
+'An issue-tracker board connected to a sensei workspace: one tracker per workspace (one sprint calendar) and one workspace per board. Read-only mirror source for sensei.sprints / sensei.tracker_tasks. The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.';
 
-comment on column trackers.project_id
-     is 'The sensei project this board belongs to. Unique: a project has exactly one tracker. ON DELETE CASCADE, and the delete trigger still tombstones the secret.';
+comment on column trackers.workspace_id
+     is 'The sensei workspace this board belongs to. Unique: a workspace has exactly one tracker. ON DELETE CASCADE, and the delete trigger still tombstones the secret.';
 comment on column trackers.kind
      is 'Which adapter speaks to this tracker (crate::tracker::adapter_for_kind).';
 comment on column trackers.base_url

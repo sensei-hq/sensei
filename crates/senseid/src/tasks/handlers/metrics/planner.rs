@@ -7,7 +7,7 @@
 //! changes HOW days are scheduled and sealed.
 //!
 //! ## The per-project graph
-//! - [`compute_project`] (`ComputeProjectMetrics`, the PARENT): freezes one `as_of`
+//! - [`compute_project`] (`ComputeWorkspaceMetrics`, the PARENT): freezes one `as_of`
 //!   for the whole run (spec test 5), then enqueues ONE `ComputeGroupMetrics`
 //!   child per active base group (the active registry `task_name`s minus
 //!   [`HEALTH_TASK_NAME`]) and — when any child was enqueued — one
@@ -292,7 +292,7 @@ where
     Ok(written)
 }
 
-/// `ComputeProjectMetrics` — the per-project PARENT. Freezes one `as_of` for the whole
+/// `ComputeWorkspaceMetrics` — the per-project PARENT. Freezes one `as_of` for the whole
 /// run (spec test 5), enqueues one [`TaskKind::ComputeGroupMetrics`] child per active
 /// base group (active registry `task_name`s minus [`HEALTH_TASK_NAME`]), and — when
 /// any child was enqueued — one [`TaskKind::ComputeHealth`] barrier `blocked_by` those
@@ -550,9 +550,9 @@ mod tests {
     /// when no row. The read-back the day-keyed engine tests assert against.
     async fn ftr_value_on(pg: &PgStore, pid: &uuid::Uuid, day: NaiveDate) -> Option<f64> {
         let row: Option<(f64,)> = sqlx_core::query_as::query_as(
-            "SELECT pm.value::float8 FROM sensei.project_metrics pm \
+            "SELECT pm.value::float8 FROM sensei.workspace_metrics pm \
                JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'ftr' AND pm.computed_on = $2 AND pm.grain = 'daily' \
+              WHERE pm.workspace_id = $1 AND m.key = 'ftr' AND pm.computed_on = $2 AND pm.grain = 'daily' \
               LIMIT 1",
         )
         .bind(pid)
@@ -591,7 +591,7 @@ mod tests {
 
         // The earliest computed day is the earliest data day (min_date fill).
         let (min_day,): (Option<NaiveDate>,) = sqlx_core::query_as::query_as(
-            "SELECT min(computed_on) FROM sensei.project_metrics WHERE project_id = $1 AND grain = 'daily'",
+            "SELECT min(computed_on) FROM sensei.workspace_metrics WHERE workspace_id = $1 AND grain = 'daily'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -660,9 +660,9 @@ mod tests {
         // Tamper BOTH days, then re-run. The settled old day must NOT recompute (its
         // tamper survives); today MUST recompute (its tamper is overwritten).
         sqlx_core::query::query(
-            "UPDATE sensei.project_metrics pm SET value = 0.123 \
+            "UPDATE sensei.workspace_metrics pm SET value = 0.123 \
                FROM sensei.metrics m \
-              WHERE m.id = pm.metric_id AND m.key = 'ftr' AND pm.project_id = $1 AND pm.grain = 'daily'",
+              WHERE m.id = pm.metric_id AND m.key = 'ftr' AND pm.workspace_id = $1 AND pm.grain = 'daily'",
         )
         .bind(pid)
         .execute(pg.pool())
@@ -709,8 +709,8 @@ mod tests {
 
         // The churn_rate rows on the commit-day (scope=repo + scope=user).
         let (c0,): (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'churn_rate' AND pm.computed_on = $2",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'churn_rate' AND pm.computed_on = $2",
         )
         .bind(pid)
         .bind(commit_day)
@@ -723,9 +723,9 @@ mod tests {
         // count = 1, so 999 is unmistakably synthetic), then re-run. A sealed commit's
         // code is immutable → it is NOT recomputed → the tamper survives.
         sqlx_core::query::query(
-            "UPDATE sensei.project_metrics pm SET value = 999 \
+            "UPDATE sensei.workspace_metrics pm SET value = 999 \
                FROM sensei.metrics m \
-              WHERE m.id = pm.metric_id AND m.key = 'churn_rate' AND pm.project_id = $1 AND pm.computed_on = $2",
+              WHERE m.id = pm.metric_id AND m.key = 'churn_rate' AND pm.workspace_id = $1 AND pm.computed_on = $2",
         )
         .bind(pid)
         .bind(commit_day)
@@ -735,8 +735,8 @@ mod tests {
 
         compute_group(&ctx, &task).await.unwrap();
         let (c999,): (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'churn_rate' AND pm.computed_on = $2 AND pm.value = 999",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'churn_rate' AND pm.computed_on = $2 AND pm.value = 999",
         )
         .bind(pid)
         .bind(commit_day)
@@ -751,7 +751,7 @@ mod tests {
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
-    // ── #5 frozen as_of shared across all children of one ComputeProjectMetrics run ──
+    // ── #5 frozen as_of shared across all children of one ComputeWorkspaceMetrics run ──
 
     #[tokio::test]
     async fn compute_project_freezes_one_as_of_across_all_children() {
@@ -761,7 +761,7 @@ mod tests {
         let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
         let today = super::super::today(pg).await.unwrap();
 
-        let parent = Task::new(TaskKind::ComputeProjectMetrics, &pid.to_string(), "");
+        let parent = Task::new(TaskKind::ComputeWorkspaceMetrics, &pid.to_string(), "");
         let enqueued = compute_project(&ctx, &parent).await.unwrap();
         assert!(enqueued >= 2, "at least one group child + the health barrier, got {enqueued}");
 
@@ -790,7 +790,7 @@ mod tests {
     async fn compute_project_is_honest_empty_with_no_active_base_groups() {
         // A bad project id fails fast (never a masked empty success).
         let ctx = make_ctx().await;
-        let bad = Task::new(TaskKind::ComputeProjectMetrics, "not-a-uuid", "");
+        let bad = Task::new(TaskKind::ComputeWorkspaceMetrics, "not-a-uuid", "");
         assert!(compute_project(&ctx, &bad).await.is_err(), "a bad project id propagates Err");
     }
 

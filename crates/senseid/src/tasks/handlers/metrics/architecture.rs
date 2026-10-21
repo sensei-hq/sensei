@@ -252,7 +252,7 @@ mod tests {
         assert!(written >= 3, "one row per architecture metric, got {written}");
 
         let confidence: f64 = sqlx_core::query_scalar::query_scalar(
-            "SELECT pm.value::float8 FROM sensei.project_metrics pm \
+            "SELECT pm.value::float8 FROM sensei.workspace_metrics pm \
                JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE m.key = 'graph_confidence' AND pm.repository_id = $1",
         )
@@ -263,7 +263,7 @@ mod tests {
         assert!((confidence - 0.5).abs() < 1e-9, "2 placed of 4 edges is 0.5, got {confidence}");
 
         let surface: f64 = sqlx_core::query_scalar::query_scalar(
-            "SELECT pm.value::float8 FROM sensei.project_metrics pm \
+            "SELECT pm.value::float8 FROM sensei.workspace_metrics pm \
                JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE m.key = 'public_surface_ratio' AND pm.repository_id = $1",
         )

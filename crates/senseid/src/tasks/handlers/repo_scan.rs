@@ -769,7 +769,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         return Err(format!("process_git_folder: folder row for {} has no ids", task.folder_path));
     };
     // THE REPOSITORY FIRST, THEN THE PROJECT. Since #211 membership belongs to
-    // the repository (`folders.repository_id` → `repositories_in_projects`), so
+    // the repository (`folders.repository_id` → `repositories_in_workspaces`), so
     // `set_folder_project` on a folder with no repository matches no row and
     // records NOTHING.
     //
@@ -778,7 +778,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // runs afterwards — calls `assign_repositories`. So on a fresh install this
     // handler always ran while `repository_id` was still NULL. Measured on a
     // from-scratch database against `~/Developer/sensei-hq`: 3 repositories, 3
-    // projects, 27,860 nodes indexed, and `repositories_in_projects` EMPTY — every
+    // projects, 27,860 nodes indexed, and `repositories_in_workspaces` EMPTY — every
     // project tagged `orphaned` with `repos_count: 0`, and every project-scoped
     // screen an empty graph over a fully indexed codebase.
     //
@@ -1008,7 +1008,7 @@ mod scan_tests {
     /// #211 membership is the repository's, so `set_folder_project` matched no
     /// row and recorded nothing. Measured on a from-scratch database against
     /// `~/Developer/sensei-hq`: 3 repositories, 3 projects, 27,860 nodes, and
-    /// `repositories_in_projects` EMPTY — every project tagged `orphaned` with
+    /// `repositories_in_workspaces` EMPTY — every project tagged `orphaned` with
     /// `repos_count: 0`, and the Structure diagram an empty graph.
     ///
     /// The handler must therefore establish the repository ITSELF rather than
@@ -1055,10 +1055,10 @@ mod scan_tests {
             .expect("the handler must give the folder a repository");
 
         // The MEMBERSHIP, which is the whole point — asserted through
-        // `folder_projects`, the view every project-scoped read resolves by,
+        // `folder_workspaces`, the view every project-scoped read resolves by,
         // rather than through the junction it happens to be built from.
         let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "SELECT project_id FROM sensei.folder_projects WHERE folder_id = $1",
+            "SELECT workspace_id FROM sensei.folder_workspaces WHERE folder_id = $1",
         )
         .bind(fid)
         .fetch_all(ctx.pg().pool())
@@ -1787,7 +1787,7 @@ mod scan_tests {
         // THE READ SIDE (step 5): the project's payload, as the Schema diagram
         // gets it — the view's read of `orders` comes from the GRAPH's edge.
         let (project,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "SELECT project_id FROM sensei.folder_projects WHERE folder_id = $1",
+            "SELECT workspace_id FROM sensei.folder_workspaces WHERE folder_id = $1",
         )
         .bind(fid)
         .fetch_one(ctx.pg().pool())

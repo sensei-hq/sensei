@@ -27,7 +27,7 @@ impl PgStore {
     ) -> Result<Vec<NaiveDate>, String> {
         let sql = "SELECT DISTINCT date_trunc('day', s.started_at)::date AS day
                      FROM activity.sessions s
-                    WHERE s.project_id = $1
+                    WHERE s.workspace_id = $1
                       AND s.outcome   IS NOT NULL";
         self.planner_days(sql, project_id).await
     }
@@ -45,12 +45,12 @@ impl PgStore {
         let sql = "SELECT DISTINCT day FROM (
                        SELECT date_trunc('day', r.started_at)::date AS day
                          FROM activity.runs r
-                        WHERE r.project_id = $1
+                        WHERE r.workspace_id = $1
                        UNION
                        SELECT date_trunc('day', to_timestamp(ae.ts / 1000.0))::date AS day
                          FROM activity.assistant_events ae
                          JOIN activity.sessions        s ON s.client_session_id = ae.session_id
-                        WHERE s.project_id   = $1
+                        WHERE s.workspace_id = $1
                           AND ae.event_type  = 'UserPromptSubmit'
                    ) u";
         self.planner_days(sql, project_id).await
@@ -67,7 +67,7 @@ impl PgStore {
         let sql = "SELECT DISTINCT date_trunc('day', s.started_at)::date AS day
                      FROM activity.transcript_turns tt
                      JOIN activity.sessions         s ON s.client_session_id = tt.session_id
-                    WHERE s.project_id  = $1
+                    WHERE s.workspace_id  = $1
                       AND tt.tokens_in IS NOT NULL";
         self.planner_days(sql, project_id).await
     }
@@ -81,7 +81,7 @@ impl PgStore {
     ) -> Result<Vec<NaiveDate>, String> {
         let sql = "SELECT DISTINCT date_trunc('day', s.started_at)::date AS day
                      FROM activity.sessions s
-                    WHERE s.project_id = $1
+                    WHERE s.workspace_id = $1
                       AND s.props ? 'process'";
         self.planner_days(sql, project_id).await
     }

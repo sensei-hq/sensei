@@ -94,9 +94,9 @@ impl PgStore {
                     s.started_at, s.completed_at, s.acp_id,
                     s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
              FROM activity.sessions s
-             LEFT JOIN sensei.projects p ON p.id = s.project_id
+             LEFT JOIN sensei.workspaces p ON p.id = s.workspace_id
              WHERE ($2::int IS NULL OR s.started_at >= now() - make_interval(days => $2::int))
-               AND ($3::uuid IS NULL OR s.project_id = $3)
+               AND ($3::uuid IS NULL OR s.workspace_id = $3)
              ORDER BY s.started_at DESC LIMIT $1"
         ).bind(limit).bind(range_days).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows
@@ -243,7 +243,7 @@ impl PgStore {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "WITH anchor AS (
                  SELECT a.repo_folder_id,
-                        a.project_id AS anchor_project,
+                        a.workspace_id AS anchor_workspace,
                         COALESCE(rf.remote_urls->0->>'url', a.repo_abs_path) AS repo_key
                    FROM sensei.folders f
                    JOIN LATERAL sensei.repo_anchor_for(f.abs_path) a ON true
@@ -251,16 +251,16 @@ impl PgStore {
                   WHERE f.id = $2
              )
              INSERT INTO activity.sessions
-                 (client_session_id, folder_id, project_id, acp_id, completed_at, repo_folder_id, repo_key)
+                 (client_session_id, folder_id, workspace_id, acp_id, completed_at, repo_folder_id, repo_key)
              SELECT $1, $2,
-                    COALESCE((SELECT anchor_project FROM anchor), $3), $4,
+                    COALESCE((SELECT anchor_workspace FROM anchor), $3), $4,
                     CASE WHEN $5 THEN now() ELSE NULL END,
                     (SELECT repo_folder_id FROM anchor),
                     (SELECT repo_key FROM anchor)
              ON CONFLICT (client_session_id) WHERE client_session_id IS NOT NULL
              DO UPDATE SET
                  completed_at   = CASE WHEN $5 THEN now() ELSE activity.sessions.completed_at END,
-                 project_id     = COALESCE(activity.sessions.project_id, EXCLUDED.project_id),
+                 workspace_id   = COALESCE(activity.sessions.workspace_id, EXCLUDED.workspace_id),
                  repo_folder_id = COALESCE(activity.sessions.repo_folder_id, EXCLUDED.repo_folder_id),
                  repo_key       = COALESCE(activity.sessions.repo_key, EXCLUDED.repo_key)
              RETURNING id"
@@ -534,7 +534,7 @@ impl PgStore {
     }
 
     /// Mark a project's captured sessions for RE-enrichment (a backfill request) —
-    /// clears `analyzed_at` so the next `AnalyzeProject` re-derives every session
+    /// clears `analyzed_at` so the next `AnalyzeWorkspace` re-derives every session
     /// from scratch with the current logic (used while metrics are being refined).
     /// Only sessions with a `client_session_id` (hook/transcript-captured) are
     /// reset, selected by `project_id` as `get_project_sessions_needing_enrichment`
@@ -545,7 +545,7 @@ impl PgStore {
     ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE activity.sessions SET analyzed_at = NULL
-              WHERE project_id = $1 AND client_session_id IS NOT NULL",
+              WHERE workspace_id = $1 AND client_session_id IS NOT NULL",
         )
         .bind(project_id)
         .execute(&self.pool)
@@ -571,9 +571,9 @@ impl PgStore {
                     coalesce(sum((e.v->>'failed')::int), 0)::int8 AS failed,
                     count(*)::int8                                AS sessions
                FROM activity.sessions s
-               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id,
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = s.folder_id,
                     jsonb_each(s.props->'tool_usage') AS e(tool, v)
-              WHERE fp.project_id = $1
+              WHERE fp.workspace_id = $1
                 AND s.props ? 'tool_usage'
                 AND jsonb_typeof(s.props->'tool_usage') = 'object'
               GROUP BY e.tool
@@ -979,7 +979,7 @@ impl PgStore {
         // in case both are null (a fully unattached session).
         let rows: Vec<(uuid::Uuid, String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
             "SELECT s.id, s.client_session_id, coalesce(s.folder_id, s.repo_folder_id) FROM activity.sessions s
-             WHERE s.project_id = $1 AND s.client_session_id IS NOT NULL
+             WHERE s.workspace_id = $1 AND s.client_session_id IS NOT NULL
                AND (s.analyzed_at IS NULL
                     OR EXISTS (SELECT 1 FROM activity.assistant_events e
                                WHERE e.session_id = s.client_session_id
@@ -1030,8 +1030,8 @@ impl PgStore {
                     s.evidence, (s.props->>'resumed')::bool AS resumed, s.props->'trouble' AS trouble,
                     s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
                FROM activity.sessions s
-               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id
-              WHERE fp.project_id = $1
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = s.folder_id
+              WHERE fp.workspace_id = $1
                 AND s.outcome   IS NOT NULL
                 AND s.outcome   <> 'empty'::sensei.session_outcome
                 AND date_trunc('day', s.started_at)::date = $2
@@ -1093,8 +1093,8 @@ impl PgStore {
         &self,
     ) -> Result<Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)>, String> {
         let rows: Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
-            "SELECT project_id, max(GREATEST(started_at, COALESCE(completed_at, started_at)))
-             FROM activity.sessions WHERE project_id IS NOT NULL GROUP BY project_id",
+            "SELECT workspace_id, max(GREATEST(started_at, COALESCE(completed_at, started_at)))
+             FROM activity.sessions WHERE workspace_id IS NOT NULL GROUP BY workspace_id",
         )
         .fetch_all(&self.pool)
         .await
@@ -1124,15 +1124,15 @@ impl PgStore {
             "WITH roots AS (
                  SELECT DISTINCT ON (f.repository_id) f.id AS folder_id, f.abs_path
                    FROM sensei.folders f
-                   JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-                  WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL
+                   JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+                  WHERE fp.workspace_id = $1 AND f.repository_id IS NOT NULL
                   ORDER BY f.repository_id, length(f.abs_path) ASC
              ), edits AS (
                  SELECT DISTINCT s.folder_id AS session_folder, ae.session_id, ae.ts,
                         ae.payload->'tool_input'->>'file_path' AS path
                    FROM activity.assistant_events ae
                    JOIN activity.sessions s ON s.client_session_id = ae.session_id
-                  WHERE s.project_id = $1
+                  WHERE s.workspace_id = $1
                     AND ae.event_type = 'PostToolUse'
                     AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
                     AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
@@ -1181,7 +1181,7 @@ impl PgStore {
             "SELECT s.folder_id, ae.session_id, ae.payload->>'prompt'
              FROM activity.assistant_events ae
              JOIN activity.sessions s ON s.client_session_id = ae.session_id
-             WHERE s.project_id = $1
+             WHERE s.workspace_id = $1
                AND ($2::uuid[] IS NULL OR s.folder_id = ANY($2))
                AND ae.event_type = 'UserPromptSubmit'
                AND ae.payload->>'prompt' IS NOT NULL
@@ -1633,7 +1633,7 @@ impl PgStore {
         sqlx_core::query_as::query_as(
             "SELECT id, client_session_id
                FROM activity.sessions
-              WHERE project_id = $1
+              WHERE workspace_id = $1
                 AND process_analyzed_at IS NULL
                 AND client_session_id IS NOT NULL
                 AND outcome IS NOT NULL AND outcome <> 'empty'::sensei.session_outcome
@@ -1756,7 +1756,7 @@ impl PgStore {
             "SELECT s.id, s.task, s.ftr, s.corrections, s.started_at, s.completed_at, f.role::text
                  FROM activity.sessions s
                  LEFT JOIN sensei.folders f ON f.id = s.folder_id
-                 WHERE s.project_id = $1
+                 WHERE s.workspace_id = $1
                  ORDER BY s.started_at DESC LIMIT $2",
         )
         .bind(project_id)
@@ -1893,7 +1893,7 @@ impl PgStore {
         )> = sqlx_core::query_as::query_as(
             "SELECT id, task, ftr, outcome::text, started_at, completed_at,
                         turns, corrections, provider, model
-                 FROM activity.sessions WHERE project_id = $1
+                 FROM activity.sessions WHERE workspace_id = $1
                  ORDER BY started_at DESC LIMIT $2",
         )
         .bind(project_id)

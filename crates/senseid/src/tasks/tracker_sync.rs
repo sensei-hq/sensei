@@ -173,7 +173,7 @@ mod tests {
         let id = connected(&pg, &rt, &site()).await;
         let row = pg.tracker_by_id(id).await.unwrap().unwrap();
         assert!(store.has(&row.secret_service));
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(row.project_id)
             .execute(pg.pool())
             .await

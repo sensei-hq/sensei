@@ -93,7 +93,7 @@ impl PgStore {
         urgency: &str,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO inference.recommendations(project_id, title, why, action_type, urgency)
+            "INSERT INTO inference.recommendations(workspace_id, title, why, action_type, urgency)
              VALUES($1, $2, $3, $4, $5::sensei.recommendation_urgency) RETURNING id",
         )
         .bind(project_id)
@@ -173,7 +173,7 @@ impl PgStore {
         id: &uuid::Uuid,
     ) -> Result<Option<(String, String, String, Option<String>, uuid::Uuid, String)>, String> {
         sqlx_core::query_as::query_as(
-            "SELECT action_type, title, why, impact, project_id, based_on::text
+            "SELECT action_type, title, why, impact, workspace_id, based_on::text
                FROM inference.recommendations
               WHERE id = $1 AND status = 'pending'",
         )
@@ -225,7 +225,7 @@ impl PgStore {
                 "UPDATE inference.recommendations
                     SET status = 'accepted'::sensei.recommendation_status, acted_at = now()
                   WHERE id = $1 AND status = 'pending'
-              RETURNING action_type, title, why, impact, project_id, based_on::text",
+              RETURNING action_type, title, why, impact, workspace_id, based_on::text",
             )
             .bind(id)
             .fetch_optional(&self.pool)
@@ -386,7 +386,7 @@ impl PgStore {
         project_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, String)> = sqlx_core::query_as::query_as(
-            "SELECT id, title, why, urgency::text, status::text, verdict::text FROM inference.recommendations WHERE project_id = $1 ORDER BY urgency::text"
+            "SELECT id, title, why, urgency::text, status::text, verdict::text FROM inference.recommendations WHERE workspace_id = $1 ORDER BY urgency::text"
         ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, title, why, urg, status, verdict)| {
             serde_json::json!({ "id": id, "title": title, "why": why, "urgency": urg, "status": status, "verdict": verdict })
@@ -414,7 +414,7 @@ impl PgStore {
             prompt,
         } = row;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO inference.recommendations(project_id, title, why, impact, action_type, urgency, based_on, reasoning_trace_id, prompt)
+            "INSERT INTO inference.recommendations(workspace_id, title, why, impact, action_type, urgency, based_on, reasoning_trace_id, prompt)
              VALUES($1, $2, $3, $4, $5, $6::sensei.recommendation_urgency, $7::jsonb, $8, $9) RETURNING id"
         ).bind(project_id).bind(title).bind(why).bind(impact).bind(action_type).bind(urgency)
             .bind(based_on.to_string()).bind(reasoning_trace_id).bind(prompt)
@@ -432,7 +432,7 @@ impl PgStore {
         let row: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(
                SELECT 1 FROM inference.recommendations
-                WHERE project_id = $1 AND based_on->'patterns' @> to_jsonb($2::text)
+                WHERE workspace_id = $1 AND based_on->'patterns' @> to_jsonb($2::text)
              )",
         )
         .bind(project_id)
@@ -464,7 +464,7 @@ impl PgStore {
                           THEN r.based_on->'patterns' ELSE '[]'::jsonb END
                    ) AS pid(v) ON true
                LEFT JOIN inference.detected_patterns dp ON dp.id = pid.v::uuid
-              WHERE r.project_id = $1 AND r.status = 'pending'
+              WHERE r.workspace_id = $1 AND r.status = 'pending'
               GROUP BY r.id, r.action_type, r.urgency",
             )
             .bind(project_id)
@@ -479,7 +479,7 @@ impl PgStore {
     /// out-scored never stays flagged.
     pub async fn clear_project_focal(&self, project_id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query(
-            "UPDATE inference.recommendations SET focal = false WHERE project_id = $1 AND focal",
+            "UPDATE inference.recommendations SET focal = false WHERE workspace_id = $1 AND focal",
         )
         .bind(project_id)
         .execute(&self.pool)
@@ -526,7 +526,7 @@ impl PgStore {
         consensus: &serde_json::Value,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO inference.reasoning_traces(project_id, trigger_event, trigger_detail, models_used, exchanges, consensus) VALUES($1, $2, $3, $4, $5, $6) RETURNING id"
+            "INSERT INTO inference.reasoning_traces(workspace_id, trigger_event, trigger_detail, models_used, exchanges, consensus) VALUES($1, $2, $3, $4, $5, $6) RETURNING id"
         ).bind(project_id).bind(trigger_event).bind(trigger_detail).bind(models_used).bind(exchanges).bind(consensus)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
@@ -541,7 +541,7 @@ impl PgStore {
         signature: &str,
     ) -> Result<bool, String> {
         let row: (bool,) = sqlx_core::query_as::query_as(
-            "SELECT EXISTS(SELECT 1 FROM inference.reasoning_traces WHERE project_id = $1 AND trigger_detail->>'signature' = $2)"
+            "SELECT EXISTS(SELECT 1 FROM inference.reasoning_traces WHERE workspace_id = $1 AND trigger_detail->>'signature' = $2)"
         ).bind(project_id).bind(signature).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -560,7 +560,7 @@ impl PgStore {
                         t.models_used, t.consensus
                    FROM inference.recommendations r
                    LEFT JOIN inference.reasoning_traces t ON t.id = r.reasoning_trace_id
-                  WHERE r.project_id = $1
+                  WHERE r.workspace_id = $1
                     AND (r.reasoning_trace_id IS NOT NULL OR r.verdict <> 'pending'::sensei.recommendation_verdict)
                   ORDER BY r.measured_at DESC NULLS LAST"
             ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -712,7 +712,7 @@ impl PgStore {
         )> = sqlx_core::query_as::query_as(
             "SELECT id, session_id, title, note, verdict::text, created_at, decided_at
                    FROM sensei.impact_verdicts
-                  WHERE project_id = $1
+                  WHERE workspace_id = $1
                     AND ($2::text IS NULL OR verdict::text = $2)
                   ORDER BY created_at DESC
                   LIMIT 200",
@@ -752,7 +752,7 @@ impl PgStore {
             return Err("title required".into());
         }
         let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.impact_verdicts (project_id, title, note, session_id)
+            "INSERT INTO sensei.impact_verdicts (workspace_id, title, note, session_id)
              VALUES ($1, $2, $3, $4) RETURNING id",
         )
         .bind(project_id)
@@ -802,7 +802,7 @@ impl PgStore {
         project_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Vec<String>, serde_json::Value, serde_json::Value)> = sqlx_core::query_as::query_as(
-            "SELECT id, trigger_event, models_used, exchanges, consensus FROM inference.reasoning_traces WHERE project_id = $1"
+            "SELECT id, trigger_event, models_used, exchanges, consensus FROM inference.reasoning_traces WHERE workspace_id = $1"
         ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, trigger, models, exchanges, consensus)| {
             serde_json::json!({ "id": id, "trigger_event": trigger, "models_used": models, "exchanges": exchanges, "consensus": consensus })
@@ -829,9 +829,9 @@ impl PgStore {
     ) -> Result<uuid::Uuid, String> {
         let count = instances.as_array().map(|a| a.len() as i32).unwrap_or(0);
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO inference.detected_patterns(project_id, folder_id, name, is_anti_pattern, confidence, instance_count, instances)
+            "INSERT INTO inference.detected_patterns(workspace_id, folder_id, name, is_anti_pattern, confidence, instance_count, instances)
              VALUES($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT(project_id, name, is_anti_pattern) DO UPDATE SET
+             ON CONFLICT(workspace_id, name, is_anti_pattern) DO UPDATE SET
                folder_id = COALESCE(EXCLUDED.folder_id, detected_patterns.folder_id),
                confidence = COALESCE(EXCLUDED.confidence, detected_patterns.confidence),
                instance_count = EXCLUDED.instance_count,
@@ -850,7 +850,7 @@ impl PgStore {
     pub async fn prune_suggested_rework(&self, project_id: &uuid::Uuid) -> Result<u64, String> {
         let done = sqlx_core::query::query(
             "DELETE FROM inference.detected_patterns
-              WHERE project_id = $1
+              WHERE workspace_id = $1
                 AND is_anti_pattern
                 AND name LIKE 'rework: %'
                 AND lifecycle = 'suggested'",
@@ -912,7 +912,7 @@ impl PgStore {
             sqlx_core::query_as::query_as(
                 "SELECT DISTINCT p.id, p.name, p.family, p.lifecycle::text, p.is_anti_pattern, p.confidence::float8, p.instance_count
                    FROM inference.detected_patterns p
-                  WHERE p.project_id = $1
+                  WHERE p.workspace_id = $1
                     AND EXISTS (
                         SELECT 1 FROM sensei.nodes n
                         JOIN sensei.node_paths np ON np.node_id = n.id
@@ -955,7 +955,7 @@ impl PgStore {
                    JOIN sensei.folders f ON f.id = dp.folder_id
                   WHERE dp.folder_id IN (
                           SELECT DISTINCT folder_id FROM activity.sessions
-                           WHERE project_id = $1 AND folder_id IS NOT NULL
+                           WHERE workspace_id = $1 AND folder_id IS NOT NULL
                         )
                   ORDER BY dp.instance_count DESC, dp.id"
             ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -971,13 +971,13 @@ impl PgStore {
         &self,
     ) -> Result<Vec<(uuid::Uuid, String, String, i64, String)>, String> {
         let rows: Vec<(uuid::Uuid, String, String, i64, String)> = sqlx_core::query_as::query_as(
-            "SELECT s.project_id, COALESCE(p.name, ''), ae.session_id, ae.ts, ae.payload->>'prompt'
+            "SELECT s.workspace_id, COALESCE(p.name, ''), ae.session_id, ae.ts, ae.payload->>'prompt'
                FROM activity.assistant_events ae
                JOIN activity.sessions s ON s.client_session_id = ae.session_id
-               JOIN sensei.projects p ON p.id = s.project_id
+               JOIN sensei.workspaces p ON p.id = s.workspace_id
               WHERE ae.event_type = 'UserPromptSubmit'
                 AND ae.payload->>'prompt' IS NOT NULL
-                AND s.project_id IS NOT NULL
+                AND s.workspace_id IS NOT NULL
               ORDER BY ae.ts",
         )
         .fetch_all(&self.pool)
@@ -994,13 +994,13 @@ impl PgStore {
     ) -> Result<uuid::Uuid, String> {
         let r: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO inference.corrections
-                (signature, text, suggestion, count, project_ids, last_seen, memory_id, instances, modified_at)
+                (signature, text, suggestion, count, workspace_ids, last_seen, memory_id, instances, modified_at)
              VALUES($1, $2, $3, $4, $5, $6, $7, $8, now())
              ON CONFLICT(signature) DO UPDATE SET
                text = EXCLUDED.text,
                suggestion = EXCLUDED.suggestion,
                count = EXCLUDED.count,
-               project_ids = EXCLUDED.project_ids,
+               workspace_ids = EXCLUDED.workspace_ids,
                last_seen = EXCLUDED.last_seen,
                memory_id = EXCLUDED.memory_id,
                instances = EXCLUDED.instances,
@@ -1054,7 +1054,7 @@ impl PgStore {
             sqlx_core::query_as::query_as(
                 "SELECT id, urgency::text, title, why, impact, evidence
              FROM inference.recommendations
-             WHERE project_id = $1 AND status = 'pending'
+             WHERE workspace_id = $1 AND status = 'pending'
              ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
              LIMIT 10",
             )
@@ -1113,10 +1113,10 @@ impl PgStore {
         #[allow(clippy::type_complexity)]
         let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, serde_json::Value, Option<uuid::Uuid>, Option<String>)> =
             sqlx_core::query_as::query_as(
-                "SELECT r.id, r.urgency::text, r.title, r.why, r.impact, r.evidence, r.project_id, p.name
+                "SELECT r.id, r.urgency::text, r.title, r.why, r.impact, r.evidence, r.workspace_id, p.name
                  FROM inference.recommendations r
-                 LEFT JOIN sensei.projects p ON p.id = r.project_id
-                 WHERE r.status = 'pending' AND ($1::uuid IS NULL OR r.project_id = $1)
+                 LEFT JOIN sensei.workspaces p ON p.id = r.workspace_id
+                 WHERE r.status = 'pending' AND ($1::uuid IS NULL OR r.workspace_id = $1)
                  ORDER BY CASE r.urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, r.id
                  LIMIT 200"
             ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
@@ -1148,9 +1148,9 @@ impl PgStore {
         #[allow(clippy::type_complexity)]
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, i32, Option<f64>, String, Option<uuid::Uuid>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, status::text, title, content, violated_count, strength::float8, scope::text, project_id
+                "SELECT id, status::text, title, content, violated_count, strength::float8, scope::text, workspace_id
                  FROM sensei.memories
-                 WHERE ($1::uuid IS NULL OR project_id = $1)
+                 WHERE ($1::uuid IS NULL OR workspace_id = $1)
                    AND ( status IN ('proposed','active','reinforced','battle_tested')
                          OR (violated_count > 0 AND status != 'archived') )
                  ORDER BY strength DESC NULLS LAST
@@ -1161,7 +1161,7 @@ impl PgStore {
             .map(|(id, status, title, content, violated_count, strength, scope, project_id)| {
                 serde_json::json!({ "id": id, "status": status, "title": title, "content": content,
                                 "violated_count": violated_count, "strength": strength,
-                                "scope": scope, "project_id": project_id })
+                                "scope": scope_to_api(scope), "project_id": project_id })
             })
             .collect())
     }
@@ -1174,13 +1174,13 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, Option<String>, String, i32, Option<uuid::Uuid>)> =
             sqlx_core::query_as::query_as(
                 "SELECT dp.id, dp.name, dp.family, dp.lifecycle::text, dp.instance_count,
-                        sensei.sole_project_of(f.id)
+                        sensei.sole_workspace_of(f.id)
                  FROM inference.detected_patterns dp
                  JOIN sensei.folders f ON f.id = dp.folder_id
                  WHERE dp.lifecycle IN ('suggested','rule') AND NOT dp.is_anti_pattern
                    AND ($1::uuid IS NULL
-                        OR EXISTS (SELECT 1 FROM sensei.folder_projects fp
-                                    WHERE fp.folder_id = f.id AND fp.project_id = $1))
+                        OR EXISTS (SELECT 1 FROM sensei.folder_workspaces fp
+                                    WHERE fp.folder_id = f.id AND fp.workspace_id = $1))
                  ORDER BY dp.instance_count DESC
                  LIMIT 100",
             )
@@ -1204,7 +1204,7 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, Option<String>, i32)> = sqlx_core::query_as::query_as(
             "SELECT id, text, suggestion, count
              FROM inference.corrections
-             WHERE ($1::uuid IS NULL OR $1 = ANY(project_ids))
+             WHERE ($1::uuid IS NULL OR $1 = ANY(workspace_ids))
              ORDER BY count DESC LIMIT $2",
         )
         .bind(project)
@@ -1227,8 +1227,8 @@ impl PgStore {
                 "SELECT dp.id, dp.name, dp.family, dp.instance_count, dp.modified_at
              FROM inference.detected_patterns dp
              JOIN sensei.folders f ON f.id = dp.folder_id
-             WHERE EXISTS (SELECT 1 FROM sensei.folder_projects fp
-                            WHERE fp.folder_id = f.id AND fp.project_id = $1)
+             WHERE EXISTS (SELECT 1 FROM sensei.folder_workspaces fp
+                            WHERE fp.folder_id = f.id AND fp.workspace_id = $1)
                AND dp.lifecycle = 'rule' AND NOT dp.is_anti_pattern
              ORDER BY dp.modified_at DESC LIMIT $2",
             )
@@ -1258,7 +1258,7 @@ impl PgStore {
         let row: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(
                SELECT 1 FROM inference.recommendations
-                WHERE project_id = $1 AND status = 'pending'
+                WHERE workspace_id = $1 AND status = 'pending'
                   AND based_on->>'recommended_model' = $2
              )",
         )
@@ -1281,7 +1281,7 @@ impl PgStore {
             sqlx_core::query_as::query_as(
                 "SELECT id, title, why, evidence, default_acp
              FROM inference.recommendations
-             WHERE project_id = $1 AND status = 'pending'
+             WHERE workspace_id = $1 AND status = 'pending'
              ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
              LIMIT 1",
             )
@@ -1305,7 +1305,7 @@ impl PgStore {
         // FTR-scored sessions. `ftrDelta` per pattern is its folder's FTR minus this.
         let project_ftr_row: (Option<f64>,) = sqlx_core::query_as::query_as(
             "SELECT avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8
-             FROM activity.sessions WHERE project_id = $1 AND ftr IS NOT NULL",
+             FROM activity.sessions WHERE workspace_id = $1 AND ftr IS NOT NULL",
         )
         .bind(project_id)
         .fetch_one(&self.pool)
@@ -1342,7 +1342,7 @@ impl PgStore {
                             AND s.outcome <> 'empty'::sensei.session_outcome) AS folder_ftr,
                         pp.description, pp.example, pp.enforcement,
                         (pp.instances->0->>'max_session_edits')::int8
-                 FROM sensei.project_patterns pp WHERE pp.project_id = $1
+                 FROM sensei.workspace_patterns pp WHERE pp.workspace_id = $1
                  ORDER BY pp.is_anti_pattern, pp.name",
         )
         .bind(project_id)
@@ -1445,7 +1445,7 @@ impl PgStore {
             "SELECT id, title, urgency::text, status::text, verdict::text, why, impact,
                         baseline_ftr::float8, current_ftr::float8, acted_at, measured_at,
                         score::float8, focal, action_type
-                 FROM inference.recommendations WHERE project_id = $1
+                 FROM inference.recommendations WHERE workspace_id = $1
                    AND ($2::text IS NULL OR status::text = $2)
                  ORDER BY focal DESC, score DESC NULLS LAST,
                           CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id

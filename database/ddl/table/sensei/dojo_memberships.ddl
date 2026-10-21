@@ -16,7 +16,7 @@ set search_path to sensei, extensions;
 -- `id` is the SERVICE membership id (dojo.memberships.id), as the dōjō lists it —
 -- NOT locally generated. That makes the one uuid mean
 -- "this membership" everywhere: in the service DB, in this local mirror, and in
--- sensei.projects.dojo_id (which points here; no cross-DB FK — Fork 1).
+-- sensei.workspaces.dojo_id (which points here; no cross-DB FK — Fork 1).
 create table if not exists dojo_memberships (
   id                   uuid        primary key   -- = dojo.memberships.id (service-assigned)
 , registry_url         text        not null      -- the dōjō that issued the persona's session (dojo_client::settings::dojo_url)
@@ -41,16 +41,16 @@ comment on table dojo_memberships is
 'Daemon-local mirror of the Dōjōs this install belongs to. Fork 1: the
 authoritative dojo.memberships row lives in the Dōjō service DB; this row records
 the registry URL, tenant_key, service membership id (as the PK) and routing
-fields so the daemon can route and federate. sensei.projects.dojo_id points at
+fields so the daemon can route and federate. sensei.workspaces.dojo_id points at
 id. Created by the sync from the signed-in persona''s memberships (#236 step 4e);
 holds no credential.';
 
 comment on column dojo_memberships.id
-     is 'The service membership id (dojo.memberships.id), as GET /v1/you/memberships lists it. sensei.projects.dojo_id references this value.';
+     is 'The service membership id (dojo.memberships.id), as GET /v1/you/memberships lists it. sensei.workspaces.dojo_id references this value.';
 comment on column dojo_memberships.kind
      is 'employer | client | community | personal — drives client-precedence routing (see dojo/routing.rs). client-bound work routes to the client Dōjō (credited anonymous); employer is excluded. All shared work is source-dereferenced regardless (always-on invariant).';
 comment on column dojo_memberships.org_slugs
-     is 'Git-remote owner slugs this membership covers (lowercased), mirrored from dojo.memberships.org_slugs. dojo/routing.rs::infer_binding matches a project''s repo owner against this set to SUGGEST a binding (confirm-inferred in the About panel) — it never auto-commits.';
+     is 'Git-remote owner slugs this membership covers (lowercased), mirrored from dojo.memberships.org_slugs. dojo/routing.rs::infer_binding matches a workspace''s repo owner against this set to SUGGEST a binding (confirm-inferred in the About panel) — it never auto-commits.';
 comment on column dojo_memberships.sync_status
      is 'Intended: last-known connection health (healthy | stale | error | authenticating), derived on the daemon side from last_heartbeat_at. NOT IMPLEMENTED — the producer does not exist. Nothing writes last_heartbeat_at anywhere in the codebase, and the only sync_status setter (dojo::memberships::set_sync_status) is dead code with no callers, so every row is stuck at the ''authenticating'' literal written once when the sync joins it. Treat this column as a designed seam, not as data.';
 

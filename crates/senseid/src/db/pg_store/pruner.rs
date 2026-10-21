@@ -61,8 +61,8 @@ impl PgStore {
         // cascades the membership away — they are the only projects this prune
         // can have emptied, and the only ones it may remove.
         let (projects_touched,): (Vec<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-            "SELECT coalesce(array_agg(DISTINCT project_id), '{}')
-               FROM sensei.repositories_in_projects WHERE repository_id = ANY($1)",
+            "SELECT coalesce(array_agg(DISTINCT workspace_id), '{}')
+               FROM sensei.repositories_in_workspaces WHERE repository_id = ANY($1)",
         )
         .bind(&repositories)
         .fetch_one(&mut *tx)

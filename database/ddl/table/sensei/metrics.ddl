@@ -36,7 +36,7 @@ A metric is ACTIVE on a day when day is in [effective_from, coalesce(effective_u
 ''infinity'')). Retirement = a past effective_until; retire_reason records why. A
 genuinely new computation still needs a compiled TaskKind + handler (task_name maps to
 a variant — no string dispatch), so a blocked metric is not seeded until its handler
-ships. Values live in sensei.project_metrics; all roll-ups and the health score are
+ships. Values live in sensei.workspace_metrics; all roll-ups and the health score are
 views over that one store.';
 
 comment on column metrics.key

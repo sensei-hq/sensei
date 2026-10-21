@@ -23,3 +23,6 @@ drop function if exists dojo.grant_project_viewer(uuid, uuid);
 drop function if exists dojo.is_project_viewer(uuid);
 drop function if exists dojo.project_in_my_dojo_or_none(uuid);
 drop function if exists dojo.revoke_project_viewer(uuid, uuid);
+
+-- 2026-10-21 (#307 D30): sensei says workspace. The renamed function replaces this.
+drop function if exists sensei.sole_project_of(uuid);

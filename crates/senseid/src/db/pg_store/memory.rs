@@ -48,9 +48,9 @@ impl PgStore {
             feature,
         } = row;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.memories(project_id, scope, scope_filter, type, title, content, impact, session_id, spine_slot, feature)
+            "INSERT INTO sensei.memories(workspace_id, scope, scope_filter, type, title, content, impact, session_id, spine_slot, feature)
              VALUES($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7, $8, $9::sensei.spine_slot, $10) RETURNING id"
-        ).bind(project_id).bind(scope).bind(scope_filter).bind(mem_type)
+        ).bind(project_id).bind(scope_to_db(scope)).bind(scope_filter).bind(mem_type)
             .bind(title).bind(content).bind(impact).bind(session_id)
             .bind(spine_slot).bind(feature)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
@@ -74,7 +74,7 @@ impl PgStore {
     pub async fn get_memory(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String, Option<String>, f64, String, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content, impact, strength::float8, status::text, modified_at FROM sensei.memories WHERE id = $1"
+                "SELECT id, workspace_id, scope::text, scope_filter, type::text, title, content, impact, strength::float8, status::text, modified_at FROM sensei.memories WHERE id = $1"
             ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.map(
             |(
@@ -91,7 +91,7 @@ impl PgStore {
                 modified,
             )| {
                 serde_json::json!({
-                    "id": id, "project_id": pid, "scope": scope, "scope_filter": filter,
+                    "id": id, "project_id": pid, "scope": scope_to_api(scope), "scope_filter": filter,
                     "type": mtype, "title": title, "content": content, "impact": impact,
                     "strength": strength, "status": status, "modified_at": modified.to_rfc3339(),
                 })
@@ -107,23 +107,23 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid, String, Option<String>, String, String, String, Option<String>, f64)> = match (project_id, scope) {
             (Some(pid), Some(s)) => sqlx_core::query_as::query_as(
                 "SELECT id, scope::text, scope_filter, type::text, title, content, impact, strength::float8
-                 FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND (project_id = $1 OR project_id IS NULL) AND scope = $2::sensei.memory_scope
+                 FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND (workspace_id = $1 OR workspace_id IS NULL) AND scope = $2::sensei.memory_scope
                  ORDER BY strength DESC"
-            ).bind(pid).bind(s).fetch_all(&self.pool).await,
+            ).bind(pid).bind(scope_to_db(s)).fetch_all(&self.pool).await,
             (Some(pid), None) => sqlx_core::query_as::query_as(
                 "SELECT id, scope::text, scope_filter, type::text, title, content, impact, strength::float8
-                 FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND (project_id = $1 OR project_id IS NULL)
+                 FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND (workspace_id = $1 OR workspace_id IS NULL)
                  ORDER BY strength DESC"
             ).bind(pid).fetch_all(&self.pool).await,
             _ => sqlx_core::query_as::query_as(
                 "SELECT id, scope::text, scope_filter, type::text, title, content, impact, strength::float8
-                 FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND project_id IS NULL
+                 FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND workspace_id IS NULL
                  ORDER BY strength DESC"
             ).fetch_all(&self.pool).await,
         }.map_err(|e| e.to_string())?;
 
         Ok(rows.into_iter().map(|(id, scope, filter, mtype, title, content, impact, strength)| {
-            serde_json::json!({ "id": id, "scope": scope, "scope_filter": filter, "type": mtype, "title": title, "content": content, "impact": impact, "strength": strength })
+            serde_json::json!({ "id": id, "scope": scope_to_api(scope), "scope_filter": filter, "type": mtype, "title": title, "content": content, "impact": impact, "strength": strength })
         }).collect())
     }
 
@@ -156,7 +156,7 @@ impl PgStore {
         Ok(rows
             .into_iter()
             .map(|(id, title, scope, impact, strength, modified)| {
-                serde_json::json!({ "id": id, "title": title, "scope": scope,
+                serde_json::json!({ "id": id, "title": title, "scope": scope_to_api(scope),
                                 "impact": impact, "strength": strength,
                                 "modified_at": modified.to_rfc3339() })
             })
@@ -323,7 +323,7 @@ impl PgStore {
                         strength, reinforced_count, violated_count,
                         scope::text, scope_filter, last_relevant_at,
                         generalised, generalised_content
-                 FROM sensei.memories WHERE project_id = $1
+                 FROM sensei.memories WHERE workspace_id = $1
                  ORDER BY last_relevant_at DESC NULLS LAST LIMIT 100",
         )
         .bind(project_id)
@@ -358,7 +358,7 @@ impl PgStore {
                         "strength": strength,
                         "reinforcedCount": reinforced,
                         "violatedCount": violated,
-                        "scope": scope, "scopeFilter": scope_filter,
+                        "scope": scope_to_api(scope), "scopeFilter": scope_filter,
                         "lastRelevantAt": last.map(|t| t.to_rfc3339()),
                         "generalised": generalised,
                         "generalisedContent": generalised_content,
@@ -373,7 +373,7 @@ impl PgStore {
     pub async fn insert_memory(&self, m: &InsertMemory) -> Result<uuid::Uuid, String> {
         let id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.memories
-                (project_id, scope, scope_filter, type, title, content, impact,
+                (workspace_id, scope, scope_filter, type, title, content, impact,
                  tags, triage_signal, status, namespace_id, enforcement, origin, source_id,
                  spine_slot, feature)
              VALUES ($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7,
@@ -383,7 +383,7 @@ impl PgStore {
              RETURNING id",
         )
         .bind(m.project_id)
-        .bind(&m.scope)
+        .bind(scope_to_db(&m.scope))
         .bind(&m.scope_filter)
         .bind(&m.mtype)
         .bind(&m.title)
@@ -562,9 +562,9 @@ impl PgStore {
     ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.memories
-                (project_id, scope, scope_filter, type, title, content, impact, tags,
+                (workspace_id, scope, scope_filter, type, title, content, impact, tags,
                  status, namespace_id, enforcement, origin, source_id)
-             SELECT project_id, scope, scope_filter, type, title, content, impact, tags,
+             SELECT workspace_id, scope, scope_filter, type, title, content, impact, tags,
                     'proposed'::sensei.memory_status,
                     $2,
                     COALESCE($3::sensei.enforcement, enforcement),
@@ -671,11 +671,11 @@ impl PgStore {
             Option<String>,
             chrono::DateTime<chrono::Utc>,
         )> = sqlx_core::query_as::query_as(
-            "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
+            "SELECT id, workspace_id, scope::text, scope_filter, type::text, title, content,
                         impact, strength::float8, status::text, reinforced_count, violated_count,
                         last_relevant_at, tags, triage_signal, modified_at
                    FROM sensei.memories
-                  WHERE ($1::uuid IS NULL OR project_id = $1)
+                  WHERE ($1::uuid IS NULL OR workspace_id = $1)
                     AND ($2::text IS NULL OR status::text = $2)
                     AND ($3::text IS NULL OR scope::text = $3)
                   ORDER BY strength DESC, last_relevant_at DESC NULLS LAST, modified_at DESC
@@ -683,7 +683,7 @@ impl PgStore {
         )
         .bind(project_id)
         .bind(status)
-        .bind(scope)
+        .bind(scope.map(scope_to_db))
         .bind(limit)
         .fetch_all(&self.pool)
         .await
@@ -695,7 +695,7 @@ impl PgStore {
                 serde_json::json!({
                     "id":               r.0,
                     "project_id":       r.1,
-                    "scope":            r.2,
+                    "scope":            scope_to_api(r.2),
                     "scope_filter":     r.3,
                     "type":             r.4,
                     "title":            r.5,
@@ -786,7 +786,7 @@ impl PgStore {
             Option<String>,
             chrono::DateTime<chrono::Utc>,
         )> = sqlx_core::query_as::query_as(
-            "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
+            "SELECT id, workspace_id, scope::text, scope_filter, type::text, title, content,
                         impact, strength::float8, status::text, reinforced_count, violated_count,
                         last_relevant_at, tags, triage_signal, modified_at
                    FROM sensei.memories WHERE id = $1",
@@ -809,7 +809,7 @@ impl PgStore {
         let memory = serde_json::json!({
             "id":               r.0,
             "project_id":       r.1,
-            "scope":            r.2,
+            "scope":            scope_to_api(r.2),
             "scope_filter":     r.3,
             "type":             r.4,
             "title":            r.5,

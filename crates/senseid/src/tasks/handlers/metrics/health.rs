@@ -255,7 +255,7 @@ mod tests {
         // Repo-grain: attribute to the project's primary repository so the row is
         // unique per project under `_v2` (a NULL-repository wrapper row collides across
         // projects seeding the same component key). Carry numerator/denominator so the
-        // pooled `project_metric_daily` view re-derives ratio/pct `value` back to
+        // pooled `workspace_metric_daily` view re-derives ratio/pct `value` back to
         // `value` (count/duration read the stored value directly, ignoring parts).
         let repository_id =
             pg.primary_repository_for_project(pid).await.unwrap().expect(
@@ -301,8 +301,8 @@ mod tests {
     ) -> Option<(f64, serde_json::Value)> {
         query_as(
             "SELECT pm.value::float8, pm.props \
-               FROM sensei.project_metrics pm \
-              WHERE pm.project_id = $1 AND pm.metric_id = $2 \
+               FROM sensei.workspace_metrics pm \
+              WHERE pm.workspace_id = $1 AND pm.metric_id = $2 \
                 AND pm.grain = 'daily'",
         )
         .bind(pid)
@@ -423,7 +423,7 @@ mod tests {
         );
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -758,8 +758,8 @@ mod tests {
 
         // No project_health row exists for this project (honest-empty).
         let (ph_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'project_health'",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'project_health'",
         )
         .bind(pid)
         .fetch_one(pg.pool())

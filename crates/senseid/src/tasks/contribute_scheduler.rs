@@ -247,7 +247,7 @@ mod tests {
         // and the count against THIS one reads 0. Deleting first makes the test
         // independent of how many times it has run before.
         let (project, tenant) = ("_test:dojo:contribute_sched", "github/acme-corp");
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE name = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE name = $1")
             .bind(project)
             .execute(pg.pool())
             .await

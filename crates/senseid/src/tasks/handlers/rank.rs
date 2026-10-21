@@ -2,7 +2,7 @@
 //!
 //! Scores every *pending* recommendation for a project via the pure
 //! [`crate::ranking`] core and marks the single focal "do first" pick. Runs at
-//! the end of [`analyze_project`](super::analyze::analyze_project), after the
+//! the end of [`analyze_workspace`](super::analyze::analyze_workspace), after the
 //! generator and consolidation have written all recs, so the whole pending set
 //! is ranked together. Idempotent: re-running recomputes scores from the
 //! current pattern signal and re-derives the focal pick.

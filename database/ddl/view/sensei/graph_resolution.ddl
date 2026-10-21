@@ -24,15 +24,15 @@ set search_path to sensei, extensions;
 --
 -- reason_codes is joined LEFT for the reason graph_boundary's is: a rung with
 -- no seeded prose must surface raw, never drop the edge that carries it.
--- Dropped before create: `repository_id`/`repository` sit beside `project` rather
+-- Dropped before create: `repository_id`/`repository` sit beside `workspace` rather
 -- than appended, and `create or replace view` can only add columns to the tail.
 drop view if exists graph_resolution;
 
 create or replace view graph_resolution as
 select cg.folder_id
      , cg.folder
-     , cg.project_id
-     , cg.project
+     , cg.workspace_id
+     , cg.workspace
      , rf.repository_id
      , r.name             as repository
      , cg.edge_id
@@ -65,7 +65,7 @@ comment on view graph_resolution is
 rung. The sibling of sensei.graph_boundary — that one is where the graph stops,
 this is where it holds and on what evidence.
 
-Shaped for GROUP BY on folder/project/source_language/resolved_via.
+Shaped for GROUP BY on folder/workspace/source_language/resolved_via.
 reason_codes is joined LEFT so a rung with no prose surfaces raw.
 
 resolved_via is written by the indexer into edges.props->>''rung''; the

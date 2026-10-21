@@ -443,7 +443,7 @@ mod tests {
 
     /// ONE REPOSITORY IN TWO PROJECTS IS COUNTED ONCE in the totals.
     ///
-    /// Membership comes through `folder_projects`, so `core` legitimately
+    /// Membership comes through `folder_workspaces`, so `core` legitimately
     /// appears under both `alpha` and `beta`. The picture draws it twice — that
     /// is what the rings mean — but "how many repositories are there" has one
     /// answer.

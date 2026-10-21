@@ -41,7 +41,7 @@ impl PgStore {
                   , count(*)::int8                                                                AS scored_n
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.props ? 'process'
                 AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome

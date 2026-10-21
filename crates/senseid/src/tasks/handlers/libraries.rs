@@ -536,7 +536,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         count += 1;
 
         // Roll the reference up to the project so it surfaces in
-        // project_libraries_resolved (the Projects screen). Idempotent;
+        // workspace_libraries_resolved (the Projects screen). Idempotent;
         // skips folders with no project (standalone).
         if let Some(pid) = project_id
             && let Err(e) = ctx.pg().upsert_project_library(&lib_id, &pid).await

@@ -801,7 +801,7 @@ async fn project_learned_convention_scopes_to_its_own_project_not_general() {
         .await
         .ok();
     for p in [proj_a, proj_b] {
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(p)
             .execute(pool)
             .await

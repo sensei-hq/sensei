@@ -664,8 +664,8 @@ mod tests {
         // computed_on is stamped to the true commit day D (60 days ago); the row is
         // keyed to the resolved repository at scope=user (I-A/I-B).
         let (rate_on_d,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' \
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' \
                 AND m.key = 'churn_rate' AND pm.computed_on = $2",
         )
         .bind(pid)
@@ -682,7 +682,7 @@ mod tests {
         let again = compute(&ctx, &pid.to_string(), Some(d)).await.unwrap();
         assert_eq!(again, 4, "re-running the same day backfills in place");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -724,8 +724,8 @@ mod tests {
             String,
         )> = query_as(
             "SELECT pm.scope::text, pm.identity, pm.repository_id, pm.commit_sha, pm.grain::text \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'churn_rate' \
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'churn_rate' \
               ORDER BY pm.scope",
         )
         .bind(pid)
@@ -862,7 +862,7 @@ mod tests {
         assert_eq!(written, 0, "no repository / rework / files → zero rows written");
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -929,7 +929,7 @@ mod tests {
             "0 project files → no denominator → NO rework_density row (never a fabricated 0/0)"
         );
         let (total_b,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid_b)
                 .fetch_one(pg.pool())
                 .await
@@ -1003,7 +1003,7 @@ mod tests {
         );
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -1315,7 +1315,7 @@ mod tests {
 
     #[tokio::test]
     async fn metric_ratings_and_project_health_score_views() {
-        // The metric_ratings + project_health_score views: each metric's latest pooled
+        // The metric_ratings + workspace_health_score views: each metric's latest pooled
         // value → a 0-5 rating via its rating_scale (direction-aware bands), then the
         // weighted 0-100 health. Seed coverage (higher_better, wt 3) at 0.86 → rating 4
         // and maintainability (lower_better, wt 3) at 0.001 → rating 5.
@@ -1340,7 +1340,7 @@ mod tests {
             .get("module_quality")
             .expect("module_quality seeded");
 
-        // ratio metrics pool Σnum/Σden in project_metric_daily → value = num/den.
+        // ratio metrics pool Σnum/Σden in workspace_metric_daily → value = num/den.
         pg.upsert_project_metric_repo(&MetricRow {
             metric_id: &cov,
             repository_id: &rid,
@@ -1371,7 +1371,7 @@ mod tests {
         .unwrap();
 
         let ratings: Vec<(String, Option<i32>)> = query_as(
-            "SELECT metric, rating FROM sensei.metric_ratings WHERE project_id = $1 ORDER BY metric",
+            "SELECT metric, rating FROM sensei.metric_ratings WHERE workspace_id = $1 ORDER BY metric",
         ).bind(pid).fetch_all(pg.pool()).await.unwrap();
         let rating_of = |k: &str| ratings.iter().find(|r| r.0 == k).and_then(|r| r.1);
         assert_eq!(rating_of("coverage"), Some(4), "coverage 0.86 → rating 4 (below 0.90)");
@@ -1382,7 +1382,7 @@ mod tests {
         );
 
         let (health, rated): (i32, i32) = query_as(
-            "SELECT health_score, rated_metrics FROM sensei.project_health_score WHERE project_id = $1",
+            "SELECT health_score, rated_metrics FROM sensei.workspace_health_score WHERE workspace_id = $1",
         ).bind(pid).fetch_one(pg.pool()).await.unwrap();
         assert_eq!(rated, 2, "two rated metrics for this project");
         assert_eq!(health, 90, "weighted 0-100 health = round(20 · (3·4 + 3·5)/6) = 90");

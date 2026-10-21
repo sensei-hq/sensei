@@ -42,7 +42,7 @@ pub fn action_weight(action_type: &str) -> f64 {
         "promote_pattern" => 0.85,
         "create_agent" => 0.8,
         "enrich_memory" => 0.6,
-        "cross_project" => 0.6,
+        "cross_workspace" => 0.6,
         "archive_memory" => 0.4,
         "library_update" => 0.55,
         "audit_stale" => 0.25,

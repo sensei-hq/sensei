@@ -14,7 +14,7 @@
 //!   calendar span; `started_at`..`completed_at` still hold the full span.
 //!
 //! Pure derivation is decoupled from the DB so it is unit-testable over an
-//! in-memory slice; the orchestrators (`enrich_session`, `analyze_project`)
+//! in-memory slice; the orchestrators (`enrich_session`, `analyze_workspace`)
 //! handle the I/O.
 
 use super::super::executor::TaskContext;
@@ -710,9 +710,9 @@ pub async fn enrich_session(
     }
 }
 
-/// Handler for `TaskKind::AnalyzeProject`: enrich every attributed session of a
+/// Handler for `TaskKind::AnalyzeWorkspace`: enrich every attributed session of a
 /// project. `task.path` carries the project id (UUID string).
-pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+pub async fn analyze_workspace(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let project_id = task.project_id()?;
     let sessions = ctx.pg().get_project_sessions_needing_enrichment(&project_id).await?;
     let mut enriched = 0u32;
@@ -729,17 +729,17 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
             }
             Ok(false) => {}
             Err(e) => {
-                tracing::warn!(error = %e, session = %id, "analyze_project: enrich_session failed")
+                tracing::warn!(error = %e, session = %id, "analyze_workspace: enrich_session failed")
             }
         }
     }
-    tracing::info!("analyze_project: {} — enriched {} sessions", project_id, enriched);
+    tracing::info!("analyze_workspace: {} — enriched {} sessions", project_id, enriched);
     // L1: derive signals (detected_patterns) for the folders that changed — needs
     // new activity to recompute, and only the affected folders' aggregates moved.
     if enriched > 0 {
         let folders: Vec<uuid::Uuid> = affected.into_iter().collect();
         if let Err(e) = derive_signals(ctx, &project_id, Some(&folders)).await {
-            tracing::warn!(error = %e, project = %project_id, "analyze_project: derive_signals failed");
+            tracing::warn!(error = %e, project = %project_id, "analyze_workspace: derive_signals failed");
         }
     }
     // L2: generate recommendations + learned memories from whatever patterns
@@ -748,39 +748,39 @@ pub async fn analyze_project(ctx: &TaskContext, task: &Task) -> Result<u32, Stri
     // artifact), so existing patterns still surface after a fresh deploy.
     // Degrades independently — a failure here is logged, not fatal.
     if let Err(e) = super::generate::generate_for_project(ctx, &project_id).await {
-        tracing::warn!(error = %e, project = %project_id, "analyze_project: generate failed");
+        tracing::warn!(error = %e, project = %project_id, "analyze_workspace: generate failed");
     }
     // L2 consolidation (#70): batch the strongest findings through the
     // `reasoning` chain for one synthesized recommendation + a reasoning trace.
     // Idempotent (signature-guarded) + degrades to no-op without a model.
     if let Err(e) = super::consolidate::consolidate_for_project(ctx, &project_id).await {
-        tracing::warn!(error = %e, project = %project_id, "analyze_project: consolidate failed");
+        tracing::warn!(error = %e, project = %project_id, "analyze_workspace: consolidate failed");
     }
     // Model-effectiveness rec (#65): if one model clearly out-performs others on
     // this project's FTR, recommend preferring it. Idempotent; degrades to no-op
     // without enough model-tagged sessions.
     if let Err(e) = super::model_insight::model_insight_for_project(ctx, &project_id).await {
-        tracing::warn!(error = %e, project = %project_id, "analyze_project: model_insight failed");
+        tracing::warn!(error = %e, project = %project_id, "analyze_workspace: model_insight failed");
     }
     // Ranking pass (#65 tail): now that generate + consolidate + model_insight
     // have written all recs, score every pending one and mark the focal "do
     // first" pick. Runs last so the whole pending set is ranked together; idempotent.
     if let Err(e) = super::rank::rank_for_project(ctx, &project_id).await {
-        tracing::warn!(error = %e, project = %project_id, "analyze_project: rank failed");
+        tracing::warn!(error = %e, project = %project_id, "analyze_workspace: rank failed");
     }
     // Analysis completion makes this project's (re)synthesized sessions
     // MEASURABLE — a `session_outcomes` day is only countable once the analyzer has
     // set each session's `outcome` — so analysis drives the per-day metric plan
-    // (synthesizer → analyzer → ComputeProjectMetrics), with the daily metrics scheduler
+    // (synthesizer → analyzer → ComputeWorkspaceMetrics), with the daily metrics scheduler
     // as the self-heal backstop. Project id rides in `folder_path` (empty `path`),
     // matching the metrics scheduler's enqueue shape. `enqueue_unique` guards
-    // against a plan storm: analyze runs often, so a ComputeProjectMetrics already
+    // against a plan storm: analyze runs often, so a ComputeWorkspaceMetrics already
     // pending/blocked/running for this project coalesces — the `None` return is
     // intentionally ignored (the in-flight plan already covers this project) and
     // never fails the analyze result.
     let _ = ctx
         .queue
-        .enqueue_unique(Task::new(TaskKind::ComputeProjectMetrics, &project_id.to_string(), ""))
+        .enqueue_unique(Task::new(TaskKind::ComputeWorkspaceMetrics, &project_id.to_string(), ""))
         .await;
     Ok(enriched)
 }
@@ -1425,8 +1425,8 @@ mod tests {
         .await
         .unwrap();
 
-        let task = Task::new(TaskKind::AnalyzeProject, "", &pid.to_string());
-        assert_eq!(analyze_project(&ctx, &task).await.unwrap(), 1, "one session enriched");
+        let task = Task::new(TaskKind::AnalyzeWorkspace, "", &pid.to_string());
+        assert_eq!(analyze_workspace(&ctx, &task).await.unwrap(), 1, "one session enriched");
 
         // session aggregates — duration is now an interval; read back as ms.
         let row: (i32, i32, Option<bool>, Option<String>, Option<f64>) =
@@ -1466,7 +1466,11 @@ mod tests {
 
         // incremental — no assistant_events newer than analyzed_at ⇒ the
         // session is skipped on the next run (cost scales with new activity).
-        assert_eq!(analyze_project(&ctx, &task).await.unwrap(), 0, "unchanged session is skipped");
+        assert_eq!(
+            analyze_workspace(&ctx, &task).await.unwrap(),
+            0,
+            "unchanged session is skipped"
+        );
         let n: (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM activity.turns WHERE session_id = $1",
         )
@@ -1498,7 +1502,7 @@ mod tests {
             .execute(pool)
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(pool)
             .await
@@ -1594,7 +1598,7 @@ mod tests {
 
         let rework: Vec<(String, Option<String>, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
             "SELECT name, instances->0->>'max_session_edits', folder_id FROM inference.detected_patterns
-              WHERE project_id = $1 AND name LIKE 'rework: %' ORDER BY name",
+              WHERE workspace_id = $1 AND name LIKE 'rework: %' ORDER BY name",
         )
         .bind(pid)
         .fetch_all(pg.pool())
@@ -1602,7 +1606,7 @@ mod tests {
         .unwrap();
 
         for sql in [
-            "DELETE FROM inference.detected_patterns WHERE project_id = $1",
+            "DELETE FROM inference.detected_patterns WHERE workspace_id = $1",
             "DELETE FROM activity.sessions WHERE id = $1",
         ] {
             let ids = if sql.contains("sessions") { vec![sid, sid2] } else { vec![pid] };
@@ -1676,7 +1680,7 @@ mod tests {
             .execute(pg.pool())
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(pg.pool())
             .await
@@ -1816,12 +1820,12 @@ mod tests {
         .await
         .unwrap();
 
-        // full wiring: analyze_project enriches (enriched>0) then derives signals.
-        let task = Task::new(TaskKind::AnalyzeProject, "", &pid.to_string());
-        assert_eq!(analyze_project(&ctx, &task).await.unwrap(), 1, "one session enriched");
+        // full wiring: analyze_workspace enriches (enriched>0) then derives signals.
+        let task = Task::new(TaskKind::AnalyzeWorkspace, "", &pid.to_string());
+        assert_eq!(analyze_workspace(&ctx, &task).await.unwrap(), 1, "one session enriched");
 
         let pats: Vec<(String, bool, Option<f64>, i32)> = sqlx_core::query_as::query_as(
-            "SELECT name, is_anti_pattern, confidence::float8, instance_count FROM inference.detected_patterns WHERE project_id = $1 ORDER BY name"
+            "SELECT name, is_anti_pattern, confidence::float8, instance_count FROM inference.detected_patterns WHERE workspace_id = $1 ORDER BY name"
         ).bind(pid).fetch_all(pg.pool()).await.unwrap();
         assert_eq!(
             pats.len(),
@@ -1841,7 +1845,7 @@ mod tests {
         // idempotent: deriving again (whole-project path) upserts the same 3 rows.
         assert_eq!(derive_signals(&ctx, &pid, None).await.unwrap(), 3);
         let n: (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*) FROM inference.detected_patterns WHERE project_id = $1",
+            "SELECT count(*) FROM inference.detected_patterns WHERE workspace_id = $1",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -1851,7 +1855,7 @@ mod tests {
 
         // cleanup
         let pool = pg.pool();
-        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE project_id = $1")
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE workspace_id = $1")
             .bind(pid)
             .execute(pool)
             .await
@@ -1876,7 +1880,7 @@ mod tests {
             .execute(pool)
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(pool)
             .await
@@ -1888,9 +1892,9 @@ mod tests {
         // Analysis completion is what makes a project's (re)synthesized sessions
         // MEASURABLE — `session_outcomes` days become countable only once the
         // analyzer sets each session's `outcome` — so a successful analyze pass
-        // drives the per-day metric plan (synthesizer → analyzer → ComputeProjectMetrics).
+        // drives the per-day metric plan (synthesizer → analyzer → ComputeWorkspaceMetrics).
         // Because analyze runs often, the enqueue is `enqueue_unique`-guarded: a
-        // second pass while the first ComputeProjectMetrics is still in flight must NOT
+        // second pass while the first ComputeWorkspaceMetrics is still in flight must NOT
         // stack a duplicate (the plan-storm guard).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
@@ -1917,7 +1921,7 @@ mod tests {
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
-        // A minimal enrichable session (a prompt + a Stop) so analyze_project
+        // A minimal enrichable session (a prompt + a Stop) so analyze_workspace
         // reaches its success path.
         let prompt = |t: &str| serde_json::json!({ "prompt": t });
         pg.insert_hook_event(&HookEventRow {
@@ -1945,27 +1949,27 @@ mod tests {
         .await
         .unwrap();
 
-        // Count ComputeProjectMetrics enqueued for THIS project (id in folder_path, empty path).
+        // Count ComputeWorkspaceMetrics enqueued for THIS project (id in folder_path, empty path).
         let owner = pid.to_string();
         let count_plans = |snap: &[(TaskKind, String, String)]| -> usize {
             snap.iter()
                 .filter(|(k, f, p)| {
-                    *k == TaskKind::ComputeProjectMetrics && *f == owner && p.is_empty()
+                    *k == TaskKind::ComputeWorkspaceMetrics && *f == owner && p.is_empty()
                 })
                 .count()
         };
 
-        let task = Task::new(TaskKind::AnalyzeProject, "", &pid.to_string());
-        analyze_project(&ctx, &task).await.unwrap();
+        let task = Task::new(TaskKind::AnalyzeWorkspace, "", &pid.to_string());
+        analyze_workspace(&ctx, &task).await.unwrap();
         assert_eq!(
             count_plans(&ctx.queue.snapshot().await),
             1,
-            "analysis completion enqueues exactly one ComputeProjectMetrics for the project",
+            "analysis completion enqueues exactly one ComputeWorkspaceMetrics for the project",
         );
 
-        // A second pass while the first ComputeProjectMetrics is still pending coalesces —
+        // A second pass while the first ComputeWorkspaceMetrics is still pending coalesces —
         // enqueue_unique dedups on (kind, folder_path, path), so no second stacks.
-        analyze_project(&ctx, &task).await.unwrap();
+        analyze_workspace(&ctx, &task).await.unwrap();
         assert_eq!(
             count_plans(&ctx.queue.snapshot().await),
             1,
@@ -1994,7 +1998,7 @@ mod tests {
             .execute(pool)
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(pool)
             .await

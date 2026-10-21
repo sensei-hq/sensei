@@ -41,8 +41,8 @@ impl PgStore {
                   , count(*)::int8 \
                FROM sensei.edges e \
                JOIN sensei.folders f ON f.id = e.folder_id \
-               JOIN sensei.folder_projects fp ON fp.folder_id = e.folder_id \
-              WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL \
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = e.folder_id \
+              WHERE fp.workspace_id = $1 AND f.repository_id IS NOT NULL \
               GROUP BY 1 \
              HAVING count(*) > 0",
         )
@@ -68,8 +68,8 @@ impl PgStore {
                   , count(*)::int8 \
                FROM sensei.nodes n \
                JOIN sensei.folders f ON f.id = n.folder_id \
-               JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id \
-              WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL \
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = n.folder_id \
+              WHERE fp.workspace_id = $1 AND f.repository_id IS NOT NULL \
                 AND n.file_id IS NOT NULL \
                 AND NOT n.is_test \
               GROUP BY 1 \
@@ -97,8 +97,8 @@ impl PgStore {
                   , count(*)::int8 \
                FROM sensei.nodes n \
                JOIN sensei.folders f ON f.id = n.folder_id \
-               JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id \
-              WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL \
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = n.folder_id \
+              WHERE fp.workspace_id = $1 AND f.repository_id IS NOT NULL \
                 AND n.kind IN ('function','method') \
                 AND n.line_start IS NOT NULL AND n.line_end IS NOT NULL \
                 AND n.line_end >= n.line_start \

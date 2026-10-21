@@ -2,7 +2,7 @@ set search_path to activity, sensei, extensions;
 
 create table if not exists runs (
   id              uuid        primary key default gen_random_uuid()
-, project_id      uuid        references sensei.projects(id) on delete set null
+, workspace_id    uuid        references sensei.workspaces(id) on delete set null
 , plan_ref        text        not null default ''
 , plan_graph      jsonb
 , goal            text
@@ -23,7 +23,7 @@ create table if not exists runs (
 , updated_at      timestamptz not null default now()
 );
 
-create index if not exists runs_project_idx on runs(project_id, started_at desc);
+create index if not exists runs_workspace_idx on runs(workspace_id, started_at desc);
 create index if not exists runs_active_idx on runs(status) where status in ('running', 'paused', 'stalled', 'blocked');
 
 comment on table runs is
@@ -40,7 +40,7 @@ comment on column runs.plan_ref
 comment on column runs.plan_graph
      is 'The authored plan graph (phases→tasks with agent/model/spec_ref + per-task state) for a run seeded via register_plan; NULL for ad-hoc/cadence-derived runs. publish_run authors relay segments from this when present, else derives them from run_events. Fetched on demand (off the 16-col RUN_SELECT).';
 comment on column runs.author_name
-     is 'Git author name (user.name, local→global) resolved for the run''s project at start_run — who is doing the work. Matches the commit author + the Dōjō sign-in. NULL when git identity was unresolvable.';
+     is 'Git author name (user.name, local→global) resolved for the run''s workspace at start_run — who is doing the work. Matches the commit author + the Dōjō sign-in. NULL when git identity was unresolvable.';
 comment on column runs.author_email
      is 'Git author email (user.email, local→global) — the identity key. Used to attribute the run to a person; the Dōjō membership resolves it to a login.';
 comment on column runs.paused_until

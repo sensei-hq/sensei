@@ -35,7 +35,7 @@ impl PgStore {
                    FROM activity.transcript_turns tt \
                    JOIN activity.sessions s  ON s.client_session_id = tt.session_id \
                    JOIN sensei.folders    rf ON rf.id = s.repo_folder_id \
-                  WHERE s.project_id = $1 \
+                  WHERE s.workspace_id = $1 \
                     AND rf.repository_id IS NOT NULL \
                     AND tt.tokens_in IS NOT NULL \
                     AND {} \

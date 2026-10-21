@@ -235,7 +235,7 @@ impl PgStore {
     ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, uuid::Uuid, String, String, String, Option<uuid::Uuid>, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, root_id, kind::text, name, abs_path, sensei.sole_project_of(id), props, tags, modified_at FROM sensei.folders WHERE abs_path = $1"
+                "SELECT id, root_id, kind::text, name, abs_path, sensei.sole_workspace_of(id), props, tags, modified_at FROM sensei.folders WHERE abs_path = $1"
             ).bind(abs_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.map(|(id, root_id, kind, name, abs, pid, props, tags, modified)| {
             serde_json::json!({
@@ -250,7 +250,7 @@ impl PgStore {
     pub async fn get_repo_by_name(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, String, Option<uuid::Uuid>, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, abs_path, sensei.sole_project_of(id), props, modified_at FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind) LIMIT 1"
+                "SELECT id, name, abs_path, sensei.sole_workspace_of(id), props, modified_at FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind) LIMIT 1"
             ).bind(name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.map(|(id, name, abs, pid, props, modified)| {
             serde_json::json!({ "id": id, "name": name, "abs_path": abs, "project_id": pid, "props": props, "modified_at": modified.to_rfc3339() })
@@ -342,7 +342,7 @@ impl PgStore {
         repository_id: &uuid::Uuid,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.repositories_in_projects (project_id, repository_id) \
+            "INSERT INTO sensei.repositories_in_workspaces (workspace_id, repository_id) \
              VALUES ($1, $2) ON CONFLICT DO NOTHING",
         )
         .bind(project_id)
@@ -359,7 +359,7 @@ impl PgStore {
     /// `repo_anchor_for` because the column was set ONLY on the repo-root folder
     /// (I16) — that is no longer true: every folder carries its repository,
     /// inherited from its anchor at write time, which is what made
-    /// `folder_projects` indexable. The walk is now redundant work for the same
+    /// `folder_workspaces` indexable. The walk is now redundant work for the same
     /// answer.
     ///
     /// A folder under no tracked repository records NOTHING rather than guessing
@@ -370,7 +370,7 @@ impl PgStore {
         project_id: &uuid::Uuid,
     ) -> Result<(), String> {
         let res = sqlx_core::query::query(
-            "INSERT INTO sensei.repositories_in_projects (project_id, repository_id) \
+            "INSERT INTO sensei.repositories_in_workspaces (workspace_id, repository_id) \
              SELECT $2, f.repository_id FROM sensei.folders f \
               WHERE f.id = $1 AND f.repository_id IS NOT NULL \
              ON CONFLICT DO NOTHING",
@@ -480,8 +480,8 @@ impl PgStore {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
             "SELECT f.abs_path
              FROM sensei.folders f
-             JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-             WHERE fp.project_id = $1 AND f.status = 'indexed'::sensei.folder_status
+             JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+             WHERE fp.workspace_id = $1 AND f.status = 'indexed'::sensei.folder_status
              ORDER BY f.abs_path",
         )
         .bind(project_id)
@@ -506,8 +506,8 @@ impl PgStore {
         let row: Option<(String,)> = sqlx_core::query_as::query_as(
             "SELECT f.abs_path
              FROM sensei.folders f
-             JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-             WHERE fp.project_id = $1 AND f.kind::text IN ('git','standalone')
+             JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+             WHERE fp.workspace_id = $1 AND f.kind::text IN ('git','standalone')
              ORDER BY length(f.abs_path), f.abs_path
              LIMIT 1",
         )
@@ -628,7 +628,7 @@ impl PgStore {
             // silently had no effect.
             // THE CALLER CANNOT NAME A PROJECT. There is no parameter, because
             // since #211 there is no column: membership belongs to the
-            // REPOSITORY (`folders.repository_id` → `repositories_in_projects`),
+            // REPOSITORY (`folders.repository_id` → `repositories_in_workspaces`),
             // and the only writer is `link_project_repository`. Taking a
             // project from the caller is what let the client-q checkout put 362
             // subfolders in a project its repository does not belong to.
@@ -698,7 +698,7 @@ impl PgStore {
         root_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, Option<uuid::Uuid>, serde_json::Value, String)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, path, abs_path, sensei.sole_project_of(id), remote_urls, status::text FROM sensei.folders WHERE root_id = $1 ORDER BY path"
+            "SELECT id, kind::text, name, path, abs_path, sensei.sole_workspace_of(id), remote_urls, status::text FROM sensei.folders WHERE root_id = $1 ORDER BY path"
         ).bind(root_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, name, path, abs, pid, remotes, status)| {
             serde_json::json!({ "id": id, "kind": kind, "name": name, "path": path, "abs_path": abs, "project_id": pid, "remote_urls": remotes, "status": status })
@@ -1036,8 +1036,8 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.repository_id \
                FROM sensei.folders f \
-               JOIN sensei.folder_projects fp ON fp.folder_id = f.id \
-              WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL \
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id \
+              WHERE fp.workspace_id = $1 AND f.repository_id IS NOT NULL \
               GROUP BY f.repository_id \
               ORDER BY min(length(f.abs_path))",
         )
@@ -1060,8 +1060,8 @@ impl PgStore {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.repository_id \
                FROM sensei.folders f \
-               JOIN sensei.folder_projects fp ON fp.folder_id = f.id \
-              WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL \
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id \
+              WHERE fp.workspace_id = $1 AND f.repository_id IS NOT NULL \
               ORDER BY length(f.abs_path) ASC \
               LIMIT 1",
         )
@@ -1102,7 +1102,7 @@ impl PgStore {
     /// resolve the repo through `repo_anchor_for` and then collect its folders
     /// with `f.abs_path LIKE a.repo_abs_path || '/%'` — a function scan feeding
     /// a prefix match over all 13,724 folders, which is the exact pair that made
-    /// `folder_projects` unusable before #210. Every folder now carries its own
+    /// `folder_workspaces` unusable before #210. Every folder now carries its own
     /// `repository_id`, so the same set is one indexed lookup.
     ///
     /// The identities query also gets `edges_owns_folder_idx`, partial on the
@@ -1232,8 +1232,8 @@ impl PgStore {
             "SELECT roots.repository_id, roots.abs_path FROM ( \
                SELECT DISTINCT ON (f.repository_id) f.repository_id, f.abs_path \
                  FROM sensei.folders f \
-                 JOIN sensei.folder_projects fp ON fp.folder_id = f.id \
-                WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL \
+                 JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id \
+                WHERE fp.workspace_id = $1 AND f.repository_id IS NOT NULL \
                 ORDER BY f.repository_id, length(f.abs_path) ASC \
              ) roots \
              ORDER BY length(roots.abs_path) ASC",
@@ -1319,8 +1319,8 @@ impl PgStore {
     pub async fn count_unindexed_folders(&self, project_id: uuid::Uuid) -> Result<i64, String> {
         let row: (i64,) = sqlx_core::query_as::query_as(
             "SELECT COUNT(*) FROM sensei.folders f
-               JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-              WHERE fp.project_id = $1
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+              WHERE fp.workspace_id = $1
                 AND f.status NOT IN ('indexed'::sensei.folder_status, 'failed'::sensei.folder_status)"
         ).bind(project_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
@@ -2081,7 +2081,7 @@ impl PgStore {
             // rule every migrated view applies. A session cannot be attributed
             // to one of two equally-true projects, so it is attributed to
             // neither and the repository carries it instead.
-            "SELECT id, sensei.sole_project_of(id) FROM (
+            "SELECT id, sensei.sole_workspace_of(id) FROM (
                  SELECT id, abs_path AS p, 1 AS live FROM sensei.folders
                  UNION ALL
                  SELECT f.id, a.alias_abs_path AS p, 0 AS live
@@ -2111,11 +2111,11 @@ impl PgStore {
         path: &str,
     ) -> Result<Option<(String, Option<uuid::Uuid>)>, String> {
         let row: Option<(String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            // `sole_project_of` rather than a join: a repository shared by two
+            // `sole_workspace_of` rather than a join: a repository shared by two
             // projects has no single answer, and this returns ONE row. NULL is
             // the honest value there, and the same one an unattributed folder
             // gives — both mean "no project resolves for this path".
-            "SELECT f.abs_path, sensei.sole_project_of(f.id) FROM sensei.folders f
+            "SELECT f.abs_path, sensei.sole_workspace_of(f.id) FROM sensei.folders f
               WHERE f.kind IN ('git','standalone','subtree')
                 AND ($1 = f.abs_path OR $1 LIKE f.abs_path || '/%')
               ORDER BY length(f.abs_path) DESC
@@ -2139,7 +2139,7 @@ impl PgStore {
         abs_path: &str,
     ) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT f.id, sensei.sole_project_of(f.id) FROM sensei.folders f
+            "SELECT f.id, sensei.sole_workspace_of(f.id) FROM sensei.folders f
              WHERE f.abs_path = $1
                 OR f.id = (SELECT folder_id FROM sensei.folder_path_aliases WHERE alias_abs_path = $1)
              ORDER BY (f.abs_path = $1) DESC
@@ -2161,7 +2161,7 @@ impl PgStore {
     pub async fn resolve_repo_anchor(&self, abs_path: &str) -> Result<Option<RepoAnchor>, String> {
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, String)> =
             sqlx_core::query_as::query_as(
-                "SELECT repo_folder_id, project_id, repo_abs_path, matched_via \
+                "SELECT repo_folder_id, workspace_id, repo_abs_path, matched_via \
                  FROM sensei.repo_anchor_for($1)",
             )
             .bind(abs_path)
@@ -2244,7 +2244,7 @@ impl PgStore {
     /// about the checkout ("this repo uses svelte"), and keying it on a
     /// directory let two clones of one repository disagree about which rules
     /// governed them. Never pass a `project`-scope namespace — project
-    /// membership is `repositories_in_projects`, and a second writer for it is
+    /// membership is `repositories_in_workspaces`, and a second writer for it is
     /// what this grain exists to prevent.
     pub async fn link_repository_namespace(
         &self,
@@ -2286,7 +2286,7 @@ impl PgStore {
         folder_id: &uuid::Uuid,
     ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(Option<uuid::Uuid>,)> = sqlx_core::query_as::query_as(
-            "SELECT sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
+            "SELECT sensei.sole_workspace_of(id) FROM sensei.folders WHERE id = $1",
         )
         .bind(folder_id)
         .fetch_optional(&self.pool)

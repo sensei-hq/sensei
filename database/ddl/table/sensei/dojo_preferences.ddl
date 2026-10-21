@@ -11,7 +11,7 @@ create table if not exists dojo_preferences (
 
 comment on table dojo_preferences is
 'Capability → preferred-tool bias for the command surface (the get_commands MCP
-tool + the project-window action buttons). When a project exposes several
+tool + the workspace-window action buttons). When a workspace exposes several
 commands of the same canonical category — e.g. two `test` commands, `cargo test`
 and `cargo nextest` — the preference marks/ranks the one to prefer. `scope` is
 `user` today (the local developer''s own choice); when a Dōjō exists it will also

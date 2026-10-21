@@ -74,7 +74,7 @@ impl PgStore {
                FROM activity.assistant_events ae
                JOIN activity.sessions        s  ON s.client_session_id = ae.session_id
                JOIN sensei.folders           rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id      = $1
+              WHERE s.workspace_id    = $1
                 AND rf.repository_id IS NOT NULL
                 AND ae.event_type    IN ($3, $4)
                 AND {}
@@ -113,7 +113,7 @@ impl PgStore {
                   , count(*) FILTER (WHERE r.status = 'done'::sensei.run_status)::int8 AS done_count
                   , count(*)::int8                                                  AS started_count
                FROM activity.runs r
-              WHERE r.project_id  = $1
+              WHERE r.workspace_id  = $1
                 AND {}
               GROUP BY 1
               ORDER BY 1",
