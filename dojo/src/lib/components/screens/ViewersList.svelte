@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Avatar, Chip, Icon } from '$lib/components/kit';
-	import { viewerLabel, type DojoViewerView, type ViewerProjectView } from '$lib/viewers-view';
+	import { personLabel, type DojoViewerView, type ViewerProjectView } from '$lib/viewers-view';
 
 	// The dōjō's viewers (#307 A3, D8) — people invited in as viewers, not members.
 	// Each row: who they are, the projects granted to them (each with a revoke),
@@ -31,7 +31,7 @@
 {:else}
 	<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 		{#each viewers as v (v.principalId)}
-			{@const label = viewerLabel(v)}
+			{@const label = personLabel(v)}
 			{@const offer = notYetGranted(v)}
 			<div class="border-paper-edge flex flex-col gap-2 border-b px-4 py-3">
 				<div class="flex items-center gap-4">

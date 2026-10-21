@@ -15,6 +15,9 @@
 	import type { InviteState } from '$lib/invite-state.svelte';
 	import InvitePanel from './InvitePanel.svelte';
 	import ViewersList from './ViewersList.svelte';
+	import TeamsList from './TeamsList.svelte';
+	import type { TeamView } from '$lib/teams-view';
+	import type { TeamDraft, SaveTeam } from '$lib/teams-state.svelte';
 	import type { DojoViewerView, ViewerProjectView } from '$lib/viewers-view';
 
 	// The admin Members & Roles / Policies / Audit surface (mockup
@@ -38,7 +41,14 @@
 		viewerProjects = [],
 		onGrantView,
 		onRevokeView,
-		onRemoveViewer
+		onRemoveViewer,
+		teams = [],
+		teamDraft,
+		onSaveTeam,
+		onDeleteTeam,
+		onAddTeamMember,
+		onRemoveTeamMember,
+		onGrantTeam
 	}: {
 		orgName: string;
 		tab?: string;
@@ -58,7 +68,16 @@
 		onGrantView?: (viewer: DojoViewerView, projectId: string) => void;
 		onRevokeView?: (viewer: DojoViewerView, projectId: string) => void;
 		onRemoveViewer?: (viewer: DojoViewerView) => void;
+		/** The dōjō's teams (#307 D7) and the draft behind New team / Rename. */
+		teams?: TeamView[];
+		teamDraft?: TeamDraft;
+		onSaveTeam?: SaveTeam;
+		onDeleteTeam?: (team: TeamView) => void;
+		onAddTeamMember?: (team: TeamView, principalId: string) => void;
+		onRemoveTeamMember?: (team: TeamView, principalId: string) => void;
+		onGrantTeam?: (team: TeamView, projectId: string) => void;
 	} = $props();
+
 
 
 	// The active tab. The nav shares this one screen between the `members` and
@@ -72,6 +91,16 @@
 		override && override.against === tab ? override.id : resolveTab(tab).id
 	);
 	const current = $derived(resolveTab(active));
+
+	/** The header button: Invite on Members / Viewers, New team on Teams. */
+	const cta = $derived.by(() => {
+		if (active === 'members' || active === 'viewers') {
+			const access = active === 'viewers' ? 'viewer' : 'member';
+			return () => invite?.start(access);
+		}
+		if (active === 'teams') return () => teamDraft?.start();
+		return undefined;
+	});
 
 	function select(id: string) {
 		override = { against: tab, id: resolveTab(id).id };
@@ -89,9 +118,7 @@
 					<Btn
 						size="sm"
 						icon="add-circle"
-						onclick={active === 'members' || active === 'viewers'
-							? () => invite?.start(active === 'viewers' ? 'viewer' : 'member')
-							: undefined}>{current.cta}</Btn
+						onclick={cta}>{current.cta}</Btn
 					>
 				{/snippet}
 			</SectionHead>
@@ -171,6 +198,20 @@
 				onRevoke={onRevokeView}
 				onRemove={onRemoveViewer}
 			/>
+		{:else if active === 'teams'}
+			{#if teamDraft}
+				<TeamsList
+					{teams}
+					{members}
+					projects={viewerProjects}
+					draft={teamDraft}
+					onSave={onSaveTeam}
+					onDelete={onDeleteTeam}
+					onAddMember={onAddTeamMember}
+					onRemoveMember={onRemoveTeamMember}
+					onGrant={onGrantTeam}
+				/>
+			{/if}
 		{:else if active === 'policies'}
 			<!-- Policies — the additive role-policy grid. -->
 			<div class="flex flex-col gap-3">

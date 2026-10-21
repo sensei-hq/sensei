@@ -6,8 +6,13 @@ import { ROLE_SURFACE_TABS, resolveTab, tabForSection } from './role-surfaces-vi
 // Pure functions, no DOM.
 
 describe('ROLE_SURFACE_TABS', () => {
-	it('is Members & Roles · Viewers · Policies · Audit in nav order', () => {
-		expect(ROLE_SURFACE_TABS.map((t) => t.id)).toEqual(['members', 'viewers', 'policies', 'audit']);
+	it('is Members & Roles · Viewers · Teams · Policies · Audit in nav order', () => {
+		expect(ROLE_SURFACE_TABS.map((t) => t.id)).toEqual(['members', 'viewers', 'teams', 'policies', 'audit']);
+	});
+
+	it('the Teams tab makes a new team, and says a team grants no access (D7)', () => {
+		expect(resolveTab('teams')).toMatchObject({ title: 'Teams', cta: 'New team' });
+		expect(resolveTab('teams').description).toMatch(/grants no access/);
 	});
 
 	it('each tab says what it is; the ladder reads contributor first (D1)', () => {
@@ -21,7 +26,7 @@ describe('ROLE_SURFACE_TABS', () => {
 	});
 
 	it('drives a distinct header + CTA per tab', () => {
-		const [members, , policies, audit] = ROLE_SURFACE_TABS;
+		const [members, , , policies, audit] = ROLE_SURFACE_TABS;
 		expect(members.title).toBe('Members & Roles');
 		expect(members.cta).toBe('Invite');
 		expect(policies.title).toBe('Role policies');

@@ -4,6 +4,7 @@
 import { DojoApiError } from '$lib/client-data';
 import type { KitEngagement, KitIncident, KitIncidentDetail, KitMember } from '$lib/components/kit/types';
 import type { DojoViewerView } from '$lib/viewers-view';
+import type { TeamView } from '$lib/teams-view';
 
 /** The console writes, already bound to the org's tenant and session token. */
 export interface OrgActions {
@@ -19,6 +20,12 @@ export interface OrgActions {
 	removeViewer: (principalId: string) => Promise<unknown>;
 	grantView: (principalId: string, projectId: string) => Promise<unknown>;
 	revokeView: (principalId: string, projectId: string) => Promise<unknown>;
+	/** The dōjō's teams (#307 D7). `teamId` null creates. */
+	saveTeam: (teamId: string | null, name: string) => Promise<unknown>;
+	deleteTeam: (teamId: string) => Promise<unknown>;
+	addTeamMember: (teamId: string, principalId: string) => Promise<unknown>;
+	removeTeamMember: (teamId: string, principalId: string) => Promise<unknown>;
+	grantTeamView: (teamId: string, projectId: string) => Promise<unknown>;
 }
 
 /** Re-read the section's load (the page passes invalidateAll). */
@@ -37,20 +44,23 @@ export class OrgSectionState {
 		private readonly reload: Reload
 	) {}
 
-	async #act(write: () => Promise<unknown>): Promise<void> {
+	/** Run a write; reload on success; say why on failure. Resolves whether it worked. */
+	async #act(write: () => Promise<unknown>): Promise<boolean> {
 		this.actionError = null;
 		try {
 			await write();
 			await this.reload();
+			return true;
 		} catch (e) {
 			this.actionError = message(e, 'that action could not be completed');
+			return false;
 		}
 	}
 
 	/** Admin — a member's dōjō role (the row carries the underlying user id). */
-	setRole(m: KitMember, role: string): Promise<void> {
+	async setRole(m: KitMember, role: string): Promise<void> {
 		const userId = m.userId;
-		return userId ? this.#act(() => this.actions.setRole(userId, role)) : Promise.resolve();
+		if (userId) await this.#act(() => this.actions.setRole(userId, role));
 	}
 
 	reportIncident = (title: string) => this.#act(() => this.actions.reportIncident(title));
@@ -90,4 +100,13 @@ export class OrgSectionState {
 	/** Admin — grant / revoke a viewer's view of one of the dōjō's projects. */
 	grantView = (v: DojoViewerView, projectId: string) => this.#act(() => this.actions.grantView(v.principalId, projectId));
 	revokeView = (v: DojoViewerView, projectId: string) => this.#act(() => this.actions.revokeView(v.principalId, projectId));
+
+	/** Admin — create (`teamId` null) or rename a team; resolves whether it saved. */
+	saveTeam = (teamId: string | null, name: string) => this.#act(() => this.actions.saveTeam(teamId, name));
+	deleteTeam = (t: TeamView) => this.#act(() => this.actions.deleteTeam(t.id));
+	addTeamMember = (t: TeamView, principalId: string) => this.#act(() => this.actions.addTeamMember(t.id, principalId));
+	removeTeamMember = (t: TeamView, principalId: string) =>
+		this.#act(() => this.actions.removeTeamMember(t.id, principalId));
+	/** Admin — grant everyone now on the team the view of a project. */
+	grantTeamView = (t: TeamView, projectId: string) => this.#act(() => this.actions.grantTeamView(t.id, projectId));
 }

@@ -17,7 +17,18 @@
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
 	import { orgHref, labelForSection } from '$lib/nav';
 	import { requireTenant } from '$lib/org-guard';
-	import { setMemberRole, removeViewer, grantProjectView, revokeProjectView } from '$lib/admin-data';
+	import {
+		setMemberRole,
+		removeViewer,
+		grantProjectView,
+		revokeProjectView,
+		createTeam,
+		renameTeam,
+		deleteTeam,
+		addTeamMember,
+		removeTeamMember,
+		grantTeamProjectView
+	} from '$lib/admin-data';
 	import {
 		createIncident,
 		updateIncident,
@@ -30,6 +41,7 @@
 	} from '$lib/client-data';
 	import { OrgSectionState } from '$lib/org-section-state.svelte';
 	import { InviteState } from '$lib/invite-state.svelte';
+	import { TeamDraft } from '$lib/teams-state.svelte';
 	import { toKitIncidentDetail } from '$lib/incidents-map';
 	import type { KitProject } from '$lib/components/kit/types';
 
@@ -73,12 +85,20 @@
 			removeEngagement: (id) => deleteEngagement(tk(), id, opts()),
 			removeViewer: (pid) => removeViewer(tk(), pid, opts()),
 			grantView: (pid, projectId) => grantProjectView(tk(), pid, projectId, opts()),
-			revokeView: (pid, projectId) => revokeProjectView(tk(), pid, projectId, opts())
+			revokeView: (pid, projectId) => revokeProjectView(tk(), pid, projectId, opts()),
+			saveTeam: (teamId, name) =>
+				teamId ? renameTeam(tk(), teamId, name, opts()) : createTeam(tk(), name, opts()),
+			deleteTeam: (teamId) => deleteTeam(tk(), teamId, opts()),
+			addTeamMember: (teamId, pid) => addTeamMember(tk(), teamId, pid, opts()),
+			removeTeamMember: (teamId, pid) => removeTeamMember(tk(), teamId, pid, opts()),
+			grantTeamView: (teamId, projectId) => grantTeamProjectView(tk(), teamId, projectId, opts())
 		},
 		invalidateAll
 	);
 	// The admin invite (#307 A3): member or viewer; the accept link is on this origin.
 	const invite = new InviteState((input) => createInvite(tk(), input, opts()), page.url.origin);
+	// New team / Rename (#307 A3).
+	const teamDraft = new TeamDraft();
 </script>
 
 <svelte:head><title>{data.title} · {data.orgName} · Dōjō</title></svelte:head>
@@ -136,6 +156,13 @@
 		onGrantView={(v, projectId) => org.grantView(v, projectId)}
 		onRevokeView={(v, projectId) => org.revokeView(v, projectId)}
 		onRemoveViewer={(v) => org.removeViewer(v)}
+		teams={data.teams}
+		{teamDraft}
+		onSaveTeam={(teamId, name) => org.saveTeam(teamId, name)}
+		onDeleteTeam={(t) => org.deleteTeam(t)}
+		onAddTeamMember={(t, pid) => org.addTeamMember(t, pid)}
+		onRemoveTeamMember={(t, pid) => org.removeTeamMember(t, pid)}
+		onGrantTeam={(t, projectId) => org.grantTeamView(t, projectId)}
 	/>
 {:else if data.section === 'scopes'}
 	<ScrScopes orgName={data.orgName} owners={data.scopeOwners} />

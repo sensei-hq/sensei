@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toViewerViews, viewerLabel } from './viewers-view';
+import { toViewerViews, personLabel } from './viewers-view';
 
 // The wire → view mapping for the dōjō's viewers (#307 D8).
 describe('viewers view', () => {
@@ -12,8 +12,8 @@ describe('viewers view', () => {
 	});
 
 	it('labels a viewer by name, else email, else a short id — never an invented name', () => {
-		expect(viewerLabel({ principalId: 'abcdef123456', name: 'Ana', email: 'a@x.co', projects: [] })).toBe('Ana');
-		expect(viewerLabel({ principalId: 'abcdef123456', name: null, email: 'a@x.co', projects: [] })).toBe('a@x.co');
-		expect(viewerLabel({ principalId: 'abcdef123456', name: null, email: null, projects: [] })).toBe('abcdef12');
+		expect(personLabel({ principalId: 'abcdef123456', name: 'Ana', email: 'a@x.co' })).toBe('Ana');
+		expect(personLabel({ principalId: 'abcdef123456', name: null, email: 'a@x.co' })).toBe('a@x.co');
+		expect(personLabel({ principalId: 'abcdef123456', name: null, email: null })).toBe('abcdef12');
 	});
 });
