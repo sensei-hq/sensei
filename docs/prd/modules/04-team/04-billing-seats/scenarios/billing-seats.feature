@@ -76,4 +76,4 @@ Feature: Billing & Seats — tier model, metering, and billing portal (all unbui
   Scenario: no separate Enterprise tier exists
     Given the pricing page
     When it renders
-    Then there are only two tiers (Free, Paid) and self-host/SSO/audit/SLA are options on Paid
+    Then there are only two tiers (Free, Paid) and SSO/audit/SLA are options on Paid

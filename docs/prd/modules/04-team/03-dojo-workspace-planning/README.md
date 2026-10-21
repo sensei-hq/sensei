@@ -59,7 +59,12 @@ knows what the sprint actually changed, and it only ever asks for better.*
 ## Surfaces
 
 - **App** — the Dōjō workspace-detail tabs (`dojo2-project.jsx`): **Repos · Team ·
-  Integrations · Targets · Sprints · Code health**; and the org console
+  Integrations · Targets · Sprints · Code health**. **Team** lists repository roles mirrored
+  from the forge with the admin override (D5) and the workspace's viewers (T6) — no workspace
+  roles. **Sprints** has two modes of one tab: the sprint scorecard, and the targets × sprints
+  matrix. **Code health** embeds the [Code map](../../03-delivery/17-code-map/README.md) with
+  the same lens list and Database · ER; each gated reading (layers, cycles, zone of pain,
+  complexity) opens the lens that explains it; and the org console
   `/org/[slug]/projects/[id]/planning` (tracker connection, gate config, baseline
   view, ratchet history) once the org context is wired (T-2).
 - **Daemon** — `planner.rs` (v0 generate), `plan_graph.rs` (model),
@@ -79,8 +84,14 @@ knows what the sprint actually changed, and it only ever asks for better.*
 - **Lead.** A gate is **delta-scoped** — *new* violations, *changed* functions,
   *guarded* paths — **or a ratchet against the workspace's own trailing baseline**.
   Never a borrowed benchmark, and never an absolute workspace-level ratio (§9.3).
-- **Lead.** The **ratchet advances only when a reading improves and holds** — a
-  single spike never advances the baseline.
+- **Lead.** The **ratchet advances when the trailing 3-sprint median beats the
+  baseline** — a single spike never advances it (V3). Targets 2 (coverage on guarded
+  paths), 5 (zone of pain) and 6 (changed functions over complexity 10) ratchet against
+  the workspace's own baseline; targets 1, 3, 4 and 7 stay delta-scoped at 0 (V4).
+- **Lead.** **A reading from an incomplete index is not evaluated** — it reads *not
+  measured* and can neither block nor pass a close (V12).
+- **Lead.** **Sprint targets read the integration branch (develop); release gates read
+  the production-mapped branch (main)** — see T5 and the sync branch scope (M4).
 - **Lead.** **Inheritance is most-specific-wins** across **Dōjō → Workspace → Sprint
   → Task type → Task**; a target with no value at a scope **inherits** the nearest
   ancestor's.
@@ -96,6 +107,12 @@ knows what the sprint actually changed, and it only ever asks for better.*
   note** (maintainer and up).
 - **Lead.** Client work uses the **client's tracker and gates**; the employer's
   mandatory rules remain a floor.
+
+## Quality headline
+
+A display summary, **never a gate**: the share of gated targets met per sprint, against a
+goal line **the workspace sets** (no dōjō-wide default) — `86% met · goal 80%` (V2). The
+viewer (T6) shows it.
 
 ## The seven gating targets
 
@@ -131,8 +148,9 @@ or sprint gate. They show beside the scorecard for context.
 ## Tracker sync & task linkage
 
 - **Providers** — GitHub, GitLab, Azure Repos, Bitbucket, or a local path.
-- **Read-only** — workspaces, issues/work items, sprints/iterations and task types
-  are pulled into the `PlanGraph`. Nothing is written back.
+- **Read-only** — workspaces, issues/work items, sprints/iterations, task types and
+  **milestones** (Jira versions / epics, ADO milestones — V11) are pulled into the
+  `PlanGraph`. Nothing is written back.
 - **One sprint owner.** Jira or ADO owns the sprint calendar; the other may still
   supply issues and task types.
 - **Task types** map to sensei's kinds — e.g. `Story → feature`, `Bug → bug`,

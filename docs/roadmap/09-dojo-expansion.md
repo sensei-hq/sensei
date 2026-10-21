@@ -23,6 +23,15 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D12 | What is a "workspace"? | **A workspace** — a group of repositories. Renamed everywhere, in one slice: the database, the API, the daemon's sync, both apps and the docs (sensei and the dōjō are both pre-v1). "Workspace" stops being a term. |
 | D13 | What does linking a team to a workspace do? | **Reporting only.** "Teams work on workspaces": the link says which team works on which workspace, so reports split by team. It grants nothing — access stays on repositories (D5) and viewer grants (D8). |
 
+**Viewer decisions V1–V12 (2026-10-21)** — recorded in
+[T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
+quality headline against a goal the workspace sets (V2); the ratchet advances on the trailing
+3-sprint median (V3) for coverage, zone of pain and changed-function complexity (V4); no DORA
+benchmark bands, stability keys against the workspace's guardrail (V5); *low sample* under 5
+deploys (V6); one-person repositories shown (V7); admins grant (V8); no export for outsiders
+(V9); generated health text plus a maintainer note (V10); tracker milestones (V11); a partial
+index is not evaluated (V12).
+
 Already decided elsewhere and kept: **the dōjō wins on conflict** (`docs/spec/2026-08-24-platform-restructure.md` Q1);
 an `origin` column stops push/pull loops (`docs/spec/2026-08-24-shared-schema-and-sync-design.md`).
 Workspaces may now be **created in the dōjō**, which reverses the invariant that the sync is their only
@@ -78,7 +87,7 @@ slice builds, passes and ships on its own.
   thing. An invite screen over the existing invite API, including viewer-only guests (D8).
 - **A4 · Workspaces are writable.** Create, rename and archive a workspace; add, move and remove a
   repository (admins and maintainers of the repositories involved). The workspace detail page with its
-  Repos and People (viewers) tabs; the org drill-in off fixtures.
+  Repos and People (viewers, per [T6](../prd/modules/04-team/06-workspace-viewer/README.md)) tabs; the org drill-in off fixtures.
 
 ### Wave B — dōjō ⇄ sensei, both ways
 

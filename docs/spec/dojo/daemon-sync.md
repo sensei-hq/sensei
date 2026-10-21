@@ -19,6 +19,14 @@
 | dōjō → sensei | one-way (as today) | the sync plan, memberships, resolved rules, relay replies — and, new, the mirrored tickets, deployments, release-gate results and DORA keys |
 | external → dōjō | **read-only pull** | trackers (Jira, Azure Boards, GitHub Issues) and CI (GitHub Actions, Azure Pipelines) — the dōjō reads; nothing writes back |
 
+**Branch scope (user, 2026-10-21; target — not in code).** Code graphs are tagged by branch and the
+latest push per branch wins. Sensei syncs only the configured **core branches** — main and
+develop (the initial default, read from git) plus one more — each mapped to an environment
+(main → production). Sprint targets read the integration branch (develop); release gates read
+the production-mapped branch (main) — T3 and T5. Today the graph is not branch-aware
+(`folders.branch` only feeds metrics); the third branch and a repository with no develop are
+open questions.
+
 Plan: [`roadmap/09-dojo-expansion.md`](../../roadmap/09-dojo-expansion.md) (Wave B) · epic #307.
 
 ## 0. What this overrides in the parent spec

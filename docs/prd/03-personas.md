@@ -64,11 +64,11 @@ used below where the journey docs named them.
 
 | | |
 |---|---|
-| Context | Runs a private Dōjō (in-house or SaaS) for an org. |
+| Context | Runs the org's private Dōjō (hosted). |
 | Goals | Stand up the Dōjō, connect identity, provision members, keep the org data inside the boundary, monitor health. |
-| Jobs-to-be-done | Stand up our own infra or subscribe (T4); connect identity — OIDC / SAML + git OAuth (T1/T2); provision members with the right roles fast (T2); set scopes and policies (T1, M13); monitor the Dōjō (T2). |
+| Jobs-to-be-done | Subscribe (T4); connect identity — OIDC / SAML + git OAuth (T1/T2); provision members with the right roles fast (T2); set scopes and policies (T1, M13); monitor the Dōjō (T2). |
 | "Good" feels like | Provisioning is fast, the org boundary is exact, and the audit trail proves confidentiality held. Payments appear only here, and only for private-shared coordination (T4). |
-| Served by | M13 · T1 · T2 · T4 · P1 (self-host) |
+| Served by | M13 · T1 · T2 · T4 · T6 (grants) |
 
 ### 5 · Engagement / client lead — *"the confidentiality guard"*
 

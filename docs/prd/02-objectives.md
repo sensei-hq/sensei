@@ -66,8 +66,10 @@ The Dōjō is not a linear "segment 5" — it threads through the Observatory an
 workspace window (the developer's flows live **in the Observatory**) and adds a web
 **console**. **Every user logs into the Dōjō** — developer · maintainer · admin ·
 lead; the team benefit is primary, but a developer in multiple teams gets a
-developer console view too. The Dōjō (service + console) deploys **in-house or as
-SaaS**. Its core principles (from the journey map):
+developer console view too. The web Dōjō keeps **Relay and an inbox for contributors**:
+tickets assigned to you in the tracker mirror sit under the relay session that carries
+their key, and tickets with no session yet are listed below them. The Dōjō is a **hosted
+service** — there is no self-hosting (Q14). A dōjō is an organization's or a person's (D11). Its core principles (from the journey map):
 **identity is the discovery · pull never push · never blind, always preview ·
 one universal strip · specificity wins conflicts.**
 
@@ -98,7 +100,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    a1[Stand up<br/>our own infra] --> a2[Connect identity<br/>OIDC / SAML + git OAuth]
+    a1[Subscribe<br/>the org's dōjō] --> a2[Connect identity<br/>OIDC / SAML + git OAuth]
     a2 --> a3[Provision members<br/>right roles, fast] --> a4[Scopes &amp; policies<br/>hierarchy + attribution/confidentiality]
     a4 --> a5[Monitor<br/>keep the Dōjō healthy]
 ```

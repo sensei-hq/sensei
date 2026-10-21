@@ -46,7 +46,7 @@ would ship a regression stops and says why.*
 
 ## Surfaces
 
-- **Dōjō** — workspace detail: a **Releases** tab (deployments, the gate result of each,
+- **Dōjō** — Workspace › **Releases** (drawn in the mockup, `dojo2-project.jsx`): the five keys, the three-part gate, deployments from main, and production incidents with "Record incident"; a **Releases** tab (deployments, the gate result of each,
   the scorecard) and a **Delivery** card with the five keys; the org **DORA** view
   (per workspace, per team, trailing 30/90 days); a **production incidents** list.
 - **Sensei** — the workspace window shows the latest release, its gate result and the
@@ -74,6 +74,14 @@ Five keys, not the classic four (user, 2026-10-21): rework rate is DORA's 2024 a
 and sits with change failure rate on the stability side. Each key shows the number of
 deployments it is computed from, and "not measured" is never a zero.
 
+**No benchmark bands (V5).** The keys carry no elite / high / medium / low bands. Change
+failure rate, time to restore and rework rate read **over / within the workspace's
+stability-guardrail threshold** (below), which the viewer (T6) also shows; deployment
+frequency and lead time carry no threshold.
+
+**Low sample (V6).** A key computed from **fewer than 5 deployments** in the window is
+flagged *low sample* — `0% · 0 of 2 deploys · low sample` — never shown as a confident value.
+
 **Group size.** A key is shown however few people contributed — an aggregate over one
 contributor is still an aggregate, never a per-person view (user, 2026-10-21). This is
 revisited only if comparison charts across people or teams are added.
@@ -81,7 +89,9 @@ revisited only if comparison charts across people or teams are added.
 ## Release gates
 
 A **release** is a production deployment candidate: the change set between the last
-successful production deployment and the candidate commit. Its gate has three parts,
+successful production deployment and the candidate commit. Release gates read the
+**production-mapped branch (main)**; sprint targets read the integration branch (develop) —
+the sync branch scope in M4. Its gate has three parts,
 all evaluated **before** the release is recorded as shippable in the dōjō and shown
 in sensei:
 

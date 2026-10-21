@@ -59,7 +59,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
   (resolution); `attribution.rs` (origin-based strip).
 - **App** — `dojo/src/routes/(app)/you/*` (personal landing); `dojo/src/routes/(app)/org/[slug]/*`
   (org context — target); `dojo/src/routes/v1/*` (Worker API); sign-in
-  (GitHub, magic-link, self-hosted URL).
+  (GitHub, magic-link).
 - **Data** — `dojo.repositories` (visibility: public/private/not-captured),
   `repository_elections`, `repository_metrics`, `memberships`, `shared_rules`,
   `tenants`, `tenant_scopes`, `audit_log`, `audit_events`, `engagements`.

@@ -35,8 +35,9 @@ for everyone below. That half of the console is specified in
 ## In scope / out of scope
 
 - In: the four role definitions and their additive grants:
-  - **Developer** (default) — read-mostly: see workspaces in jurisdiction, preview
-    a workspace's effective constitution, view members.
+  - **Contributor** (default) — read-mostly: see workspaces in jurisdiction, preview
+    a workspace's effective constitution, view members. A device-code sign-in maps to
+    contributor; there is no "read-only" role.
   - **Maintainer** — **manage governance at org level**: author rules/stance on
     the ladder, triage/approve findings, manage knowledge.
   - **Lead** — client engagements, confidentiality, audit trail.
@@ -53,7 +54,12 @@ for everyone below. That half of the console is specified in
     point, the **onboarding preview**, and **playbook-learning proposal
     review** — specified in full below.
   - The personal screens that are already built: `/you/projects`, `/you/inbox`,
-    `/you/relay`, `/library`, `/preview`, `/me`.
+    `/you/relay`, `/library`, `/preview`, `/me`. The **inbox** carries Relay for
+    contributors (Q10, amended 2026-10-21): tickets assigned to you from the tracker
+    mirror sit under the relay session that carries their key; tickets with no session
+    yet are listed below.
+  - The **viewer shell** (T6) is a non-role surface: a viewer is not a member and gets
+    none of the role consoles.
 - Out: the federation backbone (T1), workspace planning against trackers (T3),
   billing/metering (T4).
 
@@ -91,6 +97,9 @@ for everyone below. That half of the console is specified in
 
 - **Lead.** Grants are **additive** — the union of a user's roles is what they
   see. A maintainer + admin sees both governance and roles/policies.
+- **Lead.** **Per-person lists ("By developer") show only where the reader is a
+  maintainer or above on the repositories behind them** (D6). Teams are reporting groups:
+  a team caption never binds a workspace (D7, D13).
 - **Lead.** The personal landing is **always reachable** — the org-switcher
   popover has "Relay · you — all Dōjōs" pinned at top.
 - **Lead.** Role floor: `contributor < maintainer < lead < admin` (`dojo.member_role`; canonical since 2026-10-21).

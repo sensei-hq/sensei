@@ -134,7 +134,7 @@ The line is drawn by **who the knowledge is for**, not by features. A **public /
 open-source** Dōjō and your **personal** solo Dōjō are **free forever** — full
 governance, full Relay. Payment begins only when a Dōjō is **private and shared**
 by a team or org: you pay to *coordinate a group's private knowledge* and for the
-control a business needs (self-hosting, SSO, audit) — never to use sensei, never
+control a business needs (SSO, audit) — never to use sensei, never
 for tokens (inference is BYO-key and local). Tiers + open pricing questions:
 [journeys/dojo → Business model](../journeys/dojo.md#business-model--free-where-public-or-personal).
 

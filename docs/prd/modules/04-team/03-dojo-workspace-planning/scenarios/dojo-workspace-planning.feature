@@ -39,7 +39,7 @@ Feature: Dōjō Workspace Planning — gate/improvement split, targets, and the 
   NO TEST
   Scenario: the ratchet advances only on sustained improvement
     Given a run with a trailing baseline
-    When a reading improves and holds over multiple sprints
+    When the trailing 3-sprint median of a reading beats the baseline
     Then the baseline advances
     When the reading spikes once then drops
     Then the baseline does not advance
@@ -137,3 +137,14 @@ Feature: Dōjō Workspace Planning — gate/improvement split, targets, and the 
     This is unbuilt — org context not wired (T-2).
 MD
 echo "feature 1: $(wc -l < docs/prd/modules/04-team/03-dojo-workspace-planning/scenarios/dojo-workspace-planning.feature) lines"
+  NO TEST
+  Scenario: a reading from a partial index is not evaluated
+    Given a repository still indexing
+    When a sprint closes
+    Then its index-derived targets read "not measured" and neither block nor pass the close
+
+  NO TEST
+  Scenario: sprint targets read develop, release gates read main
+    Given a workspace whose repositories sync develop and main
+    When a sprint target is evaluated
+    Then it reads the develop branch's latest graph

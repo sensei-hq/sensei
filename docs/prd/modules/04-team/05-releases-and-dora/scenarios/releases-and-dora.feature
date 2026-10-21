@@ -107,3 +107,21 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
     Then rework rate counts those two over all production deployments in the window
     And a workspace with neither a tracker nor a hotfix convention shows rework rate as "not measured"
     This is unbuilt.
+
+  # gap: D-3
+  NO TEST
+  Scenario: a key over fewer than 5 deployments is flagged low sample
+    Given a workspace with 2 production deployments in the window
+    When the Delivery card is read
+    Then each key shows "low sample" beside its count
+    This is unbuilt.
+
+  # gap: D-3
+  NO TEST
+  Scenario: stability keys read against the workspace's guardrail, never a benchmark band
+    Given a workspace whose change failure rate threshold is 15%
+    And a trailing change failure rate of 17%
+    When the Delivery card is read
+    Then it reads "over 15%"
+    And no elite / high / medium / low band is shown
+    This is unbuilt.

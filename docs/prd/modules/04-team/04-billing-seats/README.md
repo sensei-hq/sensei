@@ -10,7 +10,9 @@ Billing & Seats is the **business layer**: a private shared Dōjō can be
 subscribed and metered. The model is **free for individuals and open source**;
 **paid per active contributor** for organizations; read-only members are free;
 GitHub Sponsors is optional support. There is **no separate Enterprise tier** —
-self-host, SSO/SCIM, audit retention, SLA become options on the paid org tier.
+SSO/SCIM, audit retention, SLA become options on the paid org tier. There is no
+self-hosting (Q14). **Viewers and invited guests are never metered** — only active
+contributors are.
 The job is **meter what matters (active contributors), bill fairly, keep the
 free tier real**. The user feels this as *I only pay when my team actually uses
 the shared Dōjō, and the free tier isn't a trial.*
@@ -27,7 +29,7 @@ the shared Dōjō, and the free tier isn't a trial.*
   Sponsors support); **active contributor metering** (definition, detection,
   invoicing); plan selection at Dōjō creation; billing portal in org context
   (`/org/[slug]/billing` — admin surface); the **no-Enterprise decision** (fold
-  self-host, SSO/SCIM, audit retention, SLA into paid org options).
+  SSO/SCIM, audit retention, SLA into paid org options).
 - Out: the federation backbone (T1), role consoles (T2), workspace planning (T3),
   the marketing website claims (P2).
 
@@ -51,8 +53,10 @@ the shared Dōjō, and the free tier isn't a trial.*
 - **Lead.** **Paid = per active contributor.** Read-only members are free.
   "Active contributor" = a user who authored a commit/push/contribution in the
   billing window (exact definition TBD — gap).
-- **Lead.** **No separate Enterprise tier.** Self-host, SSO/SCIM, audit
-  retention, SLA are options on the paid org tier.
+- **Lead.** **No separate Enterprise tier.** SSO/SCIM, audit retention, SLA are
+  options on the paid org tier.
+- **Lead.** **Viewers and invited guests are never metered** (T6) — a seat is an active
+  contributor.
 - **Lead.** Plan selection happens at **Dōjō creation** — the `/org/new` flow
   includes the tier choice.
 - **Lead.** The billing portal is **admin-only** in the org context.
@@ -103,7 +107,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ## Open gaps
 
 - **Active contributor definition** — how is "active" defined (seat metering)?
-- **Self-host licensing** — license vs. subscription?
 - **Fair-use limits, storage caps, non-profit/education pricing?**
 - **Payment processor integration** — none selected.
 - **Metering aggregation** — daemon-side not built.
