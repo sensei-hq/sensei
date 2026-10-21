@@ -13,18 +13,18 @@
   dojo.sensei-hq.com once (backfills the personal connection), then a sync pass → check `sensei-hq/sensei` is filed
   under organization/sensei-hq and personal repos under the personal dōjō.
 - #299 S3 done on develop (99cddc18): the relay payload names a project by slug + constitution only.
-- #302 done on develop (17302c40), debug daemon installed: one keychain item per identity. Needs one approval
-  (two prompts this once) → verify `credentials.jerrythomas` present, old items gone; then close.
 - #293 step 1 done for the app (c290f38e … bae2126f) and dōjō `you/[section]` (9f11df08) +
   `org/[slug]/[section]` (785279a6); deep link to a run fixed (a0b8aaf4, live). Next: fold `runs/[run_id]` into
   RelayDetail. #305 (found): inbox answers to a gate are never sent — fix first.
-- Dōjō expansion planned: epic #307, docs/roadmap/09-dojo-expansion.md (decisions D1–D4, 2026-10-21). Wave A
-  after #305 + the run-page fold. Local dōjō verify: a minted magic link for the local layout-verify test account. Step 2 after. #304: 26 writes still swallow failures (fix per screen).
+- Dōjō expansion planned: epic #307, docs/roadmap/09-dojo-expansion.md (D1–D4, 2026-10-21); PRD T5 releases,
+  DORA & release gates (5564841d). Wave A after #305 + the run-page fold.
+- #302 closed live (keychain migrated); #301/#299 verified on the LOCAL dōjō — production needs the daemon
+  enrolled with dojo.sensei-hq.com (user step: Settings → Dōjō → Connection). Local dōjō verify: a minted magic link for the local layout-verify test account. Step 2 after. #304: 26 writes still swallow failures (fix per screen).
 - #294, #297, #298.
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** after `sensei auth approve`: check the keychain migration (#302) and the sync (#301/#299); #305 (inbox replies real), the run-page fold, then epic #307 Wave A.
+**Next command:** #305 (inbox replies real), the run-page fold, then epic #307 Wave A.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
