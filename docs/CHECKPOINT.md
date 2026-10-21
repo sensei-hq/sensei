@@ -1,4 +1,4 @@
-# Checkpoint — 2026-10-20
+# Checkpoint — 2026-10-21
 
 **Slice:** issue burndown (docs/roadmap/08-issue-burndown.md). Waves 1 and 2 done; wave 3 in progress.
 
@@ -23,7 +23,7 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** #307 A3b — viewer-only guest invites (D8: an invite that grants project viewer(s), no membership), then the Teams / People screens. A3a teams-as-groupings done (f01422ee). A2d live check pending a daemon install.
+**Next command:** #307 A3 screens — Teams / People / Viewers, and the invite screen with the member/viewer choice (API done). D8 revised and live (18a532af): a viewer is invited into the dōjō first (dojo_viewers, not a membership), then granted projects. A3a teams done (f01422ee). A2d live check pending a daemon install.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
