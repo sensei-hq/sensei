@@ -1,7 +1,7 @@
 set search_path to dojo, extensions;
 
 -- Grant someone the read-only view of a project (#307 D8). Only an admin of the
--- project's dōjō; the viewer may be anyone — a member, or an outsider in no dōjō.
+-- project's dōjō, and only to someone in it — a member, or a dōjō viewer invited in.
 create or replace function dojo.grant_project_viewer(p_project uuid, p_principal uuid)
     returns void
     language plpgsql
@@ -14,6 +14,18 @@ begin
         raise exception 'only an admin of this project''s dōjō grants its viewers'
             using errcode = 'insufficient_privilege';
     end if;
+    -- In the dōjō first (D8, revised): a member, or someone invited as a dōjō viewer.
+    if not exists (
+        select 1 from dojo.projects p
+         where p.id = p_project
+           and (exists (select 1 from dojo.memberships m
+                         where m.tenant_id = p.tenant_id and m.user_id = p_principal and m.disabled_at is null)
+                or exists (select 1 from dojo.dojo_viewers v
+                            where v.tenant_id = p.tenant_id and v.principal_id = p_principal))
+    ) then
+        raise exception 'invite them to this dōjō as a viewer first'
+            using errcode = 'foreign_key_violation';
+    end if;
     insert into dojo.project_viewers (project_id, principal_id, granted_by)
     values (p_project, p_principal, dojo.current_principal_id())
     on conflict (project_id, principal_id) do nothing;
@@ -24,5 +36,5 @@ revoke all on function dojo.grant_project_viewer(uuid, uuid) from public;
 grant execute on function dojo.grant_project_viewer(uuid, uuid) to authenticated;
 
 comment on function dojo.grant_project_viewer(uuid, uuid) is
-'Grant the read-only project view (#307 D8). Admins of the project''s dōjō only;
-the viewer may be an outsider.';
+'Grant the read-only project view (#307 D8). Admins of the project''s dōjō only, to
+a member or a dōjō viewer of it.';

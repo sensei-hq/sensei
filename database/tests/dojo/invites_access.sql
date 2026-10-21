@@ -72,6 +72,13 @@ begin
 
     insert into dojo.invites (tenant_id, email, role, kind, token, invited_by, expires_at)
     values (t, 'new@example.com', 'contributor', 'employer', 'ztest-tok-ada', ada, now() + interval '7 days');
+    -- #307 D8: an admin issues a VIEWER invite through her own session, and reads
+    -- its access back (the column grants must include `access`).
+    insert into dojo.invites (tenant_id, email, role, kind, access, token, invited_by, expires_at)
+    values (t, 'cfo@example.com', 'contributor', 'client', 'viewer', 'ztest-tok-viewer', ada, now() + interval '7 days');
+    if (select access from dojo.invites where email = 'cfo@example.com') is distinct from 'viewer' then
+        raise exception 'invites: a viewer invite did not read back as viewer';
+    end if;
     begin
         insert into dojo.invites (tenant_id, email, role, kind, token, invited_by, expires_at)
         values (t, 'x@example.com', 'contributor', 'employer', 'ztest-tok-forged', lea, now() + interval '7 days');

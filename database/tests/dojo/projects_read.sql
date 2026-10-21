@@ -9,7 +9,7 @@
 -- |---------------------------------|------------------------------------------|
 -- | a tenant admin                  | every project in the tenant              |
 -- | a role on one of its repos      | the project (#307 D5)                    |
--- | a project viewer                | that project, even from outside (D8)     |
+-- | a project viewer                | that project, members or dōjō viewers (D8)|
 -- | the personal dōjō's owner       | their personal projects (they admin it)  |
 -- | a member with no repo role      | nothing — membership alone reads nothing |
 --
@@ -67,7 +67,9 @@ insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id)
 insert into dojo.repository_roles (repository_id, principal_id, forge_permission, forge_role) values
   ('96000000-0000-4000-8000-000000000061', 'a0000000-0000-4000-8000-000000000061', 'write',    'contributor'),
   ('96000000-0000-4000-8000-000000000061', 'a0000000-0000-4000-8000-000000000062', 'maintain', 'maintainer');
--- vic is in no dōjō: a client granted the read-only view of P.
+-- vic is a client invited into T as a viewer (not a member), granted the view of P.
+insert into dojo.dojo_viewers (tenant_id, principal_id) values
+  ('b0000000-0000-4000-8000-00000000006a', 'a0000000-0000-4000-8000-000000000067');
 insert into dojo.project_viewers (project_id, principal_id) values
   ('c0000000-0000-4000-8000-000000000061', 'a0000000-0000-4000-8000-000000000067');
 
@@ -82,7 +84,7 @@ insert into expect values
   ('zed',   'a1000000-0000-4000-8000-000000000064', ''),     -- member of T and U, no repository role: nothing
   ('carol', 'a1000000-0000-4000-8000-000000000065', '4'),    -- admin of U
   ('bob',   'a1000000-0000-4000-8000-000000000066', ''),     -- tenant lead, no repository role: nothing
-  ('vic',   'a1000000-0000-4000-8000-000000000067', '1');    -- viewer of P, in no dōjō
+  ('vic',   'a1000000-0000-4000-8000-000000000067', '1');    -- dōjō viewer granted P, not a member
 
 do $$
 declare

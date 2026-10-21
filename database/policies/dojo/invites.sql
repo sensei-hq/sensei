@@ -11,9 +11,9 @@ drop policy if exists invites_service_only on dojo.invites;
 
 -- By column: never `token`. It is a bearer, redeemed only through the accept route;
 -- the admin who issues an invite is handed the token the server minted.
-grant select (id, tenant_id, email, role, kind, invited_by, expires_at, accepted_at, created_at)
+grant select (id, tenant_id, email, role, kind, access, invited_by, expires_at, accepted_at, created_at)
     on dojo.invites to authenticated;
-grant insert (tenant_id, email, role, kind, token, invited_by, expires_at) on dojo.invites to authenticated;
+grant insert (tenant_id, email, role, kind, access, token, invited_by, expires_at) on dojo.invites to authenticated;
 
 drop policy if exists invites_read_admin on dojo.invites;
 create policy invites_read_admin on dojo.invites

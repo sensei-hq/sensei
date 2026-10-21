@@ -26,7 +26,13 @@ export interface NewInviteInput {
 	email: string;
 	role: string;
 	kind: string;
+	/** `member` makes a membership at `role`; `viewer` (#307 D8) makes the person a
+	 *  dōjō viewer — not a member — whom an admin then grants selected projects. */
+	access: InviteAccess;
 }
+
+export type InviteAccess = 'member' | 'viewer';
+const INVITE_ACCESS: readonly InviteAccess[] = ['member', 'viewer'];
 
 /** A minimal, conservative email check — a single `@` with non-empty local and
  *  domain parts. The real proof-of-ownership is Supabase auth at accept time;
@@ -47,7 +53,11 @@ export function parseNewInvite(body: Record<string, unknown>): NewInviteInput {
 	if (!(MEMBERSHIP_KINDS as readonly string[]).includes(kind)) {
 		throw new AdminError(400, 'kind must be employer, client, community, or personal');
 	}
-	return { email, role, kind };
+	const access = body.access === undefined ? 'member' : body.access;
+	if (!(INVITE_ACCESS as readonly unknown[]).includes(access)) {
+		throw new AdminError(400, 'access must be member or viewer');
+	}
+	return { email, role, kind, access: access as InviteAccess };
 }
 
 /**
@@ -72,6 +82,7 @@ export async function createInvite(
 			email: input.email,
 			role: input.role,
 			kind: input.kind,
+			access: input.access,
 			token,
 			invited_by: invitedBy,
 			expires_at: expiresAt
@@ -91,6 +102,8 @@ interface InviteRow {
 	email: string;
 	role: string;
 	kind: string;
+	access: InviteAccess;
+	invited_by: string;
 	expires_at: string;
 	accepted_at: string | null;
 }
@@ -99,7 +112,7 @@ async function loadInvite(db: DojoClient, token: string): Promise<InviteRow> {
 	if (!token) throw new AdminError(400, 'token is required');
 	const { data, error } = await db
 		.from('invites')
-		.select('id, tenant_id, email, role, kind, expires_at, accepted_at')
+		.select('id, tenant_id, email, role, kind, access, invited_by, expires_at, accepted_at')
 		.eq('token', token)
 		.maybeSingle();
 	if (error) throw new AdminError(500, error.message);
@@ -116,7 +129,8 @@ async function loadInvite(db: DojoClient, token: string): Promise<InviteRow> {
  *  - the authenticated caller's email matches the invite (else 403 — the real
  *    authorization gate; a leaked token can't be redeemed by anyone else).
  * On success, provisions the membership at the invited role (reusing addMember)
- * and stamps `accepted_at` (single-use). Returns the tenant + role joined.
+ * — or, for a viewer invite (#307 D8), records a dōjō viewer, never a membership —
+ * and stamps `accepted_at` (single-use). Returns the tenant and what was joined.
  */
 export async function acceptInvite(
 	db: DojoClient,
@@ -124,7 +138,7 @@ export async function acceptInvite(
 	callerEmail: string | null,
 	token: string,
 	nowMs: number
-): Promise<{ tenant_id: string; role: string }> {
+): Promise<{ tenant_id: string; role: string | null; access: InviteAccess }> {
 	const invite = await loadInvite(db, token);
 	if (invite.accepted_at) throw new AdminError(409, 'invite already used');
 	if (Date.parse(invite.expires_at) < nowMs) throw new AdminError(410, 'invite expired');
@@ -133,14 +147,25 @@ export async function acceptInvite(
 	if (!callerEmail || callerEmail.trim().toLowerCase() !== invite.email.trim().toLowerCase()) {
 		throw new AdminError(403, 'this invite is for a different email');
 	}
-	// Provision the membership at the invited role (addMember guards a duplicate).
-	await addMember(db, invite.tenant_id, {
-		user_id: userId,
-		kind: invite.kind,
-		authenticated_via: 'sso',
-		// The DB stores a valid `dojo.member_role`; narrow the string to the union.
-		role: invite.role as NewMemberInput['role']
-	});
+	if (invite.access === 'viewer') {
+		// A viewer is in the dōjō but is not a member: no member surface, no
+		// repository — an admin grants them the view of selected projects.
+		const { error } = await db.rpc('add_dojo_viewer', {
+			p_tenant: invite.tenant_id,
+			p_principal: userId,
+			p_invited_by: invite.invited_by
+		});
+		if (error) throw new AdminError(500, error.message);
+	} else {
+		// Provision the membership at the invited role (addMember guards a duplicate).
+		await addMember(db, invite.tenant_id, {
+			user_id: userId,
+			kind: invite.kind,
+			authenticated_via: 'sso',
+			// The DB stores a valid `dojo.member_role`; narrow the string to the union.
+			role: invite.role as NewMemberInput['role']
+		});
+	}
 	// Single-use: stamp accepted (guarded so a race can't re-stamp).
 	const { error } = await db
 		.from('invites')
@@ -148,5 +173,7 @@ export async function acceptInvite(
 		.eq('id', invite.id)
 		.is('accepted_at', null);
 	if (error) throw new AdminError(500, error.message);
-	return { tenant_id: invite.tenant_id, role: invite.role };
+	return invite.access === 'viewer'
+		? { tenant_id: invite.tenant_id, role: null, access: 'viewer' }
+		: { tenant_id: invite.tenant_id, role: invite.role, access: 'member' };
 }

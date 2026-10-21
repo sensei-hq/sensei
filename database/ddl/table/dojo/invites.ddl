@@ -10,6 +10,8 @@ create table if not exists dojo.invites (
 , invited_by   uuid                  not null
 , expires_at   timestamptz           not null
 , accepted_at  timestamptz
+, access       text                  not null default 'member'
+      check (access in ('member', 'viewer'))
 , created_at   timestamptz           not null default now()
 , constraint invites_token_unique unique (token)
 );
@@ -29,6 +31,8 @@ bounds its life. Written/read only via the service_role (`/v1` routes with
 app-level authz: admin floor to issue, email-match to accept) — no client-direct
 access.';
 
+comment on column dojo.invites.access
+     is 'member: accepting makes a membership at `role`. viewer (#307 D8): accepting makes the person a dōjō viewer — not a member — whom an admin then grants the view of selected projects.';
 comment on column dojo.invites.email
      is 'The invited email. The accept path requires the authenticated caller''s email to match (case-insensitive) — the real authorization gate, not the token.';
 comment on column dojo.invites.token

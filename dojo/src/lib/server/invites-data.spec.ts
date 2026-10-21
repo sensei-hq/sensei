@@ -13,7 +13,8 @@ function makeDb(...results: { data?: unknown; error: unknown }[]) {
 		updates: { table?: string; payload: Record<string, unknown> }[];
 		eqs: [string, unknown][];
 		selects: string[];
-	} = { inserts: [], updates: [], eqs: [], selects: [] };
+		rpcs: { fn: string; args: Record<string, unknown> }[];
+	} = { inserts: [], updates: [], eqs: [], selects: [], rpcs: [] };
 	const b: Record<string, unknown> = {};
 	b.from = (t: string) => {
 		captured.table = t;
@@ -38,6 +39,10 @@ function makeDb(...results: { data?: unknown; error: unknown }[]) {
 	b.single = () => Promise.resolve(shift());
 	b.maybeSingle = () => Promise.resolve(shift());
 	b.is = () => Promise.resolve(shift());
+	b.rpc = (fn: string, args: Record<string, unknown>) => {
+		captured.rpcs.push({ fn, args });
+		return Promise.resolve(shift());
+	};
 	return { db: b as unknown as DojoClient, captured };
 }
 
@@ -50,13 +55,20 @@ describe('parseNewInvite', () => {
 		expect(parseNewInvite({ email: 'Ada@Acme.CO', kind: 'client' })).toEqual({
 			email: 'ada@acme.co',
 			role: 'contributor',
-			kind: 'client'
+			kind: 'client',
+			access: 'member'
 		});
 		expect(parseNewInvite({ email: 'a@b.co', role: 'lead', kind: 'employer' }).role).toBe('lead');
 	});
 	it('rejects a garbage email or bad kind (400)', () => {
 		expect(() => parseNewInvite({ email: 'nope', kind: 'client' })).toThrow();
 		expect(() => parseNewInvite({ email: 'a@b.co', kind: 'wizard' })).toThrow();
+	});
+	// #307 D8: a manager or client is invited INTO the dōjō as a viewer — not a
+	// member — before an admin grants them the view of selected projects.
+	it('reads a viewer invite, and refuses an access it does not know', () => {
+		expect(parseNewInvite({ email: 'cfo@acme.co', kind: 'client', access: 'viewer' }).access).toBe('viewer');
+		expect(() => parseNewInvite({ email: 'a@b.co', kind: 'client', access: 'owner' })).toThrow();
 	});
 });
 
@@ -66,11 +78,11 @@ describe('createInvite', () => {
 			data: { id: 'inv1', token: 'tok', email: 'a@b.co', role: 'contributor', expires_at: FUTURE },
 			error: null
 		});
-		const out = await createInvite(db, 't1', 'admin-uid', { email: 'a@b.co', role: 'contributor', kind: 'client' }, NOW);
+		const out = await createInvite(db, 't1', 'admin-uid', { email: 'a@b.co', role: 'contributor', kind: 'client', access: 'member' }, NOW);
 		expect(out.id).toBe('inv1');
 		const payload = captured.inserts[0].payload;
 		expect(captured.inserts[0].table).toBe('invites');
-		expect(payload).toMatchObject({ tenant_id: 't1', email: 'a@b.co', role: 'contributor', kind: 'client', invited_by: 'admin-uid' });
+		expect(payload).toMatchObject({ tenant_id: 't1', email: 'a@b.co', role: 'contributor', kind: 'client', access: 'member', invited_by: 'admin-uid' });
 		expect(typeof payload.token).toBe('string');
 		expect((payload.token as string).length).toBeGreaterThan(20); // crypto.randomUUID
 		expect(Date.parse(payload.expires_at as string)).toBe(NOW + 7 * 24 * 60 * 60 * 1000);
@@ -82,7 +94,7 @@ describe('createInvite', () => {
 			data: { id: 'inv1', email: 'a@b.co', role: 'contributor', expires_at: FUTURE },
 			error: null
 		});
-		const out = await createInvite(db, 't1', 'admin-uid', { email: 'a@b.co', role: 'contributor', kind: 'client' }, NOW);
+		const out = await createInvite(db, 't1', 'admin-uid', { email: 'a@b.co', role: 'contributor', kind: 'client', access: 'member' }, NOW);
 		expect(out.token).toBe(captured.inserts[0].payload.token);
 		for (const cols of captured.selects) expect(cols).not.toMatch(/\btoken\b/);
 	});
@@ -134,7 +146,7 @@ describe('acceptInvite — every gate fails closed, none provisions unless all p
 			{ error: null } // accepted stamp
 		);
 		const out = await acceptInvite(db, 'u1', 'ADA@acme.co', 'tok', NOW);
-		expect(out).toEqual({ tenant_id: 't1', role: 'contributor' });
+		expect(out).toEqual({ tenant_id: 't1', role: 'contributor', access: 'member' });
 		// membership provisioned at the invited role for the caller
 		expect(captured.inserts[0]).toMatchObject({
 			table: 'memberships',
@@ -142,6 +154,21 @@ describe('acceptInvite — every gate fails closed, none provisions unless all p
 		});
 		// single-use stamp, guarded on accepted_at IS NULL
 		expect(captured.updates[0]).toMatchObject({ table: 'invites' });
+		expect(captured.updates[0].payload.accepted_at).toBeTruthy();
+	});
+
+	it('a viewer invite makes the person a dōjō viewer — never a member', async () => {
+		const { db, captured } = makeDb(
+			invite({ access: 'viewer', invited_by: 'admin-1' }), // loadInvite
+			{ data: null, error: null }, // add_dojo_viewer
+			{ error: null } // accepted stamp
+		);
+		const out = await acceptInvite(db, 'u9', 'ada@acme.co', 'tok', NOW);
+		expect(out).toEqual({ tenant_id: 't1', role: null, access: 'viewer' });
+		expect(captured.rpcs).toEqual([
+			{ fn: 'add_dojo_viewer', args: { p_tenant: 't1', p_principal: 'u9', p_invited_by: 'admin-1' } }
+		]);
+		expect(captured.inserts.filter((i) => i.table === 'memberships')).toEqual([]);
 		expect(captured.updates[0].payload.accepted_at).toBeTruthy();
 	});
 });
