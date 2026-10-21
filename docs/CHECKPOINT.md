@@ -23,7 +23,7 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** #307 A3 screens — Teams / People / Viewers, and the invite screen with the member/viewer choice (API done). D8 revised and live (18a532af): a viewer is invited into the dōjō first (dojo_viewers, not a membership), then granted projects. A3a teams done (f01422ee). A2d live check pending a daemon install.
+**Next command:** #307 A3 — the Viewers list (dōjō viewers, remove, grant/revoke projects; needs a list route), then the Teams screen and the `team/<slug>` rename. Done: D8 revised (18a532af), invite screen member/viewer (7e547a19), teams API (f01422ee). A2d live check pending a daemon install.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
