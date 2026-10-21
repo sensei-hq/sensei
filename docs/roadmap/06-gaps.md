@@ -91,7 +91,7 @@ address the gaps"). Ordered by risk; each is a GitHub issue.
 | G-SEC-4 | Relay approval gates fail open on a lost or garbled reply — fail-open is a deliberate contract; the gate never loosens the engine's verdict. Options A/B/C put to the user (recommended C: fail closed for hard-block categories in unattended runs) | #312 | P1 (decision) |
 | G-SEC-5 | Viewer metric reads must be aggregate-only (D6, D8); grants, revokes and exports are not audited (T6) | #313 | P1 (with T6) |
 | G-OPS-1 | Nothing in the dōjō plane verified in production — sync, Relay, push (D27; #184, #299, #301) | #314 | P0 |
-| G-OPS-2 | develop far ahead of main; the next release runs a destructive dōjō reconcile — count, back up, rehearse on a copy | #315 | P0 (before release) |
+| G-OPS-2 | develop far ahead of main; the next release runs a destructive dōjō reconcile — count, back up, rehearse on a copy. **Rehearsed 2026-10-21** on a prod copy: found and fixed a missing-table failure in the rename hook (55b5753d); two passes green, counts held. Waits on the user's go to release | #315 | P0 (before release) |
 | G-FUN-1 | CI / DORA data need a puller that does not depend on a daemon being online (dōjō polling or webhooks) | #316 | P2 (Wave D) |
 | G-FUN-2 | Every daemon pulls a shared tracker — deduplicate before the mirrors drift (D22) | #317 | P2 |
 | G-FUN-3 | Code lags the decisions — part 1 done (5da293d5: contributor, no create-a-dōjō, no self_hosted); left: the team governance scope (D25, waits on client/stack scopes), one tracker per project (D23, needs design) | #318 | P1 |
