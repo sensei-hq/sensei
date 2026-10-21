@@ -13,6 +13,8 @@ create table if not exists dojo.memberships (
 , device_key           text
 , last_heartbeat_at    timestamptz
 , disabled_at          timestamptz
+, disabled_reason      dojo.membership_disabled_reason
+, source               dojo.membership_source not null default 'invited'
 , created_at           timestamptz           not null default now()
 , updated_at           timestamptz           not null default now()
 , constraint memberships_tenant_user_unique unique (tenant_id, user_id)
@@ -49,3 +51,9 @@ comment on column dojo.memberships.device_key
 -- RLS: the access matrix's cells for this table. The policies call the access
 -- predicates and so live in policies/dojo/memberships.sql (see policies/README.md).
 alter table dojo.memberships enable row level security;
+
+comment on column dojo.memberships.source is
+'How the membership came to be (#309): provisioned by org provisioning from a forge proof (leaving the org ends it), or invited by an admin (never touched by provisioning). Defaults to invited, the side that is never ended automatically.';
+
+comment on column dojo.memberships.disabled_reason is
+'Why disabled_at is set (#309): left_org = a complete forge read no longer lists the person in the org; a rejoin restores only these.';

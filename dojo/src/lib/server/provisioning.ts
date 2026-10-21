@@ -337,7 +337,9 @@ async function ensureMembership(
 			user_id: principalId,
 			kind,
 			authenticated_via: authenticatedVia,
-			role
+			role,
+			// Provisioning made it from a forge proof, so leaving the org ends it (#309).
+			source: 'provisioned'
 		})
 		.select('role')
 		.single();
@@ -880,6 +882,20 @@ export async function ensureProvisioned(
 	const tenants: ProvisionedTenant[] = [];
 	for (const org of facts.orgs) {
 		tenants.push(await ensureOrgTenant(db, principalId, facts.provider, org, authenticatedVia));
+	}
+
+	// Leaving an org ends the membership provisioning made there, and with it any
+	// admin or lead power (#309, D5): the database ends the provisioned memberships
+	// of this forge's org dōjōs the read left out, and restores those that ended by
+	// leaving. Only after a COMPLETE read — an org the read could not name must not
+	// look like an org the person left. Invited members are never touched.
+	if (facts.orgsComplete) {
+		const { error } = await db.rpc('reconcile_org_memberships', {
+			p_principal: principalId,
+			p_provider: facts.provider,
+			p_kept: tenants.map((t) => t.id)
+		});
+		if (error) throw new AdminError(500, error.message);
 	}
 
 	return { synced: true, personal, tenants };

@@ -67,6 +67,12 @@ function tables(seed: Partial<Record<string, FakeTable>> = {}): Record<string, F
 		'rpc:mirror_principal_repository_roles': {
 			rows: [],
 			...seed['rpc:mirror_principal_repository_roles']
+		},
+		// Leaving an org ends the membership provisioning made (#309); its own rules
+		// are proven in database/tests/dojo/membership_departure.sql.
+		'rpc:reconcile_org_memberships': {
+			rows: [],
+			...seed['rpc:reconcile_org_memberships']
 		}
 	};
 }
@@ -77,7 +83,8 @@ const FACTS: ForgeFacts = {
 	orgs: [
 		{ id: '11', login: 'sensei-hq', role: 'admin' },
 		{ id: '22', login: 'acme', role: 'member' }
-	]
+	],
+	orgsComplete: true
 };
 
 beforeEach(() => resetFakeIds());
@@ -1180,5 +1187,44 @@ describe('mirrorRepositoryRoles — the per-person forge mirror', () => {
 		expect(failed.synced).toBe(true);
 		expect(failed.roles?.error).toMatch(/502/);
 		expect(failed.roles?.tenants).toBeUndefined();
+	});
+});
+
+// #309: repository roles follow the forge (D5), and so must the org membership
+// provisioning made. After a COMPLETE read of the person's orgs, provisioning
+// asks the database to end the provisioned memberships of orgs the read left out
+// (and restore ones that ended by leaving); after an incomplete read it asks
+// nothing — an org it could not read must not look like an org they left.
+describe('ensureProvisioned — leaving an org ends the membership it made (#309)', () => {
+	it('after a complete read, reconciles against exactly the org dōjōs it proved', async () => {
+		const db = fakeDojoDb(tables());
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		const calls = db.rpcCalls.filter((c) => c.fn === 'reconcile_org_memberships');
+		expect(calls).toEqual([
+			{
+				fn: 'reconcile_org_memberships',
+				args: { p_principal: PRINCIPAL, p_provider: 'github', p_kept: out.tenants.map((t) => t.id) }
+			}
+		]);
+		expect(out.tenants).toHaveLength(2);
+	});
+
+	it('after an incomplete read, ends nothing', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, { ...FACTS, orgsComplete: false });
+		expect(db.rpcCalls.filter((c) => c.fn === 'reconcile_org_memberships')).toEqual([]);
+	});
+
+	it('marks the memberships it makes in org dōjōs as provisioned', async () => {
+		const db = fakeDojoDb(tables());
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		const orgIds = new Set(out.tenants.map((t) => t.id));
+		const rows = db.tables.memberships.rows.filter((m) => orgIds.has(m.tenant_id as string));
+		expect(rows.map((m) => m.source)).toEqual(['provisioned', 'provisioned']);
+	});
+
+	it('a failure to reconcile is an error, not a silent pass', async () => {
+		const db = fakeDojoDb(tables({ 'rpc:reconcile_org_memberships': { rows: [], error: { message: 'boom' } } }));
+		await expect(ensureProvisioned(db as never, PRINCIPAL, FACTS)).rejects.toThrow();
 	});
 });

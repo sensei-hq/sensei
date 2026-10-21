@@ -50,6 +50,9 @@ export interface ForgeFacts {
 	provider: ForgeProvider;
 	user: ForgeUser;
 	orgs: ForgeOrg[];
+	/** Whether `orgs` is every org the person is in. Only a complete read may end
+	 *  the memberships of orgs it leaves out (#309). */
+	orgsComplete: boolean;
 }
 
 const GITHUB_API = 'https://api.github.com';
@@ -121,8 +124,21 @@ export async function fetchGithubUser(
 	return { id, login, name: nonEmpty(body?.name), email: nonEmpty(body?.email) };
 }
 
+/** At most this many pages of org memberships (100 each) are read; a person in
+ *  more is read as an incomplete picture rather than a truncated one (#309). */
+const MAX_ORG_PAGES = 10;
+
+/** The organisations one read found, and whether that read saw every one. */
+export interface ForgeOrgsRead {
+	orgs: ForgeOrg[];
+	/** False when an entry could not be read (no stable id or login): an org the
+	 *  read could not name must not look like an org the person left (#309). */
+	complete: boolean;
+}
+
 /**
- * The organisations GitHub confirms the caller is an ACTIVE member of.
+ * The organisations GitHub confirms the caller is an ACTIVE member of — every
+ * page of them.
  *
  * Uses `/user/memberships/orgs` rather than `/user/orgs` because it carries both
  * the org's stable id and the caller's `role` in one read, and because it
@@ -131,29 +147,39 @@ export async function fetchGithubUser(
  * invited to.
  *
  * An entry missing an id or login is SKIPPED, not defaulted: a connection is a
- * claim of identity, and a guessed one is worse than none (§F7).
+ * claim of identity, and a guessed one is worse than none (§F7) — and the read
+ * is then marked incomplete. A failed request, an answer that is not a list, or
+ * more pages than the cap THROW: provisioning ends the memberships of orgs a
+ * complete read leaves out (#309), so an outage must never read as "left".
  */
 export async function fetchGithubOrgs(
 	token: string,
 	fetchImpl: typeof fetch = fetch
-): Promise<ForgeOrg[]> {
-	const body = await getJson(
-		`${GITHUB_API}/user/memberships/orgs?per_page=100&state=active`,
-		token,
-		fetchImpl
-	);
-	if (!Array.isArray(body)) return [];
+): Promise<ForgeOrgsRead> {
 	const orgs: ForgeOrg[] = [];
-	for (const entry of body) {
-		const m = entry as Record<string, unknown>;
-		if (nonEmpty(m.state) !== 'active') continue;
-		const org = (m.organization ?? {}) as Record<string, unknown>;
-		const id = idText(org.id);
-		const login = nonEmpty(org.login);
-		if (!id || !login) continue;
-		orgs.push({ id, login, role: nonEmpty(m.role) === 'admin' ? 'admin' : 'member' });
+	let complete = true;
+	for (let page = 1; page <= MAX_ORG_PAGES; page++) {
+		const body = await getJson(
+			`${GITHUB_API}/user/memberships/orgs?per_page=100&state=active&page=${page}`,
+			token,
+			fetchImpl
+		);
+		if (!Array.isArray(body)) throw new AdminError(502, 'GitHub returned org memberships that are not a list');
+		for (const entry of body) {
+			const m = entry as Record<string, unknown>;
+			if (nonEmpty(m.state) !== 'active') continue;
+			const org = (m.organization ?? {}) as Record<string, unknown>;
+			const id = idText(org.id);
+			const login = nonEmpty(org.login);
+			if (!id || !login) {
+				complete = false;
+				continue;
+			}
+			orgs.push({ id, login, role: nonEmpty(m.role) === 'admin' ? 'admin' : 'member' });
+		}
+		if (body.length < 100) return { orgs, complete };
 	}
-	return orgs;
+	throw new AdminError(502, `GitHub reports more than ${MAX_ORG_PAGES * 100} org memberships; not reading a partial list`);
 }
 
 /** What one repository read says: its visibility, and its default branch. */
@@ -218,11 +244,11 @@ export async function fetchGithubFacts(
 	token: string,
 	fetchImpl: typeof fetch = fetch
 ): Promise<ForgeFacts> {
-	const [user, orgs] = await Promise.all([
+	const [user, read] = await Promise.all([
 		fetchGithubUser(token, fetchImpl),
 		fetchGithubOrgs(token, fetchImpl)
 	]);
-	return { provider: 'github', user, orgs };
+	return { provider: 'github', user, orgs: read.orgs, orgsComplete: read.complete };
 }
 
 /** GitHub's per-repo permission, as `dojo.forge_permission_to_role` reads it. */

@@ -149,6 +149,8 @@ apply:
     # Drops functions the design no longer has — reconcile prunes orphaned
     # tables but not functions. No-op once they are gone.
     - apply/after/retired_functions.sql
+    # Marks pre-#309 memberships org provisioning made as `provisioned`. Idempotent.
+    - apply/after/membership_source_backfill.sql
 
 import:
   staging:
