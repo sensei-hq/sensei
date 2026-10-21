@@ -20,10 +20,12 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** R3a in progress — an agent works on a branch in a worktree (DDL + in-place rename hook + SQL tests +
-the daemon's SQL; HTTP API unchanged until R3b). The rehearsal copy is `ztest_r3a` (pg_dump of the live 25 GB DB:
-`~/sensei-r3a-dump`; log /tmp/r3a-copy.log). On its report: review the diff, re-run the gates and the rehearsal (twice,
-counts only), then R3b (daemon API + app) on the same branch; merge to develop when R3 is whole.
+**Next command:** R3 on branch `r3-workspace` (worktree .claude/worktrees/agent-a8cdfaacfada2a58c, pushed).
+R3a done there (0ec8271c, 91894026): schema renamed in place + the daemon's SQL. Verified by me: `cargo test -p
+senseid` 3803 passed / 0 failed, SQL suite 47/47; rehearsed twice on `ztest_r3a` (daemon DB copy, counts held) and on
+a copy of the production dōjō (release steps green, in sync, counts held). R3b part 1 (daemon API + desktop app)
+running as an agent on the same branch; then part 2 (ladder rung `project` in both databases + dōjō readers + relay
+`scope_key`), R3c (MCP, CLI, skills, plugin); merge to develop when R3 is whole, then release.
 **R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
 extension_projects; 19 `project_id`-style columns (activity, history, inference, sensei) + staging.memories.project_name;
 17 views (project_metric_*, project_*); fn sole_project_of; enums project_maturity + 'project' in entity_scope,
