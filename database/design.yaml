@@ -141,6 +141,9 @@ apply:
     # Renames dojo.projects & co. to workspaces in place (#307 D12), keeping
     # their rows; dbd would otherwise recreate them empty. No-op afterwards.
     - apply/before/dojo_workspaces_renamed.sql
+    # Deletes pending invites that hold a plain token (#311), only while the
+    # `token` column still exists. No-op afterwards.
+    - apply/before/dojo_invites_token_hashed.sql
   after:
     - apply/after/realtime_publication.sql
     # USAGE on `dojo` for the API roles (+ service_role's table grants) — what

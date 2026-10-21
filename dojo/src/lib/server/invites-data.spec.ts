@@ -1,5 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { parseNewInvite, createInvite, acceptInvite, AdminError, type DojoClient } from './invites-data';
+import {
+	parseNewInvite,
+	createInvite,
+	acceptInvite,
+	hashInviteToken,
+	acceptAttemptsLeft,
+	recordAcceptFailure,
+	AdminError,
+	type DojoClient
+} from './invites-data';
+import { createHash } from 'node:crypto';
+
+const sha256 = (t: string) => createHash('sha256').update(t).digest('hex');
 
 // A chainable stub with an ordered result queue: each terminal (`.single()` /
 // `.maybeSingle()` / `.is()`) shifts the next result, in call order. Captures the
@@ -83,8 +95,10 @@ describe('createInvite', () => {
 		const payload = captured.inserts[0].payload;
 		expect(captured.inserts[0].table).toBe('invites');
 		expect(payload).toMatchObject({ tenant_id: 't1', email: 'a@b.co', role: 'contributor', kind: 'client', access: 'member', invited_by: 'admin-uid' });
-		expect(typeof payload.token).toBe('string');
-		expect((payload.token as string).length).toBeGreaterThan(20); // crypto.randomUUID
+		// Only a hash of the bearer is stored (#311): the token itself never lands in the row.
+		expect(payload.token).toBeUndefined();
+		expect(out.token.length).toBeGreaterThan(20); // crypto.randomUUID
+		expect(payload.token_hash).toBe(sha256(out.token));
 		expect(Date.parse(payload.expires_at as string)).toBe(NOW + 7 * 24 * 60 * 60 * 1000);
 	});
 	// The token is a bearer: no session reads it back (the invites read grant leaves
@@ -95,8 +109,8 @@ describe('createInvite', () => {
 			error: null
 		});
 		const out = await createInvite(db, 't1', 'admin-uid', { email: 'a@b.co', role: 'contributor', kind: 'client', access: 'member' }, NOW);
-		expect(out.token).toBe(captured.inserts[0].payload.token);
-		for (const cols of captured.selects) expect(cols).not.toMatch(/\btoken\b/);
+		expect(sha256(out.token)).toBe(captured.inserts[0].payload.token_hash);
+		for (const cols of captured.selects) expect(cols).not.toMatch(/\btoken/);
 	});
 });
 
@@ -152,9 +166,13 @@ describe('acceptInvite — every gate fails closed, none provisions unless all p
 			table: 'memberships',
 			payload: { tenant_id: 't1', user_id: 'u1', role: 'contributor', kind: 'client' }
 		});
-		// single-use stamp, guarded on accepted_at IS NULL
+		// single-use stamp, guarded on accepted_at IS NULL; the hash goes with it (#311)
 		expect(captured.updates[0]).toMatchObject({ table: 'invites' });
 		expect(captured.updates[0].payload.accepted_at).toBeTruthy();
+		expect(captured.updates[0].payload).toHaveProperty('token_hash', null);
+		// looked up by the token's hash, never the token
+		expect(captured.eqs).toContainEqual(['token_hash', sha256('tok')]);
+		expect(captured.eqs.find(([c]) => c === 'token')).toBeUndefined();
 	});
 
 	it('a viewer invite makes the person a dōjō viewer — never a member', async () => {
@@ -170,5 +188,46 @@ describe('acceptInvite — every gate fails closed, none provisions unless all p
 		]);
 		expect(captured.inserts.filter((i) => i.table === 'memberships')).toEqual([]);
 		expect(captured.updates[0].payload.accepted_at).toBeTruthy();
+	});
+});
+
+describe('hashInviteToken (#311)', () => {
+	it('is the hex SHA-256 of the token', async () => {
+		expect(await hashInviteToken('tok')).toBe(sha256('tok'));
+	});
+});
+
+// #311: failed accepts are counted per person; ten in fifteen minutes and the
+// next attempt is refused before any invite is read.
+describe('accept attempts (#311)', () => {
+	it('counts the caller\'s failures in the last 15 minutes', async () => {
+		const { db, captured } = makeDb();
+		(db as unknown as { gte: unknown }).gte = (c: string, v: unknown) => {
+			captured.eqs.push([c, v]);
+			return Promise.resolve({ count: 3, error: null });
+		};
+		expect(await acceptAttemptsLeft(db, 'u1', NOW)).toBe(7);
+		expect(captured.table).toBe('invite_accept_failures');
+		expect(captured.eqs).toContainEqual(['principal_id', 'u1']);
+		expect(captured.eqs).toContainEqual(['failed_at', new Date(NOW - 15 * 60 * 1000).toISOString()]);
+	});
+
+	it('never goes below zero, and a failed count is an error, not a free pass', async () => {
+		const many = makeDb();
+		(many.db as unknown as { gte: unknown }).gte = () => Promise.resolve({ count: 25, error: null });
+		expect(await acceptAttemptsLeft(many.db, 'u1', NOW)).toBe(0);
+		const broken = makeDb();
+		(broken.db as unknown as { gte: unknown }).gte = () => Promise.resolve({ count: null, error: { message: 'boom' } });
+		await expect(acceptAttemptsLeft(broken.db, 'u1', NOW)).rejects.toMatchObject({ status: 500 });
+	});
+
+	it('records a failure for the caller', async () => {
+		const { db, captured } = makeDb({ error: null });
+		(db as unknown as { insert: unknown }).insert = (p: Record<string, unknown>) => {
+			captured.inserts.push({ table: captured.table, payload: p });
+			return Promise.resolve({ error: null });
+		};
+		await recordAcceptFailure(db, 'u1');
+		expect(captured.inserts).toEqual([{ table: 'invite_accept_failures', payload: { principal_id: 'u1' } }]);
 	});
 });

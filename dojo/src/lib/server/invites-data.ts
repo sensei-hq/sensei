@@ -67,6 +67,7 @@ export async function createInvite(
 	nowMs: number
 ): Promise<{ id: string; token: string; email: string; role: string; expires_at: string }> {
 	const token = crypto.randomUUID();
+	const tokenHash = await hashInviteToken(token);
 	const expiresAt = new Date(nowMs + INVITE_TTL_MS).toISOString();
 	const { data, error } = await db
 		.from('invites')
@@ -76,12 +77,13 @@ export async function createInvite(
 			role: input.role,
 			kind: input.kind,
 			access: input.access,
-			token,
+			// Only a hash of the bearer is stored (#311); the admin is handed the token.
+			token_hash: tokenHash,
 			invited_by: invitedBy,
 			expires_at: expiresAt
 		})
-		// Not `token`: no session reads an invite's token back (the read grant leaves
-		// it out, #236). The admin is handed the one minted above.
+		// Not `token_hash`: no session reads it back (the read grant leaves it out,
+		// #236). The admin is handed the token minted above.
 		.select('id, email, role, expires_at')
 		.single();
 	if (error) throw new AdminError(500, error.message);
@@ -106,7 +108,7 @@ async function loadInvite(db: DojoClient, token: string): Promise<InviteRow> {
 	const { data, error } = await db
 		.from('invites')
 		.select('id, tenant_id, email, role, kind, access, invited_by, expires_at, accepted_at')
-		.eq('token', token)
+		.eq('token_hash', await hashInviteToken(token))
 		.maybeSingle();
 	if (error) throw new AdminError(500, error.message);
 	if (!data) throw new AdminError(404, 'invalid or expired invite');
@@ -162,10 +164,11 @@ export async function acceptInvite(
 			role: invite.role as NewMemberInput['role']
 		});
 	}
-	// Single-use: stamp accepted (guarded so a race can't re-stamp).
+	// Single-use: stamp accepted (guarded so a race can't re-stamp), and drop the
+	// token's hash — an accepted invite needs no bearer (#311).
 	const { error } = await db
 		.from('invites')
-		.update({ accepted_at: new Date(nowMs).toISOString() })
+		.update({ accepted_at: new Date(nowMs).toISOString(), token_hash: null })
 		.eq('id', invite.id)
 		.is('accepted_at', null);
 	if (error) throw new AdminError(500, error.message);
@@ -173,3 +176,35 @@ export async function acceptInvite(
 		? { tenant_id: invite.tenant_id, role: null, access: 'viewer' }
 		: { tenant_id: invite.tenant_id, role: invite.role, access: 'member' };
 }
+
+/** The hex SHA-256 of an invite token — what the row stores and the accept path
+ *  looks up (#311). The token itself is a bearer and is never stored. */
+export async function hashInviteToken(token: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Failed accepts allowed per person within the window before further attempts
+ *  are refused (#311). The token is unguessable; this bounds the guessing anyway. */
+export const ACCEPT_FAILURE_LIMIT = 10;
+const ACCEPT_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+
+/** How many more failed accepts the caller has in the current window (never
+ *  below 0). A failed count is an error — never a free pass. */
+export async function acceptAttemptsLeft(db: DojoClient, principalId: string, nowMs: number): Promise<number> {
+	const since = new Date(nowMs - ACCEPT_FAILURE_WINDOW_MS).toISOString();
+	const { count, error } = await db
+		.from('invite_accept_failures')
+		.select('principal_id', { count: 'exact', head: true })
+		.eq('principal_id', principalId)
+		.gte('failed_at', since);
+	if (error) throw new AdminError(500, error.message);
+	return Math.max(0, ACCEPT_FAILURE_LIMIT - (count ?? 0));
+}
+
+/** Record one failed accept by the caller (#311). */
+export async function recordAcceptFailure(db: DojoClient, principalId: string): Promise<void> {
+	const { error } = await db.from('invite_accept_failures').insert({ principal_id: principalId });
+	if (error) throw new AdminError(500, error.message);
+}
+
