@@ -19,11 +19,11 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
-  Scenario: a stack pack adopted at a level applies from that level down (D29)
-    Given a workspace under the dōjō, with the React pack adopted at the workspace
+  Scenario: a stack applied at a level applies from that level down (D29)
+    Given a workspace under the dōjō, with the React stack's rules and packs applied at the workspace
     When the inherited set of a repository in that workspace is composed
     Then the dōjō contributes
-    And the React pack's rules contribute, attributed to the workspace
+    And the React stack's rules contribute, attributed to the workspace
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
