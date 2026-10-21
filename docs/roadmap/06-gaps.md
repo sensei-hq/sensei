@@ -88,10 +88,10 @@ address the gaps"). Ordered by risk; each is a GitHub issue.
 | ~~G-SEC-1~~ | ~~An admin who leaves the GitHub org keeps their dōjō admin role~~ — fixed (ede5da58): a complete org read ends provisioned memberships the org no longer lists; invited members untouched | #309 closed | — |
 | G-SEC-2 | The dōjō has no secret store, yet D14/D21 hand it shared integration credentials | #310 | P1 (before Wave C) |
 | ~~G-SEC-3~~ | ~~Invite tokens in plain text, accepts unbounded~~ — fixed (f607bf0a): hash only, 429 after 10 failures in 15 min | #311 closed | — |
-| G-SEC-4 | Relay approval gates fail open on a lost or garbled reply — fail-open is a deliberate contract; the gate never loosens the engine's verdict. Options A/B/C put to the user (recommended C: fail closed for hard-block categories in unattended runs) | #312 | P1 (decision) |
+| G-SEC-4 | Relay approval gates fail open on a lost or garbled reply — fail-open is a deliberate contract; the gate never loosens the engine's verdict. **Built 2026-10-21** (D28, 4fcea9de): an unanswered hard-block in an unattended run is denied; live proof with the next release | #312 | P1 |
 | G-SEC-5 | Viewer metric reads must be aggregate-only (D6, D8); grants, revokes and exports are not audited (T6) | #313 | P1 (with T6) |
 | G-OPS-1 | Nothing in the dōjō plane verified in production — sync, Relay, push (D27; #184, #299, #301) | #314 | P0 |
-| G-OPS-2 | develop far ahead of main; the next release runs a destructive dōjō reconcile — count, back up, rehearse on a copy. **Rehearsed 2026-10-21** on a prod copy: found and fixed a missing-table failure in the rename hook (55b5753d); two passes green, counts held. Waits on the user's go to release | #315 | P0 (before release) |
+| G-OPS-2 | develop far ahead of main; the next release runs a destructive dōjō reconcile — count, back up, rehearse on a copy. **Done 2026-10-21:** rehearsed on a prod copy (fixed the rename hook, 55b5753d), then released as v0.16.0 — the production reconcile went exactly as rehearsed and `dbd diff` is in sync | #315 | P0 (before release) |
 | G-FUN-1 | CI / DORA data need a puller that does not depend on a daemon being online (dōjō polling or webhooks) | #316 | P2 (Wave D) |
 | G-FUN-2 | Every daemon pulls a shared tracker — deduplicate before the mirrors drift (D22) | #317 | P2 |
 | G-FUN-3 | Code lags the decisions — part 1 done (5da293d5: contributor, no create-a-dōjō, no self_hosted); left: the team governance scope (D25, waits on client/stack scopes), one tracker per project (D23, needs design) | #318 | P1 |
