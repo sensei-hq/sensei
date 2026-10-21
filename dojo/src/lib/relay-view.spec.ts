@@ -12,7 +12,7 @@ import type { RelayRunStatus, SegmentState, RelayGate } from './relay-data';
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 
-// A gate builder mirroring the RelayGateCard spec — a real RelayGate shape with
+// A gate builder — a real RelayGate shape with
 // overridable fields so each ordering/summary case is explicit about what it varies.
 function gate(overrides: Partial<RelayGate> = {}): RelayGate {
 	return {

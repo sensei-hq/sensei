@@ -49,7 +49,7 @@
 	</aside>
 	<section class="min-h-0 min-w-0 flex-col {active ? 'flex' : 'hidden md:flex'}">
 		{#if relayInboxState.selected}
-			<RelayDetail {send} />
+			<RelayDetail {send} onBack={() => relayInboxState.select(null)} />
 		{:else}
 			{@render children()}
 		{/if}

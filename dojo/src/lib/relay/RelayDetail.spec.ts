@@ -51,4 +51,39 @@ describe('RelayDetail', () => {
 		expect(await findByText('relay unavailable')).toBeTruthy();
 		expect(getByText('Send answer')).toBeTruthy();
 	});
+
+	// #293: the /you/runs/<id> page renders a run through RelayDetail too.
+	it('renders a run it is given, rather than the inbox selection', () => {
+		const [, other] = relayInboxMock();
+		relayInboxState.load(relayInboxMock());
+		relayInboxState.select(null);
+		const { getByText } = render(RelayDetail, { send: vi.fn(), session: { ...other, title: 'a linked run' } });
+		expect(getByText('a linked run')).toBeTruthy();
+	});
+
+	it('shows a notice and a way back when given them', async () => {
+		const [run] = relayInboxMock();
+		const onBack = vi.fn();
+		const { getByText } = render(RelayDetail, { send: vi.fn(), session: run, notice: 'relay timed out', onBack });
+		expect(getByText('relay timed out')).toBeTruthy();
+		await fireEvent.click(getByText('Back to inbox'));
+		expect(onBack).toHaveBeenCalled();
+	});
+
+	it('tells the page an answer landed', async () => {
+		const [run] = relayInboxMock();
+		const ask = { id: 'g-land', action: 'approve' as const, blocking: true, prompt: 'Ship?', options: ['Approve', 'Deny'], createdAt: new Date().toISOString() };
+		const onAnswered = vi.fn();
+		const { getByText } = render(RelayDetail, { send: vi.fn().mockResolvedValue(undefined), session: { ...run, asks: [ask] }, onAnswered });
+		await fireEvent.click(getByText('Approve'));
+		await fireEvent.click(getByText('Send answer'));
+		await vi.waitFor(() => expect(onAnswered).toHaveBeenCalled());
+	});
+
+	it('shows the run’s activity', () => {
+		const [run] = relayInboxMock();
+		const activity = [{ icon: 'check-circle', toneClass: 'text-success', text: 'Fixed the bug', at: '2m' }];
+		const { getByText } = render(RelayDetail, { send: vi.fn(), session: { ...run, activity } });
+		expect(getByText('Fixed the bug')).toBeTruthy();
+	});
 });

@@ -118,24 +118,26 @@ export const relayInboxState = {
 	isSending(askId: string): boolean {
 		return sending[askId] === true;
 	},
-	/** Send an answer to the dōjō the ask's run lives in, as the daemon reads it
-	 *  (`askReply`). The answer is recorded only once the reply lands; otherwise the
-	 *  ask says why and stays open. */
-	async answerAsk(send: SendReply, askId: string, answer: string, note?: string) {
-		const session = sessions.find((x) => x.asks.some((a) => a.id === askId));
-		const ask = session?.asks.find((a) => a.id === askId);
-		if (!session || !ask) {
-			askErrors = { ...askErrors, [askId]: 'this ask is no longer in your inbox' };
-			return;
+	/** Send an answer to the dōjō `run` lives in, as the daemon reads it
+	 *  (`askReply`) — for an inbox run or one opened by a /you/runs link alike. The
+	 *  answer is recorded only once the reply lands; otherwise the ask says why and
+	 *  stays open. Resolves whether it landed. */
+	async answerAsk(send: SendReply, run: RelaySession, askId: string, answer: string, note?: string): Promise<boolean> {
+		const ask = run.asks.find((a) => a.id === askId);
+		if (!ask) {
+			askErrors = { ...askErrors, [askId]: 'this ask is no longer on the run' };
+			return false;
 		}
 		sending = { ...sending, [askId]: true };
 		const { [askId]: _cleared, ...rest } = askErrors;
 		askErrors = rest;
 		try {
-			await send(session.tenantKey, askId, askReply(ask, answer, note));
+			await send(run.tenantKey, askId, askReply(ask, answer, note));
 			answered = { ...answered, [askId]: answer };
+			return true;
 		} catch (e) {
 			askErrors = { ...askErrors, [askId]: e instanceof Error && e.message ? e.message : 'could not send your answer' };
+			return false;
 		} finally {
 			const { [askId]: _done, ...still } = sending;
 			sending = still;

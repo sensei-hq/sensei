@@ -85,6 +85,22 @@ describe('relay-inbox-map', () => {
 		expect(a.options).toEqual(['Approve', 'Deny']);
 	});
 
+	// #293: the run page's activity feed moves into RelayDetail, so the session
+	// carries it — the inbox showed "no activity" for runs that had some.
+	it('toRelaySession carries the run’s activity, newest first', () => {
+		const s = toRelaySession(
+			run(),
+			[],
+			[
+				seg({ id: 'a', title: 'Wrote tests', submitted_at: '2026-07-28T10:00:00Z' }),
+				seg({ id: 'b', title: 'Not yet submitted' }),
+				seg({ id: 'c', title: 'Fixed the bug', submitted_at: '2026-07-28T11:00:00Z' })
+			],
+			'organization/acme'
+		);
+		expect(s.activity.map((e) => e.text)).toEqual(['Fixed the bug', 'Wrote tests']);
+	});
+
 	it('toRelaySession carries the tenant the run belongs to', () => {
 		const s = toRelaySession(run(), [], [], 'organization/acme');
 		expect(s.tenantKey).toBe('organization/acme');

@@ -3,6 +3,7 @@
 // over the user's memberships and maps each run + its gates + its segments into the
 // UI-shaped RelaySession the components/state already consume.
 import type { RelayRun, RelayGate, RelaySegment, RelayRunStatus } from '$lib/relay-data';
+import { segmentsToActivity } from '$lib/relay-map';
 import type {
 	RelaySession,
 	RelayAsk,
@@ -120,7 +121,8 @@ export function toRelaySession(
 		attention: attentionOf(run.status),
 		plan: toSessionPlan(segments),
 		asks: gates.map((g) => toAsk(g, segTitleById)),
-		tenantKey
+		tenantKey,
+		activity: segmentsToActivity(segments)
 	};
 }
 
@@ -128,7 +130,7 @@ export function toRelaySession(
  * An answer to an ask as the daemon reads it (`dojo/gate.rs::decision_from_reply`,
  * fail-open — only `verdict: 'deny'` blocks). An approval is a verdict; a decision
  * is the chosen option, or the typed line; a resume or chat is text. A note rides
- * along, as RelayGateCard sends it.
+ * along.
  */
 export function askReply(ask: RelayAsk, answer: string, note?: string): Record<string, unknown> {
 	const a = answer.trim();

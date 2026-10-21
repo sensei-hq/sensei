@@ -2,6 +2,7 @@
 // (relay-inbox.ts) maps `relay_sessions`/`relay_inbox`/`relay_segments` → these.
 // Keeping them UI-shaped is what lets components + tests ignore the API and lets
 // the mock/real Load swap without touching component or state.
+import type { KitActivity } from '$lib/components/kit/types';
 
 export type RelayStatus = 'running' | 'stalled' | 'blocked' | 'paused' | 'done' | 'failed';
 
@@ -81,6 +82,8 @@ export interface RelaySession {
 	asks: RelayAsk[];
 	/** The dōjō the run lives in — where a reply to its asks is sent. */
 	tenantKey: string;
+	/** What the run has submitted, newest first. */
+	activity: KitActivity[];
 }
 
 export type RelayFilter = 'needs' | 'running' | 'finished' | 'all';
