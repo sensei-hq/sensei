@@ -118,6 +118,13 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   board"; 404 `task_not_on_board`. The full and discovery applies share their SQL helpers.
   Found by the tests: the shared candidate fragment's `tr` alias shadowed an outer `tr`.
   C33/C34 still need a live check on the tenant.
+- **F9 backlog** ✅ (asked for 2026-10-21) tickets no live sprint lists: `GET …/backlog`
+  ({tickets, usage}, each session once), `?backlog=true` on the ticket list (422 with
+  `sprint=`), a Backlog row on the Sprints screen, `usage --backlog` and a backlog line in
+  `sensei tracker sprints`. One ticket query serves all/sprint/backlog (`TaskScope`).
+  Live: 199 backlog tickets on board 333, P057542601-782/783 among them.
+- **Live discovery check (2026-10-21):** lookup fetched P057542601-782 in 1.6 s; a Claude
+  Code session naming P057542601-783 had it inserted and linked 0.7 s after ingest.
 - **Next:** F5 live verification once Claude Code transcript consent is on.
 
 ## Gate for `/sensei:build`

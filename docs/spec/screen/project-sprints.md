@@ -58,8 +58,15 @@ message (same words as the Integrations screen's table; one shared mapping) and 
      sessions (branch/prompt) · active AI time · fresh tokens · out tokens · cost. A
      ticket whose current sprint is another sprint shows "now in <name>". Rows are
      buttons that open the ticket.
+   - (The Backlog row, below, uses the same ticket table.)
    - **Shared note**: when any ticket's `usage.shared > 0`, under the table: "A session
      linked to several tickets counts in full for each; the sprint total counts it once."
+2b. **Backlog** — the last row of the sprint list, "Backlog · N tickets" (from
+   `GET …/backlog`), selectable like a sprint. Its detail: "N tickets in no sprint",
+   then one usage line — **Linked to backlog tickets**: sessions, **active AI time**,
+   fresh tokens — all-time (the backlog has no window), each session once; then the
+   same ticket table (`GET …/tracker-tasks?backlog=true`). No "Not linked" part (that
+   needs a window). A failed backlog read is the daemon error, never "0 tickets".
 3. **Ticket detail** (replaces the table; **Back to Sprint N** returns): key, summary,
    status, the usage strip for the ticket, **By repository** (name, sessions, active AI
    time, fresh tokens), and **Sessions** (started, the links as text — "branch", "prompt
@@ -87,6 +94,7 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 5. Every unknown number renders "—"; a genuinely zero session count renders `0`.
 6. A ticket opens to its by-repository breakdown and its sessions, each linking to the
    replay; a session that wrote an old key shows "as <old key>".
+6b. The Backlog row lists exactly the tickets no sprint has (a discovered backlog ticket appears there at once); its total counts a session once.
 7. a11y: list rows and ticket rows are buttons with names; the selected sprint is
    `aria-current`; axe finds no serious/critical violations in the four states.
 

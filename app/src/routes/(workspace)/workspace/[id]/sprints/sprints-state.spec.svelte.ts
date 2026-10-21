@@ -3,7 +3,7 @@
 // What must never happen here: "no tracker connected" because a read failed, a
 // 0 where the daemon said null, or a sprint total built by adding its tickets.
 import { describe, it, expect } from 'vitest';
-import { SprintsState, usageCells, type SprintsApi } from './sprints-state.svelte.js';
+import { BACKLOG, SprintsState, usageCells, type SprintsApi } from './sprints-state.svelte.js';
 import type { ApiResult } from '$lib/api.js';
 import type {
   SprintUsageRow,
@@ -115,6 +115,14 @@ function daemon(over: Partial<SprintsApi> = {}) {
           },
         ],
       });
+    },
+    tryGetBacklog: async () => {
+      calls.push('backlog');
+      return ok({ tickets: 2, usage: usage({ sessions: 1, by_source: { branch: 1, prompt: 0 }, active_secs: 600, active_n: 1 }) });
+    },
+    tryListBacklogTasks: async () => {
+      calls.push('backlog-tasks');
+      return ok([task({ key: 'P-783', current_sprint: null, sprints: [] })]);
     },
     tryListUnlinkedSessions: async (_p, s) => {
       calls.push(`unlinked:${s}`);
@@ -298,5 +306,39 @@ describe('unlinked sessions', () => {
     await s.toggleUnlinked();
     expect(s.unlinked).toBe(null);
     expect(s.unlinkedError).toBe('The sensei daemon didn’t respond.');
+  });
+});
+
+describe('the backlog (tickets in no sprint)', () => {
+  it('is the last row of the sprint list, with its ticket count', async () => {
+    const { s } = await ready();
+    expect(s.rows.at(-1)).toEqual({
+      id: BACKLOG,
+      name: 'Backlog',
+      state: 'no sprint',
+      dates: '',
+      tickets: '2 tickets',
+      current: false,
+    });
+  });
+
+  it('selecting it reads the backlog’s tickets and shows its own total, each session once', async () => {
+    const { s, calls } = await ready();
+    await s.select(BACKLOG);
+    expect(calls).toContain('backlog-tasks');
+    expect(s.tasks?.map((t) => t.key)).toEqual(['P-783']);
+    expect(s.rows.at(-1)?.current).toBe(true);
+    expect(s.strip).toEqual({
+      kind: 'window',
+      total: '2 tickets in no sprint',
+      parts: [{ label: 'Linked to backlog tickets', sessions: '1', active: '10m', fresh: '—' }],
+    });
+    expect(s.movedTo(s.tasks![0])).toBe(null);
+  });
+
+  // A failed backlog read is never "0 tickets in no sprint".
+  it('a failed backlog read is the daemon error', async () => {
+    const { s } = await ready({ tryGetBacklog: async () => fail(500, 'internal') });
+    expect([s.view, s.loadError]).toEqual(['daemon_error', 'The sensei daemon hit a database error.']);
   });
 });

@@ -387,7 +387,21 @@ async fn known_sprint(
 pub(crate) struct SprintQuery {
     sprint: Option<String>,
     #[serde(default)]
+    backlog: bool,
+    #[serde(default)]
     include_removed: bool,
+}
+
+/// `GET /api/workspaces/{id}/backlog`
+pub(crate) async fn get_backlog(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let tracker = match connected(&state, &id).await {
+        Ok(t) => t,
+        Err(r) => return r.into_response(),
+    };
+    match crate::tracker::usage::backlog_usage(&state.pg, tracker.id).await {
+        Ok(b) => Json(b).into_response(),
+        Err(_) => internal().into_response(),
+    }
 }
 
 /// `GET /api/workspaces/{id}/sprints`
@@ -448,7 +462,16 @@ pub(crate) async fn list_tracker_tasks(
         },
         None => None,
     };
-    let tasks = match state.pg.tracker_task_rows(tracker.id, sprint, q.include_removed).await {
+    use crate::db::pg_store::tracker_usage::TaskScope;
+    let scope = match (sprint, q.backlog) {
+        (Some(_), true) => {
+            return fail(StatusCode::UNPROCESSABLE_ENTITY, "sprint_or_backlog").into_response();
+        }
+        (Some(id), false) => TaskScope::Sprint(id),
+        (None, true) => TaskScope::Backlog,
+        (None, false) => TaskScope::All,
+    };
+    let tasks = match state.pg.tracker_task_rows(tracker.id, scope, q.include_removed).await {
         Ok(t) => t,
         Err(_) => return internal().into_response(),
     };
@@ -1099,5 +1122,60 @@ mod tests {
             "negative-cached: answered without asking"
         );
         assert_eq!(board.jql_calls().len(), asked, "neither asked the board");
+    }
+
+    #[tokio::test]
+    async fn the_backlog_routes() {
+        use crate::tracker::test_support::{repo_in, session_with};
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let get = |uri: String| {
+            let h = &h;
+            async move { call(h, "GET", &uri, None, None).await }
+        };
+        assert_eq!(
+            json(&get(format!("/api/workspaces/{p}/backlog")).await.1)["error"],
+            json!("not_connected")
+        );
+        let s = site();
+        h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().with(
+                "/rest/agile/1.0/board/42/issue",
+                2,
+                json!({"startAt": 2, "total": 4, "issues": [
+                    {"id": "10003", "key": "AUTH-3", "fields": {}},
+                    {"id": "10004", "key": "AUTH-4", "fields": {"summary": "no sprint"}}]}),
+            ),
+        );
+        let repo = repo_in(&h.state.pg, p).await;
+        session_with(&h.state.pg, Some(repo), &["fix/AUTH-4"], &[]).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+
+        let (st, b) = get(format!("/api/workspaces/{p}/backlog")).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert_eq!(json(&b)["tickets"], json!(1));
+        assert_eq!(json(&b)["usage"]["sessions"], json!(1));
+
+        let (st, b) = get(format!("/api/workspaces/{p}/tracker-tasks?backlog=true")).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let keys: Vec<Value> =
+            json(&b).as_array().unwrap().iter().map(|t| t["key"].clone()).collect();
+        assert_eq!(keys, vec![json!("AUTH-4")]);
+
+        let sprint = h
+            .state
+            .pg
+            .tracker_sprints(h.state.pg.tracker_for_workspace(p).await.unwrap().unwrap().id)
+            .await
+            .unwrap()[0]
+            .id;
+        let (st, b) =
+            get(format!("/api/workspaces/{p}/tracker-tasks?sprint={sprint}&backlog=true")).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::UNPROCESSABLE_ENTITY, json!("sprint_or_backlog"))
+        );
     }
 }

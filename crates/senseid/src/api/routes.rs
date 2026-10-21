@@ -54,6 +54,7 @@ fn tracker_routes() -> Router<AppState> {
         .route("/api/workspaces/{id}/trackers/sync", post(trackers::sync_tracker))
         .route("/api/workspaces/{id}/trackers/{kind}/connect", post(trackers::connect_tracker))
         .route("/api/workspaces/{id}/sprints", get(trackers::list_sprints))
+        .route("/api/workspaces/{id}/backlog", get(trackers::get_backlog))
         .route("/api/workspaces/{id}/tracker-tasks", get(trackers::list_tracker_tasks))
         .route("/api/workspaces/{id}/tracker-tasks/{key}", get(trackers::get_tracker_task))
         .route("/api/workspaces/{id}/sessions/unlinked", get(trackers::list_unlinked_sessions))

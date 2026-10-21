@@ -2246,6 +2246,12 @@ export interface TrackerTaskDetail {
   }>;
 }
 
+/** `GET …/backlog`: the tickets in no sprint, and their all-time usage. */
+export interface BacklogUsage {
+  tickets: number;
+  usage: TrackerUsage;
+}
+
 /** A sprint's `unlinked` session (`GET …/sessions/unlinked`). */
 export interface UnlinkedSession {
   id: string;

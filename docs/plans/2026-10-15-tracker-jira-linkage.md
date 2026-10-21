@@ -118,6 +118,16 @@ CLI are the v1 contract.
   - Given text `P-9x;DROP`, When keys are extracted, Then only the shape-valid `P-9` can reach JQL.
   - Given a full sync after discovery, Then the discovered ticket remains, its links are recomputed, and its negative-cache row is gone.
 
+### Feature 9: Backlog (tickets in no sprint)
+
+- **Issue:** TBD
+- **Layers:** daemon (`TaskScope { All, Sprint, Backlog }` for the ticket list; backlog usage through the shared grouped usage; `GET …/backlog`; `?backlog=true`) → CLI (`usage --backlog`, a backlog line in `sprints`) → app (Backlog row and detail on the Sprints screen)
+- **Depends on:** F4, F7
+- **Acceptance criteria:** Done gate 1n; screen done gate 6b.
+- **Test scenarios:**
+  - Given P-783 in no sprint, When the backlog is read, Then P-783 is listed and a sprint's ticket is not.
+  - Given one session linked to two backlog tickets, When backlog usage is read, Then `sessions = 1`.
+
 ### Feature 5: Live verification (human)
 
 - **Issue:** TBD
@@ -143,6 +153,8 @@ graph LR
   F3 --> F8
   F4 --> F8
   F8 --> F5
+  F7 --> F9
+  F9 --> F5
 ```
 
 First task: **F1.1** — needs the user's Jira Cloud site, board id and API token.

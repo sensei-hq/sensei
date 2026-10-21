@@ -38,6 +38,9 @@ pub enum TrackerCmd {
         /// A sprint id or exact name
         #[arg(long, conflicts_with = "key")]
         sprint: Option<String>,
+        /// The tickets in no sprint
+        #[arg(long, conflicts_with_all = ["sprint", "key"])]
+        backlog: bool,
         /// One ticket key (current or former), e.g. AUTH-420
         key: Option<String>,
         /// One row per repository (with a ticket key)
@@ -117,6 +120,21 @@ pub fn active_time(secs: Option<f64>) -> String {
         format!("{}:{:02}", minutes / 60, minutes % 60)
     })
     .unwrap_or_default()
+}
+
+/// The `sensei tracker sprints` line for the backlog (`GET …/backlog`).
+pub fn backlog_row(backlog: &Value) -> Vec<String> {
+    // No window, so no "sessions in window" or "unlinked": those need dates.
+    vec![
+        "Backlog".into(),
+        "no sprint".into(),
+        String::new(),
+        String::new(),
+        backlog["tickets"].to_string(),
+        String::new(),
+        backlog["usage"]["sessions"].to_string(),
+        String::new(),
+    ]
 }
 
 /// The usage table's header.
@@ -406,6 +424,11 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                     ]
                 })
                 .collect();
+            let mut rows = rows;
+            rows.push(backlog_row(&get_json(
+                &client,
+                &format!("{base}/api/workspaces/{id}/backlog"),
+            )?));
             println!(
                 "{}",
                 table(
@@ -424,7 +447,7 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             );
             Ok(())
         }
-        TrackerCmd::Usage { workspace, sprint, key, by_repo } => {
+        TrackerCmd::Usage { workspace, sprint, backlog, key, by_repo } => {
             let id = workspace_id(&workspace)?;
             let mut rows = Vec::new();
             let mut footer = Vec::new();
@@ -448,6 +471,12 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             } else {
                 let mut uri = format!("{base}/api/workspaces/{id}/tracker-tasks");
                 let mut sprint_row = None;
+                let mut backlog_total = None;
+                if backlog {
+                    uri = format!("{uri}?backlog=true");
+                    backlog_total =
+                        Some(get_json(&client, &format!("{base}/api/workspaces/{id}/backlog"))?);
+                }
                 if let Some(sprint) = sprint {
                     let sprints =
                         get_json(&client, &format!("{base}/api/workspaces/{id}/sprints"))?;
@@ -476,6 +505,10 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                         "{} tickets without AI sessions not shown.",
                         list.len() - worked.len()
                     ));
+                }
+                if let Some(b) = backlog_total {
+                    // The backlog's own total: each session once, never a sum of tickets.
+                    rows.push(usage_cells("backlog total", "", &b["usage"]));
                 }
                 if let Some(s) = sprint_row {
                     match s["reason"].as_str() {
@@ -757,6 +790,7 @@ mod tests {
             TrackerCmd::Usage {
                 workspace: "p".into(),
                 sprint: None,
+                backlog: false,
                 key: Some("AUTH-1".into()),
                 by_repo: true
             }
@@ -766,6 +800,7 @@ mod tests {
             TrackerCmd::Usage {
                 workspace: "p".into(),
                 sprint: Some("Sprint 2".into()),
+                backlog: false,
                 key: None,
                 by_repo: false
             }
@@ -822,5 +857,25 @@ mod tests {
         assert!(USAGE_HEADER.contains(&"active AI time"), "never just \"hours\"");
         let priced = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0}, "metered_cost": 1.5, "metered_cost_n": 1});
         assert_eq!(usage_cells("K-1", "", &priced)[7], "1.50");
+    }
+
+    #[test]
+    fn backlog_is_its_own_usage_scope_and_a_sprints_line() {
+        assert_eq!(
+            parse(&["usage", "--workspace", "p", "--backlog"]).unwrap(),
+            TrackerCmd::Usage {
+                workspace: "p".into(),
+                sprint: None,
+                backlog: true,
+                key: None,
+                by_repo: false
+            }
+        );
+        assert!(parse(&["usage", "--workspace", "p", "--backlog", "--sprint", "s"]).is_err());
+        assert!(parse(&["usage", "--workspace", "p", "--backlog", "AUTH-1"]).is_err());
+        assert_eq!(
+            backlog_row(&json!({"tickets": 2, "usage": {"sessions": 1}})),
+            vec!["Backlog", "no sprint", "", "", "2", "", "1", ""]
+        );
     }
 }

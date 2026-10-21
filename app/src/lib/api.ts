@@ -27,7 +27,7 @@ import type {
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
   TranscriptSourceConsent,
   TrackerConnection, TrackerSyncCounts,
-  SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession,
+  SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession, BacklogUsage,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -809,6 +809,10 @@ export function senseiApi(port: number) {
         'GET',
         `/api/workspaces/${enc(workspaceId)}/tracker-tasks${sprintId ? `?sprint=${enc(sprintId)}` : ''}`,
       ),
+    tryGetBacklog: (workspaceId: string) =>
+      tryJson<BacklogUsage>('GET', `/api/workspaces/${enc(workspaceId)}/backlog`),
+    tryListBacklogTasks: (workspaceId: string) =>
+      tryJson<TrackerTaskRow[]>('GET', `/api/workspaces/${enc(workspaceId)}/tracker-tasks?backlog=true`),
     tryGetTrackerTask: (workspaceId: string, key: string) =>
       tryJson<TrackerTaskDetail>('GET', `/api/workspaces/${enc(workspaceId)}/tracker-tasks/${enc(key)}`),
     tryListUnlinkedSessions: (workspaceId: string, sprintId: string) =>
