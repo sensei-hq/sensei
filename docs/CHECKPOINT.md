@@ -23,7 +23,7 @@
 - Open: #292, #149, #278, dōjō (#132, #106, #191), code health (#199, #201, #139). Wave 5 #190; wave 9 re-index;
   wave 10 #275/#276. #187 needs `make test-app-e2e-cold`. #194 waits on a live failure.
 
-**Next command:** epic #307 A2 (teams: default team seeded, CRUD + membership, team ↔ project, Teams + invite screens); A1 done (a053772d). Interleave #293 step 2 (rokkit).
+**Next command:** epic #307 A2 — repository roles mirrored from the forge + admin override (D5), access predicates off teams, per-person = self + repo maintainers+ (D6). A1 done: project viewer (20a71cf7). Decisions D5–D8 in roadmap/09.
 
 **Open questions:**
 - #289: delete the 167,932 duplicate assistant events (after `make db-backup`)? Recommended.
