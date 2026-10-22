@@ -131,7 +131,9 @@ function nameFromKey(repoKey: string): string {
  * `external_slug`, because a git remote carries the org's NAME and never its
  * stable id — which is also why a slug resolving to more than one of the
  * caller's tenants is reported `ambiguous` rather than guessed at. A wrong
- * guess here attaches a private repository to somebody else's dōjō.
+ * guess here attaches a private repository to somebody else's dōjō. When an
+ * admin has MAPPED the org (#308 R5a), the mapping decides instead: the mapped
+ * dōjō, and the mapped workspace in it.
  *
  * An unmapped repository gets NO row. `dojo.repositories.tenant_id` is NOT NULL,
  * so there is nowhere to put one — which matches §II.6 exactly: it stays
@@ -173,6 +175,8 @@ export async function registerRepositories(db: DojoClient, repos: RepoInput[]): 
 			tenant_key: string | null;
 			repository_id: string | null;
 			reason: UnmappedReason | null;
+			/** The workspace its forge unit's mapping filed it into (#308 R5a). */
+			workspace_id?: string | null;
 		};
 		if (row.reason) {
 			unmapped.push({ repo_key: repoKey, reason: row.reason });
@@ -184,7 +188,12 @@ export async function registerRepositories(db: DojoClient, repos: RepoInput[]): 
 			tenant_id: row.tenant_id as string,
 			repo_id: row.repository_id as string
 		};
-		if (repo.workspace) {
+		if (row.workspace_id) {
+			// Its unit is mapped as a workspace (#308 R5a) and the database filed it
+			// there. Filing it under the daemon's workspace too would MOVE it — one
+			// workspace per repository per dōjō — and undo the admin's mapping.
+			entry.workspace_id = row.workspace_id;
+		} else if (repo.workspace) {
 			// File it under its sensei workspace (#299). A failure is reported on the
 			// repository, not thrown: the registration DID happen, and the daemon
 			// logs the reason rather than losing both.
