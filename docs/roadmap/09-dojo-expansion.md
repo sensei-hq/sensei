@@ -118,7 +118,7 @@ slice builds, passes and ships on its own.
   - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
     `get_workspace_summary`, …), the plugin's hooks and skills that call them, both `SKILL.md` copies, and
     `sensei` CLI words.
-- **R6 · The ladder is dōjō → workspace → repository (D25, D29, D32).** *Done 2026-10-22: merged to develop (fb47ee21), gates green alone; ships in the next release. Rehearsed: rule reach identical (234 repository-rule pairs, all 87 repositories); 111 stack adoptions = 111 bindings. Note: a stack pack applied at a repository ranks at repository precedence (70), above workspace (60) — reach unchanged, precedence per D29.* Today the
+- **R6 · The ladder is dōjō → workspace → repository (D25, D29, D32).** *Live in v0.18.0 (2026-10-22): the daemon DB migrated as rehearsed; production in sync. Rehearsed: rule reach identical (234 repository-rule pairs, all 87 repositories); 111 stack adoptions = 111 bindings. Note: a stack pack applied at a repository ranks at repository precedence (70), above workspace (60) — reach unchanged, precedence per D29.* Today the
   ladder still has `general · user · organization · client · technology · team · workspace · repository`.
   - **Retire `team` and `client`** (0 namespaces locally and in production): the seed, both databases (a guarded
     hook that FAILS, never deletes, if a namespace still sits on either), and every reader — the dōjō preview
