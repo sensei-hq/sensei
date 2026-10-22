@@ -20,7 +20,7 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** release (minor) — waits on the user's go. R3 is merged to develop and green: Rust 4225/0,
+**Next command:** release (minor) — waits on the user's go, and on CI green for 12e07174 (the R3 hook read sensei.scopes before it existed: a fresh install failed CI; fixed, deploy_upgrade 5/5 locally). R3 is merged to develop and green: Rust 4225/0,
 clippy + fmt clean, app check 0 + 2334 tests, dōjō check 0 + 1839 tests, plugin 28/0, SQL 48/48. The release also
 carries the Viewers-tab fix (e6c58885), #312 (unattended gate), #313 (viewer audit). Its dōjō reconcile was rehearsed
 on the prod dump (in sync, counts held); the daemon upgrade on a copy of the live DB (counts held, twice). After the
