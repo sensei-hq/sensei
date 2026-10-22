@@ -2,7 +2,7 @@
 	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { LIB_LEVELS, type LibLevelId } from '$lib/library-data';
 
-	// The Org / Team / Workspace / Stack level selector (mockup LevelPills): a
+	// The Dōjō / Workspace / Repository level selector (mockup LevelPills): a
 	// segmented control that picks the level a rule (or a pack, or an authored
 	// draft) applies at — cascading down the same ladder as authored governance.
 	// Presentational — the current value in, an onChange out. Token-only.

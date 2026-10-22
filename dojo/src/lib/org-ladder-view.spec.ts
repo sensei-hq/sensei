@@ -17,59 +17,57 @@ import { orgConstitutionFor } from './components/kit/fixtures';
 const sections = orgConstitutionFor('acme');
 
 describe('LADDER_GROUPS', () => {
-	it('is the authoring order Company · Teams · Stacks', () => {
-		expect(LADDER_GROUPS).toEqual(['Company', 'Teams', 'Stacks']);
+	it('is the ladder order Dōjō · Workspace · Repository (D25)', () => {
+		expect(LADDER_GROUPS).toEqual(['Dōjō', 'Workspace', 'Repository']);
 	});
 });
 
 describe('sectionsByGroup', () => {
 	it('buckets the sections under their authoring group, dropping empty groups', () => {
 		const grouped = sectionsByGroup(sections);
-		expect(grouped.map((g) => g.group)).toEqual(['Company', 'Teams', 'Stacks']);
-		expect(grouped.find((g) => g.group === 'Company')?.sections.map((s) => s.id)).toEqual([
-			'company'
+		expect(grouped.map((g) => g.group)).toEqual(['Dōjō', 'Workspace', 'Repository']);
+		expect(grouped.find((g) => g.group === 'Dōjō')?.sections.map((s) => s.id)).toEqual(['dojo']);
+		expect(grouped.find((g) => g.group === 'Workspace')?.sections.map((s) => s.id)).toEqual([
+			'ws-payments',
+			'ws-platform'
 		]);
-		expect(grouped.find((g) => g.group === 'Teams')?.sections.map((s) => s.id)).toEqual([
-			'team-pay',
-			'team-plat'
-		]);
-		expect(grouped.find((g) => g.group === 'Stacks')?.sections.map((s) => s.id)).toEqual([
-			'stack-react',
-			'stack-pg'
+		expect(grouped.find((g) => g.group === 'Repository')?.sections.map((s) => s.id)).toEqual([
+			'repo-web',
+			'repo-ledger'
 		]);
 	});
 
 	it('omits a group with no sections', () => {
-		const teamsOnly = sections.filter((s) => s.group === 'Teams');
-		const grouped = sectionsByGroup(teamsOnly);
-		expect(grouped.map((g) => g.group)).toEqual(['Teams']);
+		const workspacesOnly = sections.filter((s) => s.group === 'Workspace');
+		const grouped = sectionsByGroup(workspacesOnly);
+		expect(grouped.map((g) => g.group)).toEqual(['Workspace']);
 	});
 });
 
 describe('include state (includeKey · isIncluded · excludedCount)', () => {
 	it('a rule is included by default (absent from the map)', () => {
-		expect(isIncluded({}, 'company', 0)).toBe(true);
+		expect(isIncluded({}, 'dojo', 0)).toBe(true);
 	});
 
 	it('a rule is excluded only when its key is explicitly false', () => {
-		const map = { [includeKey('company', 1)]: false };
-		expect(isIncluded(map, 'company', 1)).toBe(false);
+		const map = { [includeKey('dojo', 1)]: false };
+		expect(isIncluded(map, 'dojo', 1)).toBe(false);
 		// a different index in the same section stays included.
-		expect(isIncluded(map, 'company', 0)).toBe(true);
+		expect(isIncluded(map, 'dojo', 0)).toBe(true);
 	});
 
 	it('excludedCount counts the section rules turned off', () => {
-		const company = sections.find((s) => s.id === 'company')!;
+		const dojo = sections.find((s) => s.id === 'dojo')!;
 		const map = {
-			[includeKey('company', 1)]: false,
-			[includeKey('company', 3)]: false
+			[includeKey('dojo', 1)]: false,
+			[includeKey('dojo', 3)]: false
 		};
-		expect(excludedCount(map, company)).toBe(2);
+		expect(excludedCount(map, dojo)).toBe(2);
 	});
 
 	it('excludedCount is zero for an all-included section', () => {
-		const company = sections.find((s) => s.id === 'company')!;
-		expect(excludedCount({}, company)).toBe(0);
+		const dojo = sections.find((s) => s.id === 'dojo')!;
+		expect(excludedCount({}, dojo)).toBe(0);
 	});
 });
 

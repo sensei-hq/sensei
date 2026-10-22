@@ -5,9 +5,12 @@
 // ScrOrgLadder). Side-effect-free so the mapping unit-tests without a DOM or a Worker.
 //
 // Scope vocabulary + precedence come from `sensei.scopes` (key · level 0→70, higher =
-// more specific): general·user·organization·client·technology·team·workspace·repository.
-// Ladder glyphs match the kit (社 Company · 客 Client · 己 Personal · 件 Workspace · 技
-// Stack) and section groups (社 Company · 組 Teams · 技 Stacks).
+// more specific): general · user · organization · workspace · repository. The dōjō's
+// ladder is dōjō (`organization`) → workspace → repository (D25); a team is a
+// reporting grouping, a client is a workspace classification, and a stack is a rule
+// pack applied at a level — none of them is a rung (D29 · D32). Glyphs: 全 General ·
+// 己 Personal · 社 Dōjō · 件 Workspace · 庫 Repository; the section groups are the
+// three ladder levels (org-ladder-view `LADDER_GROUPS`).
 
 import type {
 	KitLadderRung,
@@ -15,6 +18,7 @@ import type {
 	KitConstitutionSection,
 	KitConflict
 } from './components/kit/types';
+import type { LadderGroupName } from './org-ladder-view';
 
 /** A rule row as the constitution read route returns it — the display subset of the
  *  `shared_rules ⋈ namespaces` join. */
@@ -29,8 +33,8 @@ export interface ConstitutionRule {
 interface ScopeMeta {
 	label: string;
 	kanji: string;
-	/** The org authoring group (KitConstitutionSection.group): Company · Teams · Stacks. */
-	group: string;
+	/** The org authoring group (KitConstitutionSection.group): Dōjō · Workspace · Repository. */
+	group: LadderGroupName;
 	/** Precedence rank from sensei.scopes.level — lower = broader; the ladder orders by it. */
 	level: number;
 }
@@ -38,17 +42,14 @@ interface ScopeMeta {
 /** scope_key → kit meta (mirrors `sensei.scopes`). Unknown keys fall back to a neutral
  *  most-specific rung so a new scope never breaks the ladder (name still comes from data). */
 const SCOPE_META: Record<string, ScopeMeta> = {
-	general: { label: 'General', kanji: '全', group: 'Company', level: 0 },
-	user: { label: 'Personal', kanji: '己', group: 'Company', level: 10 },
-	organization: { label: 'Company', kanji: '社', group: 'Company', level: 20 },
-	client: { label: 'Client', kanji: '客', group: 'Company', level: 30 },
-	technology: { label: 'Stack', kanji: '技', group: 'Stacks', level: 40 },
-	team: { label: 'Team', kanji: '組', group: 'Teams', level: 50 },
-	workspace: { label: 'Workspace', kanji: '件', group: 'Stacks', level: 60 },
-	repository: { label: 'Repository', kanji: '庫', group: 'Stacks', level: 70 }
+	general: { label: 'General', kanji: '全', group: 'Dōjō', level: 0 },
+	user: { label: 'Personal', kanji: '己', group: 'Dōjō', level: 10 },
+	organization: { label: 'Dōjō', kanji: '社', group: 'Dōjō', level: 20 },
+	workspace: { label: 'Workspace', kanji: '件', group: 'Workspace', level: 60 },
+	repository: { label: 'Repository', kanji: '庫', group: 'Repository', level: 70 }
 };
 
-const FALLBACK: ScopeMeta = { label: 'Other', kanji: '守', group: 'Stacks', level: 999 };
+const FALLBACK: ScopeMeta = { label: 'Other', kanji: '守', group: 'Repository', level: 999 };
 
 function meta(scopeKey: string): ScopeMeta {
 	return SCOPE_META[scopeKey] ?? FALLBACK;
@@ -150,7 +151,7 @@ export function relayToKitConflicts(c: RelayConstitution): KitConflict[] {
 
 /**
  * The org authoring constitution as SECTIONS (`KitConstitutionSection[]`) grouped
- * Company/Teams/Stacks — the maintainer surface. One section per scope present, ordered
+ * Dōjō/Workspace/Repository — the maintainer surface. One section per scope present, ordered
  * broad→specific. Empty in → empty out.
  */
 export function rulesToSections(rules: ConstitutionRule[]): KitConstitutionSection[] {

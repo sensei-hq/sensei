@@ -7,9 +7,10 @@
 	// One rung of the constitution ladder (kit K2LadderRung) — a scope identity
 	// (kanji · scope · name · caption) with its rules and lock count. `active`
 	// highlights the selected rung; `onSelect` fires with the rung id. `showRules`
-	// (default true) reveals the rule list under the header. The mockup tinted an
-	// accent rung (a switched-on client rung) — `rung.tone === 'accent'` carries
-	// that treatment, otherwise neutral ink.
+	// (default true) reveals the rule list under the header. The rule packs applied
+	// at the rung (a stack's pack sits on the repository where the stack is
+	// detected — D29 · D33) show as chips under the header; a rung with none shows
+	// no pack row. `rung.tone === 'accent'` tints the rung, otherwise neutral ink.
 	let {
 		rung,
 		active,
@@ -26,6 +27,7 @@
 	const toneClass = $derived(rung.tone === 'accent' ? 'text-accent' : 'text-ink-soft');
 	const rules = $derived(rung.rules ?? []);
 	const locks = $derived(rules.filter((r) => r.hard).length);
+	const packs = $derived(rung.packs ?? []);
 </script>
 
 <div
@@ -59,6 +61,16 @@
 			>
 		{/if}
 	</button>
+	{#if packs.length}
+		<div class="border-paper-edge flex flex-wrap items-center gap-2 border-t" style="padding: 8px 16px">
+			<span class="mono text-ink-mute text-xs">packs applied here</span>
+			{#each packs as pack (pack)}
+				<Chip icon="box" toneClass="text-accent" softClass="bg-accent-soft" edgeClass="border-accent-soft"
+					>{pack}</Chip
+				>
+			{/each}
+		</div>
+	{/if}
 	{#if showRules}
 		<div class="border-paper-edge bg-paper border-t">
 			{#each rules as rule, i (i)}

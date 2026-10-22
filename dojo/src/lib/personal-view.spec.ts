@@ -8,6 +8,7 @@ import {
 } from './personal-view';
 import {
 	ladder,
+	personalLadder,
 	rulePacks,
 	dojos,
 	contributionsMine,
@@ -19,16 +20,13 @@ import type { KitDojo } from './components/kit/types';
 // these back the screens' section splits, groupings, and stat tallies.
 
 describe('personalRungs — your standing constitution', () => {
-	it('keeps only the personal + stack rungs, in ladder order', () => {
-		const rungs = personalRungs(ladder);
-		expect(rungs.map((r) => r.id)).toEqual(['personal', 'stack']);
+	it('keeps only your personal (user) rung — your rules stay yours, in sensei (D25)', () => {
+		const rungs = personalRungs([...personalLadder, ...ladder]);
+		expect(rungs.map((r) => r.id)).toEqual(['user']);
 	});
 
-	it('drops the org-scoped rungs (company · client · workspace)', () => {
-		const ids = personalRungs(ladder).map((r) => r.id);
-		expect(ids).not.toContain('company');
-		expect(ids).not.toContain('client');
-		expect(ids).not.toContain('workspace');
+	it('drops the dōjō ladder rungs (dōjō · workspace · repository)', () => {
+		expect(personalRungs(ladder)).toEqual([]);
 	});
 });
 

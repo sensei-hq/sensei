@@ -14,7 +14,7 @@ import { toKitWorkspaces } from '$lib/workspaces-map';
 import { toKitContributions, toKitDownstreams } from '$lib/contributions-map';
 import { toKitRulePacks } from '$lib/rulepacks-map';
 import type { KitWorkspace, KitContribution, KitDownstream, KitRulePack } from '$lib/components/kit/types';
-import { stance, ladder } from '$lib/components/kit/fixtures';
+import { stance, personalLadder } from '$lib/components/kit/fixtures';
 
 // The personal-zone section loader — the non-inbox destinations (workspaces ·
 // rules · packs · dojos · contributions). `dojos` binds REAL memberships (from
@@ -90,7 +90,7 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		title: labelForSection(section, 'you'),
 		// Your own governance — stance/constitution still fixture-backed pending their routes.
 		stance,
-		ladder,
+		ladder: personalLadder,
 		// Rule packs — real global library read (browse); honest-empty on failure.
 		rulePacks,
 		// Memberships — real, from the layout's `listUserOrgs`, mapped to KitDojo.

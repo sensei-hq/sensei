@@ -92,19 +92,24 @@ export interface KitRule {
 	level?: string;
 }
 
-/** One rung of the constitution ladder — a scope + its rules (dojo2-data `ladder[]`). */
+/** One rung of the constitution ladder — a scope + its rules (dojo2-data `ladder[]`).
+ *  The dōjō's ladder is dōjō → workspace → repository (D25); `id` is the scope key
+ *  (`organization` · `workspace` · `repository`, or `user` for your personal rung). */
 export interface KitLadderRung {
 	id: string;
-	/** Scope glyph (社 · 客 · 己 · 件 · 技). */
+	/** Scope glyph (社 · 件 · 庫 · 己). */
 	kanji: string;
-	/** Scope label — Company · Client · Personal · Workspace · Stack. */
+	/** Scope label — Dōjō · Workspace · Repository · Personal. */
 	scope: string;
 	/** The named entity at this scope (e.g. "Acme Corp"). */
 	name: string;
 	/** A short line on what the rung governs. */
 	caption: string;
-	/** `accent` tints the rung (a switched-on client rung); otherwise neutral ink. */
+	/** `accent` tints the rung; otherwise neutral ink. */
 	tone?: string;
+	/** The rule packs applied at this rung, by name — a stack's pack sits on each
+	 *  repository where the stack is detected (D29 · D33). Absent ⇒ none applied. */
+	packs?: string[];
 	rules?: KitRule[];
 }
 
@@ -145,21 +150,24 @@ export interface KitRulePack {
 }
 
 /** One section of a dōjō's OWN authored constitution (dojo2-data
- *  `orgConstitution[slug][]`). A dōjō authors rules at the scopes it owns —
- *  company-wide, per team, per stack (stacks also adopt rule packs). This is
+ *  `orgConstitution[slug][]`). A dōjō authors rules at the levels it owns —
+ *  dōjō-wide, per workspace, per repository — and adopts rule packs at any of
+ *  them (D25 · D29). This is
  *  NOT the resolution ladder (that appears only at workspace-preview time): it is
  *  the maintainer-authoring surface where the dōjō adds/edits/toggles its rules. */
 export interface KitConstitutionSection {
 	id: string;
-	/** Scope glyph (社 · 組 · 技). */
+	/** Scope glyph (社 · 件 · 庫). */
 	kanji: string;
-	/** The scope label (e.g. "Company-wide" · "Payments" · "Postgres"). */
+	/** The scope label (e.g. "Dōjō-wide" · "payments" · "acme/web"). */
 	scope: string;
-	/** The authoring group the section sits under — Company · Teams · Stacks. */
+	/** The authoring group the section sits under — Dōjō · Workspace · Repository
+	 *  (org-ladder-view `LADDER_GROUPS`). */
 	group: string;
 	/** A short line on what the section governs. */
 	caption: string;
-	/** Adopted rule-pack names (stacks only); absent for company/team scopes. */
+	/** Rule-pack names adopted at this section; absent ⇒ the section shows no
+	 *  pack panel. */
 	packs?: string[];
 	rules?: KitRule[];
 }
@@ -608,9 +616,9 @@ export interface KitRolePolicy {
 /** A scope-ownership row on the Scopes surface (dojo2-data `scopeOwners[slug][]`).
  *  Who owns/triages each scope's queue — unowned queues route to a fallback. */
 export interface KitScopeOwner {
-	/** The scope label (e.g. "Payments" · "Postgres"). */
+	/** The scope label (e.g. "payments" · "acme/ledger"). */
 	scope: string;
-	/** The authoring group — Company · Teams · Stacks. */
+	/** The authoring group — Dōjō · Workspace · Repository. */
 	group: string;
 	/** The owner's display name, or `null` when unowned (routes to fallback). */
 	owner: string | null;

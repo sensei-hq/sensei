@@ -18,26 +18,26 @@ const company: KitWorkspace = {
 };
 
 describe('createWorkspacePreview — reactive drill-in state', () => {
-	it('opens on the workspace rung in the by-layer view', () => {
+	it('opens on the repository rung (the most specific anchor) in the by-layer view', () => {
 		const p = createWorkspacePreview(company, ladder, conflicts);
-		expect(p.active).toBe('workspace');
+		expect(p.active).toBe('repository');
 		expect(p.view).toBe('layer');
 	});
 
 	it('exposes the resolved rungs, effective rules, discards and counts', () => {
 		const p = createWorkspacePreview(company, ladder, conflicts);
-		// every composed scope (company · client · personal · stack) + the synth workspace anchor
-		expect(p.rungs.length).toBe(5);
+		// dōjō · workspace · repository
+		expect(p.rungs.map((r) => r.id)).toEqual(['organization', 'workspace', 'repository']);
 		expect(p.effective.length).toBeGreaterThan(0);
 		expect(p.discarded.length).toBe(conflicts.length);
-		expect(p.locks).toBe(4); // company (3) + client (1)
+		expect(p.locks).toBe(4); // dōjō (3) + workspace (1)
 		expect(p.showConflicts).toBe(true);
 	});
 
 	it('setActive focuses a rung', () => {
 		const p = createWorkspacePreview(company, ladder, conflicts);
-		p.setActive('company');
-		expect(p.active).toBe('company');
+		p.setActive('organization');
+		expect(p.active).toBe('organization');
 	});
 
 	it('setView switches between layer and consolidated', () => {
@@ -51,9 +51,9 @@ describe('createWorkspacePreview — reactive drill-in state', () => {
 	it('jumpTo focuses the rung owning a level and returns to the layer view', () => {
 		const p = createWorkspacePreview(company, ladder, conflicts);
 		p.setView('consolidated');
-		// jump to a Company-scoped rule → focuses the company rung, back to layers.
-		p.jumpTo('Company');
-		expect(p.active).toBe('company');
+		// jump to a Dōjō-scoped rule → focuses the dōjō rung, back to layers.
+		p.jumpTo('Dōjō');
+		expect(p.active).toBe('organization');
 		expect(p.view).toBe('layer');
 	});
 
