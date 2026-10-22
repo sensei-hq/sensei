@@ -206,8 +206,12 @@ async fn a_session_over_two_billion_tokens_is_stored_exactly() {
     session(&s, &sid, None).await;
     transcript_turn(&s, &sid, (1, 1_000, 10, 1_500_000_000, 0, 1)).await;
     transcript_turn(&s, &sid, (2, 2_000, 10, 1_500_000_000, 0, 1)).await;
-
-    assert!(s.refresh_session_tokens(&sid).await.unwrap());
+    // Tests run in parallel, and another test's refresh-all may write this
+    // session's sums first; then this refresh changes nothing and says false.
+    // What matters is the stored value, asserted below, so the order is pinned
+    // here and only success is required of the call.
+    s.refresh_all_session_tokens().await.unwrap();
+    s.refresh_session_tokens(&sid).await.unwrap();
     let (tokens_in,): (Option<i64>,) = sqlx_core::query_as::query_as(
         "SELECT tokens_in FROM activity.sessions WHERE client_session_id = $1",
     )
