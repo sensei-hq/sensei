@@ -252,8 +252,8 @@ axes as (
              --     `openOrRefreshSeat` never refuses at a cap. Entitlement is
              --     already answered above by the subscription terms.
              --   * `dojo.seats.namespace_id` points at `sensei.namespaces`, which
-             --     is the GOVERNANCE LADDER (general·user·organization·client·
-             --     technology·team·workspace·repository) — the structure that
+             --     is the GOVERNANCE LADDER (general·user·organization·workspace·
+             --     repository) — the structure that
              --     decides WHICH RULES APPLY to a repo. Three of its four
              --     referents are rule packs, adoptions and shared rules; seats is
              --     the odd one out, billing against a rule scope.

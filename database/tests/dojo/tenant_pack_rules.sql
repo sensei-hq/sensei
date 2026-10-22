@@ -6,13 +6,13 @@
 -- `organization:<slug>` for an organization tenant (a personal one owns none; a
 -- dōjō is only ever one of the two, #307 D11) — each rule at the adoption's scope, its tier raised (never lowered) by the
 -- adoption's override. Every other namespace the daemon names is dropped: no
--- tenant owns a team, technology, repository, project or personal namespace,
+-- tenant owns a workspace, repository or personal namespace,
 -- and another tenant's is not this member's to read.
 --
 -- WHAT BREAKS THIS TEST: a membership check that is missing, ignores a disabled
 -- membership, or passes with no session; ownership matched on the slug alone (a
--- team owning the organization namespace of the same name) or on the scope
--- alone; a `team:` namespace resolving for anyone; ignoring the daemon's pairs (a namespace the folder does not name);
+-- workspace owning the organization namespace of the same name) or on the scope
+-- alone; a `workspace:` namespace resolving for anyone; ignoring the daemon's pairs (a namespace the folder does not name);
 -- an override that weakens a rule, or is dropped.
 
 begin;
@@ -29,15 +29,15 @@ insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via,
 
 insert into sensei.namespaces (id, scope_key, slug, name) values
   ('e0000000-0000-4000-8000-000000000181', 'organization', 'ztest-tpr', 'org'),
-  ('e0000000-0000-4000-8000-000000000182', 'team', 'ztest-tpr-team', 'team'),
+  ('e0000000-0000-4000-8000-000000000182', 'workspace', 'ztest-tpr-team', 'workspace'),
   ('e0000000-0000-4000-8000-000000000183', 'organization', 'ztest-tpr-other', 'other'),
-  ('e0000000-0000-4000-8000-000000000184', 'technology', 'ztest-tpr-react', 'react'),
-  ('e0000000-0000-4000-8000-000000000185', 'organization', 'ztest-tpr-team', 'same name as the team'),
+  ('e0000000-0000-4000-8000-000000000184', 'repository', 'ztest.host/tpr/react', 'react'),
+  ('e0000000-0000-4000-8000-000000000185', 'organization', 'ztest-tpr-team', 'same name as the workspace'),
   ('e0000000-0000-4000-8000-000000000186', 'organization', 'ztest-tpr-gone', 'gone');
 
 insert into sensei.rule_packs (id, slug, name, area, attribution, published_by) values
   ('f0000000-0000-4000-8000-000000000181', 'ztest-tpr-org', 'Org pack', 'security', 'OWASP', 'x'),
-  ('f0000000-0000-4000-8000-000000000182', 'ztest-tpr-team', 'Team pack', 'process', 'Team', 'x'),
+  ('f0000000-0000-4000-8000-000000000182', 'ztest-tpr-team', 'Workspace pack', 'process', 'Workspace', 'x'),
   ('f0000000-0000-4000-8000-000000000183', 'ztest-tpr-other', 'Other pack', 'process', 'Other', 'x'),
   ('f0000000-0000-4000-8000-000000000184', 'ztest-tpr-react', 'React pack', 'tech_stack', 'React', 'x'),
   ('f0000000-0000-4000-8000-000000000185', 'ztest-tpr-samename', 'Same-name pack', 'process', 'Same', 'x'),
@@ -45,7 +45,7 @@ insert into sensei.rule_packs (id, slug, name, area, attribution, published_by) 
 insert into sensei.rule_pack_rules (pack_id, ordinal, statement, enforcement) values
   ('f0000000-0000-4000-8000-000000000181', 1, 'org advisory',   'advisory'),
   ('f0000000-0000-4000-8000-000000000181', 2, 'org mandatory',  'mandatory'),
-  ('f0000000-0000-4000-8000-000000000182', 1, 'team rule',      'recommended'),
+  ('f0000000-0000-4000-8000-000000000182', 1, 'workspace rule', 'recommended'),
   ('f0000000-0000-4000-8000-000000000183', 1, 'other rule',     'required'),
   ('f0000000-0000-4000-8000-000000000184', 1, 'react rule',     'required'),
   ('f0000000-0000-4000-8000-000000000185', 1, 'same-name rule', 'required'),
@@ -67,8 +67,8 @@ declare
     org   constant uuid := 'b0000000-0000-4000-8000-00000000018a';
     other constant uuid := 'b0000000-0000-4000-8000-00000000018c';
     gone  constant uuid := 'b0000000-0000-4000-8000-00000000018d';
-    every constant text[] := array['organization:ztest-tpr', 'team:ztest-tpr-team', 'organization:ztest-tpr-other',
-                                   'technology:ztest-tpr-react', 'organization:ztest-tpr-team',
+    every constant text[] := array['organization:ztest-tpr', 'workspace:ztest-tpr-team', 'organization:ztest-tpr-other',
+                                   'repository:ztest.host/tpr/react', 'organization:ztest-tpr-team',
                                    'organization:ztest-tpr-gone', 'user:a0000000-0000-4000-8000-000000000181'];
 begin
     -- No session: nobody to check membership for.
@@ -89,12 +89,12 @@ begin
         raise exception 'tenant_pack_rules(org) returned %', got;
     end if;
 
-    -- Nobody owns a team: namespace — a team is a grouping inside a dōjō, not a dōjō.
-    select count(*) into n from dojo.tenant_pack_rules(org, every) where scope_key = 'team';
-    if n <> 0 then raise exception 'tenant_pack_rules: resolved % rules at a team: namespace', n; end if;
+    -- No tenant owns a workspace: namespace — a workspace is a grouping inside a dōjō, not a dōjō.
+    select count(*) into n from dojo.tenant_pack_rules(org, every) where scope_key = 'workspace';
+    if n <> 0 then raise exception 'tenant_pack_rules: resolved % rules at a workspace: namespace', n; end if;
 
     -- Only what the daemon's folder names.
-    select count(*) into n from dojo.tenant_pack_rules(org, array['technology:ztest-tpr-react', 'team:ztest-tpr-team']);
+    select count(*) into n from dojo.tenant_pack_rules(org, array['repository:ztest.host/tpr/react', 'workspace:ztest-tpr-team']);
     if n <> 0 then raise exception 'tenant_pack_rules: resolved % rules at namespaces the folder did not name for its tenant', n; end if;
 
     begin

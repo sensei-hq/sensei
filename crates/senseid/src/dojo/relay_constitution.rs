@@ -87,7 +87,7 @@ mod tests {
         let out = compose_constitution(vec![
             raw("never log secrets", "mandatory", "organization"),
             raw("prefer early returns", "recommended", "workspace"),
-            raw("tabs over spaces", "advisory", "technology"),
+            raw("tabs over spaces", "advisory", "repository"),
         ]);
         assert_eq!(out.rules.len(), 3);
         assert_eq!(out.rules[0].scope_key, "organization");
@@ -95,7 +95,7 @@ mod tests {
         assert_eq!(out.rules[0].enforcement, "mandatory");
         assert_eq!(out.rules[0].namespace.as_deref(), Some("ns-organization"));
         assert_eq!(out.rules[1].scope_key, "workspace");
-        assert_eq!(out.rules[2].scope_key, "technology");
+        assert_eq!(out.rules[2].scope_key, "repository");
         assert_eq!(out.locks, 1, "one mandatory rule locked");
         assert!(out.conflicts.is_empty(), "no duplicates → no discards");
     }

@@ -130,6 +130,44 @@ impl PgStore {
         Ok(())
     }
 
+    /// The repository's own namespace on the `repository` rung, made on first use
+    /// and bound to it (`sensei.repository_namespace`, #318 R6): slugged by its
+    /// repo_key, or its id when it has no remote. Errors for an unknown repository.
+    pub async fn repository_namespace(
+        &self,
+        repository_id: &uuid::Uuid,
+    ) -> Result<uuid::Uuid, String> {
+        let (id,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT sensei.repository_namespace($1)")
+                .bind(repository_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// A stack detected on a repository adopts its `stack:<slug>` pack at the
+    /// repository's own namespace (`sensei.adopt_stack_pack`, #318 R6, D29/D33):
+    /// a stack is a pack applied at a level, not a level. Additive and
+    /// idempotent; returns the pack's id. The same function converted the retired
+    /// `technology` rung on upgrade, so detection and the upgrade cannot disagree.
+    pub async fn adopt_stack_pack(
+        &self,
+        repository_id: &uuid::Uuid,
+        stack_slug: &str,
+        stack_name: &str,
+    ) -> Result<uuid::Uuid, String> {
+        let (id,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT sensei.adopt_stack_pack($1, $2, $3)")
+                .bind(repository_id)
+                .bind(stack_slug)
+                .bind(stack_name)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
     /// Get-or-create a namespace instance by (scope_key, slug). Returns its id.
     pub async fn upsert_namespace(
         &self,
@@ -833,12 +871,6 @@ impl PgStore {
         Ok(row)
     }
 
-    /// Resolve a repo's namespace at a governance scope — e.g. "this repo's
-    /// `workspace` namespace" or "its `organization` namespace". Used when
-    /// authoring a rule so the caller can say "scope this to the workspace" and we
-    /// attach the right namespace_id from the repo's memberships. Returns None
-    /// for always-on scopes (`general`/`user`) or when the repo has no namespace
-    /// at that scope.
     /// A folder's namespace memberships as `(scope_key, slug)` pairs — the stable
     /// cross-DB identity the Dōjō `rules/resolved` endpoint matches on (the daemon
     /// and Dōjō have separate namespace uuids). Excludes the always-on
@@ -860,6 +892,17 @@ impl PgStore {
         Ok(rows)
     }
 
+    /// Resolve a repo's namespace at a governance scope — e.g. "this repo's
+    /// `workspace` namespace" or "its `organization` namespace". Used when
+    /// authoring a rule or setting a stance, so the caller can say "scope this to
+    /// the workspace" and we attach the right namespace_id from the repo's
+    /// memberships. Returns None for always-on scopes (`general`/`user`) or when
+    /// the repo has no namespace at that scope.
+    ///
+    /// The `repository` rung is made on first use (#318 R6, D33): its identity is
+    /// the repository's own ([`Self::repository_namespace`]), so — unlike an
+    /// organization or a workspace — there is nothing for anyone to declare
+    /// first. A folder with no repository has none: `None`.
     pub async fn namespace_for_folder_scope(
         &self,
         folder_id: &uuid::Uuid,
@@ -867,6 +910,12 @@ impl PgStore {
     ) -> Result<Option<uuid::Uuid>, String> {
         if matches!(scope_key, "general" | "user") {
             return Ok(None); // always-on scopes are unscoped (namespace_id NULL)
+        }
+        if scope_key == "repository" {
+            return match self.repository_id_for_folder(folder_id).await? {
+                Some(repository_id) => self.repository_namespace(&repository_id).await.map(Some),
+                None => Ok(None),
+            };
         }
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT n.id

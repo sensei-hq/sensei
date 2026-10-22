@@ -166,7 +166,7 @@ impl PgStore {
     }
 
     /// Upsert a capability→preferred-tool bias for a scope (`user` today; a Dōjō
-    /// can later set org/team scopes that override it). One row per (scope,
+    /// can later set dōjō/workspace scopes that override it). One row per (scope,
     /// capability).
     pub async fn upsert_command_preference(
         &self,

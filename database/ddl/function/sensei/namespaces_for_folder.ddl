@@ -13,11 +13,11 @@ set search_path to sensei, extensions;
 -- THE TWO AXES ARE NOT INTERCHANGEABLE.
 --
 --   repository → `repository_namespaces`. Facts about the checkout: the
---   organization, the team, one namespace per detected language. Keyed on the
---   repository so two clones cannot disagree.
+--   organization, and the repository's own namespace, where the packs of its
+--   detected stacks are adopted (#318 R6). Keyed on the repository so two clones
+--   cannot disagree.
 --
---   workspace → `folder_workspaces` → the `project`-scope namespace (the ladder's
---   rung keeps that name until the dōjō converts it) of the same NAME. A workspace's governance identity. Resolved through the workspace rather
+--   workspace → `folder_workspaces` → the `workspace`-scope namespace of the same NAME. A workspace's governance identity. Resolved through the workspace rather
 --   than through a per-folder binding, which is what let eight folders claim a
 --   workspace their repository does not belong to.
 --

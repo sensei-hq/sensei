@@ -15,19 +15,21 @@ comment on table repository_namespaces is
 resolves rules through.
 
 - **What it is.** One row per (repository, namespace). A repository joins one
-  namespace per applicable scope: an organization, a team, and a technology
-  namespace per detected language.
+  namespace per applicable scope: its organization, and its own namespace on the
+  `repository` rung (sensei.repository_namespace) — where the packs of its
+  detected stacks are adopted (#318 R6, D33).
 - **How to use it.** Resolve a cwd to its folder, lift to
   `folders.repository_id`, then union the rules of every member namespace with
   the always-present `user` and `general` scopes, ordered by scope level. There
   is no tree to walk — multi-membership falls out for free, so a repository can
-  belong to two organizations or two technology namespaces with no special case.
+  belong to two organizations with no special case.
 - **What it is NOT.** It is not workspace membership. That is
   `repositories_in_workspaces`, and it is the only place a workspace is recorded. A
-  `project`-scope namespace must never be bound here: it would be a second
+  `workspace`-scope namespace must never be bound here: it would be a second
   writer for a fact `repositories_in_workspaces` already owns, which is exactly how
   the predecessor drifted.
-- **Who writes it.** The scan, from README frontmatter plus the detected stack.
+- **Who writes it.** The scan, from README frontmatter (organization) and, through
+  sensei.adopt_stack_pack, the detected stack (the repository''s own namespace).
 
 Keyed on the REPOSITORY, not on a folder. The predecessor
 (`folder_namespaces`) keyed the binding on a folder, and all 447 live rows sat
@@ -39,6 +41,6 @@ already did.';
 comment on column repository_namespaces.repository_id
      is 'FK to sensei.repositories — the repo, by identity rather than by checkout, so every clone resolves the same rules.';
 comment on column repository_namespaces.namespace_id
-     is 'FK to sensei.namespaces — a scope instance the repository belongs to. Never a `project`-scope namespace; see the table comment.';
+     is 'FK to sensei.namespaces — a scope instance the repository belongs to. Never a `workspace`-scope namespace; see the table comment.';
 comment on column repository_namespaces.modified_at
      is 'Timestamp of the last modification to this row.';

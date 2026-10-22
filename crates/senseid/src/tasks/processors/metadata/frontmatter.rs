@@ -1,5 +1,5 @@
 //! README frontmatter parser — derives repo identity (organization, workspace,
-//! team, role, stack, summary, tagline, icon) from the YAML frontmatter at the
+//! role, stack, summary, tagline, icon) from the YAML frontmatter at the
 //! top of a repo's root README. Scanning never writes identity back — that is an
 //! opt-in sync gated by a preference. The one write a scan makes is D31's
 //! one-time key migration ([`migrate_readme_workspace_key`]): a README still
@@ -16,7 +16,6 @@ pub struct Frontmatter {
     pub client: Option<String>,
     /// The workspace this repository is grouped into (`workspace:`).
     pub workspace: Option<String>,
-    pub team: Option<String>,
     pub role: Option<String>,
     pub stack: Vec<String>,
     pub summary: Option<String>,
@@ -72,7 +71,6 @@ pub fn parse_frontmatter(content: &str) -> Option<Frontmatter> {
         organization: str_field("organization"),
         client: str_field("client"),
         workspace: str_field("workspace"),
-        team: str_field("team"),
         role: str_field("role"),
         stack,
         summary: str_field("summary"),
@@ -154,7 +152,7 @@ fn split_frontmatter(content: &str) -> (serde_yaml::Mapping, String) {
     (serde_yaml::Mapping::new(), c)
 }
 
-/// Merge sensei's managed identity fields (organization, client, workspace, team,
+/// Merge sensei's managed identity fields (organization, client, workspace,
 /// role, stack, summary, tagline, icon, icon_dark) into a README's YAML
 /// frontmatter, preserving the body and any unmanaged keys the user added, and
 /// writing a `# sensei:frontmatter` marker as the first line of the block. Only
@@ -176,7 +174,6 @@ pub fn merge_frontmatter(existing: &str, fm: &Frontmatter) -> String {
     set("organization", &fm.organization);
     set("client", &fm.client);
     set("workspace", &fm.workspace);
-    set("team", &fm.team);
     set("role", &fm.role);
     set("summary", &fm.summary);
     set("tagline", &fm.tagline);
