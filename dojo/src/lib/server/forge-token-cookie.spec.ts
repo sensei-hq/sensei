@@ -33,7 +33,12 @@ describe('sealing the token', () => {
 		expect(await openForgeToken(sealed, 'auth-bob', SECRET, NOW)).toBeNull();
 		expect(await openForgeToken(sealed, ALICE, SECRET, NOW + FORGE_TOKEN_TTL_SECONDS * 1000 + 1)).toBeNull();
 		expect(await openForgeToken(sealed, ALICE, 'another-secret', NOW)).toBeNull();
-		const flipped = sealed.slice(0, -2) + (sealed.endsWith('A') ? 'B' : 'A') + sealed.slice(-1);
+		// Tamper for certain: a middle character (all data bits, unlike the last
+		// base64url one) replaced by a DIFFERENT one. Choosing the replacement from
+		// the wrong position left the cookie unchanged once in ~64 seals (random IV).
+		const at = Math.floor(sealed.length / 2);
+		const flipped = sealed.slice(0, at) + (sealed[at] === 'A' ? 'B' : 'A') + sealed.slice(at + 1);
+		expect(flipped).not.toBe(sealed);
 		expect(await openForgeToken(flipped, ALICE, SECRET, NOW)).toBeNull();
 		for (const junk of [undefined, '', 'not-base64!', 'AAAA']) {
 			expect(await openForgeToken(junk, ALICE, SECRET, NOW)).toBeNull();
