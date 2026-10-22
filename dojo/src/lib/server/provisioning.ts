@@ -24,9 +24,10 @@
 //     would silently undo every override (Part I Scenario 5 keeps existing
 //     memberships unchanged).
 //
-// Claim (`claimed_at` / `claim_state`) is also phase 2 — those columns do not
-// exist yet, so every org tenant created here is implicitly unclaimed, which is
-// the correct default: none of them has proved ownership.
+// An org tenant is created UNCLAIMED; a forge admin signing in claims it
+// (`claimTenantIfOwner`, through `dojo.claim_forge_unit` — the same path the
+// Integrations screen's explicit claim takes, #308 R5a). An org an admin has
+// mapped as a WORKSPACE of another dōjō gets no dōjō of its own here.
 import { AdminError, slugify, type DojoClient } from './admin-data';
 import {
 	fetchGithubFacts,
@@ -127,17 +128,18 @@ function authMethodFor(provider: ForgeProvider): string {
  * sign-in, so a forge admin signing in IS the proof. No endpoint, no prompt, and
  * re-verified against the forge on every sign-in rather than trusted once.
  *
- * FIRST CLAIM WINS. The `is('claimed_at', null)` on the update is the guard, not
- * the read before it: two admins signing in together would both see NULL, and
- * without it the later write would rewrite `claimed_by` to whoever logged in
- * most recently — destroying the record of who actually established the claim.
+ * One claim path (#308 R5a): `dojo.claim_forge_unit` re-proves the connection,
+ * claims the tenant if nobody has — FIRST CLAIM WINS, in the database, so two
+ * admins signing in together cannot rewrite who established it — and audits the
+ * claim. The Integrations screen's explicit claim calls the same function.
  *
  * Errors PROPAGATE. A silently-failed claim leaves the tenant unclaimed, which
  * now refuses every private repository — a denial caused by an error nobody saw.
  */
 export async function claimTenantIfOwner(
 	db: DojoClient,
-	tenantId: string,
+	provider: ForgeProvider,
+	externalId: string,
 	principalId: string,
 	role: string
 ): Promise<void> {
@@ -146,12 +148,30 @@ export async function claimTenantIfOwner(
 	// organisation that never agreed.
 	if (role !== 'admin') return;
 
-	const { error } = await db
-		.from('tenants')
-		.update({ claimed_at: new Date().toISOString(), claimed_by: principalId })
-		.eq('id', tenantId)
-		.is('claimed_at', null);
+	const { error } = await db.rpc('claim_forge_unit', {
+		p_principal: principalId,
+		p_provider: provider,
+		p_external_id: externalId
+	});
 	if (error) throw new AdminError(500, error.message);
+}
+
+/**
+ * Whether an admin has filed this org into another dōjō as a WORKSPACE
+ * (#308 R5a). Such an org gets no dōjō of its own from a sign-in: its
+ * repositories file into that workspace (`dojo.register_repository`). A read
+ * failure throws — creating a dōjō past an unreadable mapping would conjure the
+ * very boundary the admin chose not to have.
+ */
+async function mappedAsWorkspace(db: DojoClient, provider: ForgeProvider, externalId: string): Promise<boolean> {
+	const { data, error } = await db
+		.from('forge_unit_mappings')
+		.select('workspace_id')
+		.eq('provider', provider)
+		.eq('external_id', externalId)
+		.maybeSingle();
+	if (error) throw new AdminError(500, error.message);
+	return Boolean((data as { workspace_id: string | null } | null)?.workspace_id);
 }
 
 /** Forge standing → `dojo.member_role`. An org owner/admin administers the
@@ -541,14 +561,16 @@ async function ensurePersonalConnection(
  * Matched on `(provider, external_id)` — the forge's STABLE id. Matching on the
  * slug would fork the tenant when an org is renamed, and would let whoever
  * claims the freed name upstream inherit this tenant's governance (§II.2).
+ *
+ * Null when the org has no dōjō and an admin mapped it as a workspace elsewhere.
  */
-async function ensureOrgTenant(
+export async function ensureOrgTenant(
 	db: DojoClient,
 	principalId: string,
 	provider: ForgeProvider,
 	org: ForgeOrg,
 	authenticatedVia: string
-): Promise<ProvisionedTenant> {
+): Promise<ProvisionedTenant | null> {
 	const conn = await db
 		.from('tenant_connections')
 		.select('tenant_id')
@@ -574,9 +596,14 @@ async function ensureOrgTenant(
 		// A tenant may have been created by a plain member long before an owner
 		// first signs in, so the claim is attempted on EVERY pass, not only at
 		// creation. `claimTenantIfOwner` is a no-op once claimed.
-		await claimTenantIfOwner(db, row.id, principalId, roleForOrg(org));
+		await claimTenantIfOwner(db, provider, org.id, principalId, roleForOrg(org));
 		return { id: row.id, key: row.key, origin: 'organization', role, created: false };
 	}
+
+	// An org an admin filed elsewhere as a workspace gets no dōjō of its own. One
+	// that already has a dōjō keeps it (above): mapping never removes, and the
+	// person's place there stays for #309's lifecycle to decide.
+	if (await mappedAsWorkspace(db, provider, org.id)) return null;
 
 	const tenant = await insertTenantWithFreeSlug(
 		db,
@@ -631,7 +658,7 @@ async function ensureOrgTenant(
 	);
 	// The creator may themselves be the forge owner, in which case the tenant is
 	// claimed the moment it exists rather than waiting for a second sign-in.
-	await claimTenantIfOwner(db, tenant.id, principalId, roleForOrg(org));
+	await claimTenantIfOwner(db, provider, org.id, principalId, roleForOrg(org));
 	return { id: tenant.id, key: tenant.key, origin: 'organization', role, created: true };
 }
 
@@ -881,7 +908,8 @@ export async function ensureProvisioned(
 
 	const tenants: ProvisionedTenant[] = [];
 	for (const org of facts.orgs) {
-		tenants.push(await ensureOrgTenant(db, principalId, facts.provider, org, authenticatedVia));
+		const tenant = await ensureOrgTenant(db, principalId, facts.provider, org, authenticatedVia);
+		if (tenant) tenants.push(tenant);
 	}
 
 	// Leaving an org ends the membership provisioning made there, and with it any

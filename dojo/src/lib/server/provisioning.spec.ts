@@ -73,6 +73,19 @@ function tables(seed: Partial<Record<string, FakeTable>> = {}): Record<string, F
 		'rpc:reconcile_org_memberships': {
 			rows: [],
 			...seed['rpc:reconcile_org_memberships']
+		},
+		// A forge admin signing in claims the org's dōjō (#308 R5a); first-claim-wins
+		// and the audit row are proven in database/tests/dojo/forge_unit_claim.sql.
+		'rpc:claim_forge_unit': {
+			rows: [],
+			...seed['rpc:claim_forge_unit']
+		},
+		// Where an org's repositories file (#308 R5a): read before an org dōjō is
+		// created, so an org an admin filed elsewhere as a workspace gets none.
+		forge_unit_mappings: {
+			rows: [],
+			uniques: [{ columns: ['provider', 'external_id'] }],
+			...seed.forge_unit_mappings
 		}
 	};
 }
@@ -1058,72 +1071,92 @@ describe('adoptOwnPersonalTenant — tell "I raced myself" from "another human, 
 // refuses every org repository forever and reads as "nothing to sync".
 describe('claimTenantIfOwner — a forge owner signing in IS the claim', () => {
 	const ALICE = 'p-alice';
-	function tbl(over: Record<string, unknown> = {}): Record<string, FakeTable> {
-		return {
-			tenants: {
-				rows: [
-					{
-						id: 't-acme',
-						key: 'organization/acme',
-						origin: 'organization',
-						slug: 'acme',
-						claimed_at: null,
-						claimed_by: null,
-						...over
-					}
-				],
-				uniques: [{ columns: ['key'] }]
-			}
-		};
-	}
+	const claims = (db: ReturnType<typeof fakeDojoDb>) => db.rpcCalls.filter((c) => c.fn === 'claim_forge_unit');
 
-	it('claims an unclaimed tenant for a forge ADMIN', async () => {
-		const db = fakeDojoDb(tbl());
+	it('claims through dojo.claim_forge_unit for a forge ADMIN, by the org`s stable id', async () => {
+		// One claim path for sign-in and for the Integrations screen (#308 R5a):
+		// the function re-proves the connection, claims if unclaimed (first claim
+		// wins — database/tests/dojo/forge_unit_claim.sql) and audits it.
+		const db = fakeDojoDb(tables());
 		const { claimTenantIfOwner } = await import('./provisioning');
-		await claimTenantIfOwner(db as never, 't-acme', ALICE, 'admin');
-		const row = db.tables.tenants.rows[0];
-		expect(row.claimed_by).toBe(ALICE);
-		expect(row.claimed_at).toBeTruthy();
+		await claimTenantIfOwner(db as never, 'github', '11', ALICE, 'admin');
+		expect(claims(db)).toEqual([
+			{ fn: 'claim_forge_unit', args: { p_principal: ALICE, p_provider: 'github', p_external_id: '11' } }
+		]);
 	});
 
 	it('does NOT claim for a contributor — membership is not ownership', async () => {
 		// The whole point of the claim: being IN an org says nothing about owning
 		// it, and a tenant claimed by a plain member could subscribe on behalf of
 		// an organisation that never agreed.
-		const db = fakeDojoDb(tbl());
+		const db = fakeDojoDb(tables());
 		const { claimTenantIfOwner } = await import('./provisioning');
-		await claimTenantIfOwner(db as never, 't-acme', ALICE, 'contributor');
-		expect(db.tables.tenants.rows[0].claimed_at).toBeNull();
-	});
-
-	it('leaves an ALREADY-claimed tenant alone, including who claimed it', async () => {
-		// Re-stamping on every sign-in would rewrite `claimed_by` to whichever
-		// admin logged in most recently, destroying the record of who actually
-		// established the claim.
-		const db = fakeDojoDb(
-			tbl({ claimed_at: '2026-01-01T00:00:00.000Z', claimed_by: 'p-first-owner' })
-		);
-		const { claimTenantIfOwner } = await import('./provisioning');
-		await claimTenantIfOwner(db as never, 't-acme', ALICE, 'admin');
-		const row = db.tables.tenants.rows[0];
-		expect(row.claimed_by).toBe('p-first-owner');
-		expect(row.claimed_at).toBe('2026-01-01T00:00:00.000Z');
+		await claimTenantIfOwner(db as never, 'github', '11', ALICE, 'contributor');
+		expect(claims(db)).toEqual([]);
 	});
 
 	it('reports a write failure rather than swallowing it', async () => {
 		// A silently-failed claim leaves the tenant unclaimed, which now REFUSES
 		// every private repository — a denial caused by an error nobody saw.
-		const failing = {
-			from: () => failing,
-			select: () => failing,
-			eq: () => failing,
-			maybeSingle: async () => ({ data: { id: 't-acme', claimed_at: null }, error: null }),
-			update: () => ({
-				eq: () => ({ is: async () => ({ error: { message: 'write failed' } }) })
-			})
-		} as never;
+		const db = fakeDojoDb(tables({ 'rpc:claim_forge_unit': { rows: [], error: { message: 'write failed' } } }));
 		const { claimTenantIfOwner } = await import('./provisioning');
-		await expect(claimTenantIfOwner(failing, 't-acme', ALICE, 'admin')).rejects.toThrow();
+		await expect(claimTenantIfOwner(db as never, 'github', '11', ALICE, 'admin')).rejects.toThrow('write failed');
+	});
+
+	it('a sign-in pass claims the orgs the person administers, and only those', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(claims(db).map((c) => c.args.p_external_id)).toEqual(['11']);
+	});
+});
+
+describe('ensureProvisioned — an org an admin filed elsewhere as a workspace (#308 R5a)', () => {
+	const MAPPED_AS_WORKSPACE = {
+		id: 'fm-1',
+		provider: 'github',
+		external_id: '22',
+		external_slug: 'acme',
+		tenant_id: 't-elsewhere',
+		workspace_id: 'w-acme'
+	};
+
+	it('does not create a dōjō for it — its repositories file into that workspace', async () => {
+		const db = fakeDojoDb(tables({ forge_unit_mappings: { rows: [MAPPED_AS_WORKSPACE] } }));
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(out.tenants.map((t) => t.key)).toEqual(['organization/sensei-hq']);
+		expect(db.tables.tenants.rows.some((t) => t.key === 'organization/acme')).toBe(false);
+		expect(db.tables.tenant_connections.rows.some((c) => c.external_id === '22')).toBe(false);
+	});
+
+	it('still creates the dōjō of an org mapped as its OWN dōjō', async () => {
+		const db = fakeDojoDb(
+			tables({ forge_unit_mappings: { rows: [{ ...MAPPED_AS_WORKSPACE, workspace_id: null }] } })
+		);
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(out.tenants.map((t) => t.key)).toEqual(['organization/sensei-hq', 'organization/acme']);
+	});
+
+	it('keeps an org dōjō that ALREADY exists, and the person`s place in it (#309 unchanged)', async () => {
+		// Mapping an org elsewhere never removes the dōjō it already has, and the
+		// complete read still keeps the person's membership there.
+		const db = fakeDojoDb(
+			tables({
+				forge_unit_mappings: { rows: [MAPPED_AS_WORKSPACE] },
+				tenants: { rows: [{ id: 't-acme', key: 'organization/acme', origin: 'organization', slug: 'acme' }] },
+				tenant_connections: {
+					rows: [{ id: 'c-acme', tenant_id: 't-acme', provider: 'github', external_id: '22', external_slug: 'acme' }]
+				}
+			})
+		);
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(out.tenants.map((t) => t.key)).toContain('organization/acme');
+		const kept = db.rpcCalls.find((c) => c.fn === 'reconcile_org_memberships')?.args.p_kept;
+		expect(kept).toContain('t-acme');
+	});
+
+	it('fails closed when the mapping cannot be read — never a dōjō conjured past an error', async () => {
+		const db = fakeDojoDb(tables({ forge_unit_mappings: { rows: [], error: { message: 'mappings down' } } }));
+		await expect(ensureProvisioned(db as never, PRINCIPAL, FACTS)).rejects.toThrow('mappings down');
 	});
 });
 
