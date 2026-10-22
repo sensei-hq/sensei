@@ -146,6 +146,9 @@ slice builds, passes and ships on its own.
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
   org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
   the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37).*
+  *R5a (GitHub) built 2026-10-22 on branch `r5a-github-import` (not merged): the adapter interface, claim through
+  `dojo.claim_forge_unit`, `dojo.forge_unit_mappings` + `map_forge_unit`, Admin → Integrations, and registration by
+  the mapping — see the spec's "R5a as built". Production's live check waits on the merge and deploy.*
 - **R4 · The words.** PRD, specs, guides, `docs/llms`, both `SKILL.md` copies, agents, the website.
   Generic English ("the project's README", a Cargo project) stays.
 

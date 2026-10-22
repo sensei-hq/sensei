@@ -78,6 +78,43 @@ mandatory: a partial read never ends a membership (#309's rule).
 Done when an org admin, on the local and then the production dōjō, claims an org, maps a second org as a
 workspace of it, and its repositories file there.
 
+### R5a as built (2026-10-22, branch `r5a-github-import`)
+
+- **Adapter** — `dojo/src/lib/server/forge-adapter.ts`: `ForgeAdapter { provider, listUnits, proveAdmin,
+  listMembers }`, `forgeAdapter(provider)` (501 for a forge with no adapter). GitHub's sits in `forge-github.ts`:
+  `listUnits` is the org-membership read provisioning already used (unchanged); `proveAdmin` reads
+  `/user/memberships/orgs/{org}` — true only for an active `admin` of the org with the known stable id, `false` on
+  404, throws on any other failure; `listMembers` pages `/orgs/{org}/members`, incomplete on an unnamed member,
+  throws on a failed page or more than 5,000. A unit is an org (`ForgeUnit` = `ForgeOrg`); R5b adds units for
+  Azure organizations and projects behind the same interface.
+- **The claim stays on `dojo.tenants`** (`claimed_at`, `claimed_by` already existed): the claim gates billing and
+  private sync for the whole dōjō (`all_my_repositories` reads it there), and a dōjō may have several connections.
+  `dojo.claim_forge_unit(principal, provider, external_id)` — service_role only — re-proves the connection
+  (`verified_at`), claims the tenant if unclaimed (first claim wins) and writes a `dojo_claimed` audit row. The
+  sign-in claim (`claimTenantIfOwner`) now goes through it too, so there is one claim path.
+- **`dojo.forge_unit_mappings`** `(provider, external_id unique, external_slug, tenant_id, workspace_id null,
+  proven_at, mapped_by, mapped_at)`: where a unit's repositories file. No row = its own connected dōjō (what
+  provisioning makes). `dojo.map_forge_unit` (service_role) enforces: the mapper administers the target dōjō; *its own
+  dōjō* needs proof and must be the connected dōjō; *a workspace* needs proof only once the org's dōjō is claimed or
+  an admin of the org placed it (`proven_at`) — so a member can file an unclaimed org into a dōjō they administer,
+  and cannot take a claimed one away from its admins. Audited (`forge_unit_mapped`, and `forge_unit_unmapped` in the
+  dōjō it left). RLS: the dōjō's admins read; nobody writes directly.
+- **Registration** — `dojo.register_repository` consults the unit's mapping first: mapped, the repository files into
+  the mapped dōjō (and workspace) for that dōjō's members, and `not_a_member` for anyone else — never into the org's
+  own dōjō; unmapped, by connection as before. The daemon's own workspace does not re-file a mapped repository.
+  Repositories already registered move on their next registration (the daemon re-registers every cycle).
+- **Provisioning (decision)** — a sign-in does **not** create a dōjō for an org an admin mapped as a workspace of
+  another dōjō: its repositories already file there. An org whose dōjō already exists keeps it, and #309's
+  membership lifecycle is unchanged.
+- **Screen** — org Admin → Integrations. The person pastes a GitHub token (read:org): the dōjō has no durable
+  GitHub token — `provider_token` exists only during the OAuth exchange — so the proof is read with a token given
+  for that request, used for its reads only, never stored, logged or echoed (as D35 does for Azure). Routes:
+  `POST /v1/t/{tenant}/integrations/github` (list), `…/claim`, `…/map` (admin floor of the screen's dōjō).
+  An org in a workspace of a dōjō the person is not in is shown without naming that dōjō.
+- **Not in R5a**: removing a mapping (re-map instead), listing all dōjōs to pick a target (the target is the dōjō
+  whose screen this is), a re-sign-in flow that would replace the pasted token, and membership sync from
+  `listMembers` (provisioning still follows each person's own org list, #309).
+
 ## R5b · Azure DevOps (after R5a)
 
 The same adapter and screen; organization → dōjō, project → workspace (D36); the PAT in Vault (D35).
