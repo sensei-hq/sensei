@@ -20,7 +20,7 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** merge `r6-ladder` (converge the shared test DBs to its design, re-run its gates alone).
+**Next command:** R7 (D34: a dōjō has no Clients section) is running as an agent on `r7-no-clients` — on its report, review, re-run its gates alone, merge. R6 merged (fb47ee21), develop CI green. Next release (R6 + R7 + SSRF fix) goes PR → main → `make bump` on main.
 Wave 0b code done (335618b9: release-guard + `on-main` job; next release = PR → main → `make bump` ON main). Worker-on-tag waits on the user (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID secrets; remove the Worker's git triggers).
 Wave 0c done (SSRF fixed 9381ec2e, the rest triaged and dismissed with reasons; #1 closes with the next release).
 **v0.17.0 released 2026-10-22:** prod dōjō DB in sync (approved deploy-dojo), Worker 0.17.0 (6df9990, PR #324 merged
