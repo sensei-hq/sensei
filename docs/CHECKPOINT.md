@@ -20,9 +20,9 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** wave 0c — CodeQL's open alerts on main, critical SSRF (`lib_indexer.rs:272`) first. Then
-wave 0b (release from main tags; the user adds CLOUDFLARE_API_TOKEN/ACCOUNT_ID and removes the Worker's git
+**Next command:** wave 0b (release from main tags; the user adds CLOUDFLARE_API_TOKEN/ACCOUNT_ID and removes the Worker's git
 triggers), then merge `r6-ladder` (converge the shared test DBs to its design, re-run its gates alone).
+Wave 0c done (SSRF fixed 9381ec2e, the rest triaged and dismissed with reasons; #1 closes with the next release).
 **v0.17.0 released 2026-10-22:** prod dōjō DB in sync (approved deploy-dojo), Worker 0.17.0 (6df9990, PR #324 merged
 on red CodeQL — all alerts pre-existing — user decision), the local daemon migrated as rehearsed. Rehearsal copies dropped.
 **R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
