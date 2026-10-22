@@ -261,5 +261,4 @@ curl -s http://localhost:7744/api/dojo/queue?direction=downstream \
 - [[screen/dojo-developer-flow]] — full developer journey inside a Dōjō
 - [[screen/dojo-maintainer-console]] — triage / approve surface
 - [[screen/dojo-admin-console]] — server & membership admin
-- [[screen/dojo-lead-console]] — engagement definition, audit
 - (memory: project_governance_plane_design) (memory) — earlier design notes

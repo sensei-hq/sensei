@@ -6,7 +6,7 @@
 	// assert the toggle / jump / edit handlers fire. `withToggle` swaps the leading
 	// kanji for the include checkbox.
 	let {
-		rule = { kanji: '守', text: 'Never log tokens or PII, even at debug level', hard: true, level: 'Company' },
+		rule = { kanji: '守', text: 'Never log tokens or PII, even at debug level', hard: true, level: 'Dōjō' },
 		included = true,
 		showLevel = false,
 		withToggle = false,

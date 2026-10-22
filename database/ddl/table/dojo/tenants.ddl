@@ -36,7 +36,7 @@ to forges that spell it differently (github "sensei-hq", azure "senseihq").
 Was `org`, which named a GitHub org and stopped being right once a tenant could
 hold several connections.';
 comment on column dojo.tenants.dojo
-     is 'Optional sub-path when an org runs multiple Dōjōs (e.g. one per client engagement). Null for the org-level Dōjō.';
+     is 'Optional sub-path when an org runs multiple Dōjōs (e.g. one per client). Null for the org-level Dōjō.';
 comment on column dojo.tenants.scope
      is 'private (normal org/client Dōjō) or global (the single public global-dojo everyone may join).';
 comment on column dojo.tenants.dojo_url

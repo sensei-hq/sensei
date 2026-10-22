@@ -12,9 +12,10 @@ use std::path::Path;
 // ── Reconcile identity ─────────────────────────────────────────────────────
 
 /// Reconcile a workspace root's identity FROM its README frontmatter — folder
-/// props (incl. the frontmatter snapshot), icons, workspace identity, role, and
-/// repository_namespaces. Filesystem-READ-ONLY (it never writes the README, so it
-/// can't trigger a file-change loop), idempotent, and additive. Shared by the
+/// props (incl. the frontmatter snapshot), icons, workspace identity, role,
+/// repository_namespaces and the detected stacks' pack adoptions.
+/// Filesystem-READ-ONLY (it never writes the README, so it can't trigger a
+/// file-change loop), idempotent, and additive. Shared by the
 /// scan pipeline (process_git_folder) and the watcher's ReconcileRepoMetadata task.
 pub async fn reconcile_repo_identity(
     ctx: &TaskContext,
@@ -148,18 +149,16 @@ pub async fn reconcile_repo_identity(
             tracing::warn!(workspace_id = %pid, error = %e, "set_workspace_icon (reconcile) failed");
         }
 
+        // The ladder is dōjō → workspace → repository (#318 R6, D25). The
+        // README names the organization (the dōjō's rung); the workspace is the
+        // workspace's own. A team or client is not a rung (D25/D32), so the
+        // README's `team:` makes no namespace.
         let mut ns: Vec<(&str, String)> = Vec::new();
         if let Some(org) = fm.organization.as_deref() {
             ns.push(("organization", org.to_string()));
         }
         if !workspace_name.is_empty() {
             ns.push(("workspace", workspace_name.clone()));
-        }
-        if let Some(team) = fm.team.as_deref() {
-            ns.push(("team", team.to_string()));
-        }
-        for lang in &id_stack {
-            ns.push(("technology", lang.clone()));
         }
         // The namespace ROWS are all created — the `workspace` one included,
         // because it is the workspace's governance identity and the dōjō reads
@@ -172,7 +171,13 @@ pub async fn reconcile_repo_identity(
         // claim a workspace their repository does not belong to.
         // `namespaces_for_folder` reaches the workspace namespace through the
         // workspace instead, so nothing downstream loses it.
-        let repository_id = ctx.pg().repository_id_for_folder(&folder_id).await.ok().flatten();
+        let repository_id = match ctx.pg().repository_id_for_folder(&folder_id).await {
+            Ok(rid) => rid,
+            Err(e) => {
+                tracing::warn!(folder_id = %folder_id, error = %e, "repository_id_for_folder failed");
+                None
+            }
+        };
         for (scope, name) in &ns {
             let slug = metadata::slugify(name);
             if slug.is_empty() {
@@ -194,6 +199,25 @@ pub async fn reconcile_repo_identity(
             };
             ctx.pg().link_repository_namespace(&rid, &ns_id).await
                 .unwrap_or_else(|e| tracing::warn!(repository_id = %rid, ns_id = %ns_id, error = %e, "link_repository_namespace failed"));
+        }
+
+        // A stack is a pack applied at a level, not a level (D29): each detected
+        // stack adopts its `stack:<slug>` pack at the repository's own namespace
+        // (D33) — the reach the retired `technology` binding had. Additive, as
+        // that binding was.
+        for lang in &id_stack {
+            let slug = metadata::slugify(lang);
+            if slug.is_empty() {
+                continue;
+            }
+            let Some(rid) = repository_id else {
+                tracing::warn!(folder_id = %folder_id, stack = %lang,
+                    "stack pack not adopted: folder carries no repository");
+                continue;
+            };
+            if let Err(e) = ctx.pg().adopt_stack_pack(&rid, &slug, lang).await {
+                tracing::warn!(repository_id = %rid, stack = %lang, error = %e, "adopt_stack_pack failed");
+            }
         }
     }
 
@@ -1702,6 +1726,99 @@ mod tests {
         );
 
         ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    /// **A DETECTED STACK ADOPTS ITS PACK AT THE REPOSITORY** (#318 R6, D29/D33).
+    /// A stack is a pack applied at a level, not a level: reconciling a repository
+    /// adopts `stack:<slug>` at the repository's own namespace — where the
+    /// retired `technology` binding used to reach — and makes no namespace on a
+    /// retired rung (`technology`, `team`), whatever the README says.
+    ///
+    /// Mutations that must break this: bind a `technology` namespace again;
+    /// adopt at the workspace instead of the repository; read `team:` back.
+    #[tokio::test]
+    async fn a_detected_stack_adopts_its_pack_at_the_repository() {
+        let ctx = make_ctx().await;
+        let pool = ctx.pg().pool().clone();
+        let uniq = uuid::Uuid::new_v4().simple().to_string();
+        let stack = format!("r6zig{}", &uniq[..8]);
+        let org = format!("r6-org-{}", &uniq[..8]);
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join(format!("r6-{}", &uniq[..8]));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("README.md"),
+            format!("---\norganization: {org}\nteam: mobile\nstack: [{stack}]\n---\n# r6\n"),
+        )
+        .unwrap();
+        let repo_path = root.to_string_lossy().to_string();
+        let watch = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "r6", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&watch, "git", "r6", &repo_path).await.unwrap();
+        let repo_key = format!("ztest.host/r6/{uniq}");
+        let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'r6') RETURNING id",
+        )
+        .bind(&repo_key)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $2 WHERE id = $1")
+            .bind(fid)
+            .bind(rid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let wid = ctx.pg().create_workspace(&format!("r6-ws-{uniq}"), None, None).await.unwrap();
+        ctx.pg().set_folder_workspace(&fid, &wid, "root", None).await.unwrap();
+
+        reconcile_repo_identity(&ctx, &repo_path).await.unwrap();
+
+        let adopted: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT n.scope_key, n.slug
+               FROM sensei.rule_pack_adoptions a
+               JOIN sensei.rule_packs p ON p.id = a.pack_id
+               JOIN sensei.namespaces n ON n.id = a.namespace_id
+               JOIN sensei.repository_namespaces rn ON rn.namespace_id = n.id
+              WHERE p.slug = $1 AND p.area = 'tech_stack' AND rn.repository_id = $2",
+        )
+        .bind(format!("stack:{stack}"))
+        .bind(rid)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            adopted,
+            vec![("repository".to_string(), repo_key.clone())],
+            "the stack's pack is adopted at the repository's own namespace, once"
+        );
+        let pairs = ctx.pg().folder_namespace_pairs(&fid).await.unwrap();
+        assert!(
+            pairs.contains(&("organization".to_string(), org.clone())),
+            "the organization is still bound: {pairs:?}"
+        );
+        assert!(
+            !pairs.iter().any(|(scope, _)| scope == "technology" || scope == "team"),
+            "no namespace on a retired rung: {pairs:?}"
+        );
+
+        sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = $1")
+            .bind(format!("stack:{stack}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "DELETE FROM sensei.namespaces WHERE (scope_key, slug) IN (('repository', $1), ('organization', $2))",
+        )
+        .bind(&repo_key)
+        .bind(&org)
+        .execute(&pool)
+        .await
+        .unwrap();
+        ctx.pg().remove_watch_root(&watch).await.ok();
     }
 
     /// **A FILE IS NEVER PLACED AGAINST A COMPILE OF SOURCES THAT MOVED ON.**

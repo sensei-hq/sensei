@@ -14,11 +14,12 @@
 	import { untrack } from 'svelte';
 
 	// The dōjō-authoring constitution (mockup ScrOrgLadder) — the richest org
-	// screen. The dōjō authors its OWN rules by scope (company-wide · per team ·
-	// per stack, packs per stack); this is NOT the resolution ladder (that appears
-	// only at workspace-preview time). A left rail groups the sections (Company ·
-	// Teams · Stacks); the right pane shows the active section's adopted packs
-	// (stacks) and its rules, each with an include toggle + edit pencil, plus a
+	// screen. The dōjō authors its OWN rules by level (dōjō-wide · per workspace ·
+	// per repository — D25) and adopts rule packs at any of them (a stack's pack on
+	// each repository where the stack is detected — D29 · D33); this is NOT the
+	// resolution ladder (that appears only at workspace-preview time). A left rail
+	// groups the sections (Dōjō · Workspace · Repository); the right pane shows the
+	// active section's adopted packs and its rules, each with an include toggle + edit pencil, plus a
 	// New/Add rule affordance that opens the RuleEditor overlay. Presentational:
 	// the page supplies the sections (kit fixtures this chunk); the active section,
 	// include toggles, and editor open/save live in the `org-ladder-state`
@@ -48,7 +49,7 @@
 		<div class="px-4 pt-4 md:px-8 md:pt-8">
 			<SectionHead
 				kanji="掟" eyebrow={orgName + ' · governance'} title="Constitution"
-				description="The dōjō authors its rules by scope — company-wide, per team, per stack. Stacks also adopt rule packs. These are the dōjō's own rules; how they combine with your personal and a workspace's rules is resolved — and shown — when you open a workspace."
+				description="The dōjō authors its rules at each level — dōjō-wide, per workspace, per repository — and adopts rule packs at any of them; a stack's pack applies at each repository where the stack is detected. These are the dōjō's own rules; how they combine with your personal and a workspace's rules is resolved — and shown — when you open a workspace."
 			>
 				{#snippet right()}
 					<Btn size="sm" icon="add-circle" onclick={ladder.openNew}>New rule</Btn>
@@ -62,7 +63,7 @@
 			<div
 				class="grid gap-4 items-start grid-cols-1 md:grid-cols-[252px_1fr]"
 			>
-				<!-- Left rail — sections grouped Company · Teams · Stacks. -->
+				<!-- Left rail — sections grouped Dōjō · Workspace · Repository. -->
 				<div class="flex flex-col gap-4">
 					{#each ladder.groups as g (g.group)}
 						<div>
@@ -105,7 +106,7 @@
 					{/each}
 				</div>
 
-				<!-- Right pane — the active section's packs (stacks) + its rules. -->
+				<!-- Right pane — the active section's adopted packs + its rules. -->
 				<div class="flex flex-col gap-4">
 					{#if ladder.section.packs}
 						<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
@@ -116,7 +117,7 @@
 								<Icon name="box" size={16} toneClass="text-accent" />
 								<span
 									class="text-ink text-xs font-semibold uppercase"
-									style="letter-spacing: 0.18em">Rule packs for this stack</span
+									style="letter-spacing: 0.18em">Rule packs applied here</span
 								>
 								<span class="flex-1"></span>
 								<Btn size="sm" variant="ghost" icon="add-circle">Adopt pack</Btn>
@@ -139,7 +140,7 @@
 								{/each}
 							{:else}
 								<div class="mono text-ink-mute text-xs" style="padding: 12px 16px">
-									No pack adopted — this stack runs on its own rules and the company baseline.
+									No pack adopted — this scope runs on its own rules and the dōjō baseline.
 								</div>
 							{/if}
 						</div>

@@ -115,19 +115,22 @@ describe('ScrScopes — scope ownership, SLA and fallback', () => {
 	afterEach(cleanup);
 
 	it('groups scopes and shows an owner with role, queue and SLA', () => {
-		const { getByText } = render(ScrScopes, { props: { orgName: 'Acme Corp', owners } });
+		const { getByText, queryByText } = render(ScrScopes, { props: { orgName: 'Acme Corp', owners } });
 		expect(getByText('Scopes & policies')).toBeTruthy();
-		expect(getByText('Company')).toBeTruthy();
-		expect(getByText('Teams')).toBeTruthy();
-		expect(getByText('Stacks')).toBeTruthy();
-		expect(getByText('Payments')).toBeTruthy();
+		// grouped by the ladder: dōjō → workspace → repository (D25).
+		expect(getByText('Dōjō')).toBeTruthy();
+		expect(getByText('Workspace')).toBeTruthy();
+		expect(getByText('Repository')).toBeTruthy();
+		expect(queryByText('Teams')).toBeNull();
+		expect(queryByText('Stacks')).toBeNull();
+		expect(getByText('payments')).toBeTruthy();
 		expect(getByText('5 in queue · SLA 12h')).toBeTruthy();
 		expect(getByText('Marco Diaz')).toBeTruthy();
 	});
 
 	it('warns when a scope is unowned and marks it fallback', () => {
 		const { getByText } = render(ScrScopes, { props: { orgName: 'Acme Corp', owners } });
-		// the Postgres scope has no owner → the warning banner + the fallback chip.
+		// the acme/ledger repository scope has no owner → the warning banner + the fallback chip.
 		expect(getByText(/scope has no owner/)).toBeTruthy();
 		expect(getByText('unowned · fallback')).toBeTruthy();
 	});
@@ -210,7 +213,7 @@ describe('ScrHealth — signal cards, bar chart and alerts', () => {
 		expect(getByText('W1')).toBeTruthy();
 		expect(getByText('W4')).toBeTruthy();
 		expect(getByText('Leak-guard & anomalies')).toBeTruthy();
-		expect(getByText('Postgres scope queue has no owner')).toBeTruthy();
+		expect(getByText('acme/ledger scope queue has no owner')).toBeTruthy();
 	});
 });
 

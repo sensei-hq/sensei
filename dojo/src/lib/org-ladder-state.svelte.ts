@@ -22,7 +22,7 @@ export interface EditorTarget {
 
 /** The reactive authoring state a ScrOrgLadder binds to. */
 export interface OrgLadderState {
-	/** The sections grouped Company · Teams · Stacks (the left rail). */
+	/** The sections grouped Dōjō · Workspace · Repository (the left rail). */
 	readonly groups: LadderGroup[];
 	/** The focused section id. */
 	readonly active: string;

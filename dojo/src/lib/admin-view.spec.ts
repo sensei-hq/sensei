@@ -90,7 +90,7 @@ describe('audit action label + tone', () => {
 	it('tones by action family', () => {
 		expect(actionToneClass('identity_deleted')).toBe('text-warning');
 		expect(actionToneClass('member_added')).toBe('text-success');
-		expect(actionToneClass('engagement_created')).toBe('text-success');
+		expect(actionToneClass('team_created')).toBe('text-success');
 		expect(actionToneClass('role_changed')).toBe('text-accent');
 		expect(actionToneClass('policy_edited')).toBe('text-accent');
 		expect(actionToneClass('mystery')).toBe('text-ink-soft');

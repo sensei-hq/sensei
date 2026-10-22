@@ -5,25 +5,26 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   Scenario: the scope rail groups the dōjō ladder and marks which kinds are paid
     Given a maintainer with their own rules in sensei and a company Dōjō
     When they open the governance authoring surface
-    Then scopes are grouped Personal · Dōjō · Client · Workspace · Repository
-    And there is no Team group and no Stack group (D25, D29)
-    And Dōjō · Client are marked paid while Personal reads free
+    Then scopes are grouped Personal · Dōjō · Workspace · Repository
+    And there is no Team group, no Client group and no Stack group (D25, D32, D29)
+    And the Dōjō is marked paid while Personal reads free
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: Company vs Client is derived from membership, not chosen
-    Given a user whose employer owns one Dōjō and who is engaged with another
+    Given a user whose employer owns one Dōjō and who works in a client's
     When the scope rail renders both
     Then the employer Dōjō is captioned "your employer"
-    And the engaged Dōjō is captioned "engagement · not your employer"
+    And the client's Dōjō is captioned "client · not your employer"
+    And both sit in the Dōjō group — neither is a Client rung (D32)
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
-  Scenario: a stack applied at a level applies from that level down (D29)
-    Given a workspace under the dōjō, with the React stack's rules and packs applied at the workspace
-    When the inherited set of a repository in that workspace is composed
+  Scenario: a stack's pack is adopted at each repository where the stack is detected (D29, D33)
+    Given a workspace under the dōjō, and a repository in it where React is detected
+    When the inherited set of that repository is composed
     Then the dōjō contributes
-    And the React stack's rules contribute, attributed to the workspace
+    And the React stack pack's rules contribute, attributed to the repository
 
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
@@ -64,7 +65,7 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: anonymization is not an authorable stop
-    Given a maintainer authoring at a client scope
+    Given a maintainer authoring at a workspace classified client
     When the stance renders
     Then client anonymization is shown as always on with no stop to change
 
@@ -101,7 +102,7 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: a local rule that shadows an inherited one is labelled as an override
-    Given a workspace whose local rule repeats a company rule's text
+    Given a workspace whose local rule repeats the text of a rule from its dōjō, Company
     When the rules section renders
     Then the local rule reads "overrides ↑ Company"
     And the inherited rule is struck through and reads "overridden here"

@@ -14,11 +14,13 @@ import type {
 
 /* ── constitution ───────────────────────────────────────────────────────── */
 
-/** The rungs that make up your standing personal constitution — personal +
- *  stack, the two scopes that apply to every workspace you touch (mockup
- *  `ScrConstitution` `personalRungs`). Order-preserving against the ladder. */
+/** The rungs that make up your standing personal constitution — your personal
+ *  (`user`) rung, the rules that stay yours in sensei and apply to every workspace
+ *  you touch (D25). The dōjō's ladder (dōjō → workspace → repository) is never
+ *  part of it; a stack is a pack applied at a repository, not a rung (D29).
+ *  Order-preserving against the ladder. */
 export function personalRungs(ladder: KitLadderRung[]): KitLadderRung[] {
-	return ladder.filter((r) => r.id === 'personal' || r.id === 'stack');
+	return ladder.filter((r) => r.id === 'user');
 }
 
 /* ── rule packs ───────────────────────────────────────────────────────────── */

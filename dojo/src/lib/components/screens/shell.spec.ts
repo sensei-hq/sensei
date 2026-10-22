@@ -62,13 +62,14 @@ describe('dojo shell — nav groups render per context + role rank', () => {
 		expect(queryByText('Clients')).toBeNull();
 	});
 
-	it('an admin org context shows every management group', () => {
-		const { getByText } = render(AppShellHarness, {
+	it('an admin org context shows every management group, and no Clients (D34)', () => {
+		const { getByText, queryByText } = render(AppShellHarness, {
 			props: { context: 'org', org: toKitOrg(acme), nav: navGroupsFor('admin'), active: 'home' }
 		});
-		for (const group of ['Overview', 'Govern', 'Clients', 'Admin']) {
+		for (const group of ['Overview', 'Govern', 'Admin']) {
 			expect(getByText(group)).toBeTruthy();
 		}
+		expect(queryByText('Clients')).toBeNull();
 	});
 });
 

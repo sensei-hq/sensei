@@ -51,8 +51,10 @@ effect measurement** so the learning loop closes.
 Reuse the existing scope ladder (`sensei.scopes`: general 0 … repository 70) and
 enforcement axis (`advisory | recommended | required | mandatory`; `mandatory` = the
 non-overridable constitution tier). Accept surfaces a small decision:
-- **Scope** — repository (this repo only) · project · technology (e.g. `rust`,
-  `svelte`) · cross-project (a shared pack). Defaulted from the rec's `based_on`
+- **Scope** — repository (this repo only) · project · stack (e.g. `rust`,
+  `svelte` — a rule in the stack's pack `stack:<slug>`, which sits on each
+  repository where the stack is detected; there is no `technology` rung since
+  #307 R6, D29/D33) · cross-project (a shared pack). Defaulted from the rec's `based_on`
   and how widely the finding recurs (see §6).
 - **Enforcement** (rules only) — default `recommended`; the user may raise to
   `required`/`mandatory` or lower to `advisory`. A rule binds by pointing
@@ -92,8 +94,8 @@ surface *"formalize module boundaries / architectural-cohesion agent."* So Accep
 offers a **promotion scope** driven by recurrence:
 - A finding seen in one repo → default **repository/project** scope.
 - A finding recurring across sibling repos (or a stated principle like dbd's
-  *"why are you using regex"*, which is language-general) → offer **technology**
-  scope (e.g. a `rust` rule) or a **cross-project rule pack** adopted by each repo.
+  *"why are you using regex"*, which is language-general) → offer a **stack**
+  rule (e.g. a rule in the `stack:rust` pack) or a **cross-project rule pack** adopted by each repo.
 The sharing primitive exists: 14 library `rule_packs` + `rule_pack_adoptions` +
 the DEFINER `dojo.set_pack_adoption`. A cross-project accept authors one pack rule
 and adopts it at each sibling repo's namespace.
@@ -131,7 +133,7 @@ what has demonstrably worked. Accept → materialize → measure → re-rank.
   `.claude/agents/<slug>.md`, seeded from the rec `prompt`. Explicit consent, never
   auto. Git-tracked (reversible).
 - **P-C — cross-project**: recurrence detection + author-one-pack-rule +
-  adopt-at-each-sibling. The `technology`/cross-project scope option.
+  adopt-at-each-sibling. The stack/cross-project scope option.
 - **P-D — loop**: surface the before/after FTR verdict per accepted artifact
   (the measurement already runs) so the value of each materialization is visible.
 

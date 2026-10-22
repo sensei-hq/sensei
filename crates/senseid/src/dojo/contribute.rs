@@ -364,7 +364,6 @@ async fn build_artifact_for_target<G: Generalizer>(
     ItemPlan::Publish(Box::new(PublishedArtifact {
         signature,
         tenant_key: membership.tenant_key.clone(),
-        engagement_id: None,
         kind,
         title,
         body,

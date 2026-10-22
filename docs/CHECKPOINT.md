@@ -20,12 +20,11 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** finish the v0.17.0 release — tag pushed (Release run 39789357663), PR #324 open. Local install done:
-the live daemon DB migrated in place (pre-upgrade backup 4.1G first; workspaces 133, repos 97, sessions 399,
-namespaces 355 / 334 on `workspace`, memories 14 — as rehearsed), daemon 0.17.0 serving /api/workspaces (old 404).
-The backup script needed a fix for the rename window (2ee237d4). Waiting: the user approves `deploy-dojo`, then merge
-#324, verify dōjō /version + prod dbd in sync, close #312/#313-live, drop ztest_r3a + ~/sensei-r3a-dump. Then merge
-`r6-ladder` (re-run its gates alone — the shared test DBs must be converged to its design first).
+**Next command:** R5a (GitHub end to end: adapter, claim, import/mapping screen, repos file by mapping; spec docs/spec/dojo/git-integration-import.md) runs as an agent on `r5a-github-import` — on its report: review, re-run gates alone, merge. R5b (Azure, PAT in Vault) only after R5a is verified. The next release (R6 + R7 + SSRF) waits on the user's go. Open for the user: the `lead` role; the Cloudflare secrets.
+Wave 0b code done (335618b9: release-guard + `on-main` job; next release = PR → main → `make bump` ON main). Worker-on-tag waits on the user (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID secrets; remove the Worker's git triggers).
+Wave 0c done (SSRF fixed 9381ec2e, the rest triaged and dismissed with reasons; #1 closes with the next release).
+**v0.17.0 released 2026-10-22:** prod dōjō DB in sync (approved deploy-dojo), Worker 0.17.0 (6df9990, PR #324 merged
+on red CodeQL — all alerts pre-existing — user decision), the local daemon migrated as rehearsed. Rehearsal copies dropped.
 **R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
 extension_projects; 19 `project_id`-style columns (activity, history, inference, sensei) + staging.memories.project_name;
 17 views (project_metric_*, project_*); fn sole_project_of; enums project_maturity + 'project' in entity_scope,

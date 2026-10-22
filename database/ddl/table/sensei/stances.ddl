@@ -5,7 +5,7 @@ set search_path to sensei, extensions;
 -- the rules that govern WHAT it may do. User-scoped (D-STANCE-SCOPE): a stance
 -- follows the user with or without a dōjō, and is daemon-local (it drives the
 -- local session's autonomy), NOT tenant-shared. Set per namespace (a different
--- stance for an employer vs a client vs personal work), with a `namespace_id`
+-- stance for a dōjō, a workspace or a repository), with a `namespace_id`
 -- NULL row as the user's default; resolution picks the most-specific rung on the
 -- same ladder as rules (sensei.scopes.level).
 create table if not exists sensei.stances (
@@ -41,4 +41,4 @@ most-specific rung wins on the sensei.scopes ladder.';
 comment on column sensei.stances.user_key
      is 'The user this stance belongs to — the git identity (user.email, resolved like get_user_for_workspace). Stance follows the user, not a tenant.';
 comment on column sensei.stances.namespace_id
-     is 'The scope instance this stance applies at (organization/client/workspace/stack …); NULL = the user''s default across scopes. Most-specific rung overrides.';
+     is 'The scope instance this stance applies at (organization/workspace/repository); NULL = the user''s default across scopes. Most-specific rung overrides.';

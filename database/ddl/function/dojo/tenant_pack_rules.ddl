@@ -62,7 +62,7 @@ revoke all on function dojo.tenant_pack_rules(uuid, text[]) from public;
 grant execute on function dojo.tenant_pack_rules(uuid, text[]) to authenticated;
 
 comment on function dojo.tenant_pack_rules(uuid, text[]) is
-'Rules of the packs adopted at the namespace the tenant owns (organization:<slug>
-or team:<slug>, from its key), among the daemon folder''s `scope_key:slug` pairs —
+'Rules of the packs adopted at the namespace the tenant owns (organization:<slug>,
+from its key), among the daemon folder''s `scope_key:slug` pairs —
 each at the adoption''s scope, its tier raised (never lowered) by the adoption''s
 override. Members only; 42501 otherwise.';

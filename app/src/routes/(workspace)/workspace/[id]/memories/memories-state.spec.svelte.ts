@@ -192,7 +192,7 @@ describe('widen submenu', () => {
     it('opening another row resets pending scope', () => {
         const s = new WorkspaceMemoriesState();
         s.toggleWiden('a');
-        s.pendingScope = 'org';
+        s.pendingScope = 'organization';
         s.toggleWiden('b');
         expect(s.isWidenOpen('b')).toBe(true);
         expect(s.pendingScope).toBeNull();
@@ -207,9 +207,9 @@ describe('widen submenu', () => {
 
     it('governed rung requires confirmation and stages the scope', () => {
         const s = new WorkspaceMemoriesState();
-        const org = SCOPE_LADDER.find((r) => r.scope === 'org')!;
+        const org = SCOPE_LADDER.find((r) => r.scope === 'organization')!;
         expect(s.chooseScope(org)).toBe('confirm');
-        expect(s.pendingScope).toBe('org');
+        expect(s.pendingScope).toBe('organization');
     });
 
     it('governanceNote names the target scope', () => {
@@ -252,10 +252,10 @@ describe('promote state machine', () => {
 // ── Scope ladder shape ──────────────────────────────────────────────────────
 
 describe('SCOPE_LADDER', () => {
-    it('has user (ungoverned) then org + global (governed)', () => {
-        expect(SCOPE_LADDER.map((r) => r.scope)).toEqual(['user', 'org', 'global']);
+    it('has user (ungoverned) then the dōjō + global (governed)', () => {
+        expect(SCOPE_LADDER.map((r) => r.scope)).toEqual(['user', 'organization', 'global']);
         expect(SCOPE_LADDER.find((r) => r.scope === 'user')!.governed).toBe(false);
-        expect(SCOPE_LADDER.find((r) => r.scope === 'org')!.governed).toBe(true);
+        expect(SCOPE_LADDER.find((r) => r.scope === 'organization')!.governed).toBe(true);
         expect(SCOPE_LADDER.find((r) => r.scope === 'global')!.governed).toBe(true);
     });
 });

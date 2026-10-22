@@ -12,9 +12,11 @@
 // mirrors the mockup's `LIB_PACKS`. `/v1` wiring to real `dojo.shared_rules` is
 // deferred (see the plan's Chunk 2), so the packs are local for now.
 
-/** A level a rule can be pulled in at — cascades down the same ladder as
- *  authored governance (mockup `LIB_LEVELS`). */
-export type LibLevelId = 'org' | 'team' | 'proj' | 'stack';
+/** The level a pack (or rule) is APPLIED at — the same dōjō → workspace →
+ *  repository ladder as authored governance (D25). A stack is not a level: a
+ *  stack's pack is applied at the repository where the stack is detected (D29 ·
+ *  D33). */
+export type LibLevelId = 'dojo' | 'workspace' | 'repository';
 
 /** A selectable level, with its label + kanji glyph (for the LevelPills). */
 export interface LibLevel {
@@ -23,12 +25,11 @@ export interface LibLevel {
 	kanji: string;
 }
 
-/** The four levels, in ladder order (Org → Team → Workspace → Stack). */
+/** The three levels, in ladder order (Dōjō → Workspace → Repository). */
 export const LIB_LEVELS: readonly LibLevel[] = [
-	{ id: 'org', label: 'Org', kanji: '社' },
-	{ id: 'team', label: 'Team', kanji: '組' },
-	{ id: 'proj', label: 'Workspace', kanji: '件' },
-	{ id: 'stack', label: 'Stack', kanji: '技' }
+	{ id: 'dojo', label: 'Dōjō', kanji: '社' },
+	{ id: 'workspace', label: 'Workspace', kanji: '件' },
+	{ id: 'repository', label: 'Repository', kanji: '庫' }
 ] as const;
 
 /** An area (left-rail category): the six governance areas (mockup `LIB_CATS`). */
@@ -63,7 +64,7 @@ export interface LibRule {
 }
 
 /** A pack: a named, sourced bundle of cherry-pickable rules within one area.
- *  `defLevel` is the level it naturally applies at; `rec` marks the ones we
+ *  `defLevel` is the level it is applied at by default; `rec` marks the ones we
  *  recommend for a fresh Dōjō; `regulated` marks a compliance framework;
  *  `checkers` are the wired open-source tools (stack reviewers). */
 export interface LibPack {
@@ -106,7 +107,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'core-first',
 			name: 'First principles',
 			source: 'sensei core',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			rec: true,
 			rules: [
 				{ t: 'YAGNI — build only what a current requirement needs' },
@@ -120,7 +121,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'core-solid',
 			name: 'SOLID',
 			source: 'R. Martin',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			rec: true,
 			rules: [
 				{ t: 'Single Responsibility Principle' },
@@ -134,7 +135,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'core-test',
 			name: 'Testability & quality',
 			source: 'sensei core',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			rules: [
 				{ t: 'Every behaviour change ships with a test that would fail without it' },
 				{ t: 'Pure functions for logic; push side-effects to the edges' },
@@ -148,7 +149,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'arch-modular',
 			name: 'Modularity & boundaries',
 			source: 'sensei core',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			rec: true,
 			rules: [
 				{ t: 'Feature-sliced modules — cohesive inside, thin contracts between' },
@@ -161,7 +162,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'arch-gof',
 			name: 'Design patterns · OO (GoF)',
 			source: 'Gang of Four',
-			defLevel: 'team',
+			defLevel: 'workspace',
 			rules: [
 				{ t: 'Prefer Strategy over branching on type' },
 				{ t: 'Factory / Builder for multi-step or conditional construction' },
@@ -173,7 +174,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'arch-patternsdev',
 			name: 'Web patterns',
 			source: 'patterns.dev',
-			defLevel: 'stack',
+			defLevel: 'repository',
 			rules: [
 				{ t: 'Container/Presentational split for view logic' },
 				{ t: 'Code-split at the route; lazy-load below the fold' },
@@ -187,7 +188,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'sec-owasp',
 			name: 'OWASP baseline',
 			source: 'OWASP ASVS',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			rec: true,
 			rules: [
 				{ t: 'No secrets in source — use the vault, never .env in git', hard: true },
@@ -201,7 +202,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'sec-supply',
 			name: 'Supply chain',
 			source: 'SLSA',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			rules: [
 				{ t: 'Pin dependency versions; no floating majors' },
 				{ t: 'Block a merge on a high/critical advisory', hard: true },
@@ -214,7 +215,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'comp-hipaa',
 			name: 'HIPAA',
 			source: '45 CFR §164',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			regulated: true,
 			rules: [
 				{ t: 'Encrypt PHI at rest and in transit', hard: true },
@@ -227,7 +228,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'comp-pci',
 			name: 'PCI DSS',
 			source: 'PCI SSC v4',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			regulated: true,
 			rules: [
 				{ t: 'Never store CVV; tokenize the PAN', hard: true },
@@ -239,7 +240,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'comp-soc2',
 			name: 'SOC 2',
 			source: 'AICPA TSC',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			regulated: true,
 			rules: [
 				{ t: 'Change management — every prod change is reviewed & traceable', hard: true },
@@ -251,7 +252,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'comp-gdpr',
 			name: 'GDPR',
 			source: 'EU 2016/679',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			regulated: true,
 			rules: [
 				{ t: 'Lawful basis recorded for every category of personal data', hard: true },
@@ -266,7 +267,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'stk-ts',
 			name: 'TypeScript / JavaScript',
 			source: 'reviewer',
-			defLevel: 'stack',
+			defLevel: 'repository',
 			rec: true,
 			checkers: ['eslint', 'prettier', 'qlty'],
 			rules: [
@@ -280,7 +281,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'stk-py',
 			name: 'Python',
 			source: 'reviewer',
-			defLevel: 'stack',
+			defLevel: 'repository',
 			checkers: ['ruff', 'black', 'mypy', 'qlty'],
 			rules: [
 				{ t: 'ruff lint clean — pyflakes + isort + pyupgrade' },
@@ -293,7 +294,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'stk-rust',
 			name: 'Rust',
 			source: 'reviewer',
-			defLevel: 'stack',
+			defLevel: 'repository',
 			checkers: ['clippy', 'rustfmt'],
 			rules: [
 				{ t: 'clippy clean at deny(warnings)', hard: true },
@@ -305,7 +306,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'stk-go',
 			name: 'Go',
 			source: 'reviewer',
-			defLevel: 'stack',
+			defLevel: 'repository',
 			checkers: ['golangci-lint', 'gofmt', 'qlty'],
 			rules: [
 				{ t: 'golangci-lint clean before merge' },
@@ -319,7 +320,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'dsn-tokens',
 			name: 'Semantic tokens',
 			source: 'design system',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			rec: true,
 			rules: [
 				{ t: 'Color from semantic tokens only — no raw #hex / rgba / oklch', hard: true },
@@ -332,7 +333,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'dsn-atomic',
 			name: 'Atomic components',
 			source: 'design system',
-			defLevel: 'team',
+			defLevel: 'workspace',
 			rules: [
 				{ t: 'Reuse the shared component; never hand-roll a duplicate' },
 				{ t: 'One missing variant is added to the component, not forked inline' },
@@ -344,7 +345,7 @@ const RAW_PACKS: Record<LibAreaId, readonly RawPack[]> = {
 			id: 'dsn-a11y',
 			name: 'Accessibility',
 			source: 'WCAG 2.2 AA',
-			defLevel: 'org',
+			defLevel: 'dojo',
 			rules: [
 				{ t: '4.5:1 text contrast; 3:1 for large text & UI', hard: true },
 				{ t: 'Every interactive target ≥ 44px and keyboard-reachable' },

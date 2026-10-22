@@ -767,7 +767,6 @@ mod tests {
                     &payload,
                 ),
                 tenant_key: "github/acme".into(),
-                engagement_id: None,
                 kind: ArtifactKind::Principle,
                 title,
                 body,

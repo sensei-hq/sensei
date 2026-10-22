@@ -823,18 +823,18 @@ async fn federated_ledger_and_shareability() {
     sqlx_core::query::query(
         "INSERT INTO sensei.scopes(key, name, level, shareable)
              VALUES ('organization', 'Organization', 20, true),
-                    ('technology',   'Technology',   40, false)
+                    ('repository',   'Repository',   70, false)
              ON CONFLICT (key) DO NOTHING",
     )
     .execute(pg.pool())
     .await
     .unwrap();
 
-    // organization is shareable; technology is not (seeded scopes ladder).
+    // organization is shareable; repository is not (seeded scopes ladder).
     let org_ns = pg.upsert_namespace("organization", "Test Org", "test-org-fed").await.unwrap();
-    let tech_ns = pg.upsert_namespace("technology", "Rust", "rust-fed").await.unwrap();
+    let repo_ns = pg.upsert_namespace("repository", "Rust", "ztest.host/rust-fed").await.unwrap();
     assert!(pg.namespace_is_shareable(&org_ns).await.unwrap());
-    assert!(!pg.namespace_is_shareable(&tech_ns).await.unwrap());
+    assert!(!pg.namespace_is_shareable(&repo_ns).await.unwrap());
 
     let src = pg
         .create_knowledge_source(&NewKnowledgeSource {
@@ -903,7 +903,7 @@ async fn federated_ledger_and_shareability() {
     // happened to be missing both rows (#183: never assert on, or delete,
     // state the test does not own).
     sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = ANY($1::uuid[])")
-        .bind(vec![org_ns, tech_ns])
+        .bind(vec![org_ns, repo_ns])
         .execute(pg.pool())
         .await
         .unwrap();
@@ -968,13 +968,10 @@ async fn a_namespace_belongs_to_the_repository_so_two_checkouts_resolve_alike() 
         folders.push(fid);
     }
 
-    // A technology namespace — the kind of fact that is genuinely the
-    // repository's ("this checkout uses svelte"), not a workspace's.
-    let ns = pg
-        .upsert_namespace("technology", &format!("svelte-{uniq}"), &format!("svelte-{uniq}"))
-        .await
-        .unwrap();
-    pg.link_repository_namespace(&repository, &ns).await.unwrap();
+    // The repository's own namespace — where a fact that is genuinely the
+    // repository's ("this checkout uses svelte": its stack pack) is adopted,
+    // not a workspace's. Made and bound to the repository on first use.
+    let ns = pg.repository_namespace(&repository).await.unwrap();
 
     let content = format!("namespace rule {uniq}");
     pg.insert_memory(&InsertMemory {

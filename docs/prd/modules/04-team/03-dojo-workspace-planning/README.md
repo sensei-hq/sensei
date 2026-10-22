@@ -2,8 +2,7 @@
 
 **Plane:** team · **Status:** [roadmap/04-team.md](../../../../roadmap/04-team.md) ·
 **Serves:** manager / delivery lead ([persona 6](../../../03-personas.md#6--manager--delivery-lead--the-roll-up)),
-maintainer ([persona 3](../../../03-personas.md#3--maintainer--the-curator)),
-engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--client-lead--the-confidentiality-guard))
+maintainer ([persona 3](../../../03-personas.md#3--maintainer--the-curator))
 
 ## Purpose
 

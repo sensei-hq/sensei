@@ -607,7 +607,11 @@ mod tests {
         assert_eq!(cnt, 1);
 
         // 5. Cleanup (cascade ledger via source delete; remove memory, the
-        // membership, the namespace the pull created, and the seeded scope row).
+        // membership and the namespace the pull created). The `organization`
+        // rung stays: it is the seeded ladder every database carries, and other
+        // tests running alongside hold namespaces on it — deleting it here
+        // failed on their FK, and when it succeeded it left the ladder short a
+        // rung for everything after.
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE content=$1")
             .bind(&content)
             .execute(pg.pool())
@@ -621,9 +625,5 @@ mod tests {
         .execute(pg.pool())
         .await
         .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.scopes WHERE key='organization'")
-            .execute(pg.pool())
-            .await
-            .unwrap();
     }
 }

@@ -5,8 +5,7 @@
 //
 // The ladder here was ported from an older service with LEAD BELOW MAINTAINER
 // (2026-07-15). Every floor check then disagreed with the model: a maintainer
-// passed the lead floor on client engagements, incidents and the confidentiality
-// ledger, and a lead failed the maintainer floor on triage. The route specs stub
+// passed the lead floor, and a lead failed the maintainer floor on triage. The route specs stub
 // ACCESS with their own copies, so nothing tested the real order.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';

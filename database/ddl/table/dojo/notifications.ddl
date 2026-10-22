@@ -20,7 +20,7 @@ create index if not exists notifications_unread_idx on dojo.notifications(user_i
 comment on table dojo.notifications is
 'Per-member console notifications about Dōjō activity — e.g. "3 new items in
 your queue" (maintainer), "your contribution was approved" (contributor),
-"queue depth high" / "incident open past SLA" (admin/lead). read_at gates
+"queue depth high" (admin). read_at gates
 the unread badge. (Daemon-side "new upgrade arrived" toasts are a separate
 sensei-side concern handled when downstream artifacts land — C7.)';
 
@@ -29,7 +29,7 @@ comment on column dojo.notifications.membership_id
 comment on column dojo.notifications.user_id
      is 'Recipient user_id (denormalised for unread lookups across memberships).';
 comment on column dojo.notifications.kind
-     is 'Notification type (e.g. triage_pending, contribution_approved, queue_depth, incident_sla).';
+     is 'Notification type (e.g. triage_pending, contribution_approved, queue_depth).';
 
 -- RLS deny-by-default: server-only table (the dōjō Worker uses service_role, which
 -- bypasses RLS; no client authenticated/anon grant). Locks out any direct PostgREST

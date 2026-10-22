@@ -31,7 +31,7 @@ duplicate, leaving 89. The production-readiness items
 | `deploy-dojo` + live check of user-scoped metrics | #240 |
 | Write `dojo_memberships.sync_status` from the sync, or retire it; drop the 2026-08-29 held row | #184 |
 
-## Wave 0b — release from main tags (user, 2026-10-22)
+## Wave 0b — release from main tags (user, 2026-10-22) — items 1, 2, 4, 5 done (335618b9); item 3 waits on the user
 
 Every release bumps the version (patch or minor): one tag, one release run. A tagged release ships from
 **main**; develop is for scanning, coverage and tests. Mirrors rokkit/kavach.
@@ -43,6 +43,24 @@ Every release bumps the version (patch or minor): one tag, one release run. A ta
    (also clears the failing "Workers Builds: dojo" PR check).
 4. Scanning stays on develop, main and PRs.
 5. CLAUDE.md release section, the release skill and the dojo-worker-deploy memory follow.
+
+## Wave 0c — CodeQL's open alerts on main (2026-10-22) — done
+
+*Done 2026-10-22.* The critical SSRF is fixed with tests (9381ec2e; alert #1 closes when it reaches main). Every
+other alert was triaged against the code and dismissed in GitHub with its reason: the path ones are the local API's
+feature or exact-DB-guarded; the allocation ones are sized by an already-parsed body or clamped to 500; the logging
+ones print ids and names in test assertions. The screen-shell alerts closed with 11602156 and 35efa6d4. Open: 1 (#1).
+
+PR #324 was merged red on CodeQL (user decision, so the dōjō Worker matched its migrated database). Every
+alert already existed on main. Each one is fixed with a test, or dismissed in GitHub with a written reason;
+no alert is left open without one.
+- **#1 critical** SSRF, `indexer/lib_indexer.rs:272` (first).
+- **Path traversal ×5:** `api/handlers/workspace.rs` ×4, `libraries.rs:79`.
+- **Uncontrolled allocation ×3:** `knowledge.rs`, `observatory.rs`, `tasks/ticker.rs`.
+- **Cleartext logging:** in `dojo_client/session.rs` ×3, `app/src-tauri/log_collector.rs`,
+  `tools/session-report/retro.rs`, and the pg_store tests (`dojo_tests.rs`, `workspaces_tests.rs`).
+- **Improper code sanitization:** `app/e2e/tests-inspect/libraries-inspect.spec.ts:22`.
+- The screen-shell spec alerts are fixed on develop (11602156, 35efa6d4); they close when that code reaches main.
 
 ## Wave 1 — Settings → Workspaces / Repositories (#271, #269, #144)
 

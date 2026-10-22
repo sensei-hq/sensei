@@ -56,8 +56,23 @@ describe('ScrWorkspacePreview — the resolved-constitution drill-in', () => {
 		});
 		// the header title is the workspace name.
 		expect(getAllByText(/lumen-auth/).length).toBeGreaterThan(0);
-		// the ladder rungs render (Company scope label).
-		expect(getAllByText('Company').length).toBeGreaterThan(0);
+		// the ladder rungs render: dōjō → workspace → repository (D25).
+		expect(getAllByText('Dōjō').length).toBeGreaterThan(0);
+		expect(getAllByText('Workspace').length).toBeGreaterThan(0);
+		expect(getAllByText('Repository').length).toBeGreaterThan(0);
+	});
+
+	it('shows the packs applied at each rung — the stack packs on the repository (D33)', () => {
+		const { getByText, queryByText } = render(ScrWorkspacePreview, {
+			props: { workspace: company, ladder, conflicts }
+		});
+		expect(getByText('TypeScript')).toBeTruthy();
+		expect(getByText('Svelte')).toBeTruthy();
+		expect(getByText('OWASP baseline')).toBeTruthy();
+		// no retired rung renders.
+		expect(queryByText('Stack')).toBeNull();
+		expect(queryByText('Client')).toBeNull();
+		expect(queryByText('Team')).toBeNull();
 	});
 
 	it('shows the discarded-conflicts section for a company workspace', () => {

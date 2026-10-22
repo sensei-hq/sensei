@@ -1,15 +1,19 @@
 // Pure derivations behind the dōjō-authoring ladder (mockup ScrOrgLadder) —
 // the maintainer surface where a dōjō authors its OWN constitution by scope
-// (company-wide · per team · per stack). Ported faithfully from dojo2-app.jsx
+// (dōjō-wide · per workspace · per repository — D25). Ported faithfully from dojo2-app.jsx
 // (`groups` · the `inc` include map · `excluded` · `RULE_FAMILIES`). Pure over
 // plain data so the grouping, per-rule include state, and editor vocab
 // unit-test without a component, keeping ScrOrgLadder presentational.
 
 import type { KitConstitutionSection } from './components/kit/types';
 
-/** The authoring groups, broad → specific (mockup `groups`). A dōjō authors at
- *  the company scope, per team, and per stack. */
-export const LADDER_GROUPS = ['Company', 'Teams', 'Stacks'] as const;
+/** The authoring groups, broad → specific — the dōjō's ladder (D25). A dōjō
+ *  authors dōjō-wide, per workspace and per repository; a stack is a rule pack
+ *  applied at one of these levels, never a level of its own (D29). */
+export const LADDER_GROUPS = ['Dōjō', 'Workspace', 'Repository'] as const;
+
+/** One of the three ladder levels a section is authored under. */
+export type LadderGroupName = (typeof LADDER_GROUPS)[number];
 
 /** A rule family the editor picks from — a brand glyph + its human label
  *  (mockup `RULE_FAMILIES`). */
@@ -19,7 +23,9 @@ export interface RuleFamily {
 	label: string;
 }
 
-/** The six rule families a new/edited rule can carry (mockup `RULE_FAMILIES`). */
+/** The six rule families a new/edited rule can carry (mockup `RULE_FAMILIES`).
+ *  A family is what KIND of rule it is (a `stack` rule is about a tech stack) —
+ *  not the level it governs at. */
 export const RULE_FAMILIES: RuleFamily[] = [
 	{ kanji: '守', label: 'guard' },
 	{ kanji: '紋', label: 'pattern' },
@@ -39,7 +45,7 @@ export interface LadderGroup {
 }
 
 /** Bucket a dōjō's constitution sections under their authoring group, in the
- *  canonical Company · Teams · Stacks order, dropping any group with no
+ *  canonical Dōjō · Workspace · Repository order, dropping any group with no
  *  sections (mockup's `groups.map(... items.length ? ...)`). */
 export function sectionsByGroup(sections: KitConstitutionSection[]): LadderGroup[] {
 	return LADDER_GROUPS.map((group) => ({

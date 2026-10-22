@@ -2,7 +2,6 @@
 
 **Plane:** delivery · **Status:** [roadmap/03-delivery.md](../../../../roadmap/03-delivery.md) ·
 **Serves:** team developer ([persona 2](../../../03-personas.md#2--team-developer--the-inheritor)),
-engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--client-lead--the-confidentiality-guard)),
 client stakeholder ([persona 7](../../../03-personas.md#7--client--workspace-stakeholder--the-narrow-lens))
 
 ## Purpose

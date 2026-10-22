@@ -682,7 +682,7 @@ pub fn handle_list_tools() -> Value {
             ], &[
                 ("task", "string", "Optional task description; a sensitive/destructive task escalates an otherwise-low change."),
             ]),
-            tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization / workspace / technology / …) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey.", &[], &[]),
+            tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization — the dōjō — / workspace / repository, where detected stacks' packs apply) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey.", &[], &[]),
             tool("get_commands", "List the discoverable commands for this workspace — the actual `test` / `build` / `lint` / `e2e` invocations, derived from each folder's manifest (package.json scripts, etc.). Call when you need to know how to run tests, build, or lint here without guessing. Optionally filter by canonical category verb.", &[], &[
                 ("workspace",  "string", "Workspace name. Defaults to current workspace."),
                 ("category", "string", "Canonical verb filter — test | build | lint | e2e | run | format | typecheck | bench | docs | dev | start."),
@@ -749,7 +749,7 @@ pub fn handle_list_tools() -> Value {
                     ("scope_filter", "string", "Required when scope=stack (e.g. 'rust')"),
                     ("impact",       "string", "What breaks if ignored"),
                     ("tags",         "string", "Comma-separated tag list (e.g. 'security,performance')"),
-                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|workspace|repository (resolved against the current repo)"),
+                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|workspace|repository (resolved against the current repo)"),
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                     ("spine_slot",   "string", "spine slot to anchor to: vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests"),
                     ("feature",      "string", "feature name — required for feature-scope slots (brief/plan/tests)"),
@@ -769,7 +769,7 @@ pub fn handle_list_tools() -> Value {
                     ("scope_filter", "string", "Required when scope=stack"),
                     ("impact",       "string", "What breaks if ignored"),
                     ("tags",         "string", "Comma-separated tags"),
-                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|workspace|repository (resolved against the current repo)"),
+                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|workspace|repository (resolved against the current repo)"),
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                     ("spine_slot",   "string", "spine slot to anchor to: vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests"),
                     ("feature",      "string", "feature name — required for feature-scope slots (brief/plan/tests)"),
@@ -780,7 +780,7 @@ pub fn handle_list_tools() -> Value {
                  Creates a proposal at the new scope for the user to accept; it never auto-applies.",
                 &[("id", "string", "Memory id (UUID) to promote")],
                 &[
-                    ("gov_scope",   "string", "Target scope: organization|client|technology|team|workspace (resolved against the workspace's repo)"),
+                    ("gov_scope",   "string", "Target scope: organization|workspace|repository (resolved against the workspace's repo)"),
                     ("workspace",     "string", "Workspace the gov_scope resolves against (e.g. 'sensei'). Prefer this over the working directory."),
                     ("enforcement", "string", "Authority at the new scope: advisory|recommended|required|mandatory"),
                 ]),
@@ -2079,13 +2079,13 @@ mod tests {
         assert_eq!(rej.body.unwrap()["reason"], "dup");
         let prom = daemon_request_for(
             "promote_memory",
-            &json!({ "id": "xyz", "gov_scope": "team" }),
+            &json!({ "id": "xyz", "gov_scope": "organization" }),
             "/cwd",
             None,
         )
         .unwrap();
         assert_eq!(prom.path, "/api/knowledge/memories/xyz/promote");
-        assert_eq!(prom.body.unwrap()["gov_scope"], "team");
+        assert_eq!(prom.body.unwrap()["gov_scope"], "organization");
     }
 
     #[test]
@@ -2094,7 +2094,7 @@ mod tests {
         // folder=cwd (which mis-resolved to the container → 400 "not an indexed repo").
         let req = daemon_request_for(
             "promote_memory",
-            &json!({ "id": "m1", "gov_scope": "team", "workspace": "sensei" }),
+            &json!({ "id": "m1", "gov_scope": "organization", "workspace": "sensei" }),
             "/mcp/cwd",
             None,
         )
@@ -2102,12 +2102,12 @@ mod tests {
         assert_eq!(req.path, "/api/knowledge/memories/m1/promote");
         let body = req.body.clone().unwrap();
         assert_eq!(body["workspace"], json!("sensei"));
-        assert_eq!(body["gov_scope"], json!("team"));
+        assert_eq!(body["gov_scope"], json!("organization"));
         assert!(body.get("folder").is_none(), "no cwd folder shadow when workspace is explicit");
         // No workspace → fall back to the cwd folder (historical contract).
         let fb = daemon_request_for(
             "promote_memory",
-            &json!({ "id": "m1", "gov_scope": "team" }),
+            &json!({ "id": "m1", "gov_scope": "organization" }),
             "/mcp/cwd",
             None,
         )

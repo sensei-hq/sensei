@@ -26,10 +26,6 @@ import type {
 	KitCandidateDetail,
 	KitApproval,
 	KitKnowledge,
-	KitEngagement,
-	KitConfidentiality,
-	KitIncident,
-	KitClientAuditRow,
 	KitMember,
 	KitRolePolicy,
 	KitScopeOwner,
@@ -154,14 +150,19 @@ export const tabs: KitNavItem[] = [
 
 // ── Governance ─────────────────────────────────────────────────────────────
 
+// The dōjō's ladder for a workspace, broad → specific: dōjō → workspace →
+// repository (D25). Rung ids are the daemon's scope keys. Each rung lists the
+// rule packs applied at it — a stack's pack sits on the repository where the
+// stack is detected (D29 · D33).
 export const ladder: KitLadderRung[] = [
 	{
-		id: 'company',
+		id: 'organization',
 		kanji: '社',
-		scope: 'Company',
+		scope: 'Dōjō',
 		name: 'Acme Corp',
-		caption: 'your employer · every workspace',
+		caption: 'your dōjō · every workspace',
 		tone: 'ink',
+		packs: ['OWASP baseline'],
 		rules: [
 			{ kanji: '守', text: 'No secrets in source — vault only, never .env in git', hard: true },
 			{ kanji: '守', text: 'Never log tokens or PII, even at debug level', hard: true },
@@ -170,19 +171,37 @@ export const ladder: KitLadderRung[] = [
 		]
 	},
 	{
-		id: 'client',
-		kanji: '客',
-		scope: 'Client',
-		name: 'Globex',
-		caption: 'engagement rung · switches on for client repos',
-		tone: 'accent',
+		id: 'workspace',
+		kanji: '件',
+		scope: 'Workspace',
+		name: 'lumen-auth',
+		caption: 'this workspace · every repository in it',
+		tone: 'ink',
 		rules: [
 			{ kanji: '盾', text: 'Verify webhook signatures before parsing the body', hard: true },
-			{ kanji: '盾', text: 'Client identifiers never leave the machine — derived only' }
+			{ kanji: '紋', text: 'Every money-moving mutation carries an idempotency key' }
 		]
 	},
 	{
-		id: 'personal',
+		id: 'repository',
+		kanji: '庫',
+		scope: 'Repository',
+		name: 'acme/lumen-auth',
+		caption: 'most specific · refines everything above',
+		tone: 'ink',
+		packs: ['TypeScript', 'Svelte'],
+		rules: [
+			{ kanji: '技', text: 'No default exports in shared packages' },
+			{ kanji: '技', text: 'Server state through the query layer, never in a store' }
+		]
+	}
+];
+
+// Your personal rung — the rules that stay yours, in sensei (D25). Shown on
+// your constitution, never on the dōjō's ladder.
+export const personalLadder: KitLadderRung[] = [
+	{
+		id: 'user',
 		kanji: '己',
 		scope: 'Personal',
 		name: 'Rin Saito',
@@ -192,18 +211,6 @@ export const ladder: KitLadderRung[] = [
 			{ kanji: '己', text: 'Explain the plan before editing more than three files' },
 			{ kanji: '己', text: 'Prefer small, reviewable commits over one large diff' }
 		]
-	},
-	{
-		id: 'stack',
-		kanji: '技',
-		scope: 'Stack',
-		name: 'React · TypeScript',
-		caption: 'most specific · refines everything above',
-		tone: 'ink',
-		rules: [
-			{ kanji: '技', text: 'No default exports in shared packages' },
-			{ kanji: '技', text: 'Server state through the query layer, never in a store' }
-		]
 	}
 ];
 
@@ -211,16 +218,16 @@ export const conflicts: KitConflict[] = [
 	{
 		id: 'cf1',
 		topic: 'retry behaviour on money-moving calls',
-		loser: { level: 'Company', text: 'retry freely on transient failure' },
+		loser: { level: 'Dōjō', text: 'retry freely on transient failure' },
 		winner: { level: 'Workspace', text: 'idempotency key required before retry' },
-		why: 'More specific scope refines the broader one — Workspace > Company.',
+		why: 'More specific scope refines the broader one — Workspace > Dōjō.',
 		locked: false
 	},
 	{
 		id: 'cf2',
 		topic: 'logging verbosity in auth boundary',
-		loser: { level: 'Stack', text: 'debug-log request/response bodies' },
-		winner: { level: 'Company', text: 'never log tokens or PII (★)' },
+		loser: { level: 'Repository', text: 'debug-log request/response bodies' },
+		winner: { level: 'Dōjō', text: 'never log tokens or PII (★)' },
 		why: 'A non-negotiable locks — no narrower scope can relax it.',
 		locked: true
 	}
@@ -622,7 +629,7 @@ export const needsYou: KitNeed[] = [
 		dojo: 'Initech',
 		title: 'retry policy clashes with idempotency rule',
 		age: '26m',
-		why: 'Company ‘retry freely’ vs Team ‘idempotency key required’'
+		why: 'Dōjō ‘retry freely’ vs Workspace ‘idempotency key required’'
 	},
 	{
 		id: 'n3',
@@ -649,15 +656,15 @@ export const decisions: KitDecision[] = [
 		id: 'd1',
 		project: 'globex-portal',
 		title: 'adopt ‘verify webhook signature’ as a client guard',
-		options: ['adopt to Client rung', 'keep as workspace note', 'decline'],
+		options: ['adopt at this workspace', 'keep as workspace note', 'decline'],
 		context: '4 sessions · dereferenced · confidence 0.91',
 		age: '1h'
 	},
 	{
 		id: 'd2',
 		project: 'lumen-auth',
-		title: 'promote ‘idempotency key’ from Workspace to Company',
-		options: ['promote to Company', 'keep at Workspace', 'decline'],
+		title: 'promote ‘idempotency key’ from Workspace to Dōjō',
+		options: ['promote to Dōjō', 'keep at Workspace', 'decline'],
 		context: 'adopted in 6 repos · no conflicts',
 		age: '5h'
 	}
@@ -773,18 +780,21 @@ export function orgWorkspacesFor(slug: string): KitWorkspace[] {
 }
 
 // The dōjō's OWN authored constitution, by section (dojo2-data
-// `orgConstitution`). A dōjō authors rules at the scopes it owns: company-wide,
-// per team, per stack (stacks also adopt rule packs). This is NOT the resolution
-// ladder — that only appears at workspace-preview time. Keyed by slug; only `acme`
-// is authored, and an unknown slug returns empty (no fake fallback).
+// `orgConstitution`). A dōjō authors rules at the levels it owns: dōjō-wide, per
+// workspace, per repository (D25), and adopts rule packs at any of them — a
+// stack's pack on each repository where the stack is detected (D29 · D33). This is
+// NOT the resolution ladder — that only appears at workspace-preview time. Keyed
+// by slug; only `acme` is authored, and an unknown slug returns empty (no fake
+// fallback).
 const orgConstitutions: Record<string, KitConstitutionSection[]> = {
 	acme: [
 		{
-			id: 'company',
+			id: 'dojo',
 			kanji: '社',
-			scope: 'Company-wide',
-			group: 'Company',
+			scope: 'Dōjō-wide',
+			group: 'Dōjō',
 			caption: 'every workspace in the dōjō',
+			packs: ['OWASP baseline'],
 			rules: [
 				{ kanji: '守', text: 'No secrets in source — vault only, never .env in git', hard: true },
 				{ kanji: '守', text: 'Never log tokens or PII, even at debug level', hard: true },
@@ -793,11 +803,11 @@ const orgConstitutions: Record<string, KitConstitutionSection[]> = {
 			]
 		},
 		{
-			id: 'team-pay',
-			kanji: '組',
-			scope: 'Payments',
-			group: 'Teams',
-			caption: 'payments · ledger repos',
+			id: 'ws-payments',
+			kanji: '件',
+			scope: 'payments',
+			group: 'Workspace',
+			caption: 'payments · ledger repositories',
 			rules: [
 				{
 					kanji: '紋',
@@ -808,10 +818,10 @@ const orgConstitutions: Record<string, KitConstitutionSection[]> = {
 			]
 		},
 		{
-			id: 'team-plat',
-			kanji: '組',
-			scope: 'Platform',
-			group: 'Teams',
+			id: 'ws-platform',
+			kanji: '件',
+			scope: 'platform',
+			group: 'Workspace',
 			caption: 'platform · API · gateway',
 			rules: [
 				{ kanji: '理', text: 'Every public endpoint carries a deprecation policy' },
@@ -819,22 +829,22 @@ const orgConstitutions: Record<string, KitConstitutionSection[]> = {
 			]
 		},
 		{
-			id: 'stack-react',
-			kanji: '技',
-			scope: 'React · TypeScript',
-			group: 'Stacks',
-			caption: 'adopted packs + rules',
-			packs: ['React · TypeScript baseline'],
+			id: 'repo-web',
+			kanji: '庫',
+			scope: 'acme/web',
+			group: 'Repository',
+			caption: 'stack packs adopted where detected',
+			packs: ['TypeScript', 'Svelte'],
 			rules: [
 				{ kanji: '技', text: 'No default exports in shared packages' },
 				{ kanji: '技', text: 'Server state through the query layer, never in a store' }
 			]
 		},
 		{
-			id: 'stack-pg',
-			kanji: '技',
-			scope: 'Postgres',
-			group: 'Stacks',
+			id: 'repo-ledger',
+			kanji: '庫',
+			scope: 'acme/ledger',
+			group: 'Repository',
 			caption: 'no pack adopted yet',
 			packs: [],
 			rules: [
@@ -850,9 +860,9 @@ export function orgConstitutionFor(slug: string): KitConstitutionSection[] {
 	return orgConstitutions[slug] ?? [];
 }
 
-// ── Maintainer + lead consoles (dojo2-data `consoles`) ──────────────────────
+// ── Maintainer consoles (dojo2-data `consoles`) ─────────────────────────────
 //
-// The role-console fixtures the maintainer (Govern) and lead (Clients) screens
+// The role-console fixtures the maintainer (Govern) screens
 // bind to. Ported 1:1 from the mockup `consoles` block. As with the org
 // Overview data above, each console is keyed by slug; only `acme` is authored,
 // and an unknown slug returns empty (no fake fallback, matching the single
@@ -942,7 +952,7 @@ const candidateDetail: KitCandidateDetail = {
 		'3 more sessions'
 	],
 	conflict: {
-		loser: 'Company · retry freely on transient failure',
+		loser: 'Dōjō · retry freely on transient failure',
 		winner: 'Workspace · idempotency key required'
 	},
 	scopes: ['Company', 'Team · Payments', 'Stack · Node']
@@ -976,7 +986,7 @@ const approvals: Record<string, KitApproval[]> = {
 		{
 			id: 'a2',
 			kanji: '紋',
-			title: 'Promote idempotency key from Workspace to Company',
+			title: 'Promote idempotency key from Workspace to Dōjō',
 			scope: 'Company',
 			first: 'Marco Diaz',
 			when: '5h',
@@ -1040,129 +1050,6 @@ export function knowledgeFor(slug: string): KitKnowledge {
 	return knowledge[slug] ?? { prunePolicy: '', active: [], pending: [], catalog: [] };
 }
 
-// 4 · Engagements — the client register + the confidentiality model.
-const engagements: Record<string, KitEngagement[]> = {
-	acme: [
-		{
-			id: 'e1',
-			kanji: '客',
-			client: 'Globex',
-			clientTenantId: null,
-			projects: 'globex-portal · billing',
-			lessons: 86,
-			dropped: 214,
-			since: '7mo',
-			status: 'active'
-		},
-		{
-			id: 'e2',
-			kanji: '客',
-			client: 'Initech',
-			clientTenantId: null,
-			projects: 'agency-monorepo',
-			lessons: 41,
-			dropped: 97,
-			since: '1y',
-			status: 'active'
-		}
-	]
-};
-
-const confidentiality: KitConfidentiality = {
-	kept: ['The lesson — a pattern, a guard, a skill', 'Anonymized code shape', 'Confidence & impact'],
-	dropped: ['Client & repo identifiers', 'Endpoints, hostnames, secrets', 'Literal source & data'],
-	example: {
-		raw: 'await stripe.charges.create({ idempotencyKey })',
-		stripped: 'await <payment-sdk>.<mutation>({ idempotencyKey })'
-	}
-};
-
-/** The client engagements for a slug (dojo2-data `consoles.engagements`),
- *  returns empty for an unknown slug. */
-export function engagementsFor(slug: string): KitEngagement[] {
-	return engagements[slug] ?? [];
-}
-
-/** The confidentiality model (dojo2-data `consoles.confidentiality`) — the
- *  kept-vs-dropped boundary + the anonymized example. */
-export function confidentialityFor(_slug: string): KitConfidentiality {
-	return confidentiality;
-}
-
-// 5 · Incidents — confidentiality containment.
-const incidents: Record<string, KitIncident[]> = {
-	acme: [
-		{
-			id: 'i1',
-			kanji: '盾',
-			title: 'Near-leak: client hostname in a shared prompt',
-			client: 'Globex',
-			state: 'contained',
-			when: '3d',
-			severity: 'high'
-		},
-		{
-			id: 'i2',
-			kanji: '盾',
-			title: 'Raw stack trace queued to Collective',
-			client: 'Initech',
-			state: 'resolved',
-			when: '2w',
-			severity: 'medium'
-		}
-	]
-};
-
-/** The confidentiality incidents for a slug (dojo2-data `consoles.incidents`),
- *  returns empty for an unknown slug. */
-export function incidentsFor(slug: string): KitIncident[] {
-	return incidents[slug] ?? [];
-}
-
-// 6 · Client audit — the immutable confidentiality ledger.
-const clientAudit: Record<string, KitClientAuditRow[]> = {
-	acme: [
-		{
-			t: '10:42',
-			kanji: '共',
-			event: 'Lesson shared upstream',
-			detail: 'idempotency pattern · anonymized',
-			client: 'Globex',
-			ok: true
-		},
-		{
-			t: '10:41',
-			kanji: '盾',
-			event: 'Stripped 2 identifiers',
-			detail: 'hostname, repo slug',
-			client: 'Globex',
-			ok: true
-		},
-		{
-			t: '09:18',
-			kanji: '却',
-			event: 'Blocked contribution',
-			detail: 'raw source detected · held',
-			client: 'Initech',
-			ok: false
-		},
-		{
-			t: 'Yesterday',
-			kanji: '共',
-			event: 'Lesson shared upstream',
-			detail: 'webhook guard · anonymized',
-			client: 'Globex',
-			ok: true
-		}
-	]
-};
-
-/** The immutable client-audit ledger for a slug (dojo2-data
- *  `consoles.clientAudit`), returns empty for an unknown slug. */
-export function clientAuditFor(slug: string): KitClientAuditRow[] {
-	return clientAudit[slug] ?? [];
-}
-
 // ── Admin consoles (dojo2-data `members` · `roles` · `scopeOwners` ·
 //    `billing` · `consoles.identity` · `consoles.health`) ────────────────────
 //
@@ -1213,7 +1100,7 @@ export function membersFor(_slug: string): KitMember[] {
 export const rolePolicies: KitRolePolicy[] = [
 	{ id: 'contributor', kanji: '士', label: 'contributor', note: 'read-mostly · watches & chats' },
 	{ id: 'maintainer', kanji: '掟', label: 'maintainer', note: 'authors governance · triages' },
-	{ id: 'lead', kanji: '客', label: 'lead', note: 'client engagements & audit' },
+	{ id: 'lead', kanji: '客', label: 'lead', note: 'everything a maintainer can' },
 	{ id: 'admin', kanji: '任', label: 'admin', note: 'member roles & policies' }
 ];
 
@@ -1230,35 +1117,36 @@ export function auditLogFor(_slug: string): KitChatTurn[] {
 	return chat;
 }
 
-// Scope ownership — who owns/triages each scope's queue (dojo2-data `scopeOwners`).
+// Scope ownership — who owns/triages each scope's queue (dojo2-data `scopeOwners`),
+// grouped by the ladder level the scope sits at (D25).
 const scopeOwners: Record<string, KitScopeOwner[]> = {
 	acme: [
 		{
-			scope: 'Company-wide',
-			group: 'Company',
+			scope: 'Dōjō-wide',
+			group: 'Dōjō',
 			owner: 'Keiko Tanaka',
 			role: 'admin',
 			queue: 3,
 			sla: '24h'
 		},
-		{ scope: 'Payments', group: 'Teams', owner: 'Marco Diaz', role: 'maintainer', queue: 5, sla: '12h' },
+		{ scope: 'payments', group: 'Workspace', owner: 'Marco Diaz', role: 'maintainer', queue: 5, sla: '12h' },
 		{
-			scope: 'Platform',
-			group: 'Teams',
+			scope: 'platform',
+			group: 'Workspace',
 			owner: 'Sven Karlsson',
 			role: 'maintainer',
 			queue: 2,
 			sla: '24h'
 		},
 		{
-			scope: 'React · TypeScript',
-			group: 'Stacks',
+			scope: 'acme/web',
+			group: 'Repository',
 			owner: 'Rin Saito',
 			role: 'maintainer',
 			queue: 4,
 			sla: '48h'
 		},
-		{ scope: 'Postgres', group: 'Stacks', owner: null, role: null, queue: 1, sla: 'fallback' }
+		{ scope: 'acme/ledger', group: 'Repository', owner: null, role: null, queue: 1, sla: 'fallback' }
 	]
 };
 
@@ -1298,7 +1186,7 @@ export const billing: KitBilling = {
 			current: true,
 			lines: [
 				'Private, shared scopes for a company or team',
-				'Role consoles · client engagements · audit',
+				'Role consoles · audit',
 				'Relay across the team — shared inbox, presence, priority realtime',
 				'Read-only members always free'
 			]
@@ -1380,7 +1268,7 @@ export const health: KitHealth = {
 		},
 		{
 			kanji: '門',
-			title: 'Postgres scope queue has no owner',
+			title: 'acme/ledger scope queue has no owner',
 			detail: '1 candidate routed to fallback',
 			when: '1d',
 			sev: 'warning'

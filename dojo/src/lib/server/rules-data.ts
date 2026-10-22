@@ -316,7 +316,7 @@ export async function recordRulesAudit(
 // with its never-weaken tier override. They flow through the SessionStart /
 // PreCompact push.
 
-/** Parse the `?ns=organization:acme,stack:react` query into (scope_key, slug)
+/** Parse the `?ns=organization:acme,repository:github.com/acme/web` query into (scope_key, slug)
  *  pairs — how the daemon names its repo's namespaces cross-DB (the stable key,
  *  not the dojo-side uuid). Malformed segments are dropped. Pure. */
 export function parseNamespacePairs(raw: string | null): Array<{ scope_key: string; slug: string }> {

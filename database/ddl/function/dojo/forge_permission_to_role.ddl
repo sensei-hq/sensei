@@ -2,8 +2,7 @@ set search_path to dojo, extensions;
 
 -- The forge's per-repo permission as a dōjō role (#307 D5): read, triage and write
 -- are contributor; maintain is maintainer; admin is admin. `lead` never comes from
--- the forge — it is the tenant's client-confidentiality role. Anything else maps to
--- nothing.
+-- the forge — only a dōjō admin assigns it. Anything else maps to nothing.
 create or replace function dojo.forge_permission_to_role(p_permission text)
     returns dojo.member_role
     language sql

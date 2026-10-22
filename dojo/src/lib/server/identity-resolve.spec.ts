@@ -130,8 +130,8 @@ function makeTableDb(tables: Record<string, Array<Record<string, unknown>>>) {
 }
 
 describe('resolveDisplayNames is scoped to the tenant', () => {
-	// An incident's `owner_id` comes from the request body. Resolving it against
-	// the GLOBAL identities table handed a lead of tenant A the name and email of
+	// A principal id can come from a request body. Resolving it against the
+	// GLOBAL identities table handed a caller in tenant A the name and email of
 	// anyone on the platform. A principal who is not a member of the tenant
 	// resolves to nothing — exactly as an unknown id does.
 	it('never resolves a principal who is not a member of the tenant', async () => {

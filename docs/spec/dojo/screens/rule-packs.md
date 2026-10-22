@@ -3,7 +3,7 @@
 > **Before building this screen, follow the [Screen-build runbook](./SCREEN-BUILD-RUNBOOK.md)** — render + compare the mock, uno utilities (not var-space), rokkit components, tokens via rokkit.config, independent scroll + sticky headers, zero-errors gate.
 - Route: `/you/packs` — `(app)/you/[section]/+page.svelte` (section id `packs`) → `ScrRulePacks.svelte`
 - Mockup: dojo2-app.jsx `ScrRulePacks` (L211), row `PackRow` (L161)
-- Access axis: tenant-primary per `entity-access-model.md` §3 (rule-packs = governance). **Nuance:** the pack LIBRARY (`sensei.rule_packs`) is a *shared-plane* artifact — global (`owner_namespace_id` NULL) or org-authored (`owner_namespace_id → namespaces`); ADOPTION (`sensei.rule_pack_adoptions`) binds a concrete `namespace_id`. A personal `/you/packs` adoption binds the *user's* namespace, an org adoption (on ScrOrgLadder) binds a stack/org namespace — same table, different scope instance.
+- Access axis: tenant-primary per `entity-access-model.md` §3 (rule-packs = governance). **Nuance:** the pack LIBRARY (`sensei.rule_packs`) is a *shared-plane* artifact — global (`owner_namespace_id` NULL) or org-authored (`owner_namespace_id → namespaces`); ADOPTION (`sensei.rule_pack_adoptions`) binds a concrete `namespace_id`. A personal `/you/packs` adoption binds the *user's* namespace, an org adoption (on ScrOrgLadder) binds a dōjō, workspace or repository namespace (a detected stack's pack is adopted at the repository's namespace, D33) — same table, different scope instance.
 - Status: PARTIAL — component + `rulepacks-state` adopt/drop built; loader feeds **fixture** `rulePacks`; adopt/drop is local `$state` only. Full DDL exists (`rule_packs` / `rule_pack_rules` / `rule_pack_adoptions`) and the daemon-facing `GET /v1/.../rules/resolved?ns=` resolves adopted packs — but there is **no list-packs or adopt/drop endpoint** for the dōjō UI.
 
 ## ⚠ Fabricated-data debt — MUST fix on build (2026-07-29 fallback audit)
@@ -45,7 +45,7 @@ The `/you` rule-packs list is fixture-backed via the shared constitution loader 
 3. This personal adopt vs the org "Adopt pack" on ScrOrgLadder both write `rule_pack_adoptions` at different `namespace_id`s — confirm the two affordances stay distinct (individual vs tenant-wide) and which roles may adopt at an org scope.
 
 ### Resolved design (2026-07-30)
-- **Q1 + new-Q → personal adoption = the user's single personal namespace (`scope_key='personal'`); NO scope-picker on `/you/packs`.** The bare toggle becomes real `adopt(userNS)` / `drop` — `POST`/`DELETE` `sensei.rule_pack_adoptions` keyed on the user's personal namespace. The scope-picker is an **org-only** affordance (ScrOrgLadder).
+- **Q1 + new-Q → personal adoption = the user's single personal namespace (`scope_key='user'`); NO scope-picker on `/you/packs`.** The bare toggle becomes real `adopt(userNS)` / `drop` — `POST`/`DELETE` `sensei.rule_pack_adoptions` keyed on the user's personal namespace. The scope-picker is an **org-only** affordance (ScrOrgLadder).
 - **Q2 → Available visibility = global packs (`owner_namespace_id` NULL) + packs owned by the user's dōjō namespaces.**
 - **Q3 → org-scope adoption requires `maintainer` or `admin`;** contributors cannot adopt tenant-wide. Personal adoption (any user, own namespace) stays a **distinct** affordance.
 - **Depends on:** dōjō list-packs + adopt/drop endpoints (`GET /v1/…/packs`, `POST`/`DELETE …/packs/adoptions`) + the user's personal namespace row + WS-0 Rule A/role checks.

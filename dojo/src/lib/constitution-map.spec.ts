@@ -36,9 +36,9 @@ describe('rulesToLadder', () => {
 			rule('workspace', 'p'),
 			rule('organization', 'o'),
 			rule('user', 'u'),
-			rule('technology', 't')
+			rule('repository', 'r')
 		]);
-		expect(rungs.map((r) => r.scope)).toEqual(['Personal', 'Company', 'Stack', 'Workspace']);
+		expect(rungs.map((r) => r.scope)).toEqual(['Personal', 'Dōjō', 'Workspace', 'Repository']);
 	});
 
 	it('groups rules under their scope and surfaces the mandatory ★ lock', () => {
@@ -47,7 +47,7 @@ describe('rulesToLadder', () => {
 			rule('organization', 'prefer Result', 'recommended')
 		]);
 		expect(rungs).toHaveLength(1);
-		expect(rungs[0].scope).toBe('Company');
+		expect(rungs[0].scope).toBe('Dōjō');
 		expect(rungs[0].name).toBe('organization-ns');
 		expect(rungs[0].caption).toBe('2 rules');
 		expect(rungs[0].rules?.map((r) => [r.text, r.hard])).toEqual([
@@ -59,6 +59,12 @@ describe('rulesToLadder', () => {
 	it('routes an unknown scope to the fallback rung, sorted last', () => {
 		const rungs = rulesToLadder([rule('wildcard', 'x'), rule('user', 'u')]);
 		expect(rungs.map((r) => r.scope)).toEqual(['Personal', 'Other']);
+	});
+
+	it('knows no retired rung — team · client · technology are not scopes (D25 · D29 · D32)', () => {
+		// The ladder is dōjō → workspace → repository; a stack is a pack, not a level.
+		const rungs = rulesToLadder([rule('team', 'x'), rule('client', 'y'), rule('technology', 'z')]);
+		expect(rungs.map((r) => r.scope)).toEqual(['Other', 'Other', 'Other']);
 	});
 });
 
@@ -82,10 +88,10 @@ const CONSTITUTION: RelayConstitution = {
 describe('relayRules — federated constitution → ConstitutionRule[] (reuses rulesToLadder)', () => {
 	it('maps scope_key/title/enforcement through and uses the namespace as the rung name', () => {
 		const rungs = rulesToLadder(relayRules(CONSTITUTION));
-		expect(rungs.map((r) => r.scope)).toEqual(['Company', 'Workspace']);
-		const company = rungs.find((r) => r.scope === 'Company')!;
-		expect(company.name).toBe('Acme'); // real namespace name, not a stub
-		expect(company.rules?.[0]).toMatchObject({ text: 'never log secrets', hard: true });
+		expect(rungs.map((r) => r.scope)).toEqual(['Dōjō', 'Workspace']);
+		const dojo = rungs.find((r) => r.scope === 'Dōjō')!;
+		expect(dojo.name).toBe('Acme'); // real namespace name, not a stub
+		expect(dojo.rules?.[0]).toMatchObject({ text: 'never log secrets', hard: true });
 	});
 
 	it('falls back to the scope label when a rule has no namespace (honest, not blank)', () => {
@@ -101,7 +107,7 @@ describe('relayToKitConflicts — discards → KitConflict[] (daemon-computed wi
 		expect(conflicts[0]).toMatchObject({
 			topic: 'never log secrets',
 			loser: { level: 'Repository', text: 'never log secrets' },
-			winner: { level: 'Company', text: 'never log secrets' },
+			winner: { level: 'Dōjō', text: 'never log secrets' },
 			locked: true
 		});
 	});
@@ -112,16 +118,16 @@ describe('relayToKitConflicts — discards → KitConflict[] (daemon-computed wi
 });
 
 describe('rulesToSections', () => {
-	it('groups org scopes into Company / Teams / Stacks, ordered by level', () => {
+	it('groups the dōjō scopes into Dōjō / Workspace / Repository, ordered by level', () => {
 		const sections = rulesToSections([
-			rule('technology', 'strict types'),
-			rule('team', 'payments owns X'),
-			rule('organization', 'company-wide')
+			rule('repository', 'strict types'),
+			rule('workspace', 'payments owns X'),
+			rule('organization', 'dōjō-wide')
 		]);
 		expect(sections.map((s) => [s.scope, s.group])).toEqual([
-			['organization-ns', 'Company'],
-			['technology-ns', 'Stacks'],
-			['team-ns', 'Teams']
+			['organization-ns', 'Dōjō'],
+			['workspace-ns', 'Workspace'],
+			['repository-ns', 'Repository']
 		]);
 	});
 

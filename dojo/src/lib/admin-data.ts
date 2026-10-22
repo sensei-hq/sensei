@@ -122,7 +122,6 @@ export interface AuditEvent {
 	/** ISO-8601. */
 	ts: string;
 	actor_id: string | null;
-	engagement_id: string | null;
 	action: string;
 	target: string | null;
 	detail: unknown;

@@ -53,8 +53,7 @@ Feature: Releases, DORA & release gates — deployments read from CI, the five k
     When a production incident linked to it is opened and later restored
     Then change failure rate counts that deployment as failed
     And time to restore includes the incident's open-to-restore time
-    And a confidentiality incident never counts toward either
-    This is unbuilt — dojo.incidents holds confidentiality incidents only.
+    This is unbuilt — there is no production-incident entity yet.
 
   # gap: D-4
   NO TEST

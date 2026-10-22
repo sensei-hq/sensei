@@ -26,11 +26,12 @@ Feature: Dōjō Core — the org context, a dōjō from a git integration, and r
 
   # resolved: T-2
   NO TEST
-  Scenario: a lead sees the clients/engagements/audit surfaces in the org context
+  Scenario: no role sees a Clients section in the org context (D34)
     Given a user with lead role in an org
     When they open the org context
-    Then they see client engagements, confidentiality controls, and audit trail
-    Built — the Clients group is gated at lead (navForOrg).
+    Then they see the Overview and Govern groups, as a maintainer does
+    And no Engagements, Incidents or Client audit section appears for any role
+    Built — nav.spec.ts and shell.spec.ts assert the absence (#307 R7).
 
   # resolved: T-2
   NO TEST

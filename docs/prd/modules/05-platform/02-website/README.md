@@ -2,7 +2,6 @@
 
 **Plane:** platform · **Status:** [roadmap/05-platform.md](../../../../roadmap/05-platform.md) ·
 **Serves:** solo developer ([persona 1](../../../03-personas.md#1--solo-developer--the-wedge)),
-engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--client-lead--the-confidentiality-guard)),
 client / workspace stakeholder ([persona 7](../../../03-personas.md#7--client--workspace-stakeholder--the-narrow-lens))
 
 ## Purpose

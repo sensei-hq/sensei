@@ -35,7 +35,7 @@ is a bug in the policy.
 |---|---|---|
 | **anyone signed in** | a valid session JWT → `dojo.current_principal_id()` | Not a member of anything. The matrix gives this nothing tenant-scoped. |
 | **member** | an ACTIVE membership in the tenant (`memberships.disabled_at is null`) | The floor for every tenant-scoped cell. A missing or disabled membership is **no access**, never "level 0". |
-| **contributor · maintainer · lead · admin** | `memberships.role` (`dojo.member_role`) | The TENANT role. `admin` is "management": policy, identity, billing, provisioning. A tenant-role `lead` guards client confidentiality (engagements, incidents, audit ledger). |
+| **contributor · maintainer · lead · admin** | `memberships.role` (`dojo.member_role`) | The TENANT role. `admin` is "management": policy, identity, billing, provisioning. A tenant-role `lead` sits between maintainer and admin and is never derived from the forge; it unlocks nothing a maintainer does not have since the Clients section was removed (#307 R7, D34). |
 | **team** (#307, D7, D13) | `dojo.team_members`; `dojo.team_projects` links a team to the workspaces it works on | **Grants nothing.** A grouping for "by team" reports, and a way to grant workspace viewer to everyone on the team at once (one grant per person at that moment, D15). The link to a workspace is reporting only (D13). A workspace's relationship to access is its repositories (`dojo.repositories_in_projects`). |
 | **workspace viewer** (#307, D8) | a viewer grant on one workspace | **Read-only managerial view** of the workspace — metrics, dashboards, reports, aggregated or split by repository; never per-person. Admin-granted, only to someone already in the dōjō — a member or a dōjō viewer. Grants nothing else. |
 | **dōjō viewer** (#307, D8 revised) | an accepted invite with `access = viewer` (`dojo.dojo_viewers`) | **Nothing by itself** — not a membership; reads no repository. It makes the person eligible for workspace viewer grants in that dōjō. Removing them also removes their workspace views there (unless they are also a member). The dōjō's admins list them (with the email they were invited at) and read their identities. |
@@ -132,18 +132,14 @@ A contributor's publish may trigger clustering (`promoteCluster`) that changes
 OTHER members' submissions. That is a maintainer action and moves behind the
 maintainer cell, as a system step with an audit row.
 
-### Client work and compliance
+### Audit
 
 | Data | lead (tenant role) | admin |
 |---|---|---|
-| engagements, incidents | **R/W tenant** | R/W tenant |
-| audit ledger (confidentiality actions) | R tenant | R tenant |
-| audit events (full) | — | R tenant |
+| audit events | — | R tenant |
 
-References written into these rows (`client_tenant_id`, `owner_id`,
-`engagement_id`, `artifact_id`) must name objects of the same tenant (or, for
-`client_tenant_id`, a tenant with a recorded connection). An unvalidated
-reference is a read through a side door.
+A dōjō has no Clients section (#307 R7, D34): a client is just another dōjō, so
+there are no engagements, incidents or confidentiality ledger to read.
 
 ### Tenancy, identity, billing
 
@@ -167,7 +163,7 @@ writes an audit row where it changes tenant state.
 | invite acceptance | the joining principal has no membership yet; the invite token is the authority |
 | clustering after a publish (`promoteCluster`) | derived maintenance over many members' rows |
 | the audit row for a person's action (`recordAudit`) | the system's record of what the person did, written from the resolved caller; a member never authors ledger rows |
-| a display name for an id on a row the caller already read (`resolveDisplayNames`, e.g. an incident's owner; a seat's workspace name) | names live on memberships/identities/`sensei.namespaces`, which a session does not read; the lookup resolves only the ids the caller's own read returned |
+| a display name for an id on a row the caller already read (`resolveDisplayNames`, e.g. a member's or a team member's name; a seat's workspace name) | names live on memberships/identities/`sensei.namespaces`, which a session does not read; the lookup resolves only the ids the caller's own read returned |
 | the `seats_used` refresh (`POST …/billing`) | a money-facing cache derived from the seats; the system recomputes it after the admin gate, and no session writes the number |
 
 Everything not in this table moves to the user session.

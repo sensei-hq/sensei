@@ -6,7 +6,6 @@ create table if not exists dojo.artifacts (
   id             uuid                 primary key default gen_random_uuid()
 , seq            bigint               not null default nextval('dojo.artifacts_seq'::regclass)
 , tenant_id      uuid                 not null references dojo.tenants(id)
-, engagement_id  uuid                 references dojo.engagements(id)
 , kind           dojo.artifact_kind   not null
 , status         dojo.artifact_status not null default 'submitted'
 , title          text                 not null
@@ -29,7 +28,6 @@ create index if not exists artifacts_seq_idx on dojo.artifacts(seq);
 create index if not exists artifacts_tenant_idx on dojo.artifacts(tenant_id);
 create index if not exists artifacts_signature_idx on dojo.artifacts(tenant_id, signature);
 create index if not exists artifacts_kind_idx on dojo.artifacts(tenant_id, kind);
-create index if not exists artifacts_engagement_idx on dojo.artifacts(engagement_id);
 
 comment on table dojo.artifacts is
 'The canonical Dōjō artifact — one of six kinds (principle/pattern/prompt/guard/
@@ -40,8 +38,6 @@ membership whose scope matches this artifact''s scope tag.';
 
 comment on column dojo.artifacts.seq
      is 'Monotonic federation pull cursor, advanced on every write (the service sets seq = nextval on publish; a bigserial-style default alone would only fire on insert). A puller resumes gap-free from the last seq it saw — mirrors dojo.shared_rules.seq.';
-comment on column dojo.artifacts.engagement_id
-     is 'Set when the artifact came from client work under an engagement. Every artifact is source-dereferenced on publish regardless (always-on invariant).';
 comment on column dojo.artifacts.kind
      is 'One of the six primitives: principle, pattern, prompt, guard, skill, agent.';
 comment on column dojo.artifacts.payload

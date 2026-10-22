@@ -148,6 +148,15 @@ apply:
     # Deletes pending invites that hold a plain token (#311), only while the
     # `token` column still exists. No-op afterwards.
     - apply/before/dojo_invites_token_hashed.sql
+    # Drops the ladder's empty `team` and `client` rungs (#318 R6, D25/D32);
+    # refuses — never deletes — while a namespace sits on either. No-op afterwards.
+    - apply/before/sensei_ladder_rungs_retired.sql
+    # Drops the dōjō's Clients tables — engagements, incidents — and the
+    # confidentiality ledger view (#307 R7, D34). The release reconciles without
+    # --prune, so dbd alone would leave the tables orphaned; the reconcile then
+    # drops the engagement_id columns, retired_types.sql the enums. No-op
+    # afterwards.
+    - apply/before/dojo_clients_retired.sql
   after:
     - apply/after/realtime_publication.sql
     # USAGE on `dojo` for the API roles (+ service_role's table grants) — what
@@ -156,8 +165,17 @@ apply:
     # Drops functions the design no longer has — reconcile prunes orphaned
     # tables but not functions. No-op once they are gone.
     - apply/after/retired_functions.sql
+    # Drops enum types the design no longer has — reconcile warns about an
+    # orphaned enum but leaves it, and `dbd diff --exit-code` then fails.
+    # No-op once they are gone.
+    - apply/after/retired_types.sql
     # Marks pre-#309 memberships org provisioning made as `provisioned`. Idempotent.
     - apply/after/membership_source_backfill.sql
+    # Converts the ladder's `technology` rung into stack packs adopted at each
+    # repository the stack is detected in (#318 R6, D29/D33), then drops it.
+    # After, not before: it calls the functions the scan calls (adopt_stack_pack).
+    # No-op afterwards.
+    - apply/after/sensei_stack_packs_converted.sql
 
 import:
   staging:
