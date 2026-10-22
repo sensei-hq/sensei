@@ -40,6 +40,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D29 | Are stack scopes governance levels? (D25 follow-up) | **No.** A stack is a tech stack's rules and packs (React, Rust, …), **applied at a level** — the dōjō, a workspace or a repository (user 2026-10-21). The ladder stays dōjō → workspace → repository. Client scopes are still to decide. |
 | D30 | How deep does R3 go in the daemon's own database? | **Everywhere, schema too** (user 2026-10-21): `sensei.projects` and every `project_id` column are renamed in place on upgrade, rehearsed twice on a copy of a real daemon database. Another system's `project` stays (R3's rule). |
 | D31 | The README frontmatter key that groups a repository into a workspace? | **Migrated in place** (user 2026-10-21): sensei reads and writes only `workspace:`, and on its next scan rewrites an existing `project:` line to `workspace:` in that README — a one-time conversion, no permanent dual-read. |
+| D32 | Is Client a governance level? | **No — retired** (user 2026-10-22). A client engagement is the dōjō it lives in plus workspace classification `client`; client-only standards are rules at that dōjō or workspace. 0 rows stored. |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -111,6 +112,21 @@ slice builds, passes and ships on its own.
   - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
     `get_workspace_summary`, …), the plugin's hooks and skills that call them, both `SKILL.md` copies, and
     `sensei` CLI words.
+- **R6 · The ladder is dōjō → workspace → repository (D25, D29, D32).** *Planned 2026-10-22.* Today the
+  ladder still has `general · user · organization · client · technology · team · workspace · repository`.
+  - **Retire `team` and `client`** (0 namespaces locally and in production): the seed, both databases (a guarded
+    hook that FAILS, never deletes, if a namespace still sits on either), and every reader — the dōjō preview
+    rungs (`company, client, personal, stack, workspace`), the library levels (`org · team · proj · stack`),
+    `gov_scope: team` in the MCP tests.
+  - **`technology` becomes packs (D29).** 19 technology namespaces on the user's machine (typescript 38 repos,
+    svelte 14, java 10, python 10, …) are bound to repositories by detected stack. Each becomes a rule pack
+    (its rules → `rule_pack_rules`) adopted at a level through `rule_pack_adoptions` — **where it is adopted is
+    the open question (Q-R6)**: at each bound repository (exactly today's reach; needs repository-rung namespaces,
+    of which there are 0 today) or at each workspace containing a bound repository (simpler; reaches every
+    repository in that workspace).
+  - The library screen's levels become **dōjō · workspace · repository**; the preview shows that ladder with
+    the packs applied at each rung.
+  - Rehearsed on copies of both databases, counts and rule reach compared before/after.
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
