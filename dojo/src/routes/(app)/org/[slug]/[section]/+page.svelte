@@ -35,6 +35,9 @@
 	import { InviteState } from '$lib/invite-state.svelte';
 	import { TeamDraft } from '$lib/teams-state.svelte';
 	import { IntegrationsState } from '$lib/integrations-state.svelte';
+	import { connectGithub, type KavachSignIn } from '$lib/github-connect';
+	import { providers } from '$kavach/providers';
+	import { getContext, untrack } from 'svelte';
 	import type { KitWorkspace } from '$lib/components/kit/types';
 
 	// The org-zone section screen. Dispatches to the real screen for every NAV_ORG
@@ -84,15 +87,25 @@
 	// New team / Rename (#307 A3).
 	const teamDraft = new TeamDraft();
 	// Admin → Integrations (#308 R5a): GitHub, bound to this dōjō and session.
+	// The GitHub token is the server's (a sealed cookie set when Connect GitHub
+	// re-authorized through kavach); nothing here sends one.
+	const kavach = getContext<KavachSignIn>('kavach');
 	const integrations = new IntegrationsState({
-		list: (token) => listIntegrationUnits(tk(), 'github', token, opts()),
-		claim: (token, unitId) => claimIntegrationUnit(tk(), 'github', token, unitId, opts()),
-		map: (token, unitId, target) => mapIntegrationUnit(tk(), 'github', token, unitId, target, opts())
+		list: () => listIntegrationUnits(tk(), 'github', opts()),
+		claim: (unitId) => claimIntegrationUnit(tk(), 'github', unitId, opts()),
+		map: (unitId, target) => mapIntegrationUnit(tk(), 'github', unitId, target, opts()),
+		connect: () => connectGithub(kavach, providers, page.url.href)
 	});
-	// Another org's section reuses this component: its listing is not that dōjō's.
+	// Read on opening the section, again for another org (this component is
+	// reused), and again after the GitHub connection returns (kavach's sync
+	// invalidates the data, which re-runs this).
 	$effect(() => {
-		void data.tenantKey;
-		integrations.reset();
+		const current = data; // a new object after every load, the reload included
+		if (current.section !== 'integrations') return;
+		untrack(() => {
+			integrations.reset();
+			void integrations.load();
+		});
 	});
 </script>
 

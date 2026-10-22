@@ -29,6 +29,9 @@ export type Caller = {
 	/** The verified Supabase JWT — what `userDb` reads with, so RLS rather than
 	 *  route code limits the rows (#236 step 3). */
 	accessToken?: string;
+	/** The Supabase login id behind the session — what a sealed forge token is
+	 *  bound to (#308 R5a). */
+	authUserId?: string;
 };
 
 /** Resolve the `{origin}/{org}` tenant id, or throw 404/500. */
@@ -140,7 +143,7 @@ export async function resolveTenantAccess(
 	floor: AccessLevel
 ): Promise<Caller> {
 	// Same JWT-plane identity step as a user-wide caller, then tenant + role.
-	const { userId, accessToken } = await resolveCaller(request, locals);
+	const { userId, authUserId, accessToken } = await resolveCaller(request, locals);
 	// Resolving the caller's tenant and role is auth itself — system work.
 	const db = dojoDb();
 
@@ -170,7 +173,8 @@ export async function resolveTenantAccess(
 		role: mem.role,
 		access,
 		membershipId: mem.id as string,
-		accessToken
+		accessToken,
+		authUserId
 	};
 }
 

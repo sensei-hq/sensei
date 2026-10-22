@@ -7,8 +7,9 @@
 //     is unclaimed and no admin of it has placed it).
 // Spec: docs/spec/dojo/git-integration-import.md.
 //
-// The token is used for the reads of one request and never stored, logged or
-// echoed. Every forge fact is re-read at the moment of the act — never taken
+// The token is the person's GitHub connection (a "Connect GitHub"
+// re-authorization, integrations-route.ts), used for the reads of one request and
+// never stored, logged or echoed. Every forge fact is re-read at the moment of the act — never taken
 // from the client, and never from an earlier listing (§II.5).
 //
 // This module is system work (the server's service-role client): it reads every
@@ -259,17 +260,10 @@ export function providerParam(p: string | undefined): ForgeProvider {
 	return p;
 }
 
-/** An Integrations request body, or {} when it is not JSON. */
+/** An Integrations request body, or {} when it is not JSON. It carries no token:
+ *  the GitHub token comes only from the connection (integrations-route.ts). */
 async function bodyOf(request: Request): Promise<Record<string, unknown>> {
 	return ((await request.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;
-}
-
-/** The person's forge token, for this request's reads only — or a 400 that never
- *  repeats it. */
-function tokenOf(body: Record<string, unknown>): string {
-	const token = typeof body.token === 'string' ? body.token.trim() : '';
-	if (!token) throw new AdminError(400, 'a token is required');
-	return token;
 }
 
 function unitOf(body: Record<string, unknown>): string {
@@ -278,26 +272,19 @@ function unitOf(body: Record<string, unknown>): string {
 	return unitId;
 }
 
-/** A list request: the token. */
-export async function listRequest(request: Request): Promise<{ token: string }> {
-	return { token: tokenOf(await bodyOf(request)) };
+/** A claim request: the unit. */
+export async function claimRequest(request: Request): Promise<{ unitId: string }> {
+	return { unitId: unitOf(await bodyOf(request)) };
 }
 
-/** A claim request: the token and the unit. */
-export async function claimRequest(request: Request): Promise<{ token: string; unitId: string }> {
+/** A map request: the unit, and where it goes. */
+export async function mapRequest(request: Request): Promise<{ unitId: string; target: MapTarget }> {
 	const body = await bodyOf(request);
-	return { token: tokenOf(body), unitId: unitOf(body) };
-}
-
-/** A map request: the token, the unit, and where it goes. */
-export async function mapRequest(request: Request): Promise<{ token: string; unitId: string; target: MapTarget }> {
-	const body = await bodyOf(request);
-	const token = tokenOf(body);
 	const unitId = unitOf(body);
-	if (body.as === 'dojo') return { token, unitId, target: { as: 'dojo' } };
+	if (body.as === 'dojo') return { unitId, target: { as: 'dojo' } };
 	if (body.as === 'workspace') {
 		const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined;
-		return { token, unitId, target: name ? { as: 'workspace', name } : { as: 'workspace' } };
+		return { unitId, target: name ? { as: 'workspace', name } : { as: 'workspace' } };
 	}
 	throw new AdminError(400, "map it as 'dojo' or 'workspace'");
 }

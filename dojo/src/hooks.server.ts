@@ -1,6 +1,9 @@
 import { kavach } from '$kavach/auth';
 import type { Handle } from '@sveltejs/kit';
 import { provisionOnSignIn } from '$lib/server/provision-on-signin';
+import { captureForgeToken } from '$lib/server/forge-token-cookie';
+import { serverSecret } from '$lib/server/dojo-supabase';
+import kavachConfig from '../kavach.config.js';
 
 // Mirror sites/demo/src/hooks.server.js: the kavach instance's `.handle`
 // (built on @kavach/sentry) reads the session cookie into `event.locals.session`
@@ -18,5 +21,15 @@ import { provisionOnSignIn } from '$lib/server/provision-on-signin';
 // module and takes no constructor options from us.
 kavach.configure({ onSessionSync: provisionOnSignIn });
 
-export const handle: Handle = ({ event, resolve }) =>
-	kavach.handle({ event, resolve }) as ReturnType<Handle>;
+// The same moment is when a "Connect GitHub" re-authorization's token can be kept
+// for the Integrations screen (#308 R5a): kavach's session answer gains a sealed,
+// HttpOnly, /v1/t-scoped, one-hour cookie carrying it — never the database
+// (forge-token-cookie.ts). The request is cloned because kavach reads it.
+export const handle: Handle = async ({ event, resolve }) => {
+	const sync =
+		event.request.method === 'POST' && event.url.pathname === kavachConfig.routes.session
+			? event.request.clone()
+			: null;
+	const response = (await kavach.handle({ event, resolve })) as Response;
+	return sync ? captureForgeToken(sync, response, serverSecret()) : response;
+};

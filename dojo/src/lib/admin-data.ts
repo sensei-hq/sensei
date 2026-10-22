@@ -387,38 +387,36 @@ export async function getBilling(
 
 const integrationsPath = (provider: ForgeProvider) => `/integrations/${encodeURIComponent(provider)}`;
 
-/** `POST …/integrations/{provider}` — the units the person's forge token sees.
- *  POST because the token travels in the body, never in a URL. */
+/** `POST …/integrations/{provider}` — the units the person's connected GitHub
+ *  sees. The token is never sent from here: the server reads it from the sealed
+ *  cookie a "Connect GitHub" re-authorization set, and answers 428 without one. */
 export async function listIntegrationUnits(
 	tenantKey: string,
 	provider: ForgeProvider,
-	token: string,
 	opts: DojoCallOpts = {}
 ): Promise<IntegrationUnitsView> {
-	return sendJson<IntegrationUnitsView>(adminUrl(tenantKey, integrationsPath(provider)), 'POST', { token }, opts);
+	return sendJson<IntegrationUnitsView>(adminUrl(tenantKey, integrationsPath(provider)), 'POST', {}, opts);
 }
 
 /** `POST …/integrations/{provider}/claim` — claim a unit's dōjō. */
 export async function claimIntegrationUnit(
 	tenantKey: string,
 	provider: ForgeProvider,
-	token: string,
 	unitId: string,
 	opts: DojoCallOpts = {}
 ): Promise<{ dojo: { key: string } }> {
-	return sendJson(adminUrl(tenantKey, `${integrationsPath(provider)}/claim`), 'POST', { token, unit_id: unitId }, opts);
+	return sendJson(adminUrl(tenantKey, `${integrationsPath(provider)}/claim`), 'POST', { unit_id: unitId }, opts);
 }
 
 /** `POST …/integrations/{provider}/map` — its own dōjō, or a workspace here. */
 export async function mapIntegrationUnit(
 	tenantKey: string,
 	provider: ForgeProvider,
-	token: string,
 	unitId: string,
 	target: MapTarget,
 	opts: DojoCallOpts = {}
 ): Promise<{ tenantId: string; workspaceId: string | null }> {
-	return sendJson(adminUrl(tenantKey, `${integrationsPath(provider)}/map`), 'POST', { token, unit_id: unitId, ...target }, opts);
+	return sendJson(adminUrl(tenantKey, `${integrationsPath(provider)}/map`), 'POST', { unit_id: unitId, ...target }, opts);
 }
 
 /** `GET …/audit` — the admin audit log, most recent first (read-only). */

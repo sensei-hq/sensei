@@ -39,7 +39,10 @@ export default {
 	//    now that the grant is this broad:
 	//      web  — `provider_token` exists only in the payload handed to
 	//             `onSessionSync`; the session cookie keeps access/refresh only,
-	//             so it is unreachable from every later request (hooks.server.ts).
+	//             so it is unreachable from every later request (hooks.server.ts)
+	//             — except the Admin → Integrations API (#308 R5a): the same
+	//             session answer gains a SEALED, HttpOnly, /v1/t-only cookie
+	//             holding it for one hour (forge-token-cookie.ts), never the DB.
 	//      CLI  — `/v1/auth/cli/token` returns the session byte-for-byte and the
 	//             daemon PERSISTS it, in the OS keychain rather than Postgres
 	//             (`dojo_client/session.rs`). So on a developer machine this is a

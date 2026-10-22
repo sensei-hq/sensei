@@ -106,13 +106,29 @@ workspace of it, and its repositories file there.
 - **Provisioning (decision)** — a sign-in does **not** create a dōjō for an org an admin mapped as a workspace of
   another dōjō: its repositories already file there. An org whose dōjō already exists keeps it, and #309's
   membership lifecycle is unchanged.
-- **Screen** — org Admin → Integrations. The person pastes a GitHub token (read:org): the dōjō has no durable
-  GitHub token — `provider_token` exists only during the OAuth exchange — so the proof is read with a token given
-  for that request, used for its reads only, never stored, logged or echoed (as D35 does for Azure). Routes:
-  `POST /v1/t/{tenant}/integrations/github` (list), `…/claim`, `…/map` (admin floor of the screen's dōjō).
+- **Screen** — org Admin → Integrations, with **Connect GitHub** (user decision 2026-10-22: re-authorization, no
+  pasted token). The button runs the dōjō's own GitHub sign-in again through kavach (`kavach.signIn` with the
+  configured `github` provider and its scopes — `read:org` among them; the same scopes as sign-in, because the
+  returning session also runs provisioning, whose repository-role mirror clears roles a narrower token cannot list)
+  and returns to the screen. How the token travels:
+  1. GitHub → Supabase → the browser (the existing OAuth redirect); the browser's kavach instance POSTs the session,
+     `provider_token` included, to `/auth/session` — exactly as every sign-in already does.
+  2. `hooks.server.ts` wraps kavach's answer to that POST (`captureForgeToken`): for a GitHub session it adds a
+     cookie `dojo_forge_github` holding the token **sealed** — AES-GCM under a key HKDF-derived from the server's
+     secret key, bound to the Supabase login the session synced as and to an expiry — `HttpOnly; SameSite=Lax;
+     Path=/v1/t; Max-Age=3600`. The database never holds it; signing out clears it.
+  3. Each Integrations request (`POST /v1/t/{tenant}/integrations/github`, `…/claim`, `…/map`; admin floor) opens
+     the cookie for the caller's own login (`integrations-route.ts`) and uses the token for that request's reads
+     only. No cookie, one that does not open (another login, expired, tampered) or a token GitHub answers 401 to:
+     **428** "Connect GitHub" (and the dead cookie is cleared) — there is no other source of the token.
+  The request bodies carry no token. Lifetime: at most one hour, or until sign-out. Supabase must allow the return
+  URL (`<origin>/org/**` in the redirect allow-list — added to `supabase/config.toml` for local; production's is a
+  dashboard setting); without it Supabase returns to the site URL, the cookie is still set, and the screen works
+  once reopened. Caveat: re-authorizing a magic-link session with GitHub signs in as the GitHub-linked Supabase
+  user, which is a different login if the emails differ.
   An org in a workspace of a dōjō the person is not in is shown without naming that dōjō.
 - **Not in R5a**: removing a mapping (re-map instead), listing all dōjōs to pick a target (the target is the dōjō
-  whose screen this is), a re-sign-in flow that would replace the pasted token, and membership sync from
+  whose screen this is), and membership sync from
   `listMembers` (provisioning still follows each person's own org list, #309).
 
 ## R5b · Azure DevOps (after R5a)
