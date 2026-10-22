@@ -86,14 +86,17 @@ begin
     -- The new rung is made from the old one, the namespaces moved onto it, and
     -- only then the old one dropped: `namespaces.scope_key` is an FK. The seed
     -- import that follows refreshes the rung's name and description.
-    if to_regclass('sensei.scopes') is not null
-       and exists (select 1 from sensei.scopes where key = 'project') then
-        insert into sensei.scopes (key, name, level, shareable, description, modified_at)
-        select 'workspace', 'Workspace', level, shareable, description, modified_at
-          from sensei.scopes where key = 'project'
-        on conflict (key) do nothing;
-        update sensei.namespaces set scope_key = 'workspace' where scope_key = 'project';
-        delete from sensei.scopes where key = 'project';
+    -- Nested, not `and`-ed: an IF condition is planned whole, so a read of
+    -- sensei.scopes in it fails on a fresh database before the guard is tested.
+    if to_regclass('sensei.scopes') is not null then
+        if exists (select 1 from sensei.scopes where key = 'project') then
+            insert into sensei.scopes (key, name, level, shareable, description, modified_at)
+            select 'workspace', 'Workspace', level, shareable, description, modified_at
+              from sensei.scopes where key = 'project'
+            on conflict (key) do nothing;
+            update sensei.namespaces set scope_key = 'workspace' where scope_key = 'project';
+            delete from sensei.scopes where key = 'project';
+        end if;
     end if;
     if to_regclass('sensei.dojo_inbox') is not null then
         update sensei.dojo_inbox
