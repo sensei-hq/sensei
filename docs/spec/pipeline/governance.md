@@ -25,12 +25,24 @@ hierarchy in favour of **priority ladders**: each concern
 (security, architecture, testing, style, …) is its own ladder,
 each rung has a priority tag (`P0 | P1 | P2 | P3`) and an impact
 label. When two rules conflict, the higher rung wins regardless of
-scope. Scope (company / team / project / repo / stack) rides along
+scope. Scope (personal / dōjō / workspace / repository) rides along
 as a tag, not as the structure.
 
 Kanji is 律 — *rule / discipline*.
 
 ## Data invariants
+
+> **As built (#307 R6).** `sensei.rule_ladders` and `sensei.rules`
+> below never shipped: a rule is a memory with `namespace_id`,
+> `enforcement` and `origin` (see
+> [M13](../../prd/modules/02-insight/13-governance-and-rules/README.md)).
+> Its scope is the rung of its namespace in `sensei.scopes`:
+> `general` 0 · `user` 10 · `organization` 20 (the dōjō) ·
+> `workspace` 60 · `repository` 70, most specific wins. There is no
+> team, client or technology rung (D25, D32, D29) — a stack is a rule
+> pack `stack:<slug>` adopted at each repository where the stack is
+> detected (D33). The `scope` tag levels and gather orders in this
+> section (`project`, `org`, `stack`) predate that ladder.
 
 ### Ladders
 

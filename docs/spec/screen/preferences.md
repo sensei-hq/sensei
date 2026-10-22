@@ -103,7 +103,7 @@ Right pane (contents):
 - Panes deep-link — `/preferences/folders` opens the Folders
   pane directly.
 - The Connection sub-section under Profile can pair with a Dōjō,
-  authenticate, and choose which scopes (teams, stacks) to
+  authenticate, and choose which scopes (workspaces, repositories) to
   follow (per journey map §2.2 opportunities).
 - No hidden panes; every setting the wizard used to cover is
   reachable from here.

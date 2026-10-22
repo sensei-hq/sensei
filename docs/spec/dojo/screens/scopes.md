@@ -15,7 +15,7 @@
 | Header "Scopes & policies" (eyebrow "{org} · admin") | `org.name` | `data.orgName` (from `orgBySlug` on real memberships) | have | no |
 | "New scope" button | — | no handler (noop) | have (noop) | no |
 | Banner 規 (warns when any unowned) | derived from `owners` | **FIXTURE** `fixtures.ts:scopeOwners` | have | no |
-| Group sections Company / Teams / Stacks | `rows.filter(group)` | **FIXTURE**. Canonical ladder = `sensei.scopes` (`key`/`name`/`level`); a scope instance = `sensei.namespaces` at that scope. | bind→plumb | no |
+| Group sections Dōjō / Workspace / Repository (the ladder, D25 — `LADDER_GROUPS`) | `rows.filter(group)` | **FIXTURE**. Canonical ladder = `sensei.scopes` (`key`/`name`/`level`); a scope instance = `sensei.namespaces` at that scope. | bind→plumb | no |
 | Row: scope label | `r.scope` | `sensei.scopes.name` / a `sensei.namespaces` instance | plumb | no |
 | Row: "{queue} in queue · SLA {sla}" | `r.queue` / `r.sla` | **No source** — queue depth / SLA not modeled in DDL | plumb (new schema) | no |
 | Row: owner Avatar + name + RoleTag | `r.owner` / `r.role` | **No source** — no scope-owner table; nearest is `dojo.memberships.role`, but no scope↔owner binding exists | plumb (new schema) | no |
@@ -78,7 +78,7 @@ dereference as a fixed invariant — never a selectable option.
 **State** — `scopes-state.svelte.ts` → `scopesState` (**new** — today the screen renders the
 `scopeOwnersFor(slug)` fixture directly, no state module)
 - data: `owners: KitScopeOwner[]`, `policies: Policy[]`
-- `$derived`: `groups` (owners bucketed Company/Teams/Stacks) · `anyUnowned` (drives the 規 banner tone)
+- `$derived`: `groups` (owners bucketed Dōjō/Workspace/Repository) · `anyUnowned` (drives the 規 banner tone)
 - methods: `assign(scope, membershipId)` (needs the new ownership table) · `setPolicy(scopeKey, mode)`
   (`named|anonymous` only)
 
@@ -89,7 +89,7 @@ dereference as a fixed invariant — never a selectable option.
   rows → `Policy[]` once a read endpoint exists
 
 **Components** (pure, semantic, own styles + `md:`)
-- `ScrScopes` — shell: header + "New scope" + 規 banner (warns when `anyUnowned`) + Company/Teams/Stacks
+- `ScrScopes` — shell: header + "New scope" + 規 banner (warns when `anyUnowned`) + Dōjō/Workspace/Repository
   group sections. Reads `scopesState`.
 - scope-owner row — one `KitScopeOwner`: scope label · "{queue} in queue · SLA {sla}" · owner
   `Avatar` + name + `RoleTag`, or "unowned · fallback" chip · Assign/Reassign → `assign`.

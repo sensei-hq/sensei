@@ -40,7 +40,7 @@ Kanji is 連 — *to connect*.
 | Membership card | kind kanji · dojo url · role · auth chip · sync status · last-heartbeat |
 | Sign-in link | Settings → Dōjō, where signing in joins every membership |
 | Auth method chip | sso / github |
-| Connected-scopes list | teams / stacks / projects the membership follows |
+| Connected-scopes list | the workspaces / repositories the membership follows |
 | Bound projects strip | which of my projects route findings here |
 | Remove / disable / re-authenticate actions | per card |
 

@@ -114,16 +114,20 @@ for everyone below. That half of the console is specified in
   artifact carries the scope it was written at. A dōjō's governance levels are
   **dōjō → workspace → repository** (D25); scopes compose from self up to the
   dōjō. A **stack** — a tech stack's rules and packs (React, Rust, …) — is not a
-  level: it is **applied at a level** — the dōjō, a workspace or a repository —
-  and its rules apply from there like any rule written at that level (D29). Teams are not a
-  governance level — they are reporting only (D13). An individual's own rules
-  live in sensei, not in the dōjō.
+  level: it is a rule pack (`stack:<slug>`) **applied at a level**, and sensei
+  adopts it **at each repository where the stack is detected** (D29, D33), so its
+  rules apply there like any rule written at the repository. Teams are not a
+  governance level — they are reporting only (D13). Client is not a governance
+  level either (D32): a client engagement is the dōjō it lives in plus the
+  workspace classification `client`, and client-only standards are rules at that
+  dōjō or workspace. An individual's own rules live in sensei, not in the dōjō.
 - **Lead.** **Composition is most-specific-wins**, and it is not the first line
   of resolution: confidentiality resolves first, then a mandatory (★) lock that
   no narrower scope may relax, then specificity — T1's three-step order.
 - **Lead.** **Company vs Client is derived from membership**, never chosen:
   your employer's Dōjō renders *Company*, an org you're engaged with renders
-  *Client*.
+  *Client*. It is a caption on the dōjō, not a rung — either way the dōjō sits
+  on the Dōjō rung (D32).
 - **Lead.** **Anonymization is not authorable.** The stance data model carries
   an `anon` value, but the surface exposes no stop for it — client work is
   stripped by T1's universal strip or it does not leave.
@@ -144,24 +148,28 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 | Rail group | Kanji | Example | Marker |
 |---|---|---|---|
 | Personal | 己 | My workspaces | free |
-| Dōjō (Company) | 社 | Company | **paid** · *your employer* |
-| Client | 客 | Globex | **paid** · *engagement · not your employer* |
+| Dōjō | 社 | Company · Globex | **paid** · *your employer* or *engagement · not your employer* |
 | Workspace | 件 | personal-site · lumen-auth · billing-svc | *(none)* |
-| Repository | — | lumen-auth-api · billing-svc-web | *(none)* |
+| Repository | 庫 | lumen-auth-api · billing-svc-web | *(none)* |
 
 - **The dōjō ladder is dōjō → workspace → repository, most specific wins** (D25):
   a rule at the dōjō applies everywhere in it, a workspace rule to that group of
-  repositories, a repository rule to one repository. There is **no Team rung** —
-  teams are reporting only (D13).
+  repositories, a repository rule to one repository. In `sensei.scopes` the rungs
+  are `general` 0 · `user` 10 · `organization` 20 (the dōjō — labelled *Dōjō*) ·
+  `workspace` 60 · `repository` 70. There is **no Team rung** — teams are
+  reporting only (D13) — **no Client rung** (D32) and **no Stack rung** (D29).
 - **Personal is not a dōjō level.** The Personal group shows an individual's own
-  rules in sensei; they stay theirs and are
-  never authored by the dōjō. The rail marks **Dōjō · Client** paid;
+  rules in sensei (the `user` rung); they stay theirs and are
+  never authored by the dōjō. The rail marks the **Dōjō** paid;
   **Workspace and Repository carry no marker**.
-- **Company vs Client is derived per-user from membership** — never chosen.
+- **Company vs Client is derived per-user from membership** — never chosen. It
+  captions the dōjō; an engaged org's dōjō is still a Dōjō rung, not a Client one.
 - **Composition**: walk `parent` from the scope to the root — so a repository
-  composes as *lumen-auth-api → lumen-auth → Company*. A stack (a tech stack's rules
-  and packs) applied at any of those levels (say React at `lumen-auth`) contributes its rules at that level
-  (D29); it is never a rung of its own.
+  composes as *lumen-auth-api → lumen-auth → Company*. A stack is a rule pack
+  (`stack:<slug>`, area `tech_stack`) adopted at **each repository where the stack is
+  detected** (say React at `lumen-auth-api`), so it contributes its rules at the
+  repository rung (D29, D33); it is never a rung of its own. Any pack adopted at the
+  dōjō or a workspace contributes from that level down.
 - The rail badge counts **rules + skills only** at each scope — an empty scope
   reads blank rather than counting agents and commands.
 - Desktop: rail grouped by kind. Mobile: the same scopes as a wrapping pill row.
@@ -239,8 +247,9 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 - A summary card counts the **composed** set — rules · skills · agents ·
   commands · (learnings, workspace only) — deduplicated across the whole chain, so
   the number is *unique artifacts*, not a sum of lists.
-- It names the chain: *"Composed down the ladder — this scope plus **Company ·
-  Rust · React**"* and states delivery: *"Delivered to their
+- It names the chain: *"Composed down the ladder — this scope plus **lumen-auth ·
+  Company**"*, with the packs applied at each scope (the Rust and React stack packs
+  sit on the repository, where those stacks are detected — D33), and states delivery: *"Delivered to their
   Observatory the moment they connect."*
 - **Preview onboarding** expands to a per-scope breakdown (one row per
   contributing scope) and closes with *"Composed by specificity — a more
@@ -283,7 +292,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 |---|---|---|
 | Org context nav | workspaces / governance / members / triage / engagements | maintainer sees governance + triage |
 | Role badge | the user's role in this org | `maintainer` |
-| Scope rail | the ladder, grouped by kind, paid-marked, with a rules+skills count | `社 Company · paid · 4` · `客 Globex · paid · engagement` |
+| Scope rail | the ladder, grouped by kind, paid-marked, with a rules+skills count | `社 Company · paid · 4` · `社 Globex · paid · engagement` |
 | Scope chip | which scope you are authoring | `件 lumen-auth · Project` |
 | Stance dial | the selected stop **and** its consequence | `Sharing → Automatic: lessons past the confidence bar are sent up on a cadence` |
 | Artifact section | what is authored here vs inherited | `2 here · 5 inherited` |
@@ -344,8 +353,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   authorable.
 - **An accepted playbook proposal never becomes a rule at that scope** — the
   loop's accept path regressed.
-- **A stack applied at a level does not reach the scopes below it** — applying
-  a stack regressed (D29).
+- **A pack applied at a level does not reach the scopes below it, or a detected
+  stack's pack is missing from its repository** — applying a pack regressed (D29,
+  D33).
 - **An unauthored scope shows a stance other than the middle stop** — default
   drift.
 - **The personal landing shows the management overview instead of "your work"**
@@ -397,13 +407,16 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   derived from namespace membership.
 - **Library reachability** — the ponytail pack is seeded but nothing adopts it
   (M13's C-2 follow-on); "Browse library" is the surface that would close it.
-- **Client scopes under D25's dōjō → workspace → repository ladder — undecided.**
-  Stack scopes are retired as levels (D29): a stack — a tech stack's rules and packs — is applied at a level (dōjō, workspace or repository).
-  The code still groups rules as *Company · Teams · Stacks* (#318).
-- **The code still carries a Team rung** (retired by D25): `sensei.scopes` seeds
-  `team` (level 50, `database/import/staging/scopes.jsonl`), `gov_scope` accepts
-  `team` (`crates/mcp`), and the dōjō's `constitution-map.ts` / `org-ladder-view.ts`
-  / `library-data.ts` group rules as *Company · Teams · Stacks*.
+- **The ladder is dōjō → workspace → repository — resolved (#307 R6, #318).**
+  `sensei.scopes` seeds only `general · user · organization · workspace ·
+  repository`; `team`, `client` and `technology` are retired (D25, D32, D29), and
+  the deploy refuses — never deletes — if a namespace still sits on a retired rung.
+  Each technology namespace became its stack pack, adopted at each repository where
+  the stack is detected (D33). `gov_scope` accepts
+  `general|user|organization|workspace|repository` (`crates/mcp`), and the dōjō's
+  `constitution-map.ts` / `org-ladder-view.ts` group rules *Dōjō · Workspace ·
+  Repository*; the library's levels (`library-data.ts`) are `dojo · workspace ·
+  repository`.
 - **Strict stance has no control** — M13 pins `strict_fails_closed_on_every_dial`,
   but the authoring mock exposes only the three 3-stop dials; *strict* must be
   either derived from the stops or given a control of its own.

@@ -3,7 +3,7 @@
 > **Before building this screen, follow the [Screen-build runbook](./SCREEN-BUILD-RUNBOOK.md)** — render + compare the mock, uno utilities (not var-space), rokkit components, tokens via rokkit.config, independent scroll + sticky headers, zero-errors gate.
 
 - Route: `/you/projects/[id]` = `(app)/you/projects/[id]/+page.svelte` + `+page.ts`
-- Mockup: dojo2-app.jsx `ScrProjectPreview` (L244) — boards "3 · Workspace preview · company (lumen-auth)" + "3b · Workspace preview · client (globex-portal) — client rung on"
+- Mockup: dojo2-app.jsx `ScrProjectPreview` (L244) — boards "3 · Workspace preview · company (lumen-auth)" + "3b · Workspace preview · client (globex-portal) — client rung on" (the mockup's client rung is retired: a client engagement is the dōjō it lives in plus workspace classification `client` — D32)
 - Access axis: **user/membership-primary** for the *surface* (a personal drill-in from the user's workspaces list), but the *content* it renders — the resolved constitution ladder + discarded conflicts — is **tenant/governance-derived** (canon §3 row 3: "Governance: rules · ladder/scopes · rule-packs · constitution → Tenant `tenant_id`"). The preview composes the user's personal rungs with the workspace's bound dōjō's rungs; the resolution is per-workspace, read by the user.
 - Status: **STUB** — the screen (`ScrProjectPreview.svelte` + `preview/state.svelte`) is fully built and faithful, but `+page.ts` resolves the workspace + ladder + conflicts entirely from `kit/fixtures`. No `/v1` governance-resolve endpoint feeds it.
 
@@ -15,12 +15,12 @@ Live: `projects/[id]/+page.ts` → `projects.find(id)`, `ladder`, `conflicts` (A
 | back header | `Back to projects` | `onBack`→`youHref('projects')` | have | — |
 | SectionHead kanji/eyebrow | `件` / `Before you start · {p.repo}` | `project.repo` (**fixture**) | bind→plumb | — |
 | SectionHead title | `p.name` | `project.name` (**fixture**) | bind→plumb | — |
-| classification chip | `p.classification` | `project.classification` (**fixture**) — drives `previewRungs` composition | bind→plumb | — |
+| classification chip | `p.classification` | `project.classification` (**fixture**) — a label and the conflicts toggle; it does not choose rungs (the daemon owns scoping) | bind→plumb | — |
 | phase pill | `p.phase` | `project.phase` (**fixture**) | bind→plumb | — |
 | classification banner | client vs "most-specific wins" | `project.classification` + counts | have (from above) | — |
 | banner counts | `{scopes} scopes · {rules} apply · {locks} locked · {discarded} discarded` | `preview.rungs/effective/locks/discarded` (derived in `preview/state`) | have (over fixtures) | — |
 | by-layer / consolidated toggle | `view` | `preview.view` rune state | have | — |
-| ladder rungs (by-layer) | `previewRungs(p)` per classification | `preview.rungs` from `ladder` fixture, composed by classification: personal→[personal,workspace,stack]; client→[company,client,personal,workspace,stack]; else→[company,personal,workspace,stack] | bind→plumb | — |
+| ladder rungs (by-layer) | `previewRungs(p)` per classification | `preview.rungs` = `previewRungs(workspace, ladder)` from the `ladder` fixture: the ladder as the daemon composed it, broad → specific — dōjō (`organization`) → workspace → repository (D25), each rung carrying the packs applied at it (a stack's pack on the repository rung, D29 · D33); never re-filtered by classification; an empty repository rung is synthesized when none was composed | bind→plumb | — |
 | rung rules / ★ locks | `r.rules[].{text,hard,kanji}` | `KitLadderRung.rules` (**fixture**) — the actual resolved rules for THIS workspace | plumb | — |
 | consolidated rule rows | `effective` flatMap, discarded filtered | `preview.effective` (rungs minus `conflicts[].loser.text`) | have (over fixtures) | — |
 | rule-row jump | `onJump`→focus rung | `preview.jumpTo(level)` | have | — |
@@ -31,7 +31,7 @@ Live: `projects/[id]/+page.ts` → `projects.find(id)`, `ladder`, `conflicts` (A
 - **load()** (`projects/[id]/+page.ts`): guard on `hasMembership`; `projects.find(p => p.id === params.id)` from fixtures (unknown → `redirect(307, /you/projects)`); returns `{ project, ladder, conflicts }` all fixture. Comment: "presentational — real `/v1` wiring is a later chunk."
 - **mutations**: none (read-only preview).
 - **realtime**: none.
-- **Would-be source**: a governance-resolve endpoint that, given a workspace + the user's memberships, returns the composed ladder (company/client/personal/project/stack rungs), the effective rule set, the ★ locks, and the conflicts the ladder discarded. The daemon owns rule resolution (`render_rules_tiers` / `resolve_local_pack_raws` per workspace memory), but the **dōjō has no `/v1` route** exposing it, and the workspace identity itself is unresolved (see `projects.md`).
+- **Would-be source**: a governance-resolve endpoint that, given a workspace + the user's memberships, returns the composed ladder (personal `user` rung + dōjō → workspace → repository rungs with the packs applied at each), the effective rule set, the ★ locks, and the conflicts the ladder discarded. The daemon owns rule resolution (`render_rules_tiers` / `resolve_local_pack_raws` per workspace memory), but the **dōjō has no `/v1` route** exposing it, and the workspace identity itself is unresolved (see `projects.md`).
 
 ## Interactions & states
 - **By-layer ↔ Consolidated** toggle (`preview.setView`); by-layer taps a rung to focus (`preview.setActive`); consolidated rule-row `onJump` switches back to by-layer focused on that level. State seeded ONCE at mount via `untrack(createProjectPreview(...))` — opening a different workspace re-mounts (`/you/projects/[id]` nav).
@@ -42,7 +42,7 @@ Live: `projects/[id]/+page.ts` → `projects.find(id)`, `ladder`, `conflicts` (A
 ## Gap / to-do (vs mockup), ranked
 1. **Real resolution source** — expose the daemon's per-workspace constitution resolution (composed rungs + effective rules + ★ locks + discarded conflicts) as a dōjō-readable `GET /v1/…` keyed by workspace + the user's memberships. Everything on this screen is fixture until then.
 2. **Workspace identity** — blocks on `projects.md` Gap 1 (there is no real `project.id` to resolve). The preview can't be real before the workspaces list is.
-3. **Classification/phase** must be real (they drive `previewRungs` composition and the banner). Confirm these federate from the daemon.
+3. **Classification/phase** must be real (they drive the banner and the conflicts toggle). Confirm these federate from the daemon.
 4. **Client dereference banner** — for `classification === 'client'` the banner says "sources are dereferenced." Align copy with canon §5: dereference is **universal/always-on**, not client-only. The reassurance is fine, but don't imply personal/company work is un-stripped when it crosses a boundary.
 5. **Thread `mobile`** or confirm the shell handles the phone layout.
 
@@ -54,7 +54,7 @@ Live: `projects/[id]/+page.ts` → `projects.find(id)`, `ladder`, `conflicts` (A
 
 ### Resolved design (2026-07-30)
 - **Q1 → the dōjō web DOES render the per-workspace constitution preview:** workspaces page → sidebar workspace item → click → this detail page (per mockup). Not app-only.
-- **Q2 → ONE resolve endpoint:** `GET /v1/…/projects/[slug]/constitution` returns the WHOLE composed ladder (rungs by classification + effective rules + ★ locks + discarded conflicts). The dōjō does NOT re-resolve client-side.
+- **Q2 → ONE resolve endpoint:** `GET /v1/…/projects/[slug]/constitution` returns the WHOLE composed ladder (rungs as the daemon composed them + effective rules + ★ locks + discarded conflicts). The dōjō does NOT re-resolve client-side.
 - **Q3 → conflict winner/loser computed SERVER-SIDE** (the daemon's resolution); the dōjō just displays. The dōjō does not carry the resolution algorithm.
 - **Q4 → client banner copy reworded to the universal always-on dereference invariant** (`ScrProjectPreview.svelte` "Client engagement — sources are dereferenced." → universal framing; small copy change).
 - **Depends on:** `dojo.projects` (the slug/classification/phase source) + the daemon exposing per-workspace constitution resolution to a dōjō-readable `/v1` route (a governance-resolution federation seam) + WS-0 Rule A (user-membership-keyed).

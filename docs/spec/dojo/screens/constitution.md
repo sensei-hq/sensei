@@ -17,7 +17,7 @@
 | Banner 静 ("stays on your machine …") | static copy | — | have | no |
 | Stance dials, 3-up grid | `D2.stance` → `stance` prop | **FIXTURE** `components/kit/fixtures.ts:stance`. Real source `sensei.stances` (`autonomy` `stance_autonomy` · `sharing` `stance_sharing` · `review` `stance_review`), keyed `user_key` + `namespace_id`. **No dōjō endpoint** (daemon-local). | bind→plumb | no |
 | Dial change | `StanceDial onChange(id,value)` | Write path is daemon-side: `POST /api/stance` + MCP `set_stance`/`upsert_stance` (see memory *Stance WRITE path*). Dōjō has **no** stance route; `+page.svelte` wires no `onStance`. | plumb | no |
-| "Your effective constitution" rungs (personal + stack) | `personalRungs(D2.ladder)` | **FIXTURE** `fixtures.ts:ladder` filtered to `id∈{personal,stack}` (`personal-view.personalRungs`). Real → `constitution-map.rulesToLadder(ConstitutionRule[])` over `dojo.shared_rules ⋈ sensei.namespaces` resolved to the user's namespaces, ordered by `sensei.scopes.level`. | bind→plumb | no |
+| "Your effective constitution" rung (personal — the `user` rung) | `personalRungs(D2.ladder)` | **FIXTURE** `fixtures.ts:ladder` filtered to `id = 'user'` (`personal-view.personalRungs`; the dōjō's ladder is never part of it, and a stack is a pack applied at a repository, not a rung — D25, D29). Real → `constitution-map.rulesToLadder(ConstitutionRule[])` over `dojo.shared_rules ⋈ sensei.namespaces` resolved to the user's namespaces, ordered by `sensei.scopes.level`. | bind→plumb | no |
 | LadderRung rule ★ hard-lock | `rung.rules[].hard` | `constitution-map.isHardRule` ⇐ `sensei.enforcement = 'mandatory'` | have (mapper) / plumb | no |
 
 ## APIs / loaders
@@ -34,17 +34,17 @@
 - Unwire fixtures: feed `ladder` from `rulesToLadder(...)` off a real read; feed `stance` from a real stance read.
 - No `/v1` (or daemon) endpoint returns a *resolved personal constitution* (the user's most-specific rungs across their namespaces) — needs a new read.
 - No write path for the stance dials (the dials are interactive but inert).
-- **Rung-id mismatch (real bug):** `personal-view.personalRungs` filters `r.id === 'personal' || 'stack'`, but `rulesToLadder` emits `id = scope_key` (`user`, `technology`, …). When the mapper is wired, `personalRungs` returns `[]`. The scope-key vocabulary must be reconciled.
+- **Rung-id mismatch — resolved (#307 R6):** `personal-view.personalRungs` now filters `r.id === 'user'`, the same `scope_key` `rulesToLadder` emits, so wiring the mapper keeps the personal rung.
 
 ## Open questions (for Dev)
 1. Stance is user-scoped + daemon-local (`sensei.stances`, no `tenant_id`). Should the dōjō web app **edit** stance at all, or read-only (edited only in the desktop app / via MCP)? If read-only, where does the dōjō read it from given there is no cross-DB link to the daemon?
 2. `/you/rules` shows the user's effective constitution — but the user can span several dōjōs. Which tenant's governance resolves here, and via which endpoint (daemon-resolved vs a new tenant `/v1/rules/resolved` for the user's namespaces)?
-3. Confirm the canonical rung-id vocabulary so `personalRungs` matches `rulesToLadder` output (`personal|stack` vs `user|technology`). Fix one side.
+3. ~~Confirm the canonical rung-id vocabulary so `personalRungs` matches `rulesToLadder` output.~~ Resolved: both use `sensei.scopes.key` (see Q3 below).
 
 ### Resolved design (2026-07-30)
 - **Q1 stance → FEDERATE (read + write seam).** Stance dials live on the dōjō web. Build a daemon↔dōjō stance federation (read + write) across the cross-DB boundary — the daemon already owns the stance write API (`POST /api/stance` + MCP `set_stance`/`upsert_stance`, `fb63720f`); the seam mirrors/pushes user-scoped stance to the dōjō and writes back. NOT ladder-only.
 - **Q2 ladder → dōjō `GET /v1/…/rules/resolved`.** The governance rules live in the dōjō (namespaces/scopes/packs), so the dōjō resolves the user's **personal-namespace** ladder itself. No daemon dependency for the ladder.
-- **Q3 rung vocab (factually resolved):** canonical = `sensei.scopes.key` = **`company | client | personal | project | stack`** (per `LadderRung.level` workspace-detail.md + `namespaces → scopes(key)` FK). Fix BOTH `personalRungs` (view, drop the hardcoded `personal|stack`) and `rulesToLadder` (mapper) to this vocabulary; `/you` personal constitution = the personal-classification composition `[personal, project, stack]`.
+- **Q3 rung vocab (resolved; restated by #307 R6):** canonical = `sensei.scopes.key` = **`general | user | organization | workspace | repository`** (`namespaces → scopes(key)` FK; `organization` is the dōjō). There is no `client`, `team` or `technology` rung (D32, D25, D29). `personalRungs` (view) and `rulesToLadder` (mapper) both key off this vocabulary; the `/you` personal constitution is the `user` rung.
 - **Build constraint (fabricated-data debt):** drive every field from the real read; on a fetch error render an explicit error state — NEVER the fixture; honest-empty only when genuinely empty.
 - **Depends on:** the stance federation seam (read+write) + dōjō `/v1/rules/resolved` + the scope-vocab fix + WS-0 Rule A (user-keyed).
 
@@ -76,7 +76,7 @@ unwired); the stance half maps `sensei.stances` rows → `KitStanceDial[]`.
 **State** — `constitution-state.svelte.ts` → `constitutionState` (**new** — today the screen
 reads fixtures through `personal-view.personalRungs`, with local `$state` living inside `StanceDial`)
 - data: `stance: KitStanceDial[]`, `ladder: KitLadderRung[]`
-- `$derived`: `rungs` = `personalRungs(ladder)` (the personal + stack rungs that apply to every workspace)
+- `$derived`: `rungs` = `personalRungs(ladder)` (the personal `user` rung that applies to every workspace)
 - methods: `load(c: PersonalConstitution)`, `setDial(id, value)` (moves a dial locally; the single
   seam a write path hooks onto)
 - **no realtime** — governance is a pull, stance is daemon-local
@@ -99,16 +99,15 @@ reads fixtures through `personal-view.personalRungs`, with local `$state` living
 
 **Copy** (paraglide `m.<key>()` from `$lib/paraglide/messages` — no inline literals): `m.constitution_title()`,
 `m.constitution_eyebrow()` "You · standing rules", the 静 stays-local banner, per-dial label/caption,
-empty copy. Kanji (静/己/技/守) stay `KanjiToken` brand marks, not messages. (The stance `sharing`
+empty copy. Kanji (静/己/守) stay `KanjiToken` brand marks, not messages. (The stance `sharing`
 dial is a sharing *posture*, NOT `attribution_mode` — keep the two vocabularies separate.)
 
 **Realtime = State**: none — a refetch re-runs `load`, not a live `patch`. **Test seams:**
 `constitutionState` methods (no DOM); `StanceDial`/`LadderRung` with a mock prop (fidelity);
 `loadConstitution` mock → `PersonalConstitution` shape.
 
-**Rung-id carry (blocks the real ladder):** `personalRungs` filters `id ∈ {personal, stack}` but
-`rulesToLadder` emits `id = scope_key` (`user`, `technology`, …) → wiring the mapper today yields `[]`.
-`$derived rungs` must key off the reconciled vocabulary (Gap/to-do + Open question 3) before the mock→real swap.
+**Rung id:** `personalRungs` filters `id = 'user'`, the `scope_key` `rulesToLadder` emits, so the
+mock→real swap keeps the personal rung (resolved in #307 R6).
 
 **New open question (three-layer):** should `loadConstitution` fan out to two planes in one call
 (tenant `/v1` ladder + a daemon-local stance read), or — given the dōjō has no cross-DB link to the

@@ -76,6 +76,13 @@ rules are the Team plane on top of the same primitives. The user feels this modu
   values). No parallel rules table. The older `sensei.rule_ladders` + `sensei.rules`
   pairing **never shipped** (no such DDL); the ladder concept lives on as the
   priority+impact ordering on the memory row.
+- **The scope ladder is `sensei.scopes`**: `general` 0 (built-in defaults) ·
+  `user` 10 (personal, sensei only) · `organization` 20 (the dōjō) · `workspace` 60
+  · `repository` 70 — most specific wins. A rule sits on a `sensei.namespaces`
+  instance of one rung, and a repository binds to a *set* of them. Teams, clients
+  and stacks are not rungs (D25, D32, D29): a stack is a rule pack `stack:<slug>`
+  (area `tech_stack`) that the scan adopts at the repository's own namespace on the
+  `repository` rung wherever the stack is detected (`sensei.adopt_stack_pack`, D33).
 - **Tier-1 resolution is deterministic** (gather → order by enforcement desc, scope
   level desc → mandatory-lock → dedup); cached 5 min; runs on every
   `get_layered_context` call. **Tier-2** LLM consolidation (cherry-pick merge) is on
@@ -88,8 +95,9 @@ rules are the Team plane on top of the same primitives. The user feels this modu
   global / `namespace_id`-scoped rows; see `G-MEM-SCOPE`.)
 - **Priority + scope, never scope alone.** Within a ladder: `P0 > P1 > P2 > P3`,
   then impact (`critical > … > low`); same priority+impact contradiction → tighter
-  scope wins (`global | project | stack | task_type | module`) — no `user`/`org` rung
-  exists in `memory_scope` today (same caveat as M9).
+  scope wins (`global | workspace | stack | task_type | module`) — no `user`/`org` rung
+  exists in `memory_scope` today (same caveat as M9). `memory_scope` is the legacy
+  surfacing axis; governance resolution orders by the `sensei.scopes` ladder above.
 - **Enforcement.** Checker (on capture events, writes `sensei.rule_check_runs` with
   `verdict` + `output_tail` — the only enforcement table that ships today); Resolver
   (effective ruleset for the context); Verifier (**hard gate by default** — P0
@@ -111,7 +119,8 @@ rules are the Team plane on top of the same primitives. The user feels this modu
   this module owns their **effect** — autonomy decides how far an agent goes
   before it gates to a human, the strict posture refuses every autonomous action
   unless explicitly permitted, and the stance resolves most-specific-first (a
-  workspace's beats its team's, which beats the default). The rule model is not
+  repository's beats its workspace's, which beats its dōjō's, which beats the
+  default). The rule model is not
   restated there, and the stance semantics are not restated here.
 
 ## Instruction delivery & stickiness

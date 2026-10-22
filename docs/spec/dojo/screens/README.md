@@ -111,7 +111,7 @@ workspace-detail · contributions · signin · scopes · engagements; role-surfa
 
 **E. Per-screen semantic decisions** (the ones that change the build):
 - **inbox** — 4 mockup ask-kinds ↔ 5 wire kinds; is human→sensei chat in scope; "Open in Observatory" on web?
-- **constitution** — which tenant's governance resolves on `/you/rules` for a multi-dōjō user?; **rung-id bug** (`personal|stack` vs mapper's `user|technology` → empty); can the dōjō edit user-scoped stance (no cross-DB link)?
+- **constitution** — which tenant's governance resolves on `/you/rules` for a multi-dōjō user?; ~~rung-id bug~~ (resolved in #307 R6: both sides key off `sensei.scopes.key`; the personal rung is `user`); can the dōjō edit user-scoped stance (no cross-DB link)?
 - **rule-packs** — which `namespace_id` is "you" for a personal adoption?
 - **org-home** — single `/summary` endpoint vs compose; definition of "needs a maintainer".
 - **client-audit** — the artifact-strip ledger OR the tenant action-audit? (conflated today — pick one).
