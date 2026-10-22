@@ -174,7 +174,7 @@ pub(crate) async fn embed(
 pub(crate) struct ConsensusRequest {
     /// The signal or question to analyze
     pub signal: String,
-    /// Additional context (project state, metrics, etc.)
+    /// Additional context (workspace state, metrics, etc.)
     pub context: Option<String>,
     /// Override proposer model
     pub proposer_model: Option<String>,

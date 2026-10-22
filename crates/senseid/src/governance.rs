@@ -92,7 +92,7 @@ pub fn render_rules_md(set: &ResolvedRuleset) -> String {
     out.push_str("\n\n# Sensei Rules\n\n");
     out.push_str(
         "Your always-on rules (user + general scope). Repository-specific rules \
-         (organization / project / technology) are **not** listed here — call the \
+         (organization / workspace / technology) are **not** listed here — call the \
          `get_rules` MCP tool in a repo to resolve them.\n",
     );
 

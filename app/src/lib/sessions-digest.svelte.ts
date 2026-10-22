@@ -6,9 +6,9 @@
 // and the totals row goes stale"). Range changes refetch through an injected
 // `fetcher` so the class is testable without the daemon.
 //
-// Shared by the Observatory Sessions screen and the project-scoped Sessions
-// screen — the project page injects a project-scoped fetcher, the observatory
-// page a multi-project one. Pure math lives in ./sessions-digest.ts — this
+// Shared by the Observatory Sessions screen and the workspace-scoped Sessions
+// screen — the workspace page injects a workspace-scoped fetcher, the observatory
+// page a multi-workspace one. Pure math lives in ./sessions-digest.ts — this
 // file only adds runes + the refetch action on top of it.
 import type { SessionRow, SessionsDigest } from '$lib/types.js';
 import { failureReason, readOutcome, type ApiResult } from '$lib/api.js';
@@ -31,15 +31,15 @@ import {
  *  free of transport concerns. */
 export type SessionsFetcher = (range: SessionRange) => Promise<ApiResult<SessionRow[]>>;
 
-/** The digest read for a range — scoped to one project when given (the
- *  endpoint takes `range` and `project` additively) — as its rows. One fetcher
- *  for the Observatory screen and the project tab. */
+/** The digest read for a range — scoped to one workspace when given (the
+ *  endpoint takes `range` and `workspace` additively) — as its rows. One fetcher
+ *  for the Observatory screen and the workspace tab. */
 export function sessionsFetcher(
-  api: { tryGetSessionsDigest: (range?: string, project?: string) => Promise<ApiResult<SessionsDigest>> },
-  projectId?: string,
+  api: { tryGetSessionsDigest: (range?: string, workspace?: string) => Promise<ApiResult<SessionsDigest>> },
+  workspaceId?: string,
 ): SessionsFetcher {
   return async (range) => {
-    const read = await api.tryGetSessionsDigest(range, projectId);
+    const read = await api.tryGetSessionsDigest(range, workspaceId);
     return read.ok ? { ok: true, data: read.data.sessions } : read;
   };
 }

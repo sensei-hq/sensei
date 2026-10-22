@@ -12,7 +12,7 @@
  * `button, [type="button"], [type="reset"], [type="submit"] { background-color:
  * transparent }`. `[type="button"]` is an ATTRIBUTE selector — specificity
  * (0,1,0), the same as `.bg-ink` or `.bg-primary` — and the reset came later, so
- * the tie went to the reset and the utility lost. Measured on project Sessions:
+ * the tie went to the reset and the utility lost. Measured on workspace Sessions:
  * the selected "7 days" chip carried `bg-ink text-paper` and computed
  * `rgba(0, 0, 0, 0)` behind `oklch(0.975 0.008 85)`, near-white on paper. 13
  * such sites across seven screens.

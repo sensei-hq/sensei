@@ -27,12 +27,12 @@ pub(crate) async fn list_libs(
     State(state): State<AppState>,
     Query(q): Query<LibsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let scope_project = q.solution_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let scope_workspace = q.solution_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok());
     let min_repos: i64 = if q.shared.unwrap_or(false) { 2 } else { 1 };
 
     let libs = state
         .pg
-        .list_libraries_with_usage(q.repo_id.as_deref(), scope_project.as_ref(), min_repos)
+        .list_libraries_with_usage(q.repo_id.as_deref(), scope_workspace.as_ref(), min_repos)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -61,7 +61,7 @@ pub(crate) struct ScanManifestsBody {
 /// `libraries.local_path` empty on all 1,121 rows.
 ///
 /// The library is keyed on the manifest's OWN `library` name, which is the name its
-/// capabilities are addressed by. Its published packages become links so a project
+/// capabilities are addressed by. Its published packages become links so a workspace
 /// depending on `@rokkit/ui` resolves to them.
 ///
 /// A malformed or unreadable manifest is skipped and counted, never fatal: one bad

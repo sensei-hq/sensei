@@ -2,7 +2,7 @@
   interface Session {
     id: string;
     task: string;
-    project: string;
+    workspace: string;
     startedAt: string;
     completedAt?: string;
     ftr?: number | null;
@@ -67,7 +67,7 @@
             class:bg-success={isSuccess}
             class:bg-warning={!isSuccess}
           ></span>
-          <span class="font-mono text-xs text-ink-soft truncate">{s.project}</span>
+          <span class="font-mono text-xs text-ink-soft truncate">{s.workspace}</span>
           <span class="text-sm text-ink-mute truncate">{s.task}</span>
           <span
             data-corrections={s.corrections ?? ''}

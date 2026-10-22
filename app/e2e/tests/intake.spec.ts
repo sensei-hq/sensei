@@ -1,12 +1,12 @@
 /**
- * Intake — now a PER-PROJECT front door.
+ * Intake — now a PER-WORKSPACE front door.
  *
- * A playbook run always happens IN a project (no cwd/repo/graph/rules scope for a
- * global run), so intake moved off the observatory rail into the project window.
- * This verifies /project/<id>/intake end-to-end in the real built Tauri app against
- * a fresh e2e daemon: the route renders, the project sidebar links to it, and the
+ * A playbook run always happens IN a workspace (no cwd/repo/graph/rules scope for a
+ * global run), so intake moved off the observatory rail into the workspace window.
+ * This verifies /workspace/<id>/intake end-to-end in the real built Tauri app against
+ * a fresh e2e daemon: the route renders, the workspace sidebar links to it, and the
  * freeform → recommend → confirm flow round-trips through the daemon (classify +
- * recommend + record) scoped to a real project.
+ * recommend + record) scoped to a real workspace.
  *
  * Seed-agnostic: the throwaway sensei_e2e DB has the playbook DDL but no imported
  * catalog/rules, so `recommend` returns a defaulted playbook (raw name, no
@@ -38,42 +38,42 @@ async function pathname(tauriPage: TauriPageLike): Promise<string> {
   return (await tauriPage.evaluate(`window.location.pathname`)) as string;
 }
 
-/** First project in the e2e DB — intake is project-scoped, so we need a real id. */
-async function firstProjectId(): Promise<string> {
-  const projects = await daemonGet<Array<{ id: string }>>('/api/projects');
-  if (!projects.length) throw new Error('e2e daemon has no projects to scope intake to');
-  return projects[0].id;
+/** First workspace in the e2e DB — intake is workspace-scoped, so we need a real id. */
+async function firstWorkspaceId(): Promise<string> {
+  const workspaces = await daemonGet<Array<{ id: string }>>('/api/workspaces');
+  if (!workspaces.length) throw new Error('e2e daemon has no workspaces to scope intake to');
+  return workspaces[0].id;
 }
 
-test.describe('Intake — per-project front door', () => {
+test.describe('Intake — per-workspace front door', () => {
   test.beforeEach(async ({ tauriPage }) => {
     await seedSetupComplete(tauriPage);
     await navigateTo(tauriPage, '/logs'); // reset the SPA before navigating to the target
   });
 
-  test('direct navigation renders the project intake screen', async ({ tauriPage }) => {
+  test('direct navigation renders the workspace intake screen', async ({ tauriPage }) => {
     // Cold-boot health-ready can take ~50s on a fresh e2e DB; lift the per-test cap.
     test.setTimeout(180_000);
-    const id = await firstProjectId();
-    await navigateToScreen(tauriPage, `/project/${id}/intake`, '[data-testid="intake-input"]');
-    expect(await pathname(tauriPage)).toBe(`/project/${id}/intake`);
+    const id = await firstWorkspaceId();
+    await navigateToScreen(tauriPage, `/workspace/${id}/intake`, '[data-testid="intake-input"]');
+    expect(await pathname(tauriPage)).toBe(`/workspace/${id}/intake`);
     await expect(tauriPage.locator('[data-testid="intake-input"]')).toBeVisible();
     await expect(tauriPage.locator('[data-testid="intake-recommend"]')).toBeVisible();
   });
 
-  test('the project sidebar "Intake" link navigates to it', async ({ tauriPage }) => {
+  test('the workspace sidebar "Intake" link navigates to it', async ({ tauriPage }) => {
     test.setTimeout(180_000);
-    const id = await firstProjectId();
-    await navigateToScreen(tauriPage, `/project/${id}/overview`, `a[href="/project/${id}/intake"]`);
-    await tauriPage.locator(`a[href="/project/${id}/intake"]`).first().click();
+    const id = await firstWorkspaceId();
+    await navigateToScreen(tauriPage, `/workspace/${id}/overview`, `a[href="/workspace/${id}/intake"]`);
+    await tauriPage.locator(`a[href="/workspace/${id}/intake"]`).first().click();
     await new Promise((r) => setTimeout(r, 800));
-    expect(await pathname(tauriPage)).toBe(`/project/${id}/intake`);
+    expect(await pathname(tauriPage)).toBe(`/workspace/${id}/intake`);
   });
 
   test('freeform → recommend → confirm records a run', async ({ tauriPage }) => {
     test.setTimeout(180_000);
-    const id = await firstProjectId();
-    await navigateToScreen(tauriPage, `/project/${id}/intake`, '[data-testid="intake-input"]');
+    const id = await firstWorkspaceId();
+    await navigateToScreen(tauriPage, `/workspace/${id}/intake`, '[data-testid="intake-input"]');
 
     // The tauri-playwright `fill` helper drives HTMLInputElement.value, which
     // throws on a <textarea>; set the value via the native textarea setter and
@@ -104,8 +104,8 @@ test.describe('Intake — per-project front door', () => {
     await expect(tauriPage.locator('[data-testid="intake-recorded"]')).toBeVisible({ timeout: 15_000 });
   });
 
-  test('daemon recommend is project-scoped (accepts project_id, refuses a project-less run)', async () => {
-    const id = await firstProjectId();
+  test('daemon recommend is workspace-scoped (accepts workspace_id, refuses a workspace-less run)', async () => {
+    const id = await firstWorkspaceId();
     const guide = await daemonGet<Record<string, unknown>>('/api/playbook/guide');
     expect(guide).toHaveProperty('playbooks');
     expect(guide).toHaveProperty('axes');
@@ -114,7 +114,7 @@ test.describe('Intake — per-project front door', () => {
     const rec = await daemonPost<Record<string, unknown>>('/api/playbook/recommend', {
       chunk: 'add a small feature flag to gate the new panel',
       preview: true,
-      project_id: id,
+      workspace_id: id,
     });
     expect(rec).toHaveProperty('playbook');
     expect(rec).toHaveProperty('lifecycle');
@@ -122,7 +122,7 @@ test.describe('Intake — per-project front door', () => {
     expect(rec).toHaveProperty('risk');
     expect(rec).toHaveProperty('auto_select');
 
-    // A run always happens in a project — no project → an explicit error, never a
+    // A run always happens in a workspace — no workspace → an explicit error, never a
     // fabricated global recommendation.
     const err = await daemonPost<Record<string, unknown>>('/api/playbook/recommend', {
       chunk: 'add a small feature flag to gate the new panel',

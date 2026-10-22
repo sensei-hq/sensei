@@ -50,16 +50,16 @@ export function stateChip(state: string): ChipClasses {
   }
 }
 
-/** Pure: the most specific scope tag as a short label, e.g. "project · lumen",
- *  "stack · rust", "team · mobile", "company · acme", else "all projects".
- *  Mirrors the daemon's scope precedence (project -> stack -> ...). */
+/** Pure: the most specific scope tag as a short label, e.g. "workspace · lumen",
+ *  "stack · rust", "team · mobile", "company · acme", else "all workspaces".
+ *  Mirrors the daemon's scope precedence (workspace -> stack -> ...). */
 export function scopeSummary(scope: DojoUpgradeScope | null | undefined): string {
-  if (!scope) return 'all projects';
-  if (scope.project?.trim()) return `project · ${scope.project.trim()}`;
+  if (!scope) return 'all workspaces';
+  if (scope.project?.trim()) return `workspace · ${scope.project.trim()}`;
   if (scope.stack?.trim())   return `stack · ${scope.stack.trim()}`;
   if (scope.team?.trim())    return `team · ${scope.team.trim()}`;
   if (scope.company?.trim()) return `company · ${scope.company.trim()}`;
-  return 'all projects';
+  return 'all workspaces';
 }
 
 /** Pure: an inbox item's received date as a short YYYY-MM-DD label, or '' when

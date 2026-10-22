@@ -8,7 +8,7 @@
 //! root, reusing the whole self-healing scan pipeline:
 //!
 //! - `scan_root`'s reconcile re-absorbs a `standalone` root mis-scoped inside a
-//!   git repo (Bug 3) and prunes/relabels stale project roots;
+//!   git repo (Bug 3) and prunes/relabels stale workspace roots;
 //! - each `ProcessGitFolder` prunes orphan nodes for files that vanished (Bug 2,
 //!   via `scan::prune_vanished`) and re-indexes changed files.
 //!

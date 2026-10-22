@@ -19,12 +19,12 @@ pub(crate) type ProcessJudgmentDay =
 
 impl PgStore {
     /// Per-(day × repository) process-judgment aggregates over the selected day-set,
-    /// project-scoped, for sessions the analyzer has scored (`props ? 'process'`).
+    /// workspace-scoped, for sessions the analyzer has scored (`props ? 'process'`).
     /// The measurable base matches `session_outcomes` (`outcome is not null <> empty`);
     /// a session whose repo anchor can't resolve is EXCLUDED (never fabricated).
     pub(crate) async fn session_process_judgments_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<ProcessJudgmentDay>, String> {
@@ -50,7 +50,7 @@ impl PgStore {
               ORDER BY 1, 2",
             day_filter(DAY_ANCHOR, as_of),
         );
-        let q = sqlx_core::query_as::query_as::<_, ProcessJudgmentDay>(&sql).bind(project_id);
+        let q = sqlx_core::query_as::query_as::<_, ProcessJudgmentDay>(&sql).bind(workspace_id);
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 }

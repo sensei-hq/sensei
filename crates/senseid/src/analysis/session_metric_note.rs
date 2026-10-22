@@ -1,7 +1,7 @@
 //! Per-session, per-metric observation — deterministic facts → one mentor-voice
 //! line for the metric drill-down.
 //!
-//! The drill-down (`GET /api/projects/{id}/metrics/{key}/sessions?day=…`) lists
+//! The drill-down (`GET /api/workspaces/{id}/metrics/{key}/sessions?day=…`) lists
 //! the measurable sessions behind one daily datapoint. Each session already
 //! carries a "what was achieved" summary (`activity.sessions.summary`, produced
 //! by [`session_retro`](crate::tasks::handlers::session_retro)); this module adds
@@ -59,7 +59,7 @@ pub struct SessionMetricFacts {
 
 impl SessionMetricFacts {
     /// Build the facts from ONE drill-down session row (the JSON
-    /// [`get_project_sessions_for_day`](crate::db::pg_store::PgStore::get_project_sessions_for_day)
+    /// [`get_workspace_sessions_for_day`](crate::db::pg_store::PgStore::get_workspace_sessions_for_day)
     /// emits) plus the metric's registry meaning (looked up once per request).
     /// Reads only fields already present on the row — never fabricates a value.
     /// The JSON accessors default defensively (a structurally-guaranteed column

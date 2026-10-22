@@ -1,8 +1,8 @@
 <script lang="ts">
     import { railIcon } from "../observatory-nav";
   import { invalidateAll } from '$app/navigation';
-  import { PageHeader, Screen, EmptyState, ScreenState, UnreadProjectsNotice } from '$lib/components';
-  import { openProjectWindow } from '$lib/stores/windows.svelte.js';
+  import { PageHeader, Screen, EmptyState, ScreenState, UnreadWorkspacesNotice } from '$lib/components';
+  import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
   import {
     driftChipClasses,
     rollupHeadline,
@@ -15,13 +15,13 @@
 
 {#snippet driftItem(r: DriftRow)}
   {@const chip = driftChipClasses(r.status)}
-  <!-- A drift row opens the project in its OWN window (never replaces the
-       observatory main window) — every project graph/screen lives in a project
+  <!-- A drift row opens the workspace in its OWN window (never replaces the
+       observatory main window) — every workspace graph/screen lives in a workspace
        window. A button (not an anchor) so it can't navigate the main window. -->
   <button
     type="button"
     data-drift-row={r.id}
-    onclick={() => { void openProjectWindow(r.projectId, r.projectName); }}
+    onclick={() => { void openWorkspaceWindow(r.workspaceId, r.workspaceName); }}
     class="w-full text-left flex items-center gap-3 py-2 px-3 text-inherit bg-transparent border-0 border-b border-paper-edge last:border-b-0 cursor-pointer hover:bg-paper-mute"
   >
     <span class="flex-1 text-sm text-ink leading-snug">{r.detail}</span>
@@ -32,9 +32,9 @@
 {/snippet}
 
 {#snippet group(g: DriftGroup)}
-  <section class="mb-8" data-drift-group={g.projectId}>
+  <section class="mb-8" data-drift-group={g.workspaceId}>
     <div class="flex items-baseline gap-3 mb-2">
-      <h2 class="display text-lg font-normal m-0">{g.projectName}</h2>
+      <h2 class="display text-lg font-normal m-0">{g.workspaceName}</h2>
       <span class="font-mono text-xs text-danger">{g.broken} broken</span>
       {#if g.drifted > 0}
         <span class="font-mono text-xs text-warning">{g.drifted} drifted</span>
@@ -64,9 +64,9 @@
     </div>
     {:else}
     <div class="max-w-[1060px] mx-auto px-7 pb-10" data-traceability-total={data.rollup.total}>
-      <UnreadProjectsNotice unread={data.unread} />
+      <UnreadWorkspacesNotice unread={data.unread} />
       {#if data.rollup.total === 0 && data.indexedDocs === 0}
-        <!-- Nothing to check (#290): no document is indexed in any project. -->
+        <!-- Nothing to check (#290): no document is indexed in any workspace. -->
         <EmptyState
           kanji="巻"
           title="no documents indexed"
@@ -76,11 +76,11 @@
         <EmptyState
           kanji="巻"
           title="no drift detected"
-          description="Doc-to-code references are all resolving. Broken or drifted mentions will surface here once a project's next scan finds one."
+          description="Doc-to-code references are all resolving. Broken or drifted mentions will surface here once a workspace's next scan finds one."
         />
       {:else}
         <p class="text-sm text-ink-soft mb-6" data-traceability-rollup>{rollupHeadline(data.rollup)}</p>
-        {#each data.groups as g (g.projectId)}
+        {#each data.groups as g (g.workspaceId)}
           {@render group(g)}
         {/each}
       {/if}

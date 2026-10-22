@@ -68,27 +68,27 @@ pub(crate) async fn get_run(
     Ok(Json(serde_json::json!({ "run": run, "events": events })))
 }
 
-/// Resolve `body["project"]` (name-or-uuid) → a project id, and stamp the run's
-/// git author from that project's repo root (`user.name`/`user.email`, git's
+/// Resolve `body["workspace"]` (name-or-uuid) → a workspace id, and stamp the run's
+/// git author from that workspace's repo root (`user.name`/`user.email`, git's
 /// local→global precedence — the identity key that matches the commit author +
 /// the Dōjō sign-in). Shared by `create_run` + `register_plan` (DRY). `Ok((None,
-/// None, None))` when no project is given; `Err(400)` when a **given** project is
+/// None, None))` when no workspace is given; `Err(400)` when a **given** workspace is
 /// unresolvable (intent is never silently dropped). An unresolvable git identity
 /// (not a repo) leaves the author columns NULL, not an error.
-async fn resolve_project_and_author(
+async fn resolve_workspace_and_author(
     state: &AppState,
     body: &serde_json::Value,
 ) -> Result<(Option<uuid::Uuid>, Option<String>, Option<String>), StatusCode> {
-    let project_id = match body["project"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+    let workspace_id = match body["workspace"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
         // resolve fails closed: a DB error propagates as 500; a genuine miss is a 400.
-        Some(p) => match crate::api::util::resolve_project_uuid(state, p).await? {
+        Some(p) => match crate::api::util::resolve_workspace_uuid(state, p).await? {
             Some(id) => Some(id),
             None => return Err(StatusCode::BAD_REQUEST),
         },
         None => None,
     };
-    let (author_name, author_email) = match project_id {
-        Some(pid) => match state.pg.project_root_path(&pid).await.ok().flatten() {
+    let (author_name, author_email) = match workspace_id {
+        Some(pid) => match state.pg.workspace_root_path(&pid).await.ok().flatten() {
             Some(dir) => {
                 let user = crate::git_identity::read_git_user(std::path::Path::new(&dir));
                 (user.name, user.email)
@@ -97,7 +97,7 @@ async fn resolve_project_and_author(
         },
         None => (None, None),
     };
-    Ok((project_id, author_name, author_email))
+    Ok((workspace_id, author_name, author_email))
 }
 
 /// Build the run-creation response `{ run, track_url }` (201). `track_url` is the
@@ -121,13 +121,13 @@ async fn run_created_response(
 
 /// POST /api/runs — create a daemon-owned run (P3.8 run-control; the MCP
 /// `start_run` tool and the desktop app kick runs off here). Body:
-/// `{ "goal": string (required, non-empty), "project"?: name-or-uuid,
+/// `{ "goal": string (required, non-empty), "workspace"?: name-or-uuid,
 ///    "plan_ref"?: string, "max_concurrency"?: int }`.
 ///
 /// - An empty/absent `goal` is a 400 — a run with nothing to drive is a no-op.
-/// - `project` resolves name-OR-uuid → id ([`crate::api::util::resolve_project_uuid`]);
-///   absent means no project (the drive Flags "no cwd" rather than spawning
-///   loose), while a **given-but-unresolvable** project is a 400 so the caller's
+/// - `workspace` resolves name-OR-uuid → id ([`crate::api::util::resolve_workspace_uuid`]);
+///   absent means no workspace (the drive Flags "no cwd" rather than spawning
+///   loose), while a **given-but-unresolvable** workspace is a 400 so the caller's
 ///   intent is never silently dropped.
 ///
 /// Returns `{ run: Run }` with `201 Created`. The scheduler advances it on the
@@ -141,13 +141,14 @@ pub(crate) async fn create_run(
     if goal.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let (project_id, author_name, author_email) = resolve_project_and_author(&state, &body).await?;
+    let (workspace_id, author_name, author_email) =
+        resolve_workspace_and_author(&state, &body).await?;
     let plan_ref =
         body["plan_ref"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let max_concurrency = body["max_concurrency"].as_i64().map(|n| n as i32);
 
     let new = NewRun {
-        project_id,
+        workspace_id,
         plan_ref,
         goal: Some(goal.to_string()),
         dojo_session_id: None,
@@ -180,8 +181,8 @@ pub(crate) async fn create_run(
 /// so it reads `paused` (not `stalled`) and `resume_due_runs` auto-resumes it at
 /// the reset. This is the distinct resumable state for "waiting for a usage
 /// limit". Body: `{ "until": RFC-3339 (required), "reason"?: string,
-/// "run_id"?: uuid, "project"?: name-or-uuid }` — targets an explicit `run_id`,
-/// else the active (running/stalled) run for the project.
+/// "run_id"?: uuid, "workspace"?: name-or-uuid }` — targets an explicit `run_id`,
+/// else the active (running/stalled) run for the workspace.
 pub(crate) async fn pause_run(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
@@ -195,17 +196,17 @@ pub(crate) async fn pause_run(
     }
     let reason = body["reason"].as_str().map(str::trim).filter(|s| !s.is_empty());
 
-    // Target: an explicit run_id, else the active run for the (given/cwd) project.
+    // Target: an explicit run_id, else the active run for the (given/cwd) workspace.
     let run_id = match body["run_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
         Some(id) => Some(id),
-        None => match body["project"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-            Some(p) => match crate::api::util::resolve_project_uuid(&state, p).await? {
+        None => match body["workspace"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(p) => match crate::api::util::resolve_workspace_uuid(&state, p).await? {
                 Some(pid) => state
                     .pg
-                    .active_run_for_project(&pid)
+                    .active_run_for_workspace(&pid)
                     .await
                     .map_err(|e| {
-                        tracing::warn!(error = %e, "pause_run: active_run_for_project failed");
+                        tracing::warn!(error = %e, "pause_run: active_run_for_workspace failed");
                         StatusCode::INTERNAL_SERVER_ERROR
                     })?
                     .map(|r| r.id),
@@ -244,7 +245,7 @@ pub(crate) async fn pause_run(
 
 /// POST /api/runs/plan — register an authored plan graph as a daemon-owned run
 /// (AR-2; the MCP `register_plan` tool fronts this). Body: `{ "goal": string
-/// (required), "plan": PlanGraph (required), "project"?: name-or-uuid,
+/// (required), "plan": PlanGraph (required), "workspace"?: name-or-uuid,
 /// "plan_ref"?: string, "max_concurrency"?: int }`.
 ///
 /// The graph is validated (non-empty, unique task ids, deps resolve, DAG) and
@@ -281,7 +282,8 @@ pub(crate) async fn register_plan(
         return bad(format!("invalid plan graph: {e}"));
     }
 
-    let (project_id, author_name, author_email) = resolve_project_and_author(&state, &body).await?;
+    let (workspace_id, author_name, author_email) =
+        resolve_workspace_and_author(&state, &body).await?;
     let plan_ref =
         body["plan_ref"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let max_concurrency = body["max_concurrency"].as_i64().map(|n| n as i32);
@@ -296,7 +298,7 @@ pub(crate) async fn register_plan(
     };
 
     let new = NewRun {
-        project_id,
+        workspace_id,
         plan_ref,
         goal: Some(goal.to_string()),
         dojo_session_id: None,
@@ -323,7 +325,7 @@ pub(crate) async fn register_plan(
 /// `{ "state": segment_state (required), "note"?: string }`.
 ///
 /// Updates the task's state in `activity.runs.plan_graph` (so the authored relay
-/// outline re-projects with the new state) AND appends a feature-class cadence
+/// outline re-workspaces with the new state) AND appends a feature-class cadence
 /// event so the run's PROGRESS clock stays fresh — it never touches `heartbeat_at`
 /// (that stays daemon-owned so the watchdog can still catch a real stall). 404 if
 /// the run has no plan graph or the task id is unknown; 400 for a bad state.
@@ -580,14 +582,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_run_unresolvable_project_is_400() {
+    async fn create_run_unresolvable_workspace_is_400() {
         let Some(state) = make_state().await else {
             return;
         };
-        // A given project that resolves to nothing is a 400 (intent not dropped).
+        // A given workspace that resolves to nothing is a 400 (intent not dropped).
         let err = create_run(
             State(state),
-            Json(serde_json::json!({ "goal": "do a thing", "project": "no-such-project-xyzzy" })),
+            Json(
+                serde_json::json!({ "goal": "do a thing", "workspace": "no-such-workspace-xyzzy" }),
+            ),
         )
         .await
         .unwrap_err();
@@ -609,8 +613,8 @@ mod tests {
         assert_eq!(body["run"]["goal"], serde_json::json!("ship the thing"));
         assert_eq!(body["run"]["plan_ref"], serde_json::json!("docs/plan/x.md"));
         assert_eq!(body["run"]["status"], serde_json::json!("running"));
-        // No project given → project_id is null (drive will Flag "no cwd").
-        assert!(body["run"]["project_id"].is_null());
+        // No workspace given → workspace_id is null (drive will Flag "no cwd").
+        assert!(body["run"]["workspace_id"].is_null());
         // The response carries the track_url handoff field (a string when a dōjō is
         // connected, else null — robust to whatever memberships the DB holds).
         assert!(body.get("track_url").is_some(), "response carries the track_url field");

@@ -20,6 +20,8 @@
 -- The table half runs ONLY while `sensei.projects` exists: afterwards, and on a
 -- fresh database, it is a no-op. The enum-label half runs wherever a label is
 -- still old, on any plane: `sensei.entity_scope` is also deployed to the dōjō.
+-- So does the stored-key half (R3b): the retired `project_health` metric (the
+-- catalogue is on both planes) and the setup wizard's `setup.projects` key.
 --
 -- It drops the views and functions whose names, columns or parameters say
 -- project (a view cannot be replaced with a renamed column); `apply` recreates
@@ -58,6 +60,21 @@ begin
             execute format('alter type sensei.%I rename value %L to %L', pair[1], pair[2], pair[3]);
         end if;
     end loop;
+
+    -- ── stored keys (D16, R3b), on any plane ─────────────────────────────────
+    -- Renamed in place, never re-inserted: the metric's id carries its recorded
+    -- values, and the config row its value. Skipped when the new key is already
+    -- there (a fresh database the import seeded).
+    if to_regclass('sensei.metrics') is not null then
+        update sensei.metrics set key = 'workspace_health'
+         where key = 'project_health'
+           and not exists (select 1 from sensei.metrics where key = 'workspace_health');
+    end if;
+    if to_regclass('sensei.config') is not null then
+        update sensei.config set key = 'setup.workspaces'
+         where key = 'setup.projects'
+           and not exists (select 1 from sensei.config where key = 'setup.workspaces');
+    end if;
 
     if to_regclass('sensei.projects') is null or to_regclass('sensei.workspaces') is not null then
         return;

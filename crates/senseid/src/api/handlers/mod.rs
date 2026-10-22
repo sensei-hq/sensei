@@ -24,7 +24,6 @@ pub(crate) mod observatory;
 pub(crate) mod planner;
 pub(crate) mod playbook;
 pub(crate) mod preferences;
-pub(crate) mod project_detail;
 pub(crate) mod query;
 pub(crate) mod repositories;
 pub(crate) mod review;
@@ -41,6 +40,7 @@ pub(crate) mod trackers;
 pub(crate) mod upgrades;
 pub(crate) mod verdicts;
 pub(crate) mod workspace;
+pub(crate) mod workspace_detail;
 
 /// The daemon's error envelope: a status and `{"error": "…"}` beside it.
 ///

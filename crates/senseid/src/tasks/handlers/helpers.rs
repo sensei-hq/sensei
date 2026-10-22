@@ -225,7 +225,7 @@ pub(crate) fn build_globset() -> &'static globset::GlobSet {
 /// A directory walker that honours ignore files (.gitignore, .ignore, global
 /// gitignore, .git/info/exclude). `require_git(false)` is the key bit: it makes
 /// `.gitignore` apply even when the directory is NOT a git repository, so a
-/// quasi-repo (a non-git project root) still skips the vendored / build
+/// quasi-repo (a non-git workspace root) still skips the vendored / build
 /// directories its own `.gitignore` lists (node_modules, Pods, vendor/bundle, …)
 /// instead of indexing hundreds of MB of dependencies.
 pub(crate) fn build_walker(path: &std::path::Path) -> ignore::WalkBuilder {

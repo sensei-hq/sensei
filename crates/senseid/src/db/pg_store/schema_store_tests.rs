@@ -235,14 +235,14 @@ async fn the_vocabularies_are_the_specs() {
     );
 }
 
-/// The Schema diagram is a PROJECT's: one project's read never carries
-/// another's objects, and a project's folders are exactly the ones placed in it.
+/// The Schema diagram is a WORKSPACE's: one workspace's read never carries
+/// another's objects, and a workspace's folders are exactly the ones placed in it.
 ///
-/// Mutations that must break this: drop the project filter from
-/// `schema_folders_of_project`; read `schema_detail_in` without its folder
+/// Mutations that must break this: drop the workspace filter from
+/// `schema_folders_of_workspace`; read `schema_detail_in` without its folder
 /// filter.
 #[tokio::test]
-async fn a_project_reads_only_its_own_schema() {
+async fn a_workspace_reads_only_its_own_schema() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;
     };
@@ -252,12 +252,12 @@ async fn a_project_reads_only_its_own_schema() {
         let root = format!("/_test/schema-scope/{tag}/{name}");
         let root_id = pg.add_watch_root(&root, name, &serde_json::json!([])).await.unwrap();
         let folder = pg.upsert_repo(&root_id, &format!("{name}-{tag}"), &root).await.unwrap();
-        let project =
-            pg.create_project(&format!("_test:schema:{name}:{tag}"), None, None).await.unwrap();
-        crate::tasks::test_support::place_folder_in_project(
+        let workspace =
+            pg.create_workspace(&format!("_test:schema:{name}:{tag}"), None, None).await.unwrap();
+        crate::tasks::test_support::place_folder_in_workspace(
             &pg,
             &folder,
-            &project,
+            &workspace,
             &format!("{name}-{tag}"),
         )
         .await
@@ -281,11 +281,11 @@ async fn a_project_reads_only_its_own_schema() {
         .execute(pg.pool())
         .await
         .unwrap();
-        placed.push((root_id, folder, project));
+        placed.push((root_id, folder, workspace));
     }
-    let (_, mine, my_project) = placed[0];
+    let (_, mine, my_workspace) = placed[0];
 
-    let folders = pg.schema_folders_of_project(&my_project).await.unwrap();
+    let folders = pg.schema_folders_of_workspace(&my_workspace).await.unwrap();
     assert_eq!(folders, vec![mine]);
 
     // THE STORE'S OWN VERSION, for the diagram cache: the import writes after

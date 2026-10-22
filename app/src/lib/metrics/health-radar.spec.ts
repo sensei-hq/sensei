@@ -1,4 +1,4 @@
-import type { ProjectHealth } from './health-radar.js';
+import type { WorkspaceHealth } from './health-radar.js';
 import { describe, it, expect } from 'vitest';
 import {
   toSpokes,
@@ -93,11 +93,11 @@ describe('weightCoverage', () => {
 });
 
 describe('healthHeroReadout', () => {
-    // The card used to fall back to FTR here, because the `project_health` METRIC
-    // was retired in favour of the project_health_score VIEW and so the composite
+    // The card used to fall back to FTR here, because the `workspace_health` METRIC
+    // was retired in favour of the workspace_health_score VIEW and so the composite
     // signal the hero searched for never appears in the metric rows. That is why
     // it read "First-turn resolution" where the mockup reads "HEALTH".
-    const health = (over: Partial<ProjectHealth> = {}): ProjectHealth => ({
+    const health = (over: Partial<WorkspaceHealth> = {}): WorkspaceHealth => ({
         health_score: 52,
         rated_metrics: 18,
         components: {},

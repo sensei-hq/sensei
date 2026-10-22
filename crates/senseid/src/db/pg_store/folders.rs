@@ -26,7 +26,7 @@ pub(crate) const BARRIER_HASH: &str = "";
 
 /// A resolved repo anchor for an absolute path (spec 2026-08-18): the durable repo a
 /// session/transcript attaches to — the nearest repo-kind ancestor (git/subtree/
-/// standalone-project-root), alias-aware, deepest+live wins.
+/// standalone-workspace-root), alias-aware, deepest+live wins.
 #[derive(Debug, Clone)]
 pub struct RepoAnchor {
     pub repo_folder_id: uuid::Uuid,
@@ -102,8 +102,8 @@ impl PgStore {
     }
 
     /// Delete every folder at or under `prefix` (cascade nodes/edges/files).
-    /// Used when an exclusion is added; the emptied projects are then removed by
-    /// [`Self::prune_empty_projects`]. `starts_with` is exact-prefix (no LIKE
+    /// Used when an exclusion is added; the emptied workspaces are then removed by
+    /// [`Self::prune_empty_workspaces`]. `starts_with` is exact-prefix (no LIKE
     /// wildcard hazard). Returns folders deleted.
     pub async fn prune_under_prefix(&self, prefix: &str) -> Result<u64, String> {
         let p = prefix.trim_end_matches('/');
@@ -128,8 +128,8 @@ impl PgStore {
         self.upsert_folder(root_id, "git", name, name, abs_path, None, None).await
     }
 
-    /// Register a project root with an explicit folder kind — `git` for real
-    /// repos, `standalone` for quasi-repos (non-git project roots).
+    /// Register a workspace root with an explicit folder kind — `git` for real
+    /// repos, `standalone` for quasi-repos (non-git workspace roots).
     ///
     /// Unlike [`upsert_folder`]'s sticky-kind upsert, a root's git↔standalone
     /// classification is **authoritative on every scan**: a repo that lost its
@@ -158,7 +158,7 @@ impl PgStore {
         Ok(row.0)
     }
 
-    /// Upsert a structural subfolder (`kind='folder'`) within a project, linked
+    /// Upsert a structural subfolder (`kind='folder'`) within a workspace, linked
     /// to its parent folder. Thin wrapper over [`Self::upsert_subfolder_kind`].
     pub async fn upsert_subfolder(
         &self,
@@ -176,7 +176,7 @@ impl PgStore {
     /// unit, D5a). Status is terminal (`indexed`) — these rows model the tree,
     /// not scan progress. On conflict the kind is relabelled ONLY between the
     /// two structural kinds (`folder`↔`module`); a path that is actually a
-    /// (nested) project ROOT (`git`/`standalone`/`subtree`) is never
+    /// (nested) workspace ROOT (`git`/`standalone`/`subtree`) is never
     /// reclassified.
     pub async fn upsert_subfolder_kind(
         &self,
@@ -190,13 +190,13 @@ impl PgStore {
         // THE REPOSITORY IS INHERITED FROM THE REPO ANCHOR, never taken on trust.
         //
         // `pipeline.rs` already states the intent — "a module belongs to its
-        // repo's project … the modules inheriting rather than each minting its
+        // repo's workspace … the modules inheriting rather than each minting its
         // own" — but took the value from the caller, so the intent could be
         // violated. It was: the client-q `documentation` checkout ended with its
-        // root in project `client-q` and its 362 subfolders in `documentation`.
+        // root in workspace `client-q` and its 362 subfolders in `documentation`.
         //
         // The caller's value is the FALLBACK, used only when no anchor exists to
-        // inherit from (the repo root's own upsert, which is where the project is
+        // inherit from (the repo root's own upsert, which is where the workspace is
         // legitimately decided). Anything beneath an anchor takes the anchor's.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "WITH inherited AS (
@@ -240,7 +240,7 @@ impl PgStore {
         Ok(row.map(|(id, root_id, kind, name, abs, pid, props, tags, modified)| {
             serde_json::json!({
                 "id": id, "root_id": root_id, "kind": kind, "name": name, "abs_path": abs,
-                "project_id": pid, "props": props, "tags": tags,
+                "workspace_id": pid, "props": props, "tags": tags,
                 "modified_at": modified.to_rfc3339(),
             })
         }))
@@ -253,7 +253,7 @@ impl PgStore {
                 "SELECT id, name, abs_path, sensei.sole_workspace_of(id), props, modified_at FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind) LIMIT 1"
             ).bind(name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.map(|(id, name, abs, pid, props, modified)| {
-            serde_json::json!({ "id": id, "name": name, "abs_path": abs, "project_id": pid, "props": props, "modified_at": modified.to_rfc3339() })
+            serde_json::json!({ "id": id, "name": name, "abs_path": abs, "workspace_id": pid, "props": props, "modified_at": modified.to_rfc3339() })
         }))
     }
 
@@ -306,17 +306,17 @@ impl PgStore {
         Ok(())
     }
 
-    /// Assign a folder to a project with role/label.
-    pub async fn set_folder_project(
+    /// Assign a folder to a workspace with role/label.
+    pub async fn set_folder_workspace(
         &self,
         folder_id: &uuid::Uuid,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         role: &str,
         label: Option<&str>,
     ) -> Result<(), String> {
         let props = serde_json::json!({"role": role, "label": label});
         // The folder row carries the ROLE and LABEL; it no longer carries the
-        // project. `folders.project_id` is gone (#211) — membership lives once,
+        // workspace. `folders.workspace_id` is gone (#211) — membership lives once,
         // in the junction, which is the next statement.
         sqlx_core::query::query(
             "UPDATE sensei.folders SET props = props || $2, modified_at = now() WHERE id = $1",
@@ -327,25 +327,25 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
 
-        self.link_project_repository_for_folder(folder_id, project_id).await
+        self.link_workspace_repository_for_folder(folder_id, workspace_id).await
     }
 
-    /// Record that `repository_id` belongs to `project_id` — THE primitive, and
-    /// the only statement that writes `sensei.repositories_in_projects`.
+    /// Record that `repository_id` belongs to `workspace_id` — THE primitive, and
+    /// the only statement that writes `sensei.repositories_in_workspaces`.
     ///
     /// Both membership paths go through here: the scan path, which has the two
     /// ids in hand the moment it creates them, and the user-edit path via
-    /// [`Self::set_folder_project`]. Idempotent, so a rescan costs nothing.
-    pub async fn link_project_repository(
+    /// [`Self::set_folder_workspace`]. Idempotent, so a rescan costs nothing.
+    pub async fn link_workspace_repository(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         repository_id: &uuid::Uuid,
     ) -> Result<(), String> {
         sqlx_core::query::query(
             "INSERT INTO sensei.repositories_in_workspaces (workspace_id, repository_id) \
              VALUES ($1, $2) ON CONFLICT DO NOTHING",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(repository_id)
         .execute(&self.pool)
         .await
@@ -353,7 +353,7 @@ impl PgStore {
         Ok(())
     }
 
-    /// Record that the repository owning `folder_id` belongs to `project_id`.
+    /// Record that the repository owning `folder_id` belongs to `workspace_id`.
     ///
     /// Reads `folders.repository_id` directly. It used to walk ancestors through
     /// `repo_anchor_for` because the column was set ONLY on the repo-root folder
@@ -364,10 +364,10 @@ impl PgStore {
     ///
     /// A folder under no tracked repository records NOTHING rather than guessing
     /// an anchor — the miss stays a miss.
-    pub async fn link_project_repository_for_folder(
+    pub async fn link_workspace_repository_for_folder(
         &self,
         folder_id: &uuid::Uuid,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<(), String> {
         let res = sqlx_core::query::query(
             "INSERT INTO sensei.repositories_in_workspaces (workspace_id, repository_id) \
@@ -376,7 +376,7 @@ impl PgStore {
              ON CONFLICT DO NOTHING",
         )
         .bind(folder_id)
-        .bind(project_id)
+        .bind(workspace_id)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -384,8 +384,8 @@ impl PgStore {
         // RECORDING NOTHING IS NOT THE SAME AS SUCCEEDING. Zero rows means
         // either the membership already existed (fine, this is idempotent) or
         // the folder carries no repository — in which case the caller asked to
-        // put a folder in a project and nothing happened. That second case used
-        // to be silent, and silence is what let fixtures "assign" a project and
+        // put a folder in a workspace and nothing happened. That second case used
+        // to be silent, and silence is what let fixtures "assign" a workspace and
         // then find no membership at all.
         if res.rows_affected() == 0 {
             let (has_repo,): (bool,) = sqlx_core::query_as::query_as(
@@ -398,8 +398,8 @@ impl PgStore {
             .unwrap_or((false,));
             if !has_repo {
                 tracing::warn!(
-                    folder = %folder_id, project = %project_id,
-                    "set_folder_project: folder carries no repository, so no membership \
+                    folder = %folder_id, workspace = %workspace_id,
+                    "set_folder_workspace: folder carries no repository, so no membership \
                      was recorded — membership is the REPOSITORY's since #211"
                 );
             }
@@ -407,9 +407,9 @@ impl PgStore {
         Ok(())
     }
 
-    /// Update only the `role` column on a folder. Used by the Projects
+    /// Update only the `role` column on a folder. Used by the Workspaces
     /// setup stage when the user picks a role from the dropdown — distinct
-    /// from set_folder_project (which also reassigns project membership).
+    /// from set_folder_workspace (which also reassigns workspace membership).
     pub async fn update_folder_role(
         &self,
         folder_id: &uuid::Uuid,
@@ -444,38 +444,38 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
-    /// All folders belonging to a project, ordered by path. Used to enrich
-    /// /api/projects responses with folder membership so the Projects setup
+    /// All folders belonging to a workspace, ordered by path. Used to enrich
+    /// /api/workspaces responses with folder membership so the Workspaces setup
     /// page can render per-folder details.
-    pub async fn list_folders_by_project(
+    pub async fn list_folders_by_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
-        self.query_folders_by_project(project_id, false).await
+        self.query_folders_by_workspace(workspace_id, false).await
     }
 
-    /// Repo-root folders only (`kind IN ('git','standalone')`) for a project —
+    /// Repo-root folders only (`kind IN ('git','standalone')`) for a workspace —
     /// the compact folder set the folder-scoped `find_projects` view (`GET
-    /// /api/projects?under=…`) needs. Drops the hundreds of nested
+    /// /api/workspaces?under=…`) needs. Drops the hundreds of nested
     /// `kind:'folder'` descendant rows that pushed that response past the MCP
     /// client's token cap (~72K chars for sensei). The repo roots are kept so
-    /// the MCP proxy's `resolve_from_cwd_in` longest-prefix cwd→project match
+    /// the MCP proxy's `resolve_from_cwd_in` longest-prefix cwd→workspace match
     /// still resolves any deep working directory (a deep cwd still
     /// `starts_with` the repo root).
-    pub async fn list_root_folders_by_project(
+    pub async fn list_root_folders_by_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
-        self.query_folders_by_project(project_id, true).await
+        self.query_folders_by_workspace(workspace_id, true).await
     }
 
-    /// Return the absolute paths of a project's indexed folders — the input the
+    /// Return the absolute paths of a workspace's indexed folders — the input the
     /// analyzer scheduler needs to enqueue `DetectCommunities` per folder. Only
     /// `indexed` folders are worth running community detection on (others have
     /// no code nodes yet).
-    pub async fn get_indexed_folder_paths_for_project(
+    pub async fn get_indexed_folder_paths_for_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
             "SELECT f.abs_path
@@ -484,24 +484,24 @@ impl PgStore {
              WHERE fp.workspace_id = $1 AND f.status = 'indexed'::sensei.folder_status
              ORDER BY f.abs_path",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(p,)| p).collect())
     }
 
-    /// Resolve a project's canonical working-directory path — the `abs_path` of
+    /// Resolve a workspace's canonical working-directory path — the `abs_path` of
     /// its shallowest repo-root folder (`kind IN ('git','standalone')`). Used by
     /// the relay run driver (P3.3b) to pick the cwd it spawns the agent in.
     ///
-    /// Shortest `abs_path` wins so a monorepo project resolves to the repo root
-    /// rather than a nested sub-package. `None` when the project has no
-    /// repo-root folder (e.g. a project deleted out from under a run). The
+    /// Shortest `abs_path` wins so a monorepo workspace resolves to the repo root
+    /// rather than a nested sub-package. `None` when the workspace has no
+    /// repo-root folder (e.g. a workspace deleted out from under a run). The
     /// caller must still confirm the path exists on disk before spawning.
-    pub async fn project_root_path(
+    pub async fn workspace_root_path(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Option<String>, String> {
         let row: Option<(String,)> = sqlx_core::query_as::query_as(
             "SELECT f.abs_path
@@ -511,7 +511,7 @@ impl PgStore {
              ORDER BY length(f.abs_path), f.abs_path
              LIMIT 1",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -566,7 +566,7 @@ impl PgStore {
     }
 
     /// Append a tag to a folder's `tags` array, idempotently (no duplicates).
-    /// Used by the scan reconcile to flag a former project root that still has
+    /// Used by the scan reconcile to flag a former workspace root that still has
     /// on-disk content but no live owner (`stale`) for the user to triage,
     /// rather than deleting content the scan can't account for.
     pub async fn tag_folder(&self, folder_id: &uuid::Uuid, tag: &str) -> Result<(), String> {
@@ -626,12 +626,12 @@ impl PgStore {
             // member. Leaving it stale was why every folder here kept the
             // `workspace_member` an earlier run wrote, and the derivation
             // silently had no effect.
-            // THE CALLER CANNOT NAME A PROJECT. There is no parameter, because
+            // THE CALLER CANNOT NAME A WORKSPACE. There is no parameter, because
             // since #211 there is no column: membership belongs to the
             // REPOSITORY (`folders.repository_id` → `repositories_in_workspaces`),
-            // and the only writer is `link_project_repository`. Taking a
-            // project from the caller is what let the client-q checkout put 362
-            // subfolders in a project its repository does not belong to.
+            // and the only writer is `link_workspace_repository`. Taking a
+            // workspace from the caller is what let the client-q checkout put 362
+            // subfolders in a workspace its repository does not belong to.
             //
             // What IS inherited here is the repository, from the repo anchor —
             // which is the same fact, resolved one level up where it is true.
@@ -701,7 +701,7 @@ impl PgStore {
             "SELECT id, kind::text, name, path, abs_path, sensei.sole_workspace_of(id), remote_urls, status::text FROM sensei.folders WHERE root_id = $1 ORDER BY path"
         ).bind(root_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, name, path, abs, pid, remotes, status)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "path": path, "abs_path": abs, "project_id": pid, "remote_urls": remotes, "status": status })
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "path": path, "abs_path": abs, "workspace_id": pid, "remote_urls": remotes, "status": status })
         }).collect())
     }
 
@@ -715,9 +715,9 @@ impl PgStore {
         Ok(())
     }
 
-    /// A live project root that shares a git remote URL with `remotes` — the signal
+    /// A live workspace root that shares a git remote URL with `remotes` — the signal
     /// that a since-vanished root was RENAMED/MOVED rather than deleted. Restricted
-    /// to project-root kinds whose `abs_path` is in `live_abs` (the paths this scan
+    /// to workspace-root kinds whose `abs_path` is in `live_abs` (the paths this scan
     /// just discovered) so we only ever remap onto a freshly-confirmed folder.
     /// Returns the first match's id, or `None`. Empty `remotes` → `None` (a folder
     /// with no remote can't be remote-matched). DB-only; pure lookup.
@@ -1023,15 +1023,15 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// The repositories a project spans — the distinct `repository_id`s on its
-    /// git/subtree checkout folders (D2: a project is a GROUP of repositories). The
-    /// repo-grain compute iterates THIS instead of the single `project_root_path`
+    /// The repositories a workspace spans — the distinct `repository_id`s on its
+    /// git/subtree checkout folders (D2: a workspace is a GROUP of repositories). The
+    /// repo-grain compute iterates THIS instead of the single `workspace_root_path`
     /// (killing the multi-repo blind spot). Ordered by folder path so the "primary"
     /// (shallowest) repository is first and iteration is deterministic. Honest-empty
-    /// when the project has no repository-linked folder.
-    pub async fn repositories_for_project(
+    /// when the workspace has no repository-linked folder.
+    pub async fn repositories_for_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<uuid::Uuid>, String> {
         let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.repository_id \
@@ -1041,21 +1041,21 @@ impl PgStore {
               GROUP BY f.repository_id \
               ORDER BY min(length(f.abs_path))",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(r,)| r).collect())
     }
 
-    /// The project's CANONICAL (primary) repository — the repository of its
-    /// shallowest checkout folder (the root repo). Project-level metrics that have no
+    /// The workspace's CANONICAL (primary) repository — the repository of its
+    /// shallowest checkout folder (the root repo). Workspace-level metrics that have no
     /// natural per-repo grain (`knowledge`, `tool`) are attributed here so they fit
-    /// the repo-grain identity. `None` when the project has no repository-linked
+    /// the repo-grain identity. `None` when the workspace has no repository-linked
     /// folder (a repo-less quasi-repo) — those metrics are then honest-empty.
-    pub async fn primary_repository_for_project(
+    pub async fn primary_repository_for_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.repository_id \
@@ -1065,22 +1065,22 @@ impl PgStore {
               ORDER BY length(f.abs_path) ASC \
               LIMIT 1",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
         Ok(row.map(|(r,)| r))
     }
 
-    /// The repository ROOTS a project spans — one `(repository_id, abs_path)` per
+    /// The repository ROOTS a workspace spans — one `(repository_id, abs_path)` per
     /// distinct `repository_id`, where `abs_path` is the SHALLOWEST (shortest-path)
     /// checkout folder for that repository (its root working tree). The repo-grain
     /// churn/quality compute iterates THIS to run the git-log / qlty walk once per
-    /// repository in the project's actual checkout on disk (D2: a project is a GROUP
+    /// repository in the workspace's actual checkout on disk (D2: a workspace is a GROUP
     /// of repositories). Ordered by path length so the primary (shallowest) repository
-    /// is first and iteration is deterministic. Honest-empty when the project has no
+    /// is first and iteration is deterministic. Honest-empty when the workspace has no
     /// repository-linked folder — those repositories are then skipped, never faked (I-E).
-    /// The three repo-wide sets the resolver's `World` needs, for the project
+    /// The three repo-wide sets the resolver's `World` needs, for the workspace
     /// owning `folder_id`: member NAMES, member IDENTITIES, and declared types.
     ///
     /// Read from a COMPLETED pass, which is the contract. `World` is documented
@@ -1183,7 +1183,7 @@ impl PgStore {
         ))
     }
 
-    /// Every package the project owning `folder_id` declares — the resolver's
+    /// Every package the workspace owning `folder_id` declares — the resolver's
     /// `World::first_party`.
     ///
     /// FROM THE MANIFESTS, WHICH IS THE CONTRACT. `World::first_party` is
@@ -1198,7 +1198,7 @@ impl PgStore {
     /// `folder` rows are directories; admitting them would make every directory a
     /// "package", so an import naming any directory would resolve local.
     ///
-    /// Scoped to the PROJECT, not the folder: a workspace member must count its
+    /// Scoped to the WORKSPACE, not the folder: a workspace member must count its
     /// siblings as first-party or no edge can cross a package boundary. Measured
     /// on sensei 2026-09-30 before this existed — 16 packages, and ZERO placed
     /// edges whose source and target packages differ.
@@ -1224,9 +1224,9 @@ impl PgStore {
         Ok(rows.into_iter().map(|(n,)| n).collect())
     }
 
-    pub async fn repository_roots_for_project(
+    pub async fn repository_roots_for_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<(uuid::Uuid, String)>, String> {
         let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
             "SELECT roots.repository_id, roots.abs_path FROM ( \
@@ -1238,7 +1238,7 @@ impl PgStore {
              ) roots \
              ORDER BY length(roots.abs_path) ASC",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1314,15 +1314,15 @@ impl PgStore {
             .collect())
     }
 
-    /// Count folders belonging to a project that have not yet reached a terminal
+    /// Count folders belonging to a workspace that have not yet reached a terminal
     /// index state. Returns 0 when all folders are `indexed` or `failed`.
-    pub async fn count_unindexed_folders(&self, project_id: uuid::Uuid) -> Result<i64, String> {
+    pub async fn count_unindexed_folders(&self, workspace_id: uuid::Uuid) -> Result<i64, String> {
         let row: (i64,) = sqlx_core::query_as::query_as(
             "SELECT COUNT(*) FROM sensei.folders f
                JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
               WHERE fp.workspace_id = $1
                 AND f.status NOT IN ('indexed'::sensei.folder_status, 'failed'::sensei.folder_status)"
-        ).bind(project_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(workspace_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
@@ -1571,7 +1571,7 @@ impl PgStore {
 
     /// Delete keyless repositories no folder references, older than
     /// `grace_secs` (#271). A keyless repository's only identity IS its folder,
-    /// so once no folder points at it nothing can reach it again; its project
+    /// so once no folder points at it nothing can reach it again; its workspace
     /// links and per-repository rows cascade with it. A keyed repository is kept:
     /// its `repo_key` carries metric history and the dōjō identity. The grace
     /// spares a row a concurrent scan inserted and has not linked yet.
@@ -1898,8 +1898,8 @@ impl PgStore {
     /// Folders whose `root_id` names a watch root their `abs_path` is not under.
     ///
     /// `folders.root_id` caches a derivable fact, and an unchecked cache of a
-    /// derivable fact is how `folders.project_id` came to let one repository's
-    /// folders name two different projects (#210). This is the check that the
+    /// derivable fact is how `folders.workspace_id` came to let one repository's
+    /// folders name two different workspaces (#210). This is the check that the
     /// cache still agrees with the path.
     ///
     /// ASKS THE CHEAP DIRECTION. The tempting query — "find the longest watch
@@ -2076,10 +2076,10 @@ impl PgStore {
         // current folder. A live abs_path and an alias of equal length tie-break to
         // the live folder (abs_path row sorts first).
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            // `project_id` is the SOLE member of the folder's resolved set, or
-            // NULL when its repository serves more than one project — the same
+            // `workspace_id` is the SOLE member of the folder's resolved set, or
+            // NULL when its repository serves more than one workspace — the same
             // rule every migrated view applies. A session cannot be attributed
-            // to one of two equally-true projects, so it is attributed to
+            // to one of two equally-true workspaces, so it is attributed to
             // neither and the repository carries it instead.
             "SELECT id, sensei.sole_workspace_of(id) FROM (
                  SELECT id, abs_path AS p, 1 AS live FROM sensei.folders
@@ -2101,7 +2101,7 @@ impl PgStore {
 
     /// Resolve a filesystem path to its owning INDEXED REPO ROOT — the nearest
     /// `git`/`standalone`/`subtree` ancestor folder — returning `(abs_path,
-    /// project_id)`. The file watcher uses this to enqueue incremental tasks
+    /// workspace_id)`. The file watcher uses this to enqueue incremental tasks
     /// against the correct repo (a change in `~/Dev/kavach/src/x.ts` resolves to
     /// the kavach repo root), exactly as the full scan shapes ProcessFile.
     /// Structural subdirs (workspace_member / folder) are skipped so the one-owner
@@ -2112,9 +2112,9 @@ impl PgStore {
     ) -> Result<Option<(String, Option<uuid::Uuid>)>, String> {
         let row: Option<(String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
             // `sole_workspace_of` rather than a join: a repository shared by two
-            // projects has no single answer, and this returns ONE row. NULL is
+            // workspaces has no single answer, and this returns ONE row. NULL is
             // the honest value there, and the same one an unattributed folder
-            // gives — both mean "no project resolves for this path".
+            // gives — both mean "no workspace resolves for this path".
             "SELECT f.abs_path, sensei.sole_workspace_of(f.id) FROM sensei.folders f
               WHERE f.kind IN ('git','standalone','subtree')
                 AND ($1 = f.abs_path OR $1 LIKE f.abs_path || '/%')
@@ -2128,11 +2128,11 @@ impl PgStore {
         Ok(row)
     }
 
-    /// Resolve `(folder_id, project_id)` for a repo path — the importer's
-    /// project mapping from a transcript's cwd. Matches the folder whose current
+    /// Resolve `(folder_id, workspace_id)` for a repo path — the importer's
+    /// workspace mapping from a transcript's cwd. Matches the folder whose current
     /// `abs_path` is the path, OR (fallback) whose `folder_path_aliases` includes it
     /// — so a transcript recorded under an OLD path (before a rename/move) still
-    /// resolves to the current folder + project. A live abs_path match wins over an
+    /// resolves to the current folder + workspace. A live abs_path match wins over an
     /// alias. None if the path isn't a tracked folder or a known former path.
     pub async fn get_folder_ids_by_path(
         &self,
@@ -2153,7 +2153,7 @@ impl PgStore {
     /// implementation, shared by hook attribution, transcript import, cold-start
     /// synthesis, orphan repair, and the file watcher, so per-event attribution and
     /// batch backfills can never diverge. Nearest repo-kind ancestor (git/subtree/
-    /// standalone-project-root; monorepo members roll up to the git root), alias-aware,
+    /// standalone-workspace-root; monorepo members roll up to the git root), alias-aware,
     /// deepest+live wins. `None` for a path under no tracked repo (a container dir, an
     /// untracked repo, or a foreign cwd) — the caller decides the unattached policy; it
     /// never fabricates a repo. Retires find_folder_for_path / repo_root_for_path /
@@ -2168,9 +2168,9 @@ impl PgStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(row.map(|(repo_folder_id, project_id, repo_abs_path, matched_via)| RepoAnchor {
+        Ok(row.map(|(repo_folder_id, workspace_id, repo_abs_path, matched_via)| RepoAnchor {
             repo_folder_id,
-            workspace_id: project_id,
+            workspace_id,
             repo_abs_path,
             matched_via,
         }))
@@ -2178,7 +2178,7 @@ impl PgStore {
 
     /// Register a former absolute path for a folder (`folder_path_aliases`), so a
     /// transcript/hook cwd recorded at the old path still resolves to this folder +
-    /// its project after a rename/move. Idempotent (re-registering an alias updates
+    /// its workspace after a rename/move. Idempotent (re-registering an alias updates
     /// its reason). `reason` is `rename` (explicit) or `detected` (git-remote match).
     pub async fn add_folder_path_alias(
         &self,
@@ -2202,13 +2202,13 @@ impl PgStore {
 
     // ── Metrics: value store + active registry (Phase 3) ──────────────────
 
-    /// Resolve an absolute folder path to its `(folder_id, project_id)` for
-    /// project-scoped metric attribution. Thin wrapper over
+    /// Resolve an absolute folder path to its `(folder_id, workspace_id)` for
+    /// workspace-scoped metric attribution. Thin wrapper over
     /// [`Self::get_folder_ids_by_path`] (matches `folders.abs_path`, then falls
     /// back to a `folder_path_aliases.alias_abs_path`) that additionally REQUIRES a
-    /// project: a folder not yet attached to a project can't own a project-scoped
+    /// workspace: a folder not yet attached to a workspace can't own a workspace-scoped
     /// metric, so it resolves to `None` — an honest miss, never a fabricated
-    /// project id. Reuses the shared resolver rather than duplicating the
+    /// workspace id. Reuses the shared resolver rather than duplicating the
     /// folders/alias SQL.
     pub async fn resolve_folder_by_path(
         &self,
@@ -2217,7 +2217,7 @@ impl PgStore {
         Ok(self
             .get_folder_ids_by_path(folder_path)
             .await?
-            .and_then(|(folder_id, project_id)| project_id.map(|p| (folder_id, p))))
+            .and_then(|(folder_id, workspace_id)| workspace_id.map(|p| (folder_id, p))))
     }
 
     /// A folder's repository, or `None` when it carries none.
@@ -2243,7 +2243,7 @@ impl PgStore {
     /// Keyed on the repository, not on a folder: a namespace states a fact
     /// about the checkout ("this repo uses svelte"), and keying it on a
     /// directory let two clones of one repository disagree about which rules
-    /// governed them. Never pass a `project`-scope namespace — project
+    /// governed them. Never pass a `workspace`-scope namespace — workspace
     /// membership is `repositories_in_workspaces`, and a second writer for it is
     /// what this grain exists to prevent.
     pub async fn link_repository_namespace(
@@ -2280,8 +2280,8 @@ impl PgStore {
         Ok(())
     }
 
-    /// The project a folder belongs to, or `None` (unattributed folder).
-    pub async fn folder_project_id(
+    /// The workspace a folder belongs to, or `None` (unattributed folder).
+    pub async fn folder_workspace_id(
         &self,
         folder_id: &uuid::Uuid,
     ) -> Result<Option<uuid::Uuid>, String> {
@@ -2295,36 +2295,36 @@ impl PgStore {
         Ok(row.and_then(|(pid,)| pid))
     }
 
-    /// Resolve a scope identifier (project name, project UUID, or folder name)
-    /// to the set of folder ids to query.  A project expands to ALL its folders
-    /// (children included).  A bare folder name that has a project expands to
-    /// that project's folders; a folder with no project falls back to just
+    /// Resolve a scope identifier (workspace name, workspace UUID, or folder name)
+    /// to the set of folder ids to query.  A workspace expands to ALL its folders
+    /// (children included).  A bare folder name that has a workspace expands to
+    /// that workspace's folders; a folder with no workspace falls back to just
     /// itself.  Returns an empty Vec if nothing matches.
     ///
     /// Resolution order:
-    ///   1. `ident` matches a project by name → all that project's folder ids.
-    ///   2. `ident` is a valid UUID + project with that id exists → its folders.
-    ///   3. `ident` matches a repo/folder by name → if folder has a project_id,
-    ///      return that project's folders; else return `[folder.id]`.
+    ///   1. `ident` matches a workspace by name → all that workspace's folder ids.
+    ///   2. `ident` is a valid UUID + workspace with that id exists → its folders.
+    ///   3. `ident` matches a repo/folder by name → if folder has a workspace_id,
+    ///      return that workspace's folders; else return `[folder.id]`.
     ///   4. No match → empty Vec.
     ///
     /// Note: a bare child-folder name (kind='folder') is not resolvable here —
     /// `get_repo_by_name` only matches git/subtree/standalone roots — so it falls
-    /// through to the empty Vec. Callers pass a project name/UUID or a repo name.
+    /// through to the empty Vec. Callers pass a workspace name/UUID or a repo name.
     pub async fn scope_folder_ids(&self, ident: &str) -> Result<Vec<uuid::Uuid>, String> {
-        // (1) Try project name lookup first.
-        if let Some(proj) = self.get_project_by_name(ident).await? {
+        // (1) Try workspace name lookup first.
+        if let Some(proj) = self.get_workspace_by_name(ident).await? {
             let pid = crate::api::util::json_uuid(&proj["id"]).ok_or_else(|| {
-                format!("scope_folder_ids: project row missing id for '{}'", ident)
+                format!("scope_folder_ids: workspace row missing id for '{}'", ident)
             })?;
-            return self.folder_ids_for_project(&pid).await;
+            return self.folder_ids_for_workspace(&pid).await;
         }
 
-        // (2) Try parsing ident as a UUID and look up the project directly.
+        // (2) Try parsing ident as a UUID and look up the workspace directly.
         if let Ok(uid) = uuid::Uuid::parse_str(ident)
-            && self.get_project(&uid).await?.is_some()
+            && self.get_workspace(&uid).await?.is_some()
         {
-            return self.folder_ids_for_project(&uid).await;
+            return self.folder_ids_for_workspace(&uid).await;
         }
 
         // (3) Try folder/repo lookup by name.
@@ -2332,8 +2332,8 @@ impl PgStore {
             let fid = crate::api::util::json_uuid(&folder["id"]).ok_or_else(|| {
                 format!("scope_folder_ids: folder row missing id for '{}'", ident)
             })?;
-            if let Some(pid) = crate::api::util::json_uuid(&folder["project_id"]) {
-                return self.folder_ids_for_project(&pid).await;
+            if let Some(pid) = crate::api::util::json_uuid(&folder["workspace_id"]) {
+                return self.folder_ids_for_workspace(&pid).await;
             }
             return Ok(vec![fid]);
         }
@@ -2363,11 +2363,11 @@ impl PgStore {
         Ok(rows.into_iter().map(|(p,)| p).collect())
     }
 
-    // ── Project-scoped query variants (#60) ───────────────────────────
+    // ── Workspace-scoped query variants (#60) ───────────────────────────
 
     /// Folder rows for a set of folder ids (7.2) — the structural skeleton of the
     /// `/tree` endpoint: `kind`/`role`/`parent_id` drive the folder hierarchy
-    /// (repo root → sub-projects/subtrees → subfolders) that the node subtrees
+    /// (repo root → sub-workspaces/subtrees → subfolders) that the node subtrees
     /// hang off.
     pub async fn get_folders_scoped(
         &self,

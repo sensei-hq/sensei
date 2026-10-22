@@ -8,8 +8,8 @@
 //! `SENSEI_CREDENTIAL_BACKEND=security`.
 //!
 //! Router keys use service `com.sensei.gateway.router.<router_id>`, account
-//! `"default"` (one key per router for now; per-project overrides would use
-//! `account = project_id` later).
+//! `"default"` (one key per router for now; per-workspace overrides would use
+//! `account = workspace_id` later).
 //!
 //! # Blocking
 //! Every call talks to the OS store synchronously (a D-Bus round trip, a

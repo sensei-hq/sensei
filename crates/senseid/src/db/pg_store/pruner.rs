@@ -2,7 +2,7 @@
 //! it, and nothing that does not.
 //!
 //! Before this, three code paths each removed PART of a repository and left the
-//! rest: the exclusion handler deleted folders, `exclude_project` deleted nodes
+//! rest: the exclusion handler deleted folders, `exclude_workspace` deleted nodes
 //! and one folder row, and deleting a watch root cascaded folders. None removed
 //! the `repositories` rows those folders pointed at. Cutting the production DB
 //! to one repository on 2026-10-07 left 13,504 of them behind.
@@ -13,10 +13,10 @@
 //!    files, nodes, edges, commit scans and the rest.
 //! 2. The repositories those folders pointed at, UNLESS another folder still
 //!    points at one. A second checkout of the same repository keeps it, and its
-//!    commits, metrics and project membership with it.
-//! 3. Projects left empty, through `prune_empty_projects_among` — which owns the
-//!    rule for what an empty project is, history included — SCOPED to the
-//!    projects those repositories belonged to. Never a global sweep.
+//!    commits, metrics and workspace membership with it.
+//! 3. Workspaces left empty, through `prune_empty_workspaces_among` — which owns the
+//!    rule for what an empty workspace is, history included — SCOPED to the
+//!    workspaces those repositories belonged to. Never a global sweep.
 //!
 //! Steps 1 and 2 are one transaction, so a failure cannot leave folders gone
 //! and their repositories behind. A failure is an `Err`, never a count of zero.
@@ -28,7 +28,6 @@ use super::*;
 pub struct PruneReport {
     pub folders: u64,
     pub repositories: u64,
-    #[serde(rename = "projects")]
     pub workspaces: u64,
 }
 
@@ -58,17 +57,17 @@ impl PgStore {
         .await
         .map_err(|e| format!("prune: folders under {p}: {e}"))?;
 
-        // The projects these repositories belonged to, read BEFORE the delete
-        // cascades the membership away — they are the only projects this prune
+        // The workspaces these repositories belonged to, read BEFORE the delete
+        // cascades the membership away — they are the only workspaces this prune
         // can have emptied, and the only ones it may remove.
-        let (projects_touched,): (Vec<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+        let (workspaces_touched,): (Vec<uuid::Uuid>,) = sqlx_core::query_as::query_as(
             "SELECT coalesce(array_agg(DISTINCT workspace_id), '{}')
                FROM sensei.repositories_in_workspaces WHERE repository_id = ANY($1)",
         )
         .bind(&repositories)
         .fetch_one(&mut *tx)
         .await
-        .map_err(|e| format!("prune: projects under {p}: {e}"))?;
+        .map_err(|e| format!("prune: workspaces under {p}: {e}"))?;
 
         let repos = sqlx_core::query::query(
             "DELETE FROM sensei.repositories r
@@ -82,16 +81,12 @@ impl PgStore {
 
         tx.commit().await.map_err(|e| format!("prune: commit: {e}"))?;
 
-        // After the commit, and deliberately outside it: `prune_empty_projects`
-        // owns its own rule and its own statement, and a project it keeps is not
+        // After the commit, and deliberately outside it: `prune_empty_workspaces`
+        // owns its own rule and its own statement, and a workspace it keeps is not
         // a reason to restore the repository just removed.
-        let projects = self.prune_empty_projects_among(0, Some(&projects_touched)).await?;
+        let workspaces = self.prune_empty_workspaces_among(0, Some(&workspaces_touched)).await?;
 
-        Ok(PruneReport {
-            folders: folders as u64,
-            repositories: repos.rows_affected(),
-            workspaces: projects,
-        })
+        Ok(PruneReport { folders: folders as u64, repositories: repos.rows_affected(), workspaces })
     }
 
     /// The repository roots under a watch root — what stops syncing if it goes.

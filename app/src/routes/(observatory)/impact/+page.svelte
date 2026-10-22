@@ -1,7 +1,7 @@
 <script lang="ts">
     import Kanji from '$lib/components/Kanji.svelte';
   import { invalidateAll } from '$app/navigation';
-  import { EmptyState, MoeReasoningPanel, PageHeader, Screen, ScreenState, UnreadProjectsNotice } from '$lib/components';
+  import { EmptyState, MoeReasoningPanel, PageHeader, Screen, ScreenState, UnreadWorkspacesNotice } from '$lib/components';
   import { railIcon } from '../observatory-nav';
   import {
     formatDeltaPct,
@@ -77,7 +77,7 @@
     </div>
   {:else}
   {#if data.unread.length > 0}
-    <div class="px-6 pt-4"><UnreadProjectsNotice unread={data.unread} /></div>
+    <div class="px-6 pt-4"><UnreadWorkspacesNotice unread={data.unread} /></div>
   {/if}
   {#if data.total === 0 || !open}
     <div class="p-6">
@@ -118,7 +118,7 @@
             <div class="text-sm mt-1 leading-snug font-medium truncate"
                  class:text-ink={isOpen}
                  class:text-ink-mute={!isOpen}>{r.title}</div>
-            <div class="font-mono text-xs text-ink-faint mt-1 truncate">{r.projectName}</div>
+            <div class="font-mono text-xs text-ink-faint mt-1 truncate">{r.workspaceName}</div>
           </button>
         {/each}
       </aside>
@@ -128,9 +128,9 @@
            that bans tabindex on non-interactive elements is wrong for scroll regions). -->
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <main class="overflow-auto pt-5 pb-6 px-7" tabindex="0">
-        <!-- Eyebrow line — project · verdict metadata -->
+        <!-- Eyebrow line — workspace · verdict metadata -->
         <div class="flex items-center gap-3 text-xs uppercase tracking-wider text-ink-soft mb-3">
-          <span class="font-mono normal-case tracking-normal">{open.projectName}</span>
+          <span class="font-mono normal-case tracking-normal">{open.workspaceName}</span>
           <span class="text-ink-faint">·</span>
           <span>{open.status}</span>
         </div>
@@ -185,8 +185,8 @@
             <div class="font-mono text-sm mt-3 {toneClass(openVm?.tone ?? 'ink')}">{open.verdict}</div>
           </div>
           <div class="bg-paper-mute py-3 px-4">
-            <div class="text-xs uppercase tracking-wider text-ink-faint mb-1">Project</div>
-            <div class="font-mono text-sm text-ink mt-3 truncate">{open.projectName}</div>
+            <div class="text-xs uppercase tracking-wider text-ink-faint mb-1">Workspace</div>
+            <div class="font-mono text-sm text-ink mt-3 truncate">{open.workspaceName}</div>
           </div>
         </div>
 

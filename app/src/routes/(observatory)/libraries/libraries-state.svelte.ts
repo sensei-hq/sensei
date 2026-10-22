@@ -9,7 +9,7 @@ export type UsageEntry = { library_name: string; folder: string; version_used: s
 
 /** The reads the Libraries screen makes — injected so a spec can fail them. */
 export interface LibrariesApi {
-  tryGetLibs: (params?: { repoId?: string; projectId?: string; shared?: boolean }) => Promise<ApiResult<{ total: number; libs: LibEntry[] }>>;
+  tryGetLibs: (params?: { repoId?: string; workspaceId?: string; shared?: boolean }) => Promise<ApiResult<{ total: number; libs: LibEntry[] }>>;
   tryGetLibraryUsage: (id: string) => Promise<ApiResult<{ usage: UsageEntry[] }>>;
 }
 

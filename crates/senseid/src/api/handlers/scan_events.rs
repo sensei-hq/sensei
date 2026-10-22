@@ -9,7 +9,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::api::state::AppState;
 
-/// `GET /api/scan/events` — SSE stream of StateEvent (project + activity).
+/// `GET /api/scan/events` — SSE stream of StateEvent (workspace + activity).
 pub(crate) async fn scan_events_sse(
     State(state): State<AppState>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {

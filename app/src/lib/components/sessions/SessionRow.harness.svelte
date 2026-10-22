@@ -7,7 +7,7 @@
   let {
     id = 's-1',
     title = 'Fix auth',
-    project = 'sensei',
+    workspace = 'sensei',
     agent = 'claude',
     outcome = 'completed',
     ftr = true,
@@ -30,7 +30,7 @@
   }: {
     id?: string;
     title?: string;
-    project?: string;
+    workspace?: string;
     agent?: string | null;
     outcome?: string;
     ftr?: boolean | null;
@@ -54,7 +54,7 @@
 
   const session = $derived<EnrichedSession>({
     id,
-    project,
+    workspace,
     title,
     agent,
     outcome,

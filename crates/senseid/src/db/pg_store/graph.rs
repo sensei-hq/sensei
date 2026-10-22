@@ -276,7 +276,7 @@ impl PgStore {
         .await
     }
 
-    pub async fn project_exists(&self, folder_id: &uuid::Uuid) -> Result<bool, String> {
+    pub async fn workspace_exists(&self, folder_id: &uuid::Uuid) -> Result<bool, String> {
         let row: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE folder_id = $1)",
         )
@@ -1501,9 +1501,9 @@ impl PgStore {
 
     /// Multi-folder variant of `find_duplicates` (#54). Runs the same
     /// cosine-similarity self-join but scopes the pair search to every
-    /// folder belonging to a project — so a duplicate function defined in
+    /// folder belonging to a workspace — so a duplicate function defined in
     /// `crates/foo/src/x.rs` and `crates/bar/src/y.rs` (both inside the
-    /// same project) surfaces even though they don't share a folder_id.
+    /// same workspace) surfaces even though they don't share a folder_id.
     ///
     /// Pairs are restricted to `a.id < b.id` so each dyad appears once. It does
     /// NOT require `a.folder_id != b.folder_id`: in a monorepo the indexer rolls
@@ -2561,8 +2561,8 @@ impl PgStore {
     }
 
     /// Find callers of a function by name via the call_graph view.
-    /// `scope` is resolved via [`scope_folder_ids`]: a project name/UUID expands
-    /// to all of that project's folders; a bare folder name falls back to just
+    /// `scope` is resolved via [`scope_folder_ids`]: a workspace name/UUID expands
+    /// to all of that workspace's folders; a bare folder name falls back to just
     /// that folder.
     ///
     /// Filters `target_symbol`, NOT `target_name`. `target_name` is `tgt.name`
@@ -2652,8 +2652,8 @@ impl PgStore {
     }
 
     /// Find callees of a function by name via the call_graph view.
-    /// `scope` is resolved via [`scope_folder_ids`]: a project name/UUID expands
-    /// to all of that project's folders; a bare folder name falls back to just
+    /// `scope` is resolved via [`scope_folder_ids`]: a workspace name/UUID expands
+    /// to all of that workspace's folders; a bare folder name falls back to just
     /// that folder.
     ///
     /// Every row carries [`Placement`], so a reader can tell a call the indexer
@@ -2845,7 +2845,7 @@ impl PgStore {
         }).collect())
     }
 
-    /// Count all edges across multiple folders (project-scoped variant).
+    /// Count all edges across multiple folders (workspace-scoped variant).
     pub async fn count_edges_scoped(&self, folder_ids: &[uuid::Uuid]) -> Result<i64, String> {
         let row: (i64,) = sqlx_core::query_as::query_as(
             "SELECT COUNT(*) FROM sensei.edges WHERE folder_id = ANY($1)",
@@ -3080,7 +3080,7 @@ impl PgStore {
         }).collect())
     }
 
-    /// Communities across ALL folders of a project scope (one query). Communities
+    /// Communities across ALL folders of a workspace scope (one query). Communities
     /// are stored per-folder and the repo root usually owns them, so a caller must
     /// aggregate over every scope folder — a single-folder lookup (a leaf) misses
     /// them (the #G5a `get_communities` bug).
@@ -3099,7 +3099,7 @@ impl PgStore {
         }).collect())
     }
 
-    /// Communities across a project scope with LIVE membership counts (7.3): the
+    /// Communities across a workspace scope with LIVE membership counts (7.3): the
     /// `node_count` is computed from the real `nodes.community_id` join, not the
     /// denormalized `communities.node_count` — so the overview reflects the
     /// current graph (a node whose community changed since the last detect is
@@ -3224,20 +3224,20 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
-    pub async fn scan_project_doc_drift(
+    pub async fn scan_workspace_doc_drift(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<serde_json::Value, String> {
         use crate::analysis::doc_drift::{
             extract_identifier_mentions, extract_mention_from_detail, is_broken_drift,
         };
 
-        // 1. Load every doc node in this project along with its folder id
+        // 1. Load every doc node in this workspace along with its folder id
         //    and the absolute path so we can read the file content off disk.
         //    `n.content` is intentionally not stored for doc nodes today —
         //    the file remains the source of truth — so this scan reads the
         //    on-disk content each pass. Capped at 500 docs per run so a
-        //    heavy project doesn't stall the request.
+        //    heavy workspace doesn't stall the request.
         #[allow(clippy::type_complexity)]
         let doc_rows: Vec<(uuid::Uuid, uuid::Uuid, String, String)> =
             sqlx_core::query_as::query_as(
@@ -3255,7 +3255,7 @@ impl PgStore {
                 AND n.kind = 'doc'
               LIMIT 500",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -3267,12 +3267,12 @@ impl PgStore {
         //    round-trip per mention. Two deliberate widenings vs the original
         //    (which over-fired ~all mentions as broken):
         //    - ALL code-symbol kinds, not just 7 — the old whitelist predated
-        //      struct/enum/hook/component/extension, so real project symbols of
+        //      struct/enum/hook/component/extension, so real workspace symbols of
         //      those kinds were wrongly flagged.
-        //    - GLOBAL, not per-project — a doc legitimately references its
+        //    - GLOBAL, not per-workspace — a doc legitimately references its
         //      indexed dependencies' symbols (e.g. a rokkit component). Those
-        //      resolve to a real node in another project, so their mention is
-        //      not drift. (Cross-project name collisions can mask a removed
+        //      resolve to a real node in another workspace, so their mention is
+        //      not drift. (Cross-workspace name collisions can mask a removed
         //      same-named symbol — an accepted precision tradeoff to kill the
         //      dependency-reference false positives.)
         let code_names: Vec<(String,)> = sqlx_core::query_as::query_as(&format!(
@@ -3286,7 +3286,7 @@ impl PgStore {
             code_names.into_iter().map(|(n,)| n).collect();
 
         // Also treat DB schema identifiers as known: docs legitimately reference
-        // table / column / view names and enum labels (`project_id`, `created_at`,
+        // table / column / view names and enum labels (`workspace_id`, `created_at`,
         // `tool_usage_stats`, `assistant_family`), which are real identifiers, not
         // drift — but they are never indexed as code-symbol nodes. Own-schemas
         // only (skip pg_catalog / information_schema noise).
@@ -3315,7 +3315,7 @@ impl PgStore {
         //     variants, serde camelCase fields, string-dispatched tool names) are
         //     not drift. This is what removes the ~408 false positives.
         if let Err(e) = self.record_symbol_names().await {
-            tracing::warn!(error = %e, "scan_project_doc_drift: record_symbol_names failed — history not refreshed this pass");
+            tracing::warn!(error = %e, "scan_workspace_doc_drift: record_symbol_names failed — history not refreshed this pass");
         }
         let ever_rows: Vec<(String,)> =
             sqlx_core::query_as::query_as("SELECT name FROM sensei.symbol_names")
@@ -3390,7 +3390,7 @@ impl PgStore {
                 AND di.status = 'broken'
                 AND di.resolved_at IS NULL",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -3423,10 +3423,10 @@ impl PgStore {
         }))
     }
 
-    // ── Service registry + per-project scoping (T2 Slice B) ──────────────
+    // ── Service registry + per-workspace scoping (T2 Slice B) ──────────────
 
     /// Enforce one-node-one-owner: a `folder`-kind (structural) subfolder must
-    /// not carry a node that the project's canonical ROOT owner
+    /// not carry a node that the workspace's canonical ROOT owner
     /// (git/standalone/subtree) already holds. Deletes each such duplicate —
     /// TWIN-GUARDED by identical `kind` AND a path-suffix match on BOTH
     /// `file_path` and `name`: the root node's repo-relative value must end in
@@ -3563,7 +3563,7 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
-    /// Search functions across multiple folders (project-scoped variant).
+    /// Search functions across multiple folders (workspace-scoped variant).
     pub async fn search_functions_scoped(
         &self,
         folder_ids: &[uuid::Uuid],
@@ -3581,7 +3581,7 @@ impl PgStore {
         }).collect())
     }
 
-    /// Search types across multiple folders (project-scoped variant).
+    /// Search types across multiple folders (workspace-scoped variant).
     pub async fn search_types_scoped(
         &self,
         folder_ids: &[uuid::Uuid],
@@ -3602,8 +3602,8 @@ impl PgStore {
     /// Per-edge-kind resolution coverage for a scope: `(kind, resolved, total)`.
     ///
     /// This is how much the graph-navigation tools can actually be trusted, and
-    /// until now nothing reported it — `get_project_summary` answered "10,614
-    /// functions" while 43% of this project's `calls` edges were unresolved and
+    /// until now nothing reported it — `get_workspace_summary` answered "10,614
+    /// functions" while 43% of this workspace's `calls` edges were unresolved and
     /// `imports`/`extends`/`references` were at 0%, so a caller had no way to
     /// know a caller list might be partial or that a whole edge kind was empty.
     /// Surfacing it lets a reader decide to grep BEFORE trusting a lookup,
@@ -3626,7 +3626,7 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// Count nodes by kind across multiple folders (project-scoped variant).
+    /// Count nodes by kind across multiple folders (workspace-scoped variant).
     pub async fn count_nodes_by_kind_scoped(
         &self,
         folder_ids: &[uuid::Uuid],
@@ -3641,7 +3641,7 @@ impl PgStore {
         Ok(rows.into_iter().collect())
     }
 
-    /// Get all nodes across multiple folders (project-scoped variant).
+    /// Get all nodes across multiple folders (workspace-scoped variant).
     pub async fn get_nodes_scoped(
         &self,
         folder_ids: &[uuid::Uuid],
@@ -3662,7 +3662,7 @@ impl PgStore {
         }).collect())
     }
 
-    /// Get edges by kind across multiple folders (project-scoped variant).
+    /// Get edges by kind across multiple folders (workspace-scoped variant).
     pub async fn get_edges_scoped(
         &self,
         folder_ids: &[uuid::Uuid],
@@ -3803,10 +3803,10 @@ fn structure_group_sql(level: &str, prefix: &str) -> String {
     }
 }
 
-/// One (project, repository, test-or-not) cell of the World diagram (#219).
+/// One (workspace, repository, test-or-not) cell of the World diagram (#219).
 ///
 /// THE FINEST GRAIN, and the hierarchy is assembled above it. The screen offers
-/// three groupings — project first, repository first, code-vs-tests first — and
+/// three groupings — workspace first, repository first, code-vs-tests first — and
 /// they are three readings of ONE set of cells, not three queries. Building the
 /// tree in Rust keeps this a single literal statement that
 /// `check-sql-against-schema.py` can plan, and makes the grouping a pure
@@ -3851,13 +3851,13 @@ pub struct WorldPlacement {
 impl PgStore {
     /// Every indexed declaration, as cells to nest (#219).
     ///
-    /// CROSS-PROJECT, deliberately. The screen is "all indexed code, nested by
-    /// what contains it", and PROJECT is its outermost ring — so scoping to one
-    /// project would leave the top level with a single circle. The project a
+    /// CROSS-WORKSPACE, deliberately. The screen is "all indexed code, nested by
+    /// what contains it", and WORKSPACE is its outermost ring — so scoping to one
+    /// workspace would leave the top level with a single circle. The workspace a
     /// reader is viewing from is marked by the caller, not filtered here.
     ///
     /// Membership comes through `folder_workspaces`, never a folder column (#211),
-    /// which is why one repository can legitimately appear under two projects:
+    /// which is why one repository can legitimately appear under two workspaces:
     /// measured on this corpus, one does.
     ///
     /// Library nodes are excluded. A `lib·` node is a name for something whose
@@ -3888,8 +3888,8 @@ impl PgStore {
             .into_iter()
             .map(
                 |(
-                    project_id,
-                    project,
+                    workspace_id,
+                    workspace,
                     folder_id,
                     repository,
                     is_test,
@@ -3897,8 +3897,8 @@ impl PgStore {
                     documented,
                 )| {
                     WorldCell {
-                        workspace_id: project_id,
-                        workspace: project,
+                        workspace_id,
+                        workspace,
                         folder_id,
                         repository,
                         is_test,
@@ -3933,15 +3933,15 @@ impl PgStore {
             .collect())
     }
 
-    /// Nodes of the Structure diagram for one project, rolled up to `level`.
+    /// Nodes of the Structure diagram for one workspace, rolled up to `level`.
     ///
     /// Reads `sensei.structure_graph`, which is already internal-only and
     /// already resolves membership through `folder_workspaces` — so a repository
-    /// serving two projects contributes its files to BOTH, and neither sees the
+    /// serving two workspaces contributes its files to BOTH, and neither sees the
     /// other's.
     pub async fn structure_nodes(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         level: &str,
     ) -> Result<Vec<StructureNode>, String> {
         let group = structure_group_sql(level, "");
@@ -3967,7 +3967,7 @@ impl PgStore {
               ORDER BY symbols DESC, id"
         );
         let rows: Vec<StructureNodeRow> = sqlx_core::query_as::query_as(&sql)
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -4002,35 +4002,35 @@ impl PgStore {
             .collect())
     }
 
-    /// Edges of the Structure diagram for one project, rolled up to `level` and
+    /// Edges of the Structure diagram for one workspace, rolled up to `level` and
     /// restricted to `kinds`.
     ///
     /// A self-loop produced BY the rollup is dropped: two files of one module
     /// calling each other is an edge at file level and nothing at module level,
     /// and drawing it as a loop asserts a relationship the module does not have
     /// with itself.
-    /// WHEN THIS PROJECT'S GRAPH LAST CHANGED — the version every cached
+    /// WHEN THIS WORKSPACE'S GRAPH LAST CHANGED — the version every cached
     /// diagram payload is keyed on (#233).
     ///
-    /// The latest `files.indexed_at` across the project's folders. That column
+    /// The latest `files.indexed_at` across the workspace's folders. That column
     /// moves whenever a file is walked and its nodes and edges are rewritten,
     /// which is the only way anything behind `structure_edges` changes, so a
     /// matching version means a cached payload is still the right answer.
     ///
     /// NOT `folders.modified_at`, which was the cheaper candidate and is the
-    /// wrong one. Measured 2026-10-06 mid-scan on project `sensei`: the folder
+    /// wrong one. Measured 2026-10-06 mid-scan on workspace `sensei`: the folder
     /// row said 20:53 while its newest indexed file said 20:20 — the folder row
     /// moves for reasons that are not a graph change, and a version that moves
     /// without the data is a cache that never hits.
     ///
-    /// `None` IS A VERSION, not a failure: a project whose folders hold no
+    /// `None` IS A VERSION, not a failure: a workspace whose folders hold no
     /// indexed file has no graph yet, and two such states are the same state.
     /// A failure is an `Err` and is never flattened into it.
     ///
     /// 93 ms over 101,266 `files` rows, against the 1.5-74 s read it guards.
-    pub async fn project_graph_version(
+    pub async fn workspace_graph_version(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
         let row: (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
             "SELECT max(fi.indexed_at)
@@ -4038,16 +4038,16 @@ impl PgStore {
                JOIN sensei.folder_workspaces fp ON fp.folder_id = fi.folder_id
               WHERE fp.workspace_id = $1",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| format!("project_graph_version: {e}"))?;
+        .map_err(|e| format!("workspace_graph_version: {e}"))?;
         Ok(row.0)
     }
 
     pub async fn structure_edges(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         level: &str,
         kinds: &[String],
     ) -> Result<Vec<StructureEdge>, String> {
@@ -4075,7 +4075,7 @@ impl PgStore {
         );
         let rows: Vec<(String, String, String, Option<String>, i64)> =
             sqlx_core::query_as::query_as(&sql)
-                .bind(project_id)
+                .bind(workspace_id)
                 .bind(kinds)
                 .fetch_all(&self.pool)
                 .await
@@ -4112,14 +4112,14 @@ impl PgStore {
     /// self-dependency produced by the rollup, which the Structure diagram needs
     /// (a module looping to itself draws nothing) and the layering lane must
     /// not have done for it — a module whose only dependency is on itself would
-    /// otherwise vanish, and 9 modules of project `sensei` are in that state.
+    /// otherwise vanish, and 9 modules of workspace `sensei` are in that state.
     ///
     /// Both grains name their units with `sensei.module_of` / the file path, the
     /// same expressions [`structure_group_sql`] uses, so the units this returns
     /// are exactly the ones [`PgStore::structure_nodes`] places.
     pub async fn dependency_graph(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         level: &str,
         kinds: &[String],
     ) -> Result<Vec<crate::analysis::layering::Dep>, String> {
@@ -4147,14 +4147,14 @@ impl PgStore {
             )
         };
         let rows: Vec<(Option<String>, Option<String>, i64)> = sqlx_core::query_as::query_as(&sql)
-            .bind(project_id)
+            .bind(workspace_id)
             .bind(kinds)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
         // A NULL unit means the symbol carried no package, so `module_of`
         // propagated. Skipped rather than coalesced to "": a bucket named ""
-        // would collect every unplaceable symbol in the project into one
+        // would collect every unplaceable symbol in the workspace into one
         // invented module and sit at the bottom of every layering.
         Ok(rows
             .into_iter()
@@ -4180,19 +4180,19 @@ impl PgStore {
     /// it wants the ones furthest off the sequence, and NULLs last so an
     /// unplaceable module never heads the table.
     ///
-    /// `component_zones` is a FUNCTION taking the project, not a view filtered
+    /// `component_zones` is a FUNCTION taking the workspace, not a view filtered
     /// by one. Its four halves are outer-joined so a module with no coupling
     /// survives, and PostgreSQL will not push a predicate across an outer join —
     /// as a view, each nullable side was computed for the whole corpus and the
     /// query had not returned after eleven minutes.
-    pub async fn component_zones(&self, project_id: &uuid::Uuid) -> Result<Vec<Zone>, String> {
+    pub async fn component_zones(&self, workspace_id: &uuid::Uuid) -> Result<Vec<Zone>, String> {
         let rows: Vec<ZoneRow> = sqlx_core::query_as::query_as(
             "SELECT component, types::bigint, abstract_types::bigint, ca::bigint, ce::bigint,
                     abstractness, instability, distance, zone
                FROM sensei.component_zones($1)
               ORDER BY distance DESC NULLS LAST, component",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -4234,9 +4234,9 @@ impl PgStore {
     /// NOT from `graph_placement`, and that is a correction rather than a
     /// preference. Asking it for `outcome <> 'resolved'` matched EVERY row,
     /// because its outcomes are `placed` / `missed` / `no verdict` and none of
-    /// them is `resolved` — so the screen reported the project's total edge
+    /// them is `resolved` — so the screen reported the workspace's total edge
     /// count as its unplaced one (69,747 of 69,747 on sensei, where the truth
-    /// is 38,578). It was also the whole cost: filtering that view by project
+    /// is 38,578). It was also the whole cost: filtering that view by workspace
     /// cannot push past its window functions, which took 107 of the endpoint's
     /// 122 seconds against 2.9 for this.
     ///
@@ -4246,7 +4246,7 @@ impl PgStore {
     /// beside it.
     pub async fn structure_unplaced(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         kinds: &[String],
     ) -> Result<i64, String> {
         let (unplaced,): (i64,) = sqlx_core::query_as::query_as(
@@ -4256,7 +4256,7 @@ impl PgStore {
                 AND ed.kind::text = ANY($2)
                 AND ed.target_id IS NULL",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(kinds)
         .fetch_one(&self.pool)
         .await

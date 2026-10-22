@@ -19,7 +19,7 @@ use crate::tasks::Task;
 use crate::tasks::executor::TaskContext;
 use crate::transcript::TranscriptTurn;
 
-/// Sessions scored per project per tick — the batch cap so one project can't
+/// Sessions scored per workspace per tick — the batch cap so one workspace can't
 /// dominate the queue on a hot tick. Config `process.batch_per_tick` overrides.
 const DEFAULT_BATCH_PER_TICK: i64 = 25;
 /// Output budget for the reasoning call. gemma4 (the reasoning chain's model) is a
@@ -302,17 +302,17 @@ fn batch_per_tick(cfg: Option<String>) -> i64 {
         .unwrap_or(DEFAULT_BATCH_PER_TICK)
 }
 
-/// Handler: score up to the batch cap of a project's un-scored measurable
-/// sessions. `task.path` carries the project id (mirrors `AnalyzeWorkspace`).
+/// Handler: score up to the batch cap of a workspace's un-scored measurable
+/// sessions. `task.path` carries the workspace id (mirrors `AnalyzeWorkspace`).
 /// Returns the number of sessions scored (watermarked) this run — including
 /// all-N/A ones, which ARE progress (they won't be retried). A model failure on
 /// a session leaves it un-watermarked (retried next tick) and does not count.
 pub async fn analyze_session_process(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let project_id = task.project_id()?;
+    let workspace_id = task.workspace_id()?;
     let pg = ctx.pg();
     let cap = batch_per_tick(pg.get_config("process.batch_per_tick").await.ok().flatten());
 
-    let candidates = pg.sessions_needing_process_analysis(&project_id, cap).await?;
+    let candidates = pg.sessions_needing_process_analysis(&workspace_id, cap).await?;
     if candidates.is_empty() {
         return Ok(0);
     }
@@ -383,7 +383,7 @@ pub async fn analyze_session_process(ctx: &TaskContext, task: &Task) -> Result<u
         tracing::debug!(session = %client_session_id, scored_any = result.scored_any, evidence = result.evidence.len(), "session_process: scored");
     }
 
-    tracing::info!(project = %project_id, scored, "session_process: scored a batch");
+    tracing::info!(workspace = %workspace_id, scored, "session_process: scored a batch");
     Ok(scored)
 }
 

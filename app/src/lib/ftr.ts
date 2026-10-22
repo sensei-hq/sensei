@@ -1,6 +1,6 @@
 // Shared FTR presentation helpers.
 //
-// FTR (a 0..1 rate) is honest-null when a project or window has no analyzed
+// FTR (a 0..1 rate) is honest-null when a workspace or window has no analyzed
 // sessions — the daemon returns `null`, never a fabricated 0. These helpers keep
 // that honesty at the edge: they render the no-data em dash, never a "0%" a
 // reader can't tell from a real 0%.

@@ -86,7 +86,7 @@ impl PgStore {
 
     pub async fn create_recommendation(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         title: &str,
         why: &str,
         action_type: &str,
@@ -96,7 +96,7 @@ impl PgStore {
             "INSERT INTO inference.recommendations(workspace_id, title, why, action_type, urgency)
              VALUES($1, $2, $3, $4, $5::sensei.recommendation_urgency) RETURNING id",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(title)
         .bind(why)
         .bind(action_type)
@@ -165,7 +165,7 @@ impl PgStore {
     }
 
     /// Read a pending recommendation's fields for a materialization preview WITHOUT
-    /// deciding it: `(action_type, title, why, impact, project_id, based_on)`.
+    /// deciding it: `(action_type, title, why, impact, workspace_id, based_on)`.
     /// `None` when the rec is absent or already decided (so a stale UI previews
     /// nothing rather than a fabricated artifact).
     pub async fn recommendation_for_materialize(
@@ -231,7 +231,7 @@ impl PgStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
-        let Some((action_type, title, why, impact, project_id, based_on)) = row else {
+        let Some((action_type, title, why, impact, workspace_id, based_on)) = row else {
             return Err("recommendation not found or already decided".into());
         };
         if !Self::is_rule_class_action(&action_type) {
@@ -256,11 +256,11 @@ impl PgStore {
         let mem_scope = match gov_scope {
             "technology" | "team" | "organization" | "client" => "stack",
             "general" | "user" => "global",
-            _ => "project",
+            _ => "workspace",
         };
 
         let mem = crate::db::pg_store::InsertMemory {
-            workspace_id: Some(project_id),
+            workspace_id: Some(workspace_id),
             scope: mem_scope.to_string(),
             scope_filter: None,
             mtype: "convention".to_string(),
@@ -383,11 +383,11 @@ impl PgStore {
 
     pub async fn list_recommendations(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, String)> = sqlx_core::query_as::query_as(
             "SELECT id, title, why, urgency::text, status::text, verdict::text FROM inference.recommendations WHERE workspace_id = $1 ORDER BY urgency::text"
-        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(workspace_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, title, why, urg, status, verdict)| {
             serde_json::json!({ "id": id, "title": title, "why": why, "urgency": urg, "status": status, "verdict": verdict })
         }).collect())
@@ -403,7 +403,7 @@ impl PgStore {
         // EXHAUSTIVE (#161): a field added to `RecommendationRow` stops this
         // compiling until someone binds it.
         let RecommendationRow {
-            workspace_id: project_id,
+            workspace_id,
             title,
             why,
             impact,
@@ -416,17 +416,17 @@ impl PgStore {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO inference.recommendations(workspace_id, title, why, impact, action_type, urgency, based_on, reasoning_trace_id, prompt)
              VALUES($1, $2, $3, $4, $5, $6::sensei.recommendation_urgency, $7::jsonb, $8, $9) RETURNING id"
-        ).bind(project_id).bind(title).bind(why).bind(impact).bind(action_type).bind(urgency)
+        ).bind(workspace_id).bind(title).bind(why).bind(impact).bind(action_type).bind(urgency)
             .bind(based_on.to_string()).bind(reasoning_trace_id).bind(prompt)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
-    /// True if any recommendation for `project_id` already cites `pattern_id` in
+    /// True if any recommendation for `workspace_id` already cites `pattern_id` in
     /// `based_on.patterns`. The L2 generator's idempotency guard.
     pub async fn recommendation_exists_for_pattern(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         pattern_id: &uuid::Uuid,
     ) -> Result<bool, String> {
         let row: (bool,) = sqlx_core::query_as::query_as(
@@ -435,7 +435,7 @@ impl PgStore {
                 WHERE workspace_id = $1 AND based_on->'patterns' @> to_jsonb($2::text)
              )",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(pattern_id.to_string())
         .fetch_one(&self.pool)
         .await
@@ -445,13 +445,13 @@ impl PgStore {
 
     // ── Recommendation ranking (ranking.rs) ──────────────────────────
 
-    /// Pending recs for a project with the scoring factors joined from their
+    /// Pending recs for a workspace with the scoring factors joined from their
     /// source patterns (`based_on.patterns` → `detected_patterns`): returns
     /// `(id, action_type, urgency, avg_confidence, max_recurrence)`. A rec with
     /// no joinable pattern yields `avg_confidence = None`, `max_recurrence = 0`.
     pub async fn get_pending_recs_for_ranking(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<(uuid::Uuid, String, String, Option<f64>, i32)>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<f64>, i32)> =
             sqlx_core::query_as::query_as(
@@ -467,21 +467,21 @@ impl PgStore {
               WHERE r.workspace_id = $1 AND r.status = 'pending'
               GROUP BY r.id, r.action_type, r.urgency",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
-    /// Clear the focal flag across a project (before a fresh ranking pass marks a
+    /// Clear the focal flag across a workspace (before a fresh ranking pass marks a
     /// new one) so a previously-focal rec that has since been acted on or
     /// out-scored never stays flagged.
-    pub async fn clear_project_focal(&self, project_id: &uuid::Uuid) -> Result<(), String> {
+    pub async fn clear_workspace_focal(&self, workspace_id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE inference.recommendations SET focal = false WHERE workspace_id = $1 AND focal",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -518,7 +518,7 @@ impl PgStore {
 
     pub async fn insert_reasoning_trace(
         &self,
-        project_id: Option<&uuid::Uuid>,
+        workspace_id: Option<&uuid::Uuid>,
         trigger_event: &str,
         trigger_detail: &serde_json::Value,
         models_used: &[String],
@@ -527,31 +527,31 @@ impl PgStore {
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO inference.reasoning_traces(workspace_id, trigger_event, trigger_detail, models_used, exchanges, consensus) VALUES($1, $2, $3, $4, $5, $6) RETURNING id"
-        ).bind(project_id).bind(trigger_event).bind(trigger_detail).bind(models_used).bind(exchanges).bind(consensus)
+        ).bind(workspace_id).bind(trigger_event).bind(trigger_detail).bind(models_used).bind(exchanges).bind(consensus)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
-    /// True if a reasoning trace for `project_id` already carries this
+    /// True if a reasoning trace for `workspace_id` already carries this
     /// finding-set `signature` (in `trigger_detail`). The consolidation tier's
     /// idempotency guard — keeps the LLM call from re-firing on the same signals.
     pub async fn reasoning_trace_exists_with_signature(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         signature: &str,
     ) -> Result<bool, String> {
         let row: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(SELECT 1 FROM inference.reasoning_traces WHERE workspace_id = $1 AND trigger_detail->>'signature' = $2)"
-        ).bind(project_id).bind(signature).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(workspace_id).bind(signature).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
     /// Impact reports (#70 read-path): recommendations that have been acted on
     /// or carry a consolidation trace, joined to that trace. Powers the
     /// Observatory Impact view (before/after FTR + the MOE-style reasoning).
-    pub async fn get_project_impact(
+    pub async fn get_workspace_impact(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, Option<f64>, Option<f64>, serde_json::Value, Option<Vec<String>>, Option<serde_json::Value>)> =
             sqlx_core::query_as::query_as(
@@ -563,7 +563,7 @@ impl PgStore {
                   WHERE r.workspace_id = $1
                     AND (r.reasoning_trace_id IS NOT NULL OR r.verdict <> 'pending'::sensei.recommendation_verdict)
                   ORDER BY r.measured_at DESC NULLS LAST"
-            ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+            ).bind(workspace_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, title, action_type, status, verdict, baseline, current, props, models, consensus)| {
             // The reasoning field carries the honest single-verdict JSON to the
             // UI: `{headline, body, modelsUsed: string[], suggestedRevision}`
@@ -693,12 +693,12 @@ impl PgStore {
 
     // ── Doc-drift scan (T3 Slice 2.3) ────────────────────────────────────
 
-    /// List manual impact-verdict entries for a project, newest first.
+    /// List manual impact-verdict entries for a workspace, newest first.
     /// Optional `verdict` filter narrows to one lifecycle stage (`pending`,
     /// `success`, `mixed`, `failure`).
     pub async fn list_impact_verdicts(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         verdict: Option<&str>,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(
@@ -717,7 +717,7 @@ impl PgStore {
                   ORDER BY created_at DESC
                   LIMIT 200",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(verdict)
         .fetch_all(&self.pool)
         .await
@@ -743,7 +743,7 @@ impl PgStore {
     /// hits `set_impact_verdict_outcome` later to record the outcome.
     pub async fn create_impact_verdict(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         title: &str,
         note: Option<&str>,
         session_id: Option<&uuid::Uuid>,
@@ -755,7 +755,7 @@ impl PgStore {
             "INSERT INTO sensei.impact_verdicts (workspace_id, title, note, session_id)
              VALUES ($1, $2, $3, $4) RETURNING id",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(title)
         .bind(note)
         .bind(session_id)
@@ -797,13 +797,13 @@ impl PgStore {
         Ok(())
     }
 
-    pub async fn get_reasoning_traces_by_project(
+    pub async fn get_reasoning_traces_by_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Vec<String>, serde_json::Value, serde_json::Value)> = sqlx_core::query_as::query_as(
             "SELECT id, trigger_event, models_used, exchanges, consensus FROM inference.reasoning_traces WHERE workspace_id = $1"
-        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(workspace_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, trigger, models, exchanges, consensus)| {
             serde_json::json!({ "id": id, "trigger_event": trigger, "models_used": models, "exchanges": exchanges, "consensus": consensus })
         }).collect())
@@ -811,16 +811,16 @@ impl PgStore {
 
     // ── Folders to Watch ───────────────────────────────────────────────
 
-    /// Upsert a detected pattern at PROJECT scope (#82). `folder_id` is
+    /// Upsert a detected pattern at WORKSPACE scope (#82). `folder_id` is
     /// preserved as an optional locus pointer for file/folder-scoped signals
     /// (churn); it is not part of the uniqueness key. Passing the same
-    /// (project_id, name, is_anti_pattern) with a different folder_id
+    /// (workspace_id, name, is_anti_pattern) with a different folder_id
     /// updates the same row and overwrites the locus — that's the desired
     /// merge behaviour when a single file's pattern shows up across sibling
-    /// folders inside the project.
+    /// folders inside the workspace.
     pub async fn upsert_pattern(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         folder_id: Option<&uuid::Uuid>,
         name: &str,
         is_anti: bool,
@@ -838,16 +838,16 @@ impl PgStore {
                instances = EXCLUDED.instances,
                modified_at = now()
              RETURNING id"
-        ).bind(project_id).bind(folder_id).bind(name).bind(is_anti).bind(confidence).bind(count).bind(instances)
+        ).bind(workspace_id).bind(folder_id).bind(name).bind(is_anti).bind(confidence).bind(count).bind(instances)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
-    /// Remove a project's unreviewed rework rows before a re-derive writes the
+    /// Remove a workspace's unreviewed rework rows before a re-derive writes the
     /// current set (#287) — the upsert alone never removes a file that stopped
     /// qualifying, so rows from an earlier, wrong derive lingered. Only
     /// `suggested` rows: one a user promoted stays.
-    pub async fn prune_suggested_rework(&self, project_id: &uuid::Uuid) -> Result<u64, String> {
+    pub async fn prune_suggested_rework(&self, workspace_id: &uuid::Uuid) -> Result<u64, String> {
         let done = sqlx_core::query::query(
             "DELETE FROM inference.detected_patterns
               WHERE workspace_id = $1
@@ -855,7 +855,7 @@ impl PgStore {
                 AND name LIKE 'rework: %'
                 AND lifecycle = 'suggested'",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -894,14 +894,14 @@ impl PgStore {
 
     /// Patterns a symbol participates in — FILE-level membership. `detected_patterns`
     /// records file `instances`, not per-symbol members, so we match the symbol's
-    /// file: resolve nodes named `symbol` in the project's folders, then return the
-    /// project's patterns whose `instances[].file` is that node's file. The path
+    /// file: resolve nodes named `symbol` in the workspace's folders, then return the
+    /// workspace's patterns whose `instances[].file` is that node's file. The path
     /// is repo-RELATIVE and `instances[].file` is ABSOLUTE, so the match is an
     /// equality-or-path-suffix. `[]` when the symbol's file is in no pattern
     /// (honest-empty, NOT the old always-null mask that read a nonexistent `members`).
     pub async fn patterns_for_symbol(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         folder_ids: &[uuid::Uuid],
         symbol: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
@@ -922,7 +922,7 @@ impl PgStore {
                     )
                   ORDER BY p.instance_count DESC",
             )
-            .bind(project_id).bind(folder_ids).bind(symbol)
+            .bind(workspace_id).bind(folder_ids).bind(symbol)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
@@ -935,18 +935,18 @@ impl PgStore {
             .collect())
     }
 
-    /// Read a project's detected patterns for the L2 generator: `(id, folder_id,
+    /// Read a workspace's detected patterns for the L2 generator: `(id, folder_id,
     /// folder_label, name, is_anti_pattern, instance_count, instances_json_text)`.
     /// `instances` is returned as text (parsed by the caller) to avoid a sqlx
     /// json-feature dependency.
     ///
-    /// Attribution matches L1 (`derive_signals`): patterns belong to a project
-    /// via the **folders that have sessions for that project** (`sessions.project_id`),
-    /// not `folders.project_id` — the two can diverge, and L1 keys off the
+    /// Attribution matches L1 (`derive_signals`): patterns belong to a workspace
+    /// via the **folders that have sessions for that workspace** (`sessions.workspace_id`),
+    /// not `folders.workspace_id` — the two can diverge, and L1 keys off the
     /// session path, so the generator must read the same set.
     pub async fn get_patterns_for_generation(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<(uuid::Uuid, uuid::Uuid, String, String, bool, i32, String)>, String> {
         let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String, bool, i32, String)> =
             sqlx_core::query_as::query_as(
@@ -958,13 +958,13 @@ impl PgStore {
                            WHERE workspace_id = $1 AND folder_id IS NOT NULL
                         )
                   ORDER BY dp.instance_count DESC, dp.id"
-            ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+            ).bind(workspace_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
     // ── Corrections aggregation (#65 step 5) ─────────────────────────────────
 
-    /// All captured user prompts across every project: (project_id, project_name,
+    /// All captured user prompts across every workspace: (workspace_id, workspace_name,
     /// session_id, ts_ms, prompt). Ordered by ts so the handler's clustering seeds
     /// on the earliest member. The handler filters to corrections.
     pub async fn get_all_user_prompts(
@@ -1011,7 +1011,7 @@ impl PgStore {
         .bind(&row.text)
         .bind(&row.suggestion)
         .bind(row.count)
-        .bind(&row.project_ids)
+        .bind(&row.workspace_ids)
         .bind(row.last_seen)
         .bind(row.memory_id)
         .bind(&row.instances)
@@ -1033,22 +1033,22 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
-    /// Global corrections list (camelCase, projects resolved to {id, name}).
+    /// Global corrections list (camelCase, workspaces resolved to {id, name}).
     pub async fn list_corrections(&self) -> Result<serde_json::Value, String> {
         self.query_corrections(None).await
     }
 
-    /// Corrections touching a specific project.
-    pub async fn list_corrections_for_project(
+    /// Corrections touching a specific workspace.
+    pub async fn list_corrections_for_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<serde_json::Value, String> {
-        self.query_corrections(Some(project_id)).await
+        self.query_corrections(Some(workspace_id)).await
     }
 
     pub async fn get_pending_recommendations(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, serde_json::Value)> =
             sqlx_core::query_as::query_as(
@@ -1058,7 +1058,7 @@ impl PgStore {
              ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
              LIMIT 10",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -1071,9 +1071,9 @@ impl PgStore {
             .collect())
     }
 
-    /// Highest-priority pending recommendations across all projects — powers the
+    /// Highest-priority pending recommendations across all workspaces — powers the
     /// Observatory · Today hero + insight strip. Mirrors
-    /// [`Self::get_pending_recommendations`] without the project filter.
+    /// [`Self::get_pending_recommendations`] without the workspace filter.
     pub async fn get_pending_recommendations_global(
         &self,
         limit: i64,
@@ -1100,15 +1100,15 @@ impl PgStore {
     }
 
     // ── Insights (Learnings Triage) aggregator sources (#Slot 5) ──────────
-    // Each carries `project_id` so the UI can call the per-project
-    // accept/reject action; `project` is None for the cross-project view.
+    // Each carries `workspace_id` so the UI can call the per-workspace
+    // accept/reject action; `workspace` is None for the cross-workspace view.
 
-    /// Pending recommendations + their project name, ordered high→low urgency.
+    /// Pending recommendations + their workspace name, ordered high→low urgency.
     /// Capped: the triage screen shows the highest-urgency first (Now/Soon are
     /// complete; low-urgency Settled recs beyond the cap fall off the shelf).
     pub async fn get_insights_recommendations(
         &self,
-        project: Option<&uuid::Uuid>,
+        workspace: Option<&uuid::Uuid>,
     ) -> Result<Vec<serde_json::Value>, String> {
         #[allow(clippy::type_complexity)]
         let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, serde_json::Value, Option<uuid::Uuid>, Option<String>)> =
@@ -1119,7 +1119,7 @@ impl PgStore {
                  WHERE r.status = 'pending' AND ($1::uuid IS NULL OR r.workspace_id = $1)
                  ORDER BY CASE r.urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, r.id
                  LIMIT 200"
-            ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+            ).bind(workspace).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         // No silent caps: the Insights board shows the top-200 pending recs by
         // urgency; if the cap is hit, lower-urgency recs are not surfaced. Log it
         // so the truncation is observable (a "showing N of M" UI hint is a follow-up).
@@ -1131,10 +1131,10 @@ impl PgStore {
         }
         Ok(rows
             .into_iter()
-            .map(|(id, urgency, title, why, impact, evidence, project_id, name)| {
+            .map(|(id, urgency, title, why, impact, evidence, workspace_id, name)| {
                 serde_json::json!({ "id": id, "urgency": urgency, "title": title, "why": why,
                                 "impact": impact, "evidence": evidence,
-                                "project_id": project_id, "name": name })
+                                "workspace_id": workspace_id, "name": name })
             })
             .collect())
     }
@@ -1143,7 +1143,7 @@ impl PgStore {
     /// (non-archived). Column assignment happens in `crate::insights`.
     pub async fn get_insights_memories(
         &self,
-        project: Option<&uuid::Uuid>,
+        workspace: Option<&uuid::Uuid>,
     ) -> Result<Vec<serde_json::Value>, String> {
         #[allow(clippy::type_complexity)]
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, i32, Option<f64>, String, Option<uuid::Uuid>)> =
@@ -1155,13 +1155,13 @@ impl PgStore {
                          OR (violated_count > 0 AND status != 'archived') )
                  ORDER BY strength DESC NULLS LAST
                  LIMIT 100"
-            ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+            ).bind(workspace).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(id, status, title, content, violated_count, strength, scope, project_id)| {
+            .map(|(id, status, title, content, violated_count, strength, scope, workspace_id)| {
                 serde_json::json!({ "id": id, "status": status, "title": title, "content": content,
                                 "violated_count": violated_count, "strength": strength,
-                                "scope": scope_to_api(scope), "project_id": project_id })
+                                "scope": scope, "workspace_id": workspace_id })
             })
             .collect())
     }
@@ -1169,7 +1169,7 @@ impl PgStore {
     /// Suggested + rule patterns for the triage screen (anti-patterns excluded).
     pub async fn get_insights_patterns(
         &self,
-        project: Option<&uuid::Uuid>,
+        workspace: Option<&uuid::Uuid>,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, String, i32, Option<uuid::Uuid>)> =
             sqlx_core::query_as::query_as(
@@ -1184,21 +1184,21 @@ impl PgStore {
                  ORDER BY dp.instance_count DESC
                  LIMIT 100",
             )
-            .bind(project)
+            .bind(workspace)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, name, family, lifecycle, instance_count, project_id)| {
+        Ok(rows.into_iter().map(|(id, name, family, lifecycle, instance_count, workspace_id)| {
             serde_json::json!({ "id": id, "name": name, "family": family, "lifecycle": lifecycle,
-                                "instance_count": instance_count, "project_id": project_id })
+                                "instance_count": instance_count, "workspace_id": workspace_id })
         }).collect())
     }
 
-    /// Top recurring corrections by count → the Now column. `project` scopes via
-    /// the `project_ids` array membership.
+    /// Top recurring corrections by count → the Now column. `workspace` scopes via
+    /// the `workspace_ids` array membership.
     pub async fn get_insights_corrections(
         &self,
-        project: Option<&uuid::Uuid>,
+        workspace: Option<&uuid::Uuid>,
         limit: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, i32)> = sqlx_core::query_as::query_as(
@@ -1207,7 +1207,7 @@ impl PgStore {
              WHERE ($1::uuid IS NULL OR $1 = ANY(workspace_ids))
              ORDER BY count DESC LIMIT $2",
         )
-        .bind(project)
+        .bind(workspace)
         .bind(limit)
         .fetch_all(&self.pool)
         .await
@@ -1219,7 +1219,7 @@ impl PgStore {
 
     pub async fn get_adopted_teachings(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         limit: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, i32, chrono::DateTime<chrono::Utc>)> =
@@ -1232,7 +1232,7 @@ impl PgStore {
                AND dp.lifecycle = 'rule' AND NOT dp.is_anti_pattern
              ORDER BY dp.modified_at DESC LIMIT $2",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .bind(limit)
             .fetch_all(&self.pool)
             .await
@@ -1248,11 +1248,11 @@ impl PgStore {
 
     // ── Sessions (activity) ────────────────────────────────────────────
 
-    /// True if a pending recommendation already proposes `model` for this project
+    /// True if a pending recommendation already proposes `model` for this workspace
     /// (the model-insight generator's idempotency guard).
     pub async fn model_recommendation_exists(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         model: &str,
     ) -> Result<bool, String> {
         let row: (bool,) = sqlx_core::query_as::query_as(
@@ -1262,7 +1262,7 @@ impl PgStore {
                   AND based_on->>'recommended_model' = $2
              )",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(model)
         .fetch_one(&self.pool)
         .await
@@ -1270,12 +1270,12 @@ impl PgStore {
         Ok(row.0)
     }
 
-    /// Top pending recommendation for a project — highest urgency, then id —
+    /// Top pending recommendation for a workspace — highest urgency, then id —
     /// including `default_acp` for the Overview hero's "send to {acp}" action.
-    /// `None` when the project has no pending recommendation.
+    /// `None` when the workspace has no pending recommendation.
     pub async fn get_top_recommendation(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, String, serde_json::Value, Option<String>)> =
             sqlx_core::query_as::query_as(
@@ -1285,7 +1285,7 @@ impl PgStore {
              ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
              LIMIT 1",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| {
@@ -1297,21 +1297,21 @@ impl PgStore {
         })))
     }
 
-    pub async fn get_project_patterns(
+    pub async fn get_workspace_patterns(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<serde_json::Value, String> {
-        // Project baseline FTR — average First-Try-Right across the project's
+        // Workspace baseline FTR — average First-Try-Right across the workspace's
         // FTR-scored sessions. `ftrDelta` per pattern is its folder's FTR minus this.
-        let project_ftr_row: (Option<f64>,) = sqlx_core::query_as::query_as(
+        let workspace_ftr_row: (Option<f64>,) = sqlx_core::query_as::query_as(
             "SELECT avg(CASE WHEN ftr THEN 1.0 ELSE 0.0 END)::float8
              FROM activity.sessions WHERE workspace_id = $1 AND ftr IS NOT NULL",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        let project_ftr: Option<f64> = project_ftr_row.0;
+        let workspace_ftr: Option<f64> = workspace_ftr_row.0;
 
         // Each pattern + its folder's average FTR (locus signal).
         // confidence is nullable (correction-prone / rule-candidate patterns set
@@ -1345,7 +1345,7 @@ impl PgStore {
                  FROM sensei.workspace_patterns pp WHERE pp.workspace_id = $1
                  ORDER BY pp.is_anti_pattern, pp.name",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1379,7 +1379,7 @@ impl PgStore {
             Option<i64>,
         )| {
             let kind = crate::pattern_effectiveness::pattern_kind(is_anti, &lifecycle);
-            let ftr_delta = crate::pattern_effectiveness::ftr_delta(folder_ftr, project_ftr);
+            let ftr_delta = crate::pattern_effectiveness::ftr_delta(folder_ftr, workspace_ftr);
             serde_json::json!({
                 "id":            id,
                 "name":          name,
@@ -1419,9 +1419,9 @@ impl PgStore {
         }))
     }
 
-    pub async fn get_project_recommendations(
+    pub async fn get_workspace_recommendations(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         status: Option<&str>,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(
@@ -1451,7 +1451,7 @@ impl PgStore {
                           CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
                  LIMIT 50",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(status)
         .fetch_all(&self.pool)
         .await

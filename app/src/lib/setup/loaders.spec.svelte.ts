@@ -31,7 +31,7 @@ describe('extractCompletion', () => {
     expect(keys).toContain('assistants');
     expect(keys).toContain('roots');
     expect(keys).toContain('scan');
-    expect(keys).toContain('projects');
+    expect(keys).toContain('workspaces');
     expect(keys).toContain('libraries');
     expect(keys).toContain('instruments');
     expect(keys).toContain('inference');
@@ -194,14 +194,14 @@ describe('loadWizardData — a router read that fails', () => {
 });
 
 // #288: every read the wizard loads is the daemon's answer or a rejection
-// naming it — an empty fallback read as "no assistants / roots / projects /
+// naming it — an empty fallback read as "no assistants / roots / workspaces /
 // libraries / instruments" and seeded the wizard with it.
 describe('loadWizardData — any other read that fails', () => {
   afterEach(() => vi.unstubAllGlobals());
   for (const [path, what] of [
     ['/api/assistants/families', 'assistants'],
     ['/api/scan/roots', 'roots'],
-    ['/api/projects', 'projects'],
+    ['/api/workspaces', 'workspaces'],
     ['/api/libs', 'libraries'],
     ['/api/instruments', 'instruments'],
   ] as const) {

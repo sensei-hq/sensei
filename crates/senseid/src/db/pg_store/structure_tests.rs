@@ -4,8 +4,8 @@
 //! segment as the module. That segment used to be dropped when the symbol sat
 //! at a package root, which slid the symbol's NAME into the module's place —
 //! `c·senseid·ACCEPT_INPUT·item`, a C macro read as a module. Measured
-//! 2026-10-05: 13.7% of project `sensei`'s module dependencies named an endpoint
-//! absent from its own node universe, and 78% on the largest client project.
+//! 2026-10-05: 13.7% of workspace `sensei`'s module dependencies named an endpoint
+//! absent from its own node universe, and 78% on the largest client workspace.
 //!
 //! `indexer::fqn` now occupies the slot, so the third segment is the module
 //! whether or not there is one. That leaves exactly one question for SQL, and it
@@ -65,11 +65,11 @@ async fn a_package_root_symbol_belongs_to_its_package() {
     );
 }
 
-/// A PROJECT WITH NOTHING INDEXED HAS A VERSION, AND IT IS `None` (#233).
+/// A WORKSPACE WITH NOTHING INDEXED HAS A VERSION, AND IT IS `None` (#233).
 ///
 /// Not an error and not a substituted "now". Every diagram payload is cached
-/// against this value, so an `Err` here would 500 the screen for a project that
-/// is merely empty, and a fabricated timestamp would make two empty projects
+/// against this value, so an `Err` here would 500 the screen for a workspace that
+/// is merely empty, and a fabricated timestamp would make two empty workspaces
 /// look like they had changed between one request and the next — a cache that
 /// never hits for exactly the cheapest payload.
 ///
@@ -79,7 +79,7 @@ async fn a_package_root_symbol_belongs_to_its_package() {
 /// Mutation that must break this test: read `max(folders.modified_at)` instead,
 /// or `coalesce(max(fi.indexed_at), now())`.
 #[tokio::test]
-async fn a_projects_graph_version_is_none_until_a_file_is_indexed() {
+async fn a_workspaces_graph_version_is_none_until_a_file_is_indexed() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;
     };
@@ -87,25 +87,26 @@ async fn a_projects_graph_version_is_none_until_a_file_is_indexed() {
     let root = format!("/_test/version/{tag}");
     let root_id = pg.add_watch_root(&root, "ver-wt", &serde_json::json!([])).await.unwrap();
     let folder_id = pg.upsert_repo(&root_id, "ver", &root).await.unwrap();
-    let project_id = pg.create_project(&format!("_test:version:{tag}"), None, None).await.unwrap();
-    crate::tasks::test_support::place_folder_in_project(
+    let workspace_id =
+        pg.create_workspace(&format!("_test:version:{tag}"), None, None).await.unwrap();
+    crate::tasks::test_support::place_folder_in_workspace(
         &pg,
         &folder_id,
-        &project_id,
+        &workspace_id,
         &format!("ver-{tag}"),
     )
     .await
     .unwrap();
 
     assert_eq!(
-        pg.project_graph_version(&project_id).await.unwrap(),
+        pg.workspace_graph_version(&workspace_id).await.unwrap(),
         None,
-        "a project whose folders hold no indexed file has no graph yet"
+        "a workspace whose folders hold no indexed file has no graph yet"
     );
 
     pg.upsert_file_row(&folder_id, "a.rs", 1, "seed", None).await.unwrap();
-    let first = pg.project_graph_version(&project_id).await.unwrap();
-    assert!(first.is_some(), "an indexed file gives the project a version");
+    let first = pg.workspace_graph_version(&workspace_id).await.unwrap();
+    assert!(first.is_some(), "an indexed file gives the workspace a version");
 
     // Re-indexing that same file MOVES it — which is the whole contract. A
     // version that only appeared once would pin the first answer forever.
@@ -114,9 +115,9 @@ async fn a_projects_graph_version_is_none_until_a_file_is_indexed() {
         .execute(pg.pool())
         .await
         .unwrap();
-    let second = pg.project_graph_version(&project_id).await.unwrap();
+    let second = pg.workspace_graph_version(&workspace_id).await.unwrap();
     assert!(second > first, "re-indexing moves the version: {first:?} -> {second:?}");
 
-    crate::tasks::test_support::cleanup_metrics_fixture(&pg, &project_id, Some(&folder_id), &[])
+    crate::tasks::test_support::cleanup_metrics_fixture(&pg, &workspace_id, Some(&folder_id), &[])
         .await;
 }

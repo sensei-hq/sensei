@@ -9,7 +9,7 @@ afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 type Props = Partial<{
   id: string;
   title: string;
-  project: string;
+  workspace: string;
   agent: string | null;
   outcome: string;
   ftr: boolean | null;
@@ -72,8 +72,8 @@ describe('SessionRow — FTR badge agrees with the ftr column', () => {
 });
 
 describe('SessionRow — meta', () => {
-  it('renders time, duration, corrections label, project and agent', () => {
-    const m = mount({ time: '09:14', duration: '42m', corrections: 0, project: 'sensei', agent: 'zed' });
+  it('renders time, duration, corrections label, workspace and agent', () => {
+    const m = mount({ time: '09:14', duration: '42m', corrections: 0, workspace: 'sensei', agent: 'zed' });
     const text = row(m).textContent ?? '';
     expect(text).toContain('09:14');
     expect(text).toContain('42m');
@@ -87,8 +87,8 @@ describe('SessionRow — meta', () => {
     expect(row(m).textContent ?? '').toContain('3× rework');
   });
 
-  it('falls back to "unlinked" for a project-less session', () => {
-    const m = mount({ project: '' });
+  it('falls back to "unlinked" for a workspace-less session', () => {
+    const m = mount({ workspace: '' });
     expect(row(m).textContent ?? '').toContain('unlinked');
   });
 

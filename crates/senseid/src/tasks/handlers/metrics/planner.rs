@@ -6,8 +6,8 @@
 //! `metrics.last_run` clock. The per-group COMPUTERS are unchanged — this file only
 //! changes HOW days are scheduled and sealed.
 //!
-//! ## The per-project graph
-//! - [`compute_project`] (`ComputeWorkspaceMetrics`, the PARENT): freezes one `as_of`
+//! ## The per-workspace graph
+//! - [`compute_workspace`] (`ComputeWorkspaceMetrics`, the PARENT): freezes one `as_of`
 //!   for the whole run (spec test 5), then enqueues ONE `ComputeGroupMetrics`
 //!   child per active base group (the active registry `task_name`s minus
 //!   [`HEALTH_TASK_NAME`]) and — when any child was enqueued — one
@@ -22,7 +22,7 @@
 //!   - **DAY-KEYED** (`session_outcomes`, `autonomy`, `churn`, `quality`) — reads the
 //!     group's DATA-day set ([`DayKeyedGroup::data_days`], the distinct
 //!     true-occurrence source days), reads the MIN `sealed_through` across the
-//!     project's repositories for the group, plans the days via
+//!     workspace's repositories for the group, plans the days via
 //!     [`watermark_plan_days`], computes + enriches each planned day, and — ON
 //!     SUCCESS ONLY — seals every repo's watermark to `as_of − 1` (today is NEVER
 //!     sealed). A compute error propagates and advances NO watermark (fail-closed:
@@ -40,7 +40,7 @@
 //!
 //! ## Never fabricate
 //! A day is planned only when the group's source genuinely has a row on it (or it is
-//! in the trailing window / today). A project with no repository is an honest no-op
+//! in the trailing window / today). A workspace with no repository is an honest no-op
 //! (no rows, no watermark). Every day-set read propagates `Err`. A failed group never
 //! silently skips a day (fail-closed).
 
@@ -111,7 +111,7 @@ impl DayKeyedGroup {
         self.group().as_str()
     }
 
-    /// The DATA-day set for this group + project: the distinct TRUE-occurrence days
+    /// The DATA-day set for this group + workspace: the distinct TRUE-occurrence days
     /// its source rows carry (never an insert-time `created_at`). Matches the
     /// measurable base each computer writes over, so a planned day is one that can
     /// actually produce a row. This is the source-day DISCOVERY — its earliest day is
@@ -121,10 +121,10 @@ impl DayKeyedGroup {
     /// `session_process`) are read by the `planner` group's [`PgStore`] methods, which
     /// document what each one keys on and excludes. The two GIT-sourced sets are not
     /// SQL at all and are resolved here:
-    /// - `churn` — the distinct GIT committer-days in the project's repo (via
+    /// - `churn` — the distinct GIT committer-days in the workspace's repo (via
     ///   [`super::churn::git_commit_days`] on the repo root from
-    ///   [`PgStore::project_root_path`]). Not a SQL read: churn is git-derived. A
-    ///   project with no repo-root folder / a non-git root has no git churn days →
+    ///   [`PgStore::workspace_root_path`]). Not a SQL read: churn is git-derived. A
+    ///   workspace with no repo-root folder / a non-git root has no git churn days →
     ///   honest-empty (no fill, no fabricated day).
     /// - `quality` — the SAMPLED git commit-days (one anchor per ISO week, via
     ///   [`super::quality::sample_commit_days`] over `git_commit_days`), so the heavy
@@ -132,10 +132,10 @@ impl DayKeyedGroup {
     async fn data_days(
         self,
         pg: &PgStore,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<NaiveDate>, String> {
         if matches!(self, DayKeyedGroup::Churn | DayKeyedGroup::Quality) {
-            let Some(root) = pg.project_root_path(project_id).await? else {
+            let Some(root) = pg.workspace_root_path(workspace_id).await? else {
                 return Ok(Vec::new());
             };
             let commit_days = super::churn::git_commit_days(&root);
@@ -147,10 +147,10 @@ impl DayKeyedGroup {
             });
         }
         match self {
-            DayKeyedGroup::SessionOutcomes => pg.planner_session_outcome_days(project_id).await,
-            DayKeyedGroup::Autonomy => pg.planner_autonomy_days(project_id).await,
-            DayKeyedGroup::Usage => pg.planner_usage_days(project_id).await,
-            DayKeyedGroup::SessionProcess => pg.planner_session_process_days(project_id).await,
+            DayKeyedGroup::SessionOutcomes => pg.planner_session_outcome_days(workspace_id).await,
+            DayKeyedGroup::Autonomy => pg.planner_autonomy_days(workspace_id).await,
+            DayKeyedGroup::Usage => pg.planner_usage_days(workspace_id).await,
+            DayKeyedGroup::SessionProcess => pg.planner_session_process_days(workspace_id).await,
             // Handled by the git early-return above (churn/quality are not SQL day-sets).
             DayKeyedGroup::Churn | DayKeyedGroup::Quality => {
                 unreachable!("churn/quality data_days are git-sourced above")
@@ -233,23 +233,23 @@ type DayFuture<'a> =
 async fn run_computer(
     ctx: &TaskContext,
     group: MetricGroup,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<NaiveDate>,
 ) -> Result<u32, String> {
     match group {
         MetricGroup::SessionOutcomes => {
-            super::session_outcomes::compute(ctx, project_raw, as_of).await
+            super::session_outcomes::compute(ctx, workspace_raw, as_of).await
         }
-        MetricGroup::Churn => super::churn::compute(ctx, project_raw, as_of).await,
-        MetricGroup::Quality => super::quality::compute(ctx, project_raw, as_of).await,
-        MetricGroup::Autonomy => super::autonomy::compute(ctx, project_raw, as_of).await,
-        MetricGroup::Knowledge => super::knowledge::compute(ctx, project_raw, as_of).await,
-        MetricGroup::Cost => super::cost::compute(ctx, project_raw, as_of).await,
-        MetricGroup::Usage => super::usage::compute(ctx, project_raw, as_of).await,
-        MetricGroup::Architecture => super::architecture::compute(ctx, project_raw, as_of).await,
-        MetricGroup::Coverage => super::coverage::compute(ctx, project_raw, as_of).await,
+        MetricGroup::Churn => super::churn::compute(ctx, workspace_raw, as_of).await,
+        MetricGroup::Quality => super::quality::compute(ctx, workspace_raw, as_of).await,
+        MetricGroup::Autonomy => super::autonomy::compute(ctx, workspace_raw, as_of).await,
+        MetricGroup::Knowledge => super::knowledge::compute(ctx, workspace_raw, as_of).await,
+        MetricGroup::Cost => super::cost::compute(ctx, workspace_raw, as_of).await,
+        MetricGroup::Usage => super::usage::compute(ctx, workspace_raw, as_of).await,
+        MetricGroup::Architecture => super::architecture::compute(ctx, workspace_raw, as_of).await,
+        MetricGroup::Coverage => super::coverage::compute(ctx, workspace_raw, as_of).await,
         MetricGroup::SessionProcess => {
-            super::session_process::compute(ctx, project_raw, as_of).await
+            super::session_process::compute(ctx, workspace_raw, as_of).await
         }
     }
 }
@@ -266,7 +266,7 @@ async fn run_computer(
 async fn fill_and_seal<'a, F>(
     ctx: &TaskContext,
     pg: &PgStore,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     group: &str,
     repos: &[uuid::Uuid],
     plan: &[NaiveDate],
@@ -281,7 +281,7 @@ where
         written += compute_day(day).await?;
         // Per-day explainer enrichment — the SAME wiring the old dispatcher ran, moved
         // here so each computed (group, day) is still enriched exactly as before.
-        super::explainer::enrich_day(ctx, project_id, group, day).await;
+        super::explainer::enrich_day(ctx, workspace_id, group, day).await;
     }
     // Success: seal every repo through as_of - 1 (today is never sealed). A read/write
     // error here propagates (never a fabricated / partial advance).
@@ -292,16 +292,16 @@ where
     Ok(written)
 }
 
-/// `ComputeWorkspaceMetrics` — the per-project PARENT. Freezes one `as_of` for the whole
+/// `ComputeWorkspaceMetrics` — the per-workspace PARENT. Freezes one `as_of` for the whole
 /// run (spec test 5), enqueues one [`TaskKind::ComputeGroupMetrics`] child per active
 /// base group (active registry `task_name`s minus [`HEALTH_TASK_NAME`]), and — when
 /// any child was enqueued — one [`TaskKind::ComputeHealth`] barrier `blocked_by` those
 /// children (same frozen `as_of`) so the roll-up runs after the components land. The
-/// project id rides in `task.folder_path`. Returns the number of tasks enqueued
+/// workspace id rides in `task.folder_path`. Returns the number of tasks enqueued
 /// (`0` = honest-empty: no active base groups → nothing to compute, no barrier).
-pub(super) async fn compute_project(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(&task.folder_path)
-        .map_err(|e| format!("compute_project: bad project id {:?}: {e}", task.folder_path))?;
+pub(super) async fn compute_workspace(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    let workspace_id = uuid::Uuid::parse_str(&task.folder_path)
+        .map_err(|e| format!("compute_workspace: bad workspace id {:?}: {e}", task.folder_path))?;
     let pg = ctx.pg();
 
     // Freeze `as_of` ONCE (SELECT current_date) so every child in this run shares one
@@ -309,7 +309,7 @@ pub(super) async fn compute_project(ctx: &TaskContext, task: &Task) -> Result<u3
     let as_of = super::today(pg).await?;
 
     let active = pg.active_task_names().await?;
-    let owner = project_id.to_string();
+    let owner = workspace_id.to_string();
     let mut child_ids = Vec::new();
     // One child per active base group — the health barrier's own name is not a base
     // group. An unknown group still gets a child that degrades to a logged no-op in
@@ -324,14 +324,14 @@ pub(super) async fn compute_project(ctx: &TaskContext, task: &Task) -> Result<u3
 
     if child_ids.is_empty() {
         tracing::debug!(
-            project = %task.folder_path,
-            "compute_project: no active base groups — nothing to compute",
+            workspace = %task.folder_path,
+            "compute_workspace: no active base groups — nothing to compute",
         );
         return Ok(0);
     }
 
     let n_children = child_ids.len();
-    // The per-project health barrier: blocked on THIS run's group children (same frozen
+    // The per-workspace health barrier: blocked on THIS run's group children (same frozen
     // as_of) so the derived roll-up runs only after the components land.
     ctx.queue
         .enqueue(
@@ -340,25 +340,25 @@ pub(super) async fn compute_project(ctx: &TaskContext, task: &Task) -> Result<u3
         .await;
     let enqueued = n_children as u32 + 1;
     tracing::info!(
-        project = %task.folder_path,
+        workspace = %task.folder_path,
         groups = n_children,
         enqueued,
-        "compute_project: metric compute graph enqueued",
+        "compute_workspace: metric compute graph enqueued",
     );
     Ok(enqueued)
 }
 
-/// `ComputeGroupMetrics` — the per-`(project, group)` CHILD that owns cadence. The
-/// project id rides in `task.folder_path`, the registry `task_name` in `task.path`,
+/// `ComputeGroupMetrics` — the per-`(workspace, group)` CHILD that owns cadence. The
+/// workspace id rides in `task.folder_path`, the registry `task_name` in `task.path`,
 /// and the frozen `as_of` in `task.as_of`. Partitions by cadence (see the module doc):
 /// a SNAPSHOT group runs today-only with no watermark; a DAY-KEYED group plans days
 /// against the watermark, computes + enriches each, and seals on success. An unknown
 /// `task_name` is a logged no-op (`Ok(0)`) — the same honest degrade as before.
-/// Returns the number of `project_metrics` rows written.
+/// Returns the number of `workspace_metrics` rows written.
 pub(super) async fn compute_group(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let pg = ctx.pg();
-    let project_id = uuid::Uuid::parse_str(&task.folder_path)
-        .map_err(|e| format!("compute_group: bad project id {:?}: {e}", task.folder_path))?;
+    let workspace_id = uuid::Uuid::parse_str(&task.folder_path)
+        .map_err(|e| format!("compute_group: bad workspace id {:?}: {e}", task.folder_path))?;
     // `as_of` = the frozen run clock (Some from the parent), else today.
     let as_of = match task.as_of {
         Some(d) => d,
@@ -368,20 +368,20 @@ pub(super) async fn compute_group(ctx: &TaskContext, task: &Task) -> Result<u32,
     let one = std::slice::from_ref(&task.path);
     if let Some(dk) = day_keyed_active(one).into_iter().next() {
         // ── DAY-KEYED (session_outcomes / autonomy / churn / quality) ──
-        // The repositories this project spans — the watermark grain. No repo → no
+        // The repositories this workspace spans — the watermark grain. No repo → no
         // watermark, no fill: honest no-op (never a fabricated repository).
-        let repos = pg.repositories_for_project(&project_id).await?;
+        let repos = pg.repositories_for_workspace(&workspace_id).await?;
         if repos.is_empty() {
             tracing::debug!(
-                project = %task.folder_path,
+                workspace = %task.folder_path,
                 group = %task.path,
-                "compute_group: project spans no repository — honest no-op",
+                "compute_group: workspace spans no repository — honest no-op",
             );
             return Ok(0);
         }
         // The group's DATA-day discovery (unchanged) — its earliest day is `min_date`.
-        let data = dk.data_days(pg, &project_id).await?;
-        // The MIN sealed_through across the project's repos for this group. `None` if
+        let data = dk.data_days(pg, &workspace_id).await?;
+        // The MIN sealed_through across the workspace's repos for this group. `None` if
         // ANY repo is unset → full-history fill (the min_date fill, spec test 1).
         let sealed = pg.min_sealed_through_for_repos(&repos, &task.path).await?;
         // The rolling window the computers measure over — shared reader (DRY) so the
@@ -390,9 +390,9 @@ pub(super) async fn compute_group(ctx: &TaskContext, task: &Task) -> Result<u32,
         let plan = watermark_plan_days(&data, sealed, as_of, window_days);
 
         let group_metric = dk.group();
-        let project_owned = task.folder_path.clone();
-        fill_and_seal(ctx, pg, &project_id, &task.path, &repos, &plan, as_of, move |day| {
-            let proj = project_owned.clone();
+        let workspace_owned = task.folder_path.clone();
+        fill_and_seal(ctx, pg, &workspace_id, &task.path, &repos, &plan, as_of, move |day| {
+            let proj = workspace_owned.clone();
             // The `DayFuture<'_>` annotation forces the unsize coercion from the
             // concrete future to the boxed trait object (the `F` bound's Output).
             let fut: DayFuture<'_> =
@@ -405,7 +405,7 @@ pub(super) async fn compute_group(ctx: &TaskContext, task: &Task) -> Result<u32,
         // Forward-only: the rolling-window today compute (`as_of = None`), no watermark.
         // Then enrich today's datapoints exactly as the old dispatcher did.
         let written = run_computer(ctx, group, &task.folder_path, None).await?;
-        super::explainer::enrich_day(ctx, &project_id, &task.path, as_of).await;
+        super::explainer::enrich_day(ctx, &workspace_id, &task.path, as_of).await;
         Ok(written)
     } else {
         // Intentional logged no-op (NOT fabrication): a registry entry whose task_name
@@ -413,7 +413,7 @@ pub(super) async fn compute_group(ctx: &TaskContext, task: &Task) -> Result<u32,
         // warning instead of panicking the worker or wedging the queue.
         tracing::warn!(
             task_name = %task.path,
-            project = %task.folder_path,
+            workspace = %task.folder_path,
             "compute_group: unknown metrics task_name — no-op",
         );
         Ok(0)
@@ -424,8 +424,8 @@ pub(super) async fn compute_group(ctx: &TaskContext, task: &Task) -> Result<u32,
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, git_commit_on_day, make_ctx, seed_git_project_folder,
-        seed_metrics_project_folder, seed_metrics_session, seed_metrics_turn,
+        cleanup_metrics_fixture, git_commit_on_day, make_ctx, seed_git_workspace_folder,
+        seed_metrics_session, seed_metrics_turn, seed_metrics_workspace_folder,
     };
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
@@ -546,7 +546,7 @@ mod tests {
         Box::pin(async { Err::<u32, String>("forced compute failure".to_string()) })
     }
 
-    /// The `ftr` daily value for a project on `day` (scope=user, one repo) — `None`
+    /// The `ftr` daily value for a workspace on `day` (scope=user, one repo) — `None`
     /// when no row. The read-back the day-keyed engine tests assert against.
     async fn ftr_value_on(pg: &PgStore, pid: &uuid::Uuid, day: NaiveDate) -> Option<f64> {
         let row: Option<(f64,)> = sqlx_core::query_as::query_as(
@@ -570,7 +570,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
 
         let now = chrono::Utc::now();
         let today = now.date_naive();
@@ -605,7 +605,7 @@ mod tests {
 
         // A repo with NO data is an honest no-op (no rows written).
         let uniq2 = uuid::Uuid::new_v4();
-        let (pid2, fid2) = seed_metrics_project_folder(pg, &uniq2).await;
+        let (pid2, fid2) = seed_metrics_workspace_folder(pg, &uniq2).await;
         let task2 = Task::new(TaskKind::ComputeGroupMetrics, &pid2.to_string(), "session_outcomes")
             .with_as_of(today);
         assert_eq!(
@@ -625,7 +625,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
 
         let now = chrono::Utc::now();
         let today = now.date_naive();
@@ -645,7 +645,7 @@ mod tests {
         compute_group(&ctx, &task).await.unwrap();
 
         // Watermark sealed through as_of - 1 for each repo (today is NEVER sealed).
-        let repos = pg.repositories_for_project(&pid).await.unwrap();
+        let repos = pg.repositories_for_workspace(&pid).await.unwrap();
         assert!(!repos.is_empty());
         for repo in &repos {
             assert_eq!(
@@ -691,7 +691,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
 
         let today = chrono::Utc::now().date_naive();
         // A commit 60 days back — well outside the 14-day window, so once sealed it is
@@ -754,15 +754,15 @@ mod tests {
     // ── #5 frozen as_of shared across all children of one ComputeWorkspaceMetrics run ──
 
     #[tokio::test]
-    async fn compute_project_freezes_one_as_of_across_all_children() {
+    async fn compute_workspace_freezes_one_as_of_across_all_children() {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let today = super::super::today(pg).await.unwrap();
 
         let parent = Task::new(TaskKind::ComputeWorkspaceMetrics, &pid.to_string(), "");
-        let enqueued = compute_project(&ctx, &parent).await.unwrap();
+        let enqueued = compute_workspace(&ctx, &parent).await.unwrap();
         assert!(enqueued >= 2, "at least one group child + the health barrier, got {enqueued}");
 
         // Drain every enqueued task (completing each to free its per-folder slot and to
@@ -776,22 +776,22 @@ mod tests {
             match t.kind {
                 TaskKind::ComputeGroupMetrics => group_children += 1,
                 TaskKind::ComputeHealth => health += 1,
-                other => panic!("compute_project enqueued an unexpected kind: {other}"),
+                other => panic!("compute_workspace enqueued an unexpected kind: {other}"),
             }
             ctx.queue.complete(t.id).await;
         }
-        assert_eq!(health, 1, "exactly one ComputeHealth barrier per project");
+        assert_eq!(health, 1, "exactly one ComputeHealth barrier per workspace");
         assert_eq!(group_children, enqueued - 1, "the rest are group children");
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
     #[tokio::test]
-    async fn compute_project_is_honest_empty_with_no_active_base_groups() {
-        // A bad project id fails fast (never a masked empty success).
+    async fn compute_workspace_is_honest_empty_with_no_active_base_groups() {
+        // A bad workspace id fails fast (never a masked empty success).
         let ctx = make_ctx().await;
         let bad = Task::new(TaskKind::ComputeWorkspaceMetrics, "not-a-uuid", "");
-        assert!(compute_project(&ctx, &bad).await.is_err(), "a bad project id propagates Err");
+        assert!(compute_workspace(&ctx, &bad).await.is_err(), "a bad workspace id propagates Err");
     }
 
     // ── #6 failed group holds its watermark; a healthy sibling advances ──
@@ -801,8 +801,8 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
-        let repos = pg.repositories_for_project(&pid).await.unwrap();
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
+        let repos = pg.repositories_for_workspace(&pid).await.unwrap();
         assert!(!repos.is_empty());
         let as_of = super::super::today(pg).await.unwrap();
         let plan = vec![as_of];

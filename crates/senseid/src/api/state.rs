@@ -23,12 +23,12 @@ pub struct SharedState {
     /// feature-gated, so the field type is unconditional.
     pub provisioning: Option<Arc<crate::api::model_provisioning::ModelProvisioning>>,
     /// Diagram payloads already computed, keyed by question AND by the
-    /// project's graph version (#233).
+    /// workspace's graph version (#233).
     ///
     /// In-memory and lost on restart, which is the right trade: every entry is
     /// reproducible from the database, and persisting it would add a staleness
     /// question the version key exists to remove. 64 payloads — three grains
-    /// times a handful of edge-kind combinations across the projects anyone has
+    /// times a handful of edge-kind combinations across the workspaces anyone has
     /// open at once, and a large one is hundreds of kilobytes of JSON.
     pub diagrams: Arc<crate::api::diagram_cache::DiagramCache>,
     /// Tracker integrations: per-tracker locks, the secret store, the transport

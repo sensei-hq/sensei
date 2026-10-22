@@ -3,13 +3,13 @@
 //! The best insight sensei can offer is cross-user: "other developers in the
 //! same stack keep hitting X; here's what worked." This module owns the
 //! **anonymisation** that lets a local insight travel to the global collective
-//! without carrying anything project-specific
+//! without carrying anything workspace-specific
 //! (`docs/spec/pipeline/collective-intelligence.md`).
 //!
 //! Global-dojo anonymisation is **stricter than a client-Dōjō dereference**:
 //! - the deterministic [`crate::dojo::attribution`] strip runs FIRST (the
 //!   confidentiality guarantee — never trust the LLM to strip);
-//! - the project name is replaced with a project-*shape* descriptor
+//! - the workspace name is replaced with a workspace-*shape* descriptor
 //!   (`{stack, size, kind}` — never the name);
 //! - user identity is replaced with a rotating opaque anonymous id;
 //! - prose is optionally rewritten stack-agnostic via the `reasoning` chain for

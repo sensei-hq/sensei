@@ -41,7 +41,7 @@ const THROTTLE_FILE_DELTA: u32 = 25;
 #[derive(Clone)]
 struct FolderTracker {
     folder_id: String,
-    project_id: String,
+    workspace_id: String,
     folder_name: String,
     path: String,
     kind: FolderKind,
@@ -175,7 +175,7 @@ fn scan_elapsed(scan_start: Option<Instant>) -> f64 {
 fn scan_folder_from(t: &FolderTracker, status: FolderStatus) -> ScanFolder {
     ScanFolder {
         id: t.folder_id.clone(),
-        project_id: t.project_id.clone(),
+        workspace_id: t.workspace_id.clone(),
         name: t.folder_name.clone(),
         path: t.path.clone(),
         kind: t.kind.clone(),
@@ -273,7 +273,7 @@ async fn run(
             }
             TaskEvent::Completed { kind, folder_path, .. } if kind == "build_connections" => {
                 if let Some(t) = trackers.remove(&folder_path) {
-                    let project_id_str = t.project_id.clone();
+                    let workspace_id_str = t.workspace_id.clone();
                     let _ = state_events.send(StateEvent::folder_update(scan_folder_from(
                         &t,
                         FolderStatus::Indexed,
@@ -284,28 +284,28 @@ async fn run(
                         scan_elapsed(scan_start),
                     )));
 
-                    // Was this the last folder for the project? If so, flip the project to active.
-                    let all_indexed = match uuid::Uuid::parse_str(&project_id_str) {
+                    // Was this the last folder for the workspace? If so, flip the workspace to active.
+                    let all_indexed = match uuid::Uuid::parse_str(&workspace_id_str) {
                         Ok(uid) => match pg.count_unindexed_folders(uid).await {
                             Ok(remaining) => Some(remaining == 0),
                             Err(e) => {
-                                tracing::warn!(error = %e, project_id = %project_id_str, "count_unindexed_folders failed; skipping project-active check");
+                                tracing::warn!(error = %e, workspace_id = %workspace_id_str, "count_unindexed_folders failed; skipping workspace-active check");
                                 None
                             }
                         },
                         Err(e) => {
-                            tracing::warn!(error = %e, project_id = %project_id_str, "invalid project_id; skipping project-active check");
+                            tracing::warn!(error = %e, workspace_id = %workspace_id_str, "invalid workspace_id; skipping workspace-active check");
                             None
                         }
                     };
                     if let Some(check) = all_indexed
                         && check
                     {
-                        let _ = state_events.send(StateEvent::project_update(
-                            crate::api::events::ScanProject {
-                                id: project_id_str.clone(),
+                        let _ = state_events.send(StateEvent::workspace_update(
+                            crate::api::events::ScanWorkspace {
+                                id: workspace_id_str.clone(),
                                 name: String::new(),
-                                status: crate::api::events::ProjectStatus::Active,
+                                status: crate::api::events::WorkspaceStatus::Active,
                                 folders: vec![],
                                 auto_detected: true,
                                 confidence: crate::api::events::Confidence::High,
@@ -346,14 +346,14 @@ async fn build_tracker(
         }
     }?;
     let folder_id = row.get("id")?.as_str()?.to_string();
-    // project_id may be null (folder not yet assigned to a project)
-    let project_id = row.get("project_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // workspace_id may be null (folder not yet assigned to a workspace)
+    let workspace_id = row.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let folder_name = row.get("name")?.as_str()?.to_string();
     let kind =
         row.get("kind").and_then(|v| v.as_str()).map(kind_from_str).unwrap_or(FolderKind::Git);
     Some(FolderTracker {
         folder_id,
-        project_id,
+        workspace_id,
         folder_name,
         path: folder_path.to_string(),
         kind,
@@ -376,7 +376,7 @@ mod tests {
     fn fresh_tracker(files_total: u32, now: Instant) -> FolderTracker {
         FolderTracker {
             folder_id: "f".into(),
-            project_id: "p".into(),
+            workspace_id: "p".into(),
             folder_name: "n".into(),
             path: "/p".into(),
             kind: FolderKind::Git,

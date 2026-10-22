@@ -21,7 +21,7 @@ import { STORAGE_KEYS } from './storage-keys.js';
 import { guessUserName } from './setup/user-name.js';
 import { STAGES, type WizardStage } from '../routes/(config)/stages.js';
 import type {
-  DaemonAssistantFamily, DaemonWatchRoot, DaemonProject,
+  DaemonAssistantFamily, DaemonWatchRoot, DaemonWorkspace,
   DaemonLibEntry, DaemonMcpEntry, PreferencesData,
   ScanBaseline, WizardLoadData,
   DaemonChain, SenseiRole,
@@ -64,9 +64,9 @@ export interface ScanSlice {
   done: boolean;
 }
 
-export interface ProjectsSlice {
-  projects: DaemonProject[];
-  /** Per-project confirmation flag — true when the user has reviewed/approved the project. */
+export interface WorkspacesSlice {
+  workspaces: DaemonWorkspace[];
+  /** Per-workspace confirmation flag — true when the user has reviewed/approved the workspace. */
   confirmed: Record<string, boolean>;
 }
 
@@ -202,14 +202,14 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
     // "stuck at queued" for everything that finished pre-mount.
   },
   scan:        async () => {},
-  projects:    async (ws, api) => {
-    // Send only confirmed projects. The daemon's update_solution endpoint
+  workspaces:    async (ws, api) => {
+    // Send only confirmed workspaces. The daemon's update_solution endpoint
     // persists name/description; per-folder role mutations go through the
     // dedicated /api/folders/{id} endpoint so a role change doesn't have
-    // to round-trip through project metadata.
-    for (const p of ws.projects.projects) {
-      if (ws.projects.confirmed[p.id] === false) continue;
-      await api.updateProject(p.id, { name: p.name, description: p.description });
+    // to round-trip through workspace metadata.
+    for (const p of ws.workspaces.workspaces) {
+      if (ws.workspaces.confirmed[p.id] === false) continue;
+      await api.updateWorkspace(p.id, { name: p.name, description: p.description });
       for (const folder of p.folders) {
         await api.updateFolder(folder.id, { role: folder.role });
       }
@@ -372,7 +372,7 @@ export class WizardState {
   assistants  = $state<AssistantsSlice>({ assistants: [], partStatus: {}, partErrors: {} });
   roots       = $state<RootsSlice>({ roots: [], newPath: '' });
   scan        = $state<ScanSlice>({ baseline: null, started: false, done: false });
-  projects    = $state<ProjectsSlice>({ projects: [], confirmed: {} });
+  workspaces    = $state<WorkspacesSlice>({ workspaces: [], confirmed: {} });
   libraries   = $state<LibrariesSlice>({ libs: [] });
   instruments = $state<InstrumentsSlice>({ mcps: [] });
   inference   = $state<InferenceSlice>({ routers: [] });
@@ -746,11 +746,11 @@ export class WizardState {
       done: false,
     };
 
-    // Each loaded project starts as confirmed — the user has the option to
-    // unconfirm via the Projects stage, in which case it is excluded from commit.
-    this.projects = {
-      projects: data.projects.map(p => ({ ...p, folders: p.folders ?? [] })),
-      confirmed: Object.fromEntries(data.projects.map(p => [p.id, true])),
+    // Each loaded workspace starts as confirmed — the user has the option to
+    // unconfirm via the Workspaces stage, in which case it is excluded from commit.
+    this.workspaces = {
+      workspaces: data.workspaces.map(p => ({ ...p, folders: p.folders ?? [] })),
+      confirmed: Object.fromEntries(data.workspaces.map(p => [p.id, true])),
     };
     this.libraries = { libs: [...data.libraries.libs] };
     this.instruments = { mcps: [...data.mcps] };
@@ -809,7 +809,7 @@ export class WizardState {
     // Set of repo (folder) names scanned in this wizard run. Filter libs to those
     // touching at least one of these so we don't show the entire persistent DB.
     const scannedRepoNames = new Set<string>();
-    for (const p of this.projects.projects) {
+    for (const p of this.workspaces.workspaces) {
       for (const f of p.folders) scannedRepoNames.add(f.name);
     }
 

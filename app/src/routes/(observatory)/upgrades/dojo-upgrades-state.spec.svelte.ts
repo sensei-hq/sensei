@@ -63,13 +63,13 @@ describe('stateChip', () => {
 });
 
 describe('scopeSummary', () => {
-  it('project wins over stack', () =>
-    expect(scopeSummary({ project: 'lumen', stack: 'rust' })).toBe('project · lumen'));
+  it('workspace wins over stack', () =>
+    expect(scopeSummary({ project: 'lumen', stack: 'rust' })).toBe('workspace · lumen'));
   it('stack is next', () => expect(scopeSummary({ stack: 'rust' })).toBe('stack · rust'));
   it('team is next', () => expect(scopeSummary({ team: 'mobile' })).toBe('team · mobile'));
   it('company is next', () => expect(scopeSummary({ company: 'acme' })).toBe('company · acme'));
-  it('an empty scope reads all projects', () => expect(scopeSummary({})).toBe('all projects'));
-  it('a nullish scope reads all projects', () => expect(scopeSummary(undefined)).toBe('all projects'));
+  it('an empty scope reads all workspaces', () => expect(scopeSummary({})).toBe('all workspaces'));
+  it('a nullish scope reads all workspaces', () => expect(scopeSummary(undefined)).toBe('all workspaces'));
 });
 
 describe('attributionSummary', () => {

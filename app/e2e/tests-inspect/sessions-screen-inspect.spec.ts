@@ -1,7 +1,7 @@
 /**
- * #293 against the REAL daemon: Observatory and project Sessions are one
+ * #293 against the REAL daemon: Observatory and workspace Sessions are one
  * screen. Each shows the daemon's 7-day sessions — the Observatory across
- * projects, a project's window for that project alone — with no error state.
+ * workspaces, a workspace's window for that workspace alone — with no error state.
  * Read-only. Run: `bun run test:inspect -- sessions-screen`.
  */
 import { expect, test } from '../fixtures';
@@ -15,22 +15,22 @@ const totals = `({
 })`;
 
 test('both sessions screens show the daemon sessions', async ({ tauriPage }) => {
-  const all: Array<{ project: string }> = (await json('/api/sessions?range=7d')).sessions;
-  const projects = new Set(all.map((s) => s.project)).size;
-  const list: Array<{ id: string; name: string }> = await json('/api/projects');
+  const all: Array<{ workspace: string }> = (await json('/api/sessions?range=7d')).sessions;
+  const workspaces = new Set(all.map((s) => s.workspace)).size;
+  const list: Array<{ id: string; name: string }> = await json('/api/workspaces');
   const sensei = list.find((p) => p.name === 'sensei');
-  test.skip(!sensei, 'no sensei project on this daemon');
-  const own: unknown[] = (await json(`/api/sessions?range=7d&project=${sensei!.id}`)).sessions;
+  test.skip(!sensei, 'no sensei workspace on this daemon');
+  const own: unknown[] = (await json(`/api/sessions?range=7d&workspace=${sensei!.id}`)).sessions;
 
   await navigateToScreen(tauriPage, '/sessions', '[data-testid="quality-tally"], [data-screen-state="error"]', 30_000);
   const obs = (await tauriPage.evaluate(totals)) as { line: string; rows: number; errors: number };
-  await navigateToScreen(tauriPage, `/project/${sensei!.id}/sessions`, '[data-testid="project-sessions"] [data-testid="quality-tally"], [data-screen-state="error"]', 30_000);
+  await navigateToScreen(tauriPage, `/workspace/${sensei!.id}/sessions`, '[data-testid="workspace-sessions"] [data-testid="quality-tally"], [data-screen-state="error"]', 30_000);
   const proj = (await tauriPage.evaluate(totals)) as { line: string; rows: number; errors: number };
 
-  console.log(`\n[inspect] sessions: observatory ${JSON.stringify(obs)} (daemon ${all.length} across ${projects}); sensei ${JSON.stringify(proj)} (daemon ${own.length})`);
+  console.log(`\n[inspect] sessions: observatory ${JSON.stringify(obs)} (daemon ${all.length} across ${workspaces}); sensei ${JSON.stringify(proj)} (daemon ${own.length})`);
   const s = (n: number) => (n === 1 ? '' : 's');
   expect(obs.errors + proj.errors).toBe(0);
-  expect(obs.line).toContain(`${all.length} session${s(all.length)} across ${projects} project${s(projects)}`);
+  expect(obs.line).toContain(`${all.length} session${s(all.length)} across ${workspaces} workspace${s(workspaces)}`);
   expect(obs.rows).toBe(all.length);
   expect(proj.line).toContain(`${own.length} session${s(own.length)} · median`);
   expect(proj.line).not.toContain('across');

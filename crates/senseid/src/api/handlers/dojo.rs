@@ -49,7 +49,7 @@ pub(crate) async fn sync_state(
 }
 
 /// GET /api/dojo/memberships — list the daemon's Dōjō connections with each
-/// one's bound projects and sync-status. Returns a top-level array (the shape
+/// one's bound workspaces and sync-status. Returns a top-level array (the shape
 /// `docs/spec/pipeline/dojo-lifecycle.md` documents: `jq '.[] | ...'`).
 pub(crate) async fn list_memberships(
     State(state): State<AppState>,
@@ -86,46 +86,46 @@ pub(crate) async fn set_membership_orgs(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// GET /api/projects/{id}/dojo-suggestion — the inferred (confirm-inferred)
-/// project→Dōjō binding for the About-panel chip, or `{ "suggestion": null }`
-/// when the project is already bound / has no matching membership. Read-only:
+/// GET /api/workspaces/{id}/dojo-suggestion — the inferred (confirm-inferred)
+/// workspace→Dōjō binding for the About-panel chip, or `{ "suggestion": null }`
+/// when the workspace is already bound / has no matching membership. Read-only:
 /// suggests, never binds.
-pub(crate) async fn project_binding_suggestion(
+pub(crate) async fn workspace_binding_suggestion(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    // Name-or-uuid (#100): resolve so a project name works, not only a uuid.
-    let project_id = crate::api::util::resolve_project_uuid(&state, id.trim())
+    // Name-or-uuid (#100): resolve so a workspace name works, not only a uuid.
+    let workspace_id = crate::api::util::resolve_workspace_uuid(&state, id.trim())
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "project not found"))?;
-    let suggestion = memberships::suggest_binding(&state.pg, &project_id)
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "workspace lookup failed"))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "workspace not found"))?;
+    let suggestion = memberships::suggest_binding(&state.pg, &workspace_id)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::json!({ "suggestion": suggestion })))
 }
 
-/// Body for POST /api/projects/{id}/dojo-binding — confirm a binding.
+/// Body for POST /api/workspaces/{id}/dojo-binding — confirm a binding.
 #[derive(Deserialize)]
-pub(crate) struct BindProjectBody {
-    /// The membership to bind this project to (`projects.dojo_id`).
+pub(crate) struct BindWorkspaceBody {
+    /// The membership to bind this workspace to (`workspaces.dojo_id`).
     pub membership_id: String,
 }
 
-/// POST /api/projects/{id}/dojo-binding — bind a project to a Dōjō membership
+/// POST /api/workspaces/{id}/dojo-binding — bind a workspace to a Dōjō membership
 /// (the user confirming the inferred suggestion, or an explicit bind). Fails
-/// closed if the membership is unknown — a project must never point at a
-/// membership the daemon does not hold. 404 if the project is unknown.
-pub(crate) async fn bind_project_to_membership(
+/// closed if the membership is unknown — a workspace must never point at a
+/// membership the daemon does not hold. 404 if the workspace is unknown.
+pub(crate) async fn bind_workspace_to_membership(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(b): Json<BindProjectBody>,
+    Json(b): Json<BindWorkspaceBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    // Name-or-uuid (#100): resolve so a project name works, not only a uuid.
-    let project_id = crate::api::util::resolve_project_uuid(&state, id.trim())
+    // Name-or-uuid (#100): resolve so a workspace name works, not only a uuid.
+    let workspace_id = crate::api::util::resolve_workspace_uuid(&state, id.trim())
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "project not found"))?;
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "workspace lookup failed"))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "workspace not found"))?;
     let membership_id = uuid::Uuid::parse_str(b.membership_id.trim())
         .map_err(|_| err(StatusCode::BAD_REQUEST, "bad membership_id"))?;
     if state
@@ -137,11 +137,11 @@ pub(crate) async fn bind_project_to_membership(
     {
         return Err(err(StatusCode::NOT_FOUND, "unknown membership"));
     }
-    if !memberships::bind_project(&state.pg, &project_id, &membership_id)
+    if !memberships::bind_workspace(&state.pg, &workspace_id, &membership_id)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
     {
-        return Err(err(StatusCode::NOT_FOUND, "project not found"));
+        return Err(err(StatusCode::NOT_FOUND, "workspace not found"));
     }
     Ok(Json(serde_json::json!({ "ok": true, "dojo_id": membership_id.to_string() })))
 }

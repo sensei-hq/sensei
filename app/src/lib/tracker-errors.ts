@@ -1,5 +1,5 @@
 // The issue tracker's fixed daemon codes, in the words the screens show
-// (docs/spec/screen/project-integrations.md error table). Shared by the
+// (docs/spec/screen/workspace-integrations.md error table). Shared by the
 // Integrations and Sprints screens so a code reads the same everywhere.
 
 /** A failure as the screen shows it. */
@@ -35,8 +35,8 @@ const WORDS: Record<string, string> = {
   token_missing: keychain,
   credential_store: keychain,
   forbidden_caller: 'The sensei daemon refused this window’s request.',
-  not_connected: 'This project has no tracker connected.',
-  project_not_found: 'This project no longer exists in sensei.',
+  not_connected: 'This workspace has no tracker connected.',
+  workspace_not_found: 'This workspace no longer exists in sensei.',
   internal: 'The sensei daemon hit a database error.',
   db: 'sensei hit a database error while syncing.',
   unsupported_tracker: 'This tracker type isn’t available in this version of sensei.',
@@ -77,12 +77,12 @@ export function errorFor(status: number, body: Record<string, unknown> | undefin
     };
   }
   if (code === 'board_already_connected') {
-    const project = (body?.project ?? {}) as { id?: string; name?: string };
+    const workspace = (body?.workspace ?? {}) as { id?: string; name?: string };
     return {
       code,
-      text: `This board is already connected to project ${project.name ?? ''}.`,
+      text: `This board is already connected to workspace ${workspace.name ?? ''}.`,
       field,
-      link: project.id ? { href: `/project/${project.id}/integrations`, label: project.name ?? project.id } : null,
+      link: workspace.id ? { href: `/workspace/${workspace.id}/integrations`, label: workspace.name ?? workspace.id } : null,
     };
   }
   const link = code === 'unauthorized' ? { href: CREATE_TOKEN_URL, label: 'create a new token' } : null;

@@ -2,13 +2,13 @@
 //!
 //! The multi-model corpus (Zed + Claude, see [`crate::transcript::zed`]) tags
 //! each session with the model that produced it. When one model clearly
-//! out-performs the others *within a project* — higher First-Try-Right over a
+//! out-performs the others *within a workspace* — higher First-Try-Right over a
 //! meaningful sample — that's an actionable signal: prefer it here. This module
-//! turns per-project model stats into that recommendation.
+//! turns per-workspace model stats into that recommendation.
 //!
 //! Pure + deterministic; the DB load + rec write live in the handler.
 
-/// FTR over a sample of sessions for one model in a project.
+/// FTR over a sample of sessions for one model in a workspace.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelStat {
     pub provider: String,

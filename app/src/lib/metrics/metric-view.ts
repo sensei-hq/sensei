@@ -1,8 +1,8 @@
 import { isoDay } from '../dates.js';
-// Pure view logic for project metrics: wire rows -> presentational card models.
+// Pure view logic for workspace metrics: wire rows -> presentational card models.
 //
-// The daemon serves two shapes (see crates/senseid): the per-project *values*
-// (`GET /api/projects/{id}/metrics` -> ProjectMetricRow[]) and the *catalog*
+// The daemon serves two shapes (see crates/senseid): the per-workspace *values*
+// (`GET /api/workspaces/{id}/metrics` -> WorkspaceMetricRow[]) and the *catalog*
 // (`GET /api/metrics/registry`) which alone carries each metric's `family`. This
 // module keeps all formatting/trend/grouping decisions in one testable place so
 // the components stay dumb templates and the loader stays a thin fetch+join.
@@ -22,8 +22,8 @@ export type MetricFamily =
     | 'usage'
     | 'tool';
 
-/** One row of `GET /api/projects/{id}/metrics` (ProjectMetricRow + injected trend). */
-export interface ProjectMetricRow {
+/** One row of `GET /api/workspaces/{id}/metrics` (WorkspaceMetricRow + injected trend). */
+export interface WorkspaceMetricRow {
     metric: string;
     date: string;
     value: number | null;
@@ -282,14 +282,14 @@ const LOW_N = 10;
  *  `props.low_n` flag (autonomy metrics) OR a denominator/`n` below LOW_N (FTR and the
  *  other session ratios don't carry the flag, so it's computed from the sample). A
  *  low-n row shows a "low n" marker instead of a ±100 pt swing (spec 2026-08-18 #3). */
-export function isLowN(row: ProjectMetricRow): boolean {
+export function isLowN(row: WorkspaceMetricRow): boolean {
     if (row.props?.low_n === true) return true;
     const denom = numProp(row.props, 'denominator') ?? numProp(row.props, 'n');
     return denom != null && denom < LOW_N;
 }
 
 /** A short context line under the value — surfaced from `props`/`unit`. */
-export function metricSub(row: ProjectMetricRow): string {
+export function metricSub(row: WorkspaceMetricRow): string {
     const numerator = numProp(row.props, 'numerator');
     const denominator = numProp(row.props, 'denominator');
     if (numerator != null && denominator != null) {
@@ -302,7 +302,7 @@ export function metricSub(row: ProjectMetricRow): string {
 }
 
 /** Map one wire row to a presentational card model. */
-export function toMetricCard(row: ProjectMetricRow): MetricCardVM {
+export function toMetricCard(row: WorkspaceMetricRow): MetricCardVM {
     return {
         key: row.metric,
         name: row.name,
@@ -320,7 +320,7 @@ export function toMetricCard(row: ProjectMetricRow): MetricCardVM {
  * daemon metric still renders rather than vanishing.
  */
 export function groupByFamily(
-    rows: ProjectMetricRow[],
+    rows: WorkspaceMetricRow[],
     familyOf: (key: string) => MetricFamily | undefined,
 ): MetricSection[] {
     const byFamily = new Map<MetricFamily, MetricCardVM[]>();
@@ -353,7 +353,7 @@ export interface RegistryMetric {
     formula?: string | null;
 }
 
-/** One point of `GET /api/projects/{id}/metrics/{key}?grain=…`. */
+/** One point of `GET /api/workspaces/{id}/metrics/{key}?grain=…`. */
 export interface MetricSeriesPoint {
     period: string;
     value: number | null;
@@ -400,8 +400,8 @@ export interface SessionTrouble {
     duration_ms: number;
 }
 
-/** One tool's usage across a project (Pass 2c) — which tools the ACPs invoked,
- *  from `GET /api/projects/{id}/tools`. `calls` = post-tool events (sized in the
+/** One tool's usage across a workspace (Pass 2c) — which tools the ACPs invoked,
+ *  from `GET /api/workspaces/{id}/tools`. `calls` = post-tool events (sized in the
  *  bubble view); `failed` = of those, how many errored. */
 export interface ToolUsage {
     tool: string;
@@ -411,7 +411,7 @@ export interface ToolUsage {
 }
 
 /** One measurable session behind a daily datapoint — the wire shape of
- *  `GET /api/projects/{id}/metrics/{key}/sessions?day=YYYY-MM-DD`'s `sessions[]`.
+ *  `GET /api/workspaces/{id}/metrics/{key}/sessions?day=YYYY-MM-DD`'s `sessions[]`.
  *  Carries the structural fields the one-liner reads (`outcome` + `ftr` +
  *  `turns` + `corrections`), the `client_session_id` reference, `started_at`,
  *  the `task`, the `summary` (may be empty for backfilled sessions), and the
@@ -435,7 +435,7 @@ export interface DrilldownSession {
     trouble: SessionTrouble | null;
 }
 
-/** The response of `GET /api/projects/{id}/metrics/{key}/sessions?day=…` — the
+/** The response of `GET /api/workspaces/{id}/metrics/{key}/sessions?day=…` — the
  *  measurable sessions behind ONE daily datapoint. `sessions` is honest-empty
  *  (`[]`, `count` 0) when no measurable session ran that day, never fabricated. */
 export interface DaySessions {
@@ -542,7 +542,7 @@ export function formatDayLabel(iso: string): string {
  * The static "about this metric" reference block for the detail screen: what it
  * tells you (`purpose`), how to read it (`how_to_read` — interpretation + the
  * companion metric + the read-it-alone gotcha), and how it's computed
- * (`formula`). `purpose`/`how_to_read` ride the per-project row; `formula` rides
+ * (`formula`). `purpose`/`how_to_read` ride the per-workspace row; `formula` rides
  * the series response. Returns `null` when the metric carries no reference text
  * at all — the section then renders nothing rather than an empty shell. Never
  * fabricated: every field is the registry's own copy or absent.
@@ -554,7 +554,7 @@ export interface MetricAbout {
 }
 
 export function metricAbout(
-    row: ProjectMetricRow | undefined,
+    row: WorkspaceMetricRow | undefined,
     formula: string | null | undefined,
 ): MetricAbout | null {
     const purpose = row?.purpose?.trim() ?? '';
@@ -646,7 +646,7 @@ export function seriesValues(points: MetricSeriesPoint[]): number[] {
 
 // ── Chart series shape (consumed by @rokkit/chart) ──────────────────────────
 // The daemon returns a *sparse* series — one row per period that has data (see
-// PgStore::get_project_metric_series). Absent periods are simply missing, so a
+// PgStore::get_workspace_metric_series). Absent periods are simply missing, so a
 // naïve line connects across a multi-month lull as if it were one segment (or a
 // dive to 0). To render that lull as a real GAP, we densify the calendar at the
 // series' grain and mark every absent period `value: null`. @rokkit/chart's
@@ -911,7 +911,7 @@ function toolsDisplay(
  *  when no ollama narrative is available. Never invents a noun or a number: it
  *  states the metric's own value, its numerator/denominator when present, and
  *  its change vs the prior period. */
-function deterministicInsight(row: ProjectMetricRow, value: string, sub: string): string {
+function deterministicInsight(row: WorkspaceMetricRow, value: string, sub: string): string {
     if (value === METRIC_NONE) return `${row.name} has no reading for this period yet.`;
     const base = sub ? `${row.name} is ${value} (${sub})` : `${row.name} is ${value}`;
     const t = metricTrend(row.metric_type, row.direction, row.delta, isLowN(row));
@@ -922,7 +922,7 @@ function deterministicInsight(row: ProjectMetricRow, value: string, sub: string)
 
 /** Map one wire row (+ registry family + optional narrative) to a signal VM. */
 export function toSignal(
-    row: ProjectMetricRow,
+    row: WorkspaceMetricRow,
     familyOf: (key: string) => MetricFamily | undefined,
     narrative?: MetricsNarrative | null,
 ): SignalVM {
@@ -968,7 +968,7 @@ export function toSignal(
 /** Build every signal VM. The composite/health signal is the hero, so it is not
  *  a "mover"; everything else is ordered movers-first for the uniform grid. */
 export function buildSignals(
-    rows: ProjectMetricRow[],
+    rows: WorkspaceMetricRow[],
     familyOf: (key: string) => MetricFamily | undefined,
     narrative?: MetricsNarrative | null,
 ): SignalVM[] {
@@ -1016,9 +1016,9 @@ export interface SignalGroup {
  * Group signals for display: the curated key signals first, then one group per
  * family in [`FAMILY_ORDER`].
  *
- * `composite` (the project health score) is excluded — it is the hero readout at
+ * `composite` (the workspace health score) is excluded — it is the hero readout at
  * the top of the screen, not a cell in the grid. Empty groups are dropped, so a
- * project missing a metric shows no empty shell.
+ * workspace missing a metric shows no empty shell.
  */
 export function groupSignals(signals: SignalVM[]): SignalGroup[] {
     const rank = new Map(KEY_SIGNAL_KEYS.map((k, i) => [k, i]));

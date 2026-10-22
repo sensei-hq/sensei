@@ -36,11 +36,11 @@ const KEY_COST_PER_RESULT: &str = "cost_per_result";
 
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<chrono::NaiveDate>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("cost: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("cost: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
     // Forward-only: the window is anchored to NOW and the subscription is current
@@ -62,7 +62,7 @@ pub(super) async fn compute(
     };
 
     let (merged_runs, accepted_recs) =
-        pg.cost_results_in_window(&project_id, COST_WINDOW_DAYS).await?;
+        pg.cost_results_in_window(&workspace_id, COST_WINDOW_DAYS).await?;
     let results = merged_runs + accepted_recs;
     let Ok(results_u32) = u32::try_from(results) else {
         return Ok(0);
@@ -72,9 +72,9 @@ pub(super) async fn compute(
     };
 
     // Same attribution rule as the other snapshot groups: cost has no natural
-    // per-repo grain, so the single daily row rides the project's primary
+    // per-repo grain, so the single daily row rides the workspace's primary
     // repository. No repository-linked folder → no row (never fabricate one).
-    let Some(repository_id) = pg.primary_repository_for_project(&project_id).await? else {
+    let Some(repository_id) = pg.primary_repository_for_workspace(&workspace_id).await? else {
         return Ok(0);
     };
 
@@ -88,7 +88,7 @@ pub(super) async fn compute(
         "plan": sub.plan,
     });
     let day = super::today(pg).await?;
-    pg.upsert_project_metric_repo(&MetricRow {
+    pg.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &mid,
         repository_id: &repository_id,
         scope: SCOPE_USER,
@@ -139,7 +139,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_bad_project_id_is_an_error_not_a_silent_zero() {
+    async fn a_bad_workspace_id_is_an_error_not_a_silent_zero() {
         let ctx = crate::tasks::test_support::make_ctx().await;
         assert!(compute(&ctx, "not-a-uuid", None).await.is_err());
     }
@@ -163,7 +163,8 @@ mod tests {
         let _guard = SUBSCRIPTION_KEY.lock().await;
         let Ok(pg) = PgStore::connect_test().await else { return };
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = crate::tasks::test_support::seed_metrics_project_folder(&pg, &uniq).await;
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&pg, &uniq).await;
         // Two merged runs inside the window and one outside it, so the row's
         // `merged_runs` can only be right if the window predicate ran too.
         //
@@ -198,7 +199,7 @@ mod tests {
         pg.set_config(SUBSCRIPTION_CONFIG_KEY, before.as_deref().unwrap_or("")).await.unwrap();
 
         assert_eq!(wrote, 1, "a configured plan with results writes one row");
-        let rows = crate::tasks::test_support::daily_project_metric_rows(&pg, &pid).await;
+        let rows = crate::tasks::test_support::daily_workspace_metric_rows(&pg, &pid).await;
         let (_, value, props) = rows
             .iter()
             .find(|(k, _, _)| k == KEY_COST_PER_RESULT)

@@ -75,7 +75,7 @@ impl PlanGraph {
     }
 }
 
-/// Project the authored graph into a relay outline: one segment per phase (its
+/// Workspace the authored graph into a relay outline: one segment per phase (its
 /// state rolled up from its tasks), each followed by its task segments in order.
 /// `seq` runs monotonically across the whole list so the Worker's `(session_id,
 /// seq)` upsert is stable across re-publishes (the graph order is fixed at
@@ -281,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn projects_phase_then_tasks_with_parent_seq_and_labels() {
+    fn workspaces_phase_then_tasks_with_parent_seq_and_labels() {
         let segs = plan_to_segments(&sample());
         // Schema(phase) + t1 + t2 + Daemon(phase) + t3 = 5 segments.
         assert_eq!(segs.len(), 5);

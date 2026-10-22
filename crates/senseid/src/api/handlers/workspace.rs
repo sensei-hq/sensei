@@ -10,14 +10,14 @@ use tokio_stream::wrappers::BroadcastStream;
 
 // ── Repos CRUD ──────────────────────────────────────────────────────────────
 
-pub(crate) async fn list_projects(
+pub(crate) async fn list_repos(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     state.pg.list_repositories().await.map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[derive(Deserialize)]
-pub(crate) struct CreateProjectBody {
+pub(crate) struct CreateRepoBody {
     #[serde(rename = "repoId")]
     #[allow(dead_code)]
     repo_id: String,
@@ -25,9 +25,9 @@ pub(crate) struct CreateProjectBody {
     path: String,
 }
 
-pub(crate) async fn create_project(
+pub(crate) async fn create_repo(
     State(state): State<AppState>,
-    Json(body): Json<CreateProjectBody>,
+    Json(body): Json<CreateRepoBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let name = body
         .name
@@ -53,7 +53,7 @@ pub(crate) async fn create_project(
     Ok(Json(serde_json::json!({"ok": true, "folderId": folder_id})))
 }
 
-pub(crate) async fn update_project(
+pub(crate) async fn update_repo(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -87,7 +87,7 @@ pub(crate) async fn update_project(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-pub(crate) async fn delete_project(
+pub(crate) async fn delete_repo(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -119,9 +119,9 @@ fn parse_folder_patch(body: &serde_json::Value) -> Result<Option<String>, String
     }
 }
 
-/// PUT /api/folders/{id} — set or clear a folder's role. Settings → Projects
+/// PUT /api/folders/{id} — set or clear a folder's role. Settings → Workspaces
 /// uses this to persist the per-repository role picker without going through
-/// set_folder_project (which would also touch project membership).
+/// set_folder_workspace (which would also touch workspace membership).
 pub(crate) async fn update_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -209,7 +209,7 @@ pub(crate) async fn remap_folder_endpoint(
 
 // ── Exclude / Exclusions ────────────────────────────────────────────────────
 
-pub(crate) async fn exclude_project(
+pub(crate) async fn exclude_repo(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -230,14 +230,14 @@ pub(crate) async fn exclude_project(
 // `update_watch_root` (PUT /api/scan/roots/{id}), which prunes added subtrees
 // and re-scans removed ones. There is no standalone exclusions endpoint.
 
-// ── Project Tags ────────────────────────────────────────────────────────────
+// ── Workspace Tags ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub(crate) struct TagBody {
     pub tag: String,
 }
 
-pub(crate) async fn add_project_tag(
+pub(crate) async fn add_repo_tag(
     State(state): State<AppState>,
     Path(_repo_id): Path<String>,
     Json(body): Json<TagBody>,
@@ -252,7 +252,7 @@ pub(crate) async fn add_project_tag(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-pub(crate) async fn remove_project_tag(
+pub(crate) async fn remove_repo_tag(
     State(state): State<AppState>,
     Path((_repo_id, tag)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -273,7 +273,7 @@ pub(crate) struct FrontmatterSyncBody {
     pub folder: String,
     pub organization: Option<String>,
     pub client: Option<String>,
-    pub project: Option<String>,
+    pub workspace: Option<String>,
     pub team: Option<String>,
     pub role: Option<String>,
     #[serde(default)]
@@ -319,7 +319,7 @@ pub(crate) async fn sync_readme_frontmatter(
     let fm = crate::tasks::processors::metadata::Frontmatter {
         organization: body.organization,
         client: body.client,
-        project: body.project,
+        project: body.workspace,
         team: body.team,
         role: body.role,
         stack: body.stack,
@@ -588,7 +588,7 @@ pub(crate) async fn update_watch_root(
 /// Apply a root's NEW exclusion list against its OLD one (#247).
 ///
 /// Added entries are PRUNED through the one pruner, so a repository excluded
-/// here loses its folders, its repository row and any project it emptied — not
+/// here loses its folders, its repository row and any workspace it emptied — not
 /// just its folders, which is what this did before. Removed entries re-scan the
 /// root so the un-excluded subtree comes back. Then the live watcher is
 /// re-registered with the resolved prefixes.
@@ -754,7 +754,7 @@ pub(crate) struct RemoveRootQuery {
 ///   but its folders and graph stay readable. The row stays because the folder
 ///   cascade would otherwise take the data with it.
 /// - `remove` PRUNES everything under the root — folders, repositories no other
-///   checkout uses, projects left empty — then deletes the row.
+///   checkout uses, workspaces left empty — then deletes the row.
 ///
 /// Anything else, including nothing, is a 400: a default would be a guess about
 /// the user's data.
@@ -944,7 +944,7 @@ pub(crate) async fn backfill_embeddings(
     Ok(Json(serde_json::json!({"ok": true, "folders": paths.len()})))
 }
 
-/// Return project grouping suggestions from the last scan.
+/// Return workspace grouping suggestions from the last scan.
 pub(crate) async fn scan_suggestions(State(state): State<AppState>) -> Json<serde_json::Value> {
     let suggestions = match state.pg.get_config("solution_suggestions").await {
         Ok(v) => v,
@@ -999,15 +999,15 @@ pub(crate) struct IndexBody {
     _force: bool,
 }
 
-pub(crate) async fn index_project(
+pub(crate) async fn index_repo(
     State(state): State<AppState>,
     Json(body): Json<IndexBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Clear errors for this project (PgStore expects UUID)
+    // Clear errors for this repo (PgStore expects UUID)
     if let Ok(folder_id) = uuid::Uuid::parse_str(&body.repo_id)
         && let Err(e) = state.pg.clear_index_errors(&folder_id).await
     {
-        tracing::warn!(error = %e, %folder_id, "index_project: failed to clear index errors");
+        tracing::warn!(error = %e, %folder_id, "index_repo: failed to clear index errors");
     }
 
     let task = crate::tasks::Task::new(
@@ -1147,7 +1147,7 @@ mod folder_patch_tests {
     use super::*;
     use serde_json::json;
 
-    /// Settings → Projects clears a role by sending `{"role": null}`. The handler
+    /// Settings → Workspaces clears a role by sending `{"role": null}`. The handler
     /// read `null` as "field absent", skipped the update and answered 200, so the
     /// screen showed the role cleared and a reload brought it back.
     #[test]

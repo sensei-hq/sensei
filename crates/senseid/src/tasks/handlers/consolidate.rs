@@ -1,7 +1,7 @@
 //! L2 Generator — consolidation tier (F5/#70).
 //!
 //! Where the heuristic tier ([`super::generate`]) maps each pattern to an
-//! action deterministically, the consolidation tier batches a project's
+//! action deterministically, the consolidation tier batches a workspace's
 //! strongest findings through the gateway **`reasoning`** chain (the
 //! "consolidation" inference role; embedded-first per #79) and asks for one
 //! synthesized, higher-value recommendation. The model's output is recorded as
@@ -12,7 +12,7 @@
 //! logs and writes nothing — the heuristic recs are unaffected.
 //!
 //! Idempotency: the set of findings is hashed into a signature stored on the
-//! trace's `trigger_detail`; a project that already has a consolidation trace
+//! trace's `trigger_detail`; a workspace that already has a consolidation trace
 //! for the current finding-set is skipped, so the (expensive) LLM call only
 //! fires when the strongest signals actually change.
 
@@ -138,17 +138,17 @@ pub(crate) fn parse_consolidation(output: &str) -> Option<ConsolidatedInsight> {
     })
 }
 
-/// Handler step: consolidate a project's strongest findings into one
+/// Handler step: consolidate a workspace's strongest findings into one
 /// LLM-reasoned recommendation + a reasoning trace. Returns 1 if a new
 /// consolidation was written, 0 otherwise (too few findings, already done,
 /// no model, or unparseable output).
-pub async fn consolidate_for_project(
+pub async fn consolidate_for_workspace(
     ctx: &TaskContext,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
 ) -> Result<u32, String> {
     let mut findings: Vec<Finding> =
         ctx.pg()
-            .get_patterns_for_generation(project_id)
+            .get_patterns_for_generation(workspace_id)
             .await?
             .into_iter()
             .map(|(id, _folder_id, folder_label, name, _is_anti, instance_count, _instances)| {
@@ -161,7 +161,11 @@ pub async fn consolidate_for_project(
     }
 
     let signature = findings_signature(&findings);
-    if ctx.pg().reasoning_trace_exists_with_signature(project_id, &signature).await.unwrap_or(false)
+    if ctx
+        .pg()
+        .reasoning_trace_exists_with_signature(workspace_id, &signature)
+        .await
+        .unwrap_or(false)
     {
         return Ok(0); // already consolidated this finding-set
     }
@@ -193,13 +197,13 @@ pub async fn consolidate_for_project(
     let resp = match ctx.app_state.gateway.execute(&request).await {
         Ok(r) if r.success => r,
         Ok(_) | Err(_) => {
-            tracing::warn!(project = %project_id, "consolidate: no model answered — skipping (heuristic recs unaffected)");
+            tracing::warn!(workspace = %workspace_id, "consolidate: no model answered — skipping (heuristic recs unaffected)");
             return Ok(0);
         }
     };
     let content = resp.content.unwrap_or_default();
     let Some(insight) = parse_consolidation(&content) else {
-        tracing::warn!(project = %project_id, "consolidate: model output did not parse — skipping");
+        tracing::warn!(workspace = %workspace_id, "consolidate: model output did not parse — skipping");
         return Ok(0);
     };
     // Record the REAL model provenance, or none — never a fabricated "unknown",
@@ -217,7 +221,7 @@ pub async fn consolidate_for_project(
     let trace_id = ctx
         .pg()
         .insert_reasoning_trace(
-            Some(project_id),
+            Some(workspace_id),
             "consolidation",
             &trigger_detail,
             &models,
@@ -229,7 +233,7 @@ pub async fn consolidate_for_project(
     let based_on = serde_json::json!({ "patterns": pattern_ids });
     ctx.pg()
         .create_recommendation_full(&RecommendationRow {
-            workspace_id: project_id,
+            workspace_id,
             title: &insight.headline,
             why: &insight.reasoning,
             impact: None,
@@ -241,7 +245,7 @@ pub async fn consolidate_for_project(
         })
         .await?;
 
-    tracing::info!(project = %project_id, "consolidate: wrote 1 reasoned recommendation");
+    tracing::info!(workspace = %workspace_id, "consolidate: wrote 1 reasoned recommendation");
     Ok(1)
 }
 

@@ -2,19 +2,19 @@ use super::*;
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
-    /// Assemble a blended context blob: project-scoped + stack-scoped + global memories.
+    /// Assemble a blended context blob: workspace-scoped + stack-scoped + global memories.
     /// Only active/reinforced/battle_tested/challenged memories are included.
     /// Governance Tier-1 resolution: the active rules that apply to a repo,
     /// ordered strongest-first. A rule applies when it sits on one of the repo's
     /// member namespaces (its REPOSITORY's, via `repository_namespaces`), on
     /// an always-on `general`/`user`
-    /// scope, is genuinely global (unscoped **and** not tied to a project —
-    /// `namespace_id IS NULL AND project_id IS NULL`), or is a project-tied
-    /// learned convention for **this repo's own project** (`namespace_id IS NULL
-    /// AND project_id = the folder's project`). The last clause is what keeps a
-    /// project's learned principle scoped to that project instead of bleeding
+    /// scope, is genuinely global (unscoped **and** not tied to a workspace —
+    /// `namespace_id IS NULL AND workspace_id IS NULL`), or is a workspace-tied
+    /// learned convention for **this repo's own workspace** (`namespace_id IS NULL
+    /// AND workspace_id = the folder's workspace`). The last clause is what keeps a
+    /// workspace's learned principle scoped to that workspace instead of bleeding
     /// into every repo's always-on `general` set: an unscoped memory carrying a
-    /// `project_id` is that project's convention, not a global rule. Ordering is
+    /// `workspace_id` is that workspace's convention, not a global rule. Ordering is
     /// the two-axis precedence — enforcement desc (mandatory first), then scope
     /// level desc (most-specific first), then strength. Structuring (dedup +
     /// mandatory-lock) is done by `crate::governance::structure_ruleset` so it
@@ -316,9 +316,9 @@ impl PgStore {
 
     /// The global, repo-independent ruleset: rules at the always-on `general`
     /// and `user` scopes plus genuinely-global unscoped rules (`namespace_id IS
-    /// NULL AND project_id IS NULL`). These apply everywhere and are what the
-    /// daemon materializes into `~/.sensei/rules.md`. A project-tied unscoped
-    /// memory (a learned convention with a `project_id`) is that project's, not
+    /// NULL AND workspace_id IS NULL`). These apply everywhere and are what the
+    /// daemon materializes into `~/.sensei/rules.md`. A workspace-tied unscoped
+    /// memory (a learned convention with a `workspace_id`) is that workspace's, not
     /// global, so it is deliberately excluded here — it surfaces only via
     /// [`Self::resolve_rules_raw`] for its own repo. Same ordering as
     /// `resolve_rules_raw` but with no folder dimension.
@@ -466,11 +466,11 @@ impl PgStore {
         Ok(row)
     }
 
-    /// Active memories anchored to (slot[, feature]) for a project. `feature=None`
-    /// matches project-scope (feature IS NULL); `Some(f)` matches that feature.
+    /// Active memories anchored to (slot[, feature]) for a workspace. `feature=None`
+    /// matches workspace-scope (feature IS NULL); `Some(f)` matches that feature.
     pub async fn list_memories_for_slot(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         slot: &str,
         feature: Option<&str>,
         limit: i64,
@@ -483,7 +483,7 @@ impl PgStore {
                     AND feature IS NOT DISTINCT FROM $3
                   ORDER BY strength DESC, modified_at DESC LIMIT $4",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .bind(slot)
             .bind(feature)
             .bind(limit)
@@ -497,7 +497,7 @@ impl PgStore {
 
     pub async fn assemble_context(
         &self,
-        project_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
         stack_ids: &[String],
         tags: Option<&[String]>,
         limit: i64,
@@ -541,7 +541,7 @@ impl PgStore {
                   LIMIT $5",
         )
         .bind(&allowed_owned)
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(&stack_owned)
         .bind(&tags_owned)
         .bind(limit)
@@ -570,7 +570,7 @@ impl PgStore {
                  SELECT id, $2, 'get_layered_context' FROM existing",
             )
             .bind(&memory_ids)
-            .bind(project_id)
+            .bind(workspace_id)
             .execute(&self.pool)
             .await;
             if let Err(e) = logged {
@@ -584,7 +584,7 @@ impl PgStore {
             .map(|r| {
                 serde_json::json!({
                     "id":               r.0,
-                    "scope":            scope_to_api(r.2),
+                    "scope":            r.2,
                     "scope_filter":     r.3,
                     "type":             r.4,
                     "title":            r.5,
@@ -604,7 +604,7 @@ impl PgStore {
         // the general blend above (a slot-anchored memory that also matched the
         // scope/tag blend must not appear twice).
         if let Some((s, feature)) = slot {
-            let anchored = self.list_memories_for_slot(&project_id, s, feature, limit).await?;
+            let anchored = self.list_memories_for_slot(&workspace_id, s, feature, limit).await?;
             if !anchored.is_empty() {
                 let anchored_ids: std::collections::HashSet<String> = anchored
                     .iter()

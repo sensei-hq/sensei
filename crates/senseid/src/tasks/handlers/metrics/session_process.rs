@@ -3,9 +3,9 @@
 //! [`crate::tasks::handlers::session_process`] analyzer wrote into
 //! `activity.sessions.props.process`.
 //!
-//! Repo-grain, `scope = 'user'`, daily rows into `sensei.project_metrics` (via
-//! [`PgStore::upsert_project_metric_repo`]), exactly like `session_outcomes` — a
-//! project value is the pooling view over these per-repository rows. Four metrics:
+//! Repo-grain, `scope = 'user'`, daily rows into `sensei.workspace_metrics` (via
+//! [`PgStore::upsert_workspace_metric_repo`]), exactly like `session_outcomes` — a
+//! workspace value is the pooling view over these per-repository rows. Four metrics:
 //! - `spec_depth` (score): mean 0-5 over sessions whose `props.process.spec_depth.score`
 //!   is non-null (a stated plan was judged). N/A sessions don't dilute it.
 //! - `spec_deviation_rate` (pct): `present=true` / sessions where spec_deviation is a
@@ -32,16 +32,16 @@ const KEY_SPEC_DEVIATION: &str = "spec_deviation_rate";
 const KEY_REFUTED: &str = "refuted_finding_rate";
 const KEY_INCOMPLETE: &str = "incomplete_analysis_llm_rate";
 
-/// Compute the `session_process` group for one project. Mirrors
+/// Compute the `session_process` group for one workspace. Mirrors
 /// [`super::session_outcomes::compute`]'s contract (repo grain, `as_of` day-set,
 /// idempotent upsert, honest-empty). Returns the number of rows written.
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<chrono::NaiveDate>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("session_process: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("session_process: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
     let window_days = crate::tasks::metrics_scheduler::window_days(pg).await;
 
@@ -65,7 +65,7 @@ pub(super) async fn compute(
         refuted_present,
         incomplete_present,
         scored_n,
-    ) in pg.session_process_judgments_by_day(&project_id, window_days, as_of).await?
+    ) in pg.session_process_judgments_by_day(&workspace_id, window_days, as_of).await?
     {
         // spec_depth (score): mean over sessions with a real plan-depth score.
         if let Some(mid) = depth_id
@@ -73,7 +73,7 @@ pub(super) async fn compute(
         {
             let value = depth_sum / depth_n as f64;
             let props = serde_json::json!({ "n": depth_n });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_USER,
@@ -95,7 +95,7 @@ pub(super) async fn compute(
             let value = dev_present as f64 / dev_applicable as f64;
             let props =
                 serde_json::json!({ "numerator": dev_present, "denominator": dev_applicable });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_USER,
@@ -120,7 +120,7 @@ pub(super) async fn compute(
                     let value = present as f64 / scored_n as f64;
                     let props =
                         serde_json::json!({ "numerator": present, "denominator": scored_n });
-                    pg.upsert_project_metric_repo(&MetricRow {
+                    pg.upsert_workspace_metric_repo(&MetricRow {
                         metric_id: &mid,
                         repository_id: &repository_id,
                         scope: SCOPE_USER,
@@ -147,8 +147,8 @@ mod tests {
     use super::*;
     use crate::db::pg_store::PgStore;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
-        seed_metrics_project_folder, seed_metrics_session,
+        cleanup_metrics_fixture, daily_workspace_metric_rows as daily_rows, make_ctx,
+        seed_metrics_session, seed_metrics_workspace_folder,
     };
 
     /// Set a session's props.process to the given judgment object.
@@ -168,7 +168,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
 
         // s1: plan depth 4, deviated, no refute, no incomplete.
@@ -246,7 +246,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         let s = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
         set_process(pg, &s, serde_json::json!({
@@ -273,13 +273,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unscored_project_writes_zero_rows() {
-        // A project whose sessions are not process-scored (no props.process) writes
+    async fn unscored_workspace_writes_zero_rows() {
+        // A workspace whose sessions are not process-scored (no props.process) writes
         // NO rows (honest-empty), even though the sessions are measurable.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
 

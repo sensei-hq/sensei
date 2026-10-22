@@ -13,8 +13,8 @@
 //!    tripped residual risk, discard the model output and keep the deterministic
 //!    text. The safe text always wins.
 //!
-//! Global-dojo adds a project-*shape* descriptor (never the name) and a
-//! rotating, opaque anonymous contributor id (never the real user/project id).
+//! Global-dojo adds a workspace-*shape* descriptor (never the name) and a
+//! rotating, opaque anonymous contributor id (never the real user/workspace id).
 //! Attribution is [`AttributionMode::Anonymous`] with the source dereferenced.
 //!
 //! Forward seam: C6 wires the publish path and supplies a live [`Generalizer`]
@@ -24,7 +24,7 @@
 
 use crate::api::handlers::knowledge::Generalisation;
 use crate::dojo::attribution::{
-    Dereferenced, ProjectIdentifiers, Redaction, ResidualRisk, dereference,
+    Dereferenced, Redaction, ResidualRisk, WorkspaceIdentifiers, dereference,
 };
 use dojo_protocol::{Attribution, AttributionMode};
 use sha2::{Digest, Sha256};
@@ -42,8 +42,8 @@ pub trait Generalizer {
     fn generalize(&self, text: &str) -> impl Future<Output = Option<Generalisation>> + Send;
 }
 
-/// Size bucket for a [`ProjectShape`] — a coarse descriptor, never a real
-/// metric that could fingerprint a project.
+/// Size bucket for a [`WorkspaceShape`] — a coarse descriptor, never a real
+/// metric that could fingerprint a workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SizeBucket {
@@ -52,11 +52,11 @@ pub enum SizeBucket {
     Large,
 }
 
-/// A project-shape descriptor: what a receiving user filters on for relevance
-/// WITHOUT ever seeing the project name (`{stack: [rust], size: medium, kind:
+/// A workspace-shape descriptor: what a receiving user filters on for relevance
+/// WITHOUT ever seeing the workspace name (`{stack: [rust], size: medium, kind:
 /// web-service}`). Carries only coarse, non-identifying buckets.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub struct ProjectShape {
+pub struct WorkspaceShape {
     /// Coarse stack tags (`["rust"]`) — languages/frameworks, never a repo name.
     #[serde(default)]
     pub stack: Vec<String>,
@@ -89,9 +89,9 @@ pub struct AnonymizedArtifact {
     /// model, no example, or an example that did not verify — this module never
     /// invents one locally.
     pub example: Option<String>,
-    /// Project-shape descriptor — never the name.
-    pub shape: ProjectShape,
-    /// Rotating opaque contributor id — never the real user/project id.
+    /// Workspace-shape descriptor — never the name.
+    pub shape: WorkspaceShape,
+    /// Rotating opaque contributor id — never the real user/workspace id.
     pub anon_id: String,
     /// Anonymous, source-dereferenced attribution.
     pub attribution: Attribution,
@@ -147,8 +147,8 @@ pub fn rotating_anon_id(user_key: &str, bucket: i64) -> String {
 /// [`ResidualRisk`] and produces no artifact — never leak on uncertainty.
 pub async fn anonymize_for_global<G: Generalizer>(
     text: &str,
-    ctx: &ProjectIdentifiers,
-    shape: ProjectShape,
+    ctx: &WorkspaceIdentifiers,
+    shape: WorkspaceShape,
     contributor: &ContributorIdentity,
     rotation_bucket: i64,
     generalizer: &G,
@@ -214,9 +214,9 @@ pub async fn anonymize_for_global<G: Generalizer>(
 /// [`GENERALISE_REPLY_CONTRACT`], because both stages are read by the same
 /// parser and must agree on the JSON shape and on what makes an example safe.
 pub(crate) const GLOBAL_ANONYMISE_PREAMBLE: &str = "You rewrite an already-anonymised engineering lesson into a portable, stack-agnostic principle for a public collective. \
-The text you receive has ALREADY had every project name, path, id, and person removed and replaced with placeholders like <project>, <path>, <session>. \
+The text you receive has ALREADY had every workspace name, path, id, and person removed and replaced with placeholders like <workspace>, <path>, <session>. \
 Keep it that way: never invent or reintroduce a concrete name, path, repository, id, or person; leave placeholders as-is or drop them. \
-Restate the underlying learning so it applies across projects and stacks. Do not add advice the original did not contain.";
+Restate the underlying learning so it applies across workspaces and stacks. Do not add advice the original did not contain.";
 
 /// Token budget + wall-clock cap for the polish call (mirrors the shipped
 /// memory-generalise handler's discipline).
@@ -333,9 +333,9 @@ pub(crate) mod tests {
         Some(Generalisation { generalised: generalised.into(), example: Some(example.into()) })
     }
 
-    fn ctx() -> ProjectIdentifiers {
-        ProjectIdentifiers {
-            project_name: Some("Acme API".into()),
+    fn ctx() -> WorkspaceIdentifiers {
+        WorkspaceIdentifiers {
+            workspace_name: Some("Acme API".into()),
             client_name: Some("Acme Corp".into()),
             repo_names: vec!["acme-api".into()],
             folder_paths: vec!["/Users/dev/work/acme-api".into()],
@@ -344,8 +344,8 @@ pub(crate) mod tests {
         }
     }
 
-    fn shape() -> ProjectShape {
-        ProjectShape {
+    fn shape() -> WorkspaceShape {
+        WorkspaceShape {
             stack: vec!["rust".into()],
             size: Some(SizeBucket::Medium),
             kind: Some("web-service".into()),
@@ -369,7 +369,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn anon_id_is_not_the_user_key_or_project_id() {
+    fn anon_id_is_not_the_user_key_or_workspace_id() {
         let id = rotating_anon_id("local-user-secret-abc", 7);
         assert_ne!(id, "local-user-secret-abc");
         assert!(
@@ -404,7 +404,7 @@ pub(crate) mod tests {
         .expect("clean input must anonymise");
 
         let low = art.text.to_ascii_lowercase();
-        assert!(!low.contains("acme"), "no project/client/repo name may survive: {:?}", art.text);
+        assert!(!low.contains("acme"), "no workspace/client/repo name may survive: {:?}", art.text);
         assert!(!low.contains("jane"), "no person name may survive: {:?}", art.text);
         assert!(!art.text.contains("/Users/"), "no path may survive: {:?}", art.text);
         assert!(!low.contains("s-9931"), "no session id may survive: {:?}", art.text);
@@ -595,7 +595,7 @@ pub(crate) mod tests {
         let g = MockGeneralizer { response: polish("safe rewrite") };
         let out = anonymize_for_global(
             "set ACME_PROD_DB_PASSWORD then deploy",
-            &ProjectIdentifiers::default(),
+            &WorkspaceIdentifiers::default(),
             shape(),
             &contributor(),
             1,

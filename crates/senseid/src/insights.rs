@@ -56,8 +56,8 @@ pub const CORRECTION_COLUMN: &str = NOW;
 /// and the deterministic [`FallbackCopy`] (the raw DB prose).
 ///
 /// The row is the JSON either `pg_store::get_insights_recommendations` (the
-/// Learnings-triage board) or `pg_store::get_project_recommendations` (the
-/// per-project endpoint) returns — both project the SAME `inference.recommendations`
+/// Learnings-triage board) or `pg_store::get_workspace_recommendations` (the
+/// per-workspace endpoint) returns — both workspace the SAME `inference.recommendations`
 /// columns. Building the facts here — once, in one place — is what keeps both
 /// screens on ONE `(kind, facts_hash)` cache entry: a single warm serves both.
 /// Mirrors `api::handlers::tool_signals::signal_copy_inputs`.
@@ -172,17 +172,17 @@ mod tests {
         // A row shaped like `get_insights_recommendations` output …
         let triage = json!({
             "id": "r1", "urgency": "high", "title": "t", "why": "w", "impact": "i",
-            "evidence": { "n": 3 }, "project_id": "p1", "name": "sensei", "column": "now",
+            "evidence": { "n": 3 }, "workspace_id": "p1", "name": "sensei", "column": "now",
         });
-        // … and a row shaped like `get_project_recommendations` output — SAME rec.
-        let project = json!({
+        // … and a row shaped like `get_workspace_recommendations` output — SAME rec.
+        let workspace = json!({
             "id": "r1", "title": "t", "urgency": "high", "status": "pending",
             "verdict": null, "why": "w", "impact": "i", "actionType": "consolidate",
             "baseline_ftr": 0.5, "current_ftr": null, "acted_at": null, "measured_at": null,
             "score": 0.9, "focal": true,
         });
         let (k1, f1, fb1) = rec_copy_inputs(&triage);
-        let (k2, f2, fb2) = rec_copy_inputs(&project);
+        let (k2, f2, fb2) = rec_copy_inputs(&workspace);
         assert_eq!(k1, k2, "same kind");
         assert_eq!(f1, f2, "both endpoints build identical facts for the same rec");
         assert_eq!(fb1, fb2, "both endpoints build the identical fallback");
@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(
             facts_hash(k1, &f1),
             facts_hash(k2, &f2),
-            "get_insights and get_project_recommendations must share the narration-cache cache key"
+            "get_insights and get_workspace_recommendations must share the narration-cache cache key"
         );
     }
 
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn apply_rec_copy_overwrites_only_title_and_why_preserving_wire_shape() {
-        // A full get_project_recommendations row.
+        // A full get_workspace_recommendations row.
         let mut r = json!({
             "id": "r1", "title": "raw title", "urgency": "high", "status": "pending",
             "verdict": null, "why": "raw why", "impact": "raw impact", "actionType": "consolidate",

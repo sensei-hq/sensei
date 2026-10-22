@@ -78,8 +78,8 @@ pub(crate) async fn unified_query(
     Ok(Json(result))
 }
 
-/// Resolve a repo_id / project name / project UUID to a list of folder UUIDs
-/// (project-scoped). Returns an empty Vec if unknown.
+/// Resolve a repo_id / workspace name / workspace UUID to a list of folder UUIDs
+/// (workspace-scoped). Returns an empty Vec if unknown.
 pub(crate) async fn resolve_scope_ids(
     state: &AppState,
     repo_id: &str,
@@ -753,13 +753,13 @@ pub(crate) struct Hit {
     pub item: serde_json::Value,
 }
 
-/// Project a semantic row into a function hit — identical shape to
+/// Workspace a semantic row into a function hit — identical shape to
 /// `PgStore::search_functions_scoped` so fused results stay homogeneous.
 fn function_hit(r: SemRow) -> serde_json::Value {
     serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "signature": r.3, "line_start": r.4, "relevance": relevance(r.5) })
 }
 
-/// Project a semantic row into a type hit — identical shape to
+/// Workspace a semantic row into a type hit — identical shape to
 /// `PgStore::search_types_scoped` (no `signature`).
 fn type_hit(r: SemRow) -> serde_json::Value {
     serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "line_start": r.4, "relevance": relevance(r.5) })

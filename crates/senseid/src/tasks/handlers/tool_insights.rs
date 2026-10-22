@@ -18,7 +18,7 @@ use crate::api::handlers::tool_signals::{
 
 /// Verdict-window for the Health tab metrics — 14 days matches the ticket
 /// text ("14d trend"). Kept `pub const` so the aggregator + any future
-/// per-project override key off the same constant (#84 T2 Slice D).
+/// per-workspace override key off the same constant (#84 T2 Slice D).
 pub const HEALTH_VERDICT_WINDOW_DAYS: i32 = 14;
 
 pub async fn aggregate_tool_insights(ctx: &TaskContext, _task: &Task) -> Result<u32, String> {

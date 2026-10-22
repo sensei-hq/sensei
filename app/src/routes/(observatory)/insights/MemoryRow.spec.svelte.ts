@@ -12,7 +12,7 @@ const memory = (over: Partial<MemoryRowVm> = {}): MemoryRowVm => ({
   title: 'Use dbd deploy, not combine',
   content: 'combine mangles long comments',
   strength: 1,
-  scope: 'project',
+  scope: 'workspace',
   violatedCount: 0,
   ...over,
 });
@@ -26,7 +26,7 @@ describe('MemoryRow', () => {
     const fill = m.container.querySelector('[data-strength-fill]') as HTMLElement;
     expect(fill).not.toBeNull();
     expect(fill.getAttribute('style')).toContain('60%');
-    expect(m.container.textContent).toContain('project');
+    expect(m.container.textContent).toContain('workspace');
     expect(m.container.textContent).toContain('Use dbd deploy, not combine');
   });
 

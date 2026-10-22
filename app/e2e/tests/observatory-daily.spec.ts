@@ -1,7 +1,7 @@
 /**
  * Observatory daily-view coverage — the post-T3 mockup-gap slice:
  *   • Today: FtrStrip bar strip + "first-try" / "N× rework" corrections column.
- *   • Projects list: renders project cards (filtered by status).
+ *   • Workspaces list: renders workspace cards (filtered by status).
  *   • Insights: Now / Soon / Settled triage columns (or honest empty).
  *   • Upgrades / Impact: real buckets (or honest empty state).
  *
@@ -60,19 +60,19 @@ test.describe('Observatory — Today', () => {
   });
 });
 
-test.describe('Observatory — Projects list', () => {
-  test('renders project cards (filtered by status), or an honest empty state', async ({ tauriPage }) => {
-    const projects = await safeJson<Array<unknown>>(`${DAEMON_URL}/api/projects`, []);
-    if (projects.length === 0) {
-      test.skip(true, 'no projects registered on this daemon');
+test.describe('Observatory — Workspaces list', () => {
+  test('renders workspace cards (filtered by status), or an honest empty state', async ({ tauriPage }) => {
+    const workspaces = await safeJson<Array<unknown>>(`${DAEMON_URL}/api/workspaces`, []);
+    if (workspaces.length === 0) {
+      test.skip(true, 'no workspaces registered on this daemon');
       return;
     }
-    await navigateToScreen(tauriPage, '/projects', '[data-component="projects-page"]');
+    await navigateToScreen(tauriPage, '/workspaces', '[data-component="workspaces-page"]');
     // Segmentation is now a status FILTER (All/Active/Dormant/Archived); the
-    // list renders project cards/rows. With ≥1 project registered, at least one
+    // list renders workspace cards/rows. With ≥1 workspace registered, at least one
     // card is visible (default filter is All).
     const cards = await tauriPage
-      .locator('[data-project-card], [data-project-row]')
+      .locator('[data-workspace-card], [data-workspace-row]')
       .count();
     expect(cards).toBeGreaterThan(0);
   });

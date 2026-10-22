@@ -3,7 +3,7 @@ organization: Sensei HQ
 project: sensei
 role: desktop
 tagline: Sensei desktop observatory
-summary: Desktop observatory for Sensei — visualize sessions, projects, patterns, and learnings.
+summary: Desktop observatory for Sensei — visualize sessions, workspaces, patterns, and learnings.
 stack: [tauri, sveltekit, svelte, typescript]
 ---
 
@@ -58,9 +58,10 @@ bun run test:e2e
 | `/` | Bootstrap gate — waits for daemon health |
 | `/setup/*` | Setup wizard — 11 stages from welcome through assignments |
 | `/observatory` | Daily landing — insights, hero koan |
-| `/sessions` | Cross-project session browser |
+| `/sessions` | Cross-workspace session browser |
 | `/learnings` | Memories, patterns, corrections |
 | `/libraries` | Detected and imported libraries |
 | `/instruments` | MCP playground and insights |
 | `/settings` | General, assistants, inference, extensions |
-| `/projects/[id]` | Per-project overview, graph, patterns, sessions |
+| `/workspaces` | Every workspace (a group of repositories) |
+| `/workspace/[id]` | Per-workspace overview, graph, patterns, sessions |

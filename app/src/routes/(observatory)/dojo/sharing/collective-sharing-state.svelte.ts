@@ -147,7 +147,7 @@ export interface CategoryMeta {
 /** The seven categories in the wire's stable key order. */
 export const CATEGORY_META: readonly CategoryMeta[] = [
   { key: 'memory', kanji: '覚', label: 'Memories', blurb: 'distilled lessons from your sessions' },
-  { key: 'pattern', kanji: '紋', label: 'Patterns', blurb: 'recurring shapes across your projects' },
+  { key: 'pattern', kanji: '紋', label: 'Patterns', blurb: 'recurring shapes across your workspaces' },
   { key: 'rule', kanji: '則', label: 'Rules', blurb: 'conventions you hold your work to' },
   { key: 'prompt', kanji: '問', label: 'Prompts', blurb: 'prompt shapes that reliably worked' },
   { key: 'guard', kanji: '守', label: 'Guards', blurb: 'checks that catch mistakes early' },

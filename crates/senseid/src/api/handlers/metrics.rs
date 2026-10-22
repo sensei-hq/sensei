@@ -1,23 +1,23 @@
-//! Metrics read endpoints (Phase 7): the active registry catalog, a project's
-//! latest-per-metric values (with trend + the `project_health` composite), one
+//! Metrics read endpoints (Phase 7): the active registry catalog, a workspace's
+//! latest-per-metric values (with trend + the `workspace_health` composite), one
 //! metric's series at a chosen grain (carrying the metric's `formula`), and the
 //! measurable sessions behind one daily datapoint (`{key}/sessions?day=`). The
 //! reads are pure reads over
-//! [`PgStore::active_metrics`] / [`PgStore::get_project_metrics`] /
-//! [`PgStore::get_project_metric_trend`] / [`PgStore::get_project_metric_series`]
-//! and the `sensei.project_metric_*` views (the views own the aggregation — the
+//! [`PgStore::active_metrics`] / [`PgStore::get_workspace_metrics`] /
+//! [`PgStore::get_workspace_metric_trend`] / [`PgStore::get_workspace_metric_series`]
+//! and the `sensei.workspace_metric_*` views (the views own the aggregation — the
 //! handlers never re-derive ratios in Rust).
 //!
 //! Fail-closed, honest results (see the #109 audit + the repo governance rules): a
-//! fallible read propagates as a 500; a project that does not exist is a 404
-//! (matching `GET /api/projects/{id}/ftr`); an invalid `grain` is a 400 (never a
+//! fallible read propagates as a 500; a workspace that does not exist is a 404
+//! (matching `GET /api/workspaces/{id}/ftr`); an invalid `grain` is a 400 (never a
 //! silent default that would mismeasure); genuinely-absent data is an honest-empty
 //! list, never a fabricated row/value.
 //!
 //! [`PgStore::active_metrics`]: crate::db::pg_store::PgStore::active_metrics
-//! [`PgStore::get_project_metrics`]: crate::db::pg_store::PgStore::get_project_metrics
-//! [`PgStore::get_project_metric_trend`]: crate::db::pg_store::PgStore::get_project_metric_trend
-//! [`PgStore::get_project_metric_series`]: crate::db::pg_store::PgStore::get_project_metric_series
+//! [`PgStore::get_workspace_metrics`]: crate::db::pg_store::PgStore::get_workspace_metrics
+//! [`PgStore::get_workspace_metric_trend`]: crate::db::pg_store::PgStore::get_workspace_metric_trend
+//! [`PgStore::get_workspace_metric_series`]: crate::db::pg_store::PgStore::get_workspace_metric_series
 
 use axum::{
     extract::{Path, Query, State},
@@ -85,7 +85,7 @@ pub(crate) struct StatusQuery {
 /// (`PATCH /api/dojo/metric-activation`) speak the same shape.
 ///
 /// `repo` accepts a `repo_key` OR a uuid, matching the name-or-uuid convention the
-/// project endpoints already use: `repo_key` is null for a local-only repository,
+/// workspace endpoints already use: `repo_key` is null for a local-only repository,
 /// whose metrics compute normally, so a key-only parameter would leave it
 /// unaddressable.
 ///
@@ -201,34 +201,38 @@ pub(crate) async fn get_metric_status_summary(
     })))
 }
 
-/// `GET /api/projects/{id}/metrics` — latest-per-metric values for a project
-/// (project scope, daily grain) with the catalog facets attached and the weekly
+/// `GET /api/workspaces/{id}/metrics` — latest-per-metric values for a workspace
+/// (workspace scope, daily grain) with the catalog facets attached and the weekly
 /// trend (`prior`/`delta`) merged in where available. Includes the
-/// `project_health` composite (it is a metric). `{id}` is name-or-uuid.
+/// `workspace_health` composite (it is a metric). `{id}` is name-or-uuid.
 ///
-/// Fail-closed: a lookup error is a 500; a project that does not exist is a 404
-/// (matching `GET /api/projects/{id}/ftr`); a project with no metric rows yet is a
+/// Fail-closed: a lookup error is a 500; a workspace that does not exist is a 404
+/// (matching `GET /api/workspaces/{id}/ftr`); a workspace with no metric rows yet is a
 /// 200 with an empty list (honest-empty, never a fabricated row). Trend is
 /// `null`/`null` for a metric without a prior weekly period — an honest gap, not a
 /// fabricated 0.
-pub(crate) async fn get_project_metrics(
+pub(crate) async fn get_workspace_metrics(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid =
-        crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_workspace_uuid(&state, &id)
+        .await?
+        .ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
-        .get_project(&uuid)
+        .get_workspace(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let rows =
-        state.pg.get_project_metrics(&uuid).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rows = state
+        .pg
+        .get_workspace_metrics(&uuid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let trend = state
         .pg
-        .get_project_metric_trend(&uuid)
+        .get_workspace_metric_trend(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let trend_by_metric: std::collections::HashMap<String, (Option<f64>, Option<f64>)> =
@@ -252,7 +256,7 @@ pub(crate) async fn get_project_metrics(
     // fabricated-empty that would silently drop the trend fact.
     let series_by_metric = state
         .pg
-        .get_project_metric_daily_series_all(&uuid)
+        .get_workspace_metric_daily_series_all(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -275,7 +279,7 @@ pub(crate) async fn get_project_metrics(
     })))
 }
 
-/// Query for `GET /api/projects/{id}/metrics/{key}`.
+/// Query for `GET /api/workspaces/{id}/metrics/{key}`.
 #[derive(Deserialize)]
 pub(crate) struct SeriesQuery {
     /// Roll-up grain — one of `daily`|`weekly`|`monthly`|`quarterly`. Absent →
@@ -288,14 +292,14 @@ pub(crate) struct SeriesQuery {
 /// `?grain=`. Kept next to the handler that validates against it.
 const SERIES_GRAINS: [&str; 4] = ["daily", "weekly", "monthly", "quarterly"];
 
-/// `GET /api/projects/{id}/metrics/{key}?grain=weekly` — the time series for one
+/// `GET /api/workspaces/{id}/metrics/{key}?grain=weekly` — the time series for one
 /// metric at a grain, from the matching roll-up view (ratios re-derived Σnum/Σden
 /// per period by the view, never the mean of daily ratios). `{id}` is name-or-uuid.
 ///
-/// Fail-closed: a lookup error is a 500; a project that does not exist is a 404; an
+/// Fail-closed: a lookup error is a 500; a workspace that does not exist is a 404; an
 /// invalid `grain` is a 400 (never a silent default that would mismeasure); an
 /// unknown metric key (no rows) is a 200 with an empty series (honest-empty).
-pub(crate) async fn get_project_metric_series(
+pub(crate) async fn get_workspace_metric_series(
     State(state): State<AppState>,
     Path((id, key)): Path<(String, String)>,
     Query(q): Query<SeriesQuery>,
@@ -304,18 +308,19 @@ pub(crate) async fn get_project_metric_series(
     if !SERIES_GRAINS.contains(&grain) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let uuid =
-        crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_workspace_uuid(&state, &id)
+        .await?
+        .ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
-        .get_project(&uuid)
+        .get_workspace(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let series = state
         .pg
-        .get_project_metric_series(&uuid, &key, grain)
+        .get_workspace_metric_series(&uuid, &key, grain)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({
@@ -331,7 +336,7 @@ pub(crate) async fn get_project_metric_series(
     })))
 }
 
-/// Query for `GET /api/projects/{id}/metrics/{key}/sessions`.
+/// Query for `GET /api/workspaces/{id}/metrics/{key}/sessions`.
 #[derive(Deserialize)]
 pub(crate) struct DaySessionsQuery {
     /// The calendar day to drill into, `YYYY-MM-DD`. Required: without a day there
@@ -340,7 +345,7 @@ pub(crate) struct DaySessionsQuery {
     day: Option<String>,
 }
 
-/// `GET /api/projects/{id}/metrics/{key}/sessions?day=YYYY-MM-DD` — the measurable
+/// `GET /api/workspaces/{id}/metrics/{key}/sessions?day=YYYY-MM-DD` — the measurable
 /// sessions behind one daily metric datapoint (the datapoint→sessions drill-down).
 /// Each session carries the structural fields the client renders a one-liner from
 /// (`outcome` + `ftr` + `turns` + `corrections`) plus the `client_session_id`
@@ -358,36 +363,37 @@ pub(crate) struct DaySessionsQuery {
 /// deterministic, row-derived fallback line and warms the model copy off-wire; the
 /// NEXT load returns the model copy. Inference never blocks this request path.
 ///
-/// Fail-closed: a lookup error is a 500; a project that does not exist is a 404; an
+/// Fail-closed: a lookup error is a 500; a workspace that does not exist is a 404; an
 /// absent or malformed `day` is a 400; a day with no measurable session is a 200
 /// with an empty list (honest-empty, never a fabricated row).
-/// `GET /api/projects/{id}/tools`: the per-tool usage breakdown (which tools the
-/// project's ACPs actually invoked, with call/failure counts) behind the
+/// `GET /api/workspaces/{id}/tools`: the per-tool usage breakdown (which tools the
+/// workspace's ACPs actually invoked, with call/failure counts) behind the
 /// tool-usage bubble view + "which tools were used" evidence. Fail-closed: 500 on
-/// a read error, 404 for an unknown project, 200 with an empty list when no tool
+/// a read error, 404 for an unknown workspace, 200 with an empty list when no tool
 /// usage was captured (honest-empty).
-pub(crate) async fn get_project_tools(
+pub(crate) async fn get_workspace_tools(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid =
-        crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_workspace_uuid(&state, &id)
+        .await?
+        .ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
-        .get_project(&uuid)
+        .get_workspace(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     let tools = state
         .pg
-        .get_project_tool_breakdown(&uuid, 24)
+        .get_workspace_tool_breakdown(&uuid, 24)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let count = tools.len();
     Ok(Json(serde_json::json!({ "tools": tools, "count": count })))
 }
 
-pub(crate) async fn get_project_metric_day_sessions(
+pub(crate) async fn get_workspace_metric_day_sessions(
     State(state): State<AppState>,
     Path((id, key)): Path<(String, String)>,
     Query(q): Query<DaySessionsQuery>,
@@ -397,18 +403,19 @@ pub(crate) async fn get_project_metric_day_sessions(
         .as_deref()
         .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
         .ok_or(StatusCode::BAD_REQUEST)?;
-    let uuid =
-        crate::api::util::resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = crate::api::util::resolve_workspace_uuid(&state, &id)
+        .await?
+        .ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
-        .get_project(&uuid)
+        .get_workspace(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let mut sessions = state
         .pg
-        .get_project_sessions_for_day(&uuid, day)
+        .get_workspace_sessions_for_day(&uuid, day)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let count = sessions.len();

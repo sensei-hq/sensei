@@ -403,7 +403,7 @@ mod tests {
         let board = FakeBoard::standard().on_call(Box::new(move |_path| {
             let pg = pg2.clone();
             Box::pin(async move {
-                pg.delete_tracker_for_project(p).await.unwrap();
+                pg.delete_tracker_for_workspace(p).await.unwrap();
             })
         }));
         assert_eq!(sync(&pg, t, &board).await, Err(SyncError::Gone));
@@ -760,15 +760,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sessions_from_every_project_repo_link_by_branch_and_prompt() {
+    async fn sessions_from_every_workspace_repo_link_by_branch_and_prompt() {
         let Ok(pg) = PgStore::connect_test().await else { return };
         let (t, p) = connected_tracker(&pg).await;
         let (r1, r2) = (repo_in(&pg, p).await, repo_in(&pg, p).await);
-        let elsewhere = repo_in(&pg, crate::tracker::connect::tests::project(&pg).await).await;
+        let elsewhere = repo_in(&pg, crate::tracker::connect::tests::workspace(&pg).await).await;
         let on_branch = session_with(&pg, Some(r1), &["fix/auth-2-login"], &[]).await;
         let in_prompts =
             session_with(&pg, Some(r2), &["main"], &["look at AUTH-3", "AUTH-3 again"]).await;
-        let other_project = session_with(&pg, Some(elsewhere), &["fix/AUTH-2"], &[]).await;
+        let other_workspace = session_with(&pg, Some(elsewhere), &["fix/AUTH-2"], &[]).await;
         let no_anchor = session_with(&pg, None, &["fix/AUTH-2"], &[]).await;
         let unknown_key = session_with(&pg, Some(r1), &[], &["UTF-8 and AUTH-99"]).await;
         let counts = sync(&pg, t, &FakeBoard::standard()).await.unwrap();
@@ -779,7 +779,7 @@ mod tests {
                 link(on_branch, "10002", "branch", "AUTH-2", 1),
                 link(in_prompts, "10003", "prompt", "AUTH-3", 2),
             ]),
-            "assistant text never links; {other_project} {no_anchor} {unknown_key} are not candidates or match nothing"
+            "assistant text never links; {other_workspace} {no_anchor} {unknown_key} are not candidates or match nothing"
         );
     }
 

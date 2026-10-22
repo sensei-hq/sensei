@@ -1,5 +1,5 @@
 /**
- * Project · Diagrams · World — functional e2e.
+ * Workspace · Diagrams · World — functional e2e.
  *
  * The state spec covers the view machine, the drill path, the "largest inside"
  * list and the absent-measure wording against an injected API seam. This covers
@@ -22,10 +22,10 @@ import { test, expect, type TauriPageLike } from '../fixtures';
 import {
   navigateTo, navigateToScreen, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
-  seedProject,
+  seedWorkspace,
 } from '../helpers';
 
-const seedProjectId = (): Promise<string> => seedProject('e2e-world', 'fixture for the World diagram spec');
+const seedWorkspaceId = (): Promise<string> => seedWorkspace('e2e-world', 'fixture for the World diagram spec');
 
 
 function control(bar: string, item: string): string {
@@ -45,7 +45,7 @@ async function settle(tauriPage: TauriPageLike): Promise<void> {
   );
 }
 
-test.describe('Project · Diagrams · World', () => {
+test.describe('Workspace · Diagrams · World', () => {
   test.beforeEach(async ({ tauriPage }) => {
     test.setTimeout(240_000);
     await seedSetupComplete(tauriPage);
@@ -54,13 +54,13 @@ test.describe('Project · Diagrams · World', () => {
   });
 
   test('mounts, settles out of loading, and never shows the error state', async ({ tauriPage }) => {
-    const id = await seedProjectId();
-    await navigateToScreen(tauriPage, `/project/${id}/diagrams/world`, '[data-testid="world-screen"]');
+    const id = await seedWorkspaceId();
+    await navigateToScreen(tauriPage, `/workspace/${id}/diagrams/world`, '[data-testid="world-screen"]');
 
     // Chrome renders in every state, and the groupings are the three that are
     // FACTS. A fourth would mean a docs ring had been added without the data
     // behind it (#246).
-    expect(await tauriPage.count(control('Group first by', 'Project'))).toBe(1);
+    expect(await tauriPage.count(control('Group first by', 'Workspace'))).toBe(1);
     expect(await tauriPage.count(control('Group first by', 'Repository'))).toBe(1);
     expect(await tauriPage.count(control('Group first by', 'Code · tests'))).toBe(1);
     expect(
@@ -84,12 +84,12 @@ test.describe('Project · Diagrams · World', () => {
     const empty = await tauriPage.count('[data-testid="world-empty"]');
     expect(drawn + empty, 'exactly one terminal state renders').toBe(1);
 
-    // WHENEVER THE PICTURE IS DRAWN it says it is wider than the project. A view
-    // of every project silently reads as a view of yours, which is the one
+    // WHENEVER THE PICTURE IS DRAWN it says it is wider than the workspace. A view
+    // of every workspace silently reads as a view of yours, which is the one
     // misreading this screen can produce.
     if (drawn > 0) {
       const viewing = await tauriPage.textContent('[data-testid="world-viewing"]');
-      expect(viewing).toContain('not only this project');
+      expect(viewing).toContain('not only this workspace');
       expect(await tauriPage.count('[data-testid="world-totals"]')).toBe(1);
       expect(await tauriPage.count('[data-testid="world-inview"]')).toBe(1);
       const label = await tauriPage.textContent('[data-testid="world-inview-label"]');
@@ -100,8 +100,8 @@ test.describe('Project · Diagrams · World', () => {
   });
 
   test('changing the grouping re-queries without erroring', async ({ tauriPage }) => {
-    const id = await seedProjectId();
-    await navigateToScreen(tauriPage, `/project/${id}/diagrams/world`, '[data-testid="world-screen"]');
+    const id = await seedWorkspaceId();
+    await navigateToScreen(tauriPage, `/workspace/${id}/diagrams/world`, '[data-testid="world-screen"]');
     await settle(tauriPage);
 
     await tauriPage.locator(control('Group first by', 'Repository')).click();

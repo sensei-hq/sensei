@@ -12,12 +12,12 @@ pub(crate) struct RunCheckersRequest {
     /// Absolute repo path, or…
     #[serde(default)]
     pub folder: Option<String>,
-    /// …a project name / UUID (resolved to its folder).
+    /// …a workspace name / UUID (resolved to its folder).
     #[serde(default)]
-    pub project: Option<String>,
+    pub workspace: Option<String>,
 }
 
-/// POST /api/checkers/run — `{folder|project}` → `{folder, runs: [CheckRun]}`.
+/// POST /api/checkers/run — `{folder|workspace}` → `{folder, runs: [CheckRun]}`.
 /// Runs each checker-backed rule's command in the repo and records a verdict.
 pub(crate) async fn run_checkers(
     State(state): State<AppState>,
@@ -26,7 +26,7 @@ pub(crate) async fn run_checkers(
     let (folder_path, folder_id) = crate::api::handlers::knowledge::resolve_folder(
         &state,
         body.folder.as_deref(),
-        body.project.as_deref(),
+        body.workspace.as_deref(),
     )
     .await?;
     let runs =

@@ -22,7 +22,7 @@ const LEVELS: [&str; 3] = ["file", "module", "package"];
 
 /// The edge kinds `sensei.structure_edges` carries. A request naming anything
 /// else is a 400, not an empty graph — an empty result that means "you asked
-/// for a kind that does not exist" is indistinguishable from "this project has
+/// for a kind that does not exist" is indistinguishable from "this workspace has
 /// no edges", which is the distinction this screen exists to make.
 const EDGE_KINDS: [&str; 5] = ["calls", "references", "imports", "implements", "extends"];
 
@@ -37,7 +37,7 @@ pub(crate) struct StructureQuery {
     kinds: Option<String>,
 }
 
-/// GET /api/projects/{id}/diagrams/structure?level=file|module|package&kinds=calls,references
+/// GET /api/workspaces/{id}/diagrams/structure?level=file|module|package&kinds=calls,references
 ///
 /// Returns `{ nodes, edges, coverage, level, kinds }`.
 ///
@@ -50,13 +50,13 @@ pub(crate) struct StructureQuery {
 /// earlier version asked that view for `outcome <> 'resolved'` — a predicate
 /// that matched every row, because its outcomes are `placed` / `missed` /
 /// `no verdict` and none of them is `resolved`. The screen therefore reported
-/// the project's TOTAL edge count as its unplaced one, which is a precise-looking
+/// the workspace's TOTAL edge count as its unplaced one, which is a precise-looking
 /// number that says nothing. It was also 107 of the endpoint's 122 seconds.
 ///
 /// Serve a diagram payload from the cache, or compute it and store it (#233).
 ///
 /// ONE PLACE, because the policy is one decision and three endpoints: probe the
-/// project's graph version, return a stored payload only if it was stored
+/// workspace's graph version, return a stored payload only if it was stored
 /// against THAT version, otherwise compute and keep the answer.
 ///
 /// `compute` is taken as a future rather than a closure and is LAZY — an `async`
@@ -75,20 +75,20 @@ pub(crate) struct StructureQuery {
 async fn cached(
     state: &AppState,
     diagram: &'static str,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     params: String,
     compute: impl std::future::Future<Output = Result<serde_json::Value, StatusCode>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::api::diagram_cache::DiagramKey;
 
-    let key = DiagramKey::new(diagram, *project_id, params);
+    let key = DiagramKey::new(diagram, *workspace_id, params);
     // A FAILED PROBE IS A 500, never a silent recompute. If the daemon cannot
     // say when the graph last changed it cannot say whether an answer is
     // current, and serving one anyway is the stale read the version exists to
     // prevent.
     let version = state
         .pg
-        .project_graph_version(project_id)
+        .workspace_graph_version(workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -100,7 +100,7 @@ async fn cached(
     Ok(Json(payload))
 }
 
-/// `?groupBy=project|repository|kind` — which ring the World diagram leads with.
+/// `?groupBy=workspace|repository|kind` — which ring the World diagram leads with.
 #[derive(serde::Deserialize)]
 pub(crate) struct WorldQuery {
     #[serde(rename = "groupBy")]
@@ -108,7 +108,7 @@ pub(crate) struct WorldQuery {
 }
 
 /// A DB error is a 500. It is never an empty payload — that would be
-/// indistinguishable from an unindexed project, which is the one thing this
+/// indistinguishable from an unindexed workspace, which is the one thing this
 /// screen must not do.
 pub(crate) async fn structure(
     State(state): State<AppState>,
@@ -120,17 +120,17 @@ pub(crate) async fn structure(
         return Err(StatusCode::BAD_REQUEST);
     }
     let kinds = parse_kinds(q.kinds)?;
-    let project_id = resolve_project_id(&state, &id).await?;
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
     let params = format!("{level}|{}", kinds.join(","));
 
-    cached(&state, "structure", &project_id, params, async {
+    cached(&state, "structure", &workspace_id, params, async {
         // CONCURRENTLY, because the three reads share nothing. Sequentially the
         // response costs their SUM; the edge query alone dominates, so waiting for
         // the other two in series adds latency for no ordering anyone needs.
         let (nodes, edges, unplaced) = tokio::try_join!(
-            state.pg.structure_nodes(&project_id, &level),
-            state.pg.structure_edges(&project_id, &level, &kinds),
-            state.pg.structure_unplaced(&project_id, &kinds),
+            state.pg.structure_nodes(&workspace_id, &level),
+            state.pg.structure_edges(&workspace_id, &level, &kinds),
+            state.pg.structure_unplaced(&workspace_id, &kinds),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         // `drawn` is the payload's OWN edge count, not a second query. The line
@@ -150,15 +150,15 @@ pub(crate) async fn structure(
     .await
 }
 
-/// GET /api/projects/{id}/diagrams/world?groupBy=project|repository|kind
+/// GET /api/workspaces/{id}/diagrams/world?groupBy=workspace|repository|kind
 ///
 /// Containment as area: every indexed declaration, nested by what holds it.
 ///
-/// CROSS-PROJECT, and the project in the path scopes nothing. The picture is
-/// "all indexed code" and PROJECT is its outermost ring, so filtering to one
+/// CROSS-WORKSPACE, and the workspace in the path scopes nothing. The picture is
+/// "all indexed code" and WORKSPACE is its outermost ring, so filtering to one
 /// would leave the top level with a single circle. The id is still required and
 /// still resolved, for two reasons that are not decoration: the screen lives in
-/// a project window and the payload names which circle the reader is standing
+/// a workspace window and the payload names which circle the reader is standing
 /// in, and a bad id must 404 here exactly as it does on every sibling endpoint.
 ///
 /// A DB error is a 500. It is never an empty picture — on this screen an empty
@@ -170,25 +170,25 @@ pub(crate) async fn world(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     use crate::analysis::world::{Cell, GroupFirst, Placement};
 
-    let label = q.group_by.unwrap_or_else(|| "project".to_string());
+    let label = q.group_by.unwrap_or_else(|| "workspace".to_string());
     // An unknown grouping is a 400 and never a default. Silently answering a
     // different question than the one asked is how a control appears to work
     // while doing nothing.
     let group = GroupFirst::from_label(&label).ok_or(StatusCode::BAD_REQUEST)?;
-    let project_id = resolve_project_id(&state, &id).await?;
-    // The project's own name, so the payload can say which circle the reader is
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
+    // The workspace's own name, so the payload can say which circle the reader is
     // standing in. A MISS is a 404 and never an unnamed picture: the id resolved
-    // a moment ago, so a project that has vanished between the two reads is an
+    // a moment ago, so a workspace that has vanished between the two reads is an
     // inconsistency rather than an anonymous view.
     let viewing = state
         .pg
-        .get_project(&project_id)
+        .get_workspace(&workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .and_then(|p| p.get("name").and_then(|n| n.as_str().map(str::to_string)))
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    cached(&state, "world", &project_id, label.clone(), async {
+    cached(&state, "world", &workspace_id, label.clone(), async {
         // CONCURRENTLY: the two reads share nothing, and the edge pass is the
         // slow one — waiting for it in series would add the cell read's time
         // for no ordering anyone needs.
@@ -199,7 +199,7 @@ pub(crate) async fn world(
         let cells: Vec<Cell> = cells
             .into_iter()
             .map(|c| Cell {
-                project: c.workspace,
+                workspace: c.workspace,
                 repository: c.repository,
                 folder: c.folder_id,
                 is_test: c.is_test,
@@ -217,7 +217,7 @@ pub(crate) async fn world(
             "groupBy": group.as_label(),
             // Which circle the reader is standing in, so the screen can say
             // "you are here" on a picture that is deliberately wider than the
-            // project they opened.
+            // workspace they opened.
             "viewing": viewing,
             "units": nested.units,
             "totals": nested.totals,
@@ -226,24 +226,24 @@ pub(crate) async fn world(
     .await
 }
 
-/// GET /api/projects/{id}/diagrams/schema
+/// GET /api/workspaces/{id}/diagrams/schema
 ///
-/// The project's database structure as the ER half of dbd's `SchemaModel` v2
+/// The workspace's database structure as the ER half of dbd's `SchemaModel` v2
 /// — `{ version, tables, refs, entities, deps }` — read from the schema store
 /// (#251) and handed to `@rokkit/graph`'s `toGraphInput` by the Schema screen
 /// (#221). See `analysis::schema_model` for what is left out and why.
 ///
-/// A project with nothing described is `200` with empty lists: no dbd design
-/// or ORM mapping was found, which is a fact about the project. A DB error is a
+/// A workspace with nothing described is `200` with empty lists: no dbd design
+/// or ORM mapping was found, which is a fact about the workspace. A DB error is a
 /// 500, never that empty payload.
 pub(crate) async fn schema(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_id(&state, &id).await?;
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
     let folders = state
         .pg
-        .schema_folders_of_project(&project_id)
+        .schema_folders_of_workspace(&workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     // The STORE's version is part of the key: the import lands after the file
@@ -255,14 +255,14 @@ pub(crate) async fn schema(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let params = written.map(|t| t.to_rfc3339()).unwrap_or_default();
 
-    cached(&state, "schema", &project_id, params, async {
+    cached(&state, "schema", &workspace_id, params, async {
         let (entities, deps) = tokio::try_join!(
             state.pg.schema_detail_in(&folders),
             state.pg.schema_deps_in(&folders),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let payload = crate::analysis::schema_model::assemble(&entities, &deps).map_err(|e| {
-            tracing::error!(project = %project_id, error = %e, "schema diagram: the store and the graph disagree");
+            tracing::error!(workspace = %workspace_id, error = %e, "schema diagram: the store and the graph disagree");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
         serde_json::to_value(payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -275,7 +275,7 @@ pub(crate) async fn schema(
 /// portrait.
 const MAX_DEPTH: u8 = 3;
 
-/// Cards kept per ring per side. Measured 2026-10-07 on project `sensei`: a
+/// Cards kept per ring per side. Measured 2026-10-07 on workspace `sensei`: a
 /// symbol's distinct callers are 1 at the median, 6 at p90 and 60 at p99, so 40
 /// draws ~98% of symbols whole. The rest — `assert_eq` has 2,304 callers — are
 /// cut to their most-called 40 and the cut is COUNTED in the payload.
@@ -287,7 +287,7 @@ pub(crate) struct NeighbourhoodQuery {
     depth: Option<u8>,
 }
 
-/// GET /api/projects/{id}/diagrams/neighbourhood?focus=<node id>&depth=1..3
+/// GET /api/workspaces/{id}/diagrams/neighbourhood?focus=<node id>&depth=1..3
 ///
 /// One symbol, what calls it and what it calls, a ring at a time. Edges are
 /// `kind: "dependency"`, which is what makes the layout word its columns
@@ -295,12 +295,12 @@ pub(crate) struct NeighbourhoodQuery {
 ///
 /// A missing or malformed focus is a 400 — there is no default symbol, and
 /// picking one would draw a neighbourhood the reader did not ask about. A focus
-/// that is not this project's is a 404.
+/// that is not this workspace's is a 404.
 ///
 /// `coverage` says what the picture CANNOT show, and both counts sit beside it:
 /// `unplacedCallees` are calls the focus makes that the graph could not place
 /// (absent from the right-hand column), and `namedUnplaced` are unplaced calls
-/// elsewhere in the project that use the focus's NAME — some may be calls to it,
+/// elsewhere in the workspace that use the focus's NAME — some may be calls to it,
 /// so the left-hand column is a floor. `cut` is the cards a capped ring found
 /// and did not draw.
 pub(crate) async fn neighbourhood(
@@ -317,22 +317,22 @@ pub(crate) async fn neighbourhood(
         .as_deref()
         .and_then(|f| uuid::Uuid::parse_str(f).ok())
         .ok_or(StatusCode::BAD_REQUEST)?;
-    let project_id = resolve_project_id(&state, &id).await?;
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
     let focus = state
         .pg
-        .neighbourhood_focus(&project_id, &focus_id)
+        .neighbourhood_focus(&workspace_id, &focus_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    cached(&state, "neighbourhood", &project_id, format!("{focus_id}|{depth}"), async {
+    cached(&state, "neighbourhood", &workspace_id, format!("{focus_id}|{depth}"), async {
         let ((left, left_cut), (right, right_cut), unplaced) = tokio::try_join!(
-            walk(&state, &project_id, focus_id, Side::In, depth),
-            walk(&state, &project_id, focus_id, Side::Out, depth),
+            walk(&state, &workspace_id, focus_id, Side::In, depth),
+            walk(&state, &workspace_id, focus_id, Side::Out, depth),
             async {
                 state
                     .pg
-                    .neighbourhood_unplaced(&project_id, &focus_id, &focus.name)
+                    .neighbourhood_unplaced(&workspace_id, &focus_id, &focus.name)
                     .await
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
             },
@@ -387,7 +387,7 @@ pub(crate) async fn neighbourhood(
 /// Walk one side `depth` rings out. Returns every call kept, and the cards cut.
 async fn walk(
     state: &AppState,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     focus: uuid::Uuid,
     side: Side,
     depth: u8,
@@ -403,7 +403,7 @@ async fn walk(
         let ids: Vec<uuid::Uuid> = frontier.iter().copied().collect();
         let hop = state
             .pg
-            .neighbourhood_hop(project_id, &ids, side)
+            .neighbourhood_hop(workspace_id, &ids, side)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let ring =
@@ -437,18 +437,18 @@ fn card(n: &crate::db::pg_store::NeighbourNode) -> serde_json::Value {
 /// The grains Layers and Cycles can be ranked at.
 ///
 /// `package` is deliberately absent. It is a level the Structure diagram offers,
-/// but on this corpus a project's package graph is single digits of nodes —
-/// measured 2026-10-05, project `sensei` is 14 packages and 9 dependencies —
+/// but on this corpus a workspace's package graph is single digits of nodes —
+/// measured 2026-10-05, workspace `sensei` is 14 packages and 9 dependencies —
 /// which has no layering to show. The mockup agrees: Layers is module-only and
 /// Cycles toggles module against file (`…v8.dc.html:2450`).
 ///
 /// `file` IS safe here despite `structure_nodes` keying file nodes on their
 /// PATH rather than their id, which merges two files that share a relative
 /// path. Measured 2026-10-05 before shipping it, because a merge would
-/// fabricate a cycle out of two unrelated files: in project `sensei` 1,745 of
+/// fabricate a cycle out of two unrelated files: in workspace `sensei` 1,745 of
 /// 3,518 file rows collide on path and ALL 1,745 are same-package — two
 /// checkouts of one repository, where merging is the right answer. Across six
-/// projects and 36,229 paths, cross-package collisions are ZERO.
+/// workspaces and 36,229 paths, cross-package collisions are ZERO.
 const LAYERING_LEVELS: [&str; 2] = ["module", "file"];
 
 #[derive(Deserialize)]
@@ -457,7 +457,7 @@ pub(crate) struct LayeringQuery {
     kinds: Option<String>,
 }
 
-/// GET /api/projects/{id}/diagrams/layering?level=module|file&kinds=calls
+/// GET /api/workspaces/{id}/diagrams/layering?level=module|file&kinds=calls
 ///
 /// ONE endpoint for TWO screens. Layers ranks the modules and says how each
 /// dependency sits against that ranking; Cycles collapses the mutually
@@ -492,18 +492,18 @@ pub(crate) async fn layering(
         return Err(StatusCode::BAD_REQUEST);
     }
     let kinds = parse_kinds(q.kinds)?;
-    let project_id = resolve_project_id(&state, &id).await?;
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
     let params = format!("{level}|{}", kinds.join(","));
 
-    cached(&state, "layering", &project_id, params, async {
+    cached(&state, "layering", &workspace_id, params, async {
         // The node universe comes from `structure_nodes`, NOT from the dependency
         // rows. A module with no cross-module dependency has no edge to be inferred
-        // from and would silently vanish — measured on project `sensei`, 9 modules
+        // from and would silently vanish — measured on workspace `sensei`, 9 modules
         // appear only in a dependency on themselves and are exactly that case.
         let (nodes, deps, unplaced) = tokio::try_join!(
-            state.pg.structure_nodes(&project_id, &level),
-            state.pg.dependency_graph(&project_id, &level, &kinds),
-            state.pg.structure_unplaced(&project_id, &kinds),
+            state.pg.structure_nodes(&workspace_id, &level),
+            state.pg.dependency_graph(&workspace_id, &level, &kinds),
+            state.pg.structure_unplaced(&workspace_id, &kinds),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -566,7 +566,7 @@ pub(crate) async fn layering(
                 "unplaced": unplaced,
                 "units": out_nodes.len() as i64,
                 // Dependencies omitted because an endpoint owns no file and so is
-                // not a unit. NOT decoration: measured 2026-10-05 on project
+                // not a unit. NOT decoration: measured 2026-10-05 on workspace
                 // `sensei`, 32 of 234 module dependencies are in this state,
                 // because an fqn's third segment is the module for most adapters
                 // and a SYMBOL for some. A diagram that drops 13.7% of its edges
@@ -578,7 +578,7 @@ pub(crate) async fn layering(
     .await
 }
 
-/// GET /api/projects/{id}/diagrams/zones
+/// GET /api/workspaces/{id}/diagrams/zones
 ///
 /// Martin's abstractness against instability, one point per module. The main
 /// sequence is `A + I = 1`; `distance` is how far off it a module sits, and
@@ -586,7 +586,7 @@ pub(crate) async fn layering(
 /// (abstract and depended upon by nothing), `risk`, or `main`.
 ///
 /// No parameters. The grain is the module, which is the grain the mockup uses
-/// and the only one with enough points to read a sequence off — a project here
+/// and the only one with enough points to read a sequence off — a workspace here
 /// is single digits of packages.
 ///
 /// `abstractness`, `instability`, `distance` and `zone` can be NULL, and the
@@ -597,15 +597,15 @@ pub(crate) async fn zones(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_id(&state, &id).await?;
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
 
-    // NO PARAMETERS, so the key is the empty string — a project's zones are one
+    // NO PARAMETERS, so the key is the empty string — a workspace's zones are one
     // picture. Stated rather than omitted: an endpoint that later grows a knob
     // and forgets this line would serve one answer for every setting.
-    cached(&state, "zones", &project_id, String::new(), async {
+    cached(&state, "zones", &workspace_id, String::new(), async {
         let points = state
             .pg
-            .component_zones(&project_id)
+            .component_zones(&workspace_id)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -632,7 +632,7 @@ pub(crate) async fn zones(
 ///
 /// Shared by both diagram handlers so an unknown kind is a 400 on each — an
 /// empty graph that means "you asked for a kind that does not exist" is
-/// indistinguishable from "this project has no edges", which is the distinction
+/// indistinguishable from "this workspace has no edges", which is the distinction
 /// these screens exist to make.
 fn parse_kinds(raw: Option<String>) -> Result<Vec<String>, StatusCode> {
     let kinds: Vec<String> = raw
@@ -647,21 +647,21 @@ fn parse_kinds(raw: Option<String>) -> Result<Vec<String>, StatusCode> {
     Ok(kinds)
 }
 
-/// A project NAME or a UUID, matching the read-side pattern the other
-/// project-scoped handlers use (`get_folder_commands`, the MCP tools).
+/// A workspace NAME or a UUID, matching the read-side pattern the other
+/// workspace-scoped handlers use (`get_folder_commands`, the MCP tools).
 ///
 /// A name that resolves to nothing, and a UUID with no row, are both 404 — the
-/// caller asked about a project that is not here, which is not a server error.
-async fn resolve_project_id(state: &AppState, id: &str) -> Result<uuid::Uuid, StatusCode> {
+/// caller asked about a workspace that is not here, which is not a server error.
+async fn resolve_workspace_id(state: &AppState, id: &str) -> Result<uuid::Uuid, StatusCode> {
     if let Some(row) =
-        state.pg.get_project_by_name(id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        state.pg.get_workspace_by_name(id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         return crate::api::util::json_uuid(&row["id"]).ok_or(StatusCode::INTERNAL_SERVER_ERROR);
     }
     let uid = uuid::Uuid::parse_str(id).map_err(|_| StatusCode::NOT_FOUND)?;
     state
         .pg
-        .get_project(&uid)
+        .get_workspace(&uid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;

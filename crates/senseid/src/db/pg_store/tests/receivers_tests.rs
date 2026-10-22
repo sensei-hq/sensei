@@ -269,7 +269,7 @@ async fn an_ambiguous_member_lookup_refuses_rather_than_picking_one() {
 ///     `languages/typescript.rs` `struct ImportTarget`, member `is_external`.
 ///   - `dojo_client::session·Session` vs `session-report·model·Session`, member
 ///     `wall_ms` — different CRATES, and `scope_folder_ids` puts every folder of
-///     the project in one scope, so the join spans them.
+///     the workspace in one scope, so the join spans them.
 #[tokio::test]
 async fn two_same_named_types_with_disjoint_members_resolve_to_nothing() {
     let s = pg_store().await;

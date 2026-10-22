@@ -10,7 +10,7 @@ const none = async () => ok<SessionRow[]>([]);
 
 const wire = (o: Partial<SessionRow> = {}): SessionRow => ({
   id: 's1',
-  project: 'sensei',
+  workspace: 'sensei',
   task: 'Fix auth',
   summary: null,
   outcome: 'completed',
@@ -115,7 +115,7 @@ describe('SessionsDigestState — a failed read', () => {
 });
 
 describe('sessionsFetcher', () => {
-  it('reads the digest for a range — and, given one, a project — as its rows', async () => {
+  it('reads the digest for a range — and, given one, a workspace — as its rows', async () => {
     const tryGetSessionsDigest = vi.fn(async () => ok({ sessions: [wire({ id: 'a' })] }));
     const read = await sessionsFetcher({ tryGetSessionsDigest }, 'proj-42')('30d');
     expect(tryGetSessionsDigest).toHaveBeenCalledWith('30d', 'proj-42');

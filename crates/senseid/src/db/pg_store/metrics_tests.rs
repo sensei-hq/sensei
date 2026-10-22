@@ -1,6 +1,6 @@
 //! DB-touching tests for the metric WRITE path (#161).
 //!
-//! `upsert_project_metric_repo` took ten positional arguments, four of which are
+//! `upsert_workspace_metric_repo` took ten positional arguments, four of which are
 //! interchangeable at the type level — `scope`, `identity`, `commit_sha` and
 //! `source` are all string-ish, and two of them are `Option`. A call site reads
 //! `SCOPE_USER, None, None, day, GRAIN_DAILY, …`: swap the two `None`s and
@@ -74,7 +74,7 @@ async fn drop_metric(pg: &PgStore, id: &uuid::Uuid) {
 /// a transposition between them is invisible to the compiler.
 ///
 /// Mutation that must break this test: transpose the `.bind(identity)` and
-/// `.bind(commit_sha)` lines in `upsert_project_metric_repo`.
+/// `.bind(commit_sha)` lines in `upsert_workspace_metric_repo`.
 #[tokio::test]
 async fn every_dimension_of_a_metric_row_reaches_its_own_column() {
     let Ok(pg) = PgStore::connect_test().await else {
@@ -82,14 +82,14 @@ async fn every_dimension_of_a_metric_row_reaches_its_own_column() {
     };
     let uniq = uuid::Uuid::new_v4();
     let metric_id = own_metric(&pg, &uniq).await;
-    let (pid, fid) = crate::tasks::test_support::seed_metrics_project_folder(&pg, &uniq).await;
+    let (pid, fid) = crate::tasks::test_support::seed_metrics_workspace_folder(&pg, &uniq).await;
     let repository_id = crate::tasks::test_support::repository_for_folder(&pg, &fid).await;
 
     let props = serde_json::json!({ "numerator": 7, "denominator": 11, "tag": uniq.to_string() });
     let computed_on = chrono::NaiveDate::from_ymd_opt(2024, 2, 29).expect("a real date");
 
     let id = pg
-        .upsert_project_metric_repo(&MetricRow {
+        .upsert_workspace_metric_repo(&MetricRow {
             metric_id: &metric_id,
             repository_id: &repository_id,
             scope: "repo",
@@ -157,7 +157,7 @@ async fn re_writing_one_key_updates_the_row_rather_than_adding_another() {
     };
     let uniq = uuid::Uuid::new_v4();
     let metric_id = own_metric(&pg, &uniq).await;
-    let (pid, fid) = crate::tasks::test_support::seed_metrics_project_folder(&pg, &uniq).await;
+    let (pid, fid) = crate::tasks::test_support::seed_metrics_workspace_folder(&pg, &uniq).await;
     let repository_id = crate::tasks::test_support::repository_for_folder(&pg, &fid).await;
     let day = chrono::NaiveDate::from_ymd_opt(2024, 3, 1).expect("a real date");
 
@@ -165,7 +165,7 @@ async fn re_writing_one_key_updates_the_row_rather_than_adding_another() {
     let write = |identity: &'static str, value: f64, source: &'static str| {
         let pg = &pg;
         async move {
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &metric_id,
                 repository_id: &repository_id,
                 scope: "repo",

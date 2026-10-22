@@ -96,11 +96,11 @@ pub fn daemon_request_for(
 
         // ── Folder-scoped project discovery ─────────────────────────────────
         // `find_projects` is the folder-scoped view of `list_projects`: shape
-        // `GET /api/projects?under=<path>`, defaulting the scope to the MCP
+        // `GET /api/workspaces?under=<path>`, defaulting the scope to the MCP
         // call's cwd when the caller gives no `under`.
         "find_projects" => {
             let under = args["under"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
-            Some(DaemonRequest::get("/api/projects").with_query("under", under))
+            Some(DaemonRequest::get("/api/workspaces").with_query("under", under))
         }
 
         // ── Who is doing the work: the folder's effective git author ─────────
@@ -144,7 +144,7 @@ pub fn daemon_request_for(
                 "active_issue":   args["issue"].as_str().and_then(|s| s.parse::<i64>().ok()),
                 "active_plan":    args["plan"].as_str(),
                 "last_checkpoint": args["checkpoint"].as_str(),
-                "project_path":   cwd,
+                "workspace_path": cwd,
             });
             Some(DaemonRequest::put_json(format!("/api/state/{project}"), body))
         }
@@ -203,7 +203,7 @@ pub fn daemon_request_for(
 
         // ── Commands surface (#83) ──────────────────────────────────────────
         "get_commands" => {
-            let mut req = DaemonRequest::get(format!("/api/projects/{repo_id}/commands"));
+            let mut req = DaemonRequest::get(format!("/api/workspaces/{repo_id}/commands"));
             let category = args["category"].as_str().unwrap_or("");
             if !category.is_empty() {
                 req = req.with_query("category", category);
@@ -291,7 +291,7 @@ pub fn daemon_request_for(
             // (container-mis-resolved) folder and 404 even with project:'sensei'.
             let mut body = json!({});
             if let Some(p) = args["project"].as_str().filter(|s| !s.is_empty()) {
-                body["project"] = json!(p);
+                body["workspace"] = json!(p);
             } else {
                 let folder = args["folder"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
                 body["folder"] = json!(folder);
@@ -309,7 +309,7 @@ pub fn daemon_request_for(
             let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
             let mut body = json!({ "goal": goal });
             if !project.is_empty() {
-                body["project"] = json!(project);
+                body["workspace"] = json!(project);
             }
             if let Some(plan) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
                 body["plan_ref"] = json!(plan);
@@ -328,7 +328,7 @@ pub fn daemon_request_for(
             let mut body = json!({ "until": args["until"].as_str().unwrap_or("") });
             let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
             if !project.is_empty() {
-                body["project"] = json!(project);
+                body["workspace"] = json!(project);
             }
             for k in ["reason", "run_id"] {
                 if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
@@ -349,7 +349,7 @@ pub fn daemon_request_for(
             let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
             let mut body = json!({ "goal": goal, "plan": plan });
             if !project.is_empty() {
-                body["project"] = json!(project);
+                body["workspace"] = json!(project);
             }
             if let Some(p) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
                 body["plan_ref"] = json!(p);
@@ -402,7 +402,7 @@ pub fn daemon_request_for(
             // daemon can suggest the skills/agents provided by libraries it depends on.
             let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
             if !project.is_empty() {
-                body["project"] = serde_json::json!(project);
+                body["workspace"] = serde_json::json!(project);
             }
             Some(DaemonRequest::post_json("/api/playbook/recommend", body))
         }
@@ -456,7 +456,7 @@ fn build_memory_body(args: &Value, cwd: &str, repo_id: &str) -> Value {
         .collect();
 
     let mut body = json!({
-        "scope":   scope,
+        "scope":   daemon_memory_scope(scope),
         "type":    args["type"].as_str().unwrap_or(""),
         "title":   args["title"].as_str().unwrap_or(""),
         "content": args["content"].as_str().unwrap_or(""),
@@ -474,14 +474,21 @@ fn build_memory_body(args: &Value, cwd: &str, repo_id: &str) -> Value {
             body[body_key] = json!(v);
         }
     }
-    // project_id: explicit param wins, else resolved project name (scope=project).
+    // workspace_id: explicit `project_id` param wins, else the resolved project
+    // name (scope=project).
     if let Some(pid) = args["project_id"].as_str().filter(|s| !s.is_empty()) {
-        body["project_id"] = json!(pid);
+        body["workspace_id"] = json!(pid);
     } else if scope == "project" && !repo_id.is_empty() {
-        body["project_id"] = json!(repo_id);
+        body["workspace_id"] = json!(repo_id);
     }
     attach_governance(&mut body, args, cwd);
     body
+}
+
+/// A memory scope as the daemon says it. The tools still offer `project`
+/// (#307 R3c renames them); the daemon's API says `workspace`.
+fn daemon_memory_scope(scope: &str) -> &str {
+    if scope == "project" { "workspace" } else { scope }
 }
 
 /// Pure: build the `promote_memory` body — just the governance overlay.
@@ -502,7 +509,7 @@ fn attach_governance(body: &mut Value, args: &Value, cwd: &str) {
         // is given. Sending folder=cwd unconditionally shadowed a passed project
         // and mis-resolved to the container → a 400 "folder is not an indexed repo".
         if let Some(p) = args["project"].as_str().filter(|s| !s.is_empty()) {
-            body["project"] = json!(p);
+            body["workspace"] = json!(p);
         } else if !cwd.is_empty() {
             body["folder"] = json!(cwd);
         }
@@ -995,9 +1002,9 @@ pub fn context_project_param<'a>(
     repo_id: &'a str,
 ) -> Option<(&'static str, &'a str)> {
     if !explicit_pid.is_empty() {
-        Some(("project_id", explicit_pid))
+        Some(("workspace_id", explicit_pid))
     } else if !repo_id.is_empty() {
-        Some(("project", repo_id))
+        Some(("workspace", repo_id))
     } else {
         None
     }
@@ -1009,7 +1016,7 @@ pub fn context_project_param<'a>(
 /// resolved. The original bug always sent the MCP process's own `cwd`, which is
 /// not the repo path.
 pub fn rules_query_param<'a>(repo_id: &'a str, cwd: &'a str) -> (&'static str, &'a str) {
-    if !repo_id.is_empty() { ("project", repo_id) } else { ("folder", cwd) }
+    if !repo_id.is_empty() { ("workspace", repo_id) } else { ("folder", cwd) }
 }
 
 /// Pure: map an MCP tool name to the daemon's internal tool name. Most pass
@@ -1089,7 +1096,7 @@ pub fn resolve_default_project(
     }
 }
 
-/// Pure: find the project row matching `hint` among `/api/projects` rows.
+/// Pure: find the project row matching `hint` among `/api/workspaces` rows.
 /// Matching order:
 ///   1. Exact `id` (UUID) match
 ///   2. Exact `name` match (case-insensitive)
@@ -1118,7 +1125,7 @@ fn find_project<'a>(projects: &'a [Value], hint: &str) -> Option<&'a Value> {
 }
 
 /// Pure function: resolve a project hint to a project **name** from a slice of
-/// `/api/projects` rows (see [`find_project`] for the match order). Returns
+/// `/api/workspaces` rows (see [`find_project`] for the match order). Returns
 /// `None` when nothing matches.
 pub fn resolve_project_in(projects: &[Value], hint: &str) -> Option<String> {
     find_project(projects, hint).and_then(|p| p["name"].as_str().map(str::to_string))
@@ -1296,13 +1303,13 @@ mod tests {
 
     #[test]
     fn context_param_sends_project_name_not_project_id() {
-        // Resolved-from-cwd/hint: `repo_id` is a NAME → send it as `project`
-        // (the daemon resolves names). Sending it as `project_id` was the bug.
-        assert_eq!(context_project_param("", "sensei"), Some(("project", "sensei")));
-        // An explicit uuid passes straight through as `project_id`.
+        // Resolved-from-cwd/hint: `repo_id` is a NAME → send it as `workspace`
+        // (the daemon resolves names). Sending it as the id was the bug.
+        assert_eq!(context_project_param("", "sensei"), Some(("workspace", "sensei")));
+        // An explicit uuid passes straight through as `workspace_id`.
         assert_eq!(
             context_project_param("11111111-1111-1111-1111-111111111111", "sensei"),
-            Some(("project_id", "11111111-1111-1111-1111-111111111111")),
+            Some(("workspace_id", "11111111-1111-1111-1111-111111111111")),
         );
         // Nothing resolved → caller returns a "no project" error.
         assert_eq!(context_project_param("", ""), None);
@@ -1311,7 +1318,7 @@ mod tests {
     #[test]
     fn rules_param_prefers_project_name_over_cwd() {
         // Fixed: send the resolved project NAME so the daemon finds the repo.
-        assert_eq!(rules_query_param("sensei", "/mcp/proc/cwd"), ("project", "sensei"));
+        assert_eq!(rules_query_param("sensei", "/mcp/proc/cwd"), ("workspace", "sensei"));
         // Fall back to folder=cwd ONLY when no project resolved.
         assert_eq!(rules_query_param("", "/mcp/proc/cwd"), ("folder", "/mcp/proc/cwd"));
     }
@@ -1568,13 +1575,17 @@ mod tests {
 
     #[test]
     fn context_request_sends_project_name_as_project_query() {
-        // The Chunk-A bug shape: proxy must send ?project=<name>, NOT ?project_id=<name>.
+        // The Chunk-A bug shape: proxy must send ?workspace=<name>, NOT ?workspace_id=<name>.
         let req =
             daemon_request_for("get_layered_context", &json!({}), "/cwd", Some("sensei")).unwrap();
         assert_eq!(req.method, HttpMethod::Get);
         assert_eq!(req.path, "/api/knowledge/context");
-        assert_eq!(q(&req, "project"), Some("sensei"), "name must ride on ?project=");
-        assert_eq!(q(&req, "project_id"), None, "name must NOT be sent as project_id (the bug)");
+        assert_eq!(q(&req, "workspace"), Some("sensei"), "name must ride on ?workspace=");
+        assert_eq!(
+            q(&req, "workspace_id"),
+            None,
+            "name must NOT be sent as workspace_id (the bug)"
+        );
     }
 
     #[test]
@@ -1585,11 +1596,11 @@ mod tests {
             "/cwd", Some("sensei"),
         ).unwrap();
         assert_eq!(
-            q(&req, "project_id"),
+            q(&req, "workspace_id"),
             Some("11111111-1111-1111-1111-111111111111"),
             "explicit uuid overrides the resolved name"
         );
-        assert_eq!(q(&req, "project"), None);
+        assert_eq!(q(&req, "workspace"), None);
         assert_eq!(q(&req, "limit"), Some("50"));
         assert_eq!(q(&req, "tags"), Some("rust,api"));
     }
@@ -1624,12 +1635,12 @@ mod tests {
     fn rules_request_sends_project_name_not_folder() {
         let req = daemon_request_for("get_rules", &json!({}), "/mcp/cwd", Some("sensei")).unwrap();
         assert_eq!(req.path, "/api/knowledge/rules");
-        assert_eq!(q(&req, "project"), Some("sensei"), "resolved name rides on ?project=");
+        assert_eq!(q(&req, "workspace"), Some("sensei"), "resolved name rides on ?workspace=");
         assert_eq!(q(&req, "folder"), None);
         // Fallback: no project resolved → ?folder=<cwd> (the historical contract).
         let fb = daemon_request_for("get_rules", &json!({}), "/mcp/cwd", None).unwrap();
         assert_eq!(q(&fb, "folder"), Some("/mcp/cwd"));
-        assert_eq!(q(&fb, "project"), None);
+        assert_eq!(q(&fb, "workspace"), None);
     }
 
     #[test]
@@ -1677,21 +1688,21 @@ mod tests {
         .unwrap();
         assert_eq!(req.path, "/api/checkers/run");
         let body = req.body.clone().unwrap();
-        assert_eq!(body["project"], json!("sensei"));
+        assert_eq!(body["workspace"], json!("sensei"));
         assert!(body.get("folder").is_none(), "no folder shadow when project is explicit");
         // No project → fall back to the cwd folder (historical contract).
         let fb =
             daemon_request_for("run_checkers", &json!({}), "/mcp/cwd", Some("sensei")).unwrap();
         let fbody = fb.body.clone().unwrap();
         assert_eq!(fbody["folder"], json!("/mcp/cwd"));
-        assert!(fbody.get("project").is_none());
+        assert!(fbody.get("workspace").is_none());
     }
 
     #[test]
     fn commands_request_targets_project_path_with_optional_category() {
         let req = daemon_request_for("get_commands", &json!({}), "/cwd", Some("sensei")).unwrap();
         assert_eq!(req.method, HttpMethod::Get);
-        assert_eq!(req.path, "/api/projects/sensei/commands");
+        assert_eq!(req.path, "/api/workspaces/sensei/commands");
         assert!(req.query.is_empty(), "no category → no query");
         let filtered = daemon_request_for(
             "get_commands",
@@ -1717,7 +1728,7 @@ mod tests {
         assert_eq!(req.path, "/api/runs");
         let body = req.body.clone().unwrap();
         assert_eq!(body["goal"], "ship the relay engine");
-        assert_eq!(body["project"], "sensei", "unset project defaults to the resolved repo");
+        assert_eq!(body["workspace"], "sensei", "unset project defaults to the resolved repo");
         assert!(body.get("plan_ref").is_none(), "no plan_ref key when omitted");
 
         // An explicit project + plan_ref override / are forwarded.
@@ -1729,7 +1740,7 @@ mod tests {
         )
         .unwrap();
         let fb = full.body.unwrap();
-        assert_eq!(fb["project"], "other", "explicit project wins over the resolved repo");
+        assert_eq!(fb["workspace"], "other", "explicit project wins over the resolved repo");
         assert_eq!(fb["plan_ref"], "docs/plan/x.md");
 
         // No project resolvable and none given → no project key (daemon makes a
@@ -1737,7 +1748,7 @@ mod tests {
         let noproj =
             daemon_request_for("start_run", &json!({ "goal": "g" }), "/cwd", None).unwrap();
         assert!(
-            noproj.body.unwrap().get("project").is_none(),
+            noproj.body.unwrap().get("workspace").is_none(),
             "no project anywhere → omit the key"
         );
     }
@@ -1774,7 +1785,7 @@ mod tests {
         assert_eq!(req.path, "/api/runs/plan");
         let body = req.body.unwrap();
         assert_eq!(body["goal"], "ship it");
-        assert_eq!(body["project"], "sensei", "unset project defaults to the resolved repo");
+        assert_eq!(body["workspace"], "sensei", "unset project defaults to the resolved repo");
         assert_eq!(body["plan_ref"], "docs/plan/x/plan.md");
         // The JSON-string plan is parsed into an object the daemon can validate.
         assert_eq!(body["plan"]["phases"][0]["tasks"][0]["id"], "t1");
@@ -1868,7 +1879,7 @@ mod tests {
         let body = p.body.unwrap();
         assert_eq!(body["active_phase"], "build");
         assert_eq!(body["active_issue"], 42, "issue string parses to an integer");
-        assert_eq!(body["project_path"], "/proj/cwd", "cwd rides along as project_path");
+        assert_eq!(body["workspace_path"], "/proj/cwd", "cwd rides along as workspace_path");
 
         // An explicit `project` pins the state to that project (not the cwd-resolved
         // one) — the escape hatch against cross-session clobber when the cwd
@@ -1943,8 +1954,15 @@ mod tests {
         assert_eq!(prop.method, HttpMethod::Post);
         assert_eq!(prop.path, "/api/knowledge/proposals");
         let pb = prop.body.unwrap();
-        assert_eq!(pb["scope"], "project");
-        assert_eq!(pb["project_id"], "sensei", "scope=project + resolved name → project_id=name");
+        // The tool still says `project` (R3c renames it); the daemon says workspace.
+        assert_eq!(
+            pb["scope"], "workspace",
+            "the tool's project scope reaches the daemon as workspace"
+        );
+        assert_eq!(
+            pb["workspace_id"], "sensei",
+            "scope=project + resolved name → workspace_id=name"
+        );
         assert_eq!(pb["triage_signal"], "revert");
         assert_eq!(pb["tags"], json!(["rust", "api"]), "csv tags split + trimmed");
 
@@ -1956,7 +1974,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(save.path, "/api/knowledge/memories");
-        assert!(save.body.unwrap().get("project_id").is_none(), "global scope → no project_id");
+        assert!(save.body.unwrap().get("workspace_id").is_none(), "global scope → no workspace_id");
 
         // explicit project_id wins over resolved name.
         let explicit = daemon_request_for(
@@ -1967,7 +1985,7 @@ mod tests {
             Some("sensei"),
         )
         .unwrap();
-        assert_eq!(explicit.body.unwrap()["project_id"], "22222222-2222-2222-2222-222222222222");
+        assert_eq!(explicit.body.unwrap()["workspace_id"], "22222222-2222-2222-2222-222222222222");
     }
 
     #[test]
@@ -2069,7 +2087,7 @@ mod tests {
         .unwrap();
         assert_eq!(req.path, "/api/knowledge/memories/m1/promote");
         let body = req.body.clone().unwrap();
-        assert_eq!(body["project"], json!("sensei"));
+        assert_eq!(body["workspace"], json!("sensei"));
         assert_eq!(body["gov_scope"], json!("team"));
         assert!(body.get("folder").is_none(), "no cwd folder shadow when project is explicit");
         // No project → fall back to the cwd folder (historical contract).
@@ -2082,7 +2100,7 @@ mod tests {
         .unwrap();
         let fbody = fb.body.clone().unwrap();
         assert_eq!(fbody["folder"], json!("/mcp/cwd"));
-        assert!(fbody.get("project").is_none());
+        assert!(fbody.get("workspace").is_none());
     }
 
     #[test]
@@ -2118,7 +2136,7 @@ mod tests {
         // assistant just wants "projects under here").
         let req = daemon_request_for("find_projects", &json!({}), "/my/cwd", None).unwrap();
         assert_eq!(req.method, HttpMethod::Get);
-        assert_eq!(req.path, "/api/projects");
+        assert_eq!(req.path, "/api/workspaces");
         assert_eq!(q(&req, "under"), Some("/my/cwd"), "no `under` arg → default to call cwd");
     }
 
@@ -2127,7 +2145,7 @@ mod tests {
         let req =
             daemon_request_for("find_projects", &json!({ "under": "/some/dir" }), "/my/cwd", None)
                 .unwrap();
-        assert_eq!(req.path, "/api/projects");
+        assert_eq!(req.path, "/api/workspaces");
         assert_eq!(q(&req, "under"), Some("/some/dir"), "explicit `under` overrides cwd");
     }
 
@@ -2144,7 +2162,7 @@ mod tests {
         assert_eq!(req.path, "/api/runs/pause");
         let body = req.body.as_ref().expect("pause_run has a JSON body");
         assert_eq!(body["until"], "2026-07-25T11:30:00Z");
-        assert_eq!(body["project"], "sensei", "project defaults to the pinned/cwd repo");
+        assert_eq!(body["workspace"], "sensei", "project defaults to the pinned/cwd repo");
         assert_eq!(body["reason"], "usage limit");
     }
 

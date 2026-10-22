@@ -3,9 +3,9 @@
 //! ## What is expensive, and what is not
 //!
 //! Every diagram in the set — Structure, Layers, Cycles, Zones — is one read of
-//! `sensei.structure_edges` for one project, plus an aggregation that is free by
+//! `sensei.structure_edges` for one workspace, plus an aggregation that is free by
 //! comparison. Measured 2026-10-06 against the installed release daemon:
-//! project `sensei` at module grain takes 37 s, and the layering itself is
+//! workspace `sensei` at module grain takes 37 s, and the layering itself is
 //! single-digit milliseconds of that. `sensei.edges` is 3.3M rows and 4.2 GB,
 //! and the read touches ~300,000 buffers. It is I/O, not arithmetic.
 //!
@@ -30,7 +30,7 @@
 //! a writer. A version that does not match is a miss, full stop.
 //!
 //! The daemon supplies the version — the latest `files.indexed_at` across the
-//! project's folders, which moves whenever anything that feeds these payloads is
+//! workspace's folders, which moves whenever anything that feeds these payloads is
 //! re-indexed and costs 93 ms against a 37 s computation.
 //!
 //! ## `get`/`put` and not `get_or_compute`
@@ -49,9 +49,9 @@ use std::sync::Mutex;
 ///
 /// Sized for the way the screens are used rather than for the key space, which
 /// is unbounded: three grains times thirty-one edge-kind combinations times
-/// every project. What a person actually does is open two or three projects and
+/// every workspace. What a person actually does is open two or three workspaces and
 /// flip a handful of questions on each, and 64 covers that with room over. A
-/// payload for a large project is hundreds of kilobytes of JSON, so this is tens
+/// payload for a large workspace is hundreds of kilobytes of JSON, so this is tens
 /// of megabytes at worst and reproducible in full from the database.
 pub const DIAGRAM_CACHE_ENTRIES: usize = 64;
 
@@ -66,21 +66,21 @@ pub struct DiagramKey {
     /// Which endpoint. A `&'static str` because the set is closed and named at
     /// the call site; a `String` would invite building one from user input.
     pub diagram: &'static str,
-    pub project: uuid::Uuid,
+    pub workspace: uuid::Uuid,
     pub params: String,
 }
 
 impl DiagramKey {
-    pub fn new(diagram: &'static str, project: uuid::Uuid, params: impl Into<String>) -> Self {
-        Self { diagram, project, params: params.into() }
+    pub fn new(diagram: &'static str, workspace: uuid::Uuid, params: impl Into<String>) -> Self {
+        Self { diagram, workspace, params: params.into() }
     }
 }
 
-/// When the project's graph last changed.
+/// When the workspace's graph last changed.
 ///
-/// `None` is a real value and not an absence: a project whose folders hold no
+/// `None` is a real value and not an absence: a workspace whose folders hold no
 /// indexed file has no version, and two such states are the same state. It
-/// compares equal to itself, so an empty project caches like any other.
+/// compares equal to itself, so an empty workspace caches like any other.
 pub type GraphVersion = Option<chrono::DateTime<chrono::Utc>>;
 
 struct Entry {
@@ -97,8 +97,8 @@ struct Entry {
 pub struct DiagramCache {
     entries: Mutex<HashMap<DiagramKey, Entry>>,
     /// How many payloads to hold. BOUNDED because the key space is not: three
-    /// grains times 31 edge-kind combinations times every project is thousands
-    /// of entries, and a layering payload for a large project is hundreds of
+    /// grains times 31 edge-kind combinations times every workspace is thousands
+    /// of entries, and a layering payload for a large workspace is hundreds of
     /// kilobytes of JSON.
     capacity: usize,
     tick: Mutex<u64>,
@@ -151,7 +151,7 @@ impl DiagramCache {
     /// TEST-ONLY, and that is the honest scope: nothing in the daemon reads the
     /// size. The bound is the reason it exists — an unbounded cache of
     /// hundred-kilobyte payloads over a key space of grains times kind
-    /// combinations times projects is a daemon that grows until it is
+    /// combinations times workspaces is a daemon that grows until it is
     /// restarted — and the only way to assert a bound is to be able to see it.
     ///
     /// If an operator ever needs this on the health surface, make it `pub` then
@@ -167,7 +167,7 @@ impl DiagramCache {
 mod tests {
     use super::*;
 
-    fn a_project() -> uuid::Uuid {
+    fn a_workspace() -> uuid::Uuid {
         uuid::Uuid::nil()
     }
 
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn a_changed_version_is_a_miss_and_never_a_stale_hit() {
         let cache = DiagramCache::new(8);
-        let key = DiagramKey::new("layering", a_project(), "module|calls");
+        let key = DiagramKey::new("layering", a_workspace(), "module|calls");
 
         cache.put(key.clone(), at(100), payload("old"));
         assert_eq!(cache.get(&key, at(100)), Some(payload("old")), "same version, same answer");
@@ -210,10 +210,10 @@ mod tests {
     #[test]
     fn a_different_question_is_a_different_entry() {
         let cache = DiagramCache::new(8);
-        let module = DiagramKey::new("layering", a_project(), "module|calls");
-        let file = DiagramKey::new("layering", a_project(), "file|calls");
-        let kinds = DiagramKey::new("layering", a_project(), "module|calls,imports");
-        let other = DiagramKey::new("structure", a_project(), "module|calls");
+        let module = DiagramKey::new("layering", a_workspace(), "module|calls");
+        let file = DiagramKey::new("layering", a_workspace(), "file|calls");
+        let kinds = DiagramKey::new("layering", a_workspace(), "module|calls,imports");
+        let other = DiagramKey::new("structure", a_workspace(), "module|calls");
 
         cache.put(module.clone(), at(1), payload("module"));
         cache.put(file.clone(), at(1), payload("file"));
@@ -231,15 +231,15 @@ mod tests {
         assert_eq!(cache.len(), 4);
     }
 
-    /// A project with nothing indexed has a version, and it is `None`.
+    /// A workspace with nothing indexed has a version, and it is `None`.
     ///
-    /// Not a special case to skip: an empty project is a legitimate, cacheable
+    /// Not a special case to skip: an empty workspace is a legitimate, cacheable
     /// answer, and treating `None` as "never cache" would make the cheapest
     /// payload the only uncached one.
     #[test]
-    fn an_unindexed_project_caches_like_any_other() {
+    fn an_unindexed_workspace_caches_like_any_other() {
         let cache = DiagramCache::new(8);
-        let key = DiagramKey::new("layering", a_project(), "module|calls");
+        let key = DiagramKey::new("layering", a_workspace(), "module|calls");
         cache.put(key.clone(), None, payload("empty"));
         assert_eq!(cache.get(&key, None), Some(payload("empty")));
         assert_eq!(cache.get(&key, at(1)), None, "and it still misses once something is indexed");
@@ -248,7 +248,7 @@ mod tests {
     /// THE BOUND HOLDS, and the thing dropped is the least recently used.
     ///
     /// The key space is three grains times 31 kind combinations times every
-    /// project, and one payload is hundreds of kilobytes. Unbounded, this is a
+    /// workspace, and one payload is hundreds of kilobytes. Unbounded, this is a
     /// daemon that grows until it is restarted.
     ///
     /// Mutation that must break this test: remove the eviction loop, or evict
@@ -256,9 +256,9 @@ mod tests {
     #[test]
     fn the_cache_is_bounded_and_drops_the_least_recently_used() {
         let cache = DiagramCache::new(2);
-        let a = DiagramKey::new("layering", a_project(), "a");
-        let b = DiagramKey::new("layering", a_project(), "b");
-        let c = DiagramKey::new("layering", a_project(), "c");
+        let a = DiagramKey::new("layering", a_workspace(), "a");
+        let b = DiagramKey::new("layering", a_workspace(), "b");
+        let c = DiagramKey::new("layering", a_workspace(), "c");
 
         cache.put(a.clone(), at(1), payload("a"));
         cache.put(b.clone(), at(1), payload("b"));
@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn a_zero_capacity_still_holds_one_answer() {
         let cache = DiagramCache::new(0);
-        let key = DiagramKey::new("layering", a_project(), "module|calls");
+        let key = DiagramKey::new("layering", a_workspace(), "module|calls");
         cache.put(key.clone(), at(1), payload("one"));
         assert_eq!(cache.get(&key, at(1)), Some(payload("one")));
     }

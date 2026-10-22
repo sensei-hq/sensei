@@ -36,7 +36,7 @@ impl PgStore {
         // EXHAUSTIVE (#161): a field added to `MemoryRow` stops this
         // compiling until someone binds it.
         let MemoryRow {
-            workspace_id: project_id,
+            workspace_id,
             scope,
             scope_filter,
             mem_type,
@@ -50,7 +50,7 @@ impl PgStore {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.memories(workspace_id, scope, scope_filter, type, title, content, impact, session_id, spine_slot, feature)
              VALUES($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7, $8, $9::sensei.spine_slot, $10) RETURNING id"
-        ).bind(project_id).bind(scope_to_db(scope)).bind(scope_filter).bind(mem_type)
+        ).bind(workspace_id).bind(scope).bind(scope_filter).bind(mem_type)
             .bind(title).bind(content).bind(impact).bind(session_id)
             .bind(spine_slot).bind(feature)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
@@ -91,7 +91,7 @@ impl PgStore {
                 modified,
             )| {
                 serde_json::json!({
-                    "id": id, "project_id": pid, "scope": scope_to_api(scope), "scope_filter": filter,
+                    "id": id, "workspace_id": pid, "scope": scope, "scope_filter": filter,
                     "type": mtype, "title": title, "content": content, "impact": impact,
                     "strength": strength, "status": status, "modified_at": modified.to_rfc3339(),
                 })
@@ -101,15 +101,15 @@ impl PgStore {
 
     pub async fn list_active_memories(
         &self,
-        project_id: Option<&uuid::Uuid>,
+        workspace_id: Option<&uuid::Uuid>,
         scope: Option<&str>,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, Option<String>, String, String, String, Option<String>, f64)> = match (project_id, scope) {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, String, String, Option<String>, f64)> = match (workspace_id, scope) {
             (Some(pid), Some(s)) => sqlx_core::query_as::query_as(
                 "SELECT id, scope::text, scope_filter, type::text, title, content, impact, strength::float8
                  FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND (workspace_id = $1 OR workspace_id IS NULL) AND scope = $2::sensei.memory_scope
                  ORDER BY strength DESC"
-            ).bind(pid).bind(scope_to_db(s)).fetch_all(&self.pool).await,
+            ).bind(pid).bind(s).fetch_all(&self.pool).await,
             (Some(pid), None) => sqlx_core::query_as::query_as(
                 "SELECT id, scope::text, scope_filter, type::text, title, content, impact, strength::float8
                  FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND (workspace_id = $1 OR workspace_id IS NULL)
@@ -123,14 +123,14 @@ impl PgStore {
         }.map_err(|e| e.to_string())?;
 
         Ok(rows.into_iter().map(|(id, scope, filter, mtype, title, content, impact, strength)| {
-            serde_json::json!({ "id": id, "scope": scope_to_api(scope), "scope_filter": filter, "type": mtype, "title": title, "content": content, "impact": impact, "strength": strength })
+            serde_json::json!({ "id": id, "scope": scope, "scope_filter": filter, "type": mtype, "title": title, "content": content, "impact": impact, "strength": strength })
         }).collect())
     }
 
-    /// In-force adopted memories across ALL projects — powers the Observatory ·
+    /// In-force adopted memories across ALL workspaces — powers the Observatory ·
     /// Today adopted lane. Same in-force filter as [`Self::list_active_memories`]
     /// (`status='active'`, `strength>=1.0`) but not scoped to a single
-    /// project/global namespace.
+    /// workspace/global namespace.
     pub async fn list_active_memories_global(
         &self,
         limit: i64,
@@ -156,7 +156,7 @@ impl PgStore {
         Ok(rows
             .into_iter()
             .map(|(id, title, scope, impact, strength, modified)| {
-                serde_json::json!({ "id": id, "title": title, "scope": scope_to_api(scope),
+                serde_json::json!({ "id": id, "title": title, "scope": scope,
                                 "impact": impact, "strength": strength,
                                 "modified_at": modified.to_rfc3339() })
             })
@@ -285,9 +285,9 @@ impl PgStore {
         Ok(rows)
     }
 
-    pub async fn get_project_memories(
+    pub async fn get_workspace_memories(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<serde_json::Value, String> {
         // `strength` is `real` (Postgres 4-byte float) — sqlx decodes it as
         // `f32`, not `f64`. A mismatched decode-target quietly failed the
@@ -300,7 +300,7 @@ impl PgStore {
         // detail drawer (What / Because / Consequence + evidence). Cheap
         // to project — all existing columns on `sensei.memories`.
         // `generalised` / `generalised_content` power the ready-to-share lane:
-        // the flag says sensei has rewritten this memory project-agnostic, and
+        // the flag says sensei has rewritten this memory workspace-agnostic, and
         // `generalised_content` carries that portable rewrite (null until then).
         type MemRow = (
             uuid::Uuid,
@@ -326,7 +326,7 @@ impl PgStore {
                  FROM sensei.memories WHERE workspace_id = $1
                  ORDER BY last_relevant_at DESC NULLS LAST LIMIT 100",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -358,7 +358,7 @@ impl PgStore {
                         "strength": strength,
                         "reinforcedCount": reinforced,
                         "violatedCount": violated,
-                        "scope": scope_to_api(scope), "scopeFilter": scope_filter,
+                        "scope": scope, "scopeFilter": scope_filter,
                         "lastRelevantAt": last.map(|t| t.to_rfc3339()),
                         "generalised": generalised,
                         "generalisedContent": generalised_content,
@@ -383,7 +383,7 @@ impl PgStore {
              RETURNING id",
         )
         .bind(m.workspace_id)
-        .bind(scope_to_db(&m.scope))
+        .bind(&m.scope)
         .bind(&m.scope_filter)
         .bind(&m.mtype)
         .bind(&m.title)
@@ -585,7 +585,7 @@ impl PgStore {
         Ok(row.map(|(id,)| id))
     }
 
-    /// Persist the project-agnostic rewrite of a memory and flag it
+    /// Persist the workspace-agnostic rewrite of a memory and flag it
     /// ready-to-share. Sets `generalised_content`, its synthetic
     /// `generalised_example`, `generalised = true`, and bumps `modified_at`.
     /// Returns the id when a row was updated, `None` when no memory matched.
@@ -648,7 +648,7 @@ impl PgStore {
 
     pub async fn list_memories(
         &self,
-        project_id: Option<uuid::Uuid>,
+        workspace_id: Option<uuid::Uuid>,
         status: Option<&str>,
         scope: Option<&str>,
         limit: i64,
@@ -681,9 +681,9 @@ impl PgStore {
                   ORDER BY strength DESC, last_relevant_at DESC NULLS LAST, modified_at DESC
                   LIMIT $4",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(status)
-        .bind(scope.map(scope_to_db))
+        .bind(scope)
         .bind(limit)
         .fetch_all(&self.pool)
         .await
@@ -694,8 +694,8 @@ impl PgStore {
             .map(|r| {
                 serde_json::json!({
                     "id":               r.0,
-                    "project_id":       r.1,
-                    "scope":            scope_to_api(r.2),
+                    "workspace_id":       r.1,
+                    "scope":            r.2,
                     "scope_filter":     r.3,
                     "type":             r.4,
                     "title":            r.5,
@@ -808,8 +808,8 @@ impl PgStore {
             .map_err(|e| e.to_string())?;
         let memory = serde_json::json!({
             "id":               r.0,
-            "project_id":       r.1,
-            "scope":            scope_to_api(r.2),
+            "workspace_id":       r.1,
+            "scope":            r.2,
             "scope_filter":     r.3,
             "type":             r.4,
             "title":            r.5,

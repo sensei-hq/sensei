@@ -33,20 +33,19 @@ async fn memory_create_and_get() {
         .unwrap();
 }
 
-/// #307 R3a: the database stores a workspace-scoped memory as `workspace`,
-/// while the API that wrote it — and every read handed back to it — still
-/// says `project` until R3b moves the API.
+/// #307 R3b: a workspace-scoped memory says `workspace` end to end — the API
+/// that writes it, the database that stores it, and every read handed back.
 #[tokio::test]
-async fn a_project_scope_is_stored_as_workspace_and_read_back_as_project() {
+async fn a_workspace_scope_is_stored_and_read_back_as_workspace() {
     let s = pg_store().await;
     let pid = s
-        .create_project(&format!("_test:mem_scope-{}", uuid::Uuid::new_v4()), None, None)
+        .create_workspace(&format!("_test:mem_scope-{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
     let id = s
         .create_memory(&MemoryRow {
             workspace_id: Some(&pid),
-            scope: "project",
+            scope: "workspace",
             scope_filter: None,
             mem_type: "decision",
             title: "_test:mem_scope",
@@ -65,10 +64,10 @@ async fn a_project_scope_is_stored_as_workspace_and_read_back_as_project() {
             .await
             .unwrap();
     assert_eq!(stored, "workspace", "the database says workspace");
-    assert_eq!(s.get_memory(&id).await.unwrap().unwrap()["scope"], "project");
-    let listed = s.list_memories(Some(pid), None, Some("project"), 10).await.unwrap();
-    assert_eq!(listed.len(), 1, "a `project` filter finds the workspace-scoped row");
-    assert_eq!(listed[0]["scope"], "project");
+    assert_eq!(s.get_memory(&id).await.unwrap().unwrap()["scope"], "workspace");
+    let listed = s.list_memories(Some(pid), None, Some("workspace"), 10).await.unwrap();
+    assert_eq!(listed.len(), 1, "a `workspace` filter finds the workspace-scoped row");
+    assert_eq!(listed[0]["scope"], "workspace");
     sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
@@ -80,13 +79,13 @@ async fn a_project_scope_is_stored_as_workspace_and_read_back_as_project() {
 async fn create_memory_persists_spine_slot_and_feature() {
     let s = pg_store().await;
     let pid = s
-        .create_project(&format!("_test:mem_slot-{}", uuid::Uuid::new_v4()), None, None)
+        .create_workspace(&format!("_test:mem_slot-{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
     let id = s
         .create_memory(&MemoryRow {
             workspace_id: Some(&pid),
-            scope: "project",
+            scope: "workspace",
             scope_filter: None,
             mem_type: "decision",
             title: "t",
@@ -361,7 +360,7 @@ async fn memory_links_parent_child() {
 #[tokio::test]
 async fn recommendation_lifecycle() {
     let s = pg_store().await;
-    let pid = s.create_project("_test:rec_proj", None, None).await.unwrap();
+    let pid = s.create_workspace("_test:rec_proj", None, None).await.unwrap();
     let rid = s
         .create_recommendation(&pid, "_test:rec", "reduces corrections", "promote_pattern", "high")
         .await
@@ -377,7 +376,7 @@ async fn recommendation_lifecycle() {
         .execute(s.pool())
         .await
         .unwrap();
-    s.delete_project(&pid).await.unwrap();
+    s.delete_workspace(&pid).await.unwrap();
 }
 
 // Gap 1 fix — the reject terminal is `dismissed` in the enum (not
@@ -387,7 +386,7 @@ async fn recommendation_lifecycle() {
 #[tokio::test]
 async fn recommendation_reject_writes_dismissed_and_guards_at_pending() {
     let s = pg_store().await;
-    let pid = s.create_project("_test:rec_reject_proj", None, None).await.unwrap();
+    let pid = s.create_workspace("_test:rec_reject_proj", None, None).await.unwrap();
     let rid =
         s.create_recommendation(&pid, "_test:rej", "why", "revise_rule", "low").await.unwrap();
 
@@ -409,15 +408,17 @@ async fn recommendation_reject_writes_dismissed_and_guards_at_pending() {
         .execute(s.pool())
         .await
         .unwrap();
-    s.delete_project(&pid).await.unwrap();
+    s.delete_workspace(&pid).await.unwrap();
 }
 
 // ── P-A: accept → materialize a governance RULE (spec 2026-08-20) ──
 #[tokio::test]
 async fn accept_as_rule_materializes_a_memory_and_records_provenance() {
     let s = pg_store().await;
-    let pid =
-        s.create_project(&format!("_test:mat-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+    let pid = s
+        .create_workspace(&format!("_test:mat-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
     // A revise_rule rec — the canonical rule-class case ("why are you using regex").
     let rid = s
         .create_recommendation(
@@ -484,14 +485,14 @@ async fn accept_as_rule_materializes_a_memory_and_records_provenance() {
         .execute(s.pool())
         .await
         .ok();
-    s.delete_project(&pid).await.unwrap();
+    s.delete_workspace(&pid).await.unwrap();
 }
 
 #[tokio::test]
 async fn accept_as_rule_rejects_non_rule_action_and_title_body_override() {
     let s = pg_store().await;
     let pid = s
-        .create_project(&format!("_test:mat2-{}", uuid::Uuid::new_v4()), None, None)
+        .create_workspace(&format!("_test:mat2-{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
 
@@ -542,7 +543,7 @@ async fn accept_as_rule_rejects_non_rule_action_and_title_body_override() {
         .execute(s.pool())
         .await
         .ok();
-    s.delete_project(&pid).await.unwrap();
+    s.delete_workspace(&pid).await.unwrap();
 }
 
 #[tokio::test]
@@ -552,7 +553,7 @@ async fn begin_file_materialization_flips_and_returns_prompt_seed() {
     // records the file provenance. Second flip is guarded (no double write).
     let s = pg_store().await;
     let pid = s
-        .create_project(&format!("_test:pbmat-{}", uuid::Uuid::new_v4()), None, None)
+        .create_workspace(&format!("_test:pbmat-{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
     let rid = s.create_recommendation_full(&RecommendationRow {
@@ -595,7 +596,7 @@ async fn begin_file_materialization_flips_and_returns_prompt_seed() {
         .execute(s.pool())
         .await
         .ok();
-    s.delete_project(&pid).await.unwrap();
+    s.delete_workspace(&pid).await.unwrap();
 }
 
 // ── Accept-driven pattern promotion ──────────────────────────────
@@ -603,7 +604,7 @@ async fn begin_file_materialization_flips_and_returns_prompt_seed() {
 // lifecycle to `rule` (the read path renders it `adopted`). The action
 // is store-owned so it stays single-call-site + unit-testable.
 
-/// Seed a (project, folder, pattern, promote_pattern rec) fixture. The rec's
+/// Seed a (workspace, folder, pattern, promote_pattern rec) fixture. The rec's
 /// `based_on.patterns[0]` cites the pattern (unless `cite_pattern` is false,
 /// exercising the defensive no-op path). Returns (proj, folder, pattern, rec).
 async fn seed_promote_fixture(
@@ -612,7 +613,7 @@ async fn seed_promote_fixture(
     action_type: &str,
     cite_pattern: bool,
 ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
-    let (proj_id, fid) = create_test_project_and_folder(s, suffix).await;
+    let (proj_id, fid) = create_test_workspace_and_folder(s, suffix).await;
     let pat_id = s
         .upsert_pattern(
             &proj_id,
@@ -668,7 +669,7 @@ async fn cleanup_promote_fixture(
         .execute(s.pool())
         .await
         .unwrap();
-    s.delete_project(proj_id).await.unwrap();
+    s.delete_workspace(proj_id).await.unwrap();
 }
 
 /// Pure extractor: only a well-formed `patterns[0]` uuid comes back; a
@@ -761,7 +762,7 @@ async fn accept_promote_pattern_guard_fires_promotion_once() {
     cleanup_promote_fixture(&s, &proj_id, &pat_id, &rid).await;
 }
 
-/// (5) Read-path: after accept, get_project_patterns surfaces the pattern
+/// (5) Read-path: after accept, get_workspace_patterns surfaces the pattern
 /// with kind='adopted' (pattern_kind maps lifecycle='rule' → adopted).
 #[tokio::test]
 async fn accept_promote_pattern_reads_back_as_adopted() {
@@ -772,7 +773,7 @@ async fn accept_promote_pattern_reads_back_as_adopted() {
 
     s.accept_recommendation(&rid).await.unwrap();
 
-    let view = s.get_project_patterns(&proj_id).await.unwrap();
+    let view = s.get_workspace_patterns(&proj_id).await.unwrap();
     let followed = view["followed"].as_array().expect("followed array");
     let p = followed
         .iter()
@@ -789,7 +790,7 @@ async fn accept_promote_pattern_reads_back_as_adopted() {
 // spawned it (via based_on.patterns[0] → memories.source_id) is challenged
 // (weakened) through the existing memory_outcome pipeline.
 
-/// Seed a (project, folder, pattern, learned memory sourced by the pattern)
+/// Seed a (workspace, folder, pattern, learned memory sourced by the pattern)
 /// fixture. The memory starts at 1.0 + `strength_bump` so a single violation
 /// (−0.7) challenges rather than archives it. Returns (proj, folder, pat, mem).
 async fn seed_pattern_and_sourced_memory(
@@ -797,7 +798,7 @@ async fn seed_pattern_and_sourced_memory(
     suffix: &str,
     strength_bump: f64,
 ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
-    let (proj_id, fid) = create_test_project_and_folder(s, suffix).await;
+    let (proj_id, fid) = create_test_workspace_and_folder(s, suffix).await;
     let pat_id = s
         .upsert_pattern(
             &proj_id,
@@ -812,7 +813,7 @@ async fn seed_pattern_and_sourced_memory(
     // Convention memory sourced by the pattern — mirrors the rule-candidates generator.
     let mem = InsertMemory {
         workspace_id: Some(proj_id),
-        scope: "project".to_string(),
+        scope: "workspace".to_string(),
         scope_filter: None,
         mtype: "convention".to_string(),
         title: format!("_test:regressed-memory:{suffix}"),
@@ -884,14 +885,14 @@ async fn seed_regressed_rec_with_memory(
 }
 
 async fn cleanup_regressed_fixture(s: &PgStore, proj_id: &uuid::Uuid) {
-    // Sessions FK to the folder (persisted), not the project, so drop them
-    // explicitly; delete_project cascades recs, memories(+outcomes), patterns.
+    // Sessions FK to the folder (persisted), not the workspace, so drop them
+    // explicitly; delete_workspace cascades recs, memories(+outcomes), patterns.
     sqlx_core::query::query("DELETE FROM activity.sessions WHERE workspace_id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await
         .ok();
-    s.delete_project(proj_id).await.ok();
+    s.delete_workspace(proj_id).await.ok();
 }
 
 async fn violated_count(s: &PgStore, mem_id: &uuid::Uuid) -> i64 {
@@ -1030,7 +1031,7 @@ async fn reinforce_source_memory_for_rec_bumps_promotes_and_is_idempotent() {
 async fn challenge_source_memory_for_rec_no_source_memory_is_noop() {
     let s = pg_store().await;
     let suffix = format!("challenge_nomem_{}", uuid::Uuid::new_v4());
-    let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     // Pattern with NO sourced memory.
     let pat_id = s
         .upsert_pattern(
@@ -1063,7 +1064,7 @@ async fn challenge_source_memory_for_rec_no_source_memory_is_noop() {
         .execute(s.pool())
         .await
         .ok();
-    s.delete_project(&proj_id).await.ok();
+    s.delete_workspace(&proj_id).await.ok();
 }
 
 // ── P-A.2: canonical sensei.repositories schema invariants ───────────
@@ -1469,17 +1470,17 @@ async fn metric_watermarks_pk_and_cascade_on_repository_delete() {
     assert_eq!(cnt, 0, "watermarks cascade on repository delete");
 }
 
-// ── P-A.3b Stage 2 foundation: project→repositories resolution ────────
-/// A project spans the distinct repositories on its checkout folders, listed
-/// shallowest-first (the "primary" = root checkout's repo, where project-level
+// ── P-A.3b Stage 2 foundation: workspace→repositories resolution ────────
+/// A workspace spans the distinct repositories on its checkout folders, listed
+/// shallowest-first (the "primary" = root checkout's repo, where workspace-level
 /// metrics attach); the multi-repo compute iterates this, not one root path.
 #[tokio::test]
-async fn repositories_for_project_lists_repos_primary_first() {
+async fn repositories_for_workspace_lists_repos_primary_first() {
     let s = PgStore::connect_test().await.unwrap();
     let tag = uuid::Uuid::new_v4();
     let root_id =
         s.add_watch_root(&format!("/tmp/rfp-{tag}"), "rfp", &serde_json::json!([])).await.unwrap();
-    let pid = s.create_project(&format!("_test:rfp:{tag}"), None, None).await.unwrap();
+    let pid = s.create_workspace(&format!("_test:rfp:{tag}"), None, None).await.unwrap();
 
     let (r_root,): (uuid::Uuid,) = query_as(
         "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'root') RETURNING id",
@@ -1488,7 +1489,7 @@ async fn repositories_for_project_lists_repos_primary_first() {
     .fetch_one(s.pool())
     .await
     .unwrap();
-    crate::tasks::test_support::link_repository_to_project(&s, &r_root, &pid, "root").await;
+    crate::tasks::test_support::link_repository_to_workspace(&s, &r_root, &pid, "root").await;
     let (r_nested,): (uuid::Uuid,) = query_as(
         "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'nested') RETURNING id",
     )
@@ -1496,8 +1497,8 @@ async fn repositories_for_project_lists_repos_primary_first() {
     .fetch_one(s.pool())
     .await
     .unwrap();
-    crate::tasks::test_support::link_repository_to_project(&s, &r_nested, &pid, "nested").await;
-    // Root checkout (shallow path) + a nested checkout (deeper path), both in the project.
+    crate::tasks::test_support::link_repository_to_workspace(&s, &r_nested, &pid, "nested").await;
+    // Root checkout (shallow path) + a nested checkout (deeper path), both in the workspace.
     let f_root =
         s.upsert_repo_kind(&root_id, "git", "root", &format!("/tmp/rfp-{tag}/root")).await.unwrap();
     let f_nested = s
@@ -1506,7 +1507,7 @@ async fn repositories_for_project_lists_repos_primary_first() {
         .unwrap();
     for (f, r) in [(f_root, r_root), (f_nested, r_nested)] {
         // Only the repository link. The MEMBERSHIP was already written, against
-        // the repository, by the two `link_repository_to_project` calls above —
+        // the repository, by the two `link_repository_to_workspace` calls above —
         // that is the only place it exists now.
         sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $2 WHERE id = $1")
             .bind(f)
@@ -1516,10 +1517,10 @@ async fn repositories_for_project_lists_repos_primary_first() {
             .unwrap();
     }
 
-    let repos = s.repositories_for_project(&pid).await.unwrap();
+    let repos = s.repositories_for_workspace(&pid).await.unwrap();
     assert_eq!(repos, vec![r_root, r_nested], "both repos, shallowest (primary) first");
     assert_eq!(
-        s.primary_repository_for_project(&pid).await.unwrap(),
+        s.primary_repository_for_workspace(&pid).await.unwrap(),
         Some(r_root),
         "primary repository = the shallowest checkout's repository"
     );
@@ -1546,10 +1547,10 @@ async fn repositories_for_project_lists_repos_primary_first() {
 /// "rework hotspots" anti-pattern; a rework row the user promoted, and every
 /// other pattern, still reads as itself. The per-file rows stay in the table.
 #[tokio::test]
-async fn project_patterns_fold_unreviewed_rework_into_hotspots() {
+async fn workspace_patterns_fold_unreviewed_rework_into_hotspots() {
     let s = pg_store().await;
     let suffix = format!("rework_fold_{}", uuid::Uuid::new_v4());
-    let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let none = serde_json::json!([]);
     for name in ["rework: crates/a.rs", "rework: docs/b.md"] {
         s.upsert_pattern(&proj_id, Some(&fid), name, true, Some(0.6), &none).await.unwrap();
@@ -1563,7 +1564,7 @@ async fn project_patterns_fold_unreviewed_rework_into_hotspots() {
         .await
         .unwrap();
 
-    let view = s.get_project_patterns(&proj_id).await.unwrap();
+    let view = s.get_workspace_patterns(&proj_id).await.unwrap();
     let mut anti: Vec<(String, i64)> = view["antiPatterns"]
         .as_array()
         .unwrap()

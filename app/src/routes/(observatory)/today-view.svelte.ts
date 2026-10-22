@@ -1,6 +1,6 @@
 // Observatory · Today — view derivations and copy.
 // The daemon owns the maturity gate and every user-facing string (koan,
-// insights, adopted). This module only projects the wire numbers into the
+// insights, adopted). This module only workspaces the wire numbers into the
 // header chip / strip and maps discriminators (insight tone, hero
 // provenance) to tokens — no screen-side decisions about what to teach.
 import type { ObservatoryFtr, ObservatoryInsight, ObservatoryToday, ObservatoryTodayHero } from '$lib/types.js';
@@ -25,7 +25,7 @@ export interface FtrChip {
 }
 
 /**
- * Project the raw FTR wire numbers into the header chip. `delta` reflects
+ * Workspace the raw FTR wire numbers into the header chip. `delta` reflects
  * `ftr14d - ftr14dPrev` (spec), so the arrow reads up / down / flat. An absent
  * 14d rate yields `value: null` (render "—"); an absent prior window yields
  * `delta: null` (no arrow) — never a fabricated 0.

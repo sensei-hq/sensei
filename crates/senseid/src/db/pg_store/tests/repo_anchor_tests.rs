@@ -1,12 +1,12 @@
 use super::*;
 
 // ── resolve_repo_anchor / sensei.repo_anchor_for (spec 2026-08-18) ────────
-/// Create an anchor-test folder at `abs_path` with an explicit kind + optional project.
+/// Create an anchor-test folder at `abs_path` with an explicit kind + optional workspace.
 async fn mk_anchor_folder(
     s: &PgStore,
     abs_path: &str,
     kind: &str,
-    project_id: Option<uuid::Uuid>,
+    workspace_id: Option<uuid::Uuid>,
 ) -> uuid::Uuid {
     use sqlx_core::query_as::query_as;
     s.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
@@ -23,12 +23,12 @@ async fn mk_anchor_folder(
     .await
     .unwrap();
     // Membership is the REPOSITORY's (#211), so a fixture that wants this folder
-    // in a project has to give it one and link that — the folder has no column
+    // in a workspace has to give it one and link that — the folder has no column
     // of its own to stamp.
-    if let Some(pid) = project_id {
+    if let Some(pid) = workspace_id {
         let rid = s.upsert_repository(&format!("test/{}", row.0), None).await.unwrap();
         s.link_folder_to_repository(&row.0, &rid).await.unwrap();
-        s.link_project_repository(&pid, &rid).await.unwrap();
+        s.link_workspace_repository(&pid, &rid).await.unwrap();
     }
     row.0
 }
@@ -76,21 +76,21 @@ async fn repo_anchor_prefers_deepest_subtree() {
 }
 
 #[tokio::test]
-async fn repo_anchor_standalone_project_root_anchors_but_bare_does_not() {
-    // D1/E8: a standalone dir anchors only when it is a tracked project root (project_id set).
+async fn repo_anchor_standalone_workspace_root_anchors_but_bare_does_not() {
+    // D1/E8: a standalone dir anchors only when it is a tracked workspace root (workspace_id set).
     let s = pg_store().await;
     let b = "/_test/anchor_std";
-    let pid = s.create_project("_test:anchor_std", None, None).await.unwrap();
+    let pid = s.create_workspace("_test:anchor_std", None, None).await.unwrap();
     let proj = mk_anchor_folder(&s, &format!("{b}/proj"), "standalone", Some(pid)).await;
-    mk_anchor_folder(&s, &format!("{b}/bare"), "standalone", None).await; // not a project root
+    mk_anchor_folder(&s, &format!("{b}/bare"), "standalone", None).await; // not a workspace root
     assert_eq!(
         s.resolve_repo_anchor(&format!("{b}/proj/file")).await.unwrap().unwrap().repo_folder_id,
         proj,
-        "a standalone project root anchors"
+        "a standalone workspace root anchors"
     );
     assert!(
         s.resolve_repo_anchor(&format!("{b}/bare/file")).await.unwrap().is_none(),
-        "a project-less standalone dir is NOT an anchor"
+        "a workspace-less standalone dir is NOT an anchor"
     );
 }
 
@@ -335,7 +335,7 @@ async fn a_declared_package_resolves_to_its_parent_library() {
     // Two identities for one library never met. Detection reads package.json and
     // makes a row per PACKAGE (measured: 11 `@rokkit/*`, 7 `@devuser/dbd-*`),
     // while the manifest calls itself `rokkit` and the skills hang off THAT row.
-    // So a project depending on `@rokkit/ui` could not reach rokkit's four curated
+    // So a workspace depending on `@rokkit/ui` could not reach rokkit's four curated
     // skills — nothing connected the name it knows to the name they live under.
     use crate::libraries::manifest::ProvidedSkill;
     let s = pg_store().await;
@@ -467,11 +467,11 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
 }
 
 #[tokio::test]
-async fn list_project_library_capabilities_suggests_from_a_projects_deps() {
+async fn list_workspace_library_capabilities_suggests_from_a_workspaces_deps() {
     use crate::libraries::manifest::ProvidedSkill;
     let s = pg_store().await;
     let pid =
-        s.create_project(&format!("_libcap_{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+        s.create_workspace(&format!("_libcap_{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
     let lib = format!("_libcapdep_{}", uuid::Uuid::new_v4());
     let lid = s.upsert_library(&lib, "npm", Some("1"), None, None, None).await.unwrap();
     s.replace_library_capabilities(
@@ -488,18 +488,18 @@ async fn list_project_library_capabilities_suggests_from_a_projects_deps() {
     )
     .await
     .unwrap();
-    // The project depends on the library.
+    // The workspace depends on the library.
     s.execute_raw(&format!(
             "INSERT INTO sensei.library_enablement(library_id, workspace_id, enabled) VALUES('{lid}','{pid}',true) ON CONFLICT DO NOTHING"
         )).await.unwrap();
 
-    let caps = s.list_project_library_capabilities(&pid).await.unwrap();
+    let caps = s.list_workspace_library_capabilities(&pid).await.unwrap();
     let skills = caps["suggested_skills"].as_array().unwrap();
     assert!(
         skills
             .iter()
             .any(|x| x["name"] == "semantic-styles-rokkit" && x["library"] == lib.as_str()),
-        "the project's dependency contributes its skill: {caps:?}"
+        "the workspace's dependency contributes its skill: {caps:?}"
     );
 }
 
@@ -525,7 +525,7 @@ async fn folder_id_by_abs_path_is_exact_and_never_follows_aliases() {
 async fn folder_path_alias_resolves_old_paths_after_a_rename() {
     // A renamed repo: the folder now lives at the new abs_path, and its OLD
     // path is registered as an alias. Transcripts/hooks recorded under the old
-    // path (and its subdirs) must still resolve to the folder + project.
+    // path (and its subdirs) must still resolve to the folder + workspace.
     let s = pg_store().await;
     let fid = create_test_folder(&s, "alias-new").await; // abs_path /_test/alias-new
     let old = "/_test/alias-old";
@@ -569,37 +569,37 @@ async fn folder_path_alias_resolves_old_paths_after_a_rename() {
 /// Breaking mutation: drop the `kind = 'module'` predicate — ordinary `folder`
 /// rows flood in and every directory becomes a first-party "package", so an
 /// import naming any directory resolves local.
-/// A subfolder upsert CANNOT plant a project that contradicts its repository —
+/// A subfolder upsert CANNOT plant a workspace that contradicts its repository —
 /// and now there is no parameter with which to try.
 ///
-/// The upserts used to take `project_id` from the caller, which is how the
-/// intent (`pipeline.rs`: "a module belongs to its repo's project") came to be
+/// The upserts used to take `workspace_id` from the caller, which is how the
+/// intent (`pipeline.rs`: "a module belongs to its repo's workspace") came to be
 /// violated: the client-q `documentation` checkout ended with its root in
-/// project `client-q` and its 362 subfolders in `documentation`. The first fix
+/// workspace `client-q` and its 362 subfolders in `documentation`. The first fix
 /// DERIVED the stored column from the repo anchor and ignored the caller.
 ///
 /// #211 removed the column and the parameter outright, so the guarantee is now
 /// structural rather than enforced: a subfolder inherits its REPOSITORY, and
-/// its project is whatever that repository's `repositories_in_workspaces` row says.
+/// its workspace is whatever that repository's `repositories_in_workspaces` row says.
 /// There is nothing left to contradict.
 ///
 /// Breaking mutation: drop `repository_id` from the inherited CTE — the
-/// subfolder inherits nothing, resolves to no project, and the assertion on
+/// subfolder inherits nothing, resolves to no workspace, and the assertion on
 /// `sole_workspace_of` goes NULL.
 #[tokio::test]
-async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() {
+async fn a_subfolder_cannot_be_written_into_a_different_workspace_than_its_repo() {
     let s = pg_store().await;
     let root_id =
         s.add_watch_root(&tkey("inh", "root"), "inh-root", &serde_json::json!([])).await.unwrap();
-    let owner = s.create_project(&tkey("inh", "owner"), None, None).await.unwrap();
+    let owner = s.create_workspace(&tkey("inh", "owner"), None, None).await.unwrap();
 
     let repo_path = tkey("inh", "/repo");
     let repo = s.upsert_repo_kind(&root_id, "git", "inh-repo", &repo_path).await.unwrap();
     let repository = s.upsert_repository("inh-repo", None).await.unwrap();
     s.link_folder_to_repository(&repo, &repository).await.unwrap();
-    s.set_folder_project(&repo, &owner, "root", None).await.unwrap();
+    s.set_folder_workspace(&repo, &owner, "root", None).await.unwrap();
 
-    // The caller cannot name a project at all. The repository says `owner`.
+    // The caller cannot name a workspace at all. The repository says `owner`.
     let sub_path = format!("{repo_path}/src");
     let sub = s
         .upsert_subfolder_kind(&root_id, "folder", "src", &sub_path, &sub_path, Some(&repo))
@@ -617,15 +617,15 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
     assert_eq!(
         stored.0,
         Some(owner),
-        "a subfolder did not resolve to its repository's project — this is how \
-         client-q put 362 folders in the wrong project"
+        "a subfolder did not resolve to its repository's workspace — this is how \
+         client-q put 362 folders in the wrong workspace"
     );
 
     // AND the repository itself, which is what removes `repo_anchor_for` from
     // every read. `repository_id` used to be set ONLY on the anchor, so a
     // folder's repository could be found only by walking ancestors through a
     // set-returning function — and a predicate cannot be pushed into a function
-    // scan, which made `WHERE project = $1` a seq scan of all 13,715 folders.
+    // scan, which made `WHERE workspace = $1` a seq scan of all 13,715 folders.
     // Resolving the anchor ONCE at write time makes every read an index lookup.
     //
     // Breaking mutation: drop `repository_id` from the inherited CTE — the
@@ -633,42 +633,42 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
     assert_eq!(
         stored.1,
         Some(repository),
-        "a subfolder did not inherit its anchor's repository, so its project can \
+        "a subfolder did not inherit its anchor's repository, so its workspace can \
          only be found by walking ancestors at read time"
     );
 
     s.remove_watch_root(&root_id).await.ok();
 }
 
-/// A folder NEVER carries its own project — it resolves through its repository.
+/// A folder NEVER carries its own workspace — it resolves through its repository.
 ///
-/// `folders.project_id` was settable independently on all 13,697 rows, so a
-/// repository's folders could disagree about their project, and one did: the
-/// client-q `documentation` checkout's root sat in project `client-q` while its 362
+/// `folders.workspace_id` was settable independently on all 13,697 rows, so a
+/// repository's folders could disagree about their workspace, and one did: the
+/// client-q `documentation` checkout's root sat in workspace `client-q` while its 362
 /// subfolders sat in `documentation`. Membership now lives once in
 /// `repositories_in_workspaces`, keyed on the repository, and `folder_workspaces`
 /// resolves it.
 ///
 /// SEEDS THE DRIFT RATHER THAN LOOKING FOR IT. The first version of this test
 /// asserted over the live shape and was VACUOUS: the test database is clean, so
-/// there was no drift to find and pointing the view back at `folders.project_id`
+/// there was no drift to find and pointing the view back at `folders.workspace_id`
 /// did not fail it. Reproducing the client-q shape is what makes the assertion
 /// able to fail.
 ///
 /// Breaking mutation: drop `repository_id` from the inherited CTE in
 /// `upsert_subfolder_kind` — the subfolder inherits no repository, resolves
-/// through nothing, and reports no project at all.
+/// through nothing, and reports no workspace at all.
 ///
-/// (The ORIGINAL mutation — point `folder_workspaces` at `f.project_id` — is no
+/// (The ORIGINAL mutation — point `folder_workspaces` at `f.workspace_id` — is no
 /// longer expressible: #211 removed the column.)
 #[tokio::test]
-async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
+async fn a_folder_resolves_the_workspace_of_its_repository_not_its_own_column() {
     let s = pg_store().await;
     let root_id = s
         .add_watch_root(&tkey("fproj", "root"), "fproj-root", &serde_json::json!([]))
         .await
         .unwrap();
-    let owner = s.create_project(&tkey("fproj", "owner"), None, None).await.unwrap();
+    let owner = s.create_workspace(&tkey("fproj", "owner"), None, None).await.unwrap();
 
     let repo_path = tkey("fproj", "/repo");
     let repo = s.upsert_repo_kind(&root_id, "git", "fproj-repo", &repo_path).await.unwrap();
@@ -678,9 +678,9 @@ async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
     let repository = s.upsert_repository("fproj-repo", None).await.unwrap();
     s.link_folder_to_repository(&repo, &repository).await.unwrap();
     // The anchor belongs to `owner`, and this is what also records the junction row.
-    s.set_folder_project(&repo, &owner, "root", None).await.unwrap();
+    s.set_folder_workspace(&repo, &owner, "root", None).await.unwrap();
 
-    // A subfolder. It cannot be given a project of its own — there is no
+    // A subfolder. It cannot be given a workspace of its own — there is no
     // column and no parameter — so the only answer available is its
     // repository's, which is the whole point.
     let sub_path = format!("{repo_path}/docs");
@@ -701,15 +701,15 @@ async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
     assert_eq!(
         names,
         vec![tkey("fproj", "owner")],
-        "the subfolder did not resolve to its repository's project — this is the \
-         client-q drift, 362 folders in the wrong project"
+        "the subfolder did not resolve to its repository's workspace — this is the \
+         client-q drift, 362 folders in the wrong workspace"
     );
 
     s.remove_watch_root(&root_id).await.ok();
 }
 
 #[tokio::test]
-async fn first_party_packages_are_every_module_the_project_declares() {
+async fn first_party_packages_are_every_module_the_workspace_declares() {
     let s = pg_store().await;
     let root_id =
         s.add_watch_root(&tkey("fp", "root"), "fp-root", &serde_json::json!([])).await.unwrap();
@@ -717,8 +717,8 @@ async fn first_party_packages_are_every_module_the_project_declares() {
     crate::tasks::test_support::give_folder_a_repository(&s, &repo, &tkey("fp", "repo"))
         .await
         .unwrap();
-    let project = s.create_project(&tkey("fp", "proj"), None, None).await.unwrap();
-    s.set_folder_project(&repo, &project, "root", None).await.unwrap();
+    let workspace = s.create_workspace(&tkey("fp", "proj"), None, None).await.unwrap();
+    s.set_folder_workspace(&repo, &workspace, "root", None).await.unwrap();
 
     // Two manifest-declared packages, and one ordinary folder that is NOT one.
     for (name, path) in [("alpha", "/repo/crates/alpha"), ("beta", "/repo/crates/beta")] {
@@ -884,10 +884,12 @@ async fn get_folder_commands_marks_and_ranks_the_preferred_tool() {
     // G10: when several commands share a category, the user's dojo_preference
     // marks one preferred and ranks it first.
     let s = pg_store().await;
-    let pid =
-        s.create_project(&format!("_test:g10-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+    let pid = s
+        .create_workspace(&format!("_test:g10-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
     let fid = create_test_folder(&s, &format!("g10_{}", uuid::Uuid::new_v4())).await;
-    s.set_folder_project(&fid, &pid, "primary", None).await.unwrap();
+    s.set_folder_workspace(&fid, &pid, "primary", None).await.unwrap();
     // Two `test` commands; alphabetical order is jest, then vitest.
     sqlx_core::query::query(
             "INSERT INTO sensei.folder_commands (folder_id, raw_name, command_line, category, ecosystem)
@@ -1021,14 +1023,14 @@ async fn raise_session_list_cost_reports_a_missing_session() {
 }
 
 #[tokio::test]
-async fn list_all_sessions_joins_project_and_uses_camelcase_times() {
-    // #61: the observatory reads project name + startedAt/completedAt. The
-    // returned row must carry the joined project NAME (not a bare folder
+async fn list_all_sessions_joins_workspace_and_uses_camelcase_times() {
+    // #61: the observatory reads workspace name + startedAt/completedAt. The
+    // returned row must carry the joined workspace NAME (not a bare folder
     // uuid) under camelCase timestamp keys, with completedAt set once the
     // session ends — otherwise every displayed column renders blank.
     let s = pg_store().await;
     let proj_name = format!("_test:obs-{}", uuid::Uuid::new_v4());
-    let pid = s.create_project(&proj_name, None, None).await.unwrap();
+    let pid = s.create_workspace(&proj_name, None, None).await.unwrap();
     let fid = create_test_folder(&s, "obs-sess").await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
     let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", false).await.unwrap();
@@ -1041,14 +1043,14 @@ async fn list_all_sessions_joins_project_and_uses_camelcase_times() {
         .expect("our session is listed");
 
     assert_eq!(
-        row["project"],
+        row["workspace"],
         serde_json::json!(proj_name),
-        "project name is joined, not a folder uuid"
+        "workspace name is joined, not a folder uuid"
     );
     assert!(row["startedAt"].as_str().is_some(), "startedAt present (camelCase)");
     assert!(row.get("started_at").is_none(), "no stale snake_case started_at key");
     assert!(row["completedAt"].as_str().is_some(), "completedAt set after the end event");
-    assert!(row.get("folder_id").is_none(), "folder_id no longer leaks in place of the project");
+    assert!(row.get("folder_id").is_none(), "folder_id no longer leaks in place of the workspace");
 
     // Token + duration + model surfaced (camelCase): a session with captured
     // usage returns real numbers; a session with none returns null (never a 0).
@@ -1088,7 +1090,7 @@ async fn process_analysis_selects_unscored_then_saves_judgments_evidence_waterma
     // the client id, stamps the watermark; and a re-save overwrites in place.
     let s = pg_store().await;
     let suffix = format!("proc_{}", uuid::Uuid::new_v4());
-    let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let csid = format!("{suffix}-csid");
     let sid = s.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
     // Make it measurable (outcome not null) — the selection base.
@@ -1176,8 +1178,10 @@ async fn set_session_summary_refreshes_when_changed() {
     // an outcome that flipped abandoned → completed. An identical write is a
     // guarded no-op.
     let s = pg_store().await;
-    let pid =
-        s.create_project(&format!("_test:sum-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+    let pid = s
+        .create_workspace(&format!("_test:sum-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
     let fid = create_test_folder(&s, &format!("sum-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
     let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
@@ -1221,13 +1225,13 @@ async fn set_session_summary_refreshes_when_changed() {
 }
 
 #[tokio::test]
-async fn get_project_repos_excludes_subfolder_tree() {
-    // #62: a single-repo project with subfolders must list only its repo
+async fn get_workspace_repos_excludes_subfolder_tree() {
+    // #62: a single-repo workspace with subfolders must list only its repo
     // root(s), never the kind='folder' subfolder tree — else the UI shows it
-    // as a multi-repo project with every folder as a repo.
+    // as a multi-repo workspace with every folder as a repo.
     let s = pg_store().await;
     let pid = s
-        .create_project(&format!("_test:repos-{}", uuid::Uuid::new_v4()), None, None)
+        .create_workspace(&format!("_test:repos-{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
     s.execute_raw(
@@ -1246,15 +1250,15 @@ async fn get_project_repos_excludes_subfolder_tree() {
                ('00000000-0000-0000-0000-000000000001','folder'::sensei.folder_kind,'subdir','subdir',$2,$3),
                ('00000000-0000-0000-0000-000000000001','module'::sensei.folder_kind,'member','member',$4,$3)"
         ).bind(&git_abs).bind(&sub_abs).bind(rid).bind(&mem_abs).execute(s.pool()).await.unwrap();
-    s.link_project_repository(&pid, &rid).await.unwrap();
+    s.link_workspace_repository(&pid, &rid).await.unwrap();
 
-    let repos = s.get_project_repos(&pid).await.unwrap();
+    let repos = s.get_workspace_repos(&pid).await.unwrap();
     let kinds: Vec<String> =
         repos.iter().filter_map(|r| r["kind"].as_str().map(str::to_string)).collect();
     assert!(kinds.iter().any(|k| k == "git"), "the repo root is listed: {kinds:?}");
     assert!(!kinds.iter().any(|k| k == "folder"), "kind=folder subfolders excluded: {kinds:?}");
     // D5a: monorepo members are the structural tree, NOT separate repos — else
-    // a monorepo with N members regresses to an N+1-repo project (#62).
+    // a monorepo with N members regresses to an N+1-repo workspace (#62).
     assert!(!kinds.iter().any(|k| k == "module"), "kind=module excluded from repos: {kinds:?}");
 
     sqlx_core::query::query(
@@ -1276,7 +1280,7 @@ async fn get_project_repos_excludes_subfolder_tree() {
 async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
     // D5a: upsert_subfolder_kind relabels between the two STRUCTURAL kinds
     // (folder ↔ workspace_member) on conflict, but NEVER reclassifies a path
-    // that is actually a nested project ROOT (git/standalone/subtree).
+    // that is actually a nested workspace ROOT (git/standalone/subtree).
     let s = pg_store().await;
     s.execute_raw(
             "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
@@ -1302,7 +1306,7 @@ async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
     s.upsert_subfolder_kind(&rid, "module", "a", "a", &a, None).await.unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "module", "relabelled folder → workspace_member");
 
-    // A nested project root (subtree) must NOT be reclassified by a member upsert.
+    // A nested workspace root (subtree) must NOT be reclassified by a member upsert.
     let b = format!("/_test/sfk-b-{}", uuid::Uuid::new_v4());
     s.upsert_repo_kind(&rid, "subtree", "b", &b).await.unwrap();
     s.upsert_subfolder_kind(&rid, "module", "b", "b", &b, None).await.unwrap();
@@ -1321,19 +1325,21 @@ async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
 }
 
 #[tokio::test]
-async fn projects_with_session_activity_reports_the_project() {
-    // #67: the scheduler reads (project_id, latest activity) to decide what
-    // to re-analyze. A project with attributed sessions must appear.
+async fn workspaces_with_session_activity_reports_the_workspace() {
+    // #67: the scheduler reads (workspace_id, latest activity) to decide what
+    // to re-analyze. A workspace with attributed sessions must appear.
     let s = pg_store().await;
-    let pid =
-        s.create_project(&format!("_test:act-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+    let pid = s
+        .create_workspace(&format!("_test:act-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
     let fid = create_test_folder(&s, &format!("act-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
     s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
 
-    let activity = s.get_projects_with_session_activity().await.unwrap();
+    let activity = s.get_workspaces_with_session_activity().await.unwrap();
     let row =
-        activity.iter().find(|(p, _)| *p == pid).expect("project appears in session-activity");
+        activity.iter().find(|(p, _)| *p == pid).expect("workspace appears in session-activity");
     assert!(row.1.timestamp() > 0, "carries a real latest-activity timestamp");
 
     sqlx_core::query::query("DELETE FROM activity.sessions WHERE workspace_id = $1")
@@ -1349,16 +1355,18 @@ async fn projects_with_session_activity_reports_the_project() {
 }
 
 #[tokio::test]
-async fn project_ftr_and_quality_decode_numeric_metrics() {
+async fn workspace_ftr_and_quality_decode_numeric_metrics() {
     // Regression: the headline (Σ props / value) and the daily AVG(...) trend /
     // ftr_7d / avg_duration_ms are all NUMERIC; without ::float8 casts sqlx
     // fails to decode into f64 and the endpoint 500s (masked by the client's
-    // default-on-error). The project must have BOTH a stored `ftr` row (so the
+    // default-on-error). The workspace must have BOTH a stored `ftr` row (so the
     // headline decodes a real number, not a short-circuiting NULL) AND an
     // analyzed session in the window (so the inline trend decodes a numeric row).
     let s = pg_store().await;
-    let pid =
-        s.create_project(&format!("_test:ftr-{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
+    let pid = s
+        .create_workspace(&format!("_test:ftr-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
     let fid = create_test_folder(&s, &format!("ftr-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
     let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
@@ -1381,7 +1389,7 @@ async fn project_ftr_and_quality_decode_numeric_metrics() {
         .unwrap();
     // Repo-grain (_v2): the shared `ftr` metric_id is unique per (metric, repo,
     // user, day), so seed a per-test repository — a NULL-repository row would
-    // collide with a sibling project's `ftr` row on the same day.
+    // collide with a sibling workspace's `ftr` row on the same day.
     let (rid,): (uuid::Uuid,) = query_as(
         "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'ftr-decode') RETURNING id",
     )
@@ -1389,8 +1397,8 @@ async fn project_ftr_and_quality_decode_numeric_metrics() {
     .fetch_one(s.pool())
     .await
     .unwrap();
-    crate::tasks::test_support::link_repository_to_project(&s, &rid, &pid, "ftr-decode").await;
-    s.upsert_project_metric_repo(&MetricRow {
+    crate::tasks::test_support::link_repository_to_workspace(&s, &rid, &pid, "ftr-decode").await;
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &ftr_mid,
         repository_id: &rid,
         scope: "user",
@@ -1405,7 +1413,7 @@ async fn project_ftr_and_quality_decode_numeric_metrics() {
     .await
     .unwrap();
 
-    let ftr = s.get_project_ftr(&pid).await.expect("get_project_ftr decodes numeric metrics");
+    let ftr = s.get_workspace_ftr(&pid).await.expect("get_workspace_ftr decodes numeric metrics");
     assert!(ftr["ftr14d"].as_f64().is_some(), "ftr14d decodes a real number from the stored row");
     assert!(
         ftr["ftrTrend"].as_array().is_some_and(|a| !a.is_empty()),

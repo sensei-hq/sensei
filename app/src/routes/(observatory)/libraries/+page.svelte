@@ -42,7 +42,7 @@
             <EmptyState
                 kanji="書"
                 title="No libraries indexed."
-                description="Libraries appear once sensei scans your project dependencies. Add folders in the setup wizard, and sensei will detect libraries from your manifests."
+                description="Libraries appear once sensei scans your workspace dependencies. Add folders in the setup wizard, and sensei will detect libraries from your manifests."
             />
         {:else}
             <div class="grid grid-cols-[1fr_340px] gap-6">

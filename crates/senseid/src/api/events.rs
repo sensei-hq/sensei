@@ -23,14 +23,14 @@ pub enum Action {
     Set,
 }
 
-// ── Project entity ──────────────────────────────────────────────────────────
+// ── Workspace entity ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ScanProject {
+pub struct ScanWorkspace {
     pub id: String,
     pub name: String,
-    pub status: ProjectStatus,
-    pub folders: Vec<ScanProjectFolder>,
+    pub status: WorkspaceStatus,
+    pub folders: Vec<ScanWorkspaceFolder>,
     #[serde(rename = "autoDetected")]
     pub auto_detected: bool,
     pub confidence: Confidence,
@@ -38,7 +38,7 @@ pub struct ScanProject {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ProjectStatus {
+pub enum WorkspaceStatus {
     Scanning,
     Indexing,
     Active,
@@ -53,13 +53,13 @@ pub enum Confidence {
     Low,
 }
 
-// ── Folder entity (separate from project) ───────────────────────────────
+// ── Folder entity (separate from workspace) ───────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanFolder {
     pub id: String,
-    #[serde(rename = "projectId")]
-    pub project_id: String,
+    #[serde(rename = "workspaceId")]
+    pub workspace_id: String,
     pub name: String,
     pub path: String,
     pub kind: FolderKind,
@@ -98,9 +98,9 @@ pub enum FolderStatus {
     Deferred,
 }
 
-/// Kept for backward compat with project events that include inline folders.
+/// Kept for backward compat with workspace events that include inline folders.
 #[derive(Debug, Clone, Serialize)]
-pub struct ScanProjectFolder {
+pub struct ScanWorkspaceFolder {
     pub id: String,
     pub name: String,
     pub path: String,
@@ -168,26 +168,26 @@ pub enum ActivityLevel {
 // ── Constructors ────────────────────────────────────────────────────────────
 
 impl StateEvent {
-    pub fn project_add(project: ScanProject) -> Self {
+    pub fn workspace_add(workspace: ScanWorkspace) -> Self {
         Self {
             action: Action::Add,
-            entity: "project".into(),
-            data: serde_json::to_value(&project).unwrap(),
+            entity: "workspace".into(),
+            data: serde_json::to_value(&workspace).unwrap(),
         }
     }
 
-    pub fn project_update(project: ScanProject) -> Self {
+    pub fn workspace_update(workspace: ScanWorkspace) -> Self {
         Self {
             action: Action::Update,
-            entity: "project".into(),
-            data: serde_json::to_value(&project).unwrap(),
+            entity: "workspace".into(),
+            data: serde_json::to_value(&workspace).unwrap(),
         }
     }
 
-    pub fn project_remove(id: &str) -> Self {
+    pub fn workspace_remove(id: &str) -> Self {
         Self {
             action: Action::Remove,
-            entity: "project".into(),
+            entity: "workspace".into(),
             data: serde_json::json!({ "id": id }),
         }
     }
@@ -277,12 +277,12 @@ mod tests {
     }
 
     #[test]
-    fn state_event_project_add() {
-        let proj = ScanProject {
+    fn state_event_workspace_add() {
+        let proj = ScanWorkspace {
             id: "p1".into(),
             name: "Lumen".into(),
-            status: ProjectStatus::Scanning,
-            folders: vec![ScanProjectFolder {
+            status: WorkspaceStatus::Scanning,
+            folders: vec![ScanWorkspaceFolder {
                 id: "f1".into(),
                 name: "app".into(),
                 path: "/code/app".into(),
@@ -294,21 +294,21 @@ mod tests {
             auto_detected: true,
             confidence: Confidence::High,
         };
-        let evt = StateEvent::project_add(proj);
+        let evt = StateEvent::workspace_add(proj);
         let json = serde_json::to_value(&evt).unwrap();
         assert_eq!(json["action"], "add");
-        assert_eq!(json["entity"], "project");
+        assert_eq!(json["entity"], "workspace");
         assert_eq!(json["data"]["name"], "Lumen");
         assert_eq!(json["data"]["folders"][0]["filesTotal"], 842);
         assert_eq!(json["data"]["autoDetected"], true);
     }
 
     #[test]
-    fn state_event_project_remove() {
-        let evt = StateEvent::project_remove("p1");
+    fn state_event_workspace_remove() {
+        let evt = StateEvent::workspace_remove("p1");
         let json = serde_json::to_value(&evt).unwrap();
         assert_eq!(json["action"], "remove");
-        assert_eq!(json["entity"], "project");
+        assert_eq!(json["entity"], "workspace");
         assert_eq!(json["data"]["id"], "p1");
     }
 
@@ -319,8 +319,8 @@ mod tests {
     }
 
     #[test]
-    fn project_status_serializes_snake_case() {
-        let json = serde_json::to_value(ProjectStatus::Active).unwrap();
+    fn workspace_status_serializes_snake_case() {
+        let json = serde_json::to_value(WorkspaceStatus::Active).unwrap();
         assert_eq!(json, "active");
     }
 
@@ -340,11 +340,11 @@ mod tests {
             0.18,
         )))
         .unwrap();
-        tx.send(StateEvent::project_add(ScanProject {
+        tx.send(StateEvent::workspace_add(ScanWorkspace {
             id: "p1".into(),
             name: "test".into(),
-            status: ProjectStatus::Scanning,
-            folders: vec![ScanProjectFolder {
+            status: WorkspaceStatus::Scanning,
+            folders: vec![ScanWorkspaceFolder {
                 id: "f1".into(),
                 name: "app".into(),
                 path: "/code/app".into(),
@@ -378,11 +378,11 @@ mod tests {
         assert_eq!(activities[0].data["level"], "discover");
         assert_eq!(activities[2].data["level"], "success");
 
-        // Project events
-        let projects: Vec<_> = events.iter().filter(|e| e.entity == "project").collect();
-        assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0].data["name"], "test");
-        assert_eq!(projects[0].data["folders"][0]["stack"][0], "rust");
+        // Workspace events
+        let workspaces: Vec<_> = events.iter().filter(|e| e.entity == "workspace").collect();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].data["name"], "test");
+        assert_eq!(workspaces[0].data["folders"][0]["stack"][0], "rust");
     }
 
     #[tokio::test]
@@ -390,10 +390,10 @@ mod tests {
         let events = vec![
             StateEvent::activity(ActivityEvent::new(ActivityLevel::Discover, "found root", 0.1)),
             StateEvent::activity(ActivityEvent::new(ActivityLevel::Queue, "app · 5 files", 0.2)),
-            StateEvent::project_add(ScanProject {
+            StateEvent::workspace_add(ScanWorkspace {
                 id: "p1".into(),
                 name: "proj".into(),
-                status: ProjectStatus::Active,
+                status: WorkspaceStatus::Active,
                 folders: vec![],
                 auto_detected: true,
                 confidence: Confidence::High,
