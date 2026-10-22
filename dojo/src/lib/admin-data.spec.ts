@@ -21,7 +21,10 @@ import {
 	deleteTeam,
 	addTeamMember,
 	removeTeamMember,
-	grantTeamWorkspaceView
+	grantTeamWorkspaceView,
+	listIntegrationUnits,
+	claimIntegrationUnit,
+	mapIntegrationUnit
 } from '$lib/admin-data';
 
 // A fake fetch that records the call and returns a canned JSON response. Mirrors
@@ -238,5 +241,30 @@ describe("the dōjō's teams (#307 D7)", () => {
 			['PUT', `${base}/t%2F1/workspaces/p%2F1`, null],
 			['DELETE', `${base}/t%2F1`, null]
 		]);
+	});
+});
+
+describe('the dōjō`s integrations (#308 R5a)', () => {
+	it('POSTs the token in the body — never the URL — to list, claim and map', async () => {
+		const view = { provider: 'github', units: [], complete: true };
+		const { fn, calls } = fakeFetch(200, view);
+		expect(await listIntegrationUnits('organization/acme', 'github', 'gh-tok', { fetch: fn, accessToken: 'jwt' })).toEqual(view);
+		await claimIntegrationUnit('organization/acme', 'github', 'gh-tok', '22', { fetch: fn });
+		await mapIntegrationUnit('organization/acme', 'github', 'gh-tok', '22', { as: 'workspace', name: 'Acme' }, { fetch: fn });
+		const base = `${dojoApiUrl}/v1/t/organization/acme/integrations/github`;
+		expect(calls.map((c) => [c.init?.method, c.url, c.init?.body])).toEqual([
+			['POST', base, JSON.stringify({ token: 'gh-tok' })],
+			['POST', `${base}/claim`, JSON.stringify({ token: 'gh-tok', unit_id: '22' })],
+			['POST', `${base}/map`, JSON.stringify({ token: 'gh-tok', unit_id: '22', as: 'workspace', name: 'Acme' })]
+		]);
+		for (const c of calls) expect(c.url).not.toContain('gh-tok');
+		expect(headersOf(calls[0].init).Authorization).toBe('Bearer jwt');
+	});
+
+	it('throws the API`s refusal rather than an empty list', async () => {
+		const { fn } = fakeFetch(502, { error: 'GitHub read failed (401)' });
+		await expect(listIntegrationUnits('organization/acme', 'github', 'gh', { fetch: fn })).rejects.toThrow(
+			'GitHub read failed (401)'
+		);
 	});
 });

@@ -18,59 +18,17 @@
 import { AdminError, slugify, type DojoClient } from './admin-data';
 import { refusalStatus } from './db-refusal';
 import type { ForgeAdapter, ForgeUnit } from './forge-adapter';
-import { isForgeProvider, type ForgeProvider } from './forge-github';
+import { isForgeProvider, type ForgeProvider } from '../forge-providers';
+import type {
+	IntegrationDojo,
+	IntegrationMapping,
+	IntegrationUnit,
+	IntegrationUnitsView,
+	MapTarget
+} from '../integrations-view';
 import { authMethodFor, ensureOrgTenant } from './provisioning';
 
-/** A unit's own dōjō — the one its forge connection names. */
-export interface IntegrationDojo {
-	key: string;
-	name: string;
-	claimed: boolean;
-	/** Who claimed it, by display name; null when unclaimed or unnamed. */
-	claimedBy: string | null;
-}
-
-/** Where a unit's repositories file today, when someone has mapped it. */
-export type IntegrationMapping =
-	| { as: 'dojo' }
-	| {
-			as: 'workspace';
-			/** Whether the workspace is in the dōjō whose screen this is. */
-			inThisDojo: boolean;
-			/** The dōjō's key and the workspace's name — null when the dōjō is not
-			 *  one the person is in: another dōjō's contents are not theirs to read. */
-			dojoKey: string | null;
-			workspaceName: string | null;
-	  };
-
-/** One unit on the Integrations screen. */
-export interface IntegrationUnit {
-	provider: ForgeProvider;
-	id: string;
-	login: string;
-	/** The person's standing in the unit, as the forge said on this read. */
-	role: 'admin' | 'member';
-	/** Its own dōjō, or null when none has been made. */
-	dojo: IntegrationDojo | null;
-	mapping: IntegrationMapping | null;
-	/** An admin of the unit, and its dōjō unclaimed (or not made yet). */
-	canClaim: boolean;
-	/** An admin of the unit. */
-	canMapAsDojo: boolean;
-	/** An admin of the unit — or anyone, while it is unclaimed and no admin of it
-	 *  has placed it. The database enforces the same rule (map_forge_unit). */
-	canMapAsWorkspace: boolean;
-}
-
-export interface IntegrationUnitsView {
-	provider: ForgeProvider;
-	units: IntegrationUnit[];
-	/** Whether the forge read saw every unit. */
-	complete: boolean;
-}
-
-/** Where a unit goes: its own dōjō, or a workspace of the screen's dōjō. */
-export type MapTarget = { as: 'dojo' } | { as: 'workspace'; name?: string };
+export type { IntegrationDojo, IntegrationMapping, IntegrationUnit, IntegrationUnitsView, MapTarget };
 
 /** Every row of one read, or a 500 — never `[]` for a failure. */
 async function rows<T>(query: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {

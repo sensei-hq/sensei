@@ -9,6 +9,7 @@
 	import ScrRoleSurfaces from '$lib/components/screens/ScrRoleSurfaces.svelte';
 	import ScrScopes from '$lib/components/screens/ScrScopes.svelte';
 	import ScrIdentity from '$lib/components/screens/ScrIdentity.svelte';
+	import ScrIntegrations from '$lib/components/screens/ScrIntegrations.svelte';
 	import ScrHealth from '$lib/components/screens/ScrHealth.svelte';
 	import ScrBilling from '$lib/components/screens/ScrBilling.svelte';
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
@@ -24,12 +25,16 @@
 		deleteTeam,
 		addTeamMember,
 		removeTeamMember,
-		grantTeamWorkspaceView
+		grantTeamWorkspaceView,
+		listIntegrationUnits,
+		claimIntegrationUnit,
+		mapIntegrationUnit
 	} from '$lib/admin-data';
 	import { createInvite } from '$lib/client-data';
 	import { OrgSectionState } from '$lib/org-section-state.svelte';
 	import { InviteState } from '$lib/invite-state.svelte';
 	import { TeamDraft } from '$lib/teams-state.svelte';
+	import { IntegrationsState } from '$lib/integrations-state.svelte';
 	import type { KitWorkspace } from '$lib/components/kit/types';
 
 	// The org-zone section screen. Dispatches to the real screen for every NAV_ORG
@@ -78,6 +83,17 @@
 	const invite = new InviteState((input) => createInvite(tk(), input, opts()), page.url.origin);
 	// New team / Rename (#307 A3).
 	const teamDraft = new TeamDraft();
+	// Admin → Integrations (#308 R5a): GitHub, bound to this dōjō and session.
+	const integrations = new IntegrationsState({
+		list: (token) => listIntegrationUnits(tk(), 'github', token, opts()),
+		claim: (token, unitId) => claimIntegrationUnit(tk(), 'github', token, unitId, opts()),
+		map: (token, unitId, target) => mapIntegrationUnit(tk(), 'github', token, unitId, target, opts())
+	});
+	// Another org's section reuses this component: its listing is not that dōjō's.
+	$effect(() => {
+		void data.tenantKey;
+		integrations.reset();
+	});
 </script>
 
 <svelte:head><title>{data.title} · {data.orgName} · Dōjō</title></svelte:head>
@@ -125,6 +141,8 @@
 	<ScrScopes orgName={data.orgName} owners={data.scopeOwners} />
 {:else if data.section === 'identity'}
 	<ScrIdentity orgName={data.orgName} identity={data.identity} />
+{:else if data.section === 'integrations'}
+	<ScrIntegrations orgName={data.orgName} state={integrations} />
 {:else if data.section === 'health'}
 	<ScrHealth orgName={data.orgName} health={data.health} />
 {:else if data.section === 'billing'}
