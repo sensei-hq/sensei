@@ -80,7 +80,6 @@ export interface ArtifactScope {
 export interface PublishedArtifact {
 	signature: string;
 	tenant_key: string;
-	engagement_id?: string | null;
 	kind: ArtifactKind;
 	title: string;
 	body: string;
@@ -260,7 +259,6 @@ export function parsePublishedArtifact(body: Record<string, unknown>): Published
 	return {
 		signature: body.signature as string,
 		tenant_key: body.tenant_key as string,
-		engagement_id: optStr(body.engagement_id),
 		kind: body.kind as ArtifactKind,
 		title: body.title as string,
 		body: body.body as string,
@@ -299,7 +297,6 @@ export async function publishArtifact(
 		.from('artifacts')
 		.insert({
 			tenant_id: tenantId,
-			engagement_id: artifact.engagement_id,
 			kind: artifact.kind,
 			title: artifact.title,
 			body: artifact.body,
@@ -329,7 +326,6 @@ export interface ArtifactRow {
 	id: string;
 	seq: number;
 	status: string;
-	engagement_id: string | null;
 	kind: string;
 	title: string;
 	body: string;
@@ -344,7 +340,7 @@ export interface ArtifactRow {
 
 /** The `select` list for the pull join (artifact columns + embedded tenant key). */
 export const ARTIFACT_PULL_SELECT =
-	'id, seq, status, engagement_id, kind, title, body, payload, scope, signature, attribution, contributed_by, published_at, tenants(key)';
+	'id, seq, status, kind, title, body, payload, scope, signature, attribution, contributed_by, published_at, tenants(key)';
 
 /** Normalize PostgREST's embed (object or one-element array) to the single row. */
 function embeddedTenant(t: ArtifactRow['tenants']): { key: string } | null {
@@ -370,7 +366,6 @@ export function shapeArtifactPullResponse(rows: ArtifactRow[], since: number): A
 			status: r.status as ArtifactStatus,
 			signature: r.signature,
 			tenant_key: t?.key ?? '',
-			engagement_id: r.engagement_id,
 			kind: r.kind as ArtifactKind,
 			title: r.title,
 			body: r.body,

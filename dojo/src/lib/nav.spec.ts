@@ -66,17 +66,17 @@ describe('navForOrg — additive role rank filtering', () => {
 		expect(navForOrg('maintainer').map((g) => g.group)).toEqual(['Overview', 'Govern']);
 	});
 
-	it('a lead adds Clients (and keeps Govern)', () => {
-		expect(navForOrg('lead').map((g) => g.group)).toEqual(['Overview', 'Govern', 'Clients']);
+	it('a lead sees what a maintainer sees — a dōjō has no Clients section (D34)', () => {
+		expect(navForOrg('lead').map((g) => g.group)).toEqual(['Overview', 'Govern']);
 	});
 
 	it('an admin sees every group', () => {
-		expect(navForOrg('admin').map((g) => g.group)).toEqual([
-			'Overview',
-			'Govern',
-			'Clients',
-			'Admin'
-		]);
+		expect(navForOrg('admin').map((g) => g.group)).toEqual(['Overview', 'Govern', 'Admin']);
+	});
+
+	it('names no engagement, incident or client-audit section (D34)', () => {
+		const ids = NAV_ORG_BASE.flatMap((g) => g.items.map((i) => i.id));
+		for (const gone of ['engagements', 'incidents', 'clientaudit']) expect(ids).not.toContain(gone);
 	});
 
 	it('an unknown role floors to contributor rank', () => {

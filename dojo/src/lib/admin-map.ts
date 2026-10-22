@@ -88,7 +88,7 @@ export function toKitMembers(members: Membership[], opts: { self?: string; now?:
 const ROLE_LADDER: readonly KitRolePolicy[] = [
 	{ id: 'contributor', kanji: '士', label: 'contributor', note: 'read-mostly · watches & chats' },
 	{ id: 'maintainer', kanji: '掟', label: 'maintainer', note: 'authors governance · triages' },
-	{ id: 'lead', kanji: '客', label: 'lead', note: 'client engagements & audit' },
+	{ id: 'lead', kanji: '客', label: 'lead', note: 'everything a maintainer can' },
 	{ id: 'admin', kanji: '任', label: 'admin', note: 'member roles & policies' }
 ];
 

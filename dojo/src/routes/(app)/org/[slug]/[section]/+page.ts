@@ -5,16 +5,10 @@ import { orgBySlug } from '$lib/chrome';
 import { tabForSection } from '$lib/role-surfaces-view';
 import { guardTenantScope } from '$lib/org-guard';
 import {
-	listEngagements,
-	listIncidents,
 	getKnowledge,
-	listClientAuditLedger,
 	listWorkspaces,
 	DojoApiError,
-	type Engagement,
-	type Incident,
 	type KnowledgeLibraryWire,
-	type ClientAuditEntry,
 	type WorkspaceRow
 } from '$lib/client-data';
 import { listTriage, type TriageRow } from '$lib/triage-data';
@@ -37,7 +31,6 @@ import {
 	type BillingResponse
 } from '$lib/admin-data';
 import { toKitBilling } from '$lib/billing-map';
-import { toKitEngagements } from '$lib/client-map';
 import {
 	toKitTriageGroups,
 	toKitApprovals,
@@ -51,11 +44,9 @@ import {
 	toKitIdentity,
 	toKitHealth
 } from '$lib/admin-map';
-import { toKitIncidents, toKitClientAuditLedger } from '$lib/incidents-map';
 import { toKitKnowledge } from '$lib/knowledge-map';
 import { toKitWorkspaces } from '$lib/workspaces-map';
 import type {
-	KitEngagement,
 	KitTriageGroup,
 	KitApproval,
 	KitCandidateDetail,
@@ -65,15 +56,12 @@ import type {
 	KitKnowledge,
 	KitWorkspace,
 	KitIdentity,
-	KitIncident,
-	KitClientAuditRow,
 	KitHealth,
 	KitBilling
 } from '$lib/components/kit/types';
 import {
 	orgConstitutionFor,
 	candidateDetailFor,
-	confidentialityFor,
 	scopeOwnersFor,
 	billingFor
 } from '$lib/components/kit/fixtures';
@@ -93,15 +81,11 @@ import {
 //   • triage/approvals  → GET …/triage (maintainer floor)
 //   • members/audit     → GET …/members · …/policies · …/audit (admin floor)
 //   • identity          → GET …/identities (admin floor)
-//   • incidents         → GET …/incidents (lead floor)
-//   • clientaudit       → GET …/audit (admin floor — the tenant audit trail)
 //   • health            → GET …/health (admin floor)
-//   • engagements       → GET …/engagements (lead floor)
 //   • billing           → GET …/billing (admin floor) — the LIVE billable seat
 //     count overlaid on the illustrative pricing catalog (perSeat/tiers/invoices
 //     stay fixture until a payment provider is wired, D-BILLING).
-// The remaining sections (Overview ladder/workspaces, knowledge, confidentiality,
-// scopes) still render off kit fixtures — their routes aren't built (Tier 3:
+// The remaining sections (Overview ladder/workspaces, knowledge, scopes) still render off kit fixtures — their routes aren't built (Tier 3:
 // scopes/workspaces/stance need further wiring).
 export const load: PageLoad = async ({ parent, params, fetch }) => {
 	const { memberships, accessToken, user } = await parent();
@@ -132,14 +116,6 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 			return { value: empty, error };
 		}
 	}
-
-	// Engagements (lead) — the shipped client register.
-	const engagementsRes = await guardedFor<Engagement[], KitEngagement[]>(
-		'engagements',
-		[],
-		(tk) => listEngagements(tk, opts),
-		toKitEngagements
-	);
 
 	// Triage (maintainer) — the raw rows feed BOTH the triage groups and the
 	// approvals list, so fetch once and derive both when either section is active.
@@ -204,25 +180,6 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		toKitIdentity
 	);
 
-	// Incidents (lead).
-	const incidentsRes = await guardedFor<{ incidents: Incident[]; open_count: number }, KitIncident[]>(
-		'incidents',
-		[],
-		(tk) => listIncidents(tk, opts),
-		(list) => toKitIncidents(list.incidents)
-	);
-
-	// Client audit (admin — the tenant audit trail projected onto the ledger).
-	// Client-audit → the CONFIDENTIALITY ledger (audit_events filtered to
-	// publish/contained/held, client-name enriched) — NOT the admin action-audit
-	// (listAudit) the screen was wrongly bound to (client-audit.md resolved design).
-	const clientAuditRes = await guardedFor<ClientAuditEntry[], KitClientAuditRow[]>(
-		'clientaudit',
-		[],
-		(tk) => listClientAuditLedger(tk, opts),
-		toKitClientAuditLedger
-	);
-
 	// Health (admin).
 	const healthRes = await guardedFor<HealthRollup, KitHealth>(
 		'health',
@@ -265,8 +222,8 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		orgName: org.name,
 		section,
 		title: labelForSection(section, 'org'),
-		// The tenant + token the screen's console mutations (set-role, incident +
-		// engagement CRUD) call the /v1 write-routes with — passed through from the
+		// The tenant + token the screen's console mutations (set-role, viewers,
+		// teams, invites) call the /v1 write-routes with — passed through from the
 		// resolved org + the layout so the actions POST/PATCH/DELETE directly.
 		tenantKey,
 		accessToken,
@@ -281,14 +238,6 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		triageError,
 		knowledge: knowledgeRes.value,
 		knowledgeError: knowledgeRes.error,
-		// Lead Clients consoles.
-		engagements: engagementsRes.value,
-		engagementsError: engagementsRes.error,
-		confidentiality: confidentialityFor(slug),
-		incidents: incidentsRes.value,
-		incidentsError: incidentsRes.error,
-		clientAudit: clientAuditRes.value,
-		clientAuditError: clientAuditRes.error,
 		// Admin consoles. `roleTab` is the opening tab of the shared role-surfaces
 		// screen — `members` → Members, `audit` → Audit.
 		roleTab: tabForSection(section),

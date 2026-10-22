@@ -62,24 +62,21 @@ STUB screens render faithfully but their loader returns empty/fixture. So the ro
 | approvals | org-ops | tenant | PARTIAL | derived from triage; no 2-sig quorum model; actions dead |
 | knowledge | org-ops | tenant | STUB | 100% fixture; no endpoint |
 | health | org-ops | tenant | PARTIAL | real signal cards; chart+alerts empty |
-| engagements | client/lead | tenant | PARTIAL | real list+CRUD; `client` needs tenant split; counts hardcoded |
-| incidents | client/lead | tenant | PARTIAL | real list+CRUD; client=uuid (no name join); no detail |
-| client-audit | client/lead | tenant | PARTIAL | bound to WRONG ledger (action-audit vs artifact-strip) |
 | signin | entry | auth | PARTIAL | OAuth+magic-link live; left panel diverges; self-host stub |
 
 ## Cross-cutting workstreams (the real shape of the work)
 
 - **WS-0 · Data-model fixes** (`…-impact-register.md`) — PREREQUISITE. Canonical access
   (user-wide personal reads, membership-derived RLS, drop `user_id`) + universal dereference
-  (`attribution_mode = named|anonymous`) + `dojo_url` dedup + `engagements.client` split.
+  (`attribution_mode = named|anonymous`) + `dojo_url` dedup.
 - **WS-1 · Identity resolution** — a shared `user_id → display name` (via `dojo.identities`).
-  Unblocks my-dojos, role-surfaces, incidents, members, and the audit actor.
+  Unblocks my-dojos, role-surfaces, members, and the audit actor.
 - **WS-2 · Fixture → `/v1` read endpoints** — the bulk: governance (constitution mapper→endpoint,
   rule-packs, scopes, org-ladder), personal (workspaces, contributions), knowledge, org-home summary.
 - **WS-3 · New tables / schema gaps** — real blockers, not just wiring: **scope-ownership**,
   **IdP/SCIM settings**, **pricing catalog**, **decisions/2-sig quorum**, **knowledge read**.
 - **WS-4 · Wire mutations** — decide/approve/edit CTAs are inert across triage/approvals/identity/
-  incidents/knowledge (endpoints often already exist; props just not passed).
+  knowledge (endpoints often already exist; props just not passed).
 - **WS-5 · Realtime + polish** — inbox pips/realtime, health chart, empty/error states.
 
 ## Suggested priority (dependency-aware)
@@ -89,24 +86,26 @@ STUB screens render faithfully but their loader returns empty/fixture. So the ro
 3. **Governance** (tenant): constitution (mapper→endpoint) → rule-packs → org-ladder → scopes (WS-3).
 4. **Org console**: org-home → role-surfaces → identity → billing → health.
 5. **Org ops**: triage → approvals (WS-3 decisions) → knowledge (WS-2/3).
-6. **Client/lead**: engagements (client split) → incidents → client-audit (fix ledger).
-7. **Entry**: signin (panel + dereference copy).
+6. **Entry**: signin (panel + dereference copy).
+
+The Client/lead screens (engagements, incidents, client-audit) were removed with the
+Clients section (#307 R7, D34): a client is just another dōjō.
 
 ## Open questions for Dev — consolidated (full detail in each spec)
 
 **A. Draw the pre-release scope line** (many screens ask "is X in scope pre-release, or stay
 honest-empty?"): cross-dōjō workspaces list · contributions · billing invoices/payment provider ·
-incident detail · knowledge read · self-host auth.
+knowledge read · self-host auth.
 
 **B. New tables / schema gaps — build now vs defer/derive** (WS-3):
 scope-ownership · IdP/SCIM settings · pricing catalog · decisions (2-sig quorum) · knowledge read.
 
 **C. Identity resolution** — join `dojo.identities` for real names (my-dojos, role-surfaces,
-incidents, members, audit actor) — in scope this pass?
+members, audit actor) — in scope this pass?
 
 **D. Confirm these ride the WS-0 data-model pass** (register): inbox user-wide + drop `user_id`
-+ persist `project_slug`; `engagements.client` split; dereference/attribution rewording on
-workspace-detail · contributions · signin · scopes · engagements; role-surfaces `dojo_url`/
++ persist `project_slug`; dereference/attribution rewording on
+workspace-detail · contributions · signin · scopes; role-surfaces `dojo_url`/
 `attribution_default`.
 
 **E. Per-screen semantic decisions** (the ones that change the build):
@@ -114,7 +113,6 @@ workspace-detail · contributions · signin · scopes · engagements; role-surfa
 - **constitution** — which tenant's governance resolves on `/you/rules` for a multi-dōjō user?; ~~rung-id bug~~ (resolved in #307 R6: both sides key off `sensei.scopes.key`; the personal rung is `user`); can the dōjō edit user-scoped stance (no cross-DB link)?
 - **rule-packs** — which `namespace_id` is "you" for a personal adoption?
 - **org-home** — single `/summary` endpoint vs compose; definition of "needs a maintainer".
-- **client-audit** — the artifact-strip ledger OR the tenant action-audit? (conflated today — pick one).
 - **approvals** — is 2-signature quorum real for v1 (build `dojo.decisions`) or just a derived review list?
 - **health** — adopt the real 4 signals vs restore the mockup's 4; leak-guard/containment event source for the alert feed.
 - **my-dojos** — does the user's OWN personal dōjō appear here?; does a row navigate into the org (dup of OrgSwitcher)?

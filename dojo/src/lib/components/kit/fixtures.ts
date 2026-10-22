@@ -26,10 +26,6 @@ import type {
 	KitCandidateDetail,
 	KitApproval,
 	KitKnowledge,
-	KitEngagement,
-	KitConfidentiality,
-	KitIncident,
-	KitClientAuditRow,
 	KitMember,
 	KitRolePolicy,
 	KitScopeOwner,
@@ -864,9 +860,9 @@ export function orgConstitutionFor(slug: string): KitConstitutionSection[] {
 	return orgConstitutions[slug] ?? [];
 }
 
-// ── Maintainer + lead consoles (dojo2-data `consoles`) ──────────────────────
+// ── Maintainer consoles (dojo2-data `consoles`) ─────────────────────────────
 //
-// The role-console fixtures the maintainer (Govern) and lead (Clients) screens
+// The role-console fixtures the maintainer (Govern) screens
 // bind to. Ported 1:1 from the mockup `consoles` block. As with the org
 // Overview data above, each console is keyed by slug; only `acme` is authored,
 // and an unknown slug returns empty (no fake fallback, matching the single
@@ -1054,129 +1050,6 @@ export function knowledgeFor(slug: string): KitKnowledge {
 	return knowledge[slug] ?? { prunePolicy: '', active: [], pending: [], catalog: [] };
 }
 
-// 4 · Engagements — the client register + the confidentiality model.
-const engagements: Record<string, KitEngagement[]> = {
-	acme: [
-		{
-			id: 'e1',
-			kanji: '客',
-			client: 'Globex',
-			clientTenantId: null,
-			projects: 'globex-portal · billing',
-			lessons: 86,
-			dropped: 214,
-			since: '7mo',
-			status: 'active'
-		},
-		{
-			id: 'e2',
-			kanji: '客',
-			client: 'Initech',
-			clientTenantId: null,
-			projects: 'agency-monorepo',
-			lessons: 41,
-			dropped: 97,
-			since: '1y',
-			status: 'active'
-		}
-	]
-};
-
-const confidentiality: KitConfidentiality = {
-	kept: ['The lesson — a pattern, a guard, a skill', 'Anonymized code shape', 'Confidence & impact'],
-	dropped: ['Client & repo identifiers', 'Endpoints, hostnames, secrets', 'Literal source & data'],
-	example: {
-		raw: 'await stripe.charges.create({ idempotencyKey })',
-		stripped: 'await <payment-sdk>.<mutation>({ idempotencyKey })'
-	}
-};
-
-/** The client engagements for a slug (dojo2-data `consoles.engagements`),
- *  returns empty for an unknown slug. */
-export function engagementsFor(slug: string): KitEngagement[] {
-	return engagements[slug] ?? [];
-}
-
-/** The confidentiality model (dojo2-data `consoles.confidentiality`) — the
- *  kept-vs-dropped boundary + the anonymized example. */
-export function confidentialityFor(_slug: string): KitConfidentiality {
-	return confidentiality;
-}
-
-// 5 · Incidents — confidentiality containment.
-const incidents: Record<string, KitIncident[]> = {
-	acme: [
-		{
-			id: 'i1',
-			kanji: '盾',
-			title: 'Near-leak: client hostname in a shared prompt',
-			client: 'Globex',
-			state: 'contained',
-			when: '3d',
-			severity: 'high'
-		},
-		{
-			id: 'i2',
-			kanji: '盾',
-			title: 'Raw stack trace queued to Collective',
-			client: 'Initech',
-			state: 'resolved',
-			when: '2w',
-			severity: 'medium'
-		}
-	]
-};
-
-/** The confidentiality incidents for a slug (dojo2-data `consoles.incidents`),
- *  returns empty for an unknown slug. */
-export function incidentsFor(slug: string): KitIncident[] {
-	return incidents[slug] ?? [];
-}
-
-// 6 · Client audit — the immutable confidentiality ledger.
-const clientAudit: Record<string, KitClientAuditRow[]> = {
-	acme: [
-		{
-			t: '10:42',
-			kanji: '共',
-			event: 'Lesson shared upstream',
-			detail: 'idempotency pattern · anonymized',
-			client: 'Globex',
-			ok: true
-		},
-		{
-			t: '10:41',
-			kanji: '盾',
-			event: 'Stripped 2 identifiers',
-			detail: 'hostname, repo slug',
-			client: 'Globex',
-			ok: true
-		},
-		{
-			t: '09:18',
-			kanji: '却',
-			event: 'Blocked contribution',
-			detail: 'raw source detected · held',
-			client: 'Initech',
-			ok: false
-		},
-		{
-			t: 'Yesterday',
-			kanji: '共',
-			event: 'Lesson shared upstream',
-			detail: 'webhook guard · anonymized',
-			client: 'Globex',
-			ok: true
-		}
-	]
-};
-
-/** The immutable client-audit ledger for a slug (dojo2-data
- *  `consoles.clientAudit`), returns empty for an unknown slug. */
-export function clientAuditFor(slug: string): KitClientAuditRow[] {
-	return clientAudit[slug] ?? [];
-}
-
 // ── Admin consoles (dojo2-data `members` · `roles` · `scopeOwners` ·
 //    `billing` · `consoles.identity` · `consoles.health`) ────────────────────
 //
@@ -1227,7 +1100,7 @@ export function membersFor(_slug: string): KitMember[] {
 export const rolePolicies: KitRolePolicy[] = [
 	{ id: 'contributor', kanji: '士', label: 'contributor', note: 'read-mostly · watches & chats' },
 	{ id: 'maintainer', kanji: '掟', label: 'maintainer', note: 'authors governance · triages' },
-	{ id: 'lead', kanji: '客', label: 'lead', note: 'client engagements & audit' },
+	{ id: 'lead', kanji: '客', label: 'lead', note: 'everything a maintainer can' },
 	{ id: 'admin', kanji: '任', label: 'admin', note: 'member roles & policies' }
 ];
 
@@ -1313,7 +1186,7 @@ export const billing: KitBilling = {
 			current: true,
 			lines: [
 				'Private, shared scopes for a company or team',
-				'Role consoles · client engagements · audit',
+				'Role consoles · audit',
 				'Relay across the team — shared inbox, presence, priority realtime',
 				'Read-only members always free'
 			]

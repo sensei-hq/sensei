@@ -555,7 +555,6 @@ mod tests {
         PublishedArtifact {
             signature: artifact_signature(kind, title, body, None, &payload),
             tenant_key: "github/acme".into(),
-            engagement_id: None,
             kind,
             title: title.into(),
             body: body.into(),

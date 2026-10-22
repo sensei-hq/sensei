@@ -76,15 +76,6 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 		]
 	},
 	{
-		group: 'Clients',
-		role: 'lead',
-		items: [
-			{ id: 'engagements', icon: 'case-round', label: 'Engagements', kanji: '約' },
-			{ id: 'incidents', icon: 'shield-warning', label: 'Incidents', kanji: '警' },
-			{ id: 'clientaudit', icon: 'document-text', label: 'Client audit', kanji: '査' }
-		]
-	},
-	{
 		group: 'Admin',
 		role: 'admin',
 		items: [

@@ -12,10 +12,10 @@ Feature: Dōjō governance authoring — author at a scope, compose down the lad
   # gap: dojo-authoring-surface (epic #91)
   NO TEST
   Scenario: Company vs Client is derived from membership, not chosen
-    Given a user whose employer owns one Dōjō and who is engaged with another
+    Given a user whose employer owns one Dōjō and who works in a client's
     When the scope rail renders both
     Then the employer Dōjō is captioned "your employer"
-    And the engaged Dōjō is captioned "engagement · not your employer"
+    And the client's Dōjō is captioned "client · not your employer"
     And both sit in the Dōjō group — neither is a Client rung (D32)
 
   # gap: dojo-authoring-surface (epic #91)

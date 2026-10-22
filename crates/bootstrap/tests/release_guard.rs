@@ -10,8 +10,25 @@ fn script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/release-guard.sh")
 }
 
+/// A command that sees only `dir`'s repository. Run from a git hook (the
+/// pre-commit runs `make test-fast`), the environment carries `GIT_DIR`,
+/// `GIT_INDEX_FILE` and friends for the repository being committed; a child
+/// `git` that inherits them writes THAT repository's config and index instead
+/// of the throwaway one — `user.email = t@example.com` landed in the real
+/// `.git/config` that way. Every `GIT_*` variable is dropped.
+fn isolated(program: &str, dir: &Path) -> Command {
+    let mut c = Command::new(program);
+    c.current_dir(dir);
+    for (k, _) in std::env::vars_os() {
+        if k.to_string_lossy().starts_with("GIT_") {
+            c.env_remove(k);
+        }
+    }
+    c
+}
+
 fn git(dir: &Path, args: &[&str]) {
-    let o = Command::new("git").args(args).current_dir(dir).output().unwrap();
+    let o = isolated("git", dir).args(args).output().unwrap();
     assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
 }
 
@@ -35,7 +52,7 @@ fn repo() -> (tempfile::TempDir, PathBuf) {
 }
 
 fn guard(dir: &Path) -> std::process::Output {
-    Command::new("bash").arg(script()).current_dir(dir).output().unwrap()
+    isolated("bash", dir).arg(script()).output().unwrap()
 }
 
 #[test]

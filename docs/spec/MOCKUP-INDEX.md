@@ -70,7 +70,7 @@ screens live elsewhere:
 | `project-patterns` / `project-sessions` | (`ProjectPageSidebar` tabs) | `lib/project/project-pages.jsx` |
 | `dojo-admin-console` | `DojoAdminConsole` (Overview · Monitor · Members · Scopes) | `lib/dojo/dojo-admin.jsx` |
 | `dojo-maintainer-console` | `DojoMaintainerConsole` (Triage · Candidate · Knowledge) | `lib/dojo/dojo-maintainer.jsx` |
-| `dojo-lead-console` | `DojoLeadConsole` (Clients · Audit) | `lib/dojo/dojo-lead.jsx` |
+| ~~`dojo-lead-console`~~ (removed, #307 R7 D34 — the mockup still has it) | `DojoLeadConsole` (Clients · Audit) | `lib/dojo/dojo-lead.jsx` |
 | `dojo-developer-console` | `DojoDeveloperConsole` (My teams · My contributions · For me) | `lib/dojo/dojo-developer.jsx` |
 | Ecosystem architecture board | `EcosystemArchitecture` | `lib/shared/ecosystem-arch.jsx` (Observatory section ⑧) |
 | `dojo-developer-flow` | `Inapp*` | `lib/dojo/dojo-inapp.jsx` |

@@ -80,7 +80,6 @@ export interface AuditEvent {
 	id: number;
 	ts: string;
 	actor_id: string | null;
-	engagement_id: string | null;
 	action: string;
 	target: string | null;
 	detail: unknown;
@@ -120,7 +119,7 @@ const IDENTITY_COLS =
 	'id, principal_id, provider, subject, email, display_name, created_at, last_login_at';
 const POLICY_COLS =
 	'id, scope_key, attribution_default, confidentiality, retention_days, created_at, updated_at';
-const AUDIT_COLS = 'id, ts, actor_id, engagement_id, action, target, detail';
+const AUDIT_COLS = 'id, ts, actor_id, action, target, detail';
 
 /** List the tenant's memberships, most recent first, each enriched with the
  *  member's display name + email resolved from `dojo.identities` (WS-1). A member

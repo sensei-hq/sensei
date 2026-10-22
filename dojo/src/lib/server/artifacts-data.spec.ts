@@ -238,7 +238,6 @@ describe('bestFtrDelta (max(payload->>ftr_delta_observed))', () => {
 const ARTIFACT = {
 	signature: 'a'.repeat(64),
 	tenant_key: 'github/sensei-hq',
-	engagement_id: null,
 	kind: 'pattern',
 	title: 'Prefer adapters',
 	body: 'Wrap the vendor SDK behind an adapter.',
@@ -256,9 +255,10 @@ describe('parsePublishedArtifact', () => {
 		expect(a?.attribution.anonymous_id).toBe('anon-1');
 	});
 
-	it('coerces optional fields to null', () => {
-		const a = parsePublishedArtifact({ ...ARTIFACT, engagement_id: undefined });
-		expect(a?.engagement_id).toBeNull();
+	it('carries no engagement — an older daemon\'s engagement_id is ignored (D34)', () => {
+		const a = parsePublishedArtifact({ ...ARTIFACT, engagement_id: 'e1' });
+		expect(a).not.toBeNull();
+		expect(a).not.toHaveProperty('engagement_id');
 	});
 
 	it('defaults scope to {} when absent', () => {
@@ -308,7 +308,6 @@ describe('shapeArtifactPullResponse (ArtifactPullResponse wire shape + cursor)',
 		id: `art-${seq}`,
 		seq,
 		status,
-		engagement_id: null,
 		kind: 'principle',
 		title: 'T',
 		body: 'b',
@@ -328,6 +327,7 @@ describe('shapeArtifactPullResponse (ArtifactPullResponse wire shape + cursor)',
 		expect(a.id).toBe('art-5');
 		expect(a.seq).toBe(5);
 		expect(a.status).toBe('published');
+		expect(a).not.toHaveProperty('engagement_id');
 		expect(a.tenant_key).toBe('github/sensei-hq');
 		expect(a.kind).toBe('principle');
 		// The nested `tenants` embed must not leak onto the wire object.
@@ -377,6 +377,8 @@ describe('publishArtifact', () => {
 		expect(p).not.toHaveProperty('status');
 		// seq is left to the column default (nextval) — not set on insert.
 		expect(p).not.toHaveProperty('seq');
+		// dojo.artifacts has no engagement column (D34).
+		expect(p).not.toHaveProperty('engagement_id');
 	});
 
 	it('records a null contributor when anonymised', async () => {
@@ -430,7 +432,6 @@ describe('pullArtifactsSince', () => {
 					id: 'art-5',
 					seq: 5,
 					status: 'published',
-					engagement_id: null,
 					kind: 'guard',
 					title: 'T',
 					body: 'b',

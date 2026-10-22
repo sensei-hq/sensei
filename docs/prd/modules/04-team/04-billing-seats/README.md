@@ -1,8 +1,7 @@
 # Billing & Seats · T4
 
 **Plane:** team · **Status:** [roadmap/04-team.md](../../../../roadmap/04-team.md) ·
-**Serves:** org admin ([persona 4](../../../03-personas.md#4--org-admin--the-plane-owner)),
-engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--client-lead--the-confidentiality-guard))
+**Serves:** org admin ([persona 4](../../../03-personas.md#4--org-admin--the-plane-owner))
 
 ## Purpose
 

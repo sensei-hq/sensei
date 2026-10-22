@@ -127,7 +127,12 @@ slice builds, passes and ships on its own.
   - The library screen's levels become **dōjō · workspace · repository**; the preview shows that ladder with
     the packs applied at each rung.
   - Rehearsed on copies of both databases, counts and rule reach compared before/after.
-- **R7 · A dōjō has no Clients section (D34).** *Planned 2026-10-22.* Remove the Clients nav group (Engagements,
+- **R7 · A dōjō has no Clients section (D34).** *Done 2026-10-22 on branch `r7-no-clients` (not merged): the
+  dōjō app, the wire (`PublishedArtifact.engagement_id`), the dōjō schema and the PRD. The release drops the
+  tables through `apply/before/dojo_clients_retired.sql` (it reconciles without `--prune`) and the enums through
+  `apply/after/retired_types.sql`; rehearsed twice on a copy of the production dōjō — in sync, every other count
+  held. The mockups still show Clients (the user's to change). Open: `lead` now unlocks nothing a maintainer
+  lacks.* Remove the Clients nav group (Engagements,
   Incidents, Client audit), their routes, screens and data code (`engagements-data`, `incidents-data`,
   `client-data`/`-map`/`-view`, engagement bindings). In the database: `dojo.engagements`, `dojo.incidents`, the
   `confidentiality_ledger` view, `is_confidentiality_action`, and `audit_events.engagement_id`, pruned through dbd

@@ -184,7 +184,7 @@ one, we call it out.
 | 2 | **One decision, one default** | The same verb set everywhere — **Apply · Review · Dismiss** — recommended one highlighted, others one keystroke away. |
 | 3 | **Discoverability of depth** | Nothing important hidden behind a one-liner; Preferences is searchable; the sidebar clusters with a Focus mode. |
 | 4 | **Trust through proof** | No claim without a receipt — confidence scores, regression notes, before/after FTR. The user verifies; they don't take our word. |
-| 5 | **Org boundary is the Dōjō membership** | Anything that should stay inside a company or a client engagement travels through a Dōjō membership, not the global Collective. Personal sensei works perfectly with no Dōjō; when one exists, the boundary is exact. |
+| 5 | **Org boundary is the Dōjō membership** | Anything that should stay inside a company or a client travels through a Dōjō membership, not the global Collective. Personal sensei works perfectly with no Dōjō; when one exists, the boundary is exact. |
 | 6 | **Insight copy comes from the model** | Every human-readable insight string routes through [`insight-copy`](../spec/pipeline/insights.md) (embedded gemma first, static template as fallback). Actions and route labels stay deterministic. |
 
 ## What sensei is *not*

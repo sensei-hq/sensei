@@ -55,8 +55,8 @@ Feature: Workspace Window — the section panes, membership, patterns, libraries
     Then folders, sessions and memories move and the source is deleted
 
   NO TEST
-  Scenario: the solution-track roll-up spans a multi-workspace engagement
-    Given a desktop engagement spanning several workspaces
+  Scenario: the solution-track roll-up spans several workspaces
+    Given a desktop solution spanning several workspaces
     When the roll-up renders
     Then each workspace's status is summarised without reading code
 
