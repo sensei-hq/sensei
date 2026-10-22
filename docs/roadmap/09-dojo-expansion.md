@@ -39,6 +39,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D28 | Should relay approval gates fail closed? (#312) | **Only for the hard-block categories, only in unattended runs.** In a relay-driven autonomous run, a deploy, a push to main, a destructive action, credentials or money with no human answer is **denied**, with the reason. Interactive sessions keep fail-open — Claude Code's own prompt covers the person at the keyboard. The semantic backstop stays fail-open. |
 | D29 | Are stack scopes governance levels? (D25 follow-up) | **No.** A stack is a tech stack's rules and packs (React, Rust, …), **applied at a level** — the dōjō, a workspace or a repository (user 2026-10-21). The ladder stays dōjō → workspace → repository. Client scopes are still to decide. |
 | D30 | How deep does R3 go in the daemon's own database? | **Everywhere, schema too** (user 2026-10-21): `sensei.projects` and every `project_id` column are renamed in place on upgrade, rehearsed twice on a copy of a real daemon database. Another system's `project` stays (R3's rule). |
+| D31 | The README frontmatter key that groups a repository into a workspace? | **Migrated in place** (user 2026-10-21): sensei reads and writes only `workspace:`, and on its next scan rewrites an existing `project:` line to `workspace:` in that README — a one-time conversion, no permanent dual-read. |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -104,7 +105,8 @@ slice builds, passes and ships on its own.
     in BOTH databases with the dōjō app's readers (`billing-data`, the preview rung) and the relay's
     `scope_key` in the same change, since federation needs the key on both sides; the `project_health` metric
     key and `setup.projects`; and R3a's temporary `scope_to_db` / `scope_to_api` translation removed.
-    *R3a done on its branch (955196d1, 7cc9b465): rehearsed twice on a copy of the daemon DB (counts held) and
+    Part 1 done (d20a5b72: the daemon, `/api/workspaces`, the app). Part 2: the ladder rung, D31's README key.
+    *R3a done on its branch (0ec8271c, 91894026): rehearsed twice on a copy of the daemon DB (counts held) and
     on a copy of the production dōjō (in sync, counts held).*
   - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
     `get_workspace_summary`, …), the plugin's hooks and skills that call them, both `SKILL.md` copies, and
