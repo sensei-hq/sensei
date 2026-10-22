@@ -129,7 +129,7 @@ async fn workspace_list() {
 
 #[tokio::test]
 async fn list_workspaces_under_filters_by_folder_path_boundary() {
-    // find_projects (MCP) needs a folder-scoped view: only workspaces whose
+    // find_workspaces (MCP) needs a folder-scoped view: only workspaces whose
     // folders live under a given path. This pins the SQL boundary rule —
     // exact match + child match, but never a sibling that merely shares the
     // textual prefix (`/x` must not catch `/x-other`).
@@ -208,7 +208,7 @@ async fn list_workspaces_under_filters_by_folder_path_boundary() {
 
 #[tokio::test]
 async fn list_root_folders_excludes_nested_folder_descendants() {
-    // find_projects (`?under=`) must return the COMPACT folder set — repo
+    // find_workspaces (`?under=`) must return the COMPACT folder set — repo
     // roots only. The hundreds of nested `kind:'folder'` descendants are the
     // MCP token-cap bloat; list_root_folders_by_workspace drops them while
     // list_folders_by_workspace (app path) keeps the whole tree.

@@ -455,7 +455,7 @@ impl PgStore {
     }
 
     /// Repo-root folders only (`kind IN ('git','standalone')`) for a workspace —
-    /// the compact folder set the folder-scoped `find_projects` view (`GET
+    /// the compact folder set the folder-scoped `find_workspaces` view (`GET
     /// /api/workspaces?under=…`) needs. Drops the hundreds of nested
     /// `kind:'folder'` descendant rows that pushed that response past the MCP
     /// client's token cap (~72K chars for sensei). The repo roots are kept so

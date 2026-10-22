@@ -4277,7 +4277,7 @@ mod tests {
             .unwrap();
 
         // Tagged, and both context queries below are scoped to that tag, for the
-        // same reason as `mcp_proxy_knowledge_and_project_tools_contract`:
+        // same reason as `mcp_proxy_knowledge_and_workspace_tools_contract`:
         // `assemble_context` blends workspace + stack + global scopes and keeps the
         // top N by strength, so the shared test DB's accumulated global memories
         // eventually crowd a freshly-seeded fixture out of the window. The
@@ -4451,7 +4451,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mcp_proxy_knowledge_and_project_tools_contract() {
+    async fn mcp_proxy_knowledge_and_workspace_tools_contract() {
         use sensei_mcp::daemon_request_for;
         let (app, state) = test_app().await;
 
@@ -4681,7 +4681,27 @@ mod tests {
                 }),
             ),
             (
-                "get_project_summary",
+                "list_workspaces",
+                serde_json::json!({}),
+                Box::new({
+                    let n = name.clone();
+                    move |b| {
+                        // A workspace row (it counts its repositories), not a
+                        // folder row that happens to share the name.
+                        let row = b["workspaces"]
+                            .as_array()
+                            .and_then(|ws| ws.iter().find(|w| w["name"].as_str() == Some(&n)));
+                        match row {
+                            Some(w) if w["repos_count"].as_i64().unwrap_or(0) >= 1 => Ok(()),
+                            other => Err(format!(
+                                "list_workspaces must list the seeded workspace with its repos; got {other:?}"
+                            )),
+                        }
+                    }
+                }),
+            ),
+            (
+                "get_workspace_summary",
                 serde_json::json!({}),
                 Box::new({
                     let n = name.clone();
@@ -4700,7 +4720,7 @@ mod tests {
                 }),
             ),
             (
-                "get_project_conventions",
+                "get_workspace_conventions",
                 serde_json::json!({}),
                 Box::new(move |b| {
                     if arr_has(b, "naming", "kind", "function") {
@@ -4794,7 +4814,7 @@ mod tests {
         // workspace → the same seeded memory. Proves name and uuid are interchangeable.
         let by_uuid = daemon_request_for(
             "get_layered_context",
-            &serde_json::json!({ "project_id": pid.to_string(), "tags": mem_tag.clone() }),
+            &serde_json::json!({ "workspace_id": pid.to_string(), "tags": mem_tag.clone() }),
             cwd,
             Some(&name),
         )
@@ -4815,15 +4835,15 @@ mod tests {
         );
     }
 
-    // ── find_projects: folder-scoped workspace discovery crosses the seam ──────
+    // ── find_workspaces: folder-scoped workspace discovery crosses the seam ──────
     //
-    // The MCP `find_projects` tool shapes `GET /api/workspaces?under=<path>`. This
+    // The MCP `find_workspaces` tool shapes `GET /api/workspaces?under=<path>`. This
     // proves the shape reaches the daemon (never 404/400) AND that the daemon's
     // path-boundary filter genuinely scopes: a workspace with a folder under the
     // path is present; the same workspace is absent for a sibling path that only
     // shares the textual prefix. Goes RED on any drift in the route/query key.
     #[tokio::test]
-    async fn mcp_proxy_find_projects_scopes_by_under() {
+    async fn mcp_proxy_find_workspaces_scopes_by_under() {
         use sensei_mcp::daemon_request_for;
         let (app, state) = test_app().await;
 
@@ -4850,11 +4870,11 @@ mod tests {
 
         // Shape guard: no `under` arg → default to the call cwd.
         let dflt =
-            daemon_request_for("find_projects", &serde_json::json!({}), &base, None).unwrap();
+            daemon_request_for("find_workspaces", &serde_json::json!({}), &base, None).unwrap();
         assert_eq!(dflt.path, "/api/workspaces");
         assert!(
             dflt.query.iter().any(|(k, v)| k == "under" && v == &base),
-            "find_projects with no `under` arg must default to the call cwd"
+            "find_workspaces with no `under` arg must default to the call cwd"
         );
 
         let names = |b: &serde_json::Value| -> Vec<String> {
@@ -4865,7 +4885,7 @@ mod tests {
 
         // Under `base` → the seeded workspace appears.
         let req = daemon_request_for(
-            "find_projects",
+            "find_workspaces",
             &serde_json::json!({ "under": base.clone() }),
             "/irrelevant/cwd",
             None,
@@ -4875,7 +4895,7 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::OK,
-            "find_projects must reach GET /api/workspaces?under=<path>; body={body}"
+            "find_workspaces must reach GET /api/workspaces?under=<path>; body={body}"
         );
         assert!(
             names(&body).contains(&name),
@@ -4884,7 +4904,7 @@ mod tests {
 
         // Under a sibling that only shares the textual prefix → workspace is gone.
         let sib = daemon_request_for(
-            "find_projects",
+            "find_workspaces",
             &serde_json::json!({ "under": format!("{base}-other") }),
             "/x",
             None,
@@ -4900,9 +4920,9 @@ mod tests {
         state.pg.delete_workspace(&pid).await.unwrap();
     }
 
-    // ── find_projects returns COMPACT folders (no `kind:'folder'` bloat) ─────
+    // ── find_workspaces returns COMPACT folders (no `kind:'folder'` bloat) ─────
     //
-    // The `?under=` call is the MCP find_projects discovery path. Its response
+    // The `?under=` call is the MCP find_workspaces discovery path. Its response
     // carried each workspace's FULL nested folder tree (hundreds of
     // `kind:'folder'` descendants) → ~72K chars for sensei, over the MCP client
     // token cap. The scoped call must now return ONLY repo-root folders
@@ -4964,7 +4984,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_projects_under_returns_compact_folders() {
+    async fn find_workspaces_under_returns_compact_folders() {
         use sensei_mcp::daemon_request_for;
         let (app, state) = test_app().await;
 
@@ -5006,9 +5026,9 @@ mod tests {
                 .unwrap();
         }
 
-        // Scoped (find_projects) → compact folders.
+        // Scoped (find_workspaces) → compact folders.
         let req = daemon_request_for(
-            "find_projects",
+            "find_workspaces",
             &serde_json::json!({ "under": base.clone() }),
             "/x",
             None,

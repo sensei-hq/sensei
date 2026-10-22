@@ -30,7 +30,7 @@ pub enum HttpMethod {
 /// nothing and drives the in-process router by `path`).
 ///
 /// `query` is an ordered list of key/value pairs (some daemon handlers read
-/// several, e.g. `?project=…&limit=…&tags=…`); `body` is the JSON payload for
+/// several, e.g. `?workspace=…&limit=…&tags=…`); `body` is the JSON payload for
 /// `POST`/`PUT` tools (`None` for plain `GET`s).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DaemonRequest {
@@ -58,22 +58,22 @@ impl DaemonRequest {
 
 /// Shape the daemon HTTP request the proxy sends for `tool`.
 ///
-/// `resolved_project` is the project **name** the binary already resolved
-/// (via `resolve_project` / `resolve_project_from_cwd`); `None` when nothing
+/// `resolved_workspace` is the workspace **name** the binary already resolved
+/// (via `resolve_workspace` / `resolve_workspace_from_cwd`); `None` when nothing
 /// resolved (equivalent to the binary's empty `repo_id`). `cwd` is the MCP
 /// process working directory — some tools (rules fallback, governance folder,
-/// workflow `project_path`) forward it.
+/// workflow `workspace_path`) forward it.
 ///
 /// Returns:
 ///   * `Some(req)` — a straightforward daemon call whose response the binary
-///     pipes through `daemon_result`. This covers every knowledge / project /
+///     pipes through `daemon_result`. This covers every knowledge / workspace /
 ///     patterns / workflow tool plus the `/api/mcp/call` proxy default.
 ///   * `None` — a tool the binary must handle inline because it needs a custom
 ///     HTTP client (longer timeout), bespoke response parsing, or makes no
 ///     daemon call at all: `infer`, `embed`, `gateway_status`, `consensus`,
 ///     `generate_image`, `log_event`. `get_layered_context` also returns `None`
-///     in the one degenerate case where no project can be resolved (the binary
-///     then returns a friendly "no project" error instead of a daemon 400).
+///     in the one degenerate case where no workspace can be resolved (the binary
+///     then returns a friendly "no workspace" error instead of a daemon 400).
 ///
 /// This is the anti-drift seam: the contract test builds requests here and
 /// issues them against the real daemon router, so a renamed path, a changed
@@ -82,41 +82,41 @@ pub fn daemon_request_for(
     tool: &str,
     args: &Value,
     cwd: &str,
-    resolved_project: Option<&str>,
+    resolved_workspace: Option<&str>,
 ) -> Option<DaemonRequest> {
-    // The binary's `repo_id`: the resolved project NAME, or "" when unresolved.
-    let repo_id = resolved_project.unwrap_or("");
+    // The binary's `repo_id`: the resolved workspace NAME, or "" when unresolved.
+    let repo_id = resolved_workspace.unwrap_or("");
 
     match tool {
         // ── Handled inline by the binary (custom client / response / no-op) ──
-        // `use_project` is here too: it needs the daemon project list, a
+        // `use_workspace` is here too: it needs the daemon workspace list, a
         // {id,name} resolve, and a pin-file WRITE — no single daemon call.
         "infer" | "embed" | "gateway_status" | "consensus" | "generate_image" | "log_event"
-        | "use_project" => None,
+        | "use_workspace" => None,
 
-        // ── Folder-scoped project discovery ─────────────────────────────────
-        // `find_projects` is the folder-scoped view of `list_projects`: shape
+        // ── Folder-scoped workspace discovery ─────────────────────────────────
+        // `find_workspaces` is the folder-scoped view of `list_workspaces`: shape
         // `GET /api/workspaces?under=<path>`, defaulting the scope to the MCP
         // call's cwd when the caller gives no `under`.
-        "find_projects" => {
+        "find_workspaces" => {
             let under = args["under"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
             Some(DaemonRequest::get("/api/workspaces").with_query("under", under))
         }
 
         // ── Who is doing the work: the folder's effective git author ─────────
-        // `get_user_for_project` resolves the git `user.name`/`user.email` (with
-        // git's own local→global precedence) + the owning project, defaulting to
-        // the MCP call's cwd — same folder-scoping as `find_projects`. The
+        // `get_user_for_workspace` resolves the git `user.name`/`user.email` (with
+        // git's own local→global precedence) + the owning workspace, defaulting to
+        // the MCP call's cwd — same folder-scoping as `find_workspaces`. The
         // resolved identity matches the commit author and the Dōjō sign-in, so
         // a run/plan can be registered to the right person.
-        "get_user_for_project" => {
+        "get_user_for_workspace" => {
             let under = args["under"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
             Some(DaemonRequest::get("/api/user").with_query("under", under))
         }
 
         // ── Set the user's behavioural stance (autonomy · sharing · review) ─────
         // `set_stance` POSTs `/api/stance`; `under` defaults to the MCP cwd (same
-        // folder-scoping + git-identity resolution as `get_user_for_project`).
+        // folder-scoping + git-identity resolution as `get_user_for_workspace`).
         // `scope` picks the rung (omitted → the user's default); each omitted dial
         // takes its stored default. The daemon validates the dial values.
         "set_stance" => {
@@ -131,13 +131,13 @@ pub fn daemon_request_for(
         }
 
         // ── Workflow state ──────────────────────────────────────────────────
-        // `project` pins the workflow state to a specific project instead of the
+        // `workspace` pins the workflow state to a specific workspace instead of the
         // cwd-resolved one — the escape hatch when the cwd mis-resolves (issue #109:
-        // MCP default cwd = the `sensei-hq` container → wrong project), which
+        // MCP default cwd = the `sensei-hq` container → wrong workspace), which
         // otherwise makes two concurrent sessions clobber one shared state row.
-        // Mirrors start_run/register_plan's `project` handling.
+        // Mirrors start_run/register_plan's `workspace` handling.
         "update_phase" => {
-            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
             let body = json!({
                 "active_phase":   args["phase"].as_str(),
                 "active_task":    args["task"].as_str(),
@@ -146,11 +146,11 @@ pub fn daemon_request_for(
                 "last_checkpoint": args["checkpoint"].as_str(),
                 "workspace_path": cwd,
             });
-            Some(DaemonRequest::put_json(format!("/api/state/{project}"), body))
+            Some(DaemonRequest::put_json(format!("/api/state/{workspace}"), body))
         }
         "get_workflow_state" => {
-            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
-            Some(DaemonRequest::get(format!("/api/state/{project}")))
+            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            Some(DaemonRequest::get(format!("/api/state/{workspace}")))
         }
 
         // ── Pattern engine (direct /api/patterns endpoints) ─────────────────
@@ -166,7 +166,7 @@ pub fn daemon_request_for(
             Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/for/{symbol}")))
         }
         "get_duplicates" => Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/duplicates"))),
-        "get_project_conventions" => {
+        "get_workspace_conventions" => {
             Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/conventions")))
         }
 
@@ -213,9 +213,9 @@ pub fn daemon_request_for(
 
         // ── Layered memory context ──────────────────────────────────────────
         "get_layered_context" => {
-            let explicit_pid = args["project_id"].as_str().unwrap_or("");
-            // `None` → no project resolvable; the binary returns a guidance error.
-            let (key, val) = context_project_param(explicit_pid, repo_id)?;
+            let explicit_pid = args["workspace_id"].as_str().unwrap_or("");
+            // `None` → no workspace resolvable; the binary returns a guidance error.
+            let (key, val) = context_workspace_param(explicit_pid, repo_id)?;
             let mut req = DaemonRequest::get("/api/knowledge/context").with_query(key, val);
             if let Some(l) = args["limit"].as_str().filter(|s| !s.is_empty()) {
                 req = req.with_query("limit", l);
@@ -286,11 +286,11 @@ pub fn daemon_request_for(
         // `run_checkers` (D-CHECKER) runs the repo's adopted checker-backed rules
         // (their `checker_ref` command) and returns pass/fail verdicts.
         "run_checkers" => {
-            // #109: only fall back to the cwd `folder` when NO project is given.
-            // Sending folder=cwd alongside a project let the daemon prefer the
-            // (container-mis-resolved) folder and 404 even with project:'sensei'.
+            // #109: only fall back to the cwd `folder` when NO workspace is given.
+            // Sending folder=cwd alongside a workspace let the daemon prefer the
+            // (container-mis-resolved) folder and 404 even with workspace:'sensei'.
             let mut body = json!({});
-            if let Some(p) = args["project"].as_str().filter(|s| !s.is_empty()) {
+            if let Some(p) = args["workspace"].as_str().filter(|s| !s.is_empty()) {
                 body["workspace"] = json!(p);
             } else {
                 let folder = args["folder"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd);
@@ -300,16 +300,16 @@ pub fn daemon_request_for(
         }
 
         // ── Relay run-control (P3.8) → the daemon's /api/runs endpoints ─────
-        // `start_run` POSTs a new run; `project` defaults to the resolved repo
-        // (name), matching every other tool's cwd→project convention. The daemon
-        // resolves the project name/uuid and creates the run.
+        // `start_run` POSTs a new run; `workspace` defaults to the resolved repo
+        // (name), matching every other tool's cwd→workspace convention. The daemon
+        // resolves the workspace name/uuid and creates the run.
         "start_run" => {
             let goal = args["goal"].as_str().unwrap_or("");
-            // Caller-supplied project wins; else the cwd-resolved repo name.
-            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            // Caller-supplied workspace wins; else the cwd-resolved repo name.
+            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
             let mut body = json!({ "goal": goal });
-            if !project.is_empty() {
-                body["workspace"] = json!(project);
+            if !workspace.is_empty() {
+                body["workspace"] = json!(workspace);
             }
             if let Some(plan) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
                 body["plan_ref"] = json!(plan);
@@ -322,13 +322,13 @@ pub fn daemon_request_for(
             None => Some(DaemonRequest::get("/api/runs")),
         },
         // `pause_run` marks a run paused-until-reset (a limit-wait, auto-resumes) —
-        // POSTs `/api/runs/pause`; `project` defaults to the cwd-resolved repo, so
-        // the active run for the current project is paused when no run_id is given.
+        // POSTs `/api/runs/pause`; `workspace` defaults to the cwd-resolved repo, so
+        // the active run for the current workspace is paused when no run_id is given.
         "pause_run" => {
             let mut body = json!({ "until": args["until"].as_str().unwrap_or("") });
-            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
-            if !project.is_empty() {
-                body["workspace"] = json!(project);
+            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            if !workspace.is_empty() {
+                body["workspace"] = json!(workspace);
             }
             for k in ["reason", "run_id"] {
                 if let Some(v) = args[k].as_str().filter(|s| !s.is_empty()) {
@@ -346,10 +346,10 @@ pub fn daemon_request_for(
             let goal = args["goal"].as_str().unwrap_or("");
             let plan: Value =
                 serde_json::from_str(args["plan"].as_str().unwrap_or("")).unwrap_or(Value::Null);
-            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
             let mut body = json!({ "goal": goal, "plan": plan });
-            if !project.is_empty() {
-                body["workspace"] = json!(project);
+            if !workspace.is_empty() {
+                body["workspace"] = json!(workspace);
             }
             if let Some(p) = args["plan_ref"].as_str().filter(|s| !s.is_empty()) {
                 body["plan_ref"] = json!(p);
@@ -398,11 +398,11 @@ pub fn daemon_request_for(
                     body[k] = serde_json::json!(v);
                 }
             }
-            // Forward the project (explicit arg, else the cwd-resolved one) so the
+            // Forward the workspace (explicit arg, else the cwd-resolved one) so the
             // daemon can suggest the skills/agents provided by libraries it depends on.
-            let project = args["project"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
-            if !project.is_empty() {
-                body["workspace"] = serde_json::json!(project);
+            let workspace = args["workspace"].as_str().filter(|s| !s.is_empty()).unwrap_or(repo_id);
+            if !workspace.is_empty() {
+                body["workspace"] = serde_json::json!(workspace);
             }
             Some(DaemonRequest::post_json("/api/playbook/recommend", body))
         }
@@ -420,7 +420,7 @@ pub fn daemon_request_for(
             // `get_lib_docs` matches docs to the version the ASKING folder
             // pins (02b S9), so it needs to know which folder is asking. The
             // model rarely thinks to say, and cwd is the answer it would give
-            // — default it here rather than serve the latest docs to a project
+            // — default it here rather than serve the latest docs to a repository
             // on an older release and call that an answer.
             if tool == "get_lib_docs"
                 && args["folder"].as_str().filter(|s| !s.is_empty()).is_none()
@@ -438,8 +438,8 @@ pub fn daemon_request_for(
 }
 
 /// Pure: build the JSON body for `propose_memory` / `save_memory`. Both tools
-/// send the identical body; only the endpoint differs. `project_id` precedence:
-/// explicit arg wins, else the resolved project name (when scope=project).
+/// send the identical body; only the endpoint differs. `workspace_id` precedence:
+/// explicit arg wins, else the resolved workspace name (when scope=workspace).
 /// Governance fields (`gov_scope` + `folder`=cwd, `enforcement`) are attached
 /// only when the caller set them. Spine anchoring (`spine_slot`, `feature`) is
 /// likewise attached only when the caller set them — the daemon's
@@ -456,7 +456,7 @@ fn build_memory_body(args: &Value, cwd: &str, repo_id: &str) -> Value {
         .collect();
 
     let mut body = json!({
-        "scope":   daemon_memory_scope(scope),
+        "scope":   scope,
         "type":    args["type"].as_str().unwrap_or(""),
         "title":   args["title"].as_str().unwrap_or(""),
         "content": args["content"].as_str().unwrap_or(""),
@@ -474,21 +474,15 @@ fn build_memory_body(args: &Value, cwd: &str, repo_id: &str) -> Value {
             body[body_key] = json!(v);
         }
     }
-    // workspace_id: explicit `project_id` param wins, else the resolved project
-    // name (scope=project).
-    if let Some(pid) = args["project_id"].as_str().filter(|s| !s.is_empty()) {
+    // workspace_id: explicit `workspace_id` param wins, else the resolved workspace
+    // name (scope=workspace).
+    if let Some(pid) = args["workspace_id"].as_str().filter(|s| !s.is_empty()) {
         body["workspace_id"] = json!(pid);
-    } else if scope == "project" && !repo_id.is_empty() {
+    } else if scope == "workspace" && !repo_id.is_empty() {
         body["workspace_id"] = json!(repo_id);
     }
     attach_governance(&mut body, args, cwd);
     body
-}
-
-/// A memory scope as the daemon says it. The tools still offer `project`
-/// (#307 R3c renames them); the daemon's API says `workspace`.
-fn daemon_memory_scope(scope: &str) -> &str {
-    if scope == "project" { "workspace" } else { scope }
 }
 
 /// Pure: build the `promote_memory` body — just the governance overlay.
@@ -504,11 +498,11 @@ fn build_governance_body(args: &Value, cwd: &str) -> Value {
 fn attach_governance(body: &mut Value, args: &Value, cwd: &str) {
     if let Some(gs) = args["gov_scope"].as_str().filter(|s| !s.is_empty()) {
         body["gov_scope"] = json!(gs);
-        // #109: prefer an explicit project (the daemon resolves the gov_scope's
-        // repo from it server-side); only forward the cwd `folder` when no project
-        // is given. Sending folder=cwd unconditionally shadowed a passed project
+        // #109: prefer an explicit workspace (the daemon resolves the gov_scope's
+        // repo from it server-side); only forward the cwd `folder` when no workspace
+        // is given. Sending folder=cwd unconditionally shadowed a passed workspace
         // and mis-resolved to the container → a 400 "folder is not an indexed repo".
-        if let Some(p) = args["project"].as_str().filter(|s| !s.is_empty()) {
+        if let Some(p) = args["workspace"].as_str().filter(|s| !s.is_empty()) {
             body["workspace"] = json!(p);
         } else if !cwd.is_empty() {
             body["folder"] = json!(cwd);
@@ -524,7 +518,7 @@ fn attach_governance(body: &mut Value, args: &Value, cwd: &str) {
 /// is the base payload; the routing keys `hook_event_fields` reads
 /// (`hook_event_name`/`assistant_family`/`session_id`/`tool_name`/`cwd`/`exit_code`)
 /// are overlaid. `cwd` falls back to the MCP working dir so the event attributes
-/// to a project. Pure so it's unit-testable without a daemon.
+/// to a repository. Pure so it's unit-testable without a daemon.
 pub fn build_log_event_body(args: &Value, cwd: &str) -> Value {
     let mut body = match args["data"].as_str() {
         Some(s) => match serde_json::from_str::<Value>(s) {
@@ -570,40 +564,40 @@ pub fn handle_initialize() -> Value {
 pub fn handle_list_tools() -> Value {
     json!({
         "tools": [
-            tool("search", "Search functions, types, and symbols in the current project or a named library/project. Use this when you need to find where something is defined.", &[
+            tool("search", "Search functions, types, and symbols in the current workspace or a named library/workspace. Use this when you need to find where something is defined.", &[
                 ("query", "string", "What to search for (function name, type name, etc)"),
             ], &[
-                ("project", "string", "Project or library name to search in (e.g. 'rokkit', 'kavach'). Defaults to current project."),
+                ("workspace", "string", "Workspace or library name to search in (e.g. 'rokkit', 'kavach'). Defaults to current workspace."),
             ]),
             tool("context_pack", "Assemble a ready-to-use context bundle for a task or concept: the most relevant symbols (ranked by keyword AND meaning) with their actual code snippets, in one call. Prefer this over `search` when you want the code, not just where it lives.", &[
                 ("query", "string", "The task or concept to gather context for (natural language works — it's matched semantically)"),
             ], &[
-                ("project", "string", "Project name. Defaults to current project."),
+                ("workspace", "string", "Workspace name. Defaults to current workspace."),
             ]),
             tool("get_callers", "Find all functions that call a given function. Use this to understand who depends on a function.", &[
                 ("name", "string", "Function name to find callers of"),
             ], &[
-                ("project", "string", "Project name. Defaults to current project."),
+                ("workspace", "string", "Workspace name. Defaults to current workspace."),
             ]),
             tool("get_callees", "Find all functions called by a given function. Use this to understand what a function depends on.", &[
                 ("name", "string", "Function name to find callees of"),
             ], &[
-                ("project", "string", "Project name. Defaults to current project."),
+                ("workspace", "string", "Workspace name. Defaults to current workspace."),
             ]),
             tool("get_impact", "Blast radius: everything that reaches a symbol within N hops, plus where the graph stops and WHY. Use before changing or renaming anything — `get_callers` answers one hop, this answers the transitive set. The `boundary` field lists use sites that name the symbol and could not be resolved, each with a reason, so you know how much the radius may be understating rather than trusting it as exact.", &[
                 ("name", "string", "Symbol to find the blast radius of"),
             ], &[
                 ("depth", "number", "How many hops of callers to walk (default 2, max 10)"),
-                ("project", "string", "Project name. Defaults to current project."),
+                ("workspace", "string", "Workspace name. Defaults to current workspace."),
             ]),
-            tool("get_project_summary", "Get overview of a project — function count, types, libraries used, tech stack.", &[], &[
-                ("project", "string", "Project name. Defaults to current project."),
+            tool("get_workspace_summary", "Get overview of a workspace — function count, types, libraries used, tech stack.", &[], &[
+                ("workspace", "string", "Workspace name. Defaults to current workspace."),
             ]),
             tool("get_lib_docs", "Get indexed documentation for a library. Without component param returns the index/overview. With component returns that specific component's docs (e.g. 'list', 'select', 'button').", &[
                 ("name", "string", "Library name (e.g. 'bits-ui', 'rokkit', 'hono')"),
             ], &[
                 ("component", "string", "Specific component name to get docs for (e.g. 'list', 'select', 'button'). Omit for the library index."),
-                ("folder", "string", "Absolute path of the project folder asking. Defaults to the current project. Used to serve docs matching the version YOUR project pins, and to label the answer when none match."),
+                ("folder", "string", "Absolute path of the repository folder asking. Defaults to the current working directory. Used to serve docs matching the version YOUR repository pins, and to label the answer when none match."),
             ]),
             tool("search_lib_docs", "Search across all indexed library documentation. Use when looking for how to use a feature.", &[
                 ("query", "string", "What to search for in library docs"),
@@ -615,23 +609,23 @@ pub fn handle_list_tools() -> Value {
                 ("name", "string", "Library name (e.g. 'rokkit')"),
                 ("focus", "string", "Topic focus of the skill (e.g. 'styling')"),
             ], &[]),
-            tool("list_library_agents", "List the review agents a library provides (declared in its sensei.library.json manifest) — e.g. a config/pattern reviewer for that library. Use during /sensei:review when the project depends on the library.", &[
+            tool("list_library_agents", "List the review agents a library provides (declared in its sensei.library.json manifest) — e.g. a config/pattern reviewer for that library. Use during /sensei:review when the repository depends on the library.", &[
                 ("name", "string", "Library name (e.g. 'rokkit')"),
             ], &[]),
             tool("get_communities", "Get code architecture — clusters of related functions detected by community analysis.", &[], &[
-                ("project", "string", "Project name. Defaults to current project."),
+                ("workspace", "string", "Workspace name. Defaults to current workspace."),
             ]),
             tool("get_patterns", "Get files tagged with a framework pattern (e.g. 'hook', 'middleware', 'route', 'component').", &[
                 ("pattern", "string", "Pattern to search for"),
             ], &[
-                ("project", "string", "Project name. Defaults to current project."),
+                ("workspace", "string", "Workspace name. Defaults to current workspace."),
             ]),
-            tool("list_projects", "List all known projects and their index status.", &[], &[]),
-            tool("find_projects", "List the projects that live under a folder — the folder-scoped view of list_projects (which returns every project on the machine). Use this to discover which sensei project owns the directory you're working in. Defaults to the current working directory when 'under' is omitted.", &[], &[
+            tool("list_workspaces", "List all known workspaces and their index status.", &[], &[]),
+            tool("find_workspaces", "List the workspaces that live under a folder — the folder-scoped view of list_workspaces (which returns every workspace on the machine). Use this to discover which sensei workspace owns the directory you're working in. Defaults to the current working directory when 'under' is omitted.", &[], &[
                 ("under", "string", "Absolute folder path to scope the search to. Defaults to the current working directory."),
             ]),
-            tool("get_user_for_project", "Resolve the git author identity — user.name and user.email, using git's own local-over-global precedence (a repo .git/config override wins; otherwise ~/.gitconfig) — for the folder you're working in, plus the sensei project that owns it. This is the same identity as the commit author and the Dōjō sign-in, so it's how a run or plan gets registered to the right person for relay attribution. Defaults to the current working directory when 'under' is omitted.", &[], &[
-                ("under", "string", "Absolute folder path to resolve the identity + owning project for. Defaults to the current working directory."),
+            tool("get_user_for_workspace", "Resolve the git author identity — user.name and user.email, using git's own local-over-global precedence (a repo .git/config override wins; otherwise ~/.gitconfig) — for the folder you're working in, plus the sensei workspace that owns it. This is the same identity as the commit author and the Dōjō sign-in, so it's how a run or plan gets registered to the right person for relay attribution. Defaults to the current working directory when 'under' is omitted.", &[], &[
+                ("under", "string", "Absolute folder path to resolve the identity + owning workspace for. Defaults to the current working directory."),
             ]),
             tool("set_stance", "Set the user's behavioural stance — the three dials that govern HOW a run behaves (autonomy: how far it goes before asking · sharing: what surfaces to the dōjō · review: who signs off a rule) — at a scope. Complements the governance rules (WHAT a run may do). User-scoped and daemon-local. Omitting 'scope' sets the user's default across scopes; a scope key (e.g. 'workspace', 'organization') sets it for that rung and overrides the default there. Each omitted dial keeps its stored default. Defaults 'under' to the current working directory to resolve the git identity + scope namespace.", &[], &[
                 ("autonomy", "string", "How far a run goes before asking: ask_always | ask_on_guarded (default) | ask_on_risky | run_freely."),
@@ -641,8 +635,8 @@ pub fn handle_list_tools() -> Value {
                 ("under",    "string", "Absolute folder path — resolves the git identity + the scope's namespace. Defaults to the current working directory."),
                 ("user",     "string", "Explicit user key (git email) to set the stance for. Defaults to the git identity at 'under'."),
             ]),
-            tool("use_project", "Pin the active project so every subsequent tool call resolves to it regardless of the server's working directory. Call this when the user tells you which project they're working on (e.g. use_project 'sensei'). The pin persists until you switch it by calling use_project again; an explicit project= argument on any other tool still overrides it for that one call.", &[
-                ("project", "string", "Project name or UUID to pin as active (e.g. 'sensei')."),
+            tool("use_workspace", "Pin the active workspace so every subsequent tool call resolves to it regardless of the server's working directory. Call this when the user tells you which workspace they're working on (e.g. use_workspace 'sensei'). The pin persists until you switch it by calling use_workspace again; an explicit workspace= argument on any other tool still overrides it for that one call.", &[
+                ("workspace", "string", "Workspace name or UUID to pin as active (e.g. 'sensei')."),
             ], &[]),
             tool("create_session", "Start tracking a new coding session. Call at the beginning of a task.", &[
                 ("task", "string", "Description of what you're working on"),
@@ -669,10 +663,10 @@ pub fn handle_list_tools() -> Value {
                 ("issue", "string", "GitHub issue number"),
                 ("plan", "string", "Path to active plan doc"),
                 ("checkpoint", "string", "Checkpoint description"),
-                ("project", "string", "Project name or UUID to pin the state to. Defaults to the current (cwd-resolved) project; pass it when concurrent sessions must not share one project's workflow state."),
+                ("workspace", "string", "Workspace name or UUID to pin the state to. Defaults to the current (cwd-resolved) workspace; pass it when concurrent sessions must not share one workspace's workflow state."),
             ]),
             tool("get_workflow_state", "Get current workflow state — active phase, task, issue, checkpoint. Call when you need orientation or feel lost.", &[], &[
-                ("project", "string", "Project name or UUID. Defaults to the current (cwd-resolved) project."),
+                ("workspace", "string", "Workspace name or UUID. Defaults to the current (cwd-resolved) workspace."),
             ]),
             // Pattern matching
             tool("match_pattern", "Find applicable patterns for a task. Returns detected patterns from the codebase that match the description. Call during the locate step before writing code. MANDATORY in /sensei:build.", &[
@@ -682,15 +676,15 @@ pub fn handle_list_tools() -> Value {
                 ("symbol", "string", "Symbol name to check (e.g. 'SqlAdapter', 'TaskWorker')"),
             ], &[]),
             tool("get_duplicates", "Find duplicate or very similar functions across different files. Use during /sensei:review to catch code duplication.", &[], &[]),
-            tool("get_project_conventions", "Analyze project conventions — naming patterns, directory structure, design patterns. Use to understand how this project is structured.", &[], &[]),
+            tool("get_workspace_conventions", "Analyze workspace conventions — naming patterns, directory structure, design patterns. Use to understand how this workspace is structured.", &[], &[]),
             tool("resolve_risk_class", "Classify how hard a change must be reviewed (auto | review | approve) from its changed file paths. Call FIRST in /sensei:review to set the depth: 'approve' (identity/auth/money/secrets/schema/governance) demands the full adversarial review + human sign-off; 'review' is a standard review; 'auto' can skip the heavy pass. Returns {class, reasons}.", &[
                 ("paths", "array", "Changed file paths (repo-relative or absolute)."),
             ], &[
                 ("task", "string", "Optional task description; a sensitive/destructive task escalates an otherwise-low change."),
             ]),
-            tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization / project / technology / …) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey.", &[], &[]),
-            tool("get_commands", "List the discoverable commands for this project — the actual `test` / `build` / `lint` / `e2e` invocations, derived from each folder's manifest (package.json scripts, etc.). Call when you need to know how to run tests, build, or lint here without guessing. Optionally filter by canonical category verb.", &[], &[
-                ("project",  "string", "Project name. Defaults to current project."),
+            tool("get_rules", "Get the governance rules that apply to this repository, resolved across its scopes (organization / workspace / technology / …) and ranked by enforcement. Rules flagged mandatory are non-negotiable and cannot be overridden. Call at the start of a task to learn the constraints you must obey.", &[], &[]),
+            tool("get_commands", "List the discoverable commands for this workspace — the actual `test` / `build` / `lint` / `e2e` invocations, derived from each folder's manifest (package.json scripts, etc.). Call when you need to know how to run tests, build, or lint here without guessing. Optionally filter by canonical category verb.", &[], &[
+                ("workspace",  "string", "Workspace name. Defaults to current workspace."),
                 ("category", "string", "Canonical verb filter — test | build | lint | e2e | run | format | typecheck | bench | docs | dev | start."),
             ]),
             // Inference
@@ -716,7 +710,7 @@ pub fn handle_list_tools() -> Value {
                 ("challenger_model", "string", "Model for the challenger (default: balanced)"),
                 ("synthesizer_model", "string", "Model for the synthesizer (default: best available)"),
             ]),
-            tool("generate_image", "Generate an image from a text prompt using the configured image provider (OpenAI by default). Saves to the given output_path (relative paths are resolved against CWD) or to a sensei-managed cache when omitted. Returns the absolute file path. Use this when the user asks for visual assets — logos, illustrations, diagrams, character art, mockup imagery — that belong in the project.", &[
+            tool("generate_image", "Generate an image from a text prompt using the configured image provider (OpenAI by default). Saves to the given output_path (relative paths are resolved against CWD) or to a sensei-managed cache when omitted. Returns the absolute file path. Use this when the user asks for visual assets — logos, illustrations, diagrams, character art, mockup imagery — that belong in the repository.", &[
                 ("prompt", "string", "Description of the image to generate"),
             ], &[
                 ("output_path", "string", "Where to save the image. Relative to the current working directory, or absolute. If omitted, saves to ~/.sensei/generated/<hash>.png"),
@@ -735,7 +729,7 @@ pub fn handle_list_tools() -> Value {
                 ("session_id", "string", "Assistant session id (groups events into a session)"),
                 ("family", "string", "Assistant family emitting the event (claude, cursor, codex, copilot, zed). Defaults to claude."),
                 ("tool_name", "string", "The tool, for PreToolUse/PostToolUse events — required for tool-usage analysis"),
-                ("cwd", "string", "Working directory (used to attribute the event to a project). Defaults to the MCP working directory."),
+                ("cwd", "string", "Working directory (used to attribute the event to a repository). Defaults to the MCP working directory."),
                 ("success", "string", "'true'/'false' for a tool/turn outcome"),
             ]),
             // ── Knowledge plane ───────────────────────────────────────
@@ -744,14 +738,14 @@ pub fn handle_list_tools() -> Value {
                  (revert / correction / 'actually...' / repeat_pattern / override / test_failure). \
                  User reviews these in the Learnings UI before they enter active memory.",
                 &[
-                    ("scope",         "string", "global | project | stack"),
+                    ("scope",         "string", "global | workspace | stack"),
                     ("type",          "string", "memory_type enum value (e.g. convention, pattern, decision)"),
                     ("title",         "string", "Short heading"),
                     ("content",       "string", "Rule body — what the agent should know"),
                     ("triage_signal", "string", "Which capture heuristic fired"),
                 ],
                 &[
-                    ("project_id",   "string", "Project UUID (required when scope=project)"),
+                    ("workspace_id",   "string", "Workspace UUID (required when scope=workspace)"),
                     ("scope_filter", "string", "Required when scope=stack (e.g. 'rust')"),
                     ("impact",       "string", "What breaks if ignored"),
                     ("tags",         "string", "Comma-separated tag list (e.g. 'security,performance')"),
@@ -765,13 +759,13 @@ pub fn handle_list_tools() -> Value {
                 "Explicit memory save — used when the user runs /save. Goes straight into active state. \
                  Never call this on heuristic detection — use propose_memory for that.",
                 &[
-                    ("scope",   "string", "global | project | stack"),
+                    ("scope",   "string", "global | workspace | stack"),
                     ("type",    "string", "memory_type enum value"),
                     ("title",   "string", "Short heading"),
                     ("content", "string", "Rule body"),
                 ],
                 &[
-                    ("project_id",   "string", "Project UUID"),
+                    ("workspace_id",   "string", "Workspace UUID"),
                     ("scope_filter", "string", "Required when scope=stack"),
                     ("impact",       "string", "What breaks if ignored"),
                     ("tags",         "string", "Comma-separated tags"),
@@ -782,12 +776,12 @@ pub fn handle_list_tools() -> Value {
                     ("evidence",     "string", "Optional source evidence — a file:line, test name, or run id — recorded as the memory's provenance"),
                 ]),
             tool("promote_memory",
-                "Promote a proven (battle-tested) rule to a broader governance scope, e.g. project → organization. \
+                "Promote a proven (battle-tested) rule to a broader governance scope, e.g. workspace → organization. \
                  Creates a proposal at the new scope for the user to accept; it never auto-applies.",
                 &[("id", "string", "Memory id (UUID) to promote")],
                 &[
-                    ("gov_scope",   "string", "Target scope: organization|client|technology|team|workspace (resolved against the project's repo)"),
-                    ("project",     "string", "Project the gov_scope resolves against (e.g. 'sensei'). Prefer this over the working directory."),
+                    ("gov_scope",   "string", "Target scope: organization|client|technology|team|workspace (resolved against the workspace's repo)"),
+                    ("workspace",     "string", "Workspace the gov_scope resolves against (e.g. 'sensei'). Prefer this over the working directory."),
                     ("enforcement", "string", "Authority at the new scope: advisory|recommended|required|mandatory"),
                 ]),
             tool("accept_proposal",
@@ -804,12 +798,12 @@ pub fn handle_list_tools() -> Value {
                 &[("outcomes", "string", "JSON array string of {memory_id, outcome[, session_id, context]}")],
                 &[]),
             tool("get_layered_context",
-                "Fetch the blended memory context for the current project — global + project + \
+                "Fetch the blended memory context for the current workspace — global + workspace + \
                  stack-matched memories, ordered by strength. Call at session start and on /recall.",
                 &[],
                 &[
-                    ("project",    "string", "Project name. Defaults to current project."),
-                    ("project_id", "string", "Project UUID — overrides project name lookup."),
+                    ("workspace",    "string", "Workspace name. Defaults to current workspace."),
+                    ("workspace_id", "string", "Workspace UUID — overrides workspace name lookup."),
                     ("limit",      "string", "Max memories to return (default 200, cap 500)"),
                     ("tags",       "string", "Comma-separated tag filter"),
                     ("slot",       "string", "optional: lead the context with memories anchored to this spine slot (vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests)"),
@@ -830,8 +824,8 @@ pub fn handle_list_tools() -> Value {
                  for this repo is 'skipped'. Makes adopted rules enforceable, not advisory-only.",
                 &[],
                 &[
-                    ("folder",  "string", "Absolute repo path to check. Defaults to the current project's folder."),
-                    ("project", "string", "Project name or UUID instead of a path."),
+                    ("folder",  "string", "Absolute repo path to check. Defaults to the current working directory."),
+                    ("workspace", "string", "Workspace name or UUID instead of a path."),
                 ]),
             // ── Relay run-control (P3.8) ─────────────────────────────────────
             tool("start_run",
@@ -843,7 +837,7 @@ pub fn handle_list_tools() -> Value {
                  watch this run in the Dōjō; surface it to the user as the handoff.",
                 &[("goal", "string", "What the run should accomplish — the objective it's anchored to")],
                 &[
-                    ("project",  "string", "Project name or UUID the run works in. Defaults to the current project."),
+                    ("workspace",  "string", "Workspace name or UUID the run works in. Defaults to the current workspace."),
                     ("plan_ref", "string", "Path/ref of the committed plan doc the run executes (e.g. docs/plan/x.md)"),
                 ]),
             tool("run_status",
@@ -855,12 +849,12 @@ pub fn handle_list_tools() -> Value {
             tool("pause_run",
                 "Pause a run until a usage/rate limit resets — marks it 'paused' (not stalled) and the \
                  daemon auto-resumes it at the reset. Call this when you hit (or foresee) a limit so the \
-                 watcher sees a resumable wait, not a stall. Defaults to the active run for the current project.",
+                 watcher sees a resumable wait, not a stall. Defaults to the active run for the current workspace.",
                 &[("until", "string", "RFC-3339 timestamp when the limit resets (e.g. 2026-07-25T11:30:00-05:00).")],
                 &[
                     ("reason", "string", "Human-readable cause (e.g. 'usage limit', 'weekly cap')."),
-                    ("project", "string", "Project name or UUID; defaults to the current project."),
-                    ("run_id", "string", "A specific run's UUID; defaults to the active run for the project."),
+                    ("workspace", "string", "Workspace name or UUID; defaults to the current workspace."),
+                    ("run_id", "string", "A specific run's UUID; defaults to the active run for the workspace."),
                 ]),
             // ── Automated-run coordinator contract (AR-3) ────────────────────
             tool("register_plan",
@@ -877,12 +871,12 @@ pub fn handle_list_tools() -> Value {
                     ("plan", "string", "The plan graph as a JSON string (phases → tasks with agent/model/spec_ref/deps)"),
                 ],
                 &[
-                    ("project", "string", "Project name or UUID the run works in. Defaults to the current project."),
+                    ("workspace", "string", "Workspace name or UUID the run works in. Defaults to the current workspace."),
                     ("plan_ref", "string", "Path to the committed human plan doc (e.g. docs/plan/<id>/plan.md)."),
                     ("max_concurrency", "string", "Max parallel tasks (integer as a string). Defaults to 1."),
                 ]),
             tool("update_task_status",
-                "Flip one plan task's state as the executor works the graph. Re-projects the task's Dōjō \
+                "Flip one plan task's state as the executor works the graph. Redraws the task's Dōjō \
                  segment and feeds the run's progress clock — call it when a task goes active / done / \
                  failed / blocked. Never touches the liveness heartbeat (that stays the daemon's).",
                 &[
@@ -924,7 +918,7 @@ pub fn handle_list_tools() -> Value {
                     ("session_id", "string", "session UUID to attribute the run to"),
                     ("feature",    "string", "feature slug when the chunk maps to a dossier"),
                     ("confirm",    "string", "true to record the run as confirmed"),
-                    ("project",    "string", "project name or UUID — enables suggested_skills/agents from the libraries it uses (defaults to the cwd-resolved project)"),
+                    ("workspace",    "string", "workspace name or UUID — enables suggested_skills/agents from the libraries it uses (defaults to the cwd-resolved workspace)"),
                 ]),
             // ── §9 learning loop: accept path ─────────────────────────────────
             tool("list_playbook_rule_proposals",
@@ -990,14 +984,14 @@ pub fn build_daemon_params(args: &Value, repo_id: &str) -> Value {
 }
 
 /// Pure: pick the query param the daemon's `GET /api/knowledge/context`
-/// accepts for the resolved project. An explicit `project_id` (a UUID the
-/// caller passed) is forwarded as `project_id`; otherwise the resolved project
-/// **name** is sent as `project` (the daemon resolves names → UUIDs, mirroring
+/// accepts for the resolved workspace. An explicit `workspace_id` (a UUID the
+/// caller passed) is forwarded as `workspace_id`; otherwise the resolved workspace
+/// **name** is sent as `workspace` (the daemon resolves names → UUIDs, mirroring
 /// `get_commands`). Returns `None` when neither is known.
 ///
-/// The original bug lived here: the name was sent as `project_id`, which the
+/// The original bug lived here: the name was sent as `workspace_id`, which the
 /// daemon's uuid-only handler rejected with HTTP 400.
-pub fn context_project_param<'a>(
+pub fn context_workspace_param<'a>(
     explicit_pid: &'a str,
     repo_id: &'a str,
 ) -> Option<(&'static str, &'a str)> {
@@ -1011,8 +1005,8 @@ pub fn context_project_param<'a>(
 }
 
 /// Pure: pick the query param the daemon's `GET /api/knowledge/rules` accepts.
-/// Prefer the resolved project **name** (`project`) so the daemon resolves the
-/// governing folder itself; fall back to `folder=<cwd>` only when no project
+/// Prefer the resolved workspace **name** (`workspace`) so the daemon resolves the
+/// governing folder itself; fall back to `folder=<cwd>` only when no workspace
 /// resolved. The original bug always sent the MCP process's own `cwd`, which is
 /// not the repo path.
 pub fn rules_query_param<'a>(repo_id: &'a str, cwd: &'a str) -> (&'static str, &'a str) {
@@ -1028,127 +1022,131 @@ pub fn map_daemon_tool(tool_name: &str) -> &str {
     }
 }
 
-// ── Active-project pin (in-memory, session-scoped) ───────────────────────────
+// ── Active-workspace pin (in-memory, session-scoped) ───────────────────────────
 //
 // The MCP server process's cwd is fixed at launch and is usually NOT the repo,
-// so cwd-based resolution can say "no project resolved". `use_project` sets an
-// IN-MEMORY pin (`ACTIVE_PIN` in the binary) so a chosen project survives across
+// so cwd-based resolution can say "no workspace resolved". `use_workspace` sets an
+// IN-MEMORY pin (`ACTIVE_PIN` in the binary) so a chosen workspace survives across
 // every subsequent tool call regardless of cwd; the default resolver
-// (`resolve_default_project`) consults it after an explicit `project=` arg and
+// (`resolve_default_workspace`) consults it after an explicit `workspace=` arg and
 // cwd. The pin is NOT persisted to a file — it lives only for this session (the
 // MCP is one stdio process per session), so it can never leak across
 // sessions/repos: the #109 stale-pin misroute is unrepresentable by design.
 
-/// The pinned active project (`{id, name}`), held in memory for the session.
+/// The pinned active workspace (`{id, name}`), held in memory for the session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ActiveProject {
+pub struct ActiveWorkspace {
     pub id: String,
     pub name: String,
 }
 
-/// The default-project decision for a project-scoped tool (no explicit `project=`).
+/// The default-workspace decision for a workspace-scoped tool (no explicit `workspace=`).
 #[derive(Debug, Clone, PartialEq)]
-pub enum ProjectResolution {
-    /// A project was chosen. `source` is how it was picked (`"explicit"` | `"cwd"` | `"pin"`);
+pub enum WorkspaceResolution {
+    /// A workspace was chosen. `source` is how it was picked (`"explicit"` | `"cwd"` | `"pin"`);
     /// `note` carries a stale-pin warning when a resolved cwd overrode a *conflicting* pin —
     /// surfaced to the caller so a mis-resolution is never silent.
     Resolved { name: String, source: &'static str, note: Option<String> },
-    /// No explicit arg, no cwd match, no pin — the caller must name the project.
+    /// No explicit arg, no cwd match, no pin — the caller must name the workspace.
     Unresolved,
 }
 
-/// Pure: choose the default project for a project-scoped tool. Precedence:
-///   1. **explicit** — a non-empty `project=` arg (strongest; a per-call override).
-///   2. **cwd** — the project the WORKING DIR resolves to. This **beats the session `pin`** when
+/// Pure: choose the default workspace for a workspace-scoped tool. Precedence:
+///   1. **explicit** — a non-empty `workspace=` arg (strongest; a per-call override).
+///   2. **cwd** — the workspace the WORKING DIR resolves to. This **beats the session `pin`** when
 ///      they disagree: being *in* a repo is the strongest current signal. (The pin is now an
 ///      in-memory *session* value, so it can no longer be *stale across sessions*; respecting cwd
-///      on a conflict still keeps a mid-session `use_project` from masking the repo you're in.)
+///      on a conflict still keeps a mid-session `use_workspace` from masking the repo you're in.)
 ///      The override is carried in `note`, never applied silently.
 ///   3. **pin** — the fallback when the cwd resolves nothing (e.g. launched from a container dir
-///      that is not itself a project); this is what `use_project` exists for.
-///   4. otherwise **Unresolved** — the caller must pass `project=` or run `use_project`.
-pub fn resolve_default_project(
+///      that is not itself a workspace); this is what `use_workspace` exists for.
+///   4. otherwise **Unresolved** — the caller must pass `workspace=` or run `use_workspace`.
+pub fn resolve_default_workspace(
     explicit: Option<&str>,
-    pin: Option<&ActiveProject>,
+    pin: Option<&ActiveWorkspace>,
     cwd_name: &str,
-) -> ProjectResolution {
+) -> WorkspaceResolution {
     if let Some(e) = explicit.filter(|s| !s.is_empty()) {
-        return ProjectResolution::Resolved { name: e.to_string(), source: "explicit", note: None };
+        return WorkspaceResolution::Resolved {
+            name: e.to_string(),
+            source: "explicit",
+            note: None,
+        };
     }
     let cwd = (!cwd_name.trim().is_empty()).then_some(cwd_name);
     let pin_name = pin.map(|p| p.name.as_str()).filter(|n| !n.is_empty());
     match (cwd, pin_name) {
-        (Some(c), Some(p)) if c != p => ProjectResolution::Resolved {
+        (Some(c), Some(p)) if c != p => WorkspaceResolution::Resolved {
             name: c.to_string(),
             source: "cwd",
             note: Some(format!(
-                "working dir resolves to '{c}' but the pinned project is '{p}' — using '{c}'. \
-                 Run use_project to update the pin, or pass project= to override."
+                "working dir resolves to '{c}' but the pinned workspace is '{p}' — using '{c}'. \
+                 Run use_workspace to update the pin, or pass workspace= to override."
             )),
         },
         (Some(c), _) => {
-            ProjectResolution::Resolved { name: c.to_string(), source: "cwd", note: None }
+            WorkspaceResolution::Resolved { name: c.to_string(), source: "cwd", note: None }
         }
         (None, Some(p)) => {
-            ProjectResolution::Resolved { name: p.to_string(), source: "pin", note: None }
+            WorkspaceResolution::Resolved { name: p.to_string(), source: "pin", note: None }
         }
-        (None, None) => ProjectResolution::Unresolved,
+        (None, None) => WorkspaceResolution::Unresolved,
     }
 }
 
-/// Pure: find the project row matching `hint` among `/api/workspaces` rows.
+/// Pure: find the workspace row matching `hint` among `/api/workspaces` rows.
 /// Matching order:
 ///   1. Exact `id` (UUID) match
 ///   2. Exact `name` match (case-insensitive)
 ///   3. Partial `name` match (`contains`, case-insensitive)
 ///
-/// Shared by the name-only [`resolve_project_in`] and the `{id,name}`
-/// [`resolve_active_project_in`] so the match order is defined exactly once.
-fn find_project<'a>(projects: &'a [Value], hint: &str) -> Option<&'a Value> {
+/// Shared by the name-only [`resolve_workspace_in`] and the `{id,name}`
+/// [`resolve_active_workspace_in`] so the match order is defined exactly once.
+fn find_workspace<'a>(workspaces: &'a [Value], hint: &str) -> Option<&'a Value> {
     let hint_lower = hint.to_lowercase();
 
     // 1. Exact id match
-    if let Some(p) = projects.iter().find(|p| p["id"].as_str() == Some(hint)) {
+    if let Some(p) = workspaces.iter().find(|p| p["id"].as_str() == Some(hint)) {
         return Some(p);
     }
     // 2. Exact name match (case-insensitive)
-    if let Some(p) = projects
+    if let Some(p) = workspaces
         .iter()
         .find(|p| p["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone()))
     {
         return Some(p);
     }
     // 3. Partial name match
-    projects
+    workspaces
         .iter()
         .find(|p| p["name"].as_str().map(|n| n.to_lowercase().contains(&hint_lower)) == Some(true))
 }
 
-/// Pure function: resolve a project hint to a project **name** from a slice of
-/// `/api/workspaces` rows (see [`find_project`] for the match order). Returns
+/// Pure function: resolve a workspace hint to a workspace **name** from a slice of
+/// `/api/workspaces` rows (see [`find_workspace`] for the match order). Returns
 /// `None` when nothing matches.
-pub fn resolve_project_in(projects: &[Value], hint: &str) -> Option<String> {
-    find_project(projects, hint).and_then(|p| p["name"].as_str().map(str::to_string))
+pub fn resolve_workspace_in(workspaces: &[Value], hint: &str) -> Option<String> {
+    find_workspace(workspaces, hint).and_then(|p| p["name"].as_str().map(str::to_string))
 }
 
-/// Pure function: resolve a hint to the matching project's `{id, name}` — what
-/// `use_project` pins. Same match order as [`resolve_project_in`]. Returns
+/// Pure function: resolve a hint to the matching workspace's `{id, name}` — what
+/// `use_workspace` pins. Same match order as [`resolve_workspace_in`]. Returns
 /// `None` when nothing matches or the row has no `name`.
-pub fn resolve_active_project_in(projects: &[Value], hint: &str) -> Option<ActiveProject> {
-    let p = find_project(projects, hint)?;
+pub fn resolve_active_workspace_in(workspaces: &[Value], hint: &str) -> Option<ActiveWorkspace> {
+    let p = find_workspace(workspaces, hint)?;
     let name = p["name"].as_str()?.to_string();
     let id = p["id"].as_str().unwrap_or_default().to_string();
-    Some(ActiveProject { id, name })
+    Some(ActiveWorkspace { id, name })
 }
 
-/// Pure function: resolve a project name from `cwd` by matching against each
-/// project's `folders[].abs_path`.  Picks the project whose folder has the
+/// Pure function: resolve a workspace name from `cwd` by matching against each
+/// workspace's `folders[].abs_path`.  Picks the workspace whose folder has the
 /// longest `abs_path` that is a prefix of `cwd`.  Returns "" if no match.
-pub fn resolve_from_cwd_in(projects: &[Value], cwd: &str) -> String {
+pub fn resolve_from_cwd_in(workspaces: &[Value], cwd: &str) -> String {
     let mut best_name = String::new();
     let mut best_len = 0usize;
 
-    for p in projects {
+    for p in workspaces {
         if let Some(folders) = p["folders"].as_array() {
             for folder in folders {
                 if let Some(abs_path) = folder["abs_path"].as_str()
@@ -1165,10 +1163,10 @@ pub fn resolve_from_cwd_in(projects: &[Value], cwd: &str) -> String {
     // #109: cwd sits ABOVE the repos (a container/parent dir) → no prefix match.
     // If EXACTLY ONE registered repo is under cwd, that's unambiguous → pick it.
     // If several are, it's genuinely ambiguous → leave empty so the caller falls
-    // back to the pin / an explicit project= (never guess a wrong project).
+    // back to the pin / an explicit workspace= (never guess a wrong workspace).
     if best_name.is_empty() && !cwd.trim().is_empty() {
         let prefix = if cwd.ends_with('/') { cwd.to_string() } else { format!("{cwd}/") };
-        let mut under: Vec<String> = projects
+        let mut under: Vec<String> = workspaces
             .iter()
             .filter(|p| {
                 p["folders"].as_array().is_some_and(|fs| {
@@ -1205,20 +1203,20 @@ mod tests {
     }
 
     #[test]
-    fn resolve_project_matches_by_name_not_empty() {
-        assert_eq!(resolve_project_in(&sample(), "sensei"), Some("sensei".into()));
-        assert_eq!(resolve_project_in(&sample(), "SENSEI"), Some("sensei".into()));
-        assert_eq!(resolve_project_in(&sample(), "sens"), Some("sensei".into())); // partial
+    fn resolve_workspace_matches_by_name_not_empty() {
+        assert_eq!(resolve_workspace_in(&sample(), "sensei"), Some("sensei".into()));
+        assert_eq!(resolve_workspace_in(&sample(), "SENSEI"), Some("sensei".into()));
+        assert_eq!(resolve_workspace_in(&sample(), "sens"), Some("sensei".into())); // partial
         assert_eq!(
-            resolve_project_in(&sample(), "11111111-1111-1111-1111-111111111111"),
+            resolve_workspace_in(&sample(), "11111111-1111-1111-1111-111111111111"),
             Some("sensei".into())
         ); // by id
-        assert_eq!(resolve_project_in(&sample(), "nope"), None);
+        assert_eq!(resolve_workspace_in(&sample(), "nope"), None);
     }
 
     #[test]
     fn resolve_from_cwd_matches_longest_folder_prefix() {
-        // deeper path → senseid folder wins, but both belong to same project "sensei"
+        // deeper path → senseid folder wins, but both belong to same workspace "sensei"
         assert_eq!(
             resolve_from_cwd_in(&sample(), "/Users/x/dev/sensei/crates/senseid/src"),
             "sensei".to_string()
@@ -1243,35 +1241,35 @@ mod tests {
         assert_eq!(
             resolve_from_cwd_in(&many, "/wrap"),
             "",
-            "ambiguous parent → no guess (pass project=/pin)"
+            "ambiguous parent → no guess (pass workspace=/pin)"
         );
     }
 
     #[test]
-    fn resolve_project_exact_name_wins_over_partial() {
-        let projects = vec![
+    fn resolve_workspace_exact_name_wins_over_partial() {
+        let workspaces = vec![
             json!({ "id": "a", "name": "sensei-web", "folders": [] }),
             json!({ "id": "b", "name": "sensei",     "folders": [] }),
         ];
         // Exact "sensei" must return "sensei", not the partial-matching "sensei-web".
-        assert_eq!(resolve_project_in(&projects, "sensei"), Some("sensei".into()));
+        assert_eq!(resolve_workspace_in(&workspaces, "sensei"), Some("sensei".into()));
     }
 
     #[test]
     fn resolve_from_cwd_no_folders_is_empty() {
-        let projects = vec![json!({ "id": "a", "name": "x" })]; // no folders key
-        assert_eq!(resolve_from_cwd_in(&projects, "/anywhere"), "".to_string());
+        let workspaces = vec![json!({ "id": "a", "name": "x" })]; // no folders key
+        assert_eq!(resolve_from_cwd_in(&workspaces, "/anywhere"), "".to_string());
     }
 
     #[test]
     fn resolve_from_cwd_with_root_folders_only() {
         // The daemon now sends only repo-root folders (kind git|standalone) on
-        // the `?under=` find_projects path — the nested `kind:'folder'`
+        // the `?under=` find_workspaces path — the nested `kind:'folder'`
         // descendants (e.g. `.../crates/senseid`) are dropped to stay under the
-        // MCP client's token cap. cwd→project resolution must still work off the
+        // MCP client's token cap. cwd→workspace resolution must still work off the
         // repo root alone: a deep cwd `starts_with` the root, so longest-prefix
-        // still lands the project.
-        let projects = vec![json!({
+        // still lands the workspace.
+        let workspaces = vec![json!({
             "id": "11111111-1111-1111-1111-111111111111",
             "name": "sensei",
             // Only the repo root — NO descendant folder rows.
@@ -1280,17 +1278,17 @@ mod tests {
             ]
         })];
         assert_eq!(
-            resolve_from_cwd_in(&projects, "/Users/x/dev/sensei/crates/senseid/src/api"),
+            resolve_from_cwd_in(&workspaces, "/Users/x/dev/sensei/crates/senseid/src/api"),
             "sensei".to_string(),
-            "a deep cwd must still resolve to the project via its repo-root folder alone",
+            "a deep cwd must still resolve to the workspace via its repo-root folder alone",
         );
         assert_eq!(
-            resolve_from_cwd_in(&projects, "/Users/x/dev/sensei"),
+            resolve_from_cwd_in(&workspaces, "/Users/x/dev/sensei"),
             "sensei".to_string(),
             "the repo root itself must resolve",
         );
         assert_eq!(
-            resolve_from_cwd_in(&projects, "/Users/x/dev/other"),
+            resolve_from_cwd_in(&workspaces, "/Users/x/dev/other"),
             "".to_string(),
             "a cwd outside the root must not resolve",
         );
@@ -1298,28 +1296,28 @@ mod tests {
 
     // ── MCP↔daemon seam: the knowledge params the proxy sends ─────────────
     // These pin the request SHAPE that the (fixed) daemon accepts. They go RED
-    // on the original bug, which sent the project NAME as `project_id` (context)
+    // on the original bug, which sent the workspace NAME as `workspace_id` (context)
     // and the process `cwd` as `folder` (rules).
 
     #[test]
-    fn context_param_sends_project_name_not_project_id() {
+    fn context_param_sends_workspace_name_not_workspace_id() {
         // Resolved-from-cwd/hint: `repo_id` is a NAME → send it as `workspace`
         // (the daemon resolves names). Sending it as the id was the bug.
-        assert_eq!(context_project_param("", "sensei"), Some(("workspace", "sensei")));
+        assert_eq!(context_workspace_param("", "sensei"), Some(("workspace", "sensei")));
         // An explicit uuid passes straight through as `workspace_id`.
         assert_eq!(
-            context_project_param("11111111-1111-1111-1111-111111111111", "sensei"),
+            context_workspace_param("11111111-1111-1111-1111-111111111111", "sensei"),
             Some(("workspace_id", "11111111-1111-1111-1111-111111111111")),
         );
-        // Nothing resolved → caller returns a "no project" error.
-        assert_eq!(context_project_param("", ""), None);
+        // Nothing resolved → caller returns a "no workspace" error.
+        assert_eq!(context_workspace_param("", ""), None);
     }
 
     #[test]
-    fn rules_param_prefers_project_name_over_cwd() {
-        // Fixed: send the resolved project NAME so the daemon finds the repo.
+    fn rules_param_prefers_workspace_name_over_cwd() {
+        // Fixed: send the resolved workspace NAME so the daemon finds the repo.
         assert_eq!(rules_query_param("sensei", "/mcp/proc/cwd"), ("workspace", "sensei"));
-        // Fall back to folder=cwd ONLY when no project resolved.
+        // Fall back to folder=cwd ONLY when no workspace resolved.
         assert_eq!(rules_query_param("", "/mcp/proc/cwd"), ("folder", "/mcp/proc/cwd"));
     }
 
@@ -1334,7 +1332,7 @@ mod tests {
         "get_callers",
         "get_callees",
         "get_impact",
-        "get_project_summary",
+        "get_workspace_summary",
         "get_lib_docs",
         "search_lib_docs",
         "list_library_skills",
@@ -1342,11 +1340,11 @@ mod tests {
         "list_library_agents",
         "get_communities",
         "get_patterns",
-        "list_projects",
-        "find_projects",
-        "get_user_for_project",
+        "list_workspaces",
+        "find_workspaces",
+        "get_user_for_workspace",
         "set_stance",
-        "use_project",
+        "use_workspace",
         "create_session",
         "update_session",
         "add_library",
@@ -1355,7 +1353,7 @@ mod tests {
         "match_pattern",
         "get_pattern_for",
         "get_duplicates",
-        "get_project_conventions",
+        "get_workspace_conventions",
         "resolve_risk_class",
         "get_rules",
         "get_commands",
@@ -1410,6 +1408,23 @@ mod tests {
         assert_eq!(deduped.len(), names.len(), "duplicate tool names in catalog");
         for name in &names {
             assert!(EXPECTED_TOOLS.contains(name), "undeclared tool advertised: {name}");
+        }
+    }
+
+    /// #307 R3c (D12): sensei's grouping is a workspace. No tool is named for a
+    /// "project", takes a `project` argument, or describes itself in that word.
+    #[test]
+    fn no_tool_says_project() {
+        for t in tools() {
+            let name = t["name"].as_str().unwrap_or("");
+            assert!(!name.contains("project"), "tool name says project: {name}");
+            let desc = t["description"].as_str().unwrap_or("").to_lowercase();
+            assert!(!desc.contains("project"), "{name}'s description says project: {desc}");
+            for (arg, schema) in t["inputSchema"]["properties"].as_object().unwrap() {
+                assert!(!arg.contains("project"), "{name} takes a `{arg}` argument");
+                let arg_desc = schema["description"].as_str().unwrap_or("").to_lowercase();
+                assert!(!arg_desc.contains("project"), "{name}.{arg} says project: {arg_desc}");
+            }
         }
     }
 
@@ -1574,7 +1589,7 @@ mod tests {
     }
 
     #[test]
-    fn context_request_sends_project_name_as_project_query() {
+    fn context_request_sends_workspace_name_as_workspace_query() {
         // The Chunk-A bug shape: proxy must send ?workspace=<name>, NOT ?workspace_id=<name>.
         let req =
             daemon_request_for("get_layered_context", &json!({}), "/cwd", Some("sensei")).unwrap();
@@ -1592,7 +1607,7 @@ mod tests {
     fn context_request_forwards_explicit_uuid_limit_and_tags() {
         let req = daemon_request_for(
             "get_layered_context",
-            &json!({ "project_id": "11111111-1111-1111-1111-111111111111", "limit": "50", "tags": "rust,api" }),
+            &json!({ "workspace_id": "11111111-1111-1111-1111-111111111111", "limit": "50", "tags": "rust,api" }),
             "/cwd", Some("sensei"),
         ).unwrap();
         assert_eq!(
@@ -1626,18 +1641,18 @@ mod tests {
     }
 
     #[test]
-    fn context_request_none_when_no_project_resolvable() {
-        // No explicit project_id, nothing resolved → binary returns a guidance error.
+    fn context_request_none_when_no_workspace_resolvable() {
+        // No explicit workspace_id, nothing resolved → binary returns a guidance error.
         assert_eq!(daemon_request_for("get_layered_context", &json!({}), "/cwd", None), None);
     }
 
     #[test]
-    fn rules_request_sends_project_name_not_folder() {
+    fn rules_request_sends_workspace_name_not_folder() {
         let req = daemon_request_for("get_rules", &json!({}), "/mcp/cwd", Some("sensei")).unwrap();
         assert_eq!(req.path, "/api/knowledge/rules");
         assert_eq!(q(&req, "workspace"), Some("sensei"), "resolved name rides on ?workspace=");
         assert_eq!(q(&req, "folder"), None);
-        // Fallback: no project resolved → ?folder=<cwd> (the historical contract).
+        // Fallback: no workspace resolved → ?folder=<cwd> (the historical contract).
         let fb = daemon_request_for("get_rules", &json!({}), "/mcp/cwd", None).unwrap();
         assert_eq!(q(&fb, "folder"), Some("/mcp/cwd"));
         assert_eq!(q(&fb, "workspace"), None);
@@ -1676,12 +1691,12 @@ mod tests {
     }
 
     #[test]
-    fn run_checkers_omits_cwd_folder_when_project_is_given() {
-        // #109: an explicit project must NOT also carry folder=cwd — the daemon
+    fn run_checkers_omits_cwd_folder_when_workspace_is_given() {
+        // #109: an explicit workspace must NOT also carry folder=cwd — the daemon
         // prefers the folder, and the MCP cwd mis-resolves to the container.
         let req = daemon_request_for(
             "run_checkers",
-            &json!({ "project": "sensei" }),
+            &json!({ "workspace": "sensei" }),
             "/mcp/cwd",
             Some("sensei"),
         )
@@ -1689,8 +1704,8 @@ mod tests {
         assert_eq!(req.path, "/api/checkers/run");
         let body = req.body.clone().unwrap();
         assert_eq!(body["workspace"], json!("sensei"));
-        assert!(body.get("folder").is_none(), "no folder shadow when project is explicit");
-        // No project → fall back to the cwd folder (historical contract).
+        assert!(body.get("folder").is_none(), "no folder shadow when workspace is explicit");
+        // No workspace → fall back to the cwd folder (historical contract).
         let fb =
             daemon_request_for("run_checkers", &json!({}), "/mcp/cwd", Some("sensei")).unwrap();
         let fbody = fb.body.clone().unwrap();
@@ -1699,7 +1714,7 @@ mod tests {
     }
 
     #[test]
-    fn commands_request_targets_project_path_with_optional_category() {
+    fn commands_request_targets_workspace_path_with_optional_category() {
         let req = daemon_request_for("get_commands", &json!({}), "/cwd", Some("sensei")).unwrap();
         assert_eq!(req.method, HttpMethod::Get);
         assert_eq!(req.path, "/api/workspaces/sensei/commands");
@@ -1715,8 +1730,8 @@ mod tests {
     }
 
     #[test]
-    fn start_run_posts_goal_with_resolved_project_and_optional_plan() {
-        // project defaults to the resolved repo name (cwd→project convention).
+    fn start_run_posts_goal_with_resolved_workspace_and_optional_plan() {
+        // workspace defaults to the resolved repo name (cwd→workspace convention).
         let req = daemon_request_for(
             "start_run",
             &json!({ "goal": "ship the relay engine" }),
@@ -1728,28 +1743,28 @@ mod tests {
         assert_eq!(req.path, "/api/runs");
         let body = req.body.clone().unwrap();
         assert_eq!(body["goal"], "ship the relay engine");
-        assert_eq!(body["workspace"], "sensei", "unset project defaults to the resolved repo");
+        assert_eq!(body["workspace"], "sensei", "unset workspace defaults to the resolved repo");
         assert!(body.get("plan_ref").is_none(), "no plan_ref key when omitted");
 
-        // An explicit project + plan_ref override / are forwarded.
+        // An explicit workspace + plan_ref override / are forwarded.
         let full = daemon_request_for(
             "start_run",
-            &json!({ "goal": "g", "project": "other", "plan_ref": "docs/plan/x.md" }),
+            &json!({ "goal": "g", "workspace": "other", "plan_ref": "docs/plan/x.md" }),
             "/cwd",
             Some("sensei"),
         )
         .unwrap();
         let fb = full.body.unwrap();
-        assert_eq!(fb["workspace"], "other", "explicit project wins over the resolved repo");
+        assert_eq!(fb["workspace"], "other", "explicit workspace wins over the resolved repo");
         assert_eq!(fb["plan_ref"], "docs/plan/x.md");
 
-        // No project resolvable and none given → no project key (daemon makes a
-        // project-less run rather than a 400).
+        // No workspace resolvable and none given → no workspace key (daemon makes a
+        // workspace-less run rather than a 400).
         let noproj =
             daemon_request_for("start_run", &json!({ "goal": "g" }), "/cwd", None).unwrap();
         assert!(
             noproj.body.unwrap().get("workspace").is_none(),
-            "no project anywhere → omit the key"
+            "no workspace anywhere → omit the key"
         );
     }
 
@@ -1772,7 +1787,7 @@ mod tests {
     }
 
     #[test]
-    fn register_plan_forwards_parsed_graph_with_resolved_project() {
+    fn register_plan_forwards_parsed_graph_with_resolved_workspace() {
         let plan = r#"{"phases":[{"title":"P","tasks":[{"id":"t1","title":"x","agent":"general-purpose","model":"sonnet"}]}]}"#;
         let req = daemon_request_for(
             "register_plan",
@@ -1785,7 +1800,7 @@ mod tests {
         assert_eq!(req.path, "/api/runs/plan");
         let body = req.body.unwrap();
         assert_eq!(body["goal"], "ship it");
-        assert_eq!(body["workspace"], "sensei", "unset project defaults to the resolved repo");
+        assert_eq!(body["workspace"], "sensei", "unset workspace defaults to the resolved repo");
         assert_eq!(body["plan_ref"], "docs/plan/x/plan.md");
         // The JSON-string plan is parsed into an object the daemon can validate.
         assert_eq!(body["plan"]["phases"][0]["tasks"][0]["id"], "t1");
@@ -1837,7 +1852,7 @@ mod tests {
         let d = daemon_request_for("get_duplicates", &json!({}), "/cwd", Some("sensei")).unwrap();
         assert_eq!(d.path, "/api/patterns/sensei/duplicates");
         assert_eq!(d.method, HttpMethod::Get);
-        let c = daemon_request_for("get_project_conventions", &json!({}), "/cwd", Some("sensei"))
+        let c = daemon_request_for("get_workspace_conventions", &json!({}), "/cwd", Some("sensei"))
             .unwrap();
         assert_eq!(c.path, "/api/patterns/sensei/conventions");
     }
@@ -1881,25 +1896,28 @@ mod tests {
         assert_eq!(body["active_issue"], 42, "issue string parses to an integer");
         assert_eq!(body["workspace_path"], "/proj/cwd", "cwd rides along as workspace_path");
 
-        // An explicit `project` pins the state to that project (not the cwd-resolved
+        // An explicit `workspace` pins the state to that workspace (not the cwd-resolved
         // one) — the escape hatch against cross-session clobber when the cwd
         // mis-resolves (#109). Both verbs honour it.
         let pinned_get = daemon_request_for(
             "get_workflow_state",
-            &json!({ "project": "torii" }),
+            &json!({ "workspace": "torii" }),
             "/cwd",
             Some("sensei"),
         )
         .unwrap();
-        assert_eq!(pinned_get.path, "/api/state/torii", "explicit project overrides the cwd repo");
+        assert_eq!(
+            pinned_get.path, "/api/state/torii",
+            "explicit workspace overrides the cwd repo"
+        );
         let pinned_put = daemon_request_for(
             "update_phase",
-            &json!({ "phase": "build", "project": "torii" }),
+            &json!({ "phase": "build", "workspace": "torii" }),
             "/cwd",
             Some("sensei"),
         )
         .unwrap();
-        assert_eq!(pinned_put.path, "/api/state/torii", "update_phase honours explicit project");
+        assert_eq!(pinned_put.path, "/api/state/torii", "update_phase honours explicit workspace");
     }
 
     #[test]
@@ -1931,21 +1949,21 @@ mod tests {
     }
 
     #[test]
-    fn get_project_summary_proxies_with_repo_id() {
-        let req =
-            daemon_request_for("get_project_summary", &json!({}), "/cwd", Some("sensei")).unwrap();
+    fn get_workspace_summary_proxies_with_repo_id() {
+        let req = daemon_request_for("get_workspace_summary", &json!({}), "/cwd", Some("sensei"))
+            .unwrap();
         assert_eq!(req.path, "/api/mcp/call");
         let body = req.body.unwrap();
-        assert_eq!(body["tool"], "get_project_summary");
+        assert_eq!(body["tool"], "get_workspace_summary");
         assert_eq!(body["params"]["repoId"], "sensei");
     }
 
     #[test]
     fn memory_writes_target_the_right_endpoints_and_bodies() {
-        // propose → proposals; save → memories. project scope + resolved name → project_id.
+        // propose → proposals; save → memories. workspace scope + resolved name → workspace_id.
         let prop = daemon_request_for(
             "propose_memory",
-            &json!({ "scope": "project", "type": "convention", "title": "t", "content": "c",
+            &json!({ "scope": "workspace", "type": "convention", "title": "t", "content": "c",
                      "triage_signal": "revert", "tags": "rust, api" }),
             "/cwd",
             Some("sensei"),
@@ -1954,14 +1972,10 @@ mod tests {
         assert_eq!(prop.method, HttpMethod::Post);
         assert_eq!(prop.path, "/api/knowledge/proposals");
         let pb = prop.body.unwrap();
-        // The tool still says `project` (R3c renames it); the daemon says workspace.
-        assert_eq!(
-            pb["scope"], "workspace",
-            "the tool's project scope reaches the daemon as workspace"
-        );
+        assert_eq!(pb["scope"], "workspace", "the tool and the daemon both say workspace");
         assert_eq!(
             pb["workspace_id"], "sensei",
-            "scope=project + resolved name → workspace_id=name"
+            "scope=workspace + resolved name → workspace_id=name"
         );
         assert_eq!(pb["triage_signal"], "revert");
         assert_eq!(pb["tags"], json!(["rust", "api"]), "csv tags split + trimmed");
@@ -1976,11 +1990,11 @@ mod tests {
         assert_eq!(save.path, "/api/knowledge/memories");
         assert!(save.body.unwrap().get("workspace_id").is_none(), "global scope → no workspace_id");
 
-        // explicit project_id wins over resolved name.
+        // explicit workspace_id wins over resolved name.
         let explicit = daemon_request_for(
             "save_memory",
-            &json!({ "scope": "project", "type": "decision", "title": "t", "content": "c",
-                     "project_id": "22222222-2222-2222-2222-222222222222" }),
+            &json!({ "scope": "workspace", "type": "decision", "title": "t", "content": "c",
+                     "workspace_id": "22222222-2222-2222-2222-222222222222" }),
             "/cwd",
             Some("sensei"),
         )
@@ -2012,8 +2026,8 @@ mod tests {
         // them (spine_slot/feature columns on sensei.memories).
         let req = daemon_request_for(
             "save_memory",
-            &json!({ "scope": "project", "type": "decision", "title": "t", "content": "c",
-                     "project_id": "sensei", "spine_slot": "brief", "feature": "auth" }),
+            &json!({ "scope": "workspace", "type": "decision", "title": "t", "content": "c",
+                     "workspace_id": "sensei", "spine_slot": "brief", "feature": "auth" }),
             "/proj/cwd",
             Some("sensei"),
         )
@@ -2075,12 +2089,12 @@ mod tests {
     }
 
     #[test]
-    fn promote_memory_prefers_project_over_cwd_folder() {
-        // #109: an explicit project carries {project} into the gov overlay and NO
+    fn promote_memory_prefers_workspace_over_cwd_folder() {
+        // #109: an explicit workspace carries {workspace} into the gov overlay and NO
         // folder=cwd (which mis-resolved to the container → 400 "not an indexed repo").
         let req = daemon_request_for(
             "promote_memory",
-            &json!({ "id": "m1", "gov_scope": "team", "project": "sensei" }),
+            &json!({ "id": "m1", "gov_scope": "team", "workspace": "sensei" }),
             "/mcp/cwd",
             None,
         )
@@ -2089,8 +2103,8 @@ mod tests {
         let body = req.body.clone().unwrap();
         assert_eq!(body["workspace"], json!("sensei"));
         assert_eq!(body["gov_scope"], json!("team"));
-        assert!(body.get("folder").is_none(), "no cwd folder shadow when project is explicit");
-        // No project → fall back to the cwd folder (historical contract).
+        assert!(body.get("folder").is_none(), "no cwd folder shadow when workspace is explicit");
+        // No workspace → fall back to the cwd folder (historical contract).
         let fb = daemon_request_for(
             "promote_memory",
             &json!({ "id": "m1", "gov_scope": "team" }),
@@ -2128,29 +2142,33 @@ mod tests {
         assert_eq!(req.body.unwrap()["tool"], "totally_made_up");
     }
 
-    // ── Folder→project workflow: find_projects / use_project + the pin ───────
+    // ── Folder→workspace workflow: find_workspaces / use_workspace + the pin ───────
 
     #[test]
-    fn find_projects_defaults_under_to_cwd() {
+    fn find_workspaces_defaults_under_to_cwd() {
         // No `under` arg → scope to the MCP call's cwd (the whole point: the
-        // assistant just wants "projects under here").
-        let req = daemon_request_for("find_projects", &json!({}), "/my/cwd", None).unwrap();
+        // assistant just wants "workspaces under here").
+        let req = daemon_request_for("find_workspaces", &json!({}), "/my/cwd", None).unwrap();
         assert_eq!(req.method, HttpMethod::Get);
         assert_eq!(req.path, "/api/workspaces");
         assert_eq!(q(&req, "under"), Some("/my/cwd"), "no `under` arg → default to call cwd");
     }
 
     #[test]
-    fn find_projects_uses_explicit_under_over_cwd() {
-        let req =
-            daemon_request_for("find_projects", &json!({ "under": "/some/dir" }), "/my/cwd", None)
-                .unwrap();
+    fn find_workspaces_uses_explicit_under_over_cwd() {
+        let req = daemon_request_for(
+            "find_workspaces",
+            &json!({ "under": "/some/dir" }),
+            "/my/cwd",
+            None,
+        )
+        .unwrap();
         assert_eq!(req.path, "/api/workspaces");
         assert_eq!(q(&req, "under"), Some("/some/dir"), "explicit `under` overrides cwd");
     }
 
     #[test]
-    fn pause_run_posts_until_and_defaults_project_to_cwd() {
+    fn pause_run_posts_until_and_defaults_workspace_to_cwd() {
         let req = daemon_request_for(
             "pause_run",
             &json!({ "until": "2026-07-25T11:30:00Z", "reason": "usage limit" }),
@@ -2162,24 +2180,25 @@ mod tests {
         assert_eq!(req.path, "/api/runs/pause");
         let body = req.body.as_ref().expect("pause_run has a JSON body");
         assert_eq!(body["until"], "2026-07-25T11:30:00Z");
-        assert_eq!(body["workspace"], "sensei", "project defaults to the pinned/cwd repo");
+        assert_eq!(body["workspace"], "sensei", "workspace defaults to the pinned/cwd repo");
         assert_eq!(body["reason"], "usage limit");
     }
 
     #[test]
-    fn get_user_for_project_defaults_under_to_cwd() {
+    fn get_user_for_workspace_defaults_under_to_cwd() {
         // No `under` → resolve identity for the MCP call's cwd (same
-        // folder-scoping as find_projects), hitting the daemon's /api/user.
-        let req = daemon_request_for("get_user_for_project", &json!({}), "/my/cwd", None).unwrap();
+        // folder-scoping as find_workspaces), hitting the daemon's /api/user.
+        let req =
+            daemon_request_for("get_user_for_workspace", &json!({}), "/my/cwd", None).unwrap();
         assert_eq!(req.method, HttpMethod::Get);
         assert_eq!(req.path, "/api/user");
         assert_eq!(q(&req, "under"), Some("/my/cwd"), "no `under` arg → default to call cwd");
     }
 
     #[test]
-    fn get_user_for_project_uses_explicit_under_over_cwd() {
+    fn get_user_for_workspace_uses_explicit_under_over_cwd() {
         let req = daemon_request_for(
-            "get_user_for_project",
+            "get_user_for_workspace",
             &json!({ "under": "/some/repo" }),
             "/my/cwd",
             None,
@@ -2223,81 +2242,81 @@ mod tests {
     }
 
     #[test]
-    fn use_project_is_handled_inline() {
-        // The binary owns use_project (resolve + pin write); the lib shapes no
+    fn use_workspace_is_handled_inline() {
+        // The binary owns use_workspace (resolve + pin write); the lib shapes no
         // single daemon request, so daemon_request_for must return None.
         assert_eq!(
-            daemon_request_for("use_project", &json!({ "project": "sensei" }), "/cwd", None),
+            daemon_request_for("use_workspace", &json!({ "workspace": "sensei" }), "/cwd", None),
             None
         );
     }
 
     #[test]
-    fn resolve_active_project_returns_id_and_name() {
-        let ap = resolve_active_project_in(&sample(), "sensei").unwrap();
+    fn resolve_active_workspace_returns_id_and_name() {
+        let ap = resolve_active_workspace_in(&sample(), "sensei").unwrap();
         assert_eq!(ap.name, "sensei");
         assert_eq!(ap.id, "11111111-1111-1111-1111-111111111111");
         // by uuid resolves the same row
         assert_eq!(
-            resolve_active_project_in(&sample(), "11111111-1111-1111-1111-111111111111")
+            resolve_active_workspace_in(&sample(), "11111111-1111-1111-1111-111111111111")
                 .unwrap()
                 .name,
             "sensei"
         );
-        assert!(resolve_active_project_in(&sample(), "nope").is_none());
+        assert!(resolve_active_workspace_in(&sample(), "nope").is_none());
     }
 
     #[test]
-    fn default_project_explicit_then_cwd_beats_pin_then_pin_fallback_then_unresolved() {
-        use ProjectResolution::*;
-        let pin = ActiveProject { id: "id".into(), name: "pinned".into() };
-        let resolved = |r: ProjectResolution| match r {
+    fn default_workspace_explicit_then_cwd_beats_pin_then_pin_fallback_then_unresolved() {
+        use WorkspaceResolution::*;
+        let pin = ActiveWorkspace { id: "id".into(), name: "pinned".into() };
+        let resolved = |r: WorkspaceResolution| match r {
             Resolved { name, source, note } => (name, source, note),
             Unresolved => ("<unresolved>".into(), "none", None),
         };
 
         // explicit wins over pin AND cwd.
         assert_eq!(
-            resolved(resolve_default_project(Some("explicit"), Some(&pin), "cwdname")).0,
+            resolved(resolve_default_workspace(Some("explicit"), Some(&pin), "cwdname")).0,
             "explicit"
         );
 
         // THE FIX: a resolved cwd beats a CONFLICTING pin (the stale cross-session pin that
         // returned sensei while working in torii) — and the override is surfaced in `note`,
         // never silent. (Old behaviour returned the pin here — that test codified the bug.)
-        let (name, source, note) = resolved(resolve_default_project(None, Some(&pin), "torii"));
+        let (name, source, note) = resolved(resolve_default_workspace(None, Some(&pin), "torii"));
         assert_eq!((name.as_str(), source), ("torii", "cwd"));
         assert!(
-            note.as_deref().unwrap().contains("pinned project is 'pinned'"),
+            note.as_deref().unwrap().contains("pinned workspace is 'pinned'"),
             "stale-pin override is surfaced"
         );
 
         // cwd + pin AGREE → cwd, no note (nothing to warn about).
-        let agree = ActiveProject { id: "id".into(), name: "sensei".into() };
+        let agree = ActiveWorkspace { id: "id".into(), name: "sensei".into() };
         assert_eq!(
-            resolved(resolve_default_project(None, Some(&agree), "sensei")),
+            resolved(resolve_default_workspace(None, Some(&agree), "sensei")),
             ("sensei".into(), "cwd", None)
         );
 
         // pin is the fallback ONLY when the cwd resolves nothing (e.g. a container dir).
         assert_eq!(
-            resolved(resolve_default_project(None, Some(&pin), "")),
+            resolved(resolve_default_workspace(None, Some(&pin), "")),
             ("pinned".into(), "pin", None)
         );
 
         // cwd used when there's no pin at all.
         assert_eq!(
-            resolved(resolve_default_project(None, None, "cwdname")),
+            resolved(resolve_default_workspace(None, None, "cwdname")),
             ("cwdname".into(), "cwd", None)
         );
 
-        // nothing resolves → Unresolved (caller must pass project= / use_project).
-        assert_eq!(resolve_default_project(None, None, "  "), ProjectResolution::Unresolved);
+        // nothing resolves → Unresolved (caller must pass workspace= / use_workspace).
+        assert_eq!(resolve_default_workspace(None, None, "  "), WorkspaceResolution::Unresolved);
 
         // empty explicit + empty-name pin are treated as absent.
-        let empty = ActiveProject { id: "id".into(), name: String::new() };
+        let empty = ActiveWorkspace { id: "id".into(), name: String::new() };
         assert_eq!(
-            resolved(resolve_default_project(Some(""), Some(&empty), "cwdname")),
+            resolved(resolve_default_workspace(Some(""), Some(&empty), "cwdname")),
             ("cwdname".into(), "cwd", None)
         );
     }

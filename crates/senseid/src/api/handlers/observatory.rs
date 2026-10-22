@@ -17,7 +17,7 @@ use crate::api::util::resolve_workspace_uuid;
 // ── Solutions CRUD ──────────────────────────────────────────────────────────
 
 /// Query params for [`list_solutions`]. `under` scopes the list to workspaces
-/// whose folders live under an absolute path (the sensei MCP `find_projects`
+/// whose folders live under an absolute path (the sensei MCP `find_workspaces`
 /// tool sends it); omitted → every workspace (unchanged).
 #[derive(Deserialize)]
 pub(crate) struct ListSolutionsQuery {
@@ -40,7 +40,7 @@ pub(crate) async fn list_solutions(
     // page (and any future workspace detail view) can render folder names,
     // paths, and roles without an extra round trip per workspace.
     //
-    // Folder-scope matters here: the `?under=` call is the MCP `find_projects`
+    // Folder-scope matters here: the `?under=` call is the MCP `find_workspaces`
     // discovery path, which only needs the repo-root folders — attaching the
     // hundreds of nested `kind:'folder'` descendants blew the response past the
     // MCP client's token cap (~72K chars for sensei). So when `under` is set we

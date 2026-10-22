@@ -3,7 +3,7 @@
 //!
 //! It answers *who* is doing the work (git `user.name`/`user.email`, resolved
 //! with git's own local→global precedence) and *where* (the workspace under the
-//! folder, via the same folder-scoped resolver `find_projects` uses). A run or
+//! folder, via the same folder-scoped resolver `find_workspaces` uses). A run or
 //! plan can then be registered under the same identity a contributor uses to
 //! sign in to the Dōjō, so relay attribution needs no hand-paired token.
 //!
@@ -22,7 +22,7 @@ use crate::resolution::Resolution;
 pub(crate) struct UserQuery {
     /// Absolute folder to resolve the identity + owning workspace for. Defaults to
     /// the daemon's cwd when omitted (the MCP proxy always sends the caller's
-    /// cwd, matching `find_projects`).
+    /// cwd, matching `find_workspaces`).
     under: Option<String>,
 }
 
@@ -40,7 +40,7 @@ pub(crate) async fn get_user(
     let user = read_git_user(std::path::Path::new(&dir));
 
     // The owning workspace = the workspace whose folders live under `dir` — the same
-    // folder-scoped view `find_projects` returns. FAIL CLOSED (issue #109): name
+    // folder-scoped view `find_workspaces` returns. FAIL CLOSED (issue #109): name
     // a workspace only when EXACTLY one resolves. When `dir` is a container of
     // several workspaces, don't silently pick the first (that misattributes the
     // run/plan to the wrong workspace); surface `workspace_ambiguous` so the caller

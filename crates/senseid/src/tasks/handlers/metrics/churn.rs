@@ -1193,7 +1193,7 @@ mod tests {
         // (tool_name, cwd, payload) — an MCP plugin call in the repo, a Bash call, and a builtin.
         let events: [(&str, Option<&str>, serde_json::Value); 3] = [
             (
-                "mcp__plugin_sensei_sensei__get_project_conventions",
+                "mcp__plugin_sensei_sensei__get_workspace_conventions",
                 Some(root.as_str()),
                 serde_json::json!({"tool_input": {"repoId": "sensei"}}),
             ),
@@ -1251,11 +1251,11 @@ mod tests {
             rows.iter().find(|r| r.0 == t).unwrap_or_else(|| panic!("row for {t}")).clone()
         };
 
-        let mcp = by("mcp__plugin_sensei_sensei__get_project_conventions");
+        let mcp = by("mcp__plugin_sensei_sensei__get_workspace_conventions");
         assert_eq!(mcp.2.as_deref(), Some("sensei"), "plugin parsed from mcp__plugin_<plugin>_");
         assert_eq!(
             mcp.3.as_deref(),
-            Some("get_project_conventions"),
+            Some("get_workspace_conventions"),
             "method = segment after final __"
         );
         assert_eq!(mcp.4.as_deref(), Some("mcp"), "tool_kind = mcp");

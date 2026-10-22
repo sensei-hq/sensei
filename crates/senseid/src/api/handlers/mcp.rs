@@ -274,12 +274,13 @@ pub(crate) async fn mcp_call_tool(
                 })
             }
         }
-        "list_projects" => {
-            let repos = state.pg.list_repositories().await.map_err(|e| {
-                tracing::warn!(error = %e, "mcp list_projects: list_repositories failed");
+        "list_workspaces" => {
+            // Every workspace — the names the other tools' `workspace=` accepts.
+            let workspaces = state.pg.list_workspaces_under(None).await.map_err(|e| {
+                tracing::warn!(error = %e, "mcp list_workspaces: list_workspaces_under failed");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
-            serde_json::json!({"workspaces": repos})
+            serde_json::json!({"workspaces": workspaces})
         }
         "create_session" => {
             let repo_id_str = params["repoId"].as_str().unwrap_or(query);
@@ -414,10 +415,10 @@ pub(crate) async fn mcp_call_tool(
             // Reuse unified query logic — delegate to POST /api/query handler
             serde_json::json!({"hint": "Use POST /api/query directly"})
         }
-        "get_project_summary" => {
+        "get_workspace_summary" => {
             let ids = resolve_scope_ids(&state, repo_id).await?;
             let (fns, types) = if !ids.is_empty() {
-                let counts = state.pg.count_nodes_by_kind_scoped(&ids).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: count_nodes_by_kind_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+                let counts = state.pg.count_nodes_by_kind_scoped(&ids).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_workspace_summary: count_nodes_by_kind_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
                 let f = counts.get("function").copied().unwrap_or(0)
                     + counts.get("method").copied().unwrap_or(0);
                 let t = counts.get("class").copied().unwrap_or(0)
@@ -429,11 +430,11 @@ pub(crate) async fn mcp_call_tool(
             };
             // Prefer workspace row for name/metadata; fall back to folder row.
             let workspace = match state.pg.get_workspace_by_name(repo_id).await
-                .map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_workspace_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?
+                .map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_workspace_summary: get_workspace_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?
             {
                 Some(proj) => Some(proj),
                 None => state.pg.get_repo_by_name(repo_id).await
-                    .map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_repo_by_name fallback failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
+                    .map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_workspace_summary: get_repo_by_name fallback failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
             };
             // How far to trust the graph tools, stated rather than inferred. A
             // symbol count says nothing about whether `get_callers` can answer:
@@ -442,7 +443,7 @@ pub(crate) async fn mcp_call_tool(
             let graph_health = if ids.is_empty() {
                 serde_json::json!([])
             } else {
-                let by_kind = state.pg.edge_resolution_by_kind(&ids).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: edge_resolution_by_kind failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+                let by_kind = state.pg.edge_resolution_by_kind(&ids).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_workspace_summary: edge_resolution_by_kind failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
                 serde_json::Value::Array(
                     by_kind
                         .into_iter()

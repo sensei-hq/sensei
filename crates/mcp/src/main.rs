@@ -2,21 +2,21 @@ use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 
 use sensei_mcp::{
-    ActiveProject, DaemonRequest, HttpMethod, ProjectResolution, build_log_event_body,
-    daemon_request_for, handle_initialize, handle_list_tools, resolve_active_project_in,
-    resolve_default_project, resolve_from_cwd_in, resolve_project_in,
+    ActiveWorkspace, DaemonRequest, HttpMethod, WorkspaceResolution, build_log_event_body,
+    daemon_request_for, handle_initialize, handle_list_tools, resolve_active_workspace_in,
+    resolve_default_workspace, resolve_from_cwd_in, resolve_workspace_in,
 };
 
-/// The active-project pin for THIS MCP session, held in memory — NOT a file.
+/// The active-workspace pin for THIS MCP session, held in memory — NOT a file.
 /// The MCP is one stdio process per Claude session with a single-threaded
-/// request loop, so a process-global is exactly session-scoped: `use_project`
+/// request loop, so a process-global is exactly session-scoped: `use_workspace`
 /// sets it, later tool calls read it, and it vanishes when the session ends.
-/// There is no `~/.sensei/active-project`, so a pin can never leak across
+/// There is no `~/.sensei/active-workspace`, so a pin can never leak across
 /// sessions or repos — the #109 stale-pin misroute is unrepresentable.
-static ACTIVE_PIN: std::sync::Mutex<Option<ActiveProject>> = std::sync::Mutex::new(None);
+static ACTIVE_PIN: std::sync::Mutex<Option<ActiveWorkspace>> = std::sync::Mutex::new(None);
 
 /// Prepend a note (as its own text block) to a tool result's `content` — used to surface a
-/// stale-pin project override so a mis-resolution is visible, not silent.
+/// stale-pin workspace override so a mis-resolution is visible, not silent.
 fn prepend_note(result: &mut Value, note: &str) {
     if let Some(arr) = result.get_mut("content").and_then(Value::as_array_mut) {
         arr.insert(0, json!({ "type": "text", "text": note }));
@@ -111,7 +111,7 @@ fn main() {
         .build()
         .expect("failed to create HTTP client");
 
-    // Detect current project from CWD
+    // Detect current workspace from CWD
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 
     for line in stdin.lock().lines() {
@@ -160,38 +160,38 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     let tool_name = params["name"].as_str().unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    // `use_project` pins the named project; its `project` arg is the pin TARGET,
+    // `use_workspace` pins the named workspace; its `workspace` arg is the pin TARGET,
     // not a scoping hint, so handle it before the generic resolution below.
-    if tool_name == "use_project" {
-        return handle_use_project(&args, client);
+    if tool_name == "use_workspace" {
+        return handle_use_workspace(&args, client);
     }
 
-    // Resolve the project for scoping. `repo_id` is the resolved project NAME
-    // (or "" when nothing resolved). Precedence: explicit `project=` arg →
-    // cwd resolution → in-memory session pin (set by `use_project`). An
+    // Resolve the workspace for scoping. `repo_id` is the resolved workspace NAME
+    // (or "" when nothing resolved). Precedence: explicit `workspace=` arg →
+    // cwd resolution → in-memory session pin (set by `use_workspace`). An
     // explicit-but-unresolvable arg errors (it never silently falls through to
     // the pin/cwd).
-    let project_hint = args["project"].as_str().unwrap_or("");
-    let explicit = if project_hint.is_empty() {
+    let workspace_hint = args["workspace"].as_str().unwrap_or("");
+    let explicit = if workspace_hint.is_empty() {
         None
     } else {
-        match resolve_project(project_hint, client) {
+        match resolve_workspace(workspace_hint, client) {
             Ok(Some(name)) => Some(name),
             Ok(None) => {
                 return json!({
                     "content": [{"type": "text", "text": format!(
-                        "Project '{}' not found. Use the list_projects tool to see available projects.",
-                        project_hint
+                        "Workspace '{}' not found. Use the list_workspaces tool to see available workspaces.",
+                        workspace_hint
                     )}],
                     "isError": true
                 });
             }
-            // Daemon unreachable/unreadable — do NOT report the project as missing.
+            // Daemon unreachable/unreadable — do NOT report the workspace as missing.
             Err(e) => {
                 return json!({
                     "content": [{"type": "text", "text": format!(
-                        "Could not resolve project '{}': {}. The daemon may be starting or unreachable — retry shortly (this does NOT mean the project is absent).",
-                        project_hint, e
+                        "Could not resolve workspace '{}': {}. The daemon may be starting or unreachable — retry shortly (this does NOT mean the workspace is absent).",
+                        workspace_hint, e
                     )}],
                     "isError": true
                 });
@@ -202,31 +202,31 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     let (pin, cwd_name) = if explicit.is_some() {
         (None, String::new())
     } else {
-        (ACTIVE_PIN.lock().unwrap().clone(), resolve_project_from_cwd(cwd, client))
+        (ACTIVE_PIN.lock().unwrap().clone(), resolve_workspace_from_cwd(cwd, client))
     };
     // A resolved cwd beats a conflicting (stale) pin; the override is surfaced, not silent.
     let (repo_id, resolution_note) =
-        match resolve_default_project(explicit.as_deref(), pin.as_ref(), &cwd_name) {
-            ProjectResolution::Resolved { name, note, .. } => (name, note),
-            ProjectResolution::Unresolved => (String::new(), None),
+        match resolve_default_workspace(explicit.as_deref(), pin.as_ref(), &cwd_name) {
+            WorkspaceResolution::Resolved { name, note, .. } => (name, note),
+            WorkspaceResolution::Unresolved => (String::new(), None),
         };
     let resolved = (!repo_id.is_empty()).then_some(repo_id.as_str());
 
-    // The library shapes every straightforward daemon call (knowledge / project
+    // The library shapes every straightforward daemon call (knowledge / workspace
     // / patterns / workflow / mcp-proxy). Send it here and pipe through the
     // standard response conversion — prepending a stale-pin note so a mis-resolution
-    // is visible to the caller instead of silently returning the wrong project's state.
+    // is visible to the caller instead of silently returning the wrong workspace's state.
     if let Some(req) = daemon_request_for(tool_name, &args, cwd, resolved) {
         let mut result = daemon_result(send_daemon_request(client, &req));
         if let Some(note) = resolution_note {
-            prepend_note(&mut result, &format!("⟦project: {repo_id} — {note}⟧"));
+            prepend_note(&mut result, &format!("⟦workspace: {repo_id} — {note}⟧"));
         }
         return result;
     }
 
     // `None` → tools the binary owns because they need a custom HTTP client
     // (longer timeout), bespoke response parsing, or make no daemon call. Plus
-    // `get_layered_context`'s one no-project guard.
+    // `get_layered_context`'s one no-workspace guard.
     match tool_name {
         // ── Inference tools (direct endpoints, not mcp proxy) ──────────────
         "infer" => {
@@ -431,8 +431,8 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
 
         "get_layered_context" => {
             // Reached only when the library returned `None` — i.e. neither an
-            // explicit project_id nor a resolved project name is available.
-            json!({"content":[{"type":"text","text":"No project resolved. Pass project_id or run from a project directory."}], "isError": true})
+            // explicit workspace_id nor a resolved workspace name is available.
+            json!({"content":[{"type":"text","text":"No workspace resolved. Pass workspace_id or run from a workspace directory."}], "isError": true})
         }
 
         // Unreachable: `daemon_request_for` returns `Some` for every other tool
@@ -445,78 +445,78 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     }
 }
 
-/// `use_project`: resolve the named project (name or uuid) against the daemon,
+/// `use_workspace`: resolve the named workspace (name or uuid) against the daemon,
 /// then set the `{id,name}` pin IN MEMORY for this session so every later tool
 /// call resolves to it regardless of cwd. No file is written — the pin is
 /// process-global (this MCP process == one session), so it never outlives the
 /// session or leaks to another repo. The resolve logic lives in the lib
 /// (unit-tested); this only drives the daemon fetch and the in-memory set.
-fn handle_use_project(args: &Value, client: &reqwest::blocking::Client) -> Value {
-    let hint = args["project"].as_str().unwrap_or("");
+fn handle_use_workspace(args: &Value, client: &reqwest::blocking::Client) -> Value {
+    let hint = args["workspace"].as_str().unwrap_or("");
     if hint.is_empty() {
         return json!({
-            "content": [{"type": "text", "text": "use_project requires a `project` name or UUID."}],
+            "content": [{"type": "text", "text": "use_workspace requires a `workspace` name or UUID."}],
             "isError": true
         });
     }
-    let projects = match get_projects(client) {
+    let workspaces = match get_workspaces(client) {
         Ok(p) => p,
         Err(e) => {
             return json!({
                 "content": [{"type": "text", "text": format!(
-                    "Could not reach the daemon to resolve '{hint}': {e}. Retry shortly (not a 'project missing')."
+                    "Could not reach the daemon to resolve '{hint}': {e}. Retry shortly (not a 'workspace missing')."
                 )}],
                 "isError": true
             });
         }
     };
-    let Some(pin) = resolve_active_project_in(&projects, hint) else {
+    let Some(pin) = resolve_active_workspace_in(&workspaces, hint) else {
         return json!({
             "content": [{"type": "text", "text": format!(
-                "Project '{hint}' not found. Use find_projects or list_projects to see available projects."
+                "Workspace '{hint}' not found. Use find_workspaces or list_workspaces to see available workspaces."
             )}],
             "isError": true
         });
     };
     let msg = format!(
-        "Pinned active project to '{}' ({}) for this session. Every tool will now resolve to it regardless of the working directory. Pass project=<other> on a tool to override for one call, or run use_project again to switch. (Session-scoped — the pin resets when this session ends.)",
+        "Pinned active workspace to '{}' ({}) for this session. Every tool will now resolve to it regardless of the working directory. Pass workspace=<other> on a tool to override for one call, or run use_workspace again to switch. (Session-scoped — the pin resets when this session ends.)",
         pin.name, pin.id
     );
     *ACTIVE_PIN.lock().unwrap() = Some(pin);
     json!({ "content": [{"type": "text", "text": msg}] })
 }
 
-/// Resolve a project name/library name to a project **name** by querying the daemon.
+/// Resolve a workspace name/library name to a workspace **name** by querying the daemon.
 ///
-/// Returns `None` when no project matches the hint so callers can return a
+/// Returns `None` when no workspace matches the hint so callers can return a
 /// clear error to the LLM rather than silently forwarding an arbitrary string.
 /// `Ok(Some(name))` = resolved, `Ok(None)` = genuinely not found, `Err` = the
 /// daemon couldn't be reached/read (so the caller must NOT say "not found").
-fn resolve_project(
+fn resolve_workspace(
     hint: &str,
     client: &reqwest::blocking::Client,
 ) -> Result<Option<String>, String> {
-    Ok(resolve_project_in(&get_projects(client)?, hint))
+    Ok(resolve_workspace_in(&get_workspaces(client)?, hint))
 }
 
-/// Resolve current project name from CWD by matching against registered project
+/// Resolve current workspace name from CWD by matching against registered workspace
 /// folder paths. Best-effort: a daemon error yields "" (→ Unresolved, handled by
 /// the caller), logged to stderr — never a fabricated match.
-fn resolve_project_from_cwd(cwd: &str, client: &reqwest::blocking::Client) -> String {
-    match get_projects(client) {
-        Ok(projects) => resolve_from_cwd_in(&projects, cwd),
+fn resolve_workspace_from_cwd(cwd: &str, client: &reqwest::blocking::Client) -> String {
+    match get_workspaces(client) {
+        Ok(workspaces) => resolve_from_cwd_in(&workspaces, cwd),
         Err(e) => {
-            eprintln!("sensei-mcp: cwd project resolution skipped — {e}");
+            eprintln!("sensei-mcp: cwd workspace resolution skipped — {e}");
             String::new()
         }
     }
 }
 
-/// Fetch the project list, distinguishing a genuinely-empty list from a daemon
-/// failure. NEVER collapse an error to `[]` — that made every named project look
-/// nonexistent during a daemon bounce (a fabricated "project not found"). Mirrors
+/// Fetch the workspace list, distinguishing a genuinely-empty list from a daemon
+/// failure. NEVER collapse an error to `[]` — that made every named workspace look
+/// nonexistent during a daemon bounce (a fabricated "workspace not found"). Mirrors
 /// `send_daemon_request`'s connect-retry so an upgrade restart is survived.
-fn get_projects(client: &reqwest::blocking::Client) -> Result<Vec<Value>, String> {
+fn get_workspaces(client: &reqwest::blocking::Client) -> Result<Vec<Value>, String> {
     let url = format!("{}/api/workspaces", daemon_url());
     let resp = match client.get(&url).send() {
         Err(e) if e.is_connect() => {
