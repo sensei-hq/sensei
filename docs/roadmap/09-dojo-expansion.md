@@ -42,6 +42,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D31 | The README frontmatter key that groups a repository into a workspace? | **Migrated in place** (user 2026-10-21): sensei reads and writes only `workspace:`, and on its next scan rewrites an existing `project:` line to `workspace:` in that README — a one-time conversion, no permanent dual-read. |
 | D32 | Is Client a governance level? | **No — retired** (user 2026-10-22). A client engagement is the dōjō it lives in plus workspace classification `client`; client-only standards are rules at that dōjō or workspace. 0 rows stored. |
 | D33 | Where does a converted stack pack apply? (Q-R6) | **At each repository where the stack is detected** (user 2026-10-22) — exactly today's reach; repository-rung namespaces are created as needed, and a new repository adopts by detection as today. |
+| D34 | Does a dōjō keep a Clients section (Engagements, Incidents, Client audit)? | **No** (user 2026-10-22). A client is just another dōjō, and there is no client rung (D32). A dōjō's work is its Epics, Sprints and Tasks, which come from its integrations. The engagement and incident model, and the confidentiality ledger built on it, are removed. |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -113,7 +114,7 @@ slice builds, passes and ships on its own.
   - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
     `get_workspace_summary`, …), the plugin's hooks and skills that call them, both `SKILL.md` copies, and
     `sensei` CLI words.
-- **R6 · The ladder is dōjō → workspace → repository (D25, D29, D32).** *Built 2026-10-22 on branch `r6-ladder` (50094d60…6b8df79c); merges after the R3 release. Rehearsed: rule reach identical (234 repository-rule pairs, all 87 repositories); 111 stack adoptions = 111 bindings. Note: a stack pack applied at a repository ranks at repository precedence (70), above workspace (60) — reach unchanged, precedence per D29.* Today the
+- **R6 · The ladder is dōjō → workspace → repository (D25, D29, D32).** *Done 2026-10-22: merged to develop (fb47ee21), gates green alone; ships in the next release. Rehearsed: rule reach identical (234 repository-rule pairs, all 87 repositories); 111 stack adoptions = 111 bindings. Note: a stack pack applied at a repository ranks at repository precedence (70), above workspace (60) — reach unchanged, precedence per D29.* Today the
   ladder still has `general · user · organization · client · technology · team · workspace · repository`.
   - **Retire `team` and `client`** (0 namespaces locally and in production): the seed, both databases (a guarded
     hook that FAILS, never deletes, if a namespace still sits on either), and every reader — the dōjō preview
@@ -126,6 +127,12 @@ slice builds, passes and ships on its own.
   - The library screen's levels become **dōjō · workspace · repository**; the preview shows that ladder with
     the packs applied at each rung.
   - Rehearsed on copies of both databases, counts and rule reach compared before/after.
+- **R7 · A dōjō has no Clients section (D34).** *Planned 2026-10-22.* Remove the Clients nav group (Engagements,
+  Incidents, Client audit), their routes, screens and data code (`engagements-data`, `incidents-data`,
+  `client-data`/`-map`/`-view`, engagement bindings). In the database: `dojo.engagements`, `dojo.incidents`, the
+  `confidentiality_ledger` view, `is_confidentiality_action`, and `audit_events.engagement_id`, pruned through dbd
+  (pre-v1: dropping data is approved). Update the PRD passages that describe engagements as a model, and the mockups.
+  The daemon's own anonymization of what it contributes is separate, and stays.
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
