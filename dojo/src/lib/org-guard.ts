@@ -2,7 +2,7 @@
 //
 // A membership-less user has no tenant (`tenantKey === null`, the no-tenant
 // sentinel from `resolveTenantKey`). Their org-scoped screens — members,
-// identities, policies, triage, engagements, incidents, health, audit, relay —
+// identities, policies, triage, health, audit, relay —
 // must NOT fetch `/v1/t/{tenant}/…` against a fabricated org; they show a shared
 // "join or create a Dōjō" empty state instead.
 //

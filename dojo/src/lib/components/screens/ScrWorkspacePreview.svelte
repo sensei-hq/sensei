@@ -83,7 +83,7 @@
 				kanji="観"
 				tone={workspace.classification === 'client' ? 'accent' : 'neutral'}
 				title={workspace.classification === 'client'
-					? 'Client engagement — sources are dereferenced, as they always are.'
+					? 'Client work — sources are dereferenced, as they always are.'
 					: 'These rules resolve here, most-specific wins.'}
 			>
 				{preview.rungs.length} scopes compose this constitution · {preview.effective.length} rules apply

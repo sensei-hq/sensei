@@ -72,7 +72,6 @@ function ev(over: Partial<AuditEvent> = {}): AuditEvent {
 		id: 1,
 		ts: '2026-07-23T11:22:00Z',
 		actor_id: 'u1',
-		engagement_id: null,
 		action: 'publish',
 		target: 'rule-9',
 		detail: {},

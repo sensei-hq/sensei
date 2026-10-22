@@ -3,8 +3,8 @@
 	import { resolve } from '$app/paths';
 
 	// The shared "join or create a Dōjō" empty state (DJ1). Every org-scoped
-	// console screen (members, identities, policies, triage, engagements,
-	// incidents, health, audit, relay) renders this when the caller has no
+	// console screen (members, identities, policies, triage, health, audit,
+	// relay) renders this when the caller has no
 	// membership (`noMembership` from the guarded load) instead of a fabricated
 	// tenant's data. Presentational: it takes the screen's name so the copy reads
 	// naturally, and links back to the org picker where the caller creates or

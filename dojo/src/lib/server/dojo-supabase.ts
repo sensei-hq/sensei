@@ -6,7 +6,7 @@
 //
 // Prerequisites (one-time, Supabase dashboard):
 //   - Settings → API → Exposed schemas: add `dojo` (and `sensei`), so PostgREST
-//     can read `dojo.tenants` / `memberships` / `engagements` / ….
+//     can read `dojo.tenants` / `memberships` / `workspaces` / ….
 //   - Worker env: SUPABASE_SERVICE_ROLE_KEY (private) + PUBLIC_SUPABASE_URL.
 
 import { createClient } from '@supabase/supabase-js';

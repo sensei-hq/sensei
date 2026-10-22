@@ -131,9 +131,7 @@ const ACTION_LABELS: Record<string, string> = {
 	identity_updated: 'Identity updated',
 	identity_deleted: 'Identity deleted',
 	policy_edited: 'Policy edited',
-	policy_deleted: 'Policy deleted',
-	engagement_created: 'Engagement created',
-	engagement_updated: 'Engagement updated'
+	policy_deleted: 'Policy deleted'
 };
 
 /** Human label for an audit action; falls back to a de-underscored raw value. */
