@@ -35,8 +35,8 @@ is a bug in the policy.
 |---|---|---|
 | **anyone signed in** | a valid session JWT → `dojo.current_principal_id()` | Not a member of anything. The matrix gives this nothing tenant-scoped. |
 | **member** | an ACTIVE membership in the tenant (`memberships.disabled_at is null`) | The floor for every tenant-scoped cell. A missing or disabled membership is **no access**, never "level 0". |
-| **contributor · maintainer · lead · admin** | `memberships.role` (`dojo.member_role`) | The TENANT role. `admin` is "management": policy, identity, billing, provisioning. A tenant-role `lead` sits between maintainer and admin and is never derived from the forge; it unlocks nothing a maintainer does not have since the Clients section was removed (#307 R7, D34). |
-| **team** (#307, D7, D13) | `dojo.team_members`; `dojo.team_projects` links a team to the workspaces it works on | **Grants nothing.** A grouping for "by team" reports, and a way to grant workspace viewer to everyone on the team at once (one grant per person at that moment, D15). The link to a workspace is reporting only (D13). A workspace's relationship to access is its repositories (`dojo.repositories_in_projects`). |
+| **contributor · maintainer · lead · admin** | `memberships.role` (`dojo.member_role`) | The TENANT role. `admin` is "management": policy, identity, billing, provisioning. A tenant-role `lead` sits between maintainer and admin and is never derived from the forge. Since D38 (#307 R8) it is the **team lead**: it reads the per-person metrics of the people it shares a team with, on the repositories it can read (Metrics, below). |
+| **team** (#307, D7, D13) | `dojo.team_members`; `dojo.team_projects` links a team to the workspaces it works on | **Grants no repository access.** It decides one thing: whose per-person metrics a tenant `lead` reads (D38) — never where. A grouping for "by team" reports, and a way to grant workspace viewer to everyone on the team at once (one grant per person at that moment, D15). The link to a workspace is reporting only (D13). A workspace's relationship to access is its repositories (`dojo.repositories_in_projects`). |
 | **workspace viewer** (#307, D8) | a viewer grant on one workspace | **Read-only managerial view** of the workspace — metrics, dashboards, reports, aggregated or split by repository; never per-person. Admin-granted, only to someone already in the dōjō — a member or a dōjō viewer. Grants nothing else. |
 | **dōjō viewer** (#307, D8 revised) | an accepted invite with `access = viewer` (`dojo.dojo_viewers`) | **Nothing by itself** — not a membership; reads no repository. It makes the person eligible for workspace viewer grants in that dōjō. Removing them also removes their workspace views there (unless they are also a member). The dōjō's admins list them (with the email they were invited at) and read their identities. |
 | **repository role** (#307, D5) | the person's role on one repository — mirrored from the forge, admin-overridable | **Where access lives.** A repository's shared rows for anyone with a role on it; per-person rows for the person and maintainers and above on it (D6). |
@@ -101,6 +101,7 @@ creating and editing them in the dōjō is #307 A4.
 |---|---|---|---|---|---|
 | repository metrics, `scope = repo` | — | R repository | R repository | aggregates and per-repository splits of the granted workspace | R tenant |
 | repository metrics, `scope = user` | R own | R own | **R repository-maintainer (cross-user, D6)** | never per-person | R tenant |
+| repository metrics, `scope = user`, as a tenant **lead** (D38) | R own | R own | **R teammates' rows on repositories the lead can read** | never per-person | R tenant |
 | metric activations (tenant-wide on/off) | — | — | — | — | **W** (org policy) |
 | metric activations (own) | W own, user-authority repositories | | | | |
 
@@ -108,6 +109,18 @@ creating and editing them in the dōjō is #307 A4.
 repo-scoped rows to anyone with a role on the repository, another person's rows
 to a maintainer or above on it (D6), and the whole tenant to its admins (#307
 A2b). The viewer's aggregate read is decided (D8) and not yet in the predicate.
+
+**A tenant lead reads their team (#307 R8, D38).** `dojo.leads_team_member(person,
+tenant)` is true when the caller's active membership in the row's dōjō is `lead` or
+above and the caller shares a team **of that dōjō** with the person, who is an
+active member there. `can_read_repository_metric` grants a `scope = user` row when
+that holds **and** the caller can read the row's repository (`can_read_repository`
+— a role on it, D5). So: a lead on no team reads only their own rows; a teammate's
+row on a repository the lead holds no role on stays hidden; a viewer is never a
+member and reads none (D6, `viewer_audit.sql`). Relay sessions stay owner-only
+(#249): the lead reads a person's metric aggregates, never their sessions. The
+console reads through `dojo.team_member_metrics` (SECURITY INVOKER — the row
+policy decides), pinned by `database/tests/dojo/lead_team_metrics.sql`.
 
 A `scope = user` row arrives only as its own person's: `dojo.file_metric_rows`
 takes `principal_id` from the session, never the input, and the daemon sends only rows
@@ -188,7 +201,8 @@ repository needs every tenant's forge connections to say "not yours" rather than
 
 Today: `my_repositories`, `register_repository`, `set_repository_election`,
 `file_metric_rows`, `set_metric_activation`, `set_pack_adoption`,
-`my_adopted_pack_slugs`, `tenant_live_session_count`, `principal_is_member`.
+`my_adopted_pack_slugs`, `tenant_live_session_count`, `principal_is_member`,
+`leads_team_member`.
 Each has a test under `database/tests/dojo/`. (`create_dojo` was dropped in R1,
 7478fe8d — D11/D20.)
 
