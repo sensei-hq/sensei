@@ -18,7 +18,7 @@
         strength: number;
         status: string;
         type: string;
-        project_name?: string;
+        workspace_name?: string;
     };
 
     let memories = $state<Memory[]>([]);
@@ -81,10 +81,10 @@
                         <p class="text-sm text-ink m-0 leading-normal">
                             {mem.title}
                         </p>
-                        {#if mem.project_name}
+                        {#if mem.workspace_name}
                             <span
                                 class="text-xs text-ink-soft mt-1 inline-block"
-                                >{mem.project_name}</span
+                                >{mem.workspace_name}</span
                             >
                         {/if}
                     </button>

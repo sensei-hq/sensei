@@ -1,6 +1,6 @@
 /**
  * Inspect-harness globalSetup — launch the built Sensei.app against the REAL
- * `sensei` DB for eyeballing live data (real project metrics, etc.).
+ * `sensei` DB for eyeballing live data (real workspace metrics, etc.).
  *
  * Unlike the e2e harness (globalSetup.ts), this does NOT set SENSEI_INSTANCE and
  * does NOT stop the brew `sensei` service: the app talks to the already-running

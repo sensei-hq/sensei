@@ -58,23 +58,6 @@ fn vector_literal(v: &[f32]) -> String {
     buf
 }
 
-/// A memory's or an extension's scope as the database stores it. The database
-/// says `workspace` (#307 R3a, D30); the daemon's HTTP API and everything that
-/// fills it still say `project` until R3b moves the API and the app together.
-/// Every bind of a `sensei.memory_scope` / `sensei.extension_scope` value goes
-/// through here, and every read back through [`scope_to_api`].
-pub(crate) fn scope_to_db(scope: &str) -> &str {
-    match scope {
-        "project" => "workspace",
-        other => other,
-    }
-}
-
-/// The inverse of [`scope_to_db`], for a scope read out of the database.
-pub(crate) fn scope_to_api(scope: String) -> String {
-    if scope == "workspace" { "project".to_string() } else { scope }
-}
-
 /// Valid `workspaces.maturity` lifecycle values — mirrors the
 /// `sensei.workspace_maturity` enum in
 /// `database/ddl/enum/sensei/workspace_maturity.ddl`. Used to reject an unknown
@@ -82,7 +65,7 @@ pub(crate) fn scope_to_api(scope: String) -> String {
 /// leaking a raw Postgres enum-cast failure as a 500.
 pub const WORKSPACE_MATURITIES: [&str; 4] = ["discovery", "active", "maintenance", "archived"];
 
-/// Partial update for a project's editable identity fields (the About screen).
+/// Partial update for a workspace's editable identity fields (the About screen).
 /// Every field is optional: `None` leaves the column unchanged (COALESCE
 /// semantics), matching the About form which strips empty inputs and PUTs only
 /// the fields the user touched. Text columns bind `Option<&str>`; the three
@@ -90,7 +73,7 @@ pub const WORKSPACE_MATURITIES: [&str; 4] = ["discovery", "active", "maintenance
 /// `maturity` is the `sensei.workspace_maturity` enum and is validated against
 /// [`WORKSPACE_MATURITIES`] before the write.
 #[derive(Debug, Default, Clone)]
-pub struct ProjectPatch<'a> {
+pub struct WorkspacePatch<'a> {
     pub name: Option<&'a str>,
     pub description: Option<&'a str>,
     pub maturity: Option<&'a str>,
@@ -303,7 +286,7 @@ pub struct ShareBatchItem {
     /// `origin='learned'` memory the title is a truncated slice of the prompt
     /// that produced it, so unlike `body` this field has no rewrite behind it:
     /// only the deterministic strip runs, which removes KNOWN identifiers
-    /// (project/client/repo/folder/session/person) and pattern-matched
+    /// (workspace/client/repo/folder/session/person) and pattern-matched
     /// paths/emails/uuids/secrets — ordinary prose passes through unchanged.
     /// Generalising the title is tracked in `docs/history/plan/decisions.md`.
     pub title: String,
@@ -338,7 +321,7 @@ pub struct MemoryPushPayload {
 /// Parse a git remote URL into its source-identifier tokens (owner + repo),
 /// e.g. `git@github.com:acme/acme-api.git` and
 /// `https://github.com/acme/acme-api` both → `["acme", "acme-api"]`. Used by
-/// [`PgStore::project_identifiers`] to feed the confidentiality dereference
+/// [`PgStore::workspace_identifiers`] to feed the confidentiality dereference
 /// (C5) — both the org/owner and the repo name are source identifiers to strip.
 /// Host-like segments (containing a dot) are skipped. Pure — unit-tested.
 fn repo_tokens_from_remote(url: &str) -> Vec<String> {
@@ -370,7 +353,7 @@ fn remote_path_segments(url: &str) -> Vec<String> {
 /// The git-org owner slug of a remote — the path segment before the repo,
 /// lowercased. `git@github.com:Sensei-HQ/sensei.git` and
 /// `https://github.com/Sensei-HQ/sensei` both → `Some("sensei-hq")`; a URL with
-/// no owner segment → `None`. Feeds [`PgStore::project_org_owners`] →
+/// no owner segment → `None`. Feeds [`PgStore::workspace_org_owners`] →
 /// `dojo::routing::infer_binding` for the R3 auto-bind suggestion. Pure.
 pub(crate) fn remote_owner_slug(url: &str) -> Option<String> {
     let segments = remote_path_segments(url);
@@ -404,13 +387,13 @@ pub struct Metric {
     pub effective_until: Option<chrono::NaiveDate>,
 }
 
-/// Latest stored value for one metric of a project, with the catalog facets it is
-/// read through — the shape [`PgStore::get_project_metrics`] returns. `value`/`props`
-/// come from `sensei.project_metric_daily` (latest `date` per metric); `name`,
+/// Latest stored value for one metric of a workspace, with the catalog facets it is
+/// read through — the shape [`PgStore::get_workspace_metrics`] returns. `value`/`props`
+/// come from `sensei.workspace_metric_daily` (latest `date` per metric); `name`,
 /// `metric_type`, `unit`, `direction`, `purpose`, `how_to_read` are joined from
 /// `sensei.metrics`. Trend (prior/delta) is deferred to the Phase 7 endpoint.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct ProjectMetricRow {
+pub struct WorkspaceMetricRow {
     pub metric: String,
     pub date: chrono::NaiveDate,
     pub value: f64,
@@ -423,15 +406,15 @@ pub struct ProjectMetricRow {
     pub how_to_read: String,
 }
 
-/// The latest weekly trend point for one metric of a project — the shape
-/// [`PgStore::get_project_metric_trend`] returns. Read from
-/// `sensei.project_metric_trend` (the weekly `lag()` over `workspace_metric_weekly`):
+/// The latest weekly trend point for one metric of a workspace — the shape
+/// [`PgStore::get_workspace_metric_trend`] returns. Read from
+/// `sensei.workspace_metric_trend` (the weekly `lag()` over `workspace_metric_weekly`):
 /// `prior`/`delta` are `None` for a metric's first period (honest-null, never a
 /// fabricated 0). `direction` travels with the row so the UI can colour the delta
 /// (a positive delta on a `lower_better` metric is a regression) without a
 /// registry re-join.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct ProjectMetricTrendRow {
+pub struct WorkspaceMetricTrendRow {
     pub metric: String,
     pub period: chrono::NaiveDate,
     pub value: f64,
@@ -440,14 +423,14 @@ pub struct ProjectMetricTrendRow {
     pub direction: String,
 }
 
-/// One point in a project metric's time series at a chosen grain — the shape
-/// [`PgStore::get_project_metric_series`] returns. `period` is the grain's bucket
+/// One point in a workspace metric's time series at a chosen grain — the shape
+/// [`PgStore::get_workspace_metric_series`] returns. `period` is the grain's bucket
 /// start (`date` for daily; the week/month/quarter start otherwise); `value` is
 /// the view's re-derived value (Σnum/Σden for ratio/pct, Σ for count/currency,
 /// period-end for value/score — NEVER the mean of daily ratios). `direction`
 /// travels with the row so the UI can colour the series without a registry re-join.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct ProjectMetricSeriesPoint {
+pub struct WorkspaceMetricSeriesPoint {
     pub period: chrono::NaiveDate,
     pub value: f64,
     pub direction: String,
@@ -458,16 +441,16 @@ pub struct ProjectMetricSeriesPoint {
     pub explainer: Option<String>,
 }
 
-/// A project metric's series at a grain bundled with the metric's `formula` — the
+/// A workspace metric's series at a grain bundled with the metric's `formula` — the
 /// "how it's calculated" facet the metric-detail screen surfaces beside the chart.
-/// The shape [`PgStore::get_project_metric_series`] returns. `formula` is read from
+/// The shape [`PgStore::get_workspace_metric_series`] returns. `formula` is read from
 /// the `sensei.metrics` registry by key, so it is present even when `points` is
 /// empty (a valid metric with no data yet) and is `None` only when the key names no
 /// registered metric (honest-null, never a fabricated string).
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct ProjectMetricSeries {
+pub struct WorkspaceMetricSeries {
     pub formula: Option<String>,
-    pub points: Vec<ProjectMetricSeriesPoint>,
+    pub points: Vec<WorkspaceMetricSeriesPoint>,
 }
 
 /// One row of `sensei.metric_status`: for one repository × one registry metric,
@@ -528,7 +511,7 @@ pub struct ReasonCode {
 /// The descriptive facets of ONE metric by registry key — its display `name` and
 /// its `how_to_read` "what this measures" line. The shape
 /// [`PgStore::get_metric_meaning`] returns, read from `sensei.metrics` by key (the
-/// same by-key path [`PgStore::get_project_metric_series`] reads `formula`
+/// same by-key path [`PgStore::get_workspace_metric_series`] reads `formula`
 /// through). Grounds the drill-down's per-session observation in the metric's real
 /// meaning. `None` from the reader when the key names no registered metric
 /// (honest-null, never a fabricated meaning).
@@ -596,7 +579,6 @@ mod personas;
 /// handlers must not each re-invent what a missing row means.
 pub(crate) use personas::ForgeTokenRow;
 mod playbook;
-mod projects;
 mod reasons;
 mod repo_key;
 mod runs;
@@ -606,6 +588,7 @@ pub(crate) mod sync;
 pub(crate) mod tracker_usage;
 pub(crate) mod trackers;
 mod transcript;
+mod workspaces;
 pub(crate) use repo_key::normalize_repo_key;
 pub(crate) use schedules::{SchedulePatch, StoredSchedule};
 
@@ -802,7 +785,7 @@ impl PgStore {
     ) -> Result<Run, String> {
         let (
             id,
-            project_id,
+            workspace_id,
             plan_ref,
             goal,
             status,
@@ -822,7 +805,7 @@ impl PgStore {
             .ok_or_else(|| format!("unknown run_status from DB: {status:?}"))?;
         Ok(Run {
             id,
-            project_id,
+            workspace_id,
             plan_ref,
             goal,
             status,
@@ -840,13 +823,13 @@ impl PgStore {
         })
     }
 
-    /// Shared folder query for [`list_folders_by_project`] (full tree) and
-    /// [`list_root_folders_by_project`] (repo roots only). `roots_only` gates
+    /// Shared folder query for [`list_folders_by_workspace`] (full tree) and
+    /// [`list_root_folders_by_workspace`] (repo roots only). `roots_only` gates
     /// out the `kind:'folder'` descendants at the SQL level so the compact
     /// path never materializes them.
-    async fn query_folders_by_project(
+    async fn query_folders_by_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         roots_only: bool,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, Option<String>)> =
@@ -858,7 +841,7 @@ impl PgStore {
                AND ($2 = false OR f.kind::text IN ('git','standalone'))
              ORDER BY f.path",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .bind(roots_only)
             .fetch_all(&self.pool)
             .await
@@ -889,7 +872,7 @@ impl PgStore {
             .and_then(|s| uuid::Uuid::parse_str(s).ok())
     }
 
-    /// Scan every doc node in a project's folders for backtick-wrapped
+    /// Scan every doc node in a workspace's folders for backtick-wrapped
     /// identifier mentions, cross-reference against `sensei.nodes`, and
     /// materialise the results into `inference.drift_items`. Returns how
     /// many broken references were added, how many drift rows were
@@ -898,19 +881,19 @@ impl PgStore {
     ///
     /// The identifier extraction lives in `analysis::doc_drift` so it can
     /// be unit-tested without a Postgres round-trip; here we handle the
-    /// per-project fanout and the persistence.
+    /// per-workspace fanout and the persistence.
     /// Node kinds treated as real code symbols for drift resolution and the
     /// `symbol_names` history. One list so the drift `known` query and
     /// `record_symbol_names` can never drift apart. (Bare enum labels; Postgres
     /// coerces them against the `sensei.node_kind` column.)
     const DRIFT_SYMBOL_KINDS: &'static str = "'function','method','class','type','interface','const','module','struct','hook','component','enum','extension'";
 
-    /// Shared read: optionally filter to a project, resolve `project_ids` → a JSON
-    /// array of {id, name}. The projects array is aggregated as text and parsed in
+    /// Shared read: optionally filter to a workspace, resolve `workspace_ids` → a JSON
+    /// array of {id, name}. The workspaces array is aggregated as text and parsed in
     /// Rust (the codebase avoids decoding json columns directly).
     async fn query_corrections(
         &self,
-        project_filter: Option<&uuid::Uuid>,
+        workspace_filter: Option<&uuid::Uuid>,
     ) -> Result<serde_json::Value, String> {
         let rows: Vec<(
             uuid::Uuid,
@@ -928,22 +911,22 @@ impl PgStore {
               WHERE ($1::uuid IS NULL OR $1 = ANY(c.workspace_ids))
               ORDER BY c.count DESC, c.last_seen DESC NULLS LAST",
         )
-        .bind(project_filter)
+        .bind(workspace_filter)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
 
         let out: Vec<serde_json::Value> = rows
             .into_iter()
-            .map(|(id, text, count, last_seen, memory_id, suggestion, projects_json)| {
-                let projects: serde_json::Value =
-                    serde_json::from_str(&projects_json).unwrap_or_else(|_| serde_json::json!([]));
+            .map(|(id, text, count, last_seen, memory_id, suggestion, workspaces_json)| {
+                let workspaces: serde_json::Value = serde_json::from_str(&workspaces_json)
+                    .unwrap_or_else(|_| serde_json::json!([]));
                 serde_json::json!({
                     "id": id,
                     "text": text,
                     "count": count,
                     "lastSeen": last_seen.map(|t| t.to_rfc3339()),
-                    "projects": projects,
+                    "workspaces": workspaces,
                     "memoryId": memory_id,
                     "suggestion": suggestion,
                 })
@@ -966,8 +949,8 @@ impl PgStore {
     const ACTIVE_METRIC_PREDICATE: &str = "effective_from <= current_date and (effective_until is null or effective_until > current_date)";
 
     /// `(phantom_id, survivor_id)` pairs — one per name-duplicate phantom that
-    /// [`Self::heal_duplicate_name_projects`] would merge. The `= 1` guard ensures
-    /// the survivor is the single folder-bearing project for that name
+    /// [`Self::heal_duplicate_name_workspaces`] would merge. The `= 1` guard ensures
+    /// the survivor is the single folder-bearing workspace for that name
     /// (unambiguous), so a two-folder-bearing collision is excluded. Shared by the
     /// heal (which merges each) and [`Self::detect_duplicate_name_phantoms`] (which
     /// reports read-only) so both agree on exactly what a phantom is.
@@ -990,25 +973,25 @@ impl PgStore {
     /// `standalone` root paired with the DEEPEST enclosing git repo it sits inside
     /// (DISTINCT ON + length DESC picks the closest repo, never a grandparent).
     /// `starts_with` is exact-prefix (no LIKE wildcard hazard in paths). Requires
-    /// the git repo to already have a project so there is somewhere to attribute
-    /// to. Tuple: `(standalone_id, standalone_project, git_id, git_project,
+    /// the git repo to already have a workspace so there is somewhere to attribute
+    /// to. Tuple: `(standalone_id, standalone_workspace, git_id, git_workspace,
     /// git_root, git_abs_path)`. Shared by the heal (which re-absorbs each) and
     /// [`Self::detect_nested_standalone_roots`] (which reports read-only).
     /// Every `standalone` folder sitting INSIDE a git repository — mis-scoped by
-    /// structure, whatever its project says.
+    /// structure, whatever its workspace says.
     ///
-    /// This used to also require `s.project_id IS DISTINCT FROM g.project_id`,
-    /// using a divergent project as the evidence that the standalone was
+    /// This used to also require `s.workspace_id IS DISTINCT FROM g.workspace_id`,
+    /// using a divergent workspace as the evidence that the standalone was
     /// mis-scoped. That proxy is now obsolete and actively wrong: a folder
-    /// inherits its project from its repo anchor at write time (#211), so a
-    /// nested standalone's project MATCHES its enclosing repo by construction
+    /// inherits its workspace from its repo anchor at write time (#211), so a
+    /// nested standalone's workspace MATCHES its enclosing repo by construction
     /// and the old predicate matched nothing. The repair silently stopped
     /// happening — caught by `audit_repairs_nested_standalone`, which asserts
-    /// the kind is repaired, not just the project.
+    /// the kind is repaired, not just the workspace.
     ///
     /// Structure is the better rule anyway. A standalone inside a repo is
     /// mis-scoped because the repo owns that subtree, and that is true whether
-    /// or not the two happen to name the same project.
+    /// or not the two happen to name the same workspace.
     #[allow(clippy::type_complexity)]
     async fn nested_standalone_candidates(
         &self,
@@ -1016,12 +999,12 @@ impl PgStore {
         Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, String)>,
         String,
     > {
-        // BOTH project columns are OPTIONAL. `sole_workspace_of` is NULL whenever
-        // a repository serves no project or two, and 4,129 folders are in that
-        // state live. Decoding the enclosing repo's project as a bare `Uuid`
+        // BOTH workspace columns are OPTIONAL. `sole_workspace_of` is NULL whenever
+        // a repository serves no workspace or two, and 4,129 folders are in that
+        // state live. Decoding the enclosing repo's workspace as a bare `Uuid`
         // made ONE such repo abort the whole heal pass with a decode error, so
         // nothing anywhere was re-absorbed — the re-parenting does not need a
-        // project at all, and only the phantom merge below does.
+        // workspace at all, and only the phantom merge below does.
         sqlx_core::query_as::query_as(
             "SELECT DISTINCT ON (s.id)
                     s.id, sensei.sole_workspace_of(s.id), g.id,
@@ -1039,7 +1022,7 @@ impl PgStore {
         .map_err(|e| e.to_string())
     }
 
-    /// Build the FTR headline JSON shared by [`Self::get_project_ftr`] and
+    /// Build the FTR headline JSON shared by [`Self::get_workspace_ftr`] and
     /// [`Self::get_holistic_ftr`]. `ftr_14d` / `ftr_14d_prev` are honest-null
     /// when absent — they serialize to JSON `null`, NEVER coerced to a fabricated
     /// `0.0` a caller can't tell from a real 0%. One place so neither getter can
@@ -1193,16 +1176,16 @@ impl PgStore {
            LEFT JOIN sensei.dojo_membership_personas mp ON mp.membership_id = m.id
            LEFT JOIN sensei.personas p ON p.id = mp.persona_id";
 
-    /// Collect all folder ids belonging to a project, deduped.
-    async fn folder_ids_for_project(
+    /// Collect all folder ids belonging to a workspace, deduped.
+    async fn folder_ids_for_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<uuid::Uuid>, String> {
-        let folders = self.list_folders_by_project(project_id).await?;
+        let folders = self.list_folders_by_workspace(workspace_id).await?;
         let mut ids: Vec<uuid::Uuid> =
             folders.iter().filter_map(|f| crate::api::util::json_uuid(&f["id"])).collect();
         // folders.id is the PK so dupes can't occur today, but sort+dedup keeps
-        // this robust if list_folders_by_project ever grows a join.
+        // this robust if list_folders_by_workspace ever grows a join.
         ids.sort_unstable();
         ids.dedup();
         Ok(ids)
@@ -1240,22 +1223,5 @@ mod pool_lifecycle_tests {
         // Idempotence: the second close must return, not panic or hang.
         pg.close().await;
         assert!(pg.pool().is_closed(), "a second close() leaves the pool closed");
-    }
-}
-
-#[cfg(test)]
-mod scope_vocabulary_tests {
-    use super::{scope_to_api, scope_to_db};
-
-    /// The database says `workspace` and the API `project` (#307 R3a); every
-    /// other scope passes through both ways untouched.
-    #[test]
-    fn a_scope_crosses_the_database_boundary_and_back() {
-        assert_eq!(scope_to_db("project"), "workspace");
-        assert_eq!(scope_to_api("workspace".into()), "project");
-        for other in ["global", "stack", "task_type", "module", "folder"] {
-            assert_eq!(scope_to_db(other), other);
-            assert_eq!(scope_to_api(other.into()), other);
-        }
     }
 }

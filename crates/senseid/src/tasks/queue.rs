@@ -551,7 +551,7 @@ impl TaskQueue {
     /// Test-only: every task the queue is holding (pending, blocked, running,
     /// completed) as whole [`Task`]s.
     ///
-    /// [`Self::snapshot`] projects this down to `(kind, folder_path, path)`. That
+    /// [`Self::snapshot`] workspaces this down to `(kind, folder_path, path)`. That
     /// projection was for a long time the ONLY way to look at the queue, and it
     /// discards `force` — which is part of why a dropped force flag stayed
     /// invisible from outside. Anything asserting on task STATE wants this one.

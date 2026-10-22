@@ -27,7 +27,7 @@ describe("SettingsSidebar", () => {
       "General",
       "Assistants",
       "Roots",
-      "Projects",
+      "Workspaces",
       "Libraries",
       "Instruments",
       "Providers",
@@ -48,10 +48,10 @@ describe("SettingsSidebar", () => {
   });
 
   it("highlights the parent entry for a nested sub-route", () => {
-    const { container } = mount("/settings/projects/abc-123");
+    const { container } = mount("/settings/workspaces/abc-123");
     expect(
       container.querySelector('[aria-current="page"]')?.getAttribute("href"),
-    ).toBe("/settings/projects");
+    ).toBe("/settings/workspaces");
   });
 
   it("shows the Settings eyebrow header", () => {

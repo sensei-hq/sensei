@@ -1,5 +1,5 @@
 //! DB-touching CRUD tests for the relay run-state model. Each test is
-//! self-contained: `project_id` is `None` (nullable FK), and every created
+//! self-contained: `workspace_id` is `None` (nullable FK), and every created
 //! run is cascade-deleted at the end (`run_events` cascade with the run).
 //! Guarded like the neighbouring pg_store tests — a missing test DB means
 //! the test no-ops rather than fails.
@@ -22,7 +22,7 @@ async fn create_get_and_defaults() {
     let id = pg.create_run(&NewRun::default()).await.unwrap();
     let run = pg.get_run(&id).await.unwrap().expect("run exists");
     assert_eq!(run.id, id);
-    assert_eq!(run.project_id, None);
+    assert_eq!(run.workspace_id, None);
     assert_eq!(run.plan_ref, "", "plan_ref defaults to ''");
     assert_eq!(run.status, RelayRunStatus::Running, "status defaults to running");
     assert_eq!(run.max_concurrency, 1, "max_concurrency defaults to 1");
@@ -45,7 +45,7 @@ async fn create_with_fields() {
     let session = uuid::Uuid::new_v4();
     let id = pg
         .create_run(&NewRun {
-            project_id: None,
+            workspace_id: None,
             plan_ref: Some("docs/plan/P3.md".into()),
             goal: Some("ship relay".into()),
             dojo_session_id: Some(session),

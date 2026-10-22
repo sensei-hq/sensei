@@ -7,7 +7,7 @@
 //! outcome is negative) a suggested revision.
 //!
 //! The functions here are deterministic and pure. They compose a
-//! `serde_json::Value` shaped to what `get_project_impact` projects
+//! `serde_json::Value` shaped to what `get_workspace_impact` workspaces
 //! straight through to the UI. All inputs come from data the daemon
 //! already has, so no additional LLM calls are required at measure time.
 

@@ -435,25 +435,25 @@ consumed**, not money — see `cost_per_result` for the money question.
 
 ## Composite — overall health
 
-### Project health — **live, as a VIEW over ratings**
+### Workspace health — **live, as a VIEW over ratings**
 
-The stored `project_health` **metric** is retired (`effective_until:
+The stored `workspace_health` **metric** is retired (`effective_until:
 2026-08-12`) — a plain mean of normalized components moved 46→44 purely because
 `throughput` dipped on a quiet day. It produced zero rows and is not scheduled.
 
-**The capability was not retired — it moved.** Project health is now derived,
+**The capability was not retired — it moved.** Workspace health is now derived,
 not stored:
 
 | view | what it gives |
 |---|---|
-| `sensei.metric_ratings` | latest daily reading per (project, metric) with its 0–5 `rating` |
-| `sensei.project_health_score` | `round(20 × Σ(weight × rating) / Σ(weight))` → 0–100, plus `rated_metrics`, `total_weight`, and a `components` jsonb (per-metric `rating`/`weight`/`name`) |
-| `sensei.project_health_trend` | the same score per `grain` × `period` (daily/weekly/monthly), plus **`coverage`** — the share of total model weight that backed the score |
+| `sensei.metric_ratings` | latest daily reading per (workspace, metric) with its 0–5 `rating` |
+| `sensei.workspace_health_score` | `round(20 × Σ(weight × rating) / Σ(weight))` → 0–100, plus `rated_metrics`, `total_weight`, and a `components` jsonb (per-metric `rating`/`weight`/`name`) |
+| `sensei.workspace_health_trend` | the same score per `grain` × `period` (daily/weekly/monthly), plus **`coverage`** — the share of total model weight that backed the score |
 
-Served by `GET /api/projects/{id}/health`. Live: **67 projects scored**, trend
+Served by `GET /api/workspaces/{id}/health`. Live: **67 workspaces scored**, trend
 has 1,806 daily / 449 weekly / 228 monthly rows back to 2018.
 
-- **How to read:** the "is this project healthy?" glance; drill into `components`
+- **How to read:** the "is this workspace healthy?" glance; drill into `components`
   to see what's dragging it. Not a substitute for FTR — a summary of it and its
   companions. **Always read with `coverage`/`rated_metrics`** — see the defect below.
 - **Representation:** **health dial** + component breakdown (the radar plots
@@ -512,7 +512,7 @@ reader who encounters an old row or an old chart can find out what it was.
 - **Reviving it** means clearing `effective_until` in the seed — but not before the
   verdict is outcome-based, or it measures the same nothing.
 
-### Project health `project_health` — retired 2026-08-12
+### Workspace health `workspace_health` — retired 2026-08-12
 - **Was:** `composite · score · ▲ · weight 1` — a single 0–100 roll-up.
 - **Why retired:** a plain mean of ~9 normalized components is not a meaningful
   signal — it moved 46→44 purely because `throughput` dipped on a quiet day, while
@@ -520,8 +520,8 @@ reader who encounters an old row or an old chart can find out what it was.
   signal; FTR is the north star, and a qlty-based code-quality family replaces the
   code-health role.* **Produced 0 rows.**
 - **Not a loss of capability** — the composite moved to the
-  [`project_health_score` view](#composite--overall-health), which is live and
-  scores 67 projects. The schema + handler are kept and it is revivable, but there
+  [`workspace_health_score` view](#composite--overall-health), which is live and
+  scores 67 workspaces. The schema + handler are kept and it is revivable, but there
   is no reason to: the view is strictly better, since it composes ratings rather
   than raw normalized values.
 
@@ -538,7 +538,7 @@ reader who encounters an old row or an old chart can find out what it was.
 | Cost | | cost_per_result (2 repos — needs a configured plan) | |
 | Autonomy | interruption_rate | | false_crash_rate (never computed) |
 | Knowledge | memory_promotion (≈0 = the signal) | | recall-hit, repeat-mistake, guidance-adherence — all unregistered |
-| Composite | project health (via `project_health_score` view) | | coverage gating ([#155](https://github.com/sensei-hq/sensei/issues/155)) |
+| Composite | workspace health (via `workspace_health_score` view) | | coverage gating ([#155](https://github.com/sensei-hq/sensei/issues/155)) |
 | Architecture | graph_confidence, public_surface_ratio, symbol_size_p95 | | module-level coupling, cohesion, cycles — see below |
 
 ### The architecture gap

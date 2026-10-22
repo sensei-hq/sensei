@@ -2,17 +2,17 @@ use super::*;
 
 // ── Personas (Phase 3) ──────────────────────────────────────────────────
 
-/// Seed a project + repository + one user-scope metric row for `email`.
+/// Seed a workspace + repository + one user-scope metric row for `email`.
 async fn seed_identity_row(
     s: &PgStore,
     uniq: &uuid::Uuid,
     email: &str,
     value: f64,
 ) -> (uuid::Uuid, uuid::Uuid) {
-    let pid = s.create_project(&format!("_test:persona:{uniq}"), None, None).await.unwrap();
+    let pid = s.create_workspace(&format!("_test:persona:{uniq}"), None, None).await.unwrap();
     let rid = crate::tasks::test_support::seed_bare_repository(s, &pid, uniq).await;
     let mid = seed_metric(s, &format!("_test:persona:{uniq}:ftr"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(&MetricRow {
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &mid,
         repository_id: &rid,
         scope: "user",
@@ -189,7 +189,7 @@ async fn a_held_back_scope_cannot_crowd_the_push_window() {
 
     // The pushable row is OLDER, so a limit applied before the scope filter would
     // hand every slot to the newer user-scoped rows and miss it entirely.
-    s.upsert_project_metric_repo(&MetricRow {
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &mid,
         repository_id: &rid,
         scope: "repo",
@@ -204,7 +204,7 @@ async fn a_held_back_scope_cannot_crowd_the_push_window() {
     .await
     .unwrap();
     for d in 10..14 {
-        s.upsert_project_metric_repo(&MetricRow {
+        s.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mid,
             repository_id: &rid,
             scope: "user",
@@ -238,7 +238,7 @@ async fn the_allow_list_cannot_be_crowded_out_either() {
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
     let allowed_key = format!("test/bare-{uniq}");
     let mid = seed_metric(&s, &format!("_test:allow:{uniq}"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(&MetricRow {
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &mid,
         repository_id: &rid,
         scope: "repo",
@@ -255,7 +255,7 @@ async fn the_allow_list_cannot_be_crowded_out_either() {
 
     // A second shared repository with NEWER rows that the plan does not allow.
     let other_pid =
-        s.create_project(&format!("_test:allow:other:{uniq}"), None, None).await.unwrap();
+        s.create_workspace(&format!("_test:allow:other:{uniq}"), None, None).await.unwrap();
     let other_uniq = uuid::Uuid::new_v4();
     let other_rid =
         crate::tasks::test_support::seed_bare_repository(&s, &other_pid, &other_uniq).await;
@@ -265,7 +265,7 @@ async fn the_allow_list_cannot_be_crowded_out_either() {
         .await
         .unwrap();
     for d in 20..24 {
-        s.upsert_project_metric_repo(&MetricRow {
+        s.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mid,
             repository_id: &other_rid,
             scope: "repo",
@@ -301,7 +301,7 @@ async fn two_rows_that_differ_in_every_key_field_arrive_different() {
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
     let key = format!("test/bare-{uniq}");
     let mid = seed_metric(&s, &format!("_test:contrast:{uniq}"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(&MetricRow {
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &mid,
         repository_id: &rid,
         scope: "repo",

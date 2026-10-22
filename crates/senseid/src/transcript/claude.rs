@@ -221,7 +221,7 @@ fn claude_model_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Option<Stri
 /// Reconstruct a session's event stream from a Claude transcript (#75): a
 /// `UserPromptSubmit` per genuine human prompt, a `PostToolUse` per `tool_use`
 /// block (name + file_path), and a synthetic terminal `Stop` (transcripts carry
-/// no end marker). Also collects distinct `cwd`s for project resolution. Pure.
+/// no end marker). Also collects distinct `cwd`s for workspace resolution. Pure.
 pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
     parse_claude_session_of(content.lines())
 }
@@ -637,7 +637,7 @@ mod tests {
         let p = ClaudeAdapter::new(std::path::PathBuf::from("/tmp")).parse(content);
         assert_eq!(p.turns.len(), 1, "one user-bounded turn");
         assert_eq!(p.turns[0].user_text.as_deref(), Some("fix the parser"));
-        assert_eq!(p.cwds, vec!["/repo".to_string()], "cwd collected for project resolution");
+        assert_eq!(p.cwds, vec!["/repo".to_string()], "cwd collected for workspace resolution");
         let kinds: Vec<&str> = p.events.iter().map(|e| e.event_type.as_str()).collect();
         assert_eq!(kinds, vec!["UserPromptSubmit", "PostToolUse", "Stop"]);
         assert_eq!(p.model, Some(("anthropic".to_string(), "claude-opus-4-8".to_string())));
@@ -654,7 +654,7 @@ mod tests {
         assert_eq!(
             s.cwds,
             vec!["/repo".to_string()],
-            "collects distinct cwd for project resolution"
+            "collects distinct cwd for workspace resolution"
         );
         let kinds: Vec<&str> = s.events.iter().map(|e| e.event_type.as_str()).collect();
         assert_eq!(

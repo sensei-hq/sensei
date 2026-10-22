@@ -1,6 +1,6 @@
 //! Scan lifecycle integration — exercises the daemon end-to-end via HTTP
 //! and asserts the SSE event stream emits throttled folder_update events
-//! with progress + a terminal status=indexed + a final project_update::active.
+//! with progress + a terminal status=indexed + a final workspace_update::active.
 //!
 //! Self-skips if SENSEI_API_URL is not set.
 
@@ -15,7 +15,7 @@ fn base_url() -> Option<String> {
 }
 
 #[tokio::test]
-async fn scan_emits_folder_progress_and_project_active() {
+async fn scan_emits_folder_progress_and_workspace_active() {
     let Some(url) = base_url() else {
         return;
     };
@@ -48,7 +48,7 @@ async fn scan_emits_folder_progress_and_project_active() {
     let mut folder_adds = 0;
     let mut folder_updates_with_progress = 0;
     let mut folder_terminal_indexed = 0;
-    let mut project_active = 0;
+    let mut workspace_active = 0;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
 
     while tokio::time::Instant::now() < deadline {
@@ -81,14 +81,14 @@ async fn scan_emits_folder_progress_and_project_active() {
                         folder_updates_with_progress += 1;
                     }
                 }
-                ("project", "update") if evt["data"]["status"].as_str() == Some("active") => {
-                    project_active += 1;
+                ("workspace", "update") if evt["data"]["status"].as_str() == Some("active") => {
+                    workspace_active += 1;
                 }
-                ("project", "update") => {}
+                ("workspace", "update") => {}
                 _ => {}
             }
         }
-        if project_active >= 1 && folder_terminal_indexed >= 1 {
+        if workspace_active >= 1 && folder_terminal_indexed >= 1 {
             break;
         }
     }
@@ -96,7 +96,7 @@ async fn scan_emits_folder_progress_and_project_active() {
     fs::remove_dir_all(&root).ok();
 
     eprintln!(
-        "[scan_lifecycle] counts: folder_adds={folder_adds} progress_updates={folder_updates_with_progress} terminal_indexed={folder_terminal_indexed} project_active={project_active}"
+        "[scan_lifecycle] counts: folder_adds={folder_adds} progress_updates={folder_updates_with_progress} terminal_indexed={folder_terminal_indexed} workspace_active={workspace_active}"
     );
 
     assert!(folder_adds >= 1, "expected ≥1 folder add, got {folder_adds}");
@@ -108,5 +108,5 @@ async fn scan_emits_folder_progress_and_project_active() {
         folder_terminal_indexed >= 1,
         "expected ≥1 terminal indexed folder_update, got {folder_terminal_indexed}"
     );
-    assert!(project_active >= 1, "expected ≥1 project_update::active, got {project_active}");
+    assert!(workspace_active >= 1, "expected ≥1 workspace_update::active, got {workspace_active}");
 }

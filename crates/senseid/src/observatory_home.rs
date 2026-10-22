@@ -83,7 +83,7 @@ pub fn mature_hero(top: &RecLite, source_ids: &[String], noticed: &str) -> Value
     })
 }
 
-/// Fallback hero for the rare case of a mature project with no pending
+/// Fallback hero for the rare case of a mature workspace with no pending
 /// recommendation to surface. Never panics the assembler.
 pub fn steady_hero(recent_count: usize) -> Value {
     json!({

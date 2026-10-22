@@ -6,13 +6,13 @@
  *
  *   1. Navigate to /instruments (Playground tab open by default).
  *   2. Click a known tool row (`get_callees`) via its data-testid.
- *   3. Assert inputs are pre-filled (`repoId` from activeProject or
+ *   3. Assert inputs are pre-filled (`repoId` from activeWorkspace or
  *      placeholder; other inputs from `input.placeholder`).
  *   4. Click the Query button (data-testid=tool-execute).
  *   5. Wait for the response `<pre>` and assert its text is non-empty.
  *
  * The e2e daemon runs on a throw-away `sensei_e2e` DB with no indexed
- * projects, so `get_callees` returns `{"callees": []}`. That's a
+ * workspaces, so `get_callees` returns `{"callees": []}`. That's a
  * correct, non-empty response — the test asserts the round-trip works,
  * not that the DB has data.
  */
@@ -34,7 +34,7 @@ test.describe('Instruments Playground · execute', () => {
     await new Promise((r) => setTimeout(r, 500));
 
     // The Playground pre-fills tool inputs on click via `pickToolDefaults`
-    // (repoId → activeProject || placeholder; other inputs → placeholder).
+    // (repoId → activeWorkspace || placeholder; other inputs → placeholder).
     // Confirm at least one input is populated — a blank form would defeat
     // the point of the defaulting fix that closed the "execute returns
     // empty" symptom the user hit.
@@ -63,7 +63,7 @@ test.describe('Instruments Playground · execute', () => {
     // A daemon round-trip succeeded when the response text is non-empty
     // JSON. On the e2e DB `{"callees": []}` (19 chars) is the correct
     // result. On the user's real install, the same call returns 18
-    // callees for `extract_deps` in the sensei project.
+    // callees for `extract_deps` in the sensei workspace.
     expect((responseText ?? '').length).toBeGreaterThan(2);
     expect(responseText).toContain('{');
     expect(responseText).toContain('}');

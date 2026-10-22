@@ -517,7 +517,7 @@ fn resolve_project_from_cwd(cwd: &str, client: &reqwest::blocking::Client) -> St
 /// nonexistent during a daemon bounce (a fabricated "project not found"). Mirrors
 /// `send_daemon_request`'s connect-retry so an upgrade restart is survived.
 fn get_projects(client: &reqwest::blocking::Client) -> Result<Vec<Value>, String> {
-    let url = format!("{}/api/projects", daemon_url());
+    let url = format!("{}/api/workspaces", daemon_url());
     let resp = match client.get(&url).send() {
         Err(e) if e.is_connect() => {
             std::thread::sleep(std::time::Duration::from_millis(300));
@@ -527,7 +527,7 @@ fn get_projects(client: &reqwest::blocking::Client) -> Result<Vec<Value>, String
     }
     .map_err(|e| format!("cannot reach senseid daemon: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("daemon returned HTTP {} for /api/projects", resp.status()));
+        return Err(format!("daemon returned HTTP {} for /api/workspaces", resp.status()));
     }
-    resp.json::<Vec<Value>>().map_err(|e| format!("unreadable /api/projects response: {e}"))
+    resp.json::<Vec<Value>>().map_err(|e| format!("unreadable /api/workspaces response: {e}"))
 }

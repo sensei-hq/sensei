@@ -5,7 +5,7 @@
  */
 
 import type {
-  DaemonWatchRoot, DaemonAssistantFamily, AssistantVariant, DaemonProject,
+  DaemonWatchRoot, DaemonAssistantFamily, AssistantVariant, DaemonWorkspace,
   DaemonLibEntry, DaemonMcpEntry, DaemonRouter, PreferencesData, WizardLoadData,
   Memory, MemoryDetail,
 } from './contracts.js';
@@ -49,9 +49,9 @@ export function mockAssistant(overrides: Partial<DaemonAssistantFamily> = {}): D
   };
 }
 
-export function mockProject(overrides: Partial<DaemonProject> = {}): DaemonProject {
+export function mockWorkspace(overrides: Partial<DaemonWorkspace> = {}): DaemonWorkspace {
   return {
-    id: 'proj-1', name: 'Test Project', description: null, client: null, goal: null,
+    id: 'proj-1', name: 'Test Workspace', description: null, client: null, goal: null,
     stack: { languages: ['TypeScript'], frameworks: ['SvelteKit'], runtimes: ['Node 20'], services: [] },
     icon: { kind: 'kanji', value: '工' },
     folders: [
@@ -74,7 +74,7 @@ export function mockMcpEntry(overrides: Partial<DaemonMcpEntry> = {}): DaemonMcp
   return {
     id: 'postgres-mcp', name: 'PostgreSQL MCP', publisher: 'supabase', kind: 'data',
     summary: 'Query schema, introspect tables.', tools: 14, verified: true,
-    installed: false, recommended: true, selected: true, project_count: 2,
+    installed: false, recommended: true, selected: true, workspace_count: 2,
     ...overrides,
   };
 }
@@ -107,7 +107,7 @@ export function mockWizardLoadData(overrides: Partial<WizardLoadData> = {}): Wiz
     setupComplete: false,
     completion: {
       welcome: 'pending', preferences: 'pending', assistants: 'pending',
-      roots: 'pending', scan: 'pending', projects: 'pending',
+      roots: 'pending', scan: 'pending', workspaces: 'pending',
       libraries: 'pending', instruments: 'pending',
       inference: 'pending', assignments: 'pending', done: 'pending',
     },
@@ -121,7 +121,7 @@ export function mockWizardLoadData(overrides: Partial<WizardLoadData> = {}): Wiz
       }),
     ],
     roots: [mockWatchRoot()],
-    projects: [mockProject()],
+    workspaces: [mockWorkspace()],
     libraries: { total: 1, libs: [mockLibEntry()] },
     mcps: [mockMcpEntry()],
     routers: [mockRouter()],
@@ -131,7 +131,7 @@ export function mockWizardLoadData(overrides: Partial<WizardLoadData> = {}): Wiz
 
 export function mockMemory(overrides: Partial<Memory> = {}): Memory {
   return {
-    id: 'mem-1', project_id: 'proj-1', scope: 'project', scope_filter: null,
+    id: 'mem-1', workspace_id: 'proj-1', scope: 'workspace', scope_filter: null,
     type: 'convention', title: 'Test memory', content: 'body',
     impact: null, strength: 1.0, status: 'proposed',
     applied_count: 0, violated_count: 0, last_relevant_at: null,

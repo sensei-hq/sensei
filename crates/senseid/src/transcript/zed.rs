@@ -12,7 +12,7 @@
 //!   than branching on `version`.
 //! - `model` — `{provider, model}` (the multi-model signal, captured per turn).
 //! - `initial_project_snapshot.worktree_snapshots[].worktree_path` — the cwd(s)
-//!   for project resolution (present for 225/226 threads; `folder_paths` column
+//!   for workspace resolution (present for 225/226 threads; `folder_paths` column
 //!   is mostly empty and not needed).
 //! - `initial_project_snapshot.timestamp` (start) + top-level `updated_at` (end)
 //!   — there are no per-message timestamps, so session events are spread evenly

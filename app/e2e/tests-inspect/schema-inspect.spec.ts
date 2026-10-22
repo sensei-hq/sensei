@@ -1,5 +1,5 @@
 /**
- * Inspect the REAL Schema diagram (#221) for this repository's project. Done
+ * Inspect the REAL Schema diagram (#221) for this repository's workspace. Done
  * gate 1: `ErDiagram` and `DependencyDiagram` MOUNT against the live payload
  * (169 tables, 184 keys, 784 deps) without a runtime throw — the e2e DB has no
  * schema to draw, so only this harness can show it. Captures
@@ -13,9 +13,9 @@ const DIR = '/tmp/sensei-shots';
 const settle = (ms = 3000) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function idForName(name: string): Promise<string | null> {
-  const res = await fetch(`${DAEMON_URL}/api/projects`);
+  const res = await fetch(`${DAEMON_URL}/api/workspaces`);
   const body = await res.json();
-  const list: Array<{ id: string; name: string }> = Array.isArray(body) ? body : (body.projects ?? []);
+  const list: Array<{ id: string; name: string }> = Array.isArray(body) ? body : (body.workspaces ?? []);
   return list.find((p) => p.name === name)?.id ?? null;
 }
 
@@ -62,13 +62,13 @@ test('schema — sensei, both scopes over live data', async ({ tauriPage }) => {
   mkdirSync(DIR, { recursive: true });
   const id = await idForName('sensei');
   if (!id) {
-    test.skip(true, 'no project named "sensei" on the real daemon');
+    test.skip(true, 'no workspace named "sensei" on the real daemon');
     return;
   }
   await navigateTo(tauriPage, '/logs');
   await installErrorTrap(tauriPage);
 
-  await navigateToScreen(tauriPage, `/project/${id}/diagrams/schema`, '[data-testid="schema-screen"]');
+  await navigateToScreen(tauriPage, `/workspace/${id}/diagrams/schema`, '[data-testid="schema-screen"]');
   await tauriPage.waitForSelector('[data-testid="schema-diagram"], [data-testid="schema-error"], [data-testid="schema-none"]', 60_000);
   await settle();
   const coverage = await text(tauriPage, '[data-testid="schema-coverage"]');

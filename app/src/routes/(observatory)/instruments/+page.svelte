@@ -76,7 +76,7 @@
 
     function pickToolDefaults(tool: PlaygroundTool): Record<string, string> {
         const manifest = tool.mcp === 'sensei' ? tools.find((t) => t.name === tool.name) ?? null : null;
-        return defaultsFor(manifest, appState.activeProjectId || null);
+        return defaultsFor(manifest, appState.activeWorkspaceId || null);
     }
 
     function openSource(source: ToolHealthSource) {

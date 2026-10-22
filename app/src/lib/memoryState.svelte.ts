@@ -76,22 +76,22 @@ class MemoryState {
     #acting = new SvelteSet<string>();
     #actionErrors = new SvelteMap<string, string>();
 
-    // The project scope the lists were loaded under (undefined = global /
+    // The workspace scope the lists were loaded under (undefined = global /
     // observatory view). Re-fetches after a mutation reuse it so a scoped view
-    // never pulls in memories from other projects.
-    #projectId: string | undefined = undefined;
+    // never pulls in memories from other workspaces.
+    #workspaceId: string | undefined = undefined;
 
     triageCount  = $derived(this.triage.length);
     activeCount  = $derived(this.active.length);
     archiveCount = $derived(this.archive.length);
 
-    async load(projectId?: string) {
-        this.#projectId = projectId;
+    async load(workspaceId?: string) {
+        this.#workspaceId = workspaceId;
         this.loading = true;
         const [t, a, x] = await Promise.all([
-            this.fetchTab('triage',  projectId),
-            this.fetchTab('active',  projectId),
-            this.fetchTab('archive', projectId),
+            this.fetchTab('triage',  workspaceId),
+            this.fetchTab('active',  workspaceId),
+            this.fetchTab('archive', workspaceId),
         ]);
         // Any tab unread means the lists are unknown — none is shown.
         this.listError = t.error ?? a.error ?? x.error;
@@ -101,11 +101,11 @@ class MemoryState {
         this.loading = false;
     }
 
-    private async fetchTab(tab: Tab, projectId?: string): Promise<{ memories: Memory[]; error: string | null }> {
+    private async fetchTab(tab: Tab, workspaceId?: string): Promise<{ memories: Memory[]; error: string | null }> {
         const api = senseiApi(appState.port);
         const statuses = STATUSES_BY_TAB[tab];
         const buckets = await Promise.all(statuses.map(status =>
-            api.tryListMemories({ status, project_id: projectId, limit: 500 })
+            api.tryListMemories({ status, workspace_id: workspaceId, limit: 500 })
         ));
         const failed = buckets.find((b) => !b.ok);
         if (failed && !failed.ok) return { memories: [], error: failureReason(failed.error) };
@@ -115,7 +115,7 @@ class MemoryState {
     /** Re-read one tab after an action. A failed read keeps the tab as it was
      *  and says the lists could not be refreshed. */
     private async refreshTab(tab: Tab, current: Memory[]): Promise<Memory[]> {
-        const read = await this.fetchTab(tab, this.#projectId);
+        const read = await this.fetchTab(tab, this.#workspaceId);
         this.listError = read.error;
         return read.error ? current : read.memories;
     }

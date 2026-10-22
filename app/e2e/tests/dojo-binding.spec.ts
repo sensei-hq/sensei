@@ -1,5 +1,5 @@
 /**
- * R3 · project → Dōjō auto-bind — functional e2e.
+ * R3 · workspace → Dōjō auto-bind — functional e2e.
  *
  * The pure inference + the confirmed/inferred/empty view model are covered
  * exhaustively by unit tests (routing.rs::infer_binding, about-binding-state
@@ -9,12 +9,12 @@
  *      org-tagging edit normalizes a joined membership's slugs.
  *   2. The Dōjō connections screen mounts and sends you to sign in — there
  *      is no pairing form (#236 step 4e).
- *   3. The project About "Bindings" section mounts without a runtime throw and
+ *   3. The workspace About "Bindings" section mounts without a runtime throw and
  *      renders exactly one valid state (confirmed | inferred | empty) — proves
  *      the loader fires GET …/dojo-suggestion + the membership list and the
- *      section renders. The inferred→confirm click-flow needs a project whose
+ *      section renders. The inferred→confirm click-flow needs a workspace whose
  *      git remote owner matches a membership's org_slugs; the throwaway e2e DB
- *      has no scanned git projects, so that path is unit-tested, not e2e'd.
+ *      has no scanned git workspaces, so that path is unit-tested, not e2e'd.
  *
  * Requires the org_slugs column in sensei_e2e — run with
  * `SENSEI_DDL_DIR=$(pwd)/database` until a release bundles the DDL.
@@ -26,7 +26,7 @@ import {
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
 } from '../helpers';
 
-/** Mark setup complete so the observatory + project shells are reachable. */
+/** Mark setup complete so the observatory + workspace shells are reachable. */
 
 function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
   expect(errs.error, `${where}: uncaught errors`).toEqual([]);
@@ -93,17 +93,17 @@ test.describe('R3 · Dōjō auto-bind', () => {
     expectNoRuntimeErrors(await readErrors(tauriPage), 'connections');
   });
 
-  test('project About Bindings section mounts in a valid state', async ({ tauriPage }) => {
-    const projects = await safeJson<Array<{ id: string }>>(`${DAEMON_URL}/api/projects`, []);
-    if (projects.length === 0) { test.skip(true, 'no projects registered in e2e DB'); return; }
-    const id = projects[0].id;
+  test('workspace About Bindings section mounts in a valid state', async ({ tauriPage }) => {
+    const workspaces = await safeJson<Array<{ id: string }>>(`${DAEMON_URL}/api/workspaces`, []);
+    if (workspaces.length === 0) { test.skip(true, 'no workspaces registered in e2e DB'); return; }
+    const id = workspaces[0].id;
 
-    await navigateToScreen(tauriPage, `/project/${id}/about`, '[data-testid="project-bindings"]');
-    const section = tauriPage.locator('[data-testid="project-bindings"]');
+    await navigateToScreen(tauriPage, `/workspace/${id}/about`, '[data-testid="workspace-bindings"]');
+    const section = tauriPage.locator('[data-testid="workspace-bindings"]');
     await expect(section).toBeVisible({ timeout: 30_000 });
 
     // Exactly one valid state renders: a confirmed/inferred chip, or the empty
-    // hint. With no scanned git-owner project + membership match, empty is
+    // hint. With no scanned git-owner workspace + membership match, empty is
     // expected — but assert the section is coherent either way.
     // Read the section's text rather than counting a getByText locator: the
     // TauriPage adapter matches text through a synthetic attribute, so its count

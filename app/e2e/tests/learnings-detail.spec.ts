@@ -27,20 +27,20 @@ async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   `);
 }
 
-async function getAnyProjectId(): Promise<string> {
-  const res = await fetch(`${DAEMON_URL}/api/projects`);
-  const projects: { id: string }[] = await res.json();
-  if (!projects.length) throw new Error('No projects in dev DB');
-  return projects[0].id;
+async function getAnyWorkspaceId(): Promise<string> {
+  const res = await fetch(`${DAEMON_URL}/api/workspaces`);
+  const workspaces: { id: string }[] = await res.json();
+  if (!workspaces.length) throw new Error('No workspaces in dev DB');
+  return workspaces[0].id;
 }
 
-async function saveActiveMemory(projectId: string, title: string): Promise<string> {
+async function saveActiveMemory(workspaceId: string, title: string): Promise<string> {
   const res = await fetch(`${DAEMON_URL}/api/knowledge/memories`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      project_id: projectId,
-      scope: 'project',
+      workspace_id: workspaceId,
+      scope: 'workspace',
       type: 'convention',
       title,
       content: 'pick me — has outcomes',
@@ -63,9 +63,9 @@ async function recordApplied(memoryId: string): Promise<void> {
 
 test.describe('Learnings — detail pane', () => {
   test('clicking a memory shows content + outcomes', async ({ tauriPage }) => {
-    const projectId = await getAnyProjectId();
+    const workspaceId = await getAnyWorkspaceId();
     const title = 'e2e-detail-' + Date.now();
-    const memId = await saveActiveMemory(projectId, title);
+    const memId = await saveActiveMemory(workspaceId, title);
     await recordApplied(memId);
 
     await seedSetupComplete(tauriPage);

@@ -30,7 +30,7 @@ describe('root layout load — the boot gate', () => {
 
   it('redirects to /setup/welcome once healthy but setup is incomplete', async () => {
     wizardState.setupComplete = false;
-    expect(await gate('http://localhost/projects')).toBe('/setup/welcome');
+    expect(await gate('http://localhost/workspaces')).toBe('/setup/welcome');
   });
 
   it('lets a route through when both gates are open', async () => {

@@ -180,7 +180,7 @@ pub(crate) fn watcher_is_stalled(
 /// genuinely differ — a watch root holds many repos. What must not differ is
 /// what "longest prefix" means, and a second copy of six words of iterator is
 /// exactly how that drifts. The component-wise `Path::starts_with` that stops
-/// `/a/proj` matching `/a/project` lives there too, tested there.
+/// `/a/proj` matching `/a/workspace` lives there too, tested there.
 pub(crate) fn watch_root_for_path(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
     crate::indexer::incremental::owning_root(path, roots).cloned()
 }
@@ -757,26 +757,27 @@ mod tests {
     #[test]
     fn register_adds_root_to_map() {
         let mut watcher = make_watcher();
-        watcher.register(PathBuf::from("/tmp/project"), vec![]);
+        watcher.register(PathBuf::from("/tmp/workspace"), vec![]);
         assert_eq!(watcher.roots().len(), 1);
-        assert!(watcher.roots().contains_key(&PathBuf::from("/tmp/project")));
+        assert!(watcher.roots().contains_key(&PathBuf::from("/tmp/workspace")));
     }
 
     #[test]
     fn register_stores_exclusions() {
         let mut watcher = make_watcher();
-        watcher.register(PathBuf::from("/tmp/project"), vec!["node_modules".into(), "dist".into()]);
-        let root = &watcher.roots()[&PathBuf::from("/tmp/project")];
+        watcher
+            .register(PathBuf::from("/tmp/workspace"), vec!["node_modules".into(), "dist".into()]);
+        let root = &watcher.roots()[&PathBuf::from("/tmp/workspace")];
         assert_eq!(root.excluded, vec!["node_modules", "dist"]);
     }
 
     #[test]
     fn register_same_root_twice_updates_exclusions() {
         let mut watcher = make_watcher();
-        watcher.register(PathBuf::from("/tmp/project"), vec!["old".into()]);
-        watcher.register(PathBuf::from("/tmp/project"), vec!["new".into()]);
+        watcher.register(PathBuf::from("/tmp/workspace"), vec!["old".into()]);
+        watcher.register(PathBuf::from("/tmp/workspace"), vec!["new".into()]);
         assert_eq!(watcher.roots().len(), 1);
-        assert_eq!(watcher.roots()[&PathBuf::from("/tmp/project")].excluded, vec!["new"]);
+        assert_eq!(watcher.roots()[&PathBuf::from("/tmp/workspace")].excluded, vec!["new"]);
     }
 
     #[test]
@@ -792,8 +793,8 @@ mod tests {
     #[test]
     fn unregister_removes_root() {
         let mut watcher = make_watcher();
-        watcher.register(PathBuf::from("/tmp/project"), vec![]);
-        watcher.unregister(&PathBuf::from("/tmp/project"));
+        watcher.register(PathBuf::from("/tmp/workspace"), vec![]);
+        watcher.unregister(&PathBuf::from("/tmp/workspace"));
         assert!(watcher.roots().is_empty());
     }
 
@@ -903,7 +904,7 @@ mod tests {
     #[test]
     fn reading_git_head_does_not_trigger_a_branch_reconcile() {
         use notify::event::{AccessKind, AccessMode, DataChange, ModifyKind};
-        let head = PathBuf::from("/project/.git/HEAD");
+        let head = PathBuf::from("/workspace/.git/HEAD");
         let read = EventKind::Access(AccessKind::Close(AccessMode::Read));
         assert!(!RootWatcher::triggers_branch_reconcile(&read, &head));
         let checkout = EventKind::Modify(ModifyKind::Data(DataChange::Content));
@@ -914,28 +915,28 @@ mod tests {
 
     #[test]
     fn should_watch_rust_file() {
-        assert!(RootWatcher::should_watch_path(&PathBuf::from("/project/src/main.rs"), &[]));
+        assert!(RootWatcher::should_watch_path(&PathBuf::from("/workspace/src/main.rs"), &[]));
     }
 
     #[test]
     fn should_watch_typescript_file() {
-        assert!(RootWatcher::should_watch_path(&PathBuf::from("/project/src/app.tsx"), &[]));
+        assert!(RootWatcher::should_watch_path(&PathBuf::from("/workspace/src/app.tsx"), &[]));
     }
 
     #[test]
     fn should_watch_markdown_file() {
-        assert!(RootWatcher::should_watch_path(&PathBuf::from("/project/docs/README.md"), &[]));
+        assert!(RootWatcher::should_watch_path(&PathBuf::from("/workspace/docs/README.md"), &[]));
     }
 
     #[test]
     fn should_not_watch_image_file() {
-        assert!(!RootWatcher::should_watch_path(&PathBuf::from("/project/logo.png"), &[]));
+        assert!(!RootWatcher::should_watch_path(&PathBuf::from("/workspace/logo.png"), &[]));
     }
 
     #[test]
     fn should_not_watch_node_modules() {
         assert!(!RootWatcher::should_watch_path(
-            &PathBuf::from("/project/node_modules/foo/index.js"),
+            &PathBuf::from("/workspace/node_modules/foo/index.js"),
             &[]
         ));
     }
@@ -943,7 +944,7 @@ mod tests {
     #[test]
     fn should_not_watch_custom_exclusion() {
         assert!(!RootWatcher::should_watch_path(
-            &PathBuf::from("/project/vendor/lib.rs"),
+            &PathBuf::from("/workspace/vendor/lib.rs"),
             &["vendor".into()]
         ));
     }
@@ -968,12 +969,12 @@ mod tests {
 
     #[test]
     fn detects_git_head_as_branch_switch() {
-        assert!(RootWatcher::is_branch_switch(&PathBuf::from("/project/.git/HEAD")));
+        assert!(RootWatcher::is_branch_switch(&PathBuf::from("/workspace/.git/HEAD")));
     }
 
     #[test]
     fn non_git_file_is_not_branch_switch() {
-        assert!(!RootWatcher::is_branch_switch(&PathBuf::from("/project/src/main.rs")));
+        assert!(!RootWatcher::is_branch_switch(&PathBuf::from("/workspace/src/main.rs")));
     }
 
     // ── watcher_is_stalled (watchdog decision) ────────────────────────
@@ -1137,24 +1138,24 @@ mod tests {
 
     #[test]
     fn watch_root_for_path_matches_containing_root() {
-        let roots = vec![PathBuf::from("/a/project")];
+        let roots = vec![PathBuf::from("/a/workspace")];
         assert_eq!(
-            watch_root_for_path(&PathBuf::from("/a/project/src/main.rs"), &roots),
-            Some(PathBuf::from("/a/project")),
+            watch_root_for_path(&PathBuf::from("/a/workspace/src/main.rs"), &roots),
+            Some(PathBuf::from("/a/workspace")),
         );
     }
 
     #[test]
     fn watch_root_for_path_none_when_outside() {
-        let roots = vec![PathBuf::from("/a/project")];
+        let roots = vec![PathBuf::from("/a/workspace")];
         assert_eq!(watch_root_for_path(&PathBuf::from("/b/other/x.rs"), &roots), None);
     }
 
     #[test]
     fn watch_root_for_path_is_component_wise_not_string_prefix() {
-        // /a/project must NOT match /a/projectX (the classic string-prefix bug).
-        let roots = vec![PathBuf::from("/a/project")];
-        assert_eq!(watch_root_for_path(&PathBuf::from("/a/projectX/f.rs"), &roots), None);
+        // /a/workspace must NOT match /a/workspaceX (the classic string-prefix bug).
+        let roots = vec![PathBuf::from("/a/workspace")];
+        assert_eq!(watch_root_for_path(&PathBuf::from("/a/workspaceX/f.rs"), &roots), None);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  mockWatchRoot, mockAssistant, mockProject, mockLibEntry,
+  mockWatchRoot, mockAssistant, mockWorkspace, mockLibEntry,
   mockMcpEntry, mockPreferences, mockWizardLoadData,
 } from './mock-contracts.js';
 
@@ -22,8 +22,8 @@ describe('contract mock factories', () => {
     expect(a.variants[0].installed).toBeTypeOf('boolean');
   });
 
-  it('mockProject has folders array', () => {
-    const p = mockProject();
+  it('mockWorkspace has folders array', () => {
+    const p = mockWorkspace();
     expect(Array.isArray(p.folders)).toBe(true);
     expect(p.folders[0].kind).toBeTypeOf('string');
   });
@@ -36,9 +36,9 @@ describe('contract mock factories', () => {
     expect(l.enabled).toBeTypeOf('boolean');
   });
 
-  it('mockMcpEntry has project_count', () => {
+  it('mockMcpEntry has workspace_count', () => {
     const m = mockMcpEntry();
-    expect(m.project_count).toBeTypeOf('number');
+    expect(m.workspace_count).toBeTypeOf('number');
     expect(m.selected).toBeTypeOf('boolean');
   });
 
@@ -48,7 +48,7 @@ describe('contract mock factories', () => {
     expect(data.preferences.displayName).toBeTypeOf('string');
     expect(Array.isArray(data.assistantFamilies)).toBe(true);
     expect(Array.isArray(data.roots)).toBe(true);
-    expect(Array.isArray(data.projects)).toBe(true);
+    expect(Array.isArray(data.workspaces)).toBe(true);
     expect(Array.isArray(data.libraries.libs)).toBe(true);
     expect(Array.isArray(data.mcps)).toBe(true);
   });
@@ -63,12 +63,12 @@ describe('contract mock factories', () => {
     const data = mockWizardLoadData({
       completion: {
         welcome: 'done', preferences: 'done', assistants: 'done',
-        roots: 'done', scan: 'done', projects: 'pending',
+        roots: 'done', scan: 'done', workspaces: 'pending',
         libraries: 'pending', instruments: 'pending',
         inference: 'pending', assignments: 'pending', done: 'pending',
       },
     });
     expect(data.completion.welcome).toBe('done');
-    expect(data.completion.projects).toBe('pending');
+    expect(data.completion.workspaces).toBe('pending');
   });
 });

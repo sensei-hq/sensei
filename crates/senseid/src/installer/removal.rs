@@ -7,7 +7,7 @@ use super::{RemoveRequest, RemoveResult, cache_dir, home, plugin_dir, sensei_dir
 
 // ── Remove ──────────────────────────────────────────────────────────────────
 
-/// Remove sensei artifacts. With purge=true, also removes project data.
+/// Remove sensei artifacts. With purge=true, also removes workspace data.
 /// Data directory (~/.sensei/) deletion is handled by the CLI after stopping the daemon.
 pub fn remove(req: &RemoveRequest) -> RemoveResult {
     // Resolve the real locations once and delegate. The path-injected core lets
@@ -20,8 +20,8 @@ pub fn remove(req: &RemoveRequest) -> RemoveResult {
 /// Path-injected core. `run_uninstall` gates the external
 /// `claude plugin uninstall` (skipped in tests so it never touches real config).
 /// `_req.purge` and `_sensei_dir` are currently unused: pre-release there is no
-/// project registry to purge (the daemon owns projects in Postgres), so uninstall
-/// no longer walks a `projects.json` manifest cleaning each repo.
+/// workspace registry to purge (the daemon owns workspaces in Postgres), so uninstall
+/// no longer walks a `workspaces.json` manifest cleaning each repo.
 fn remove_with(
     _req: &RemoveRequest,
     home: &Path,
@@ -173,7 +173,7 @@ mod tests {
     // ── remove (integration-level) ──────────────────────────────────
 
     #[test]
-    fn remove_without_purge_does_not_clean_projects() {
+    fn remove_without_purge_does_not_clean_workspaces() {
         // Run the path-injected core against a temp home with the external
         // `claude plugin uninstall` skipped — calling the real remove() here used
         // to uninstall sensei from the developer's own ~/.claude on every test run.
@@ -187,7 +187,7 @@ mod tests {
             &h.join(".sensei"),
             false,
         );
-        assert!(result.projects_cleaned.is_empty());
+        assert!(result.workspaces_cleaned.is_empty());
     }
 
     // ── RemoveRequest deserialization ───────────────────────────────
@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(result.commands_removed, 0);
         assert_eq!(result.agents_removed, 0);
         assert!(result.acps_removed.is_empty());
-        assert!(result.projects_cleaned.is_empty());
+        assert!(result.workspaces_cleaned.is_empty());
         assert!(result.errors.is_empty());
     }
 
@@ -230,7 +230,7 @@ mod tests {
             agents_removed: 8,
             plugin_removed: true,
             cache_cleared: true,
-            projects_cleaned: vec!["/tmp/proj".into()],
+            workspaces_cleaned: vec!["/tmp/proj".into()],
             errors: vec!["some error".into()],
         };
         let json: serde_json::Value = serde_json::to_value(&result).unwrap();
@@ -240,7 +240,7 @@ mod tests {
         assert_eq!(json["agents_removed"], 8);
         assert_eq!(json["plugin_removed"], true);
         assert_eq!(json["cache_cleared"], true);
-        assert_eq!(json["projects_cleaned"][0], "/tmp/proj");
+        assert_eq!(json["workspaces_cleaned"][0], "/tmp/proj");
         assert_eq!(json["errors"][0], "some error");
     }
 

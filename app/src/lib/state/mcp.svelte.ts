@@ -185,14 +185,14 @@ let serverToolManifests = $state<Record<string, McpServerToolsManifest>>({});
  *  from the manifests so a failed read is retried on the next expand. */
 let serverToolErrors = $state<Record<string, string>>({});
 
-/** Load the discovered MCP-servers list for a project (or user-scope only
- *  when no project id). Idempotent — a subsequent call returns cached rows
+/** Load the discovered MCP-servers list for a workspace (or user-scope only
+ *  when no workspace id). Idempotent — a subsequent call returns cached rows
  *  unless `force` is set. */
-async function loadMcpServers(projectId?: string, force = false): Promise<McpServerRow[]> {
+async function loadMcpServers(workspaceId?: string, force = false): Promise<McpServerRow[]> {
   if (!force && mcpServersStatus === 'ready') return mcpServers;
   if (mcpServersStatus === 'loading') return mcpServers;
   mcpServersStatus = 'loading';
-  const resp = await senseiApi(appState.port).getMcpServers(projectId);
+  const resp = await senseiApi(appState.port).getMcpServers(workspaceId);
   if (resp.ok) {
     mcpServers = resp.data.servers;
     mcpServersStatus = 'ready';
@@ -229,7 +229,7 @@ async function toggleMcpServer(serverId: string, enabled: boolean): Promise<stri
   return null;
 }
 
-/** Trigger a full discovery pass across $HOME + registered projects, then
+/** Trigger a full discovery pass across $HOME + registered workspaces, then
  *  reload the list. Returns `null` on success, else the failure in words. */
 async function refreshMcpServers(): Promise<string | null> {
   const res = await senseiApi(appState.port).refreshMcpServers();

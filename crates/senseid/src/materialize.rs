@@ -1,7 +1,7 @@
 //! File materialization for accepted `write_skill` / `create_agent` recommendations
 //! (spec 2026-08-20-insight-acceptance-materialization, P-B).
 //!
-//! Accepting one of these recs writes a project-scoped Claude Code artifact into the
+//! Accepting one of these recs writes a workspace-scoped Claude Code artifact into the
 //! target repo — a skill at `<repo>/.claude/skills/<slug>/SKILL.md` or an agent at
 //! `<repo>/.claude/agents/<slug>.md` — which the repo's sessions auto-discover. This
 //! CROSSES the dōjō "consent-sensitive install" boundary (writing executable,

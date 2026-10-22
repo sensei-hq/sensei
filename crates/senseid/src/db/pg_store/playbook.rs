@@ -157,18 +157,18 @@ impl PgStore {
     /// Confirmed+attributed sample size + FTR rate for one exact (lifecycle, intent,
     /// risk, playbook) combo — the auto-select-on-trust gate's evidence lookup.
     /// Auto-select trust for a `(lifecycle, intent, risk, playbook)` combo,
-    /// scoped to ONE project. A playbook run always happens in a project, so
-    /// trust is "does this playbook earn FTR in THIS project" — never a global
-    /// average across unrelated projects (which would auto-select on the wrong
+    /// scoped to ONE workspace. A playbook run always happens in a workspace, so
+    /// trust is "does this playbook earn FTR in THIS workspace" — never a global
+    /// average across unrelated workspaces (which would auto-select on the wrong
     /// signal). Returns `(n confirmed+attributed runs, avg FTR)` for the combo
-    /// within `project_id`.
+    /// within `workspace_id`.
     pub async fn playbook_combo_trust(
         &self,
         lifecycle: &str,
         intent: &str,
         risk: &str,
         playbook: &str,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<(i64, f64), String> {
         let row: (i64, f64) = sqlx_core::query_as::query_as(
             "SELECT count(*)::int8, coalesce(avg(outcome_ftr::int)::float8, 0.0)
@@ -181,7 +181,7 @@ impl PgStore {
         .bind(intent)
         .bind(risk)
         .bind(playbook)
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -211,7 +211,7 @@ impl PgStore {
             confirmed,
             classified_by,
             model_fallback,
-            workspace_id: project_id,
+            workspace_id,
         } = row;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.playbook_run
@@ -221,7 +221,7 @@ impl PgStore {
              RETURNING id"
         ).bind(session_id).bind(feature).bind(lifecycle).bind(intent).bind(risk)
          .bind(rule_id).bind(playbook).bind(rationale).bind(confirmed)
-         .bind(classified_by).bind(model_fallback).bind(project_id)
+         .bind(classified_by).bind(model_fallback).bind(workspace_id)
          .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }

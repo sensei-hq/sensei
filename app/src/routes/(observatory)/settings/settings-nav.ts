@@ -62,7 +62,7 @@ export function buildNavItems(): NavEntry[] {
       text: "Sources",
       children: [
         link("庵", "i-solar-folder-2-bold-duotone", "Roots", "/settings/roots"),
-        link("組", "i-solar-folder-open-bold-duotone", "Projects", "/settings/projects"),
+        link("組", "i-solar-folder-open-bold-duotone", "Workspaces", "/settings/workspaces"),
         link("書", "i-solar-book-bookmark-bold-duotone", "Libraries", "/settings/libraries"),
       ],
     },

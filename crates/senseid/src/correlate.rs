@@ -33,7 +33,7 @@
 //! Everything here is pure — the caller supplies observations — so the statistics
 //! are testable without a database.
 
-/// One metric's value on one (project, day). The caller groups by cell.
+/// One metric's value on one (workspace, day). The caller groups by cell.
 pub type Cell = std::collections::HashMap<String, f64>;
 
 /// A correlation worth reporting.

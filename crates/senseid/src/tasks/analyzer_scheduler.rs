@@ -1,19 +1,19 @@
 //! Analyzer scheduler (#67).
 //!
 //! A long-lived tokio task (mirroring `progress_emitter::spawn`) that wakes on
-//! an interval and enqueues `TaskKind::AnalyzeWorkspace` for every project whose
+//! an interval and enqueues `TaskKind::AnalyzeWorkspace` for every workspace whose
 //! sessions have changed since it was last analyzed — so session enrichment
 //! (#66, L0) and the downstream analyzer layers run on their own as sessions
 //! accrue. The on-demand path is the API enqueueing the same task directly.
 //!
 //! Incrementality (the steady state):
-//! - **Persisted watermark** — the per-project "last activity I acted on" map is
+//! - **Persisted watermark** — the per-workspace "last activity I acted on" map is
 //!   saved to `sensei.config` (`analyzer.watermark`), so a daemon restart does
-//!   NOT re-analyze every project; only genuinely-new activity is due.
-//! - **Global passes** — when any project is due, `AggregateCorrections` and
+//!   NOT re-analyze every workspace; only genuinely-new activity is due.
+//! - **Global passes** — when any workspace is due, `AggregateCorrections` and
 //!   `MeasureVerdicts` run once (corrections cluster globally; verdicts re-measure
 //!   accepted recs' before/after FTR).
-//! - **Daily full refresh** — once per `full_refresh_secs`, ALL active projects
+//! - **Daily full refresh** — once per `full_refresh_secs`, ALL active workspaces
 //!   are re-analyzed even without new sessions, so time-based/decay insights
 //!   (maturity, pattern effectiveness, model effectiveness, ranking) stay fresh.
 //!   The full-refresh window is ALSO when `DetectCommunities` runs per indexed
@@ -29,17 +29,17 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Re-analyze every active project at least this often, regardless of new
+/// Re-analyze every active workspace at least this often, regardless of new
 /// activity — keeps decay/staleness/effectiveness insights current.
 const DEFAULT_FULL_REFRESH_SECS: i64 = 86_400;
 /// Config keys for the persisted scheduler state.
 const WATERMARK_KEY: &str = "analyzer.watermark";
 const LAST_REFRESH_KEY: &str = "analyzer.last_full_refresh";
 
-/// Projects whose latest session activity is newer than the watermark value we
-/// last acted on. Pure: it also advances the watermark for the projects it
+/// Workspaces whose latest session activity is newer than the watermark value we
+/// last acted on. Pure: it also advances the watermark for the workspaces it
 /// returns, so a subsequent call with the same activity returns nothing.
-pub fn projects_due(
+pub fn workspaces_due(
     activity: &[(uuid::Uuid, DateTime<Utc>)],
     watermark: &mut HashMap<uuid::Uuid, DateTime<Utc>>,
 ) -> Vec<uuid::Uuid> {
@@ -57,8 +57,8 @@ pub fn projects_due(
     due
 }
 
-/// Enqueue the per-project analyzer tasks for one due project. Kept as a small
-/// helper so the "what runs when a project is due" contract is unit-testable
+/// Enqueue the per-workspace analyzer tasks for one due workspace. Kept as a small
+/// helper so the "what runs when a workspace is due" contract is unit-testable
 /// against a real queue without driving the scheduler's infinite `run` loop.
 ///
 /// Both tasks ride the same due signal (new activity, or the daily full
@@ -66,14 +66,14 @@ pub fn projects_due(
 /// `ScanDocDrift` refreshes `inference.drift_items` so doc-drift populates on
 /// its own instead of only via the manual `/drift/scan` endpoint. The drift
 /// writer dedups + resolves in place, so re-running per due tick is safe and
-/// bounded to active projects.
-async fn enqueue_due_project(queue: &TaskQueue, pid: &uuid::Uuid) {
+/// bounded to active workspaces.
+async fn enqueue_due_workspace(queue: &TaskQueue, pid: &uuid::Uuid) {
     queue.enqueue(Task::new(TaskKind::AnalyzeWorkspace, "", &pid.to_string())).await;
     queue.enqueue(Task::new(TaskKind::ScanDocDrift, "", &pid.to_string())).await;
 }
 
-/// Enqueue the DAILY-only LLM process-quality pass for one project (spec
-/// 2026-08-20). Separated from [`enqueue_due_project`] because it rides the daily
+/// Enqueue the DAILY-only LLM process-quality pass for one workspace (spec
+/// 2026-08-20). Separated from [`enqueue_due_workspace`] because it rides the daily
 /// full-refresh window, NOT every hourly activity tick — it's up to
 /// `batch_per_tick` local reasoning-chain calls, too heavy to run hourly. The
 /// task itself is watermark-gated (only un-scored sessions) + batch-capped, so a
@@ -83,7 +83,7 @@ async fn enqueue_daily_process(queue: &TaskQueue, pid: &uuid::Uuid) {
 }
 
 /// Enqueue the once-per-tick global aggregation passes, in dependency order.
-/// Extracted as a small helper (like [`enqueue_due_project`]) so the ordering
+/// Extracted as a small helper (like [`enqueue_due_workspace`]) so the ordering
 /// contract is unit-testable without driving `run`'s infinite loop.
 ///
 /// Order matters: `ClassifyPendingVerdicts` gap-fills verdicts for sessions
@@ -117,7 +117,7 @@ fn due_for_full_refresh(now_ms: i64, last_refresh_ms: Option<i64>, interval_secs
     }
 }
 
-/// Serialize the watermark to JSON (`{project_uuid: rfc3339}`) for persistence.
+/// Serialize the watermark to JSON (`{workspace_uuid: rfc3339}`) for persistence.
 fn serialize_watermark(watermark: &HashMap<uuid::Uuid, DateTime<Utc>>) -> String {
     let map: serde_json::Map<String, serde_json::Value> = watermark
         .iter()
@@ -148,7 +148,7 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     tokio::spawn(run(queue, pg));
 }
 
-/// The analyzer's cross-pass state: how far each project has been analyzed, and
+/// The analyzer's cross-pass state: how far each workspace has been analyzed, and
 /// when the last daily full refresh ran.
 ///
 /// Held in memory between passes AND persisted to config, so a restart resumes
@@ -212,16 +212,16 @@ async fn analyzer_pass(
     st: &mut AnalyzerState,
     refresh_secs: i64,
 ) -> Result<(), String> {
-    let activity = match pg.get_projects_with_session_activity().await {
+    let activity = match pg.get_workspaces_with_session_activity().await {
         Ok(a) => a,
         // Fail-closed: reported, not swallowed into an empty pass that would
-        // read as "no projects need analyzing".
+        // read as "no workspaces need analyzing".
         Err(e) => return Err(e.to_string()),
     };
-    // Incremental: projects whose activity advanced past the watermark.
-    let mut due = projects_due(&activity, &mut st.watermark);
+    // Incremental: workspaces whose activity advanced past the watermark.
+    let mut due = workspaces_due(&activity, &mut st.watermark);
 
-    // Daily full refresh: re-analyze ALL active projects so decay/effectiveness
+    // Daily full refresh: re-analyze ALL active workspaces so decay/effectiveness
     // insights stay fresh even when no new sessions arrived. Community
     // detection also runs here — see the module-level comment for why the
     // daily cadence is the right home for it.
@@ -241,24 +241,24 @@ async fn analyzer_pass(
         if let Err(e) = pg.set_config(LAST_REFRESH_KEY, &now_ms.to_string()).await {
             tracing::warn!(error = %e, "analyzer_scheduler: persisting last_refresh watermark failed — restart may redo full refresh");
         }
-        tracing::info!(projects = activity.len(), "analyzer_scheduler: daily full refresh");
+        tracing::info!(workspaces = activity.len(), "analyzer_scheduler: daily full refresh");
         // Enqueue community detection per indexed folder for every active
-        // project. Log-and-skip on lookup errors — a bad row shouldn't
+        // workspace. Log-and-skip on lookup errors — a bad row shouldn't
         // block the rest of the daily pass.
         for (pid, _) in &activity {
-            match pg.get_indexed_folder_paths_for_project(pid).await {
+            match pg.get_indexed_folder_paths_for_workspace(pid).await {
                 Ok(paths) => {
                     for abs_path in paths {
                         queue.enqueue(Task::new(TaskKind::DetectCommunities, &abs_path, "")).await;
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(project_id = %pid, error = %e, "analyzer_scheduler: could not list folders for community detection");
+                    tracing::warn!(workspace_id = %pid, error = %e, "analyzer_scheduler: could not list folders for community detection");
                 }
             }
         }
         // LLM process-quality pass, daily only (spec 2026-08-20): score each
-        // active project's un-scored transcripts. Watermark-gated + batch-capped
+        // active workspace's un-scored transcripts. Watermark-gated + batch-capped
         // in the handler, so this daily enqueue drains the backlog incrementally.
         for (pid, _) in &activity {
             enqueue_daily_process(queue, pid).await;
@@ -267,10 +267,10 @@ async fn analyzer_pass(
 
     let any_due = !due.is_empty();
     for pid in &due {
-        enqueue_due_project(queue, pid).await;
+        enqueue_due_workspace(queue, pid).await;
     }
     // Global passes once per tick when work happened: corrections cluster
-    // across projects; verdicts re-measure accepted recs' before/after FTR;
+    // across workspaces; verdicts re-measure accepted recs' before/after FTR;
     // pending verdicts get classified so the Health-tab aggregate sees every
     // session (not just opened ones); tool insights snapshot the per-tool
     // signal cards so the observatory Insights tab reads from cache (T2 Slice D).
@@ -280,7 +280,7 @@ async fn analyzer_pass(
         // Same restart-risk category as LAST_REFRESH_KEY — log on failure
         // so an operator can see we're at risk of re-analyzing after boot.
         if let Err(e) = pg.set_config(WATERMARK_KEY, &serialize_watermark(&st.watermark)).await {
-            tracing::warn!(error = %e, "analyzer_scheduler: persisting activity watermark failed — restart may re-enqueue analyzed projects");
+            tracing::warn!(error = %e, "analyzer_scheduler: persisting activity watermark failed — restart may re-enqueue analyzed workspaces");
         }
     }
 
@@ -296,38 +296,38 @@ mod tests {
     }
 
     #[test]
-    fn projects_due_picks_new_then_only_advanced() {
+    fn workspaces_due_picks_new_then_only_advanced() {
         let p1 = uuid::Uuid::new_v4();
         let p2 = uuid::Uuid::new_v4();
         let mut wm = HashMap::new();
 
         // First sight of both → both due.
-        let mut due = projects_due(&[(p1, ts(100)), (p2, ts(100))], &mut wm);
+        let mut due = workspaces_due(&[(p1, ts(100)), (p2, ts(100))], &mut wm);
         due.sort();
         let mut expect = vec![p1, p2];
         expect.sort();
         assert_eq!(due, expect);
 
         // Unchanged activity → nothing due.
-        assert!(projects_due(&[(p1, ts(100)), (p2, ts(100))], &mut wm).is_empty());
+        assert!(workspaces_due(&[(p1, ts(100)), (p2, ts(100))], &mut wm).is_empty());
 
         // Only p1's activity advanced → only p1 due.
-        assert_eq!(projects_due(&[(p1, ts(200)), (p2, ts(100))], &mut wm), vec![p1]);
+        assert_eq!(workspaces_due(&[(p1, ts(200)), (p2, ts(100))], &mut wm), vec![p1]);
     }
 
     #[tokio::test]
-    async fn due_project_enqueues_analyze_and_doc_drift() {
+    async fn due_workspace_enqueues_analyze_and_doc_drift() {
         let queue = TaskQueue::new();
         let pid = uuid::Uuid::new_v4();
-        enqueue_due_project(&queue, &pid).await;
+        enqueue_due_workspace(&queue, &pid).await;
 
-        // Exactly two tasks, both targeting this project: AnalyzeWorkspace +
+        // Exactly two tasks, both targeting this workspace: AnalyzeWorkspace +
         // ScanDocDrift (doc-drift rides the same due signal).
         assert_eq!(queue.status().await.pending, 2);
         let mut kinds: Vec<TaskKind> = Vec::new();
         for _ in 0..2 {
             let t = queue.next_task().await;
-            assert_eq!(t.path, pid.to_string(), "task carries the project id");
+            assert_eq!(t.path, pid.to_string(), "task carries the workspace id");
             kinds.push(t.kind);
         }
         kinds.sort_by_key(|k| k.to_string());

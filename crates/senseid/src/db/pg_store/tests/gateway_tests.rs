@@ -3,7 +3,7 @@ use super::*;
 // ── Gateway chains / role assignments tests ─────────────────────
 
 /// list_chains_with_models returns every active chain, correctly
-/// projects the `role` column, and JSON-aggregates member models in
+/// workspaces the `role` column, and JSON-aggregates member models in
 /// sequence order. Seeded prod rows drive the shape assertions —
 /// only a chain the test itself creates is deleted at teardown.
 #[tokio::test]

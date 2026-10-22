@@ -36,11 +36,11 @@ use std::future::Future;
 use uuid::Uuid;
 
 use crate::collective::anonymize::{
-    ContributorIdentity, GatewayGeneralizer, Generalizer, ProjectShape, anonymize_for_global,
+    ContributorIdentity, GatewayGeneralizer, Generalizer, WorkspaceShape, anonymize_for_global,
     current_rotation_bucket,
 };
 use crate::db::pg_store::{DojoMembership, PgStore, ShareBatchItem};
-use crate::dojo::attribution::{Dereferenced, ProjectIdentifiers};
+use crate::dojo::attribution::{Dereferenced, WorkspaceIdentifiers};
 use crate::dojo::client::{DojoClient, DojoClientError};
 use crate::dojo::memberships::MembershipKind;
 use crate::dojo::routing::{Contribution, MembershipRef, RoutingDecision, client_precedence_route};
@@ -279,8 +279,8 @@ async fn build_artifact_for_target<G: Generalizer>(
     item: &ShareBatchItem,
     membership: &DojoMembership,
     dereference: bool,
-    ctx: &ProjectIdentifiers,
-    shape: &ProjectShape,
+    ctx: &WorkspaceIdentifiers,
+    shape: &WorkspaceShape,
     contributor: &ContributorIdentity,
     rotation_bucket: i64,
     generalizer: &G,
@@ -401,7 +401,7 @@ pub enum ItemResult {
     AlreadySent,
     /// A permanent failure.
     Error { message: String },
-    /// No Dōjō destination for this batch's project (unbound / no memberships).
+    /// No Dōjō destination for this batch's workspace (unbound / no memberships).
     NoDestination,
 }
 
@@ -502,19 +502,19 @@ pub struct LoadedBatch {
     pub batch_id: Uuid,
     pub routing: RoutingDecision,
     pub memberships: HashMap<Uuid, DojoMembership>,
-    pub identifiers: ProjectIdentifiers,
-    pub shape: ProjectShape,
+    pub identifiers: WorkspaceIdentifiers,
+    pub shape: WorkspaceShape,
     pub items: Vec<ShareBatchItem>,
 }
 
 /// Load an APPROVED batch into a [`LoadedBatch`]: its member memories, the
-/// project's routing (bound membership + candidate memberships → client-precedence
-/// decision), and the project identifiers the confidentiality strip needs.
+/// workspace's routing (bound membership + candidate memberships → client-precedence
+/// decision), and the workspace identifiers the confidentiality strip needs.
 ///
 /// Errors when the batch is missing or not `approved` — only approved batches
 /// contribute (the human review already happened).
 pub async fn load_batch(store: &PgStore, batch_id: Uuid) -> Result<LoadedBatch, String> {
-    let (project_id, status, items) = store
+    let (workspace_id, status, items) = store
         .batch_share_items(&batch_id)
         .await?
         .ok_or_else(|| format!("share batch {batch_id} not found"))?;
@@ -535,19 +535,19 @@ pub async fn load_batch(store: &PgStore, batch_id: Uuid) -> Result<LoadedBatch, 
     let memberships: HashMap<Uuid, DojoMembership> =
         membership_rows.into_iter().map(|m| (m.id, m)).collect();
 
-    let bound = store.project_bound_membership(&project_id).await?;
+    let bound = store.workspace_bound_membership(&workspace_id).await?;
     let routing = client_precedence_route(&candidates, &Contribution { bound_membership: bound });
-    let identifiers = store.project_identifiers(&project_id).await?;
+    let identifiers = store.workspace_identifiers(&workspace_id).await?;
 
     Ok(LoadedBatch {
         batch_id,
         routing,
         memberships,
         identifiers,
-        // Coarse project-shape descriptor (stack/size/kind) is deferred for C6 —
+        // Coarse workspace-shape descriptor (stack/size/kind) is deferred for C6 —
         // the global anonymise path is safe with an empty shape (it carries no
         // identifiers); enriching it is a follow-up.
-        shape: ProjectShape::default(),
+        shape: WorkspaceShape::default(),
         items,
     })
 }
@@ -1012,9 +1012,9 @@ mod tests {
     use crate::collective::anonymize::tests::{MockGeneralizer, polish_with};
     use crate::dojo::routing::{RouteTarget, RoutingDecision};
 
-    fn ctx() -> ProjectIdentifiers {
-        ProjectIdentifiers {
-            project_name: Some("Acme API".into()),
+    fn ctx() -> WorkspaceIdentifiers {
+        WorkspaceIdentifiers {
+            workspace_name: Some("Acme API".into()),
             client_name: Some("Acme Corp".into()),
             repo_names: vec!["acme-api".into()],
             folder_paths: vec!["/Users/dev/work/acme-api".into()],
@@ -1077,7 +1077,7 @@ mod tests {
             },
             memberships: HashMap::from([(mid, m)]),
             identifiers: ctx(),
-            shape: ProjectShape::default(),
+            shape: WorkspaceShape::default(),
             items,
         }
     }
@@ -1158,7 +1158,7 @@ mod tests {
 
     pub(super) fn no_identifier(text: &str) {
         let low = text.to_ascii_lowercase();
-        assert!(!low.contains("acme"), "leaked project/client/repo name: {text:?}");
+        assert!(!low.contains("acme"), "leaked workspace/client/repo name: {text:?}");
         assert!(!low.contains("jane"), "leaked person name: {text:?}");
         assert!(!text.contains("/Users/dev"), "leaked path: {text:?}");
         assert!(!low.contains("s-9931"), "leaked session id: {text:?}");
@@ -1237,7 +1237,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_known_identifier_in_the_example_is_stripped_like_the_title() {
-        // A KNOWN token (project/repo/person/path) is removable, so the strip
+        // A KNOWN token (workspace/repo/person/path) is removable, so the strip
         // removes it and the item still ships — same treatment as the title.
         let l = loaded(
             membership("employer", "github/acme-corp"),
@@ -1647,7 +1647,7 @@ mod tests {
             &m,
             true,
             &ctx(),
-            &ProjectShape::default(),
+            &WorkspaceShape::default(),
             &contributor(),
             1,
             &NoLlm,
@@ -1770,9 +1770,9 @@ mod nothing_generalised_is_nothing_shareable {
         let Ok(pg) = PgStore::connect_test().await else {
             return;
         };
-        let (project, tenant) = ("_test:dojo:preview_example", "github/acme-preview");
+        let (workspace, tenant) = ("_test:dojo:preview_example", "github/acme-preview");
         sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE name = $1")
-            .bind(project)
+            .bind(workspace)
             .execute(pg.pool())
             .await
             .unwrap();
@@ -1782,10 +1782,10 @@ mod nothing_generalised_is_nothing_shareable {
             .await
             .unwrap();
 
-        let proj = pg.create_project(project, None, None).await.unwrap();
+        let proj = pg.create_workspace(workspace, None, None).await.unwrap();
         let mem = |title: &str| InsertMemory {
             workspace_id: Some(proj),
-            scope: "project".into(),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: title.into(),
@@ -1833,7 +1833,7 @@ mod nothing_generalised_is_nothing_shareable {
         })
         .await
         .unwrap();
-        pg.bind_project_to_dojo(&proj, Some(&mid)).await.unwrap();
+        pg.bind_workspace_to_dojo(&proj, Some(&mid)).await.unwrap();
 
         let preview = preview_batch(&pg, batch, &contributor()).await.expect("preview builds");
         let shown = |id: Uuid| {
@@ -1861,7 +1861,7 @@ mod nothing_generalised_is_nothing_shareable {
         assert_eq!(ungeneralised.example, None);
 
         pg.delete_dojo_membership(&mid).await.unwrap();
-        pg.delete_project(&proj).await.unwrap();
+        pg.delete_workspace(&proj).await.unwrap();
     }
 
     #[test]

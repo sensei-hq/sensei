@@ -21,7 +21,7 @@ export function actionMeta(type: string): { label: string; color: string; bg: st
 export const MODULE_META: Record<string, { label: string; kanji: string }> = {
     bootstrap: { label: 'Bootstrap',    kanji: '健' },
     wizard:    { label: 'Setup wizard', kanji: '導' },
-    projects:  { label: 'Projects',     kanji: '組' },
+    workspaces:  { label: 'Workspaces',     kanji: '組' },
 };
 
 export function moduleLabel(mod: string): string {

@@ -1,6 +1,6 @@
 // Shared Sessions-digest primitives — the four chart variants, the mini-cycler
 // chart, the session row, and the screen itself (SessionsDigestScreen). Consumed by both the Observatory Sessions screen
-// and the project-scoped Sessions screen. Per-day aggregation + quality logic
+// and the workspace-scoped Sessions screen. Per-day aggregation + quality logic
 // lives in $lib/sessions-digest.ts; the reactive view state in
 // $lib/sessions-digest.svelte.ts.
 export { default as TrendChart } from './TrendChart.svelte';

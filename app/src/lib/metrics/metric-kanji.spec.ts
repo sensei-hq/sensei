@@ -32,12 +32,12 @@ const REGISTRY = [
 	'interruption_rate',
 	'memory_promotion',
 	'unused_tools',
-	'project_health',
+	'workspace_health',
 ];
 
 /** The eleven the mockups actually specify — these are not ours to change. */
 const FROM_MOCKUP: Array<[string, string]> = [
-	['project_health', '健'],
+	['workspace_health', '健'],
 	['churn_concentration', '紋'],
 	['churn_rate', '流'],
 	['time_to_useful_result', '連'],

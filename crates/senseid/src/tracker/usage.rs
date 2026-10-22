@@ -56,7 +56,7 @@ pub fn sprint_window(
     Ok((from, to))
 }
 
-/// A ticket's usage within one repository of the project.
+/// A ticket's usage within one repository of the workspace.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct RepoUsage {
     pub repository_id: uuid::Uuid,
@@ -267,7 +267,7 @@ mod tests {
 
     // ── Against the database (fake board, seeded sessions) ──────────────────
 
-    use crate::tracker::connect::tests::{connected_tracker, project};
+    use crate::tracker::connect::tests::{connected_tracker, workspace};
     use crate::tracker::jira::JiraAdapter;
     use crate::tracker::sync::{SYNC_DEADLINE, TrackerLocks, sync_tracker};
     use crate::tracker::test_support::{FakeBoard, repo_in, session_with};
@@ -351,7 +351,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_ticket_counts_every_project_repo_and_drops_a_removed_repo_at_once() {
+    async fn a_ticket_counts_every_workspace_repo_and_drops_a_removed_repo_at_once() {
         let Ok(pg) = PgStore::connect_test().await else { return };
         let (t, p) = connected_tracker(&pg).await;
         let repos = [repo_in(&pg, p).await, repo_in(&pg, p).await, repo_in(&pg, p).await];
@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(parts.len(), 3);
         assert_eq!(parts.iter().map(|r| r.usage.sessions).sum::<i64>(), total.sessions);
 
-        // The second repo leaves the project: its session drops out, no resync.
+        // The second repo leaves the workspace: its session drops out, no resync.
         sqlx_core::query::query(
             "DELETE FROM sensei.repositories_in_workspaces
               WHERE workspace_id = $2
@@ -406,8 +406,8 @@ mod tests {
         let no_key = s(&["main"], &["refactor"]).await;
         let other_tracker = s(&["main"], &[]).await;
         let in_100 = s(&["fix/AUTH-1"], &[]).await;
-        let outside_project =
-            session_with(&pg, Some(repo_in(&pg, project(&pg).await).await), &["fix/AUTH-2"], &[])
+        let outside_workspace =
+            session_with(&pg, Some(repo_in(&pg, workspace(&pg).await).await), &["fix/AUTH-2"], &[])
                 .await;
         for (id, when) in [
             (in_sprint, at(10, 5, 9)),
@@ -417,7 +417,7 @@ mod tests {
             (no_key, at(10, 7, 9)),
             (other_tracker, at(10, 8, 9)),
             (in_100, at(9, 5, 9)),
-            (outside_project, at(10, 5, 9)),
+            (outside_workspace, at(10, 5, 9)),
         ] {
             measured(&pg, id, when, Some(60), None).await;
         }

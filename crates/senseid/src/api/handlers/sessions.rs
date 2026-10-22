@@ -25,12 +25,12 @@ pub(crate) async fn get_sessions_stub(
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let range_days = range_to_days(q.get("range").map(String::as_str));
-    // `?project=<name-or-uuid>` scopes the digest to one project (honours the
+    // `?workspace=<name-or-uuid>` scopes the digest to one workspace (honours the
     // name-or-UUID contract). An unresolvable name yields None → no scope.
-    let project = match q.get("project") {
+    let workspace = match q.get("workspace") {
         // Fail closed on a resolver DB error (→ 500); a genuine unresolvable name
         // still yields None → no scope (unchanged).
-        Some(p) => crate::api::util::resolve_project_uuid(&state, p).await?,
+        Some(p) => crate::api::util::resolve_workspace_uuid(&state, p).await?,
         None => None,
     };
     // PgStore uses list_sessions_by_folder(&Uuid, limit) instead of get_sessions(repo_id)
@@ -43,8 +43,8 @@ pub(crate) async fn get_sessions_stub(
         }
     } else {
         // 500 comfortably covers the real corpus within any range window; range +
-        // project narrow it. The digest aggregates these client-side per day.
-        state.pg.list_all_sessions(500, range_days, project.as_ref()).await.map_err(|e| {
+        // workspace narrow it. The digest aggregates these client-side per day.
+        state.pg.list_all_sessions(500, range_days, workspace.as_ref()).await.map_err(|e| {
             tracing::warn!(error = %e, "get_sessions_stub: list_all_sessions failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?
@@ -317,14 +317,14 @@ pub(crate) async fn ingest_hook_event(
         && let Some(cwd) = f.cwd
     {
         match state.pg.find_folder_for_path(cwd).await {
-            Ok(Some((folder_id, project_id))) => {
+            Ok(Some((folder_id, workspace_id))) => {
                 let is_end = matches!(f.event_type, "Stop" | "SessionEnd");
                 if let Err(e) = state
                     .pg
                     .record_session_event(
                         f.session_id,
                         &folder_id,
-                        project_id.as_ref(),
+                        workspace_id.as_ref(),
                         f.family,
                         is_end,
                     )
@@ -706,10 +706,10 @@ fn workflow_state_md(ws: &serde_json::Value) -> String {
 
 pub(crate) async fn get_workflow_state(
     State(state): State<AppState>,
-    Path(project): Path<String>,
+    Path(workspace): Path<String>,
     Query(q): Query<StateQuery>,
 ) -> Response {
-    let ws = match state.pg.get_workflow_state(&project).await {
+    let ws = match state.pg.get_workflow_state(&workspace).await {
         Ok(v) => v,
         Err(e) => return Json(serde_json::json!({"error": e})).into_response(),
     };
@@ -723,7 +723,7 @@ pub(crate) async fn get_workflow_state(
     match ws {
         Some(ws) => Json(ws).into_response(),
         None => Json(serde_json::json!({
-            "project": project,
+            "workspace": workspace,
             "active_phase": null,
             "active_plan": null,
             "active_task": null,
@@ -737,13 +737,13 @@ pub(crate) async fn get_workflow_state(
 
 pub(crate) async fn update_workflow_state(
     State(state): State<AppState>,
-    Path(project): Path<String>,
+    Path(workspace): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let result = state
         .pg
         .upsert_workflow_state(
-            &project,
+            &workspace,
             body["active_phase"].as_str(),
             body["active_plan"].as_str(),
             body["active_task"].as_str(),
@@ -757,7 +757,7 @@ pub(crate) async fn update_workflow_state(
         return Json(serde_json::json!({"ok": false, "error": e}));
     }
 
-    // Phase bridge: mirror the workflow phase onto the project's active run so a
+    // Phase bridge: mirror the workflow phase onto the workspace's active run so a
     // daemon-owned run streams phases→segments to the relay while the agent works
     // (drive stays OFF — this is status only, and it's how the "watch me build
     // through phases" view is fed). Best-effort: a bridge hiccup must never fail
@@ -765,22 +765,23 @@ pub(crate) async fn update_workflow_state(
     if let Some(phase) = body["active_phase"].as_str().filter(|s| !s.is_empty()) {
         // Best-effort mirror: a bridge hiccup must never fail the primary write.
         // But surface (log) a resolver DB error rather than swallow it silently.
-        match crate::api::util::resolve_project_uuid(&state, &project).await {
-            Ok(Some(project_id)) => {
-                if let Err(e) = state.pg.advance_run_phase_for_project(&project_id, phase).await {
-                    tracing::warn!(project = %project, error = %e, "update_phase: run phase bridge failed");
+        match crate::api::util::resolve_workspace_uuid(&state, &workspace).await {
+            Ok(Some(workspace_id)) => {
+                if let Err(e) = state.pg.advance_run_phase_for_workspace(&workspace_id, phase).await
+                {
+                    tracing::warn!(workspace = %workspace, error = %e, "update_phase: run phase bridge failed");
                 }
             }
             Ok(None) => {}
-            Err(_) => tracing::warn!(project = %project,
-                "update_phase: run phase bridge skipped — project resolve failed"),
+            Err(_) => tracing::warn!(workspace = %workspace,
+                "update_phase: run phase bridge skipped — workspace resolve failed"),
         }
     }
 
     // Workflow state lives ONLY in Postgres (`sensei.workflow_state`), read back
-    // via `GET /api/state/{project}`. We no longer mirror it to a per-repo
+    // via `GET /api/state/{workspace}`. We no longer mirror it to a per-repo
     // `.sensei/state.yaml`: that file drifted (it was written only when a
-    // `project_path` was supplied, which the MCP update_phase doesn't send), so
+    // `workspace_path` was supplied, which the MCP update_phase doesn't send), so
     // the session hooks injected a STALE phase/issue and misdirected the agent.
     // The hooks + `/sensei:session` now read the daemon (the DB) directly.
     Json(serde_json::json!({"ok": true}))

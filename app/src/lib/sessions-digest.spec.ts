@@ -37,7 +37,7 @@ function isoDaysAgo(n: number, hour = 10, min = 5): string {
 
 const wire = (o: Partial<SessionRow> = {}): SessionRow => ({
   id: 's1',
-  project: 'sensei',
+  workspace: 'sensei',
   task: 'Fix auth',
   summary: null,
   outcome: 'completed',
@@ -210,9 +210,9 @@ describe('enrich', () => {
     expect(s.quality).toBe('good');
     expect(s.agent).toBe('claude');
   });
-  it('gives an unlinked (null project) session an empty project string', () => {
-    const [s] = enrich([wire({ project: null })], NOW);
-    expect(s.project).toBe('');
+  it('gives an unlinked (null workspace) session an empty workspace string', () => {
+    const [s] = enrich([wire({ workspace: null })], NOW);
+    expect(s.workspace).toBe('');
   });
 });
 
@@ -265,15 +265,15 @@ describe('aggregateByDay', () => {
 });
 
 describe('computeTotals', () => {
-  it('counts by quality, distinct projects, and the median duration', () => {
+  it('counts by quality, distinct workspaces, and the median duration', () => {
     const rows = [
-      wire({ id: 'a', project: 'sensei', outcome: 'completed', ftr: true, startedAt: isoDaysAgo(0), completedAt: isoDaysAgo(0, 10, 30) }),
-      wire({ id: 'b', project: 'rokkit', outcome: 'corrected', ftr: false, startedAt: isoDaysAgo(0), completedAt: isoDaysAgo(0, 10, 20) }),
-      wire({ id: 'c', project: 'rokkit', outcome: 'abandoned', ftr: null, startedAt: isoDaysAgo(0) }),
+      wire({ id: 'a', workspace: 'sensei', outcome: 'completed', ftr: true, startedAt: isoDaysAgo(0), completedAt: isoDaysAgo(0, 10, 30) }),
+      wire({ id: 'b', workspace: 'rokkit', outcome: 'corrected', ftr: false, startedAt: isoDaysAgo(0), completedAt: isoDaysAgo(0, 10, 20) }),
+      wire({ id: 'c', workspace: 'rokkit', outcome: 'abandoned', ftr: null, startedAt: isoDaysAgo(0) }),
     ];
     const totals = computeTotals(enrich(rows, NOW));
     expect(totals.count).toBe(3);
-    expect(totals.projects).toBe(2);
+    expect(totals.workspaces).toBe(2);
     expect(totals.good).toBe(1);
     expect(totals.bad).toBe(1);
     expect(totals.ugly).toBe(1);
@@ -321,22 +321,22 @@ describe('chart / cycler vocab', () => {
   });
 });
 
-// #293: Observatory and project Sessions are one screen; only the words differ.
+// #293: Observatory and workspace Sessions are one screen; only the words differ.
 describe('sessionsCopy', () => {
-  it('speaks of the week across projects in the observatory', () => {
+  it('speaks of the week across workspaces in the observatory', () => {
     const c = sessionsCopy(null);
     expect(c.eyebrow).toBe('Observatory · Sessions');
     expect(c.title).toBe('The shape of your week.');
-    expect(c.acrossProjects).toBe(true);
+    expect(c.acrossWorkspaces).toBe(true);
     expect(c.kanji).toBe('録');
   });
 
-  it('speaks of one project in its window', () => {
+  it('speaks of one workspace in its window', () => {
     const c = sessionsCopy('atlas');
     expect(c.eyebrow).toBe('atlas · sessions');
-    expect(c.title).toBe('The shape of this project.');
-    expect(c.acrossProjects).toBe(false);
-    expect(c.emptyDescription).toContain('on this project');
+    expect(c.title).toBe('The shape of this workspace.');
+    expect(c.acrossWorkspaces).toBe(false);
+    expect(c.emptyDescription).toContain('on this workspace');
   });
 });
 

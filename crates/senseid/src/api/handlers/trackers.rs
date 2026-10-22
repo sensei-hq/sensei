@@ -35,16 +35,16 @@ fn internal() -> ApiErr {
     fail(StatusCode::INTERNAL_SERVER_ERROR, "internal")
 }
 
-/// The project's uuid, or the response to return (404 for an unknown project:
-/// `resolve_project_uuid` accepts any well-formed uuid without checking it).
-async fn known_project(state: &AppState, id: &str) -> Result<uuid::Uuid, ApiErr> {
-    let uuid = crate::api::util::resolve_project_uuid(state, id)
+/// The workspace's uuid, or the response to return (404 for an unknown workspace:
+/// `resolve_workspace_uuid` accepts any well-formed uuid without checking it).
+async fn known_workspace(state: &AppState, id: &str) -> Result<uuid::Uuid, ApiErr> {
+    let uuid = crate::api::util::resolve_workspace_uuid(state, id)
         .await
         .map_err(|_| internal())?
-        .ok_or_else(|| fail(StatusCode::NOT_FOUND, "project_not_found"))?;
-    match state.pg.get_project(&uuid).await {
+        .ok_or_else(|| fail(StatusCode::NOT_FOUND, "workspace_not_found"))?;
+    match state.pg.get_workspace(&uuid).await {
         Ok(Some(_)) => Ok(uuid),
-        Ok(None) => Err(fail(StatusCode::NOT_FOUND, "project_not_found")),
+        Ok(None) => Err(fail(StatusCode::NOT_FOUND, "workspace_not_found")),
         Err(_) => Err(internal()),
     }
 }
@@ -78,16 +78,16 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
     }))
 }
 
-/// `GET /api/projects/{id}/trackers`
+/// `GET /api/workspaces/{id}/trackers`
 pub(crate) async fn list_trackers(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    let project = match known_project(&state, &id).await {
+    let workspace = match known_workspace(&state, &id).await {
         Ok(p) => p,
         Err(r) => return r.into_response(),
     };
-    match state.pg.tracker_for_project(project).await {
+    match state.pg.tracker_for_workspace(workspace).await {
         Ok(None) => Json(serde_json::json!([])).into_response(),
         Ok(Some(row)) => match view(&state, &row).await {
             Ok(v) => Json(serde_json::json!([v])).into_response(),
@@ -97,13 +97,13 @@ pub(crate) async fn list_trackers(
     }
 }
 
-/// `POST /api/projects/{id}/trackers/{kind}/connect`
+/// `POST /api/workspaces/{id}/trackers/{kind}/connect`
 pub(crate) async fn connect_tracker(
     State(state): State<AppState>,
     Path((id, kind)): Path<(String, String)>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    let project = match known_project(&state, &id).await {
+    let workspace = match known_workspace(&state, &id).await {
         Ok(p) => p,
         Err(r) => return r.into_response(),
     };
@@ -125,13 +125,19 @@ pub(crate) async fn connect_tracker(
     };
     let (base_url, board_ref) = (params.base_url.clone(), params.board_ref.clone());
     let rt = state.trackers.clone();
-    let connected =
-        match connect(&state.pg, rt.secrets.clone(), adapter, transport.as_ref(), project, params)
-            .await
-        {
-            Ok(c) => c,
-            Err(e) => return connect_failure(e, &base_url, &board_ref).into_response(),
-        };
+    let connected = match connect(
+        &state.pg,
+        rt.secrets.clone(),
+        adapter,
+        transport.as_ref(),
+        workspace,
+        params,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => return connect_failure(e, &base_url, &board_ref).into_response(),
+    };
     let row = match state.pg.tracker_by_id(connected.tracker_id).await {
         Ok(Some(row)) => row,
         _ => return internal().into_response(),
@@ -166,11 +172,11 @@ pub(crate) async fn connect_tracker(
 fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
     use crate::tracker::TrackerError;
     match e {
-        ConnectError::BoardAlreadyConnected { project_id, project_name } => (
+        ConnectError::BoardAlreadyConnected { workspace_id, workspace_name } => (
             StatusCode::CONFLICT,
             Json(serde_json::json!({
                 "error": "board_already_connected",
-                "project": {"id": project_id, "name": project_name},
+                "workspace": {"id": workspace_id, "name": workspace_name},
             })),
         ),
         ConnectError::Validate(ValidateError::BoardNotFound) => (
@@ -198,32 +204,32 @@ fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
     }
 }
 
-/// `DELETE /api/projects/{id}/trackers`
+/// `DELETE /api/workspaces/{id}/trackers`
 pub(crate) async fn disconnect_tracker(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    let project = match known_project(&state, &id).await {
+    let workspace = match known_workspace(&state, &id).await {
         Ok(p) => p,
         Err(r) => return r.into_response(),
     };
-    match disconnect(&state.pg, state.trackers.secrets.clone(), project).await {
+    match disconnect(&state.pg, state.trackers.secrets.clone(), workspace).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => fail(StatusCode::NOT_FOUND, "not_connected").into_response(),
         Err(_) => internal().into_response(),
     }
 }
 
-/// `POST /api/projects/{id}/trackers/sync`
+/// `POST /api/workspaces/{id}/trackers/sync`
 pub(crate) async fn sync_tracker(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    let project = match known_project(&state, &id).await {
+    let workspace = match known_workspace(&state, &id).await {
         Ok(p) => p,
         Err(r) => return r.into_response(),
     };
-    let row = match state.pg.tracker_for_project(project).await {
+    let row = match state.pg.tracker_for_workspace(workspace).await {
         Ok(Some(row)) => row,
         Ok(None) => return fail(StatusCode::NOT_FOUND, "not_connected").into_response(),
         Err(_) => return internal().into_response(),
@@ -241,25 +247,25 @@ pub(crate) async fn sync_tracker(
     }
 }
 
-/// `GET /api/projects/{id}/tracker-tasks/{key}`
+/// `GET /api/workspaces/{id}/tracker-tasks/{key}`
 pub(crate) async fn get_tracker_task(
     State(state): State<AppState>,
     Path((id, key)): Path<(String, String)>,
 ) -> Response {
-    let project = match known_project(&state, &id).await {
+    let workspace = match known_workspace(&state, &id).await {
         Ok(p) => p,
         Err(r) => return r.into_response(),
     };
-    let task = match state.pg.tracker_task_detail(project, &key).await {
+    let task = match state.pg.tracker_task_detail(workspace, &key).await {
         Ok(Some(task)) => task,
-        Ok(None) => match discover_on_miss(&state, project, &key).await {
+        Ok(None) => match discover_on_miss(&state, workspace, &key).await {
             Ok(task) => task,
             Err(r) => return r.into_response(),
         },
         Err(_) => return internal().into_response(),
     };
-    // The ticket exists, so the project has a tracker.
-    let tracker = match tracker_of(&state, project).await {
+    // The ticket exists, so the workspace has a tracker.
+    let tracker = match tracker_of(&state, workspace).await {
         Ok(t) => t,
         Err(r) => return r.into_response(),
     };
@@ -306,12 +312,12 @@ const LOOKUP_DISCOVERY: std::time::Duration = std::time::Duration::from_secs(30)
 /// once before answering. Anything else stays `task_not_found`, with no request.
 async fn discover_on_miss(
     state: &AppState,
-    project: uuid::Uuid,
+    workspace: uuid::Uuid,
     key: &str,
 ) -> Result<crate::db::pg_store::trackers::TaskDetail, ApiErr> {
     use crate::tracker::discover::{DiscoverError, Scope};
     let not_found = || fail(StatusCode::NOT_FOUND, "task_not_found");
-    let tracker = match state.pg.tracker_for_project(project).await {
+    let tracker = match state.pg.tracker_for_workspace(workspace).await {
         Ok(Some(t)) => t,
         Ok(None) => return Err(not_found()),
         Err(_) => return Err(internal()),
@@ -326,7 +332,7 @@ async fn discover_on_miss(
     match tokio::time::timeout(LOOKUP_DISCOVERY, run).await {
         Err(_) => Err(fail(StatusCode::BAD_GATEWAY, TrackerError::Transport.code())),
         Ok(Ok(out)) if !out.inserted.is_empty() => {
-            match state.pg.tracker_task_detail(project, key).await {
+            match state.pg.tracker_task_detail(workspace, key).await {
                 Ok(Some(task)) => Ok(task),
                 Ok(None) => Err(not_found()),
                 Err(_) => Err(internal()),
@@ -349,19 +355,19 @@ async fn discover_on_miss(
     }
 }
 
-/// The project's tracker, or the response to return (404 `not_connected`).
-async fn tracker_of(state: &AppState, project: uuid::Uuid) -> Result<TrackerRow, ApiErr> {
-    match state.pg.tracker_for_project(project).await {
+/// The workspace's tracker, or the response to return (404 `not_connected`).
+async fn tracker_of(state: &AppState, workspace: uuid::Uuid) -> Result<TrackerRow, ApiErr> {
+    match state.pg.tracker_for_workspace(workspace).await {
         Ok(Some(row)) => Ok(row),
         Ok(None) => Err(fail(StatusCode::NOT_FOUND, "not_connected")),
         Err(_) => Err(internal()),
     }
 }
 
-/// The project's tracker for a read route: the project must exist and be connected.
+/// The workspace's tracker for a read route: the workspace must exist and be connected.
 async fn connected(state: &AppState, id: &str) -> Result<TrackerRow, ApiErr> {
-    let project = known_project(state, id).await?;
-    tracker_of(state, project).await
+    let workspace = known_workspace(state, id).await?;
+    tracker_of(state, workspace).await
 }
 
 /// `?sprint=` as one of the tracker's sprints (404 `sprint_not_found` otherwise).
@@ -384,7 +390,7 @@ pub(crate) struct SprintQuery {
     include_removed: bool,
 }
 
-/// `GET /api/projects/{id}/sprints`
+/// `GET /api/workspaces/{id}/sprints`
 pub(crate) async fn list_sprints(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -425,7 +431,7 @@ pub(crate) async fn list_sprints(
     Json(rows).into_response()
 }
 
-/// `GET /api/projects/{id}/tracker-tasks?sprint=&include_removed=`
+/// `GET /api/workspaces/{id}/tracker-tasks?sprint=&include_removed=`
 pub(crate) async fn list_tracker_tasks(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -468,7 +474,7 @@ pub(crate) async fn list_tracker_tasks(
     Json(rows).into_response()
 }
 
-/// `GET /api/projects/{id}/sessions/unlinked?sprint=`
+/// `GET /api/workspaces/{id}/sessions/unlinked?sprint=`
 pub(crate) async fn list_unlinked_sessions(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -534,10 +540,10 @@ mod tests {
         format!("t{}.atlassian.net", uuid::Uuid::new_v4().simple())
     }
 
-    async fn project(h: &Harness) -> uuid::Uuid {
+    async fn workspace(h: &Harness) -> uuid::Uuid {
         h.state
             .pg
-            .create_project(&format!("_test:tracker-api:{}", uuid::Uuid::new_v4()), None, None)
+            .create_workspace(&format!("_test:tracker-api:{}", uuid::Uuid::new_v4()), None, None)
             .await
             .unwrap()
     }
@@ -583,7 +589,7 @@ mod tests {
         call(
             h,
             "POST",
-            &format!("/api/projects/{p}/trackers/jira/connect"),
+            &format!("/api/workspaces/{p}/trackers/jira/connect"),
             Some(connect_body(site)),
             None,
         )
@@ -594,7 +600,7 @@ mod tests {
     async fn settled(h: &Harness, p: uuid::Uuid) -> Value {
         for _ in 0..300 {
             let (_, body) =
-                call(h, "GET", &format!("/api/projects/{p}/trackers"), None, None).await;
+                call(h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
             let v = json(&body);
             if v[0]["status"] != json!("pending") {
                 return v;
@@ -605,16 +611,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_project_without_a_tracker_lists_empty_and_an_unknown_project_is_404() {
+    async fn a_workspace_without_a_tracker_lists_empty_and_an_unknown_workspace_is_404() {
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         assert_eq!(
-            call(&h, "GET", &format!("/api/projects/{p}/trackers"), None, None).await,
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await,
             (StatusCode::OK, "[]".into())
         );
         let ghost = uuid::Uuid::new_v4();
         assert_eq!(
-            call(&h, "GET", &format!("/api/projects/{ghost}/trackers"), None, None).await.0,
+            call(&h, "GET", &format!("/api/workspaces/{ghost}/trackers"), None, None).await.0,
             StatusCode::NOT_FOUND
         );
     }
@@ -622,7 +628,7 @@ mod tests {
     #[tokio::test]
     async fn connect_returns_201_pending_then_the_first_sync_lands() {
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         let (status, body) = connect(&h, p, &s).await;
@@ -641,12 +647,12 @@ mod tests {
     #[tokio::test]
     async fn connect_refusals_carry_fixed_codes() {
         let h = harness().await;
-        let p = project(&h).await;
-        let uri = format!("/api/projects/{p}/trackers/jira/connect");
+        let p = workspace(&h).await;
+        let uri = format!("/api/workspaces/{p}/trackers/jira/connect");
         let (st, b) = call(
             &h,
             "POST",
-            &format!("/api/projects/{p}/trackers/gitlab/connect"),
+            &format!("/api/workspaces/{p}/trackers/gitlab/connect"),
             Some(connect_body(&site())),
             None,
         )
@@ -672,7 +678,7 @@ mod tests {
     #[tokio::test]
     async fn connect_maps_validation_failures() {
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let s = site();
         h.factory.serve(
             &format!("https://{s}"),
@@ -684,7 +690,7 @@ mod tests {
             (StatusCode::UNAUTHORIZED, json!("unauthorized"))
         );
         assert_eq!(
-            call(&h, "GET", &format!("/api/projects/{p}/trackers"), None, None).await.1,
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await.1,
             "[]"
         );
 
@@ -702,9 +708,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_board_owned_by_another_project_is_409_with_that_project() {
+    async fn a_board_owned_by_another_workspace_is_409_with_that_workspace() {
         let h = harness().await;
-        let (p1, p2) = (project(&h).await, project(&h).await);
+        let (p1, p2) = (workspace(&h).await, workspace(&h).await);
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         assert_eq!(connect(&h, p1, &s).await.0, StatusCode::CREATED);
@@ -712,16 +718,18 @@ mod tests {
         assert_eq!(st, StatusCode::CONFLICT);
         let v = json(&b);
         assert_eq!(
-            (v["error"].clone(), v["project"]["id"].clone()),
+            (v["error"].clone(), v["workspace"]["id"].clone()),
             (json!("board_already_connected"), json!(p1.to_string()))
         );
-        assert!(v["project"]["name"].as_str().is_some_and(|n| n.starts_with("_test:tracker-api:")));
+        assert!(
+            v["workspace"]["name"].as_str().is_some_and(|n| n.starts_with("_test:tracker-api:"))
+        );
     }
 
     #[tokio::test]
     async fn a_keyring_failure_is_500_credential_store() {
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         *h.store.fail_set.lock().unwrap() = true;
@@ -735,10 +743,10 @@ mod tests {
     #[tokio::test]
     async fn sync_returns_counts_busy_and_404() {
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
-        let uri = format!("/api/projects/{p}/trackers/sync");
+        let uri = format!("/api/workspaces/{p}/trackers/sync");
         assert_eq!(
             call(&h, "POST", &uri, None, None).await.0,
             StatusCode::NOT_FOUND,
@@ -752,7 +760,7 @@ mod tests {
             json(&b)["counts"],
             json!({"sprints": 2, "tasks": 3, "removed": 0, "links": 0, "skipped_members": 0})
         );
-        let id = h.state.pg.tracker_for_project(p).await.unwrap().unwrap().id;
+        let id = h.state.pg.tracker_for_workspace(p).await.unwrap().unwrap().id;
         let _held = h.rt.locks.try_lock(id).unwrap();
         let (st, b) = call(&h, "POST", &uri, None, None).await;
         assert_eq!((st, json(&b)["error"].clone()), (StatusCode::CONFLICT, json!("busy")));
@@ -761,7 +769,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_sync_is_502_with_its_code() {
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         connect(&h, p, &s).await;
@@ -771,10 +779,10 @@ mod tests {
             FakeBoard::standard().fail("/rest/agile/1.0/board/42/sprint", TrackerError::Forbidden),
         );
         let (st, b) =
-            call(&h, "POST", &format!("/api/projects/{p}/trackers/sync"), None, None).await;
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/sync"), None, None).await;
         assert_eq!((st, json(&b)["error"].clone()), (StatusCode::BAD_GATEWAY, json!("forbidden")));
         let listed =
-            json(&call(&h, "GET", &format!("/api/projects/{p}/trackers"), None, None).await.1);
+            json(&call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await.1);
         assert_eq!(
             (listed[0]["status"].clone(), listed[0]["last_error"].clone()),
             (json!("error"), json!("forbidden"))
@@ -784,12 +792,12 @@ mod tests {
     #[tokio::test]
     async fn disconnect_is_204_then_404() {
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         connect(&h, p, &s).await;
         settled(&h, p).await;
-        let uri = format!("/api/projects/{p}/trackers");
+        let uri = format!("/api/workspaces/{p}/trackers");
         assert_eq!(call(&h, "DELETE", &uri, None, None).await.0, StatusCode::NO_CONTENT);
         assert_eq!(call(&h, "GET", &uri, None, None).await.1, "[]");
         assert_eq!(call(&h, "DELETE", &uri, None, None).await.0, StatusCode::NOT_FOUND);
@@ -798,8 +806,8 @@ mod tests {
     #[tokio::test]
     async fn the_routes_are_guarded_against_foreign_origins_and_hosts() {
         let h = harness().await;
-        let p = project(&h).await;
-        let uri = format!("/api/projects/{p}/trackers");
+        let p = workspace(&h).await;
+        let uri = format!("/api/workspaces/{p}/trackers");
         assert_eq!(
             call(&h, "GET", &uri, None, Some("https://evil.example")).await.0,
             StatusCode::FORBIDDEN
@@ -820,29 +828,29 @@ mod tests {
     #[tokio::test]
     async fn the_token_never_appears_in_any_response() {
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         let mut bodies = vec![connect(&h, p, &s).await.1];
         settled(&h, p).await;
-        bodies.push(call(&h, "GET", &format!("/api/projects/{p}/trackers"), None, None).await.1);
+        bodies.push(call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await.1);
         bodies.push(
-            call(&h, "POST", &format!("/api/projects/{p}/trackers/sync"), None, None).await.1,
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/sync"), None, None).await.1,
         );
-        bodies.push(connect(&h, project(&h).await, &s).await.1); // 409
+        bodies.push(connect(&h, workspace(&h).await, &s).await.1); // 409
         *h.store.fail_set.lock().unwrap() = true;
         bodies.push(connect(&h, p, &s).await.1); // 500
         for b in bodies {
             assert!(!b.contains(SENTINEL), "token leaked: {b}");
         }
-        let row = h.state.pg.tracker_for_project(p).await.unwrap().unwrap();
+        let row = h.state.pg.tracker_for_workspace(p).await.unwrap().unwrap();
         assert!(!format!("{row:?}").contains(SENTINEL));
     }
 
     #[tokio::test]
     async fn the_same_board_typed_differently_is_still_409() {
         let h = harness().await;
-        let (p1, p2) = (project(&h).await, project(&h).await);
+        let (p1, p2) = (workspace(&h).await, workspace(&h).await);
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         assert_eq!(connect(&h, p1, &s).await.0, StatusCode::CREATED);
@@ -854,7 +862,7 @@ mod tests {
         let (st, b) = call(
             &h,
             "POST",
-            &format!("/api/projects/{p2}/trackers/jira/connect"),
+            &format!("/api/workspaces/{p2}/trackers/jira/connect"),
             Some(shouted),
             None,
         )
@@ -868,13 +876,13 @@ mod tests {
     #[tokio::test]
     async fn the_first_sync_waits_out_a_running_sync_instead_of_being_dropped() {
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         connect(&h, p, &s).await;
         settled(&h, p).await;
         // A sync is running when the user re-connects.
-        let id = h.state.pg.tracker_for_project(p).await.unwrap().unwrap().id;
+        let id = h.state.pg.tracker_for_workspace(p).await.unwrap().unwrap().id;
         let held = h.rt.locks.try_lock(id).unwrap();
         assert_eq!(connect(&h, p, &s).await.0, StatusCode::CREATED);
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -887,7 +895,7 @@ mod tests {
     async fn a_ticket_lists_its_linked_sessions_by_current_or_former_key() {
         use crate::tracker::test_support::{repo_in, session_with};
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         let repo = repo_in(&h.state.pg, p).await;
@@ -896,7 +904,7 @@ mod tests {
         settled(&h, p).await;
 
         let (st, b) =
-            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/auth-3"), None, None).await;
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/auth-3"), None, None).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         let v = json(&b);
         assert_eq!(v["task"]["key"], json!("AUTH-3"));
@@ -923,15 +931,16 @@ mod tests {
             ),
         );
         let (st, b) =
-            call(&h, "POST", &format!("/api/projects/{p}/trackers/sync"), None, None).await;
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/sync"), None, None).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         let (st, b) =
-            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/AUTH-3"), None, None).await;
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/AUTH-3"), None, None).await;
         assert_eq!((st, json(&b)["task"]["key"].clone()), (StatusCode::OK, json!("PLAT-9")), "{b}");
 
         // A key in the board's shape is looked for on the board first (R11).
         let missing =
-            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/AUTH-404"), None, None).await;
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/AUTH-404"), None, None)
+                .await;
         assert_eq!(
             (missing.0, json(&missing.1)["error"].clone()),
             (StatusCode::NOT_FOUND, json!("task_not_on_board"))
@@ -939,7 +948,7 @@ mod tests {
         let foreign = call(
             &h,
             "GET",
-            &format!("/api/projects/{p}/tracker-tasks/AUTH-3"),
+            &format!("/api/workspaces/{p}/tracker-tasks/AUTH-3"),
             None,
             Some("https://evil.com"),
         )
@@ -947,22 +956,22 @@ mod tests {
         assert_eq!(foreign.0, StatusCode::FORBIDDEN, "reads are guarded too");
         let unknown = uuid::Uuid::new_v4();
         let gone =
-            call(&h, "GET", &format!("/api/projects/{unknown}/tracker-tasks/AUTH-3"), None, None)
+            call(&h, "GET", &format!("/api/workspaces/{unknown}/tracker-tasks/AUTH-3"), None, None)
                 .await;
-        assert_eq!(json(&gone.1)["error"], json!("project_not_found"));
+        assert_eq!(json(&gone.1)["error"], json!("workspace_not_found"));
     }
 
     #[tokio::test]
     async fn usage_routes_return_their_shapes_and_fixed_codes() {
         use crate::tracker::test_support::{repo_in, session_with};
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let get = |uri: String| {
             let h = &h;
             async move { call(h, "GET", &uri, None, None).await }
         };
         assert_eq!(
-            json(&get(format!("/api/projects/{p}/sprints")).await.1)["error"],
+            json(&get(format!("/api/workspaces/{p}/sprints")).await.1)["error"],
             json!("not_connected")
         );
         let s = site();
@@ -972,7 +981,7 @@ mod tests {
         connect(&h, p, &s).await;
         settled(&h, p).await;
 
-        let (st, b) = get(format!("/api/projects/{p}/sprints")).await;
+        let (st, b) = get(format!("/api/workspaces/{p}/sprints")).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         let sprints = json(&b);
         assert_eq!(sprints.as_array().map(Vec::len), Some(2), "{b}");
@@ -985,7 +994,7 @@ mod tests {
         }
         let s101 = sprints[0]["id"].as_str().unwrap().to_string();
 
-        let (st, b) = get(format!("/api/projects/{p}/tracker-tasks")).await;
+        let (st, b) = get(format!("/api/workspaces/{p}/tracker-tasks")).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         let tasks = json(&b);
         assert_eq!(tasks.as_array().map(Vec::len), Some(3));
@@ -998,48 +1007,53 @@ mod tests {
         assert_eq!(none["usage"]["sessions"], json!(0));
         assert!(none["usage"]["active_secs"].is_null());
 
-        let (_, b) = get(format!("/api/projects/{p}/tracker-tasks?sprint={s101}")).await;
+        let (_, b) = get(format!("/api/workspaces/{p}/tracker-tasks?sprint={s101}")).await;
         assert_eq!(json(&b).as_array().map(Vec::len), Some(2), "{b}");
         let unknown = uuid::Uuid::new_v4();
-        let (st, b) = get(format!("/api/projects/{p}/tracker-tasks?sprint={unknown}")).await;
+        let (st, b) = get(format!("/api/workspaces/{p}/tracker-tasks?sprint={unknown}")).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
             (StatusCode::NOT_FOUND, json!("sprint_not_found"))
         );
 
-        let (st, b) = get(format!("/api/projects/{p}/tracker-tasks/AUTH-2")).await;
+        let (st, b) = get(format!("/api/workspaces/{p}/tracker-tasks/AUTH-2")).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         let detail = json(&b);
         assert_eq!(detail["usage"]["sessions"], json!(1));
         assert_eq!(detail["by_repo"].as_array().map(Vec::len), Some(1));
         assert_eq!(detail["by_repo"][0]["usage"]["sessions"], json!(1));
 
-        let (st, b) = get(format!("/api/projects/{p}/sessions/unlinked")).await;
+        let (st, b) = get(format!("/api/workspaces/{p}/sessions/unlinked")).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
             (StatusCode::UNPROCESSABLE_ENTITY, json!("sprint_required"))
         );
-        let (st, b) = get(format!("/api/projects/{p}/sessions/unlinked?sprint={s101}")).await;
+        let (st, b) = get(format!("/api/workspaces/{p}/sessions/unlinked?sprint={s101}")).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         assert!(
             !json(&b).as_array().unwrap().iter().any(|s| s["id"] == json!(sess)),
             "a linked session is not unlinked"
         );
-        let (st, b) = get(format!("/api/projects/{p}/sessions/unlinked?sprint={unknown}")).await;
+        let (st, b) = get(format!("/api/workspaces/{p}/sessions/unlinked?sprint={unknown}")).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
             (StatusCode::NOT_FOUND, json!("sprint_not_found"))
         );
-        let foreign =
-            call(&h, "GET", &format!("/api/projects/{p}/sprints"), None, Some("https://evil.com"))
-                .await;
+        let foreign = call(
+            &h,
+            "GET",
+            &format!("/api/workspaces/{p}/sprints"),
+            None,
+            Some("https://evil.com"),
+        )
+        .await;
         assert_eq!(foreign.0, StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
     async fn a_lookup_miss_in_the_board_shape_discovers_the_ticket_first() {
         let h = harness().await;
-        let p = project(&h).await;
+        let p = workspace(&h).await;
         let s = site();
         let board = h.factory.serve(
             &format!("https://{s}"),
@@ -1052,7 +1066,8 @@ mod tests {
         settled(&h, p).await;
 
         let (st, b) =
-            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/auth-900"), None, None).await;
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/auth-900"), None, None)
+                .await;
         assert_eq!(
             (st, json(&b)["task"]["key"].clone()),
             (StatusCode::OK, json!("AUTH-900")),
@@ -1060,7 +1075,8 @@ mod tests {
         );
 
         let (st, b) =
-            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/AUTH-404"), None, None).await;
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/AUTH-404"), None, None)
+                .await;
         assert_eq!(st, StatusCode::NOT_FOUND, "{b}");
         assert_eq!(
             json(&b),
@@ -1069,13 +1085,14 @@ mod tests {
 
         let asked = board.jql_calls().len();
         let (st, b) =
-            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/UTF-8"), None, None).await;
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/UTF-8"), None, None).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
             (StatusCode::NOT_FOUND, json!("task_not_found"))
         );
         let (_, b) =
-            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/AUTH-404"), None, None).await;
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/AUTH-404"), None, None)
+                .await;
         assert_eq!(
             json(&b)["error"],
             json!("task_not_found"),

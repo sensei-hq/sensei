@@ -182,20 +182,20 @@ describe('WizardState', () => {
       expect(ws.scan.baseline!.rootCount).toBe(1);
     });
 
-    it('populates projects slice', () => {
+    it('populates workspaces slice', () => {
       ws.hydrate(mockWizardLoadData());
-      expect(ws.projects.projects).toHaveLength(1);
+      expect(ws.workspaces.workspaces).toHaveLength(1);
     });
 
-    it('marks each loaded project as confirmed by default', () => {
+    it('marks each loaded workspace as confirmed by default', () => {
       ws.hydrate(mockWizardLoadData());
-      const project = ws.projects.projects[0];
-      expect(ws.projects.confirmed[project.id]).toBe(true);
+      const workspace = ws.workspaces.workspaces[0];
+      expect(ws.workspaces.confirmed[workspace.id]).toBe(true);
     });
 
     it('defaults folders to an empty array when the daemon omits them', () => {
       ws.hydrate(mockWizardLoadData({
-        projects: [{
+        workspaces: [{
           id: 'p-folderless', name: 'Folderless', description: null, client: null, goal: null,
           stack: { languages: [], frameworks: [], runtimes: [], services: [] },
           icon: { kind: 'kanji', value: '空' },
@@ -203,7 +203,7 @@ describe('WizardState', () => {
           folders: undefined,
         }],
       }));
-      expect(ws.projects.projects[0].folders).toEqual([]);
+      expect(ws.workspaces.workspaces[0].folders).toEqual([]);
     });
 
     it('populates libraries slice', () => {
@@ -290,7 +290,7 @@ describe('WizardState', () => {
 
     it('returns true for stages with no gate', () => {
       expect(ws.canAdvance('assistants')).toBe(true);
-      expect(ws.canAdvance('projects')).toBe(true);
+      expect(ws.canAdvance('workspaces')).toBe(true);
       expect(ws.canAdvance('libraries')).toBe(true);
       expect(ws.canAdvance('instruments')).toBe(true);
     });
@@ -341,7 +341,7 @@ describe('WizardState', () => {
       ws.hydrate(mockWizardLoadData({
         completion: {
           welcome: 'done', preferences: 'pending', assistants: 'pending',
-          roots: 'pending', scan: 'pending', projects: 'pending',
+          roots: 'pending', scan: 'pending', workspaces: 'pending',
           libraries: 'pending', instruments: 'pending',
           inference: 'pending', done: 'pending',
         },

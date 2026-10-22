@@ -78,26 +78,26 @@ pub(crate) async fn recommend_playbook(
     };
     let rec = recommend(&axes, &rules);
 
-    // A playbook run always happens IN a project — there is no global run (no cwd,
+    // A playbook run always happens IN a workspace — there is no global run (no cwd,
     // no repo, no code graph, no rules scope to compute trust against). Require a
-    // resolvable project and NEVER fabricate one on a miss (no-fabrication rule);
+    // resolvable workspace and NEVER fabricate one on a miss (no-fabrication rule);
     // both persist and the auto-select trust query scope to it.
-    let project_ident = body["project"]
+    let workspace_ident = body["workspace"]
         .as_str()
-        .or_else(|| body["project_id"].as_str())
+        .or_else(|| body["workspace_id"].as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let Some(ident) = project_ident else {
+    let Some(ident) = workspace_ident else {
         return Json(serde_json::json!({
-            "error": "project (id or name) is required — a playbook run always happens in a project"
+            "error": "workspace (id or name) is required — a playbook run always happens in a workspace"
         }));
     };
-    let project_id = match crate::api::util::resolve_project_uuid(&state, ident).await {
+    let workspace_id = match crate::api::util::resolve_workspace_uuid(&state, ident).await {
         Ok(Some(pid)) => pid,
         Ok(None) => {
-            return Json(serde_json::json!({ "error": format!("unknown project: {ident}") }));
+            return Json(serde_json::json!({ "error": format!("unknown workspace: {ident}") }));
         }
-        Err(_) => return Json(serde_json::json!({ "error": "failed to resolve project" })),
+        Err(_) => return Json(serde_json::json!({ "error": "failed to resolve workspace" })),
     };
 
     // Persist the run unless this is a preview call. Recommend-and-confirm
@@ -120,7 +120,7 @@ pub(crate) async fn recommend_playbook(
                 confirmed,
                 classified_by: Some(classified_by.as_str()),
                 model_fallback,
-                workspace_id: project_id,
+                workspace_id,
             })
             .await
     {
@@ -143,7 +143,7 @@ pub(crate) async fn recommend_playbook(
                 axes.intent.as_str(),
                 axes.risk.as_str(),
                 &rec.playbook,
-                &project_id,
+                &workspace_id,
             )
             .await
         {
@@ -157,9 +157,9 @@ pub(crate) async fn recommend_playbook(
         (false, 0, 0.0)
     };
 
-    // Workstream D: suggest the skills/agents provided by the libraries this project
+    // Workstream D: suggest the skills/agents provided by the libraries this workspace
     // uses ("this repo uses rokkit → load its styling skill / config reviewer"). FAIL
-    // CLOSED — on an unresolved project or a query error, OMIT the keys entirely; an
+    // CLOSED — on an unresolved workspace or a query error, OMIT the keys entirely; an
     // empty `[]` (present keys) means "resolved, genuinely none", never a masked
     // failure. (Deliberately NOT the `.ok().flatten()` masking used for the tone read.)
     let mut resp = serde_json::json!({
@@ -175,11 +175,11 @@ pub(crate) async fn recommend_playbook(
         "auto_select": auto_select,
         "trust": { "n": trust_n, "ftr": trust_ftr },
     });
-    // Suggest the skills/agents provided by the libraries this project depends on
-    // ("this repo uses rokkit → load its styling skill"). Reuses the project_id
+    // Suggest the skills/agents provided by the libraries this workspace depends on
+    // ("this repo uses rokkit → load its styling skill"). Reuses the workspace_id
     // resolved above. FAIL CLOSED — on a query error, OMIT the keys entirely; an
     // empty `[]` (present keys) means "resolved, genuinely none", never a masked failure.
-    match state.pg.list_project_library_capabilities(&project_id).await {
+    match state.pg.list_workspace_library_capabilities(&workspace_id).await {
         Ok(caps) => {
             if let Some(obj) = resp.as_object_mut() {
                 obj.insert("suggested_skills".into(), caps["suggested_skills"].clone());
@@ -250,7 +250,7 @@ pub(crate) async fn classify_chunk(
     let system = "You classify a chunk of software work into three axes for a playbook \
 recommender. Respond with ONLY compact JSON and no prose: \
 {\"lifecycle\":\"greenfield|stable\",\"intent\":\"explore|ux|feature|enhancement|bug\",\"risk\":\"low|high\"}. \
-`lifecycle`: greenfield = new/empty project, stable = existing product. \
+`lifecycle`: greenfield = new/empty workspace, stable = existing product. \
 `intent`: explore = fuzzy/spike, ux = UX-heavy surface, feature = new known feature, \
 enhancement = improving something existing, bug = fixing a defect. \
 `risk`: high = touches many callers/a wide blast-radius, low = contained.";

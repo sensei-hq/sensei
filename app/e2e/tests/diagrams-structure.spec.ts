@@ -1,5 +1,5 @@
 /**
- * Project · Diagrams · Structure (/project/<id>/diagrams/structure) — functional e2e.
+ * Workspace · Diagrams · Structure (/workspace/<id>/diagrams/structure) — functional e2e.
  *
  * The state spec covers the three-state machine, the degree arithmetic and the
  * kind toggle with an injected API seam. This covers what it cannot: the real
@@ -8,7 +8,7 @@
  * genuinely re-querying rather than re-rendering the same payload.
  *
  * The throwaway `sensei_e2e` DB is dropped before a run and nothing indexes
- * into it, so the seeded project has no graph and the EMPTY state is what
+ * into it, so the seeded workspace has no graph and the EMPTY state is what
  * renders here. That is deliberate rather than a shortfall: empty is a terminal
  * state this screen has to get right, and getting it right means not being
  * reached by a failure. The body therefore waits for either the diagram or the
@@ -25,23 +25,23 @@ import { test, expect, type TauriPageLike } from '../fixtures';
 import {
   navigateTo, navigateToScreen, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
-  seedProject,
+  seedWorkspace,
 } from '../helpers';
 
 /**
- * A project to diagram, SEEDED rather than assumed.
+ * A workspace to diagram, SEEDED rather than assumed.
  *
  * `reset-e2e-db` drops `sensei_e2e` before a run, so a fresh database has no
- * projects at all and a spec that reads `/api/projects[0]` throws before it
+ * workspaces at all and a spec that reads `/api/workspaces[0]` throws before it
  * tests anything. Reusing whatever a previous run happened to leave behind is
  * worse than that: it passes or fails depending on history.
  *
- * A project with nothing indexed under it is the right fixture here. The graph
+ * A workspace with nothing indexed under it is the right fixture here. The graph
  * CONTENT is verified against the real index at the daemon level; what this
  * spec covers is that the screen mounts, settles, and lands in a terminal state
  * — and the empty state is a terminal state this screen must get right.
  */
-const seedProjectId = (): Promise<string> => seedProject('e2e-structure', 'fixture for the Structure diagram spec');
+const seedWorkspaceId = (): Promise<string> => seedWorkspace('e2e-structure', 'fixture for the Structure diagram spec');
 
 
 /**
@@ -70,7 +70,7 @@ async function settle(tauriPage: TauriPageLike): Promise<void> {
   );
 }
 
-test.describe('Project · Diagrams · Structure', () => {
+test.describe('Workspace · Diagrams · Structure', () => {
   test.beforeEach(async ({ tauriPage }) => {
     test.setTimeout(180_000);
     await seedSetupComplete(tauriPage);
@@ -79,10 +79,10 @@ test.describe('Project · Diagrams · Structure', () => {
   });
 
   test('mounts, settles out of loading, and never shows the error state', async ({ tauriPage }) => {
-    const id = await seedProjectId();
+    const id = await seedWorkspaceId();
     await navigateToScreen(
       tauriPage,
-      `/project/${id}/diagrams/structure`,
+      `/workspace/${id}/diagrams/structure`,
       '[data-testid="structure-screen"]',
     );
 
@@ -115,10 +115,10 @@ test.describe('Project · Diagrams · Structure', () => {
   });
 
   test('switching to module level re-queries and collapses the graph', async ({ tauriPage }) => {
-    const id = await seedProjectId();
+    const id = await seedWorkspaceId();
     await navigateToScreen(
       tauriPage,
-      `/project/${id}/diagrams/structure`,
+      `/workspace/${id}/diagrams/structure`,
       '[data-testid="structure-screen"]',
     );
     await settle(tauriPage);

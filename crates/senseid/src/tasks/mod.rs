@@ -106,22 +106,22 @@ pub enum TaskKind {
     DeriveOrmSchema,
     ExtractDeps,
     MeasureVerdicts,
-    /// Re-reconcile a project root's identity from its README frontmatter
+    /// Re-reconcile a workspace root's identity from its README frontmatter
     /// (watcher-triggered on a root README change). Lightweight: no file walk.
     ReconcileRepoMetadata,
-    /// Enrich a project's sessions from the captured hook-event stream —
+    /// Enrich a workspace's sessions from the captured hook-event stream —
     /// derive turns/corrections/outcome/ftr/duration/module (analyzer L0, #66).
     AnalyzeWorkspace,
-    /// LLM process-quality pass over a project's un-scored transcripts — spec
+    /// LLM process-quality pass over a workspace's un-scored transcripts — spec
     /// depth/deviation + refuted-findings + incomplete-analysis into
     /// `sessions.props.process` + evidence (spec 2026-08-20). Local reasoning
-    /// chain, batch-capped, watermark-gated; `path` carries the project id.
+    /// chain, batch-capped, watermark-gated; `path` carries the workspace id.
     /// Enqueued on the analyzer scheduler's daily full-refresh window.
     AnalyzeSessionProcess,
-    /// Scan a project's doc nodes for backtick identifier mentions that no
+    /// Scan a workspace's doc nodes for backtick identifier mentions that no
     /// longer resolve to a live code node, materialising `inference.drift_items`
     /// (analyzer-driven counterpart to the manual `/drift/scan` endpoint).
-    /// Per-project: `path` carries the project id, exactly like `AnalyzeWorkspace`.
+    /// Per-workspace: `path` carries the workspace id, exactly like `AnalyzeWorkspace`.
     ScanDocDrift,
     /// Dispatcher: enqueue one `IngestCapture` per changed transcript
     /// so ingestion chunks + interleaves with other work (#73).
@@ -129,20 +129,20 @@ pub enum TaskKind {
     /// Ingest one transcript file into activity.transcript_turns (resumable,
     /// per-file cursor). folder_path = capture source, path = file (#73).
     IngestCapture,
-    /// Reconstruct historical coverage for one project: check out sampled past
+    /// Reconstruct historical coverage for one workspace: check out sampled past
     /// commits and run the configured `metrics.coverage_command` in each.
-    /// `path` = project id, `folder_path` = week bound ("" = all history).
+    /// `path` = workspace id, `folder_path` = week bound ("" = all history).
     ///
-    /// Deliberately ONE task per project rather than a dispatcher + per-commit
+    /// Deliberately ONE task per workspace rather than a dispatcher + per-commit
     /// children, which is the shape `IngestCaptures` uses. Coverage runs the
-    /// project's REAL TEST SUITE per commit, and the executor runs N workers — so
+    /// workspace's REAL TEST SUITE per commit, and the executor runs N workers — so
     /// per-commit children would put N test suites on the machine at once. The
     /// serial loop inside one task is the concurrency control.
     BackfillCoverage,
     /// Fetch tickets a tracker's board has but sensei hasn't synced yet, named in
     /// newly ingested sessions, and link them (tracker spec R11). `path` = tracker id.
     TrackerDiscover,
-    /// Global: cluster recurring corrective prompts across all projects into
+    /// Global: cluster recurring corrective prompts across all workspaces into
     /// inference.corrections (analyzer #65 step 5). Enqueued once per scheduler tick.
     AggregateCorrections,
     /// Global: snapshot the per-tool signal cards (unused / warn / opportunity /
@@ -192,29 +192,29 @@ pub enum TaskKind {
     /// active run (beside `AdvanceRun`). STATUS only (publishes status + heartbeat
     /// + stall + plan segments); never drives the run.
     PublishRun,
-    /// Metrics pipeline (watermark engine): the per-(project, group) CHILD —
-    /// compute ONE base metric group for ONE project. The group (the registry
-    /// `task_name`, e.g. `"session_outcomes"`) rides in `task.path`, the project
+    /// Metrics pipeline (watermark engine): the per-(workspace, group) CHILD —
+    /// compute ONE base metric group for ONE workspace. The group (the registry
+    /// `task_name`, e.g. `"session_outcomes"`) rides in `task.path`, the workspace
     /// id in `task.folder_path`, and the frozen `as_of` in `task.as_of` — one kind
     /// handles every group (the group is payload, not enum), which is why there is
     /// no `TaskKind` per group. Enqueued by the `ComputeWorkspaceMetrics` parent;
     /// dispatched to `handlers::metrics::compute_group`, which schedules + seals
     /// each day via `sensei.metric_watermarks`.
     ComputeGroupMetrics,
-    /// Metrics pipeline (watermark engine): the per-project HEALTH barrier — a
+    /// Metrics pipeline (watermark engine): the per-workspace HEALTH barrier — a
     /// SEPARATE kind from [`TaskKind::ComputeGroupMetrics`] because it must run
     /// AFTER the base groups land. The `ComputeWorkspaceMetrics` parent enqueues it
-    /// `blocked_by` the project's `ComputeGroupMetrics` child ids (project id in
+    /// `blocked_by` the workspace's `ComputeGroupMetrics` child ids (workspace id in
     /// `task.folder_path`); dispatched to `handlers::metrics::compute_health`.
     ComputeHealth,
-    /// Metrics pipeline (watermark engine): the per-project PARENT. The project id
+    /// Metrics pipeline (watermark engine): the per-workspace PARENT. The workspace id
     /// rides in `task.folder_path`. It FREEZES one `as_of` (`super::today`) shared
     /// by every child, enqueues one `ComputeGroupMetrics{as_of}` per active base
     /// group, then enqueues `ComputeHealth` `blocked_by` those child ids. Each
     /// child schedules its own days off the per-(repo, group) watermark cursor in
     /// `sensei.metric_watermarks`, so a re-tick recomputes only today + any gaps.
     /// Enqueued each tick by `metrics_scheduler`; dispatched to
-    /// `handlers::metrics::compute_project`.
+    /// `handlers::metrics::compute_workspace`.
     ComputeWorkspaceMetrics,
 }
 
@@ -839,19 +839,19 @@ impl Task {
     // folder_path", "page title stored in path" — and `BackfillCoverage` went as
     // far as putting a WEEK COUNT in `folder_path`.
     //
-    // The consequence is that nothing checks an enqueue. Pass a project id where
+    // The consequence is that nothing checks an enqueue. Pass a workspace id where
     // a folder path belongs and it fails much later, inside a handler, as a parse
     // error or (worse) a lookup miss that reads as "no data". Every handler also
     // re-parsed its own inputs with its own error text: four different phrasings
-    // of "invalid project id" existed.
+    // of "invalid workspace id" existed.
     //
     // These constructors and accessors are the contract. The storage is still the
     // two columns — a jsonb payload is a later, separate change — but both ends
     // now name what they carry, in one place.
 
-    /// A task about one PROJECT. The id rides in `path`.
-    pub fn for_project(kind: TaskKind, project_id: &uuid::Uuid) -> Self {
-        Self::new(kind, "", &project_id.to_string())
+    /// A task about one WORKSPACE. The id rides in `path`.
+    pub fn for_workspace(kind: TaskKind, workspace_id: &uuid::Uuid) -> Self {
+        Self::new(kind, "", &workspace_id.to_string())
     }
 
     /// A task about one FOLDER on disk — the git checkout root it operates in.
@@ -870,28 +870,28 @@ impl Task {
         Self::new(kind, source, unit)
     }
 
-    /// A coverage backfill for one project, optionally bounded to the most recent
+    /// A coverage backfill for one workspace, optionally bounded to the most recent
     /// `weeks` sampled anchors.
     ///
     /// The bound used to be stringified into `folder_path` at the call site, which
     /// is exactly the kind of thing this constructor exists to stop being ad hoc.
-    pub fn for_coverage_backfill(project_id: &uuid::Uuid, weeks: Option<u32>) -> Self {
+    pub fn for_coverage_backfill(workspace_id: &uuid::Uuid, weeks: Option<u32>) -> Self {
         Self::new(
             TaskKind::BackfillCoverage,
             &weeks.map(|w| w.to_string()).unwrap_or_default(),
-            &project_id.to_string(),
+            &workspace_id.to_string(),
         )
     }
 
-    /// The project id this task is about.
+    /// The workspace id this task is about.
     ///
     /// One parse, one error phrasing. Handlers previously each wrote their own —
-    /// "ScanDocDrift: invalid project id", "AnalyzeSessionProcess: invalid project
-    /// id", "coverage: bad project id" — so the same failure read three ways
+    /// "ScanDocDrift: invalid workspace id", "AnalyzeSessionProcess: invalid workspace
+    /// id", "coverage: bad workspace id" — so the same failure read three ways
     /// depending on which handler hit it.
-    pub fn project_id(&self) -> Result<uuid::Uuid, String> {
+    pub fn workspace_id(&self) -> Result<uuid::Uuid, String> {
         uuid::Uuid::parse_str(&self.path).map_err(|e| {
-            format!("{}: expected a project id in `path`, got {:?} ({e})", self.kind, self.path)
+            format!("{}: expected a workspace id in `path`, got {:?} ({e})", self.kind, self.path)
         })
     }
 
@@ -926,7 +926,7 @@ impl Task {
     /// The week bound on a coverage backfill: `None` = all history.
     ///
     /// An unparseable bound is an ERROR, not a fallback to `None`. Defaulting
-    /// would silently run the project's real test suite across its entire history
+    /// would silently run the workspace's real test suite across its entire history
     /// because a string was malformed — far more work than was asked for.
     pub fn coverage_weeks(&self) -> Result<Option<u32>, String> {
         match self.folder_path.as_str() {
@@ -1089,13 +1089,13 @@ mod tests {
         assert_eq!(TaskKind::ProcessFile.watchdog_timeout(), short);
         assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
         assert_eq!(TaskKind::ComputeGroupMetrics.watchdog_timeout(), long);
-        // The per-project parent only freezes as_of + enqueues → short bucket.
+        // The per-workspace parent only freezes as_of + enqueues → short bucket.
         assert_eq!(TaskKind::ComputeWorkspaceMetrics.watchdog_timeout(), short);
         // The terminal barrier gets a WIDER budget: community detection on a huge
         // edge-heavy folder legitimately runs many minutes and must not be
         // watchdog-killed into a retry-timeout loop.
         assert!(TaskKind::DetectCommunities.watchdog_timeout() > long);
-        // Coverage runs the project's real test suite per commit — the widest.
+        // Coverage runs the workspace's real test suite per commit — the widest.
         assert!(
             TaskKind::BackfillCoverage.watchdog_timeout()
                 > TaskKind::DetectCommunities.watchdog_timeout()
@@ -1166,8 +1166,8 @@ mod tests {
     #[test]
     fn typed_constructors_and_accessors_round_trip() {
         let pid = uuid::Uuid::new_v4();
-        let t = Task::for_project(TaskKind::AnalyzeWorkspace, &pid);
-        assert_eq!(t.project_id().unwrap(), pid, "a project task reads its id back");
+        let t = Task::for_workspace(TaskKind::AnalyzeWorkspace, &pid);
+        assert_eq!(t.workspace_id().unwrap(), pid, "a workspace task reads its id back");
 
         let t = Task::for_capture(TaskKind::IngestCapture, "zed", "thread-1");
         assert_eq!(t.capture_source(), "zed");
@@ -1181,17 +1181,17 @@ mod tests {
     #[test]
     fn a_wrong_payload_is_an_error_not_a_silent_miss() {
         // The failure this contract exists to surface. Before it, a folder path
-        // handed to a project-scoped kind parsed as garbage deep inside a handler
+        // handed to a workspace-scoped kind parsed as garbage deep inside a handler
         // — or worse, looked up nothing and read as "no data".
         let t = Task::new(TaskKind::AnalyzeWorkspace, "", "/not/a/uuid");
-        let err = t.project_id().unwrap_err();
-        assert!(err.contains("expected a project id"), "got: {err}");
+        let err = t.workspace_id().unwrap_err();
+        assert!(err.contains("expected a workspace id"), "got: {err}");
         assert!(err.contains("analyze_workspace"), "the error names the kind: {err}");
     }
 
     #[test]
     fn a_malformed_week_bound_refuses_rather_than_running_all_history() {
-        // Defaulting to None here would silently run the project's real test suite
+        // Defaulting to None here would silently run the workspace's real test suite
         // across its ENTIRE history because a string was malformed — far more work
         // than was asked for, and expensive.
         let pid = uuid::Uuid::new_v4();

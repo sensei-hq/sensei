@@ -27,7 +27,7 @@ pub struct TrackerRow {
     pub discovered_through: chrono::DateTime<chrono::Utc>,
 }
 
-/// The project that already owns a board.
+/// The workspace that already owns a board.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardOwner {
     pub tracker_id: uuid::Uuid,
@@ -51,7 +51,7 @@ pub struct NewTracker {
 /// Why persisting a connect failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectDbError {
-    /// Another project took the board meanwhile.
+    /// Another workspace took the board meanwhile.
     BoardTaken,
     /// The new secret's pending tombstone was already drained: the secret may be
     /// gone, so the row must not point at it.
@@ -85,7 +85,7 @@ pub struct LinkedSession {
     pub links: Vec<SessionLinkRow>,
 }
 
-/// One ticket of a project's tracker and the candidate sessions linked to it.
+/// One ticket of a workspace's tracker and the candidate sessions linked to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskDetail {
     pub id: uuid::Uuid,
@@ -165,7 +165,7 @@ fn dedupe_by<T: Clone, K: std::hash::Hash + Eq>(items: &[T], key: impl Fn(&T) ->
 }
 
 /// The tracker's candidate sessions (spec R1): anchored in a repository of the
-/// tracker's project, whichever repo. One row per session; `tracker` is the SQL
+/// tracker's workspace, whichever repo. One row per session; `tracker` is the SQL
 /// placeholder holding the tracker id.
 pub(crate) fn candidate_sessions(tracker: &str) -> String {
     format!(
@@ -346,14 +346,14 @@ impl PgStore {
             .map_err(|e| e.to_string())
     }
 
-    pub async fn tracker_for_project(
+    pub async fn tracker_for_workspace(
         &self,
-        project_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
     ) -> Result<Option<TrackerRow>, String> {
         sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!(
             "{TRACKER_SELECT} WHERE workspace_id = $1"
         ))
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_optional(&self.pool)
         .await
         .map(|r| r.map(tracker_row))
@@ -377,10 +377,10 @@ impl PgStore {
         .fetch_optional(&self.pool)
         .await
         .map(|r| {
-            r.map(|(tracker_id, project_id, project_name)| BoardOwner {
+            r.map(|(tracker_id, workspace_id, workspace_name)| BoardOwner {
                 tracker_id,
-                workspace_id: project_id,
-                workspace_name: project_name,
+                workspace_id,
+                workspace_name,
             })
         })
         .map_err(|e| e.to_string())
@@ -692,11 +692,11 @@ impl PgStore {
             .collect())
     }
 
-    /// The project's ticket with this key (current or former, case-insensitive)
+    /// The workspace's ticket with this key (current or former, case-insensitive)
     /// and its linked candidate sessions; `None` when there is no such ticket.
     pub async fn tracker_task_detail(
         &self,
-        project_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
         key: &str,
     ) -> Result<Option<TaskDetail>, String> {
         let err = |e: sqlx_core::Error| e.to_string();
@@ -715,7 +715,7 @@ impl PgStore {
                            t.last_seen_at DESC NULLS LAST
                   LIMIT 1",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .bind(key)
             .fetch_optional(&self.pool)
             .await
@@ -723,7 +723,7 @@ impl PgStore {
         else {
             return Ok(None);
         };
-        // Only the project's current candidates (R1), as usage counts them.
+        // Only the workspace's current candidates (R1), as usage counts them.
         let rows = sqlx_core::query_as::query_as::<
             _,
             (uuid::Uuid, Option<chrono::DateTime<chrono::Utc>>, String, String, i32),
@@ -910,16 +910,16 @@ impl PgStore {
             }
         };
         let mut tx = self.pool.begin().await.map_err(db)?;
-        // Serialise connects for the project.
-        let project = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+        // Serialise connects for the workspace.
+        let workspace = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
             "SELECT id FROM sensei.workspaces WHERE id = $1 FOR UPDATE",
         )
         .bind(t.workspace_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
-        if project.is_none() {
-            return Err(ConnectDbError::Db("project not found".into()));
+        if workspace.is_none() {
+            return Err(ConnectDbError::Db("workspace not found".into()));
         }
         let existing = sqlx_core::query_as::query_as::<_, (uuid::Uuid, String, String, String)>(
             "SELECT id, kind::text, base_url, board_ref FROM sensei.trackers WHERE workspace_id = $1",
@@ -1019,9 +1019,12 @@ impl PgStore {
         .map_err(|e| e.to_string())
     }
 
-    pub async fn delete_tracker_for_project(&self, project_id: uuid::Uuid) -> Result<bool, String> {
+    pub async fn delete_tracker_for_workspace(
+        &self,
+        workspace_id: uuid::Uuid,
+    ) -> Result<bool, String> {
         sqlx_core::query::query("DELETE FROM sensei.trackers WHERE workspace_id = $1")
-            .bind(project_id)
+            .bind(workspace_id)
             .execute(&self.pool)
             .await
             .map(|r| r.rows_affected() > 0)
@@ -1089,15 +1092,15 @@ impl PgStore {
 mod schema_tests {
     use crate::db::pg_store::PgStore;
 
-    async fn project(pg: &PgStore, tag: &str) -> uuid::Uuid {
-        pg.create_project(&format!("_test:tracker:{tag}:{}", uuid::Uuid::new_v4()), None, None)
+    async fn workspace(pg: &PgStore, tag: &str) -> uuid::Uuid {
+        pg.create_workspace(&format!("_test:tracker:{tag}:{}", uuid::Uuid::new_v4()), None, None)
             .await
             .unwrap()
     }
 
     async fn insert_tracker(
         pg: &PgStore,
-        project_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
         base_url: &str,
         board_ref: &str,
         secret_service: &str,
@@ -1108,7 +1111,7 @@ mod schema_tests {
              VALUES ($1, 'jira', $2, 'dev@example.com', 'AUTH', $3, $4)
              RETURNING id",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(base_url)
         .bind(board_ref)
         .bind(secret_service)
@@ -1163,9 +1166,9 @@ mod schema_tests {
         out
     }
 
-    async fn cleanup(pg: &PgStore, project_id: uuid::Uuid, services: &[&str]) {
+    async fn cleanup(pg: &PgStore, workspace_id: uuid::Uuid, services: &[&str]) {
         sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
-            .bind(project_id)
+            .bind(workspace_id)
             .execute(pg.pool())
             .await
             .ok();
@@ -1185,9 +1188,9 @@ mod schema_tests {
     }
 
     #[tokio::test]
-    async fn a_project_holds_at_most_one_tracker() {
+    async fn a_workspace_holds_at_most_one_tracker() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg, "one-per-project").await;
+        let p = workspace(&pg, "one-per-workspace").await;
         let (s1, s2) = (unique("a"), unique("b"));
         insert_tracker(&pg, p, "https://a.atlassian.net", "1", &s1).await.unwrap();
         let second = insert_tracker(&pg, p, "https://b.atlassian.net", "2", &s2).await;
@@ -1199,16 +1202,16 @@ mod schema_tests {
     }
 
     #[tokio::test]
-    async fn a_board_belongs_to_at_most_one_project() {
+    async fn a_board_belongs_to_at_most_one_workspace() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let (p1, p2) = (project(&pg, "board-a").await, project(&pg, "board-b").await);
+        let (p1, p2) = (workspace(&pg, "board-a").await, workspace(&pg, "board-b").await);
         let (s1, s2) = (unique("a"), unique("b"));
         let base = format!("https://t{}.atlassian.net", uuid::Uuid::new_v4().simple());
         insert_tracker(&pg, p1, &base, "42", &s1).await.unwrap();
         let second = insert_tracker(&pg, p2, &base, "42", &s2).await;
         assert!(
             second.is_err(),
-            "the same (kind, base_url, board_ref) on two projects must be rejected"
+            "the same (kind, base_url, board_ref) on two workspaces must be rejected"
         );
         cleanup(&pg, p1, &[&s1]).await;
         cleanup(&pg, p2, &[&s2]).await;
@@ -1217,7 +1220,7 @@ mod schema_tests {
     #[tokio::test]
     async fn deleting_a_tracker_tombstones_its_secret_immediately() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg, "delete").await;
+        let p = workspace(&pg, "delete").await;
         let s = unique("del");
         let t = insert_tracker(&pg, p, "https://d.atlassian.net", "7", &s).await.unwrap();
         let seen =
@@ -1227,9 +1230,9 @@ mod schema_tests {
     }
 
     #[tokio::test]
-    async fn deleting_the_project_cascades_and_still_tombstones_the_secret() {
+    async fn deleting_the_workspace_cascades_and_still_tombstones_the_secret() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg, "cascade").await;
+        let p = workspace(&pg, "cascade").await;
         let s = unique("cascade");
         insert_tracker(&pg, p, "https://c.atlassian.net", "8", &s).await.unwrap();
         let seen =
@@ -1242,7 +1245,7 @@ mod schema_tests {
     #[tokio::test]
     async fn swapping_the_secret_tombstones_the_old_one_not_the_new_one() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg, "swap").await;
+        let p = workspace(&pg, "swap").await;
         let (old, new) = (unique("old"), unique("new"));
         let t = insert_tracker(&pg, p, "https://s.atlassian.net", "9", &old).await.unwrap();
         let seen = within_rollback(
@@ -1261,7 +1264,7 @@ mod schema_tests {
     #[tokio::test]
     async fn updating_other_columns_writes_no_tombstone() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg, "noop").await;
+        let p = workspace(&pg, "noop").await;
         let s = unique("noop");
         let t = insert_tracker(&pg, p, "https://n.atlassian.net", "10", &s).await.unwrap();
         sqlx_core::query::query("UPDATE sensei.trackers SET last_attempt_at = now() WHERE id = $1")
@@ -1276,7 +1279,7 @@ mod schema_tests {
     #[tokio::test]
     async fn sprints_tasks_and_memberships_are_keyed_and_cascade() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg, "children").await;
+        let p = workspace(&pg, "children").await;
         let s = unique("children");
         let t = insert_tracker(&pg, p, "https://k.atlassian.net", "11", &s).await.unwrap();
 

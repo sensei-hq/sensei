@@ -72,7 +72,7 @@ export async function stopDaemon(): Promise<void> {
   }
 }
 
-/** Reset all daemon data (repos, projects, config). */
+/** Reset all daemon data (repos, workspaces, config). */
 export async function resetDaemon(): Promise<void> {
   await fetch(`${DAEMON_URL}/api/reset`, { method: 'POST' });
 }
@@ -121,17 +121,17 @@ export async function removeRootsUnder(prefix: string): Promise<void> {
 }
 
 /**
- * A project for a spec to scope to, SEEDED rather than assumed: `reset-e2e-db`
- * drops `sensei_e2e` before a run, so a fresh database has no projects and a spec
- * reading `/api/projects[0]` throws before it tests anything. Reused by name, so
- * a spec's project is the same across runs and never one another spec left.
+ * A workspace for a spec to scope to, SEEDED rather than assumed: `reset-e2e-db`
+ * drops `sensei_e2e` before a run, so a fresh database has no workspaces and a spec
+ * reading `/api/workspaces[0]` throws before it tests anything. Reused by name, so
+ * a spec's workspace is the same across runs and never one another spec left.
  * Nothing is indexed under it — screens land in their empty terminal state.
  */
-export async function seedProject(name: string, description: string): Promise<string> {
-  const existing = await daemonGet<Array<{ id: string; name: string }>>('/api/projects');
+export async function seedWorkspace(name: string, description: string): Promise<string> {
+  const existing = await daemonGet<Array<{ id: string; name: string }>>('/api/workspaces');
   const mine = existing.find((p) => p.name === name);
   if (mine) return mine.id;
-  const created = await daemonPost<{ ok: boolean; id: string }>('/api/projects', { name, description });
+  const created = await daemonPost<{ ok: boolean; id: string }>('/api/workspaces', { name, description });
   return created.id;
 }
 

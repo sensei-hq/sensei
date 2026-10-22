@@ -28,7 +28,7 @@ pub(crate) async fn next_batch(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let next = state.pg.next_unsent_approved_batch().await.map_err(internal)?;
-    let Some((batch_id, _project_id, _decided_at)) = next else {
+    let Some((batch_id, _workspace_id, _decided_at)) = next else {
         return Ok(Json(serde_json::json!({ "batch": null })));
     };
     let contributor = ContributorIdentity {

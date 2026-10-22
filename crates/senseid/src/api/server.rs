@@ -24,7 +24,7 @@ fn write_startup_error(msg: &str) {
 ///
 /// Names `sensei bootstrap` and NOTHING destructive. The earlier wording
 /// offered `dbd reset` as a peer alternative, and `dbd reset` drops the
-/// project's managed objects — a data-loss command one copy-paste away from a
+/// workspace's managed objects — a data-loss command one copy-paste away from a
 /// daemon that has usually just lost a cold-boot race and will self-heal on its
 /// own. The safe path is idempotent, so it is the only one worth naming.
 fn degraded_startup_message(database_url: &str, error: &str) -> String {
@@ -192,7 +192,7 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                 // WHICH failure is this? A database that does not exist yet is
                 // a first install still being built — a WAIT — and reporting it
                 // as degraded told people their install had broken. Ask the
-                // question the project already owns rather than reading the
+                // question the workspace already owns rather than reading the
                 // connect error's text (see `resilience::mode_after_failed_connect`).
                 let exists = sensei_bootstrap::database::database_exists(&cfg.db_name).ok();
                 let mode = crate::api::resilience::mode_after_failed_connect(exists);
@@ -451,7 +451,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // Version-change rebuild (D2): if this binary differs from the one that
     // last scanned the DB, re-scan all indexed roots (rebuilds the code graph
     // under the new binary) and clear the analyzer full-refresh watermark so
-    // the scheduler re-analyzes every project. Runs BEFORE the scheduler spawns
+    // the scheduler re-analyzes every workspace. Runs BEFORE the scheduler spawns
     // so the cleared watermark is observed on its first (immediate) tick.
     // Non-fatal: internal failures are logged, never propagated.
     //
@@ -473,12 +473,12 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         );
     }
 
-    // Periodically enrich/analyze projects whose sessions changed (#67). First
+    // Periodically enrich/analyze workspaces whose sessions changed (#67). First
     // tick fires immediately, so a freshly-started daemon backfills enrichment.
     crate::tasks::analyzer_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
 
     // Metrics pipeline (Phase 4): once-daily (watermarked), enqueue the active
-    // metric registry per project — one ComputeGroupMetrics per base group + a
+    // metric registry per workspace — one ComputeGroupMetrics per base group + a
     // ComputeHealth barrier. Mirrors the analyzer scheduler's spawn/watermark
     // pattern; the first tick backfills if a day has elapsed since the last run.
     crate::tasks::metrics_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
@@ -489,9 +489,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     //      new transcripts, smart-skipped) so day-keyed sources exist, then re-attach
     //      orphaned sessions. FRESHLY-synthesized sessions become measurable after the
     //      analyzer runs, and each `AnalyzeWorkspace` success enqueues an
-    //      overlap-guarded `ComputeWorkspaceMetrics` for its project (the synthesizer →
+    //      overlap-guarded `ComputeWorkspaceMetrics` for its workspace (the synthesizer →
     //      analyzer → ComputeWorkspaceMetrics chain).
-    //   2. UNCONDITIONALLY enqueue the per-project metric plan on boot
+    //   2. UNCONDITIONALLY enqueue the per-workspace metric plan on boot
     //      (`enqueue_backfill_all`). This is the trigger for a PERSIST-boot: when the
     //      daemon restarts and its sessions already exist AND are already analyzed
     //      (measurable), nothing re-synthesizes, so the analysis-completion hook never
@@ -516,7 +516,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
             // when this work happens rather than a schedule here and a cadence
             // there to keep in step.
             //
-            // Persist-boot trigger: plan the per-day metric backfill for every project
+            // Persist-boot trigger: plan the per-day metric backfill for every workspace
             // (guarded + idempotent). On a fresh install this runs before synthesis
             // completes and finds little — trigger #1's analysis hook re-plans as
             // sessions become measurable; on a persist-boot the sessions are already
@@ -526,8 +526,8 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
                     "startup: metric backfill skipped (a plan wave is already in flight)"
                 ),
                 Ok(n) => tracing::info!(
-                    projects = n,
-                    "startup: enqueued metric backfill (ComputeWorkspaceMetrics per project)"
+                    workspaces = n,
+                    "startup: enqueued metric backfill (ComputeWorkspaceMetrics per workspace)"
                 ),
                 Err(e) => tracing::warn!(error = %e, "startup: metric backfill enqueue failed"),
             }
@@ -663,13 +663,13 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // MCPs), probe them, and rebuild the unified `sensei.assistant_tools`
     // inventory (MCP tools + built-in catalog) so the Instruments · Health share
     // grid (#84) has day-one data without a manual refresh. Runs after the
-    // projects table is populated (needs project roots), so it fires from a
+    // workspaces table is populated (needs workspace roots), so it fires from a
     // spawn with a small delay rather than blocking boot.
     {
         let pg = state.pg.clone();
         tokio::spawn(async move {
             // Small delay so the initial scan queue drains and any
-            // fresh-boot project rows land first.
+            // fresh-boot workspace rows land first.
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             match crate::tool_discovery::run_capture(&pg).await {
                 Ok(c) => tracing::info!(
@@ -922,7 +922,7 @@ mod worker_count_tests {
     ///
     /// The degraded message used to end *"run `sensei bootstrap` (or
     /// `dbd reset`) to (re)provision the database"*. `dbd reset` DROPS the
-    /// project's managed objects. Offering it as a peer alternative to
+    /// workspace's managed objects. Offering it as a peer alternative to
     /// `sensei bootstrap` — which is the safe, idempotent path — puts data loss
     /// one copy-paste away from a daemon that may simply have lost a cold-boot
     /// race, and the daemon self-heals from that without anyone typing

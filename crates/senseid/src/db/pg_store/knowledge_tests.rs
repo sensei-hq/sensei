@@ -12,11 +12,11 @@ use super::*;
 #[tokio::test]
 async fn list_memories_filters_by_status() {
     let pg = PgStore::connect_test().await.unwrap();
-    let project_id = pg.ensure_test_project("list-status").await.unwrap();
+    let workspace_id = pg.ensure_test_workspace("list-status").await.unwrap();
     let m1 = pg
         .insert_memory(&InsertMemory {
-            workspace_id: Some(project_id),
-            scope: "project".into(),
+            workspace_id: Some(workspace_id),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "t1".into(),
@@ -36,8 +36,8 @@ async fn list_memories_filters_by_status() {
         .unwrap();
     let _m2 = pg
         .insert_memory(&InsertMemory {
-            workspace_id: Some(project_id),
-            scope: "project".into(),
+            workspace_id: Some(workspace_id),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "t2".into(),
@@ -56,11 +56,11 @@ async fn list_memories_filters_by_status() {
         .await
         .unwrap();
 
-    let proposed = pg.list_memories(Some(project_id), Some("proposed"), None, 50).await.unwrap();
+    let proposed = pg.list_memories(Some(workspace_id), Some("proposed"), None, 50).await.unwrap();
     assert_eq!(proposed.len(), 1);
     assert_eq!(proposed[0]["id"].as_str().unwrap(), m1.to_string());
 
-    // `list-status` is a reused fixture project (ensure_test_project, #34) —
+    // `list-status` is a reused fixture workspace (ensure_test_workspace, #34) —
     // clean up so repeated runs don't accrete proposed rows into the count.
     sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)")
         .bind(&[m1, _m2][..])
@@ -72,11 +72,11 @@ async fn list_memories_filters_by_status() {
 #[tokio::test]
 async fn set_memory_status_accept_proposal() {
     let pg = PgStore::connect_test().await.unwrap();
-    let pid = pg.ensure_test_project("accept-prop").await.unwrap();
+    let pid = pg.ensure_test_workspace("accept-prop").await.unwrap();
     let mid = pg
         .insert_memory(&InsertMemory {
             workspace_id: Some(pid),
-            scope: "project".into(),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "t".into(),
@@ -106,11 +106,11 @@ async fn set_memory_status_accept_proposal() {
 #[tokio::test]
 async fn get_memory_detail_includes_outcomes() {
     let pg = PgStore::connect_test().await.unwrap();
-    let pid = pg.ensure_test_project("detail").await.unwrap();
+    let pid = pg.ensure_test_workspace("detail").await.unwrap();
     let mid = pg
         .insert_memory(&InsertMemory {
             workspace_id: Some(pid),
-            scope: "project".into(),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "t".into(),
@@ -147,11 +147,11 @@ async fn get_memory_detail_includes_outcomes() {
 #[tokio::test]
 async fn assemble_context_blends_three_scopes() {
     let pg = PgStore::connect_test().await.unwrap();
-    let pid = pg.ensure_test_project("blend").await.unwrap();
+    let pid = pg.ensure_test_workspace("blend").await.unwrap();
 
     // Scope every query in this test to a run-unique tag.
     //
-    // `assemble_context` matches `project_id = $2 OR scope='stack' OR
+    // `assemble_context` matches `workspace_id = $2 OR scope='stack' OR
     // scope='global'` and then takes the top N by strength, so the shared test
     // DB's several-hundred global memories crowd this test's fixtures out of
     // the window — deleting our own rows afterwards (below) never fixed that,
@@ -164,7 +164,7 @@ async fn assemble_context_blends_three_scopes() {
     let m_p = pg
         .insert_memory(&InsertMemory {
             workspace_id: Some(pid),
-            scope: "project".into(),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "P".into(),
@@ -241,7 +241,7 @@ async fn assemble_context_blends_three_scopes() {
     let m_prop = pg
         .insert_memory(&InsertMemory {
             workspace_id: Some(pid),
-            scope: "project".into(),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "PROP".into(),
@@ -271,8 +271,8 @@ async fn assemble_context_blends_three_scopes() {
         .collect();
     assert!(!titles2.contains(&"PROP".to_string()));
 
-    // `blend` is a reused fixture project (#34) and "S"/"G" are global/stack
-    // scoped — visible to every project. Clean up so repeated runs don't
+    // `blend` is a reused fixture workspace (#34) and "S"/"G" are global/stack
+    // scoped — visible to every workspace. Clean up so repeated runs don't
     // accrete rows that eventually push this test's own memories out of
     // assemble_context's top-N window.
     sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)")
@@ -285,15 +285,15 @@ async fn assemble_context_blends_three_scopes() {
 #[tokio::test]
 async fn list_memories_for_slot_matches_slot_and_feature() {
     let pg = PgStore::connect_test().await.unwrap();
-    let pid = pg.ensure_test_project("slot-retrieval").await.unwrap();
+    let pid = pg.ensure_test_workspace("slot-retrieval").await.unwrap();
 
     let m_design = pg
         .create_memory(&MemoryRow {
             workspace_id: Some(&pid),
-            scope: "project",
+            scope: "workspace",
             scope_filter: None,
             mem_type: "decision",
-            title: "design-project-scope",
+            title: "design-workspace-scope",
             content: "c",
             impact: None,
             session_id: None,
@@ -305,7 +305,7 @@ async fn list_memories_for_slot_matches_slot_and_feature() {
     let m_design_auth = pg
         .create_memory(&MemoryRow {
             workspace_id: Some(&pid),
-            scope: "project",
+            scope: "workspace",
             scope_filter: None,
             mem_type: "decision",
             title: "design-auth-feature",
@@ -320,10 +320,10 @@ async fn list_memories_for_slot_matches_slot_and_feature() {
     let m_decisions = pg
         .create_memory(&MemoryRow {
             workspace_id: Some(&pid),
-            scope: "project",
+            scope: "workspace",
             scope_filter: None,
             mem_type: "decision",
-            title: "decisions-project-scope",
+            title: "decisions-workspace-scope",
             content: "c",
             impact: None,
             session_id: None,
@@ -333,9 +333,9 @@ async fn list_memories_for_slot_matches_slot_and_feature() {
         .await
         .unwrap();
 
-    let design_project = pg.list_memories_for_slot(&pid, "design", None, 50).await.unwrap();
-    assert_eq!(design_project.len(), 1);
-    assert_eq!(design_project[0]["id"].as_str().unwrap(), m_design.to_string());
+    let design_workspace = pg.list_memories_for_slot(&pid, "design", None, 50).await.unwrap();
+    assert_eq!(design_workspace.len(), 1);
+    assert_eq!(design_workspace[0]["id"].as_str().unwrap(), m_design.to_string());
 
     let design_auth = pg.list_memories_for_slot(&pid, "design", Some("auth"), 50).await.unwrap();
     assert_eq!(design_auth.len(), 1);
@@ -351,7 +351,7 @@ async fn list_memories_for_slot_matches_slot_and_feature() {
 #[tokio::test]
 async fn assemble_context_leads_with_slot_anchored_memory() {
     let pg = PgStore::connect_test().await.unwrap();
-    let pid = pg.ensure_test_project("slot-leads").await.unwrap();
+    let pid = pg.ensure_test_workspace("slot-leads").await.unwrap();
 
     // Tag-scoped for the same reason as `assemble_context_blends_three_scopes`:
     // the shared test DB's global memories otherwise fill the top-N window and
@@ -361,7 +361,7 @@ async fn assemble_context_leads_with_slot_anchored_memory() {
     let only_ours = vec![tag.clone()];
     let fixture = |title: &str, slot: Option<&str>| InsertMemory {
         workspace_id: Some(pid),
-        scope: "project".into(),
+        scope: "workspace".into(),
         scope_filter: None,
         mtype: "decision".into(),
         title: title.into(),
@@ -408,9 +408,9 @@ async fn assemble_context_leads_with_slot_anchored_memory() {
 #[tokio::test]
 async fn assemble_context_logs_one_load_per_memory() {
     let pg = PgStore::connect_test().await.unwrap();
-    let pid = pg.ensure_test_project("loads-writer").await.unwrap();
-    // Project-scoped active memory → loaded exactly once per assemble_context
-    // call on this (test-unique) project.
+    let pid = pg.ensure_test_workspace("loads-writer").await.unwrap();
+    // Workspace-scoped active memory → loaded exactly once per assemble_context
+    // call on this (test-unique) workspace.
     // Tag-scoped so the delivered set is exactly this memory: the telemetry
     // assertions below count load rows, and an unscoped call would also log a
     // load for every unrelated global memory that fit in the window.
@@ -419,7 +419,7 @@ async fn assemble_context_logs_one_load_per_memory() {
     let mid = pg
         .insert_memory(&InsertMemory {
             workspace_id: Some(pid),
-            scope: "project".into(),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "L".into(),
@@ -476,11 +476,11 @@ async fn assemble_context_logs_one_load_per_memory() {
 #[tokio::test]
 async fn memory_loaded_last_7d_respects_window() {
     let pg = PgStore::connect_test().await.unwrap();
-    let pid = pg.ensure_test_project("loads-window").await.unwrap();
+    let pid = pg.ensure_test_workspace("loads-window").await.unwrap();
     let mid = pg
         .insert_memory(&InsertMemory {
             workspace_id: Some(pid),
-            scope: "project".into(),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "W".into(),
@@ -516,11 +516,11 @@ async fn memory_loaded_last_7d_respects_window() {
 #[tokio::test]
 async fn memory_followed_skipped_last_7d_over_outcomes() {
     let pg = PgStore::connect_test().await.unwrap();
-    let pid = pg.ensure_test_project("followed-skipped").await.unwrap();
+    let pid = pg.ensure_test_workspace("followed-skipped").await.unwrap();
     let mid = pg
         .insert_memory(&InsertMemory {
             workspace_id: Some(pid),
-            scope: "project".into(),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "F".into(),
@@ -564,11 +564,11 @@ async fn memory_followed_skipped_last_7d_over_outcomes() {
 #[tokio::test]
 async fn get_memory_detail_includes_7d_telemetry() {
     let pg = PgStore::connect_test().await.unwrap();
-    let pid = pg.ensure_test_project("detail-telemetry").await.unwrap();
+    let pid = pg.ensure_test_workspace("detail-telemetry").await.unwrap();
     let mid = pg
         .insert_memory(&InsertMemory {
             workspace_id: Some(pid),
-            scope: "project".into(),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "D".into(),
@@ -645,27 +645,27 @@ async fn insert_memory_persists_source_id() {
         .unwrap();
 }
 
-/// Governance scope hygiene: a project's learned convention (an unscoped
-/// memory carrying a `project_id`, exactly what the L2 generator writes in
-/// `tasks::handlers::generate::generate_for_project`) must resolve ONLY for
-/// its own project's repo — labeled `project`, not the always-on `general`
-/// set — and must never bleed into another project's ruleset or the global
-/// `~/.sensei/rules.md`. Regression for the cross-project general-rule bleed
+/// Governance scope hygiene: a workspace's learned convention (an unscoped
+/// memory carrying a `workspace_id`, exactly what the L2 generator writes in
+/// `tasks::handlers::generate::generate_for_workspace`) must resolve ONLY for
+/// its own workspace's repo — labeled `workspace`, not the always-on `general`
+/// set — and must never bleed into another workspace's ruleset or the global
+/// `~/.sensei/rules.md`. Regression for the cross-workspace general-rule bleed
 /// found by dogfooding `get_rules`.
 #[tokio::test]
-async fn project_learned_convention_scopes_to_its_own_project_not_general() {
+async fn workspace_learned_convention_scopes_to_its_own_workspace_not_general() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;
     };
     let pool = pg.pool();
 
-    // Two projects, each with its own repo folder attributed to it.
+    // Two workspaces, each with its own repo folder attributed to it.
     let proj_a = pg
-        .create_project(&format!("_test:rules-A-{}", uuid::Uuid::new_v4()), None, None)
+        .create_workspace(&format!("_test:rules-A-{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
     let proj_b = pg
-        .create_project(&format!("_test:rules-B-{}", uuid::Uuid::new_v4()), None, None)
+        .create_workspace(&format!("_test:rules-B-{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
     let root = pg
@@ -692,16 +692,16 @@ async fn project_learned_convention_scopes_to_its_own_project_not_general() {
     )
     .await
     .unwrap();
-    pg.set_folder_project(&folder_a, &proj_a, "root", None).await.unwrap();
-    pg.set_folder_project(&folder_b, &proj_b, "root", None).await.unwrap();
+    pg.set_folder_workspace(&folder_a, &proj_a, "root", None).await.unwrap();
+    pg.set_folder_workspace(&folder_b, &proj_b, "root", None).await.unwrap();
 
-    // A learned convention captured for project A: namespace_id NULL,
-    // project-tied — the shape the L2 generator emits.
-    let conv_content = format!("project A convention {}", uuid::Uuid::new_v4());
+    // A learned convention captured for workspace A: namespace_id NULL,
+    // workspace-tied — the shape the L2 generator emits.
+    let conv_content = format!("workspace A convention {}", uuid::Uuid::new_v4());
     let conv = pg
         .insert_memory(&InsertMemory {
             workspace_id: Some(proj_a),
-            scope: "project".into(),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "conv A".into(),
@@ -720,7 +720,7 @@ async fn project_learned_convention_scopes_to_its_own_project_not_general() {
         .await
         .unwrap();
 
-    // A genuinely-global rule: unscoped AND not tied to a project — the real
+    // A genuinely-global rule: unscoped AND not tied to a workspace — the real
     // always-on set that must keep working.
     let global_content = format!("genuinely global rule {}", uuid::Uuid::new_v4());
     let global = pg
@@ -745,31 +745,32 @@ async fn project_learned_convention_scopes_to_its_own_project_not_general() {
         .await
         .unwrap();
 
-    // Project A's ruleset: A's convention (labeled `project`) + the global rule.
+    // Workspace A's ruleset: A's convention (labeled with the ladder's `project`
+    // rung, which keeps its name until the dōjō converts it) + the global rule.
     let a_rules = pg.resolve_rules_raw(&folder_a).await.unwrap();
     let a_conv =
         a_rules.iter().find(|r| r.content == conv_content).expect("A's convention resolves for A");
     assert_eq!(
         a_conv.scope, "project",
-        "a project-tied unscoped convention is labeled project, not general"
+        "a workspace-tied unscoped convention is labeled at the project rung, not general"
     );
     assert!(
         a_rules.iter().any(|r| r.content == global_content),
         "the genuinely-global rule applies to A"
     );
 
-    // Project B's ruleset: MUST NOT contain A's convention; the global rule still applies.
+    // Workspace B's ruleset: MUST NOT contain A's convention; the global rule still applies.
     let b_rules = pg.resolve_rules_raw(&folder_b).await.unwrap();
     assert!(
         !b_rules.iter().any(|r| r.content == conv_content),
-        "A's learned convention must NOT bleed into project B"
+        "A's learned convention must NOT bleed into workspace B"
     );
     assert!(
         b_rules.iter().any(|r| r.content == global_content),
         "the genuinely-global rule still applies to B"
     );
 
-    // Global always-on set: the genuinely-global rule, NOT any project convention.
+    // Global always-on set: the genuinely-global rule, NOT any workspace convention.
     let global_set = pg.resolve_global_rules().await.unwrap();
     assert!(
         global_set.iter().any(|r| r.content == global_content),
@@ -777,7 +778,7 @@ async fn project_learned_convention_scopes_to_its_own_project_not_general() {
     );
     assert!(
         !global_set.iter().any(|r| r.content == conv_content),
-        "a project convention must NOT be in the always-on global set"
+        "a workspace convention must NOT be in the always-on global set"
     );
 
     // cleanup (best-effort)
@@ -968,7 +969,7 @@ async fn a_namespace_belongs_to_the_repository_so_two_checkouts_resolve_alike() 
     }
 
     // A technology namespace — the kind of fact that is genuinely the
-    // repository's ("this checkout uses svelte"), not a project's.
+    // repository's ("this checkout uses svelte"), not a workspace's.
     let ns = pg
         .upsert_namespace("technology", &format!("svelte-{uniq}"), &format!("svelte-{uniq}"))
         .await

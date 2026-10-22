@@ -51,7 +51,7 @@ pub(crate) enum Planned {
     },
     Memory {
         source_pattern: uuid::Uuid,
-        project_scoped_filter: Option<String>,
+        workspace_scoped_filter: Option<String>,
         title: String,
         content: String,
         impact: Option<String>,
@@ -146,7 +146,7 @@ pub(crate) fn plan_artifacts(patterns: &[PatternRow]) -> Vec<Planned> {
                 let title = principle_title(&principle);
                 out.push(Planned::Memory {
                     source_pattern: p.id,
-                    project_scoped_filter: None,
+                    workspace_scoped_filter: None,
                     title: title.clone(),
                     content: principle.trim().to_string(),
                     impact: Some(format!(
@@ -210,15 +210,15 @@ pub(crate) fn plan_artifacts(patterns: &[PatternRow]) -> Vec<Planned> {
     out
 }
 
-/// Handler step: generate recommendations + learned memories for a project from
+/// Handler step: generate recommendations + learned memories for a workspace from
 /// its detected patterns. Idempotent. Returns the number of new artifacts written.
-pub async fn generate_for_project(
+pub async fn generate_for_workspace(
     ctx: &TaskContext,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
 ) -> Result<u32, String> {
     let rows: Vec<PatternRow> = ctx
         .pg()
-        .get_patterns_for_generation(project_id)
+        .get_patterns_for_generation(workspace_id)
         .await?
         .into_iter()
         .map(|(id, _folder_id, folder_label, name, _is_anti, instance_count, instances_text)| {
@@ -242,7 +242,7 @@ pub async fn generate_for_project(
                 // Skip if a recommendation already cites this pattern.
                 if ctx
                     .pg()
-                    .recommendation_exists_for_pattern(project_id, &pattern_id)
+                    .recommendation_exists_for_pattern(workspace_id, &pattern_id)
                     .await
                     .unwrap_or(false)
                 {
@@ -252,7 +252,7 @@ pub async fn generate_for_project(
                 match ctx
                     .pg()
                     .create_recommendation_full(&RecommendationRow {
-                        workspace_id: project_id,
+                        workspace_id,
                         title: &title,
                         why: &why,
                         impact: impact.as_deref(),
@@ -273,7 +273,7 @@ pub async fn generate_for_project(
                 }
             }
             Planned::Memory {
-                project_scoped_filter,
+                workspace_scoped_filter,
                 title,
                 content,
                 impact,
@@ -287,12 +287,12 @@ pub async fn generate_for_project(
                     continue;
                 }
                 // Analyzer memories self-anchor into the spine's design/decisions
-                // slot from their category/type (project scope — no feature).
+                // slot from their category/type (workspace scope — no feature).
                 let slot = crate::memory_slot::default_slot(Some(category.as_str()), &mtype);
                 let mem = crate::db::pg_store::InsertMemory {
-                    workspace_id: Some(*project_id),
-                    scope: "project".to_string(),
-                    scope_filter: project_scoped_filter,
+                    workspace_id: Some(*workspace_id),
+                    scope: "workspace".to_string(),
+                    scope_filter: workspace_scoped_filter,
                     mtype,
                     title,
                     content,
@@ -323,7 +323,7 @@ pub async fn generate_for_project(
     }
 
     if written > 0 {
-        tracing::info!("generate_for_project: {} — {} new artifacts", project_id, written);
+        tracing::info!("generate_for_workspace: {} — {} new artifacts", workspace_id, written);
     }
     Ok(written)
 }
@@ -459,7 +459,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let pid = pg
-            .create_project(&format!("_test:gen-{}", uuid::Uuid::new_v4()), None, None)
+            .create_workspace(&format!("_test:gen-{}", uuid::Uuid::new_v4()), None, None)
             .await
             .unwrap();
         let root = pg
@@ -478,7 +478,7 @@ mod tests {
         )
         .await
         .unwrap();
-        // A session attributes this folder to the project (L1's attribution path).
+        // A session attributes this folder to the workspace (L1's attribution path).
         let csid = format!("_test-gen-sid-{}", uuid::Uuid::new_v4());
         pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
@@ -490,7 +490,7 @@ mod tests {
             .unwrap();
 
         // First run: writes a learned memory + a recommendation.
-        let written = generate_for_project(&ctx, &pid).await.unwrap();
+        let written = generate_for_workspace(&ctx, &pid).await.unwrap();
         assert!(written >= 2, "expected memory + recommendation, got {written}");
         assert!(
             pg.recommendation_exists_for_pattern(&pid, &pat_id).await.unwrap(),
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(origin, "learned");
 
         // The analyzer's real write path anchors it: category/mtype="convention"
-        // → default_slot → "design" (project scope, so no feature).
+        // → default_slot → "design" (workspace scope, so no feature).
         let anchor: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
             "SELECT spine_slot::text, feature FROM sensei.memories WHERE source_id = $1",
         )
@@ -528,10 +528,10 @@ mod tests {
             Some("design"),
             "analyzer memory self-anchors into the design slot"
         );
-        assert_eq!(anchor.1, None, "analyzer memories are project-scope — no feature");
+        assert_eq!(anchor.1, None, "analyzer memories are workspace-scope — no feature");
 
         // Second run: idempotent — nothing new.
-        let again = generate_for_project(&ctx, &pid).await.unwrap();
+        let again = generate_for_workspace(&ctx, &pid).await.unwrap();
         assert_eq!(again, 0, "re-run must not duplicate");
 
         // cleanup (best-effort)

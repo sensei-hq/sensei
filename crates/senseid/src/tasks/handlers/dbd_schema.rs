@@ -57,7 +57,7 @@ pub async fn import_dbd_schema(ctx: &TaskContext, task: &Task) -> Result<u32, St
     // The package the SQL walk placed this design's DDL under. A manifest that
     // names none placed nothing, so there are no nodes to describe.
     let Some(package) = crate::indexer::placement::package_named_by(&design, &text) else {
-        tracing::info!(design = %design.display(), "import_dbd_schema: the design names no project — its DDL is not placed either");
+        tracing::info!(design = %design.display(), "import_dbd_schema: the design names no workspace — its DDL is not placed either");
         return Ok(0);
     };
 

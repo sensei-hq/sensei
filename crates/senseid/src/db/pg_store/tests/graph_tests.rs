@@ -198,7 +198,7 @@ async fn a_lib_node_records_the_language_that_minted_it() {
     // could be refused when a lib symbol of that name is in scope — but with no
     // language on the lib node the guard is unavoidably cross-language and would
     // refuse a Rust `Session` because a PYTHON package exports that name.
-    // Measured: 23 first-party rust type names collide this way project-wide
+    // Measured: 23 first-party rust type names collide this way workspace-wide
     // (Action, Column, Config, Gateway, Message, Node, Plan, Request, Session,
     // Table, Transport, ...).
     let s = pg_store().await;
@@ -261,7 +261,7 @@ async fn a_lib_node_records_the_language_that_minted_it() {
 
 #[tokio::test]
 async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_cannot_be() {
-    // 02b S9 end to end through the store. A project on 1.2 handed 3.0's docs
+    // 02b S9 end to end through the store. A workspace on 1.2 handed 3.0's docs
     // gets a confident answer about an API it does not have; the label is what
     // makes that answer usable instead of wrong (R4).
     let s = pg_store().await;
@@ -1835,7 +1835,7 @@ async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
 /// string and every reference would miss. It follows that N files legitimately
 /// map to one fqn, and one fqn must mean one node.
 ///
-/// An Android project makes this concrete: `app/src/panama/java/…/Color.kt` and
+/// An Android workspace makes this concrete: `app/src/panama/java/…/Color.kt` and
 /// `app/src/ecuador/java/…/Color.kt` each declare `val colorPrimary` in one
 /// package. MEASURED over that 245-file repo: 423 distinct top-level
 /// declarations, 26 colliding, all 26 `val`.
@@ -2424,7 +2424,7 @@ async fn graph_nodes_and_tree_expose_fqn_and_containers() {
     assert_eq!(
         method["fqn"].as_str(),
         Some(method_fqn),
-        "get_nodes_scoped projects the node's fqn"
+        "get_nodes_scoped workspaces the node's fqn"
     );
     assert_eq!(method["resolved"].as_bool(), Some(true), "and its resolved flag");
     assert_eq!(

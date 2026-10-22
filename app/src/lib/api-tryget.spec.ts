@@ -36,36 +36,36 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryGetConsolidatedRuleset', call: () => api().tryGetConsolidatedRuleset(), body: null },
   { name: 'tryGetShareReviewBatch', call: () => api().tryGetShareReviewBatch(), body: { batch: null } },
   { name: 'tryGetCollectivePreferences', call: () => api().tryGetCollectivePreferences(), body: { destination: 'none' } },
-  { name: 'tryGetProjectLibraries', call: () => api().tryGetProjectLibraries('p1'), body: { libraries: [] } },
-  { name: 'tryGetProjectLibraryVersionConflicts', call: () => api().tryGetProjectLibraryVersionConflicts('p1'), body: { conflicts: [] } },
+  { name: 'tryGetWorkspaceLibraries', call: () => api().tryGetWorkspaceLibraries('p1'), body: { libraries: [] } },
+  { name: 'tryGetWorkspaceLibraryVersionConflicts', call: () => api().tryGetWorkspaceLibraryVersionConflicts('p1'), body: { conflicts: [] } },
   // #288 — Observatory · Today.
   { name: 'tryGetObservatoryToday', call: () => api().tryGetObservatoryToday(), body: { dataMaturity: 'mature' } },
   { name: 'tryGetObservatoryFtr', call: () => api().tryGetObservatoryFtr(), body: { ftr14d: 0.8 } },
-  // #288 — projects index and project layout.
-  { name: 'tryGetProjectFtr', call: () => api().tryGetProjectFtr('p1'), body: { ftr14d: 0.8 } },
-  { name: 'tryGetProjectQualitySignals', call: () => api().tryGetProjectQualitySignals('p1'), body: { ftr_7d: 0.9 } },
-  { name: 'tryListProjects', call: () => api().tryListProjects(), body: [] },
+  // #288 — workspaces index and workspace layout.
+  { name: 'tryGetWorkspaceFtr', call: () => api().tryGetWorkspaceFtr('p1'), body: { ftr14d: 0.8 } },
+  { name: 'tryGetWorkspaceQualitySignals', call: () => api().tryGetWorkspaceQualitySignals('p1'), body: { ftr_7d: 0.9 } },
+  { name: 'tryListWorkspaces', call: () => api().tryListWorkspaces(), body: [] },
   // #288 — Impact and Traceability.
-  { name: 'tryGetProjectImpact', call: () => api().tryGetProjectImpact('p1'), body: [] },
+  { name: 'tryGetWorkspaceImpact', call: () => api().tryGetWorkspaceImpact('p1'), body: [] },
   { name: 'tryListImpactVerdicts', call: () => api().tryListImpactVerdicts('p1'), body: { verdicts: [] } },
-  { name: 'tryGetProjectDrift', call: () => api().tryGetProjectDrift('p1'), body: { items: [], total: 0 } },
-  { name: 'tryScanProjectDrift', call: () => api().tryScanProjectDrift('p1'), body: { scannedDocs: 2 } },
+  { name: 'tryGetWorkspaceDrift', call: () => api().tryGetWorkspaceDrift('p1'), body: { items: [], total: 0 } },
+  { name: 'tryScanWorkspaceDrift', call: () => api().tryScanWorkspaceDrift('p1'), body: { scannedDocs: 2 } },
   // #288 — Upgrades and the recommendation decision.
   { name: 'tryGetUpgrades', call: () => api().tryGetUpgrades(), body: { artifacts: [], unread_count: 0 } },
   { name: 'tryPreviewRecommendation', call: () => api().tryPreviewRecommendation('p1', 'r1'), body: { materializable: true } },
   { name: 'tryMaterializeRecommendation', call: () => api().tryMaterializeRecommendation('p1', 'r1', {}), body: { ok: true } },
-  { name: 'tryAcceptProjectRecommendation', call: () => api().tryAcceptProjectRecommendation('p1', 'r1'), body: { ok: true } },
-  { name: 'tryRejectProjectRecommendation', call: () => api().tryRejectProjectRecommendation('p1', 'r1'), body: { ok: true } },
+  { name: 'tryAcceptWorkspaceRecommendation', call: () => api().tryAcceptWorkspaceRecommendation('p1', 'r1'), body: { ok: true } },
+  { name: 'tryRejectWorkspaceRecommendation', call: () => api().tryRejectWorkspaceRecommendation('p1', 'r1'), body: { ok: true } },
   // #288 — Insights.
   { name: 'tryGetInsights', call: () => api().tryGetInsights('p1'), body: { counts: { now: 0 } } },
   // #288 — Sessions.
   { name: 'tryGetSessionsDigest', call: () => api().tryGetSessionsDigest('7d', 'p1'), body: { sessions: [] } },
   { name: 'tryGetSessions', call: () => api().tryGetSessions(), body: { stats: null, sessions: [] } },
-  // #288 — project Instruments and Memories.
-  { name: 'tryGetProjectInstruments', call: () => api().tryGetProjectInstruments('p1'), body: { tools: [] } },
-  { name: 'tryGetProjectMcpToolStats', call: () => api().tryGetProjectMcpToolStats('p1'), body: { tools: [] } },
-  { name: 'tryListProjectServices', call: () => api().tryListProjectServices('p1'), body: { services: [] } },
-  { name: 'tryGetProjectMemories', call: () => api().tryGetProjectMemories('p1'), body: { active: [], total: 0 } },
+  // #288 — workspace Instruments and Memories.
+  { name: 'tryGetWorkspaceInstruments', call: () => api().tryGetWorkspaceInstruments('p1'), body: { tools: [] } },
+  { name: 'tryGetWorkspaceMcpToolStats', call: () => api().tryGetWorkspaceMcpToolStats('p1'), body: { tools: [] } },
+  { name: 'tryListWorkspaceServices', call: () => api().tryListWorkspaceServices('p1'), body: { services: [] } },
+  { name: 'tryGetWorkspaceMemories', call: () => api().tryGetWorkspaceMemories('p1'), body: { active: [], total: 0 } },
   { name: 'tryListMemoryShareBatches', call: () => api().tryListMemoryShareBatches('p1', 'proposed'), body: { batches: [] } },
   // #288 — Libraries.
   { name: 'tryGetLibs', call: () => api().tryGetLibs({}), body: { total: 0, libs: [] } },
@@ -91,7 +91,7 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryGetScanRoots', call: () => api().tryGetScanRoots(), body: [] },
   // #288 — the last five.
   { name: 'tryGetHealth', call: () => api().tryGetHealth(), body: { daemonDbMode: 'full' } },
-  { name: 'tryGetProjectTools', call: () => api().tryGetProjectTools('p1'), body: { tools: [], count: 0 } },
+  { name: 'tryGetWorkspaceTools', call: () => api().tryGetWorkspaceTools('p1'), body: { tools: [], count: 0 } },
   { name: 'tryGetIntakeGuide', call: () => api().tryGetIntakeGuide(), body: { frame: '', axes: [], playbooks: [] } },
   { name: 'tryListMemories', call: () => api().tryListMemories({ status: 'active' }), body: { memories: [] } },
   { name: 'tryListKnowledgeSources', call: () => api().tryListKnowledgeSources(), body: { sources: [] } },
@@ -100,7 +100,7 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryGetCommunities', call: () => api().tryGetCommunities('r'), body: [] },
   { name: 'tryDetectCommunities', call: () => api().tryDetectCommunities('r'), body: { ok: true, communities: 2 } },
   { name: 'tryGetCallFlow', call: () => api().tryGetCallFlow('r'), body: { moduleCount: 1 } },
-  { name: 'tryGetProjectGraph', call: () => api().tryGetProjectGraph('p1'), body: { repos: 1 } },
+  { name: 'tryGetWorkspaceGraph', call: () => api().tryGetWorkspaceGraph('p1'), body: { repos: 1 } },
 ];
 
 describe('F8 · error-propagating loaders (no fabrication on failure)', () => {

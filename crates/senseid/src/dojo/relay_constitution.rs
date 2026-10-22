@@ -1,10 +1,10 @@
-//! Compose a project's resolved constitution for dōjō federation.
+//! Compose a workspace's resolved constitution for dōjō federation.
 //!
 //! The daemon owns the authority resolution (dedup + mandatory locks + the
 //! discards the ladder makes); the dōjō only DISPLAYS it (resolved design Q2/Q3).
 //! This maps a folder's resolved [`RawRule`]s — already ordered strongest-first
 //! by [`crate::db::pg_store::PgStore::resolve_rules_raw`] — onto the wire
-//! [`RelayConstitution`] the dōjō's project-detail preview renders: the effective
+//! [`RelayConstitution`] the dōjō's workspace-detail preview renders: the effective
 //! rules (carried in the daemon's own `scope_key`/`enforcement` vocabulary so the
 //! dōjō reuses its existing scope→rung display map), the discards (a weaker
 //! duplicate that lost to a higher-authority scope), and the ★-lock count. Pure —

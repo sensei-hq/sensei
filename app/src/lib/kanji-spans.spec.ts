@@ -4,9 +4,9 @@ import { join } from 'path';
 
 // #133: a kanji written as a bare `class="kanji"` element never sees the glyph
 // preference. Every mark goes through <Kanji>, which can render its icon; only
-// Kanji itself and ProjectGlyph (a project identity with an image fallback)
+// Kanji itself and WorkspaceGlyph (a workspace identity with an image fallback)
 // write the class directly.
-const ALLOWED = ['lib/components/Kanji.svelte', 'projects/ProjectGlyph.svelte'];
+const ALLOWED = ['lib/components/Kanji.svelte', 'workspaces/WorkspaceGlyph.svelte'];
 
 function svelteFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {

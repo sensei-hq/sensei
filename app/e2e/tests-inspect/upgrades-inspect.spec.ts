@@ -2,7 +2,7 @@
  * #288 against the REAL daemon: both Upgrades lanes show the daemon's reads —
  * the local count equals the installable pending recs fanned out here, the
  * dōjō count equals `/api/upgrades` (or, if the daemon cannot reach the dōjō,
- * its lane says so) — with no project left unread.
+ * its lane says so) — with no workspace left unread.
  * Run: `bun run test:inspect -- upgrades`.
  */
 import { expect, test } from '../fixtures';
@@ -12,9 +12,9 @@ const INSTALLABLE = new Set(['write_skill', 'create_agent', 'revise_rule', 'enri
 
 test('upgrades shows the daemon reads', async ({ tauriPage }) => {
   test.setTimeout(180_000);
-  const projects: { id: string }[] = await (await fetch(`${DAEMON_URL}/api/projects`)).json();
+  const workspaces: { id: string }[] = await (await fetch(`${DAEMON_URL}/api/workspaces`)).json();
   const recs = await Promise.all(
-    projects.map(async (p) => (await fetch(`${DAEMON_URL}/api/projects/${p.id}/recommendations?status=pending`)).json()),
+    workspaces.map(async (p) => (await fetch(`${DAEMON_URL}/api/workspaces/${p.id}/recommendations?status=pending`)).json()),
   );
   const local = recs.flat().filter((r: { action_type?: string; actionType?: string }) =>
     INSTALLABLE.has(r.action_type ?? r.actionType ?? '')).length;
@@ -27,7 +27,7 @@ test('upgrades shows the daemon reads', async ({ tauriPage }) => {
     dojo: document.querySelector('[data-dojo-total]')?.getAttribute('data-dojo-total') ?? null,
     dojoError: document.querySelector('[data-lane="dojo"] [data-screen-state="error"]')?.textContent?.trim() ?? null,
     localError: document.querySelector('[data-lane="local"] [data-screen-state="error"]')?.textContent?.trim() ?? null,
-    unread: document.querySelectorAll('[data-unread-projects]').length,
+    unread: document.querySelectorAll('[data-unread-workspaces]').length,
   })`)) as Record<string, string | number | null>;
   console.log(`\n[inspect] upgrades ${JSON.stringify(seen)} (daemon: local ${local}, dojo ${dojo ?? `HTTP ${dojoRes.status}`})`);
   expect([seen.localError, seen.unread]).toEqual([null, 0]);

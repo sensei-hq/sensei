@@ -9,7 +9,7 @@ afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 
 const memory = (over: Partial<ViolationCardVm> = {}): ViolationCardVm => ({
   id: 'm1',
-  projectId: 'p1',
+  workspaceId: 'p1',
   title: 'Never build against the live dev server',
   content: 'A reload storm caused a partial render on 2026-05-11',
   violatedCount: 3,

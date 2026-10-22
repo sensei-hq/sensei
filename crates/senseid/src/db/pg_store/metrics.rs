@@ -225,22 +225,23 @@ impl PgStore {
     // ── Observatory views ──────────────────────────────────────────────
 
     /// Daily FTR sparkline. Re-sourced from the daily `ftr` rows in
-    /// `sensei.project_metric_daily` (metric='ftr') — the single FTR source of
+    /// `sensei.workspace_metric_daily` (metric='ftr') — the single FTR source of
     /// truth: `ftr_rate` = the stored `value` (num/den), `session_count` =
-    /// `props.denominator`. Per-project rows read straight through (one row per
-    /// day). The holistic (no project filter) branch POOLS the parts per day —
+    /// `props.denominator`. Per-workspace rows read straight through (one row per
+    /// day). The holistic (no workspace filter) branch POOLS the parts per day —
     /// Σnumerator / Σdenominator — so it stays session-weighted and consistent
-    /// with every other rollup, honouring the `project_metrics` invariant that
+    /// with every other rollup, honouring the `workspace_metrics` invariant that
     /// ratios re-derive from their parts (never an average-of-averages). Response
     /// shape unchanged (`{day, ftr_rate, session_count}`);
     /// `props.correction_count`/`avg_turns` are carried in the store but were
     /// never part of this getter's shape, so they stay unexposed.
     pub async fn get_ftr_daily(
         &self,
-        project_id: Option<&uuid::Uuid>,
+        workspace_id: Option<&uuid::Uuid>,
         days: i32,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(chrono::NaiveDate, Option<f64>, Option<i64>)> = if let Some(pid) = project_id
+        let rows: Vec<(chrono::NaiveDate, Option<f64>, Option<i64>)> = if let Some(pid) =
+            workspace_id
         {
             sqlx_core::query_as::query_as(
                 "SELECT d.date, d.value::float8, (d.props->>'denominator')::int8
@@ -265,7 +266,7 @@ impl PgStore {
 
     pub async fn get_hotspots(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         days: i32,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, String, i64, i64)> = sqlx_core::query_as::query_as(
@@ -274,7 +275,7 @@ impl PgStore {
              WHERE workspace_id = $1 AND last_event_at >= (now() - ($2::int || ' days')::interval)
              ORDER BY (edit_count + correction_count) DESC LIMIT 20",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(days)
         .fetch_all(&self.pool)
         .await
@@ -286,12 +287,12 @@ impl PgStore {
 
     pub async fn get_quality_signals(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<serde_json::Value, String> {
         let row: Option<(f64, Option<f64>, i64, Option<f64>)> = sqlx_core::query_as::query_as(
             "SELECT ftr_7d::float8, pattern_compliance::float8, open_drift_count, test_pass_rate::float8
              FROM sensei.workspace_quality_signals WHERE workspace_id = $1"
-        ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(workspace_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(match row {
             Some((ftr, compliance, drift, tests)) => serde_json::json!({
                 "ftr_7d": ftr, "pattern_compliance": compliance,
@@ -303,44 +304,44 @@ impl PgStore {
         })
     }
 
-    /// Upsert one `sensei.project_metrics` row, keyed on its identity
-    /// `(metric_id, project_id, folder_id, session_id, computed_on, grain)` — the
-    /// `project_metrics_identity` unique index (`nulls not distinct`, so a
-    /// project-scope / daily-grain row's null `folder_id`/`session_id` collide
+    /// Upsert one `sensei.workspace_metrics` row, keyed on its identity
+    /// `(metric_id, workspace_id, folder_id, session_id, computed_on, grain)` — the
+    /// `workspace_metrics_identity` unique index (`nulls not distinct`, so a
+    /// workspace-scope / daily-grain row's null `folder_id`/`session_id` collide
     /// rather than duplicate). A re-run with the same identity BACKFILLS in place —
     /// updates `value`, `props`, `source` and bumps `modified_at` — so the compute
     /// tasks are idempotent. Returns the row id. `grain` is the
     /// `sensei.metric_grain` enum (`daily`|`session`); `source` the
     /// `sensei.metric_source` enum (`measured`|`estimated`).
     ///
-    /// `project_metrics_identity` is a unique INDEX, not a named constraint, so the
+    /// `workspace_metrics_identity` is a unique INDEX, not a named constraint, so the
     /// conflict target is the column list — Postgres infers the arbiter index
     /// (honouring its `nulls not distinct`); `ON CONFLICT ON CONSTRAINT <name>`
     /// would not resolve against an index.
     #[allow(clippy::too_many_arguments)]
-    /// Metric correlations for a project: which signals move together.
+    /// Metric correlations for a workspace: which signals move together.
     ///
-    /// Reads the daily project-scope values as (project, day) CELLS and the
+    /// Reads the daily workspace-scope values as (workspace, day) CELLS and the
     /// registry's `derives_from` suppression lists, then defers to
     /// [`crate::correlate::correlations`] for the statistics — the maths is pure
     /// and unit-tested there, this only supplies observations.
-    /// `project_id = None` correlates across EVERY project (the portfolio view).
+    /// `workspace_id = None` correlates across EVERY workspace (the portfolio view).
     ///
-    /// That is usually the useful call. Per project the data is thin — measured
-    /// here, most projects have zero daily rows and the busiest yields exactly one
+    /// That is usually the useful call. Per workspace the data is thin — measured
+    /// here, most workspaces have zero daily rows and the busiest yields exactly one
     /// reportable pair — because a correlation needs both metrics present on the
-    /// same day, repeatedly. Pooling projects raises the paired count enough for
+    /// same day, repeatedly. Pooling workspaces raises the paired count enough for
     /// the weaker-but-real relationships to clear the gates, at the cost of mixing
     /// codebases: a portfolio finding describes how the SIGNALS relate, not how one
-    /// project behaves.
+    /// workspace behaves.
     pub async fn get_metric_correlations(
         &self,
-        project_id: Option<&uuid::Uuid>,
+        workspace_id: Option<&uuid::Uuid>,
     ) -> Result<serde_json::Value, String> {
-        // Cells are keyed by (project, day) even in the portfolio view: pooling two
-        // projects' values into one day would correlate unrelated codebases and
+        // Cells are keyed by (workspace, day) even in the portfolio view: pooling two
+        // workspaces' values into one day would correlate unrelated codebases and
         // manufacture a relationship that exists in neither. So a row of a
-        // repository in NO project (NULL project_id) cannot be a cell, and is not
+        // repository in NO workspace (NULL workspace_id) cannot be a cell, and is not
         // read — decoding it failed the whole portfolio with a 500.
         let obs: Vec<(uuid::Uuid, chrono::NaiveDate, String, f64)> = sqlx_core::query_as::query_as(
             "SELECT pm.workspace_id, pm.computed_on, m.key, pm.value::float8 \
@@ -351,7 +352,7 @@ impl PgStore {
                 AND pm.grain = 'daily' \
                 AND pm.scope = 'user' AND pm.value IS NOT NULL",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -391,14 +392,14 @@ impl PgStore {
     /// this number and that copy have to agree.
     const HEALTH_TREND_WEEKS: i64 = 12;
 
-    /// Project health from the rating views (spec 2026-08-20): the weighted 0–100
+    /// Workspace health from the rating views (spec 2026-08-20): the weighted 0–100
     /// `health_score` + per-metric 0–5 `ratings` (the radar spokes) + the `components`
     /// map the score was built from. `health_score`/`components` are null when nothing
     /// is rated yet (honest-empty — never a fabricated 0). `ratings` lists EVERY metric
     /// with a current reading (rated or not) so the radar can show all spokes + values.
-    pub async fn get_project_health(
+    pub async fn get_workspace_health(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<serde_json::Value, String> {
         let ratings: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
             "SELECT jsonb_build_object( \
@@ -407,7 +408,7 @@ impl PgStore {
                FROM sensei.metric_ratings WHERE workspace_id = $1 \
               ORDER BY family::text, metric",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -415,7 +416,7 @@ impl PgStore {
             "SELECT health_score, rated_metrics, components \
                FROM sensei.workspace_health_score WHERE workspace_id = $1",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -430,7 +431,7 @@ impl PgStore {
         // there is no stored-and-recomputed second copy of the number.
         //
         // BOUNDED to the last `HEALTH_TREND_WEEKS`. The view keeps every period, so
-        // an unbounded read grows forever — a three-year-old project would ship
+        // an unbounded read grows forever — a three-year-old workspace would ship
         // ~156 points on every metrics load and cram them into a 240px sparkline.
         // Newest-first inside the subquery to apply the limit, then re-sorted
         // oldest-first because that is the order a sparkline plots.
@@ -444,7 +445,7 @@ impl PgStore {
              ) recent \
              ORDER BY period",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(Self::HEALTH_TREND_WEEKS)
         .fetch_all(&self.pool)
         .await
@@ -460,7 +461,7 @@ impl PgStore {
         }))
     }
 
-    pub async fn upsert_project_metric_repo(
+    pub async fn upsert_workspace_metric_repo(
         &self,
         row: &MetricRow<'_>,
     ) -> Result<uuid::Uuid, String> {
@@ -483,8 +484,8 @@ impl PgStore {
             props,
             source,
         } = row;
-        // Writes target the TABLE, never the `project_metrics` compatibility view:
-        // the view's project_id is derived and has no inverse, so an insert through
+        // Writes target the TABLE, never the `workspace_metrics` compatibility view:
+        // the view's workspace_id is derived and has no inverse, so an insert through
         // it could not know which repository the value belongs to.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.repository_metrics
@@ -521,7 +522,7 @@ impl PgStore {
     /// metric_key, value)` — the datapoints the compute-time explainer enrichment
     /// (see [`crate::tasks::handlers::metrics::explainer`]) annotates. Scoped to the
     /// group via the metric's `task_name`, to the local-user value via `scope =
-    /// 'user'` (the same rows `sensei.project_metric_daily` pools to the project),
+    /// 'user'` (the same rows `sensei.workspace_metric_daily` pools to the workspace),
     /// and to daily grain. Under the repo grain the `_v2` identity carries no
     /// `folder_id`/`session_id`, so this now returns one row PER REPOSITORY the
     /// group wrote for the day (each row_id gets its own explainer). Empty when the
@@ -529,7 +530,7 @@ impl PgStore {
     /// read error; never masks it.
     pub async fn get_group_daily_metrics_for_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         task_name: &str,
         day: chrono::NaiveDate,
     ) -> Result<Vec<(uuid::Uuid, String, f64)>, String> {
@@ -544,7 +545,7 @@ impl PgStore {
                 AND pm.computed_on = $3
               ORDER BY m.key",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(task_name)
         .bind(day)
         .fetch_all(&self.pool)
@@ -553,16 +554,16 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// The immediately-prior day's POOLED project value for one metric — the
+    /// The immediately-prior day's POOLED workspace value for one metric — the
     /// `prev_value` the explainer's `delta` is measured against. Reads the most
-    /// recent row of the `sensei.project_metric_daily` VIEW (the repo-grain rows
-    /// already pooled to the project) with `date < day` for that metric key, so the
+    /// recent row of the `sensei.workspace_metric_daily` VIEW (the repo-grain rows
+    /// already pooled to the workspace) with `date < day` for that metric key, so the
     /// delta compares like-for-like against today's pooled value rather than a
     /// single repository's base row. `None` when this is the metric's first day
     /// (honest-null, never a fabricated 0). Propagates the read error; never masks it.
     pub async fn get_prev_daily_metric_value(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         key: &str,
         day: chrono::NaiveDate,
     ) -> Result<Option<f64>, String> {
@@ -575,7 +576,7 @@ impl PgStore {
               ORDER BY d.date DESC
               LIMIT 1",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(key)
         .bind(day)
         .fetch_optional(&self.pool)
@@ -584,15 +585,15 @@ impl PgStore {
         Ok(row.map(|(v,)| v))
     }
 
-    /// One day's measurable session-outcome counts for a project — `(total,
+    /// One day's measurable session-outcome counts for a workspace — `(total,
     /// completed, first_try)` — the day context the explainer grounds in. Same
-    /// measurable base as [`Self::get_project_sessions_for_day`] (folder-join scope,
+    /// measurable base as [`Self::get_workspace_sessions_for_day`] (folder-join scope,
     /// `outcome IS NOT NULL`, day pinned on `date_trunc('day', started_at)`), read as
     /// one cheap COUNT-by-outcome. All-zero when no measurable session ran that day
     /// (honest, never fabricated). Propagates the read error; never masks it.
     pub async fn get_day_session_outcome_counts(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         day: chrono::NaiveDate,
     ) -> Result<(i64, i64, i64), String> {
         let row: (i64, i64, i64) = sqlx_core::query_as::query_as(
@@ -606,7 +607,7 @@ impl PgStore {
                 AND s.outcome   <> 'empty'::sensei.session_outcome
                 AND date_trunc('day', s.started_at)::date = $2",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(day)
         .fetch_one(&self.pool)
         .await
@@ -614,7 +615,7 @@ impl PgStore {
         Ok(row)
     }
 
-    /// MERGE the per-datapoint `explainer` into one project_metrics row's `props`,
+    /// MERGE the per-datapoint `explainer` into one workspace_metrics row's `props`,
     /// preserving every other key (`props || jsonb_build_object('explainer', …)` —
     /// so `numerator`/`denominator`/`n`/… survive). Runs AFTER the value upsert
     /// (whose `ON CONFLICT` overwrites `props` wholesale), so the merge is the last
@@ -916,8 +917,8 @@ impl PgStore {
 
     /// Resolve a repository reference — a `repo_key` OR a uuid — to its id.
     ///
-    /// Both forms, mirroring the name-or-uuid convention the project endpoints
-    /// already use (`resolve_project_uuid`): a repository's `repo_key` is null when
+    /// Both forms, mirroring the name-or-uuid convention the workspace endpoints
+    /// already use (`resolve_workspace_uuid`): a repository's `repo_key` is null when
     /// it has no remote, so a key-only lookup would make local-only repositories
     /// unaddressable even though their metrics compute normally.
     ///
@@ -990,19 +991,19 @@ impl PgStore {
         Ok(row.and_then(|(k,)| k))
     }
 
-    /// Latest stored value per metric for a project, with the catalog facets it is
-    /// read through — reads `sensei.project_metric_daily` (project-scope daily
+    /// Latest stored value per metric for a workspace, with the catalog facets it is
+    /// read through — reads `sensei.workspace_metric_daily` (workspace-scope daily
     /// rows) and keeps the newest `date` per metric (`DISTINCT ON`), joining
     /// `sensei.metrics` for name/type/unit/direction/purpose/how_to_read. Empty
-    /// when the project has no daily rows yet (honest-empty, not a failure). Trend
+    /// when the workspace has no daily rows yet (honest-empty, not a failure). Trend
     /// (prior/delta over `workspace_metric_trend`) is deferred to the Phase 7
     /// endpoint.
-    pub async fn get_project_metrics(
+    pub async fn get_workspace_metrics(
         &self,
-        project_id: &uuid::Uuid,
-    ) -> Result<Vec<ProjectMetricRow>, String> {
+        workspace_id: &uuid::Uuid,
+    ) -> Result<Vec<WorkspaceMetricRow>, String> {
         // Only ACTIVE metrics: a RETIRED metric (past `effective_until`, e.g.
-        // project_health) leaves durable rows in project_metrics — retirement is
+        // workspace_health) leaves durable rows in workspace_metrics — retirement is
         // "in place, never hand-delete a row" — so the values read must exclude
         // them by the active window, or the stale rows keep rendering as a card.
         // Same predicate the registry endpoint uses (effective_from/until resolve
@@ -1029,7 +1030,7 @@ impl PgStore {
             String,
             String,
         )> = sqlx_core::query_as::query_as(&sql)
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -1047,7 +1048,7 @@ impl PgStore {
                     direction,
                     purpose,
                     how_to_read,
-                )| ProjectMetricRow {
+                )| WorkspaceMetricRow {
                     metric,
                     date,
                     value,
@@ -1063,17 +1064,17 @@ impl PgStore {
             .collect())
     }
 
-    /// Latest weekly trend point per metric for a project — reads
-    /// `sensei.project_metric_trend` (the weekly `lag()` view), keeping the newest
-    /// `period` per metric (`DISTINCT ON`). Powers the trend arrow on the project
+    /// Latest weekly trend point per metric for a workspace — reads
+    /// `sensei.workspace_metric_trend` (the weekly `lag()` view), keeping the newest
+    /// `period` per metric (`DISTINCT ON`). Powers the trend arrow on the workspace
     /// metrics endpoint: `prior`/`delta` are `None` for a metric with a single
-    /// weekly period (honest-null, never a fabricated 0). Empty when the project
+    /// weekly period (honest-null, never a fabricated 0). Empty when the workspace
     /// has no daily rows yet (honest-empty, not a failure). Propagates the read
     /// error; never masks it.
-    pub async fn get_project_metric_trend(
+    pub async fn get_workspace_metric_trend(
         &self,
-        project_id: &uuid::Uuid,
-    ) -> Result<Vec<ProjectMetricTrendRow>, String> {
+        workspace_id: &uuid::Uuid,
+    ) -> Result<Vec<WorkspaceMetricTrendRow>, String> {
         let rows: Vec<(String, chrono::NaiveDate, f64, Option<f64>, Option<f64>, String)> =
             sqlx_core::query_as::query_as(
                 "SELECT DISTINCT ON (metric)
@@ -1082,13 +1083,13 @@ impl PgStore {
                   WHERE workspace_id = $1
                   ORDER BY metric, period DESC",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(metric, period, value, prior, delta, direction)| ProjectMetricTrendRow {
+            .map(|(metric, period, value, prior, delta, direction)| WorkspaceMetricTrendRow {
                 metric,
                 period,
                 value,
@@ -1099,13 +1100,13 @@ impl PgStore {
             .collect())
     }
 
-    /// The time series for ONE metric of a project at a chosen `grain`, read from
+    /// The time series for ONE metric of a workspace at a chosen `grain`, read from
     /// the matching roll-up view: `daily` → `workspace_metric_daily` (raw stored
     /// values); `weekly`/`monthly`/`quarterly` → the roll-up view that re-derives
     /// each period from sums (Σnum/Σden for ratio/pct — NEVER the mean of daily
     /// ratios). `grain` MUST be one of `daily`|`weekly`|`monthly`|`quarterly`; any
     /// other value is an `Err` (the caller 400s) rather than a silent default that
-    /// would mismeasure. An unknown metric key — or a project with no rows — yields
+    /// would mismeasure. An unknown metric key — or a workspace with no rows — yields
     /// an empty `points` list (honest-empty, not a failure). Propagates the read
     /// error; never masks it.
     ///
@@ -1114,12 +1115,12 @@ impl PgStore {
     /// from `sensei.metrics` by key — independent of the view — so it is present
     /// even when `points` is empty (a valid metric with no data yet) and is `None`
     /// only when the key names no registered metric (honest-null).
-    pub async fn get_project_metric_series(
+    pub async fn get_workspace_metric_series(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         key: &str,
         grain: &str,
-    ) -> Result<ProjectMetricSeries, String> {
+    ) -> Result<WorkspaceMetricSeries, String> {
         // The view + its period column are chosen from a fixed allowlist keyed on
         // the validated grain — no user-supplied string ever reaches the SQL, so
         // the `format!` is injection-safe.
@@ -1142,14 +1143,14 @@ impl PgStore {
         );
         let rows: Vec<(chrono::NaiveDate, f64, String, Option<String>)> =
             sqlx_core::query_as::query_as(&sql)
-                .bind(project_id)
+                .bind(workspace_id)
                 .bind(key)
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| e.to_string())?;
         let points = rows
             .into_iter()
-            .map(|(period, value, direction, explainer)| ProjectMetricSeriesPoint {
+            .map(|(period, value, direction, explainer)| WorkspaceMetricSeriesPoint {
                 period,
                 value,
                 direction,
@@ -1166,14 +1167,14 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?
         .map(|(f,)| f);
-        Ok(ProjectMetricSeries { formula, points })
+        Ok(WorkspaceMetricSeries { formula, points })
     }
 
     /// The descriptive meaning of ONE metric by registry key — its display `name`
     /// and `how_to_read` line — for grounding the drill-down's per-session
     /// observation. Reads `sensei.metrics` by key (the same by-key path
-    /// [`Self::get_project_metric_series`] reads `formula` through), independent of
-    /// any project rows. `None` when the key names no registered metric
+    /// [`Self::get_workspace_metric_series`] reads `formula` through), independent of
+    /// any workspace rows. `None` when the key names no registered metric
     /// (honest-null, never a fabricated meaning). Propagates the read error; never
     /// masks it.
     pub async fn get_metric_meaning(
@@ -1190,17 +1191,17 @@ impl PgStore {
         Ok(row.map(|(name, how_to_read)| crate::db::pg_store::MetricMeaning { name, how_to_read }))
     }
 
-    /// The full daily series (chronological) for EVERY metric of a project, in a
-    /// single query — reads `sensei.project_metric_daily` (project scope) and
+    /// The full daily series (chronological) for EVERY metric of a workspace, in a
+    /// single query — reads `sensei.workspace_metric_daily` (workspace scope) and
     /// groups the values by metric, keeping each metric's points in `date` order.
     /// Powers the narrative's overall-trend fact: the direction the daily
     /// sparkline shows, so a rising `lower_better` metric reads as worsening even
-    /// when its most-recent weekly step dipped. Empty when the project has no
+    /// when its most-recent weekly step dipped. Empty when the workspace has no
     /// daily rows yet (honest-empty, not a failure). Propagates the read error;
     /// never masks it.
-    pub async fn get_project_metric_daily_series_all(
+    pub async fn get_workspace_metric_daily_series_all(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<std::collections::HashMap<String, Vec<f64>>, String> {
         let rows: Vec<(String, f64)> = sqlx_core::query_as::query_as(
             "SELECT metric, value::float8
@@ -1208,7 +1209,7 @@ impl PgStore {
               WHERE workspace_id = $1
               ORDER BY metric, date",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1250,12 +1251,12 @@ impl PgStore {
         Ok(crate::model_insight::fold_effectiveness(raw))
     }
 
-    /// Per-(provider, canonical-model) FTR over a project's enriched, model-tagged
+    /// Per-(provider, canonical-model) FTR over a workspace's enriched, model-tagged
     /// sessions — the input to the model-effectiveness recommendation. Label
     /// variants are folded to a canonical model (model_insight::fold_model_stats).
-    pub async fn get_project_model_stats(
+    pub async fn get_workspace_model_stats(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<crate::model_insight::ModelStat>, String> {
         let rows: Vec<(Option<String>, String, i64, i64)> = sqlx_core::query_as::query_as(
             "SELECT provider, model, count(*) AS sessions,
@@ -1264,7 +1265,7 @@ impl PgStore {
               WHERE workspace_id = $1 AND model IS NOT NULL AND analyzed_at IS NOT NULL
               GROUP BY provider, model",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1277,18 +1278,18 @@ impl PgStore {
         Ok(crate::model_insight::fold_model_stats(raw))
     }
 
-    pub async fn get_project_ftr(
+    pub async fn get_workspace_ftr(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<serde_json::Value, String> {
         // Headline re-derived from the daily `ftr` rows in
-        // `sensei.project_metric_daily` (metric='ftr') — the single FTR source of
-        // truth. `ftr14d` reuses [`Self::get_project_ftr_rate`] (same 14d Σnum/Σden)
+        // `sensei.workspace_metric_daily` (metric='ftr') — the single FTR source of
+        // truth. `ftr14d` reuses [`Self::get_workspace_ftr_rate`] (same 14d Σnum/Σden)
         // so the window can't drift between the two; `ftr14dPrev` is the same
         // pooled ratio over the prior-14d window and `sessions7d` is Σdenominator
         // over 7d. Scoped to the analyzed base (`outcome is not null`, the store's
         // denominator); `nullif(...,0)` keeps an empty window honest-null.
-        let ftr_14d = self.get_project_ftr_rate(project_id).await?;
+        let ftr_14d = self.get_workspace_ftr_rate(workspace_id).await?;
         let (ftr_14d_prev, sessions_7d): (Option<f64>, i64) =
             sqlx_core::query_as::query_as(
                 "SELECT
@@ -1297,7 +1298,7 @@ impl PgStore {
                    coalesce(sum((props->>'denominator')::int8) FILTER (WHERE date > current_date - 7), 0)::int8
                  FROM sensei.workspace_metric_daily
                  WHERE metric = 'ftr' AND workspace_id = $1"
-            ).bind(project_id)
+            ).bind(workspace_id)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
 
         // 14-day daily trend array — reads activity.sessions directly, filtered to
@@ -1310,7 +1311,7 @@ impl PgStore {
                  FROM activity.sessions
                  WHERE workspace_id = $1 AND outcome IS NOT NULL AND outcome <> 'empty'::sensei.session_outcome AND started_at > now() - interval '14d'
                  GROUP BY day ORDER BY day"
-            ).bind(project_id)
+            ).bind(workspace_id)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
         let trend: Vec<f64> = daily.into_iter().map(|(_, v)| v.unwrap_or(0.0)).collect();
@@ -1318,17 +1319,17 @@ impl PgStore {
         Ok(Self::ftr_headline_json(ftr_14d, ftr_14d_prev, trend, sessions_7d))
     }
 
-    /// The project's 14-day session-weighted FTR — Σ(`props.numerator`) /
+    /// The workspace's 14-day session-weighted FTR — Σ(`props.numerator`) /
     /// Σ(`props.denominator`) over the daily `ftr` rows in
-    /// `sensei.project_metric_daily` (metric='ftr'), the single FTR source of
-    /// truth. Same 14d window and derivation as [`Self::get_project_ftr`]'s
-    /// `ftr14d` (which calls this), so both agree. Returns `None` when the project
+    /// `sensei.workspace_metric_daily` (metric='ftr'), the single FTR source of
+    /// truth. Same 14d window and derivation as [`Self::get_workspace_ftr`]'s
+    /// `ftr14d` (which calls this), so both agree. Returns `None` when the workspace
     /// has no `ftr` rows in the window — honest-absent, NEVER a fabricated `0`.
-    /// Shared by the legacy `/api/metrics/{project}` route and the MCP
+    /// Shared by the legacy `/api/metrics/{workspace}` route and the MCP
     /// `get_metrics` tool so those surfaces report the same number.
-    pub async fn get_project_ftr_rate(
+    pub async fn get_workspace_ftr_rate(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Option<f64>, String> {
         let row: (Option<f64>,) = sqlx_core::query_as::query_as(
             "SELECT (sum((props->>'numerator')::float8)
@@ -1336,7 +1337,7 @@ impl PgStore {
                FROM sensei.workspace_metric_daily
               WHERE metric = 'ftr' AND workspace_id = $1 AND date > current_date - 14",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1344,8 +1345,8 @@ impl PgStore {
     }
 
     /// Holistic First-Try-Right rollup across all sessions — powers the
-    /// Observatory · Today header. Mirrors [`Self::get_project_ftr`] without the
-    /// project filter: the 14d / prior-14d headline is session-weighted
+    /// Observatory · Today header. Mirrors [`Self::get_workspace_ftr`] without the
+    /// workspace filter: the 14d / prior-14d headline is session-weighted
     /// (fraction of FTR-scored sessions, honest-null when there are none), and
     /// the trend is a fixed 14 calendar-day array (0-filled on empty days) so the
     /// sparkline always has 14 points.
@@ -1411,7 +1412,7 @@ impl PgStore {
     }
 
     /// The MIN `sealed_through` across `repository_ids` for one metric group — the
-    /// project-level cursor the day-keyed engine plans from (a project's group is
+    /// workspace-level cursor the day-keyed engine plans from (a workspace's group is
     /// only settled through the least-sealed of its repos). Honest full-fill signal:
     /// returns `None` if ANY requested repo is unset — no watermark row, or a row
     /// whose `sealed_through` is still NULL — so the engine refills the full history
@@ -1448,7 +1449,7 @@ impl PgStore {
             ids.dedup();
             ids.len() as i64
         };
-        // Any repo unset → min is undefined at the project level → full fill.
+        // Any repo unset → min is undefined at the workspace level → full fill.
         if sealed_repos < distinct_requested { Ok(None) } else { Ok(min_sealed) }
     }
 

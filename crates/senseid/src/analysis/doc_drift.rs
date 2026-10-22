@@ -3,7 +3,7 @@
 //!
 //! Kept as a stand-alone module (no DB access) so the extractor is
 //! unit-testable without a Postgres fixture. The daemon-side driver in
-//! `pg_store::scan_project_doc_drift` calls `extract_identifier_mentions`
+//! `pg_store::scan_workspace_doc_drift` calls `extract_identifier_mentions`
 //! per doc and joins the results against `sensei.nodes` to decide whether
 //! each mention is a real reference or drift.
 //!
@@ -18,7 +18,7 @@
 //! - A small stopword list filters English words and common tokens that
 //!   backtick pairs sometimes wrap (`if`, `for`, `null`, …).
 //! - Extra shape filter: a single-word lowercase or single-word capitalised
-//!   token (`sensei`, `Handler`) is almost always a common noun or project
+//!   token (`sensei`, `Handler`) is almost always a common noun or workspace
 //!   name, not a code symbol. We require either an underscore (snake_case),
 //!   an internal uppercase-after-lowercase transition (camelCase /
 //!   PascalCase-with-more-than-one-word), or a trailing `()` call marker
@@ -97,7 +97,7 @@ fn scan_backtick_spans(line: &str, mut visit: impl FnMut(&str)) {
 /// A trailing `()` is stripped before checking so `` `foo()` `` still
 /// resolves to `foo`. Bare single-word tokens (`sensei`, `Handler`,
 /// `parser`) are rejected unless the original `raw` carried the `()`
-/// call marker — those are almost always common nouns / project names in
+/// call marker — those are almost always common nouns / workspace names in
 /// prose, not code identifiers. `snake_case`, `camelCase`, and
 /// `PascalCase` compound tokens still pass.
 fn is_candidate_identifier(raw: &str) -> bool {
@@ -126,7 +126,7 @@ fn is_candidate_identifier(raw: &str) -> bool {
     }
     // SCREAMING_SNAKE_CASE is the env-var / config-key convention
     // (`CLOUDFLARE_API_TOKEN`, `CF_PAGES`, `BASE_PATH`) — a doc mentioning one
-    // references configuration, not a project code symbol, so its absence from
+    // references configuration, not a workspace code symbol, so its absence from
     // the graph is not drift. (A removed SCREAMING const is the rare recall
     // tradeoff; such consts that still exist resolve via the known-symbol set.)
     let is_screaming_snake = has_underscore && !token.bytes().any(|b| b.is_ascii_lowercase());
@@ -209,10 +209,10 @@ mod tests {
 
     #[test]
     fn rejects_single_word_bare_identifiers() {
-        // Common nouns and project names in prose — `sensei`, `Handler`,
+        // Common nouns and workspace names in prose — `sensei`, `Handler`,
         // `parser` — always look like identifiers but are almost never real
         // code references. The compound-shape rule filters them.
-        let content = "The `sensei` project ships a `Handler` and a `parser`.";
+        let content = "The `sensei` workspace ships a `Handler` and a `parser`.";
         assert!(extract_identifier_mentions(content).is_empty());
     }
 
@@ -290,7 +290,7 @@ Back to prose: `still_counted`.";
     fn is_broken_drift_flags_only_previously_indexed_now_missing() {
         // known = things that resolve NOW (a current symbol + a DB schema name).
         let known: HashSet<String> =
-            ["current_fn".to_string(), "project_id".to_string()].into_iter().collect();
+            ["current_fn".to_string(), "workspace_id".to_string()].into_iter().collect();
         // ever = every name that was ever a real symbol (history).
         let ever: HashSet<String> =
             ["current_fn".to_string(), "removed_fn".to_string()].into_iter().collect();
@@ -304,7 +304,7 @@ Back to prose: `still_counted`.";
         assert!(!is_broken_drift("battle_tested", &known, &ever));
         // Resolves via a DB schema identifier (in `known`, never a code symbol) →
         // not drift.
-        assert!(!is_broken_drift("project_id", &known, &ever));
+        assert!(!is_broken_drift("workspace_id", &known, &ever));
     }
 
     #[test]

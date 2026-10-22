@@ -903,7 +903,7 @@ fn remove_all(purge: bool) {
                 println!("  ✓ Cache cleared");
             }
 
-            for p in result["projects_cleaned"].as_array().unwrap_or(&vec![]) {
+            for p in result["workspaces_cleaned"].as_array().unwrap_or(&vec![]) {
                 println!("  ✓ Project cleaned: {}", p.as_str().unwrap_or("?"));
             }
 
@@ -1175,7 +1175,7 @@ fn print_index_doctor(r: &serde_json::Value) {
         ("orphan nodes (indexed file gone)", "orphan_files", "orphan_files"),
         ("ghost folders (directory gone)", "ghost_folders", "ghost_folders"),
         ("nested standalone (mis-scoped in a repo)", "nested_standalone", "nested_standalone"),
-        ("duplicate-name projects", "duplicate_name_projects", "duplicate_name_projects"),
+        ("duplicate-name projects", "duplicate_name_workspaces", "duplicate_name_workspaces"),
     ];
     let total: u64 = classes.iter().map(|(_, count_key, _)| n(count_key)).sum();
     // Advisory classes — surfaced separately below because the daemon does NOT
@@ -1536,13 +1536,13 @@ mod tests {
         print_index_doctor(&serde_json::json!({
             "roots_checked": 3, "roots_present": 3, "roots_absent": 0,
             "orphan_files": 0, "ghost_folders": 0, "nested_standalone": 0,
-            "duplicate_name_projects": 0, "samples": {}
+            "duplicate_name_workspaces": 0, "samples": {}
         }));
         // Drift report with samples → no panic (renders per-class + samples).
         print_index_doctor(&serde_json::json!({
             "roots_checked": 2, "roots_present": 1, "roots_absent": 1,
             "orphan_files": 2, "ghost_folders": 1, "nested_standalone": 0,
-            "duplicate_name_projects": 0,
+            "duplicate_name_workspaces": 0,
             "samples": { "orphan_files": ["/a/b.rs", "/a/c.rs"], "ghost_folders": ["/a/gone"] }
         }));
     }

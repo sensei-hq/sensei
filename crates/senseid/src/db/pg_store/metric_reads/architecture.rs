@@ -33,7 +33,7 @@ impl PgStore {
     /// an unattributed edge belongs to no repository's score.
     pub(crate) async fn architecture_edge_confidence_by_repo(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<ConfidenceRow>, String> {
         sqlx_core::query_as::query_as::<_, ConfidenceRow>(
             "SELECT f.repository_id \
@@ -46,7 +46,7 @@ impl PgStore {
               GROUP BY 1 \
              HAVING count(*) > 0",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())
@@ -60,7 +60,7 @@ impl PgStore {
     /// about what it OWNS.
     pub(crate) async fn architecture_public_surface_by_repo(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<SurfaceRow>, String> {
         sqlx_core::query_as::query_as::<_, SurfaceRow>(
             "SELECT f.repository_id \
@@ -75,7 +75,7 @@ impl PgStore {
               GROUP BY 1 \
              HAVING count(*) > 0",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())
@@ -88,7 +88,7 @@ impl PgStore {
     /// the percentile down and invent an improvement.
     pub(crate) async fn architecture_symbol_size_by_repo(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<SizeRow>, String> {
         sqlx_core::query_as::query_as::<_, SizeRow>(
             "SELECT f.repository_id \
@@ -106,7 +106,7 @@ impl PgStore {
               GROUP BY 1 \
              HAVING count(*) > 0",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())

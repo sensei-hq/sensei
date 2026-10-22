@@ -23,7 +23,7 @@ const EVENT_USER_PROMPT: &str = "UserPromptSubmit";
 /// This group's occurrence-time anchors for the shared [`day_filter`] /
 /// [`bind_day`] `$2` day-set contract. The interruption counts bucket/window on
 /// the event's CLIENT clock `ts` (epoch ms → `to_timestamp(ts / 1000.0)`, the
-/// same `ae.ts / 1000.0` convention `get_project_sessions_needing_enrichment`
+/// same `ae.ts / 1000.0` convention `get_workspace_sessions_needing_enrichment`
 /// uses), NOT the server insert `created_at` — a synthesized/back-dated event
 /// carries its true occurrence time in `ts` while `created_at` is `now`. The
 /// run-completion counts bucket on `runs.started_at`.
@@ -35,7 +35,7 @@ const ANCHOR_RUN_COMPLETION: &str = "r.started_at";
 /// denominator; the row is keyed to the SESSION's resolved repository.
 pub(crate) type InterruptionDay = (chrono::NaiveDate, uuid::Uuid, i64, i64);
 
-/// One day's run counts for a project: `(day, done_count, started_count)`.
+/// One day's run counts for a workspace: `(day, done_count, started_count)`.
 /// `started_count` (every run started that day) is the `run_completion`
 /// denominator.
 pub(crate) type RunCompletionDay = (chrono::NaiveDate, i64, i64);
@@ -45,15 +45,15 @@ impl PgStore {
     /// day-set (rolling window when `as_of = None`, the single day `D` when
     /// `Some(D)`).
     ///
-    /// `activity.assistant_events` carries no project id — its `session_id` is
+    /// `activity.assistant_events` carries no workspace id — its `session_id` is
     /// the assistant's own session-id string. Events attribute to a session
     /// through `activity.sessions.client_session_id = assistant_events.
     /// session_id`, and to a REPOSITORY through that session's `repo_folder_id →
     /// sensei.folders.repository_id`. Counts are GROUP BY `(day, repository)`,
     /// so each day/repository yields its own row.
     ///
-    /// Events whose session matches no session, a session in another project
-    /// (the `sessions.project_id = $1` scope), or a session whose repository
+    /// Events whose session matches no session, a session in another workspace
+    /// (the `sessions.workspace_id = $1` scope), or a session whose repository
     /// cannot be resolved (`repo_folder_id` NULL, or that folder's
     /// `repository_id` NULL) are EXCLUDED — the row is skipped, never attributed
     /// to a fabricated repository (I-E).
@@ -62,7 +62,7 @@ impl PgStore {
     /// insert `created_at`.
     pub(crate) async fn autonomy_interruption_counts_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<InterruptionDay>, String> {
@@ -82,7 +82,7 @@ impl PgStore {
               ORDER BY 1, 2",
             day_filter(ANCHOR_INTERRUPTION, as_of),
         );
-        let q = sqlx_core::query_as::query_as::<_, InterruptionDay>(&sql).bind(project_id);
+        let q = sqlx_core::query_as::query_as::<_, InterruptionDay>(&sql).bind(workspace_id);
         bind_day(q, window_days, as_of)
             .bind(EVENT_STOP)
             .bind(EVENT_USER_PROMPT)
@@ -92,19 +92,19 @@ impl PgStore {
     }
 
     /// Daily run-completion counts over the selected day-set (rolling window
-    /// when `as_of = None`, the single day `D` when `Some(D)`), project-scoped
-    /// via the direct `runs.project_id` FK.
+    /// when `as_of = None`, the single day `D` when `Some(D)`), workspace-scoped
+    /// via the direct `runs.workspace_id` FK.
     ///
     /// `done_count` is runs whose terminal `status = 'done'`; `started_count` is
     /// every run started that day (the denominator). Bucketed by `started_at` —
     /// a run counts on the day it started, regardless of when it finished.
     ///
-    /// `activity.runs` carries NO repository, so these counts are project-wide
+    /// `activity.runs` carries NO repository, so these counts are workspace-wide
     /// and have no natural per-repository grain; the caller decides which
     /// repository to attribute them to.
     pub(crate) async fn autonomy_run_completion_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<RunCompletionDay>, String> {
@@ -119,7 +119,7 @@ impl PgStore {
               ORDER BY 1",
             day_filter(ANCHOR_RUN_COMPLETION, as_of),
         );
-        let q = sqlx_core::query_as::query_as::<_, RunCompletionDay>(&sql).bind(project_id);
+        let q = sqlx_core::query_as::query_as::<_, RunCompletionDay>(&sql).bind(workspace_id);
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 }

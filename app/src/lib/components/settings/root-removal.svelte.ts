@@ -7,7 +7,7 @@
 // removal without a decision:
 //
 // - keep: stop syncing, leave the data readable (the root is paused);
-// - remove: prune every folder, repository and emptied project under it.
+// - remove: prune every folder, repository and emptied workspace under it.
 //
 // So the controller lists what will stop syncing FIRST, and only then offers
 // the two choices. A list that failed to load offers no decision: answering for
@@ -46,7 +46,7 @@ export function describePrune(r: PruneReport): string {
   const parts = [
     r.folders > 0 ? count(r.folders, 'folder', 'folders') : null,
     r.repositories > 0 ? count(r.repositories, 'repository', 'repositories') : null,
-    r.projects > 0 ? count(r.projects, 'empty project', 'empty projects') : null,
+    r.workspaces > 0 ? count(r.workspaces, 'empty workspace', 'empty workspaces') : null,
   ].filter((p): p is string => p !== null);
   if (parts.length === 0) return 'Nothing was indexed there.';
   const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;

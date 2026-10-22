@@ -1,7 +1,7 @@
 //! PURE client-precedence routing.
 //!
-//! Given the memberships a project's work could reach and which membership the
-//! project is bound to, decide which Dōjō(s) receive a contribution — and
+//! Given the memberships a workspace's work could reach and which membership the
+//! workspace is bound to, decide which Dōjō(s) receive a contribution — and
 //! whether the source must be dereferenced before it leaves the machine.
 //!
 //! This is the confidentiality-critical decision (it decides where potentially
@@ -9,11 +9,11 @@
 //! unit-tested. The lifecycle rules it encodes (`docs/spec/pipeline/
 //! dojo-lifecycle.md`):
 //!
-//! - "Rule: **client takes precedence.** A project bound to a client membership
+//! - "Rule: **client takes precedence.** A workspace bound to a client membership
 //!   routes findings to the client's Dōjō before the employer's, and the
 //!   client's confidentiality policy governs." (Data invariants → Memberships)
 //! - membership_kind.ddl: "`client` takes precedence over `employer` when a
-//!   project could route to either (the client's confidentiality policy
+//!   workspace could route to either (the client's confidentiality policy
 //!   governs)."
 //! - Attribution table: "Client work | **Source-dereferenced** | ... | Shareable
 //!   anywhere — source dropped, not lesson." Dereference for client work is
@@ -23,19 +23,19 @@
 //! non-test caller is the upstream-contribution path (C6) — so the public
 //! surface is `dead_code`-allowed at the module level until that chunk lands.
 #![allow(dead_code)]
-//! - Wrong gate: "Two memberships try to receive the same client project's
+//! - Wrong gate: "Two memberships try to receive the same client workspace's
 //!   artifacts. Precedence rule violated — **client wins uniquely.**"
-//! - Wrong gate: "A client-project memory got published with its source repo
+//! - Wrong gate: "A client-workspace memory got published with its source repo
 //!   identifiers intact ... this is the confidentiality gate; nothing else
 //!   matters more."
 //!
 //! Encoded precedence (highest first): `client` > `employer` > `community` >
-//! `personal`. When the project has an explicit binding that binding is the
+//! `personal`. When the workspace has an explicit binding that binding is the
 //! routing anchor; when it does not, the highest-precedence available kind wins.
 
 use crate::dojo::memberships::MembershipKind;
 
-/// Membership-kind precedence, highest first: a project that could bind to more
+/// Membership-kind precedence, highest first: a workspace that could bind to more
 /// than one membership prefers `client` over `employer` over `community` over
 /// `personal` (client work is the most confidentiality-sensitive, so it wins).
 /// Shared by [`client_precedence_route`] (destination routing) and
@@ -56,30 +56,30 @@ pub struct BindCandidate {
     pub org_slugs: Vec<String>,
 }
 
-/// A SUGGESTED project→membership binding inferred from the project's git-remote
+/// A SUGGESTED workspace→membership binding inferred from the workspace's git-remote
 /// owner. Confirm-inferred: the app surfaces it as a chip the user accepts; it is
 /// never auto-committed and never routes or publishes anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InferredBinding {
     pub membership_id: uuid::Uuid,
     pub kind: MembershipKind,
-    /// The project's git-remote owner slug that matched the membership.
+    /// The workspace's git-remote owner slug that matched the membership.
     pub matched_slug: String,
 }
 
-/// Infer which membership a project should bind to from its git-remote owner
-/// slug(s). A membership is a candidate when any `project_owner` is in its
+/// Infer which membership a workspace should bind to from its git-remote owner
+/// slug(s). A membership is a candidate when any `workspace_owner` is in its
 /// `org_slugs`; among candidates the highest-[`KIND_PRECEDENCE`] kind wins
 /// (`client` over `employer` …), ties broken by candidate order. Returns the
 /// matched owner slug so the About chip can explain the suggestion. `None` when
-/// no membership covers the project's owner. Pure — matching is case-insensitive
+/// no membership covers the workspace's owner. Pure — matching is case-insensitive
 /// (both sides are lowercased; owners come from `remote_owner_slug`).
 pub fn infer_binding(
-    project_owners: &[String],
+    workspace_owners: &[String],
     candidates: &[BindCandidate],
 ) -> Option<InferredBinding> {
     let owners: Vec<String> =
-        project_owners.iter().map(|o| o.trim().to_ascii_lowercase()).collect();
+        workspace_owners.iter().map(|o| o.trim().to_ascii_lowercase()).collect();
     for kind in KIND_PRECEDENCE {
         for c in candidates.iter().filter(|c| c.kind == kind) {
             if let Some(matched) = c
@@ -98,7 +98,7 @@ pub fn infer_binding(
     None
 }
 
-/// A membership the contribution could plausibly route to — the project's
+/// A membership the contribution could plausibly route to — the workspace's
 /// binding plus any org/community memberships considered for auto-routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MembershipRef {
@@ -106,19 +106,19 @@ pub struct MembershipRef {
     pub kind: MembershipKind,
 }
 
-/// What is being routed. Kept minimal: routing only needs to know the project's
+/// What is being routed. Kept minimal: routing only needs to know the workspace's
 /// binding (`sensei.workspaces.dojo_id`). Everything else about the artifact
 /// (payload, scope tags, attribution mode) is decided by dojo-protocol / the C5
 /// attribution pass — this function decides *destination* + *dereference*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Contribution {
-    /// The membership this contribution's project is bound to
-    /// (`sensei.workspaces.dojo_id`), or `None` when the project is unbound.
+    /// The membership this contribution's workspace is bound to
+    /// (`sensei.workspaces.dojo_id`), or `None` when the workspace is unbound.
     pub bound_membership: Option<uuid::Uuid>,
 }
 
 impl Contribution {
-    /// A contribution from a project bound to `membership_id`.
+    /// A contribution from a workspace bound to `membership_id`.
     pub fn bound_to(membership_id: uuid::Uuid) -> Self {
         Self { bound_membership: Some(membership_id) }
     }
@@ -173,13 +173,13 @@ fn targets_of(
 
 /// Decide which Dōjō(s) receive `contribution`, honoring client-precedence.
 ///
-/// - If the project has an explicit binding, that binding is the routing anchor:
+/// - If the workspace has an explicit binding, that binding is the routing anchor:
 ///   the contribution routes to exactly that membership. If the anchor is a
 ///   `client` membership the contribution is dereferenced and every `employer`
 ///   candidate is explicitly excluded (client wins uniquely). A binding whose
 ///   membership is not present in `candidates` FAILS CLOSED (routes nowhere) —
 ///   we never route work whose sensitivity we cannot establish.
-/// - If the project is unbound, route to the highest-precedence available kind
+/// - If the workspace is unbound, route to the highest-precedence available kind
 ///   (`client` > `employer` > `community` > `personal`); when `client` wins,
 ///   every `employer` candidate is excluded and the client target is
 ///   dereferenced.
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn unbound_with_client_and_employer_prefers_client_and_excludes_employer() {
         // membership_kind.ddl: "client takes precedence over employer when a
-        // project could route to either."
+        // workspace could route to either."
         let client = m(MembershipKind::Client);
         let employer = m(MembershipKind::Employer);
         let d = client_precedence_route(&[employer, client], &Contribution::default());
@@ -354,10 +354,10 @@ mod tests {
     }
 
     #[test]
-    fn employer_bound_project_ignores_a_client_membership_elsewhere() {
+    fn employer_bound_workspace_ignores_a_client_membership_elsewhere() {
         // The binding — not mere presence of a client membership — decides
-        // sensitivity. An employer-bound project routes to the employer even
-        // when the developer also holds a client membership on another project.
+        // sensitivity. An employer-bound workspace routes to the employer even
+        // when the developer also holds a client membership on another workspace.
         let employer = m(MembershipKind::Employer);
         let unrelated_client = m(MembershipKind::Client);
         let d = client_precedence_route(
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn infer_binding_prefers_client_over_employer_when_both_cover_the_owner() {
-        // A project whose owner is covered by BOTH a client and an employer
+        // A workspace whose owner is covered by BOTH a client and an employer
         // membership suggests the client binding (client-precedence) — the
         // confidentiality-safe default the user then confirms.
         let employer = cand(MembershipKind::Employer, &["acme"]);
@@ -426,7 +426,7 @@ mod tests {
     fn infer_binding_returns_none_when_no_membership_covers_the_owner() {
         let c = cand(MembershipKind::Employer, &["acme"]);
         assert!(infer_binding(&["unrelated-org".into()], std::slice::from_ref(&c)).is_none());
-        // No owners at all (e.g. a non-git project) → no suggestion.
+        // No owners at all (e.g. a non-git workspace) → no suggestion.
         assert!(infer_binding(&[], std::slice::from_ref(&c)).is_none());
         // No candidates (no dōjō connected) → no suggestion.
         assert!(infer_binding(&["acme".into()], &[]).is_none());
@@ -441,8 +441,8 @@ mod tests {
     }
 
     #[test]
-    fn infer_binding_matches_any_of_multiple_project_owners() {
-        // A monorepo/project can expose several remote owners; a membership
+    fn infer_binding_matches_any_of_multiple_workspace_owners() {
+        // A monorepo/workspace can expose several remote owners; a membership
         // covering any one of them is a candidate.
         let c = cand(MembershipKind::Employer, &["acme-labs"]);
         let got =

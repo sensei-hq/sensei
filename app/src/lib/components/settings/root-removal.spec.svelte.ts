@@ -18,7 +18,7 @@ const repos: RootRepository[] = [
 const report = (over: Partial<PruneReport> = {}): PruneReport => ({
   folders: 3,
   repositories: 1,
-  projects: 1,
+  workspaces: 1,
   ...over,
 });
 
@@ -90,7 +90,7 @@ describe('RootRemoval', () => {
     await r.open();
     await r.decide('remove');
     expect(r.outcome).toBe('removed');
-    expect(r.message).toBe('Removed 3 folders, 1 repository and 1 empty project.');
+    expect(r.message).toBe('Removed 3 folders, 1 repository and 1 empty workspace.');
   });
 
   // The old UI dropped the row whether or not the delete worked.
@@ -113,7 +113,7 @@ describe('RootRemoval', () => {
     expect(calls).toContain('prune /r/a');
     expect(r.repositories.map((x) => x.path)).toEqual(['/r/b']);
     expect(r.message).toBe(
-      'Removed 3 folders, 1 repository and 1 empty project. a is now skipped, so a rescan will not bring it back.',
+      'Removed 3 folders, 1 repository and 1 empty workspace. a is now skipped, so a rescan will not bring it back.',
     );
   });
 
@@ -131,14 +131,14 @@ describe('RootRemoval', () => {
 
 describe('describePrune', () => {
   it('names only what was removed', () => {
-    expect(describePrune(report({ folders: 1, repositories: 0, projects: 0 }))).toBe('Removed 1 folder.');
-    expect(describePrune(report({ folders: 2, repositories: 2, projects: 0 }))).toBe(
+    expect(describePrune(report({ folders: 1, repositories: 0, workspaces: 0 }))).toBe('Removed 1 folder.');
+    expect(describePrune(report({ folders: 2, repositories: 2, workspaces: 0 }))).toBe(
       'Removed 2 folders and 2 repositories.',
     );
   });
 
   it('nothing removed is said plainly, not as "removed 0"', () => {
-    expect(describePrune(report({ folders: 0, repositories: 0, projects: 0 }))).toBe(
+    expect(describePrune(report({ folders: 0, repositories: 0, workspaces: 0 }))).toBe(
       'Nothing was indexed there.',
     );
   });

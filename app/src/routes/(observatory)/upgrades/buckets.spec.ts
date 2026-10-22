@@ -3,8 +3,8 @@ import { bucketUpgrades, kindFor, KIND_META, type Upgrade } from './buckets.js';
 
 const u = (over: Partial<Upgrade> = {}): Upgrade => ({
   id: 'u',
-  projectId: 'p',
-  projectName: 'sensei',
+  workspaceId: 'p',
+  workspaceName: 'sensei',
   title: 'x',
   why: '',
   urgency: 'medium',
@@ -38,12 +38,12 @@ describe('bucketUpgrades', () => {
     expect(b.lint .map(x => x.id)).toEqual(['3']);
   });
 
-  it('within each bucket, orders by urgency desc then project name asc', () => {
+  it('within each bucket, orders by urgency desc then workspace name asc', () => {
     const b = bucketUpgrades([
-      u({ id: '1', urgency: 'low',    projectName: 'apple' }),
-      u({ id: '2', urgency: 'high',   projectName: 'zulu'  }),
-      u({ id: '3', urgency: 'medium', projectName: 'mike'  }),
-      u({ id: '4', urgency: 'high',   projectName: 'alpha' }),
+      u({ id: '1', urgency: 'low',    workspaceName: 'apple' }),
+      u({ id: '2', urgency: 'high',   workspaceName: 'zulu'  }),
+      u({ id: '3', urgency: 'medium', workspaceName: 'mike'  }),
+      u({ id: '4', urgency: 'high',   workspaceName: 'alpha' }),
     ]);
     expect(b.skill.map(x => x.id)).toEqual(['4', '2', '3', '1']);
   });

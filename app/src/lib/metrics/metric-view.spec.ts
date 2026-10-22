@@ -32,14 +32,14 @@ import {
     sessionOneLiner,
     shortSessionId,
     formatDayLabel,
-    type ProjectMetricRow,
+    type WorkspaceMetricRow,
     type MetricFamily,
     type MetricSeriesPoint,
     type RegistryMetric,
     type DrilldownSession,
 } from './metric-view.js';
 
-function row(over: Partial<ProjectMetricRow>): ProjectMetricRow {
+function row(over: Partial<WorkspaceMetricRow>): WorkspaceMetricRow {
     return {
         metric: 'ftr',
         date: '2026-08-10',
@@ -190,13 +190,13 @@ describe('metricTrend', () => {
 
 describe('isLowN', () => {
     it('flags a thin denominator, clears an adequate one', () => {
-        expect(isLowN({ props: { numerator: 1, denominator: 1 } } as unknown as ProjectMetricRow)).toBe(true);
-        expect(isLowN({ props: { numerator: 6, denominator: 12 } } as unknown as ProjectMetricRow)).toBe(false);
+        expect(isLowN({ props: { numerator: 1, denominator: 1 } } as unknown as WorkspaceMetricRow)).toBe(true);
+        expect(isLowN({ props: { numerator: 6, denominator: 12 } } as unknown as WorkspaceMetricRow)).toBe(false);
     });
     it('respects the daemon low_n flag and the n fallback; null props is not low-n', () => {
-        expect(isLowN({ props: { low_n: true, denominator: 50 } } as unknown as ProjectMetricRow)).toBe(true);
-        expect(isLowN({ props: { n: 3 } } as unknown as ProjectMetricRow)).toBe(true);
-        expect(isLowN({ props: null } as unknown as ProjectMetricRow)).toBe(false);
+        expect(isLowN({ props: { low_n: true, denominator: 50 } } as unknown as WorkspaceMetricRow)).toBe(true);
+        expect(isLowN({ props: { n: 3 } } as unknown as WorkspaceMetricRow)).toBe(true);
+        expect(isLowN({ props: null } as unknown as WorkspaceMetricRow)).toBe(false);
     });
 });
 
@@ -248,7 +248,7 @@ describe('groupByFamily', () => {
         ({
             ftr: 'outcome',
             time_to_useful_result: 'velocity',
-            project_health: 'composite',
+            workspace_health: 'composite',
         })[key] as MetricFamily | undefined;
 
     it('orders sections composite -> outcome -> velocity and only includes present families', () => {
@@ -256,7 +256,7 @@ describe('groupByFamily', () => {
             [
                 row({ metric: 'ftr' }),
                 row({ metric: 'time_to_useful_result', metric_type: 'duration' }),
-                row({ metric: 'project_health', metric_type: 'score', value: 84 }),
+                row({ metric: 'workspace_health', metric_type: 'score', value: 84 }),
             ],
             familyOf,
         );
@@ -276,7 +276,7 @@ describe('groupByFamily', () => {
 
 const famOf = (key: string): MetricFamily | undefined =>
     ({
-        project_health: 'composite',
+        workspace_health: 'composite',
         churn_concentration: 'quality',
         time_to_useful_result: 'velocity',
         unused_tools: 'tool',
@@ -458,8 +458,8 @@ describe('linkifyMetrics', () => {
 });
 
 describe('movers + ordering', () => {
-    const rows: ProjectMetricRow[] = [
-        row({ metric: 'project_health', metric_type: 'score', value: 44, prior: 46, delta: -2 }),
+    const rows: WorkspaceMetricRow[] = [
+        row({ metric: 'workspace_health', metric_type: 'score', value: 44, prior: 46, delta: -2 }),
         row({ metric: 'churn_concentration', metric_type: 'pct', value: 0.57, prior: 0.36, delta: 0.21 }),
         row({ metric: 'time_to_useful_result', metric_type: 'duration', direction: 'lower_better', value: 796, prior: 273, delta: 523 }),
         row({ metric: 'unused_tools', metric_type: 'count', direction: 'lower_better', value: 3, prior: 3, delta: 0, props: { total_tools: 106, relevant_tools: 12, used_tools: 9 } }),
@@ -467,7 +467,7 @@ describe('movers + ordering', () => {
     const signals = buildSignals(rows, famOf);
 
     it('the composite is never a mover — it is the hero readout', () => {
-        expect(pickMovers(signals).some((s) => s.key === 'project_health')).toBe(false);
+        expect(pickMovers(signals).some((s) => s.key === 'workspace_health')).toBe(false);
     });
 
     it('movers exclude the flat signal and rank by relative magnitude', () => {
@@ -492,15 +492,15 @@ describe('groupSignals', () => {
             duplication_ratio: 'quality',
             churn_rate: 'quality',
             throughput: 'velocity',
-            project_health: 'composite',
+            workspace_health: 'composite',
             tokens_per_day: 'usage',
         }) as Record<string, MetricFamily>)[k];
 
-    const allRows: ProjectMetricRow[] = [
+    const allRows: WorkspaceMetricRow[] = [
         row({ metric: 'throughput', metric_type: 'count', value: 4 }),
         row({ metric: 'churn_rate', metric_type: 'count', value: 2 }),
         row({ metric: 'coverage', metric_type: 'pct', value: 0.7 }),
-        row({ metric: 'project_health', metric_type: 'score', value: 44 }),
+        row({ metric: 'workspace_health', metric_type: 'score', value: 44 }),
         row({ metric: 'duplication_ratio', value: 0.04 }),
         row({ metric: 'tokens_per_day', metric_type: 'count', value: 1000 }),
         row({ metric: 'module_quality', value: 0.0015 }),
@@ -533,7 +533,7 @@ describe('groupSignals', () => {
 
     it('keeps the composite out — it is the hero readout, not a grid cell', () => {
         const grouped = groupSignals(all).flatMap((g) => g.signals.map((s) => s.key));
-        expect(grouped).not.toContain('project_health');
+        expect(grouped).not.toContain('workspace_health');
     });
 
     it('places a usage metric rather than dropping it', () => {
@@ -559,7 +559,7 @@ describe('deterministicHeadline', () => {
     it('counts movers and their direction', () => {
         const signals = buildSignals(
             [
-                row({ metric: 'project_health', metric_type: 'score', value: 44, prior: 46, delta: -2 }),
+                row({ metric: 'workspace_health', metric_type: 'score', value: 44, prior: 46, delta: -2 }),
                 row({ metric: 'churn_concentration', metric_type: 'pct', direction: 'higher_better', value: 0.57, prior: 0.36, delta: 0.21 }),
                 row({ metric: 'time_to_useful_result', metric_type: 'duration', direction: 'lower_better', value: 796, prior: 273, delta: 523 }),
             ],

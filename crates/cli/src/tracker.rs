@@ -71,7 +71,7 @@ pub enum ConnectKind {
 }
 
 /// The project id for `input` (a uuid or an exact project name) from the
-/// `GET /api/projects` list. Zero or several matches is an error naming them.
+/// `GET /api/workspaces` list. Zero or several matches is an error naming them.
 pub fn resolve_project(projects: &Value, input: &str) -> Result<String, String> {
     resolve_named(projects, input, "project")
 }
@@ -255,7 +255,7 @@ pub fn describe_error(status: u16, body: &Value) -> String {
         ),
         "task_not_found" => "No ticket with that key in sensei.".into(),
         "board_already_connected" => {
-            let p = body.get("project");
+            let p = body.get("workspace");
             let name = p.and_then(|p| p.get("name")).and_then(Value::as_str).unwrap_or("?");
             let id = p.and_then(|p| p.get("id")).and_then(Value::as_str).unwrap_or("?");
             format!("This board is already connected to project {name} ({id}).")
@@ -271,7 +271,7 @@ pub fn describe_error(status: u16, body: &Value) -> String {
         "token_required" => format!("No API token: set {TOKEN_ENV} or pipe it on stdin."),
         "unsupported_tracker" => "This tracker type isn't available in this version of sensei.".into(),
         "not_connected" => "This project has no tracker connected.".into(),
-        "project_not_found" => "No such project.".into(),
+        "workspace_not_found" => "No such project.".into(),
         "busy" => "A sync is already running for this project.".into(),
         "rate_limited" => "Jira is rate-limiting requests. Try again in a minute.".into(),
         "token_missing" | "credential_store" => {
@@ -300,7 +300,7 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
     let base = crate::daemon_url();
     let client = crate::client();
     let project_id = |input: &str| -> Result<String, String> {
-        let projects = get_json(&client, &format!("{base}/api/projects"))?;
+        let projects = get_json(&client, &format!("{base}/api/workspaces"))?;
         resolve_project(&projects, input)
     };
     match cmd {
@@ -323,7 +323,7 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             );
             // Two validation requests at up to 30 s each, plus the keyring.
             let resp = crate::client_with_timeout(90)
-                .post(format!("{base}/api/projects/{id}/trackers/jira/connect"))
+                .post(format!("{base}/api/workspaces/{id}/trackers/jira/connect"))
                 .json(&body)
                 .send()
                 .map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
@@ -341,12 +341,12 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                 t["base_url"].as_str().unwrap_or("?"),
             );
             println!("First sync running…");
-            wait_for_first_sync(&client, &format!("{base}/api/projects/{id}/trackers"))
+            wait_for_first_sync(&client, &format!("{base}/api/workspaces/{id}/trackers"))
         }
         TrackerCmd::Sync { project } => {
             let id = project_id(&project)?;
             let resp = crate::client_with_timeout(660)
-                .post(format!("{base}/api/projects/{id}/trackers/sync"))
+                .post(format!("{base}/api/workspaces/{id}/trackers/sync"))
                 .send()
                 .map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
             let status = resp.status().as_u16();
@@ -364,7 +364,7 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
         TrackerCmd::Disconnect { project } => {
             let id = project_id(&project)?;
             let resp = client
-                .delete(format!("{base}/api/projects/{id}/trackers"))
+                .delete(format!("{base}/api/workspaces/{id}/trackers"))
                 .send()
                 .map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
             let status = resp.status().as_u16();
@@ -376,7 +376,7 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
         }
         TrackerCmd::Sprints { project } => {
             let id = project_id(&project)?;
-            let sprints = get_json(&client, &format!("{base}/api/projects/{id}/sprints"))?;
+            let sprints = get_json(&client, &format!("{base}/api/workspaces/{id}/sprints"))?;
             let rows: Vec<Vec<String>> = sprints
                 .as_array()
                 .map(Vec::as_slice)
@@ -430,7 +430,7 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             let mut footer = Vec::new();
             if let Some(key) = key {
                 let t =
-                    get_json(&client, &format!("{base}/api/projects/{id}/tracker-tasks/{key}"))?;
+                    get_json(&client, &format!("{base}/api/workspaces/{id}/tracker-tasks/{key}"))?;
                 rows.push(usage_cells(
                     t["task"]["key"].as_str().unwrap_or(&key),
                     &short(&t["task"]["summary"]),
@@ -446,10 +446,11 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                     }
                 }
             } else {
-                let mut uri = format!("{base}/api/projects/{id}/tracker-tasks");
+                let mut uri = format!("{base}/api/workspaces/{id}/tracker-tasks");
                 let mut sprint_row = None;
                 if let Some(sprint) = sprint {
-                    let sprints = get_json(&client, &format!("{base}/api/projects/{id}/sprints"))?;
+                    let sprints =
+                        get_json(&client, &format!("{base}/api/workspaces/{id}/sprints"))?;
                     let sid = resolve_sprint(&sprints, &sprint)?;
                     uri = format!("{uri}?sprint={sid}");
                     sprint_row = sprints
@@ -735,7 +736,7 @@ mod tests {
         );
         let taken = describe_error(
             409,
-            &json!({"error": "board_already_connected", "project": {"id": "x", "name": "other"}}),
+            &json!({"error": "board_already_connected", "workspace": {"id": "x", "name": "other"}}),
         );
         assert!(taken.contains("other"), "{taken}");
         assert!(describe_error(404, &json!({"error": "board_not_found", "base_url": "https://a.atlassian.net", "board_ref": "4"})).contains("#4"));

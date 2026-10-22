@@ -6,7 +6,7 @@ use crate::db::pg_store::PgStore;
 pub(crate) type DeliveredResults = (i64, i64);
 
 impl PgStore {
-    /// Results delivered for `project_id` within the trailing window: merged runs +
+    /// Results delivered for `workspace_id` within the trailing window: merged runs +
     /// accepted recommendations. Counted separately so the props can show which
     /// contributed — a cost that moved because recommendations dried up is a
     /// different story from one that moved because runs stopped merging.
@@ -25,7 +25,7 @@ impl PgStore {
     /// interval.
     pub(crate) async fn cost_results_in_window(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
     ) -> Result<DeliveredResults, String> {
         let sql = format!(
@@ -37,7 +37,7 @@ impl PgStore {
                         AND acted_at > now() - interval '{window_days} days')::int8"
         );
         sqlx_core::query_as::query_as::<_, DeliveredResults>(&sql)
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| e.to_string())

@@ -41,7 +41,6 @@ pub mod pattern_effectiveness;
 pub mod plan_graph;
 pub mod planner;
 pub mod playbook;
-pub mod project_overview;
 pub mod ranking;
 pub mod relay_drivers;
 pub mod resolution;
@@ -60,6 +59,7 @@ mod transcript;
 mod types;
 pub mod verdicts;
 mod watcher;
+pub mod workspace_overview;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;

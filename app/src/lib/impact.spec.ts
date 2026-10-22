@@ -11,8 +11,8 @@ import {
 
 const row = (over: Partial<ImpactRow> = {}): ImpactRow => ({
   id: 'r',
-  projectId: 'p',
-  projectName: 'sensei',
+  workspaceId: 'p',
+  workspaceName: 'sensei',
   title: 'x',
   status: 'accepted',
   actionType: 'create_agent',
@@ -55,7 +55,7 @@ describe('bucketImpact', () => {
     expect(b.positive.map(r => r.id)).toEqual(['2', '1']);
   });
 
-  it('buckets a real all-pending project (the sensei case) into pending only', () => {
+  it('buckets a real all-pending workspace (the sensei case) into pending only', () => {
     const b = bucketImpact([
       row({ id: '1', verdict: 'pending', baselineFtr: null, currentFtr: null, ftrDelta: null }),
       row({ id: '2', verdict: 'pending', baselineFtr: null, currentFtr: null, ftrDelta: null }),

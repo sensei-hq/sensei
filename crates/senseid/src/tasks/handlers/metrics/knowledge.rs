@@ -2,23 +2,23 @@
 //!
 //! Follows the `session_outcomes` / `churn` / `duplication` / `autonomy` template
 //! (resolve `key → metric_id` via the active registry, write a daily row to
-//! `sensei.project_metrics` via [`PgStore::upsert_project_metric_repo`]) for ONE
-//! project. The single row is `grain = daily`, `scope = user`, `identity = NULL`,
+//! `sensei.workspace_metrics` via [`PgStore::upsert_workspace_metric_repo`]) for ONE
+//! workspace. The single row is `grain = daily`, `scope = user`, `identity = NULL`,
 //! `folder_id`/`session_id` NULL, `computed_on = today` — a SNAPSHOT (see below),
 //! matching the other snapshot computers (`churn`'s `rework_density`,
 //! `duplication`'s `duplication_ratio`).
 //!
-//! ## Repo grain: attributed to the project's PRIMARY repository
+//! ## Repo grain: attributed to the workspace's PRIMARY repository
 //! Under the repo-grain identity (`metric_id, repository_id, scope, identity,
 //! commit_sha, computed_on, grain`) every production write carries a real
 //! `repository_id`; `folder_id`/`session_id` are no longer part of the identity and
-//! a null-repository row would collide across projects. `knowledge` is
-//! project-scoped and has NO natural per-repository grain (it counts memories /
-//! patterns / corrections that belong to the whole project), so its single daily row
-//! is attributed to [`PgStore::primary_repository_for_project`] — the project's
-//! canonical (shallowest-checkout) repository. A project with NO repository-linked
+//! a null-repository row would collide across workspaces. `knowledge` is
+//! workspace-scoped and has NO natural per-repository grain (it counts memories /
+//! patterns / corrections that belong to the whole workspace), so its single daily row
+//! is attributed to [`PgStore::primary_repository_for_workspace`] — the workspace's
+//! canonical (shallowest-checkout) repository. A workspace with NO repository-linked
 //! folder cannot be attributed to a repository, so it writes NO row (honest-empty —
-//! never fabricate a repository). `scope = user` (the default-project read), and
+//! never fabricate a repository). `scope = user` (the default-workspace read), and
 //! `identity = NULL` (a single local user; NULL keeps the row unique per
 //! `(metric, repo, user, day)`). `commit_sha = NULL` — this is a day-bucketed
 //! snapshot, not a commit-cadence measurement.
@@ -31,7 +31,7 @@
 //!
 //! ## A real 0 is THE signal here (not honest-empty)
 //! Unlike a windowed ratio where a 0/0 is meaningless, `memory_promotion`'s 0 is
-//! the point: a project with eligible items (`denominator >= 1`) but ZERO memories
+//! the point: a workspace with eligible items (`denominator >= 1`) but ZERO memories
 //! created writes a REAL `0.0` (distillation has stalled — the catalog's "≈0 is the
 //! signal" loop-health alert). Only a `denominator` of 0 (NO eligible items at all)
 //! writes NO row — there is genuinely nothing to distill, so there is nothing to
@@ -52,17 +52,17 @@
 //! patterns+corrections)`, so the denominator SUMS two sources: eligible
 //! `inference.detected_patterns` plus eligible `inference.corrections`, where
 //! eligible means "has recurred at least [`ELIGIBILITY_MIN_INSTANCES`] times".
-//! Both are cleanly project-attributable, so both are counted (the display props
+//! Both are cleanly workspace-attributable, so both are counted (the display props
 //! carry the split for transparency).
 //!
 //! Never-fabricate: every DB call propagates `Err`; `denominator = 0` writes NO row;
-//! a project with no primary repository writes NO row; a real `denominator >= 1` with
-//! 0 memories writes a real `0.0`. Strict project scoping (patterns via `project_id`,
-//! corrections via `project_ids` membership, memories via `project_id`) — another
-//! project's items never leak in.
+//! a workspace with no primary repository writes NO row; a real `denominator >= 1` with
+//! 0 memories writes a real `0.0`. Strict workspace scoping (patterns via `workspace_id`,
+//! corrections via `workspace_ids` membership, memories via `workspace_id`) — another
+//! workspace's items never leak in.
 //!
-//! [`PgStore::upsert_project_metric_repo`]: crate::db::pg_store::PgStore::upsert_project_metric_repo
-//! [`PgStore::primary_repository_for_project`]: crate::db::pg_store::PgStore::primary_repository_for_project
+//! [`PgStore::upsert_workspace_metric_repo`]: crate::db::pg_store::PgStore::upsert_workspace_metric_repo
+//! [`PgStore::primary_repository_for_workspace`]: crate::db::pg_store::PgStore::primary_repository_for_workspace
 //! [`PgStore::knowledge_memories_created`]: crate::db::pg_store::PgStore::knowledge_memories_created
 //! [`PgStore::knowledge_eligible_counts`]: crate::db::pg_store::PgStore::knowledge_eligible_counts
 //! [`window_days`]: crate::tasks::metrics_scheduler::window_days
@@ -77,7 +77,7 @@ const GRAIN_DAILY: &str = "daily";
 /// `sensei.metric_source` text value — knowledge is measured, not estimated.
 const SOURCE_MEASURED: &str = "measured";
 /// `sensei.metric_scope` text value — knowledge writes the local-user value only
-/// (the default-project read); it has no whole-tree `repo` twin.
+/// (the default-workspace read); it has no whole-tree `repo` twin.
 const SCOPE_USER: &str = "user";
 
 /// The registry `key` this computer produces.
@@ -88,9 +88,9 @@ const KEY_MEMORY_PROMOTION: &str = "memory_promotion";
 /// `detected_patterns.instance_count` AND `corrections.count`.
 const ELIGIBILITY_MIN_INSTANCES: i32 = 3;
 
-/// Compute the `knowledge` group for one project as a snapshot as of today.
-/// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
-/// number of `project_metrics` rows written (`0` = honest-empty: no eligible
+/// Compute the `knowledge` group for one workspace as a snapshot as of today.
+/// `workspace_raw` is the workspace uuid carried in `task.folder_path`. Returns the
+/// number of `workspace_metrics` rows written (`0` = honest-empty: no eligible
 /// patterns/corrections, no primary repository to attribute to, or the metric is
 /// inactive). Idempotent — re-running backfills in place via the upsert identity.
 /// This is a FORWARD-ONLY snapshot (Phase 3): the eligible denominator is a snapshot
@@ -99,11 +99,11 @@ const ELIGIBILITY_MIN_INSTANCES: i32 = 3;
 /// `None`/today keep the current snapshot-on-today behavior.
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<chrono::NaiveDate>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("knowledge: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("knowledge: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
     // Forward-only: the eligible-item denominator is a current snapshot and cannot be
@@ -123,9 +123,9 @@ pub(super) async fn compute(
         return Ok(0);
     };
 
-    let numerator = pg.knowledge_memories_created(&project_id, window_days).await?;
+    let numerator = pg.knowledge_memories_created(&workspace_id, window_days).await?;
     let (eligible_patterns, eligible_corrections) =
-        pg.knowledge_eligible_counts(&project_id, ELIGIBILITY_MIN_INSTANCES).await?;
+        pg.knowledge_eligible_counts(&workspace_id, ELIGIBILITY_MIN_INSTANCES).await?;
     let denominator = eligible_patterns + eligible_corrections;
 
     if denominator == 0 {
@@ -136,10 +136,10 @@ pub(super) async fn compute(
     }
 
     // Repo grain: knowledge has no natural per-repo grain, so its single daily row is
-    // attributed to the project's PRIMARY (shallowest-checkout) repository. A project
+    // attributed to the workspace's PRIMARY (shallowest-checkout) repository. A workspace
     // with no repository-linked folder cannot be attributed → NO row (honest-empty;
     // never fabricate a repository).
-    let Some(repository_id) = pg.primary_repository_for_project(&project_id).await? else {
+    let Some(repository_id) = pg.primary_repository_for_workspace(&workspace_id).await? else {
         return Ok(0);
     };
 
@@ -155,7 +155,7 @@ pub(super) async fn compute(
     let day = super::today(pg).await?;
     // scope=user, identity=NULL (single local user), commit_sha=NULL (day-bucketed
     // snapshot, not commit cadence), folder_id/session_id=NULL (not in the identity).
-    pg.upsert_project_metric_repo(&MetricRow {
+    pg.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &mid,
         repository_id: &repository_id,
         scope: SCOPE_USER,
@@ -176,8 +176,8 @@ pub(super) async fn compute(
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
-        purge_corrections, seed_correction, seed_memory, seed_metrics_project_folder,
+        cleanup_metrics_fixture, daily_workspace_metric_rows as daily_rows, make_ctx,
+        purge_corrections, seed_correction, seed_memory, seed_metrics_workspace_folder,
         seed_pattern_with_instances,
     };
     use sqlx_core::query_as::query_as;
@@ -191,7 +191,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
 
         // 3 eligible patterns (instance_count == 3), NO memories.
         for i in 0..3 {
@@ -226,14 +226,14 @@ mod tests {
             "denominator breakdown: 0 eligible corrections"
         );
 
-        // Repo grain (I-A/I-C): the row is attributed to the project's PRIMARY
+        // Repo grain (I-A/I-C): the row is attributed to the workspace's PRIMARY
         // repository with scope=user, identity NULL, commit_sha NULL, and no
         // folder_id/session_id.
         let expected_repo = pg
-            .primary_repository_for_project(&pid)
+            .primary_repository_for_workspace(&pid)
             .await
             .unwrap()
-            .expect("fixture project has a repository-linked folder");
+            .expect("fixture workspace has a repository-linked folder");
         let (repo_id, scope, identity, commit_sha): (
             Option<uuid::Uuid>,
             String,
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(
             repo_id,
             Some(expected_repo),
-            "attributed to the project's primary repository (I-A)"
+            "attributed to the workspace's primary repository (I-A)"
         );
         assert_eq!(scope, "user", "knowledge writes scope=user only (I-B)");
         assert_eq!(identity, None, "identity NULL — single local user (I-C)");
@@ -268,7 +268,7 @@ mod tests {
     // async one loses wakers across per-test runtimes (see test_support).
     #[allow(clippy::await_holding_lock)]
     async fn memory_promotion_positive_sums_patterns_and_corrections() {
-        // Holds for the same reason as the cross-project test: the correction
+        // Holds for the same reason as the cross-workspace test: the correction
         // half of this sum is deletable by any sibling's table-wide sweep.
         let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.enter();
 
@@ -280,7 +280,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let sig_a = format!("_test:corr-a:{uniq}");
         let sig_b = format!("_test:corr-b:{uniq}");
         let sig_lo = format!("_test:corr-lo:{uniq}");
@@ -302,7 +302,7 @@ mod tests {
         seed_correction(pg, &sig_lo, 2, &[pid]).await; // ineligible
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
-        assert_eq!(written, 1, "one memory_promotion project row");
+        assert_eq!(written, 1, "one memory_promotion workspace row");
 
         let daily = daily_rows(pg, &pid).await;
         let mp =
@@ -360,7 +360,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let sig = format!("_test:corr-noeli:{uniq}");
         purge_corrections(pg, &[&sig]).await;
 
@@ -392,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn memory_promotion_no_repository_writes_no_row() {
-        // Repo-grain honest-empty (I-A/I-E): a project with a REAL denominator (3
+        // Repo-grain honest-empty (I-A/I-E): a workspace with a REAL denominator (3
         // eligible patterns) but NO repository-linked folder cannot be attributed to a
         // repository, so its single daily row is SKIPPED — never a fabricated
         // repository. The SAME denominator with a repository writes a real-zero row
@@ -401,17 +401,19 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let pid =
-            pg.create_project(&format!("_test:knowledge-norepo:{uniq}"), None, None).await.unwrap();
+        let pid = pg
+            .create_workspace(&format!("_test:knowledge-norepo:{uniq}"), None, None)
+            .await
+            .unwrap();
 
-        // 3 eligible patterns with NO folder (folder_id NULL) → project has no
-        // repository-linked folder, so `primary_repository_for_project` is None.
+        // 3 eligible patterns with NO folder (folder_id NULL) → workspace has no
+        // repository-linked folder, so `primary_repository_for_workspace` is None.
         for i in 0..3 {
             seed_pattern_with_instances(pg, &pid, None, &format!("p{i}-{uniq}"), true, 3).await;
         }
         assert!(
-            pg.primary_repository_for_project(&pid).await.unwrap().is_none(),
-            "fixture precondition: project has no repository to attribute to"
+            pg.primary_repository_for_workspace(&pid).await.unwrap().is_none(),
+            "fixture precondition: workspace has no repository to attribute to"
         );
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
@@ -428,7 +430,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             total, 0,
-            "no rows when the project has no repository (never a fabricated repository)"
+            "no rows when the workspace has no repository (never a fabricated repository)"
         );
 
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
@@ -436,13 +438,15 @@ mod tests {
 
     #[tokio::test]
     async fn memory_promotion_no_data_writes_zero_rows() {
-        // Never-fabricate: a project with no memories / patterns / corrections writes
+        // Never-fabricate: a workspace with no memories / patterns / corrections writes
         // NO rows (not a defaulted 0).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let pid =
-            pg.create_project(&format!("_test:knowledge-empty:{uniq}"), None, None).await.unwrap();
+        let pid = pg
+            .create_workspace(&format!("_test:knowledge-empty:{uniq}"), None, None)
+            .await
+            .unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no knowledge data in the window → zero rows written");
@@ -453,7 +457,7 @@ mod tests {
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
-        assert_eq!(total, 0, "no project_metrics rows for an empty project (never fabricated)");
+        assert_eq!(total, 0, "no workspace_metrics rows for an empty workspace (never fabricated)");
 
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
     }
@@ -462,7 +466,7 @@ mod tests {
     // Held across awaits ON PURPOSE — TestGate is a blocking mutex because an
     // async one loses wakers across per-test runtimes (see test_support).
     #[allow(clippy::await_holding_lock)]
-    async fn memory_promotion_excludes_other_projects() {
+    async fn memory_promotion_excludes_other_workspaces() {
         // inference.corrections is a GLOBAL table and two operations on it are
         // table-wide by design: delete_corrections_not_in(keep) removes every
         // signature outside `keep`, and aggregate_corrections prunes to what it
@@ -472,28 +476,28 @@ mod tests {
         // gate's own docs describe for metrics_pipeline_end_to_end.
         let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.enter();
 
-        // Cross-project isolation (mutation-proof): a SECOND real project's memories,
+        // Cross-workspace isolation (mutation-proof): a SECOND real workspace's memories,
         // patterns, and a correction that names ONLY B must NOT leak into A. A
         // correction naming A specifically IS counted for A — proving the
-        // `project_id = ANY(project_ids)` membership scope, not a global count.
+        // `workspace_id = ANY(workspace_ids)` membership scope, not a global count.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq_a = uuid::Uuid::new_v4();
         let uniq_b = uuid::Uuid::new_v4();
-        let (pid_a, fid_a) = seed_metrics_project_folder(pg, &uniq_a).await;
-        let (pid_b, fid_b) = seed_metrics_project_folder(pg, &uniq_b).await; // a real SECOND project
+        let (pid_a, fid_a) = seed_metrics_workspace_folder(pg, &uniq_a).await;
+        let (pid_b, fid_b) = seed_metrics_workspace_folder(pg, &uniq_b).await; // a real SECOND workspace
         let sig_a = format!("_test:corr-onlyA:{uniq_a}");
         let sig_b = format!("_test:corr-onlyB:{uniq_b}");
         purge_corrections(pg, &[&sig_a, &sig_b]).await;
 
-        // Project A: 1 memory, 2 eligible patterns, 1 eligible correction naming A only.
+        // Workspace A: 1 memory, 2 eligible patterns, 1 eligible correction naming A only.
         seed_memory(pg, &pid_a, chrono::Utc::now() - chrono::Duration::hours(2)).await;
         seed_pattern_with_instances(pg, &pid_a, Some(&fid_a), &format!("pa1-{uniq_a}"), true, 3)
             .await;
         seed_pattern_with_instances(pg, &pid_a, Some(&fid_a), &format!("pa2-{uniq_a}"), true, 3)
             .await;
         seed_correction(pg, &sig_a, 4, &[pid_a]).await;
-        // Project B: 5 memories, 5 eligible patterns, 1 eligible correction naming B only
+        // Workspace B: 5 memories, 5 eligible patterns, 1 eligible correction naming B only
         // — none of which must touch A.
         for _ in 0..5 {
             seed_memory(pg, &pid_b, chrono::Utc::now() - chrono::Duration::hours(2)).await;
@@ -535,14 +539,14 @@ mod tests {
         assert_eq!(
             mp.2["eligible_corrections"].as_i64(),
             Some(1),
-            "A's eligible corrections = 1 (B-only correction excluded — project_ids membership)"
+            "A's eligible corrections = 1 (B-only correction excluded — workspace_ids membership)"
         );
         assert!((mp.1 - 1.0 / 3.0).abs() < 1e-9, "A value = 1/3 (B's data excluded)");
 
         // A's row is attributed to A's OWN primary repository (not B's) — repo-grain
-        // attribution stays project-local.
+        // attribution stays workspace-local.
         let expected_repo_a = pg
-            .primary_repository_for_project(&pid_a)
+            .primary_repository_for_workspace(&pid_a)
             .await
             .unwrap()
             .expect("A has a repository-linked folder");
@@ -578,7 +582,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         for i in 0..3 {
             seed_pattern_with_instances(pg, &pid, Some(&fid), &format!("p{i}-{uniq}"), true, 3)
                 .await;
@@ -596,7 +600,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             total, 0,
-            "no project_metrics rows for a historical as_of (never a fabricated snapshot)"
+            "no workspace_metrics rows for a historical as_of (never a fabricated snapshot)"
         );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;

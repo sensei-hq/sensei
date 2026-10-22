@@ -11,7 +11,7 @@ async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
     let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     let suffix = format!("prune_keep_unanalyzed_{}", uuid::Uuid::new_v4());
-    let (_pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (_pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let csid = format!("{}-csid", suffix);
     let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
     // Age the session past the cutoff but leave analyzed_at NULL.
@@ -66,12 +66,12 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     let suffix = format!("prune_del_{}", uuid::Uuid::new_v4());
-    let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let csid = format!("{}-csid", suffix);
     let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
     // Age to 40 days: past the 30-day retention window but INSIDE the 60-day
     // backstop, so the ONLY thing that makes it prune-eligible is the
-    // capture path — its day must already exist in sensei.project_metrics.
+    // capture path — its day must already exist in sensei.workspace_metrics.
     // (Previously aged 90 days, which pruned unconditionally; now the test
     // exercises capture-before-reclaim directly.)
     // Repo-grain: the capture guard keys on the session's repository, so give the
@@ -105,7 +105,7 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     .execute(s.pool())
     .await
     .unwrap();
-    // Seed a covering daily project_metrics row for the session's day (its OWN
+    // Seed a covering daily workspace_metrics row for the session's day (its OWN
     // repository, scope='user') so the repo-grain capture-before-reclaim guard is
     // satisfied (the durable snapshot exists).
     let day40: (chrono::NaiveDate,) = sqlx_core::query_as::query_as(
@@ -119,7 +119,7 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
             .fetch_one(s.pool())
             .await
             .unwrap();
-    s.upsert_project_metric_repo(&MetricRow {
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &ftr_id.0,
         repository_id: &repo_id,
         scope: "user",
@@ -214,7 +214,7 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
 /// Repo-grain capture-before-reclaim (I20, P-A.3b): after the metric store flips
 /// to REPOSITORY grain, the pruner's capture guard keys on the SESSION'S
 /// REPOSITORY (`folders.repository_id` via `s.repo_folder_id`), a `scope='user'`
-/// row, and `metrics.capture_source='session'` — NOT the project, NOT the
+/// row, and `metrics.capture_source='session'` — NOT the workspace, NOT the
 /// cadence. Four legs prove all three discriminators, each at retention=30 /
 /// backstop=60:
 ///  (a) 40d, day captured by a `scope='user'` `capture_source='session'` (`ftr`)
@@ -237,7 +237,7 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
     let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     let suffix = format!("prune_cbr_repo_{}", uuid::Uuid::new_v4());
-    let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
 
     // The session's repository (fid's repository_id) plus a DECOY repository used
     // to prove the guard matches the SESSION'S repository, not any repository.
@@ -314,7 +314,7 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
 
     // (a) captured on its OWN repo by a scope=user session metric → PRUNED.
     let captured = aged_repo_session(&s, &fid, &suffix, "captured", 40).await;
-    s.upsert_project_metric_repo(&MetricRow {
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &ftr_id.0,
         repository_id: &repo_a,
         scope: "user",
@@ -332,7 +332,7 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
     // (b) uncaptured on repo_a; a DECOY scope=user session metric for the SAME day
     //     lives on repo_b → KEPT (the guard must match the session's repository).
     let uncaptured = aged_repo_session(&s, &fid, &suffix, "uncaptured", 45).await;
-    s.upsert_project_metric_repo(&MetricRow {
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &ftr_id.0,
         repository_id: &repo_b,
         scope: "user",
@@ -353,7 +353,7 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
     //     cadence='day' (the rework_density row would capture) or drops the
     //     scope='user' filter (the scope=repo ftr row would capture).
     let wrong_signal = aged_repo_session(&s, &fid, &suffix, "wrongsignal", 50).await;
-    s.upsert_project_metric_repo(&MetricRow {
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &rework_id.0,
         repository_id: &repo_a,
         scope: "user",
@@ -367,7 +367,7 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
     })
     .await
     .unwrap();
-    s.upsert_project_metric_repo(&MetricRow {
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &ftr_id.0,
         repository_id: &repo_a,
         scope: "repo",
@@ -415,7 +415,7 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
     );
 
     // Clean up survivors, the seeded metric rows, then the repositories (repo_key
-    // uniqueness must not collide across runs of the shared test DB). project_metrics
+    // uniqueness must not collide across runs of the shared test DB). workspace_metrics
     // first so its repository FK does not block the repositories delete.
     sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = ANY($1::uuid[])")
         .bind(vec![uncaptured, wrong_signal])
@@ -739,7 +739,7 @@ async fn hook_event_no_tool_name() {
             assistant_family: "claude",
             event_type: "SessionStart",
             tool_name: None,
-            cwd: Some("/home/user/project"),
+            cwd: Some("/home/user/workspace"),
             ts: chrono::Utc::now().timestamp_millis(),
             success: None,
             payload: &payload,
@@ -761,7 +761,7 @@ async fn hook_event_cursor_family() {
             assistant_family: "cursor",
             event_type: "SessionStart",
             tool_name: None,
-            cwd: Some("/home/user/project"),
+            cwd: Some("/home/user/workspace"),
             ts: chrono::Utc::now().timestamp_millis(),
             success: None,
             payload: &payload,

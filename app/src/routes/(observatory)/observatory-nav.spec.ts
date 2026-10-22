@@ -29,10 +29,10 @@ describe("buildNavItems", () => {
     // Anchors are top-level links; Settings is the trailing top-level link.
     const topHrefs = links(entries).map((l) => l.href);
     expect(topHrefs).toContain("/"); // Today
-    expect(topHrefs).toContain("/projects");
+    expect(topHrefs).toContain("/workspaces");
     expect(topHrefs).toContain("/settings"); // Settings
 
-    // Intake moved to the project window (a run always starts IN a project), so
+    // Intake moved to the workspace window (a run always starts IN a workspace), so
     // it is NOT an observatory anchor anymore. Today is the leading anchor now.
     expect(topHrefs[0]).toBe("/");
     expect(byHref(entries, "/intake")).toBeUndefined();
@@ -76,9 +76,9 @@ describe("buildNavItems", () => {
     expect(impact?.badge).toBeUndefined();
   });
 
-  it("carries no fabricated badge on any non-Projects rail entry", () => {
+  it("carries no fabricated badge on any non-Workspaces rail entry", () => {
     for (const l of allLinks(buildNavItems())) {
-      if (l.href === "/projects") continue;
+      if (l.href === "/workspaces") continue;
       expect(l.badge, `${l.href} must not carry a mock badge`).toBeUndefined();
     }
   });
@@ -89,9 +89,9 @@ describe("buildNavItems", () => {
     }
   });
 
-  it("uses the project count as the Projects badge", () => {
+  it("uses the workspace count as the Workspaces badge", () => {
     expect(
-      byHref(buildNavItems({ projectCount: 12 }), "/projects")
+      byHref(buildNavItems({ workspaceCount: 12 }), "/workspaces")
         ?.badge,
     ).toBe(12);
   });
@@ -137,17 +137,17 @@ describe("buildNavItems", () => {
 describe("resolveActiveHref", () => {
   it("matches the exact route", () => {
     expect(resolveActiveHref("/")).toBe("/");
-    expect(resolveActiveHref("/projects")).toBe("/projects");
+    expect(resolveActiveHref("/workspaces")).toBe("/workspaces");
     expect(resolveActiveHref("/learnings")).toBe("/learnings");
   });
 
   it("matches a nested route to its parent nav entry", () => {
-    expect(resolveActiveHref("/projects/abc-123")).toBe("/projects");
+    expect(resolveActiveHref("/workspaces/abc-123")).toBe("/workspaces");
   });
 
   it("does not let Today (/) swallow every route", () => {
     expect(resolveActiveHref("/sessions")).toBe("/sessions");
-    expect(resolveActiveHref("/projects/abc")).not.toBe("/");
+    expect(resolveActiveHref("/workspaces/abc")).not.toBe("/");
   });
 
   it("returns empty string for an unknown route", () => {

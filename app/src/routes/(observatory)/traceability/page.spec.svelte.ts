@@ -16,16 +16,16 @@ describe('Traceability /+page — a failed read', () => {
     expect(m.container.textContent).not.toMatch(/\b0 tracked|no measurements yet|no drift detected/);
   });
 
-  it('names the projects it could not read beside what it did', () => {
-    const m = mountComponent(Page, { data: { groups: [], rollup: { total: 0, drifted: 0, broken: 0, projectsAffected: 0 }, unread: [{ name: 'beta', reason: 'Bad Gateway' }], error: null } as unknown as PageData });
+  it('names the workspaces it could not read beside what it did', () => {
+    const m = mountComponent(Page, { data: { groups: [], rollup: { total: 0, drifted: 0, broken: 0, workspacesAffected: 0 }, unread: [{ name: 'beta', reason: 'Bad Gateway' }], error: null } as unknown as PageData });
     cleanup.push(m.destroy);
-    expect(m.container.querySelector('[data-unread-projects]')?.textContent).toContain('beta (Bad Gateway)');
+    expect(m.container.querySelector('[data-unread-workspaces]')?.textContent).toContain('beta (Bad Gateway)');
   });
 
-  // #290: no project has documents indexed → "nothing checked", not "no drift".
+  // #290: no workspace has documents indexed → "nothing checked", not "no drift".
   it('says no documents are indexed when none are', () => {
     const m = mountComponent(Page, {
-      data: { groups: [], rollup: { total: 0, drifted: 0, broken: 0, projectsAffected: 0 }, unread: [], indexedDocs: 0, error: null } as unknown as PageData,
+      data: { groups: [], rollup: { total: 0, drifted: 0, broken: 0, workspacesAffected: 0 }, unread: [], indexedDocs: 0, error: null } as unknown as PageData,
     });
     cleanup.push(m.destroy);
     expect(m.container.textContent).toContain('no documents indexed');

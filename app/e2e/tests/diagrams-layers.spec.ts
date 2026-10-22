@@ -1,5 +1,5 @@
 /**
- * Project · Diagrams · Layers and Cycles — functional e2e.
+ * Workspace · Diagrams · Layers and Cycles — functional e2e.
  *
  * The state spec covers the three-state machine, the break filter, the cycle
  * ordering and the cut sentence against an injected API seam. This covers what
@@ -8,7 +8,7 @@
  * routing between the three views.
  *
  * The throwaway `sensei_e2e` DB is dropped before a run and nothing indexes into
- * it, so the seeded project has no graph and the EMPTY state is what renders
+ * it, so the seeded workspace has no graph and the EMPTY state is what renders
  * here. That is deliberate: empty is a terminal state these screens must get
  * right, and getting it right means not being reached by a failure. Each body
  * waits for a terminal state and asserts the ERROR state is absent — a 500 or an
@@ -24,10 +24,10 @@ import { test, expect, type TauriPageLike } from '../fixtures';
 import {
   navigateTo, navigateToScreen, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
-  seedProject,
+  seedWorkspace,
 } from '../helpers';
 
-const seedProjectId = (): Promise<string> => seedProject('e2e-layers', 'fixture for the Layers and Cycles diagram specs');
+const seedWorkspaceId = (): Promise<string> => seedWorkspace('e2e-layers', 'fixture for the Layers and Cycles diagram specs');
 
 
 /**
@@ -62,7 +62,7 @@ async function settleCycles(tauriPage: TauriPageLike): Promise<void> {
   );
 }
 
-test.describe('Project · Diagrams · Layers', () => {
+test.describe('Workspace · Diagrams · Layers', () => {
   test.beforeEach(async ({ tauriPage }) => {
     test.setTimeout(240_000);
     await seedSetupComplete(tauriPage);
@@ -71,10 +71,10 @@ test.describe('Project · Diagrams · Layers', () => {
   });
 
   test('mounts, settles out of loading, and never shows the error state', async ({ tauriPage }) => {
-    const id = await seedProjectId();
+    const id = await seedWorkspaceId();
     await navigateToScreen(
       tauriPage,
-      `/project/${id}/diagrams/layers`,
+      `/workspace/${id}/diagrams/layers`,
       '[data-testid="layers-screen"]',
     );
 
@@ -123,10 +123,10 @@ test.describe('Project · Diagrams · Layers', () => {
   });
 
   test('the sub-nav routes between the three views', async ({ tauriPage }) => {
-    const id = await seedProjectId();
+    const id = await seedWorkspaceId();
     await navigateToScreen(
       tauriPage,
-      `/project/${id}/diagrams/layers`,
+      `/workspace/${id}/diagrams/layers`,
       '[data-testid="layers-screen"]',
     );
 
@@ -148,7 +148,7 @@ test.describe('Project · Diagrams · Layers', () => {
   });
 });
 
-test.describe('Project · Diagrams · Cycles', () => {
+test.describe('Workspace · Diagrams · Cycles', () => {
   test.beforeEach(async ({ tauriPage }) => {
     test.setTimeout(240_000);
     await seedSetupComplete(tauriPage);
@@ -159,10 +159,10 @@ test.describe('Project · Diagrams · Cycles', () => {
   test('settles into a terminal state and says so when there are no cycles', async ({
     tauriPage,
   }) => {
-    const id = await seedProjectId();
+    const id = await seedWorkspaceId();
     await navigateToScreen(
       tauriPage,
-      `/project/${id}/diagrams/cycles`,
+      `/workspace/${id}/diagrams/cycles`,
       '[data-testid="cycles-screen"]',
     );
 
@@ -177,7 +177,7 @@ test.describe('Project · Diagrams · Cycles', () => {
     expect(listed + none + empty, 'exactly one terminal state renders').toBe(1);
 
     // THE READING THIS SCREEN EXISTS FOR. "No cycles" and "nothing loaded" are
-    // the same blank canvas, so the absence gets words — and a project that DID
+    // the same blank canvas, so the absence gets words — and a workspace that DID
     // load with no cycles must land on `cycles-none`, never on `cycles-empty`.
     if (none > 0) {
       const text = await tauriPage.textContent('[data-testid="cycles-none"]');

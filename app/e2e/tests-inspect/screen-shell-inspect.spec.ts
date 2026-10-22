@@ -8,8 +8,8 @@
 import { expect, test } from '../fixtures';
 import { DAEMON_URL } from '../helpers';
 
-/** Project-scoped screens on `Screen`; grows as screens move (#293). */
-const PROJECT_SCREENS = [
+/** Workspace-scoped screens on `Screen`; grows as screens move (#293). */
+const WORKSPACE_SCREENS = [
   'traceability', 'instruments', 'libraries', 'memories',
   'diagrams/cycles', 'diagrams/layers', 'diagrams/neighbourhood', 'diagrams/schema', 'diagrams/structure', 'diagrams/world',
   'overview', 'about', 'patterns', 'impact', 'intake', 'metrics', 'sessions', 'atlas',
@@ -17,11 +17,11 @@ const PROJECT_SCREENS = [
 
 /** Observatory screens on `Screen`, by path; grows as screens move (#293). */
 const OBSERVATORY_SCREENS = [
-  ...['assistants', 'dojo', 'extensions', 'general', 'inference', 'instruments', 'libraries', 'metrics', 'projects', 'providers', 'roots']
+  ...['assistants', 'dojo', 'extensions', 'general', 'inference', 'instruments', 'libraries', 'metrics', 'workspaces', 'providers', 'roots']
     .map((s) => `/settings/${s}`),
   '/dojo/connections', '/dojo/sharing', '/help', '/knowledge-sources', '/libraries', '/traceability', '/upgrades',
   '/', '/impact', '/learnings', '/share-review',
-  '/activity-logs', '/consolidation', '/insights', '/instruments', '/projects', '/sessions',
+  '/activity-logs', '/consolidation', '/insights', '/instruments', '/workspaces', '/sessions',
 ];
 
 type Probe = { fills: boolean; mainScrolls: boolean; headerMoved: number; bodyScrolled: number; fill: boolean } | null;
@@ -45,7 +45,7 @@ async function openScreen(page: Page, route: string) {
   );
   // Navigated ONCE and not awaited: re-issuing restarts a slow loader, and
   // awaiting the navigation inside evaluate trips the harness's 30s call limit
-  // on a screen whose load is slower than that (project Instruments, #298).
+  // on a screen whose load is slower than that (workspace Instruments, #298).
   await page.evaluate(`(() => {
     const a = document.createElement('a');
     a.href = ${JSON.stringify(route)};
@@ -94,17 +94,17 @@ const PROBE = `(() => {
 
 test('screens on the shared layout keep the header fixed over one scroll body', async ({ tauriPage }) => {
   test.setTimeout(600_000);
-  const projects: { id: string; name: string }[] = await (await fetch(`${DAEMON_URL}/api/projects`)).json();
-  const sensei = projects.find((p) => p.name === 'sensei');
-  test.skip(!sensei, 'no sensei project on this daemon');
+  const workspaces: { id: string; name: string }[] = await (await fetch(`${DAEMON_URL}/api/workspaces`)).json();
+  const sensei = workspaces.find((p) => p.name === 'sensei');
+  test.skip(!sensei, 'no sensei workspace on this daemon');
 
   const results: Record<string, Probe> = {};
   const metrics: { metrics: { metric: string }[] } = await (
-    await fetch(`${DAEMON_URL}/api/projects/${sensei!.id}/metrics`)
+    await fetch(`${DAEMON_URL}/api/workspaces/${sensei!.id}/metrics`)
   ).json();
-  const screens = [...PROJECT_SCREENS, ...metrics.metrics.slice(0, 1).map((m) => `metrics/${m.metric}`)];
+  const screens = [...WORKSPACE_SCREENS, ...metrics.metrics.slice(0, 1).map((m) => `metrics/${m.metric}`)];
   for (const screen of screens) {
-    await openScreen(tauriPage, `/project/${sensei!.id}/${screen}`);
+    await openScreen(tauriPage, `/workspace/${sensei!.id}/${screen}`);
     results[screen] = (await tauriPage.evaluate(PROBE)) as Probe;
   }
   for (const path of OBSERVATORY_SCREENS) {
@@ -112,7 +112,7 @@ test('screens on the shared layout keep the header fixed over one scroll body', 
     results[path] = (await tauriPage.evaluate(PROBE)) as Probe;
   }
   console.log(`\n[inspect] screen shell ${JSON.stringify(results)}`);
-  expect(screens.length).toBeGreaterThan(PROJECT_SCREENS.length);
+  expect(screens.length).toBeGreaterThan(WORKSPACE_SCREENS.length);
   for (const screen of [...screens, ...OBSERVATORY_SCREENS]) {
     expect(results[screen], screen).toEqual(expected(results[screen]?.fill ?? false));
   }

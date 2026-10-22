@@ -16,9 +16,9 @@ describe('Impact /+page — a failed read', () => {
     expect(m.container.textContent).not.toMatch(/\b0 tracked|no measurements yet|no drift detected/);
   });
 
-  it('names the projects it could not read beside what it did', () => {
+  it('names the workspaces it could not read beside what it did', () => {
     const m = mountComponent(Page, { data: { buckets: { positive: [], neutral: [], negative: [], pending: [] }, total: 0, unread: [{ name: 'beta', reason: 'Bad Gateway' }], error: null } as unknown as PageData });
     cleanup.push(m.destroy);
-    expect(m.container.querySelector('[data-unread-projects]')?.textContent).toContain('beta (Bad Gateway)');
+    expect(m.container.querySelector('[data-unread-workspaces]')?.textContent).toContain('beta (Bad Gateway)');
   });
 });

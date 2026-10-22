@@ -15,7 +15,7 @@ pub const PENDING_GRACE: Duration = Duration::from_secs(10 * 60);
 /// Why a connect was refused or failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectError {
-    BoardAlreadyConnected { project_id: uuid::Uuid, project_name: String },
+    BoardAlreadyConnected { workspace_id: uuid::Uuid, workspace_name: String },
     Validate(ValidateError),
     CredentialStore,
     Db(String),
@@ -35,7 +35,7 @@ pub async fn connect(
     store: Arc<dyn SecretStore>,
     adapter: &dyn TrackerAdapter,
     transport: &dyn GetTransport,
-    project_id: uuid::Uuid,
+    workspace_id: uuid::Uuid,
     params: ConnectParams,
 ) -> Result<Connected, ConnectError> {
     let kind = adapter.kind().as_str();
@@ -43,10 +43,10 @@ pub async fn connect(
         .tracker_board_owner(kind, &params.base_url, &params.board_ref)
         .await
         .map_err(ConnectError::Db)?;
-    if let Some(owner) = owner.filter(|o| o.workspace_id != project_id) {
+    if let Some(owner) = owner.filter(|o| o.workspace_id != workspace_id) {
         return Err(ConnectError::BoardAlreadyConnected {
-            project_id: owner.workspace_id,
-            project_name: owner.workspace_name,
+            workspace_id: owner.workspace_id,
+            workspace_name: owner.workspace_name,
         });
     }
     let validated = adapter.validate(transport, &params).await.map_err(ConnectError::Validate)?;
@@ -67,7 +67,7 @@ pub async fn connect(
 
     // 3-4. Persist in one transaction; the swap/delete triggers tombstone the old secret.
     let row = NewTracker {
-        workspace_id: project_id,
+        workspace_id,
         kind: kind.to_string(),
         base_url: params.base_url.clone(),
         account: params.account.clone(),
@@ -85,8 +85,8 @@ pub async fn connect(
                 .map_err(ConnectError::Db)?
                 .ok_or_else(|| ConnectError::Db("board taken, owner not found".into()))?;
             return Err(ConnectError::BoardAlreadyConnected {
-                project_id: owner.workspace_id,
-                project_name: owner.workspace_name,
+                workspace_id: owner.workspace_id,
+                workspace_name: owner.workspace_name,
             });
         }
         Err(ConnectDbError::PendingTombstoneGone) => {
@@ -100,13 +100,13 @@ pub async fn connect(
     Ok(Connected { tracker_id, created })
 }
 
-/// Remove a project's tracker. `Ok(false)` when it had none.
+/// Remove a workspace's tracker. `Ok(false)` when it had none.
 pub async fn disconnect(
     pg: &PgStore,
     store: Arc<dyn SecretStore>,
-    project_id: uuid::Uuid,
+    workspace_id: uuid::Uuid,
 ) -> Result<bool, String> {
-    if !pg.delete_tracker_for_project(project_id).await? {
+    if !pg.delete_tracker_for_workspace(workspace_id).await? {
         return Ok(false);
     }
     // The row is gone either way; a drain failure is the tick's to retry, not a
@@ -191,8 +191,8 @@ pub(crate) mod tests {
     use crate::tracker::test_support::FakeBoard;
     use crate::tracker::{ApiToken, TrackerError};
 
-    pub(crate) async fn project(pg: &PgStore) -> uuid::Uuid {
-        pg.create_project(&format!("_test:tracker-connect:{}", uuid::Uuid::new_v4()), None, None)
+    pub(crate) async fn workspace(pg: &PgStore) -> uuid::Uuid {
+        pg.create_workspace(&format!("_test:tracker-connect:{}", uuid::Uuid::new_v4()), None, None)
             .await
             .unwrap()
     }
@@ -211,9 +211,9 @@ pub(crate) mod tests {
         format!("https://t{}.atlassian.net", uuid::Uuid::new_v4().simple())
     }
 
-    /// A connected tracker (board 42 of a unique site) on a fresh project.
+    /// A connected tracker (board 42 of a unique site) on a fresh workspace.
     pub(crate) async fn connected_tracker(pg: &PgStore) -> (uuid::Uuid, uuid::Uuid) {
-        let p = project(pg).await;
+        let p = workspace(pg).await;
         let c = connect(
             pg,
             Arc::new(MemoryStore::default()),
@@ -241,7 +241,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_new_connect_stores_the_secret_and_starts_pending() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg).await;
+        let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
         let c =
@@ -273,13 +273,13 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_keyring_failure_writes_no_row_and_leaves_a_pending_tombstone() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg).await;
+        let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         *store.fail_set.lock().unwrap() = true;
         let r = connect(&pg, store, &JiraAdapter, &FakeBoard::standard(), p, params(&site(), "42"))
             .await;
         assert_eq!(r, Err(ConnectError::CredentialStore));
-        assert!(pg.tracker_for_project(p).await.unwrap().is_none());
+        assert!(pg.tracker_for_workspace(p).await.unwrap().is_none());
         let (pending,): (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM sensei.tracker_secret_tombstones
               WHERE account = 'dev@example.com' AND not_before > now() + interval '5 minutes'",
@@ -294,9 +294,9 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_board_owned_by_another_project_is_refused_before_any_write() {
+    async fn a_board_owned_by_another_workspace_is_refused_before_any_write() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let (p1, p2) = (project(&pg).await, project(&pg).await);
+        let (p1, p2) = (workspace(&pg).await, workspace(&pg).await);
         let s = site();
         connect(
             &pg,
@@ -313,7 +313,7 @@ pub(crate) mod tests {
             connect(&pg, store.clone(), &JiraAdapter, &FakeBoard::standard(), p2, params(&s, "42"))
                 .await;
         assert!(
-            matches!(r, Err(ConnectError::BoardAlreadyConnected { project_id, .. }) if project_id == p1),
+            matches!(r, Err(ConnectError::BoardAlreadyConnected { workspace_id, .. }) if workspace_id == p1),
             "{r:?}"
         );
         assert!(store.entries.lock().unwrap().is_empty(), "nothing stored for a refused connect");
@@ -322,7 +322,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_failed_validation_writes_nothing() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg).await;
+        let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let denied = FakeBoard::standard().fail("/rest/api/3/myself", TrackerError::Unauthorized);
         let r = connect(&pg, store.clone(), &JiraAdapter, &denied, p, params(&site(), "42")).await;
@@ -330,14 +330,14 @@ pub(crate) mod tests {
             r,
             Err(ConnectError::Validate(ValidateError::Tracker(TrackerError::Unauthorized)))
         );
-        assert!(pg.tracker_for_project(p).await.unwrap().is_none());
+        assert!(pg.tracker_for_workspace(p).await.unwrap().is_none());
         assert!(store.entries.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn reconnecting_the_same_board_swaps_the_secret_and_resets_status() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg).await;
+        let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
         let first =
@@ -366,7 +366,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn reconnecting_to_another_board_replaces_the_tracker() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg).await;
+        let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
         let first =
@@ -404,7 +404,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn persisting_refuses_a_secret_whose_pending_tombstone_was_drained() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg).await;
+        let p = workspace(&pg).await;
         let t = crate::db::pg_store::trackers::NewTracker {
             workspace_id: p,
             kind: "jira".into(),
@@ -420,13 +420,13 @@ pub(crate) mod tests {
             pg.connect_tracker(&t).await,
             Err(crate::db::pg_store::trackers::ConnectDbError::PendingTombstoneGone)
         );
-        assert!(pg.tracker_for_project(p).await.unwrap().is_none());
+        assert!(pg.tracker_for_workspace(p).await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn disconnect_removes_the_row_and_the_secret() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg).await;
+        let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let c = connect(
             &pg,
@@ -440,7 +440,7 @@ pub(crate) mod tests {
         .unwrap();
         let service = pg.tracker_by_id(c.tracker_id).await.unwrap().unwrap().secret_service;
         assert_eq!(disconnect(&pg, store.clone(), p).await, Ok(true));
-        assert!(pg.tracker_for_project(p).await.unwrap().is_none());
+        assert!(pg.tracker_for_workspace(p).await.unwrap().is_none());
         // The post-commit drain runs in the background.
         for _ in 0..200 {
             if !store.has(&service) && tombstone_due(&pg, &service).await.is_none() {
@@ -517,7 +517,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn connect_does_not_wait_for_the_tombstone_drain() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg).await;
+        let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         slow_backlog(&pg, &store, 3).await;
         let started = std::time::Instant::now();
@@ -534,7 +534,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn disconnect_does_not_wait_for_the_drain_and_succeeds_when_it_fails() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = project(&pg).await;
+        let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         connect(&pg, store.clone(), &JiraAdapter, &FakeBoard::standard(), p, params(&site(), "42"))
             .await

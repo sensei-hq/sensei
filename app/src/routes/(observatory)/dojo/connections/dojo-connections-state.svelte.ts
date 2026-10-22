@@ -16,7 +16,7 @@
 // unexpected value degrades to muted ink rather than being dropped — mirroring
 // the traceability state module's discipline.
 
-import type { DojoBoundProject, DojoMembership } from '$lib/types.js';
+import type { DojoBoundWorkspace, DojoMembership } from '$lib/types.js';
 
 /** Semantic tone a sync status maps to. `ink` = an unexpected status we still
  *  surface rather than drop (never a status colour). */
@@ -92,11 +92,11 @@ export function kindPill(kind: string): KindPill {
   }
 }
 
-/** Pure: "3 projects bound" / "1 project bound" / "no projects bound". */
-export function boundProjectsSummary(projects: DojoBoundProject[]): string {
-  const n = projects.length;
-  if (n === 0) return 'no projects bound';
-  return `${n} ${n === 1 ? 'project' : 'projects'} bound`;
+/** Pure: "3 workspaces bound" / "1 workspace bound" / "no workspaces bound". */
+export function boundWorkspacesSummary(workspaces: DojoBoundWorkspace[]): string {
+  const n = workspaces.length;
+  if (n === 0) return 'no workspaces bound';
+  return `${n} ${n === 1 ? 'workspace' : 'workspaces'} bound`;
 }
 
 /** Pure: the list header line, e.g. "3 connections · 2 healthy." Sentence case,

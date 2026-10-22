@@ -105,8 +105,8 @@ pub fn run_to_session_update(
         paused_until: run.paused_until.clone(),
         pause_reason: run.pause_reason.clone(),
         heartbeat_at: run.heartbeat_at.clone(),
-        // Set by the impure federation path (publish_run) from the run's project;
-        // the pure projection has no DB to resolve the namespace slug / project row.
+        // Set by the impure federation path (publish_run) from the run's workspace;
+        // the pure projection has no DB to resolve the namespace slug / workspace row.
         project_slug: None,
         workspace: None,
     }
@@ -200,9 +200,9 @@ fn phase_event_state(kind: RunEventKind) -> Option<SegmentState> {
     }
 }
 
-/// The project a run is in, for the dōjō to attach the session to: its slug and
-/// resolved constitution. A run outside any project names none. Pure.
-pub fn run_project(
+/// The workspace a run is in, for the dōjō to attach the session to: its slug and
+/// resolved constitution. A run outside any workspace names none. Pure.
+pub fn run_workspace(
     slug: Option<String>,
     constitution: Option<RelayConstitution>,
 ) -> Option<RelayWorkspaceInfo> {
@@ -226,23 +226,23 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn a_run_in_a_project_names_it_by_slug_with_its_constitution() {
+    fn a_run_in_a_workspace_names_it_by_slug_with_its_constitution() {
         let c = RelayConstitution { rules: vec![], conflicts: vec![], locks: 2 };
-        let p = run_project(Some("sensei-hq".into()), Some(c.clone())).unwrap();
+        let p = run_workspace(Some("sensei-hq".into()), Some(c.clone())).unwrap();
         assert_eq!(p.slug, "sensei-hq");
         assert_eq!(p.constitution, Some(c));
     }
 
     #[test]
-    fn a_run_outside_any_project_names_none() {
+    fn a_run_outside_any_workspace_names_none() {
         let c = RelayConstitution { rules: vec![], conflicts: vec![], locks: 0 };
-        assert_eq!(run_project(None, Some(c)), None);
+        assert_eq!(run_workspace(None, Some(c)), None);
     }
 
     fn run(over: impl FnOnce(&mut Run)) -> Run {
         let mut r = Run {
             id: Uuid::from_u128(0x1111),
-            project_id: None,
+            workspace_id: None,
             plan_ref: "docs/plan/relay-engine.md".into(),
             goal: Some("ship the relay supervision bridge".into()),
             status: RelayRunStatus::Running,

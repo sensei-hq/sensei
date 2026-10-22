@@ -4,13 +4,13 @@
 //! NEVER leave the machine. The rule (`docs/spec/pipeline/dojo-lifecycle.md`
 //! → Attribution): "Client work | **Source-dereferenced** | Source reference
 //! (repo, identifiers, pointer). Learning + cause + context travel." The wrong
-//! gate: "A client-project memory got published with its source repo identifiers
+//! gate: "A client-workspace memory got published with its source repo identifiers
 //! intact ... this is the confidentiality gate; nothing else matters more."
 //!
 //! ## Two design commitments
 //!
 //! 1. **Deterministic, no LLM.** This layer NEVER calls a model. It is a pure
-//!    function of `(text, ProjectIdentifiers)`; it always runs; it is the
+//!    function of `(text, WorkspaceIdentifiers)`; it always runs; it is the
 //!    guarantee. The LLM prose-generalisation in [`crate::collective::anonymize`]
 //!    sits ON TOP of this for readability and is never trusted to strip.
 //! 2. **Fail closed.** After stripping, a heuristic re-scans the output for any
@@ -25,7 +25,7 @@
 //! (defense in depth): absolute filesystem paths (POSIX `/…`, `~/…`, Windows
 //! `C:\…`), email addresses, uuids, and `s-1234` / `sess_…` session ids.
 //!
-//! Known identifiers ([`ProjectIdentifiers`] — project name, client/org name,
+//! Known identifiers ([`WorkspaceIdentifiers`] — workspace name, client/org name,
 //! repo names, folder paths, session ids, person names) are matched in every
 //! realistic form: exact, snake_case, kebab-case, camelCase, PascalCase, bare,
 //! and as a distinctive substring within a longer token. A multi-word token
@@ -51,7 +51,7 @@ const PH_PATH: &str = "<path>";
 const PH_EMAIL: &str = "<email>";
 const PH_UUID: &str = "<id>";
 const PH_SESSION: &str = "<session>";
-const PH_PROJECT: &str = "<project>";
+const PH_WORKSPACE: &str = "<workspace>";
 const PH_CLIENT: &str = "<client>";
 const PH_REPO: &str = "<repo>";
 const PH_PERSON: &str = "<person>";
@@ -59,7 +59,7 @@ const PH_PERSON: &str = "<person>";
 /// Every placeholder — subtracted from the output before the residual
 /// squash-check so a placeholder's own letters can't be mistaken for a leak.
 const ALL_PLACEHOLDERS: [&str; 8] =
-    [PH_PATH, PH_EMAIL, PH_UUID, PH_SESSION, PH_PROJECT, PH_CLIENT, PH_REPO, PH_PERSON];
+    [PH_PATH, PH_EMAIL, PH_UUID, PH_SESSION, PH_WORKSPACE, PH_CLIENT, PH_REPO, PH_PERSON];
 
 /// Minimum alnum length for a known token to be treated as "distinctive". Below
 /// this a token would over-match ordinary prose to the point of uselessness
@@ -175,20 +175,20 @@ pub enum RedactionKind {
     Email,
     Uuid,
     SessionId,
-    Project,
+    Workspace,
     Client,
     Repo,
     Person,
 }
 
-/// The known sensitive tokens for one project — the deterministic stripper's
-/// context. DB-free: [`crate::db::pg_store::PgStore::project_identifiers`] builds
+/// The known sensitive tokens for one workspace — the deterministic stripper's
+/// context. DB-free: [`crate::db::pg_store::PgStore::workspace_identifiers`] builds
 /// this, but the strip itself takes it by value so it is exhaustively unit-
 /// testable without a database.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ProjectIdentifiers {
+pub struct WorkspaceIdentifiers {
     /// `sensei.workspaces.name`.
-    pub project_name: Option<String>,
+    pub workspace_name: Option<String>,
     /// `sensei.workspaces.client` (the client/org name).
     pub client_name: Option<String>,
     /// Repo names — folder names + names parsed from git remote urls.
@@ -202,13 +202,13 @@ pub struct ProjectIdentifiers {
     pub person_names: Vec<String>,
 }
 
-impl ProjectIdentifiers {
-    /// The distinctive name tokens (project / client / repo / person) with their
+impl WorkspaceIdentifiers {
+    /// The distinctive name tokens (workspace / client / repo / person) with their
     /// redaction category — the tokens the residual squash-check backstops.
     fn name_tokens(&self) -> Vec<(&str, RedactionKind)> {
         let mut out = Vec::new();
-        if let Some(p) = self.project_name.as_deref() {
-            out.push((p, RedactionKind::Project));
+        if let Some(p) = self.workspace_name.as_deref() {
+            out.push((p, RedactionKind::Workspace));
         }
         if let Some(c) = self.client_name.as_deref() {
             out.push((c, RedactionKind::Client));
@@ -321,7 +321,7 @@ impl Redactor {
 /// Pass order matters: paths and known session ids are masked before the generic
 /// uuid pass (so a uuid session id reads `<session>`, not `<id>`), and name
 /// tokens are applied longest-first so `acme-api` falls before `acme`.
-pub fn dereference(text: &str, ctx: &ProjectIdentifiers) -> DereferenceResult {
+pub fn dereference(text: &str, ctx: &WorkspaceIdentifiers) -> DereferenceResult {
     let mut r = Redactor::new(text);
 
     // 1. Known folder paths (longest first) — explicit, in case the generic path
@@ -347,12 +347,12 @@ pub fn dereference(text: &str, ctx: &ProjectIdentifiers) -> DereferenceResult {
     // 5. Generic uuids, then generic session shapes.
     r.mask_re(&RE_UUID, PH_UUID, RedactionKind::Uuid);
     r.mask_re(&RE_SESSION, PH_SESSION, RedactionKind::SessionId);
-    // 6. Known names (project / client / repo / person), longest first.
+    // 6. Known names (workspace / client / repo / person), longest first.
     let mut names = ctx.name_tokens();
     names.sort_by_key(|(t, _)| std::cmp::Reverse(squash(t).len()));
     for (token, kind) in names {
         let placeholder = match kind {
-            RedactionKind::Project => PH_PROJECT,
+            RedactionKind::Workspace => PH_WORKSPACE,
             RedactionKind::Client => PH_CLIENT,
             RedactionKind::Person => PH_PERSON,
             _ => PH_REPO,
@@ -378,7 +378,7 @@ pub fn dereference(text: &str, ctx: &ProjectIdentifiers) -> DereferenceResult {
 /// Known-token signal: after subtracting the placeholders, does the squashed
 /// output still contain a squashed distinctive known token — catching anything a
 /// boundary-limited replacement let survive (e.g. a camel-embedded short name).
-pub fn residual_risk(text: &str, ctx: &ProjectIdentifiers) -> bool {
+pub fn residual_risk(text: &str, ctx: &WorkspaceIdentifiers) -> bool {
     if RE_POSIX_PATH.is_match(text)
         || RE_HOME_PATH.is_match(text)
         || RE_WIN_PATH.is_match(text)
@@ -434,7 +434,7 @@ impl Dereferenced {
     /// Run the deterministic strip and gate on it. `Ok` only when the output is
     /// residual-risk-free; `Err(ResidualRisk)` means the caller MUST refuse to
     /// publish.
-    pub fn new(text: &str, ctx: &ProjectIdentifiers) -> Result<Self, ResidualRisk> {
+    pub fn new(text: &str, ctx: &WorkspaceIdentifiers) -> Result<Self, ResidualRisk> {
         let DereferenceResult { text, removed, residual_risk } = dereference(text, ctx);
         if residual_risk { Err(ResidualRisk { removed }) } else { Ok(Self { text, removed }) }
     }
@@ -480,9 +480,9 @@ impl std::error::Error for ResidualRisk {}
 mod tests {
     use super::*;
 
-    fn ctx() -> ProjectIdentifiers {
-        ProjectIdentifiers {
-            project_name: Some("Acme API".into()),
+    fn ctx() -> WorkspaceIdentifiers {
+        WorkspaceIdentifiers {
+            workspace_name: Some("Acme API".into()),
             client_name: Some("Acme Corp".into()),
             repo_names: vec!["acme-api".into(), "billing-svc".into()],
             folder_paths: vec!["/Users/dev/work/acme-api".into()],
@@ -576,13 +576,13 @@ mod tests {
     }
 
     #[test]
-    fn client_and_person_and_project_are_stripped() {
+    fn client_and_person_and_workspace_are_stripped() {
         let c = ctx();
         let out =
             dereference("During the Acme Corp engagement, Jane Doe led the Acme API rollout.", &c);
         assert!(!contains_ci(&out.text, "Acme Corp"), "client survived: {:?}", out.text);
         assert!(!contains_ci(&out.text, "Jane Doe"), "person survived: {:?}", out.text);
-        assert!(!contains_ci(&out.text, "Acme API"), "project survived: {:?}", out.text);
+        assert!(!contains_ci(&out.text, "Acme API"), "workspace survived: {:?}", out.text);
         assert!(!out.residual_risk, "clean strip flagged residual: {:?}", out.text);
     }
 
@@ -608,14 +608,14 @@ mod tests {
     fn residual_risk_flags_surviving_absolute_path() {
         // A raw path in the text with NO ctx that describes it: the generic
         // detector must still flag it.
-        assert!(residual_risk("see /Users/x/y/secret.rs", &ProjectIdentifiers::default()));
+        assert!(residual_risk("see /Users/x/y/secret.rs", &WorkspaceIdentifiers::default()));
     }
 
     #[test]
     fn residual_risk_flags_surviving_known_token_camel_embedded() {
         // A 3-char client camel-embedded past a boundary the replacement can't
         // reach: the squash backstop must catch it → publish refused.
-        let c = ProjectIdentifiers { client_name: Some("IBM".into()), ..Default::default() };
+        let c = WorkspaceIdentifiers { client_name: Some("IBM".into()), ..Default::default() };
         assert!(residual_risk("deployed to myIBMservice cluster", &c));
     }
 
@@ -623,7 +623,7 @@ mod tests {
     fn residual_risk_flags_screaming_snake_secret() {
         assert!(residual_risk(
             "set ACME_PROD_DB_PASSWORD before boot",
-            &ProjectIdentifiers::default()
+            &WorkspaceIdentifiers::default()
         ));
     }
 
@@ -641,7 +641,7 @@ mod tests {
         // SCREAMING_SNAKE secret isn't a known token or a path — dereference
         // won't strip it, so the residual check must make `Dereferenced::new`
         // fail closed rather than hand back publishable text.
-        let err = Dereferenced::new("export ACME_SECRET_TOKEN=1", &ProjectIdentifiers::default());
+        let err = Dereferenced::new("export ACME_SECRET_TOKEN=1", &WorkspaceIdentifiers::default());
         assert!(err.is_err(), "obvious surviving identifier must fail closed");
     }
 
@@ -659,7 +659,7 @@ mod tests {
         // Compile-time guarantee (documented): `Dereferenced { text }` cannot be
         // built outside this module because the field is private. This test
         // asserts the runtime half — the constructor always runs the gate.
-        let bad = Dereferenced::new("token s-1 at /a/b/c", &ProjectIdentifiers::default());
+        let bad = Dereferenced::new("token s-1 at /a/b/c", &WorkspaceIdentifiers::default());
         // /a/b/c is a POSIX path (2 segments) + s-1 is a session id → stripped,
         // then residual clean → Ok, but proving the gate ran: removed is set.
         let d = bad.unwrap();
@@ -690,7 +690,7 @@ mod tests {
         let c = ctx();
         let masked = dereference("acme-api and Acme Corp and /Users/dev/work/acme-api", &c).text;
         assert!(
-            masked.contains(PH_REPO) || masked.contains(PH_PROJECT) || masked.contains(PH_CLIENT)
+            masked.contains(PH_REPO) || masked.contains(PH_WORKSPACE) || masked.contains(PH_CLIENT)
         );
         let again = dereference(&masked, &c);
         assert_eq!(again.text, masked);
@@ -700,9 +700,9 @@ mod tests {
 
     #[test]
     fn removed_records_categories_without_raw_values() {
-        // Use `billing-svc` (a repo distinct from the project name) so the Repo
+        // Use `billing-svc` (a repo distinct from the workspace name) so the Repo
         // category is unambiguous — `acme-api` would otherwise be claimed by the
-        // equal-squash Project token first (which is itself correct: the token
+        // equal-squash Workspace token first (which is itself correct: the token
         // IS stripped, only the label differs).
         let c = ctx();
         let out = dereference("Jane Doe at jane@acme.com in billing-svc", &c);
@@ -732,7 +732,7 @@ mod residual_risk_false_positives {
     /// `squash` strips every non-alphanumeric, so the haystack has NO word
     /// boundaries, and the scan is a raw `contains` with
     /// `MIN_DISTINCTIVE_SQUASH = 3`. `repo_names` is populated from EVERY folder
-    /// name in a project — for `sensei` that is ~300 entries including `api`,
+    /// name in a workspace — for `sensei` that is ~300 entries including `api`,
     /// `app`, `you`, `org`, `bin`, `src`, `lib`, `code`, `state`, `token`.
     ///
     /// A three-letter folder name therefore matches inside ordinary English, and
@@ -740,7 +740,7 @@ mod residual_risk_false_positives {
     /// each token below is a real folder in this repository.
     #[test]
     fn a_three_letter_folder_name_matches_inside_ordinary_english() {
-        let ctx = ProjectIdentifiers { repo_names: vec!["app".into()], ..Default::default() };
+        let ctx = WorkspaceIdentifiers { repo_names: vec!["app".into()], ..Default::default() };
         // "happens" contains "app". Nothing here identifies anything.
         assert!(
             residual_risk("this happens whenever the cache is cold", &ctx),
@@ -750,7 +750,7 @@ mod residual_risk_false_positives {
 
     #[test]
     fn tokens_match_across_word_boundaries_once_squashed() {
-        let ctx = ProjectIdentifiers { repo_names: vec!["api".into()], ..Default::default() };
+        let ctx = WorkspaceIdentifiers { repo_names: vec!["api".into()], ..Default::default() };
         // "a pipeline" squashes to "apipeline", which contains "api".
         assert!(
             residual_risk("prefer a pipeline over a barrier", &ctx),
@@ -761,8 +761,8 @@ mod residual_risk_false_positives {
     #[test]
     fn the_live_case_a_clean_generalised_principle_is_held() {
         // Verbatim from the memory held on 2026-08-29 by the real publish path.
-        // `stores` and `providers` are both folder names in this project.
-        let ctx = ProjectIdentifiers {
+        // `stores` and `providers` are both folder names in this workspace.
+        let ctx = WorkspaceIdentifiers {
             repo_names: vec!["stores".into(), "providers".into()],
             ..Default::default()
         };

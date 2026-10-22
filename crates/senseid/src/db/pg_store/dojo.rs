@@ -51,12 +51,12 @@ impl PgStore {
 
     // ── Insight copy cache (narration-cache pipeline) ────────────────────
 
-    /// List memory-share batches for a project, newest first. `only_status`
+    /// List memory-share batches for a workspace, newest first. `only_status`
     /// filters to a single lifecycle stage (`proposed`, `approved`, …); pass
     /// `None` to include every stage.
     pub async fn list_memory_share_batches(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         only_status: Option<&str>,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, i64)> =
@@ -69,7 +69,7 @@ impl PgStore {
                   ORDER BY b.created_at DESC
                   LIMIT 200"
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .bind(only_status)
             .fetch_all(&self.pool)
             .await
@@ -95,7 +95,7 @@ impl PgStore {
     /// caller-side bug. Returns the new batch id on success.
     pub async fn create_memory_share_batch(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         memory_ids: &[uuid::Uuid],
         note: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
@@ -108,7 +108,7 @@ impl PgStore {
             "INSERT INTO sensei.memory_share_batches (workspace_id, note)
              VALUES ($1, $2) RETURNING id",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(note)
         .fetch_one(&mut *tx)
         .await
@@ -168,7 +168,7 @@ impl PgStore {
 
     // ── Dōjō upstream contribute (C6) ─────────────────────────────────
 
-    /// Load a share batch's `(project_id, status, member items)` for the C6
+    /// Load a share batch's `(workspace_id, status, member items)` for the C6
     /// upstream-contribute path. `status` is returned so the caller can enforce
     /// "only `approved` batches contribute". Each item carries the SHAREABLE
     /// lane only — the `generalised_content` rewrite as `body` (empty when the
@@ -185,7 +185,7 @@ impl PgStore {
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        let Some((project_id, status)) = head else {
+        let Some((workspace_id, status)) = head else {
             return Ok(None);
         };
 
@@ -231,18 +231,18 @@ impl PgStore {
                 memory_type,
             })
             .collect();
-        Ok(Some((project_id, status, items)))
+        Ok(Some((workspace_id, status, items)))
     }
 
-    /// The membership a project is bound to (`sensei.workspaces.dojo_id`), or `None`
-    /// when the project is unbound / unknown. The routing anchor for C6.
-    pub async fn project_bound_membership(
+    /// The membership a workspace is bound to (`sensei.workspaces.dojo_id`), or `None`
+    /// when the workspace is unbound / unknown. The routing anchor for C6.
+    pub async fn workspace_bound_membership(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(Option<uuid::Uuid>,)> =
             sqlx_core::query_as::query_as("SELECT dojo_id FROM sensei.workspaces WHERE id = $1")
-                .bind(project_id)
+                .bind(workspace_id)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -251,7 +251,7 @@ impl PgStore {
 
     /// The oldest `approved` share batch that still has at least one member memory
     /// with no `sent` outbox row — i.e. work the daemon still owes a Dōjō. Powers
-    /// `GET /api/share-review/next-batch`. Returns `(batch_id, project_id,
+    /// `GET /api/share-review/next-batch`. Returns `(batch_id, workspace_id,
     /// decided_at)`.
     pub async fn next_unsent_approved_batch(
         &self,
@@ -751,17 +751,17 @@ impl PgStore {
         Ok(res.rows_affected() > 0)
     }
 
-    /// Bind (or, with `None`, unbind) a project to a Dōjō membership by setting
-    /// `sensei.workspaces.dojo_id`. Returns `false` if the project is unknown.
-    pub async fn bind_project_to_dojo(
+    /// Bind (or, with `None`, unbind) a workspace to a Dōjō membership by setting
+    /// `sensei.workspaces.dojo_id`. Returns `false` if the workspace is unknown.
+    pub async fn bind_workspace_to_dojo(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         membership_id: Option<&uuid::Uuid>,
     ) -> Result<bool, String> {
         let res = sqlx_core::query::query(
             "UPDATE sensei.workspaces SET dojo_id = $2, modified_at = now() WHERE id = $1",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(membership_id)
         .execute(&self.pool)
         .await
@@ -769,9 +769,9 @@ impl PgStore {
         Ok(res.rows_affected() > 0)
     }
 
-    /// Projects bound to a membership (`projects.dojo_id = id`) — the
-    /// connections pane's "bound projects" strip.
-    pub async fn projects_bound_to_dojo(
+    /// Workspaces bound to a membership (`workspaces.dojo_id = id`) — the
+    /// connections pane's "bound workspaces" strip.
+    pub async fn workspaces_bound_to_dojo(
         &self,
         membership_id: &uuid::Uuid,
     ) -> Result<Vec<(uuid::Uuid, String)>, String> {

@@ -4,7 +4,7 @@ import {
   driftTone,
   driftChipClasses,
   rollupDrift,
-  groupDriftByProject,
+  groupDriftByWorkspace,
   rollupHeadline,
   toDriftRow,
   type DriftRow,
@@ -12,15 +12,15 @@ import {
 
 const row = (over: Partial<DriftRow> = {}): DriftRow => ({
   id: 'd',
-  projectId: 'p',
-  projectName: 'sensei',
+  workspaceId: 'p',
+  workspaceName: 'sensei',
   detail: 'Mentions `foo` which is not in the code.',
   status: 'broken',
   ...over,
 });
 
 describe('toDriftRow', () => {
-  it('annotates a wire DriftItem with its owning project', () => {
+  it('annotates a wire DriftItem with its owning workspace', () => {
     const item = {
       id: 'ac55',
       file: '',
@@ -33,8 +33,8 @@ describe('toDriftRow', () => {
     const r = toDriftRow(item, { id: 'proj-1', name: 'rokkit' });
     expect(r).toEqual({
       id: 'ac55',
-      projectId: 'proj-1',
-      projectName: 'rokkit',
+      workspaceId: 'proj-1',
+      workspaceName: 'rokkit',
       detail: 'Mentions `bar`.',
       status: 'broken',
     });
@@ -63,58 +63,58 @@ describe('driftChipClasses', () => {
 });
 
 describe('rollupDrift', () => {
-  it('counts total, broken, drifted and distinct affected projects', () => {
+  it('counts total, broken, drifted and distinct affected workspaces', () => {
     const r = rollupDrift([
-      row({ id: '1', projectId: 'a', status: 'broken' }),
-      row({ id: '2', projectId: 'a', status: 'drifted' }),
-      row({ id: '3', projectId: 'b', status: 'broken' }),
+      row({ id: '1', workspaceId: 'a', status: 'broken' }),
+      row({ id: '2', workspaceId: 'a', status: 'drifted' }),
+      row({ id: '3', workspaceId: 'b', status: 'broken' }),
     ]);
-    expect(r).toEqual({ total: 3, broken: 2, drifted: 1, projectsAffected: 2 });
+    expect(r).toEqual({ total: 3, broken: 2, drifted: 1, workspacesAffected: 2 });
   });
 
   it('is all-zero for an empty feed', () => {
-    expect(rollupDrift([])).toEqual({ total: 0, broken: 0, drifted: 0, projectsAffected: 0 });
+    expect(rollupDrift([])).toEqual({ total: 0, broken: 0, drifted: 0, workspacesAffected: 0 });
   });
 });
 
-describe('groupDriftByProject', () => {
-  it('groups rows by project and counts per-status', () => {
-    const groups = groupDriftByProject([
-      row({ id: '1', projectId: 'a', projectName: 'alpha', status: 'broken' }),
-      row({ id: '2', projectId: 'a', projectName: 'alpha', status: 'drifted' }),
-      row({ id: '3', projectId: 'b', projectName: 'bravo', status: 'broken' }),
+describe('groupDriftByWorkspace', () => {
+  it('groups rows by workspace and counts per-status', () => {
+    const groups = groupDriftByWorkspace([
+      row({ id: '1', workspaceId: 'a', workspaceName: 'alpha', status: 'broken' }),
+      row({ id: '2', workspaceId: 'a', workspaceName: 'alpha', status: 'drifted' }),
+      row({ id: '3', workspaceId: 'b', workspaceName: 'bravo', status: 'broken' }),
     ]);
-    const alpha = groups.find((g) => g.projectId === 'a');
-    expect(alpha).toMatchObject({ projectName: 'alpha', broken: 1, drifted: 1 });
+    const alpha = groups.find((g) => g.workspaceId === 'a');
+    expect(alpha).toMatchObject({ workspaceName: 'alpha', broken: 1, drifted: 1 });
     expect(alpha?.rows).toHaveLength(2);
   });
 
   it('orders groups broken-first (most broken refs lead)', () => {
-    const groups = groupDriftByProject([
-      row({ id: '1', projectId: 'a', projectName: 'alpha', status: 'broken' }),
-      row({ id: '2', projectId: 'b', projectName: 'bravo', status: 'broken' }),
-      row({ id: '3', projectId: 'b', projectName: 'bravo', status: 'broken' }),
+    const groups = groupDriftByWorkspace([
+      row({ id: '1', workspaceId: 'a', workspaceName: 'alpha', status: 'broken' }),
+      row({ id: '2', workspaceId: 'b', workspaceName: 'bravo', status: 'broken' }),
+      row({ id: '3', workspaceId: 'b', workspaceName: 'bravo', status: 'broken' }),
     ]);
-    expect(groups.map((g) => g.projectId)).toEqual(['b', 'a']);
+    expect(groups.map((g) => g.workspaceId)).toEqual(['b', 'a']);
   });
 
-  it('breaks a broken-count tie by total rows, then project name', () => {
-    const groups = groupDriftByProject([
+  it('breaks a broken-count tie by total rows, then workspace name', () => {
+    const groups = groupDriftByWorkspace([
       // zulu: 1 broken + 1 drifted = 2 rows
-      row({ id: '1', projectId: 'z', projectName: 'zulu', status: 'broken' }),
-      row({ id: '2', projectId: 'z', projectName: 'zulu', status: 'drifted' }),
+      row({ id: '1', workspaceId: 'z', workspaceName: 'zulu', status: 'broken' }),
+      row({ id: '2', workspaceId: 'z', workspaceName: 'zulu', status: 'drifted' }),
       // mike: 1 broken = 1 row
-      row({ id: '3', projectId: 'm', projectName: 'mike', status: 'broken' }),
+      row({ id: '3', workspaceId: 'm', workspaceName: 'mike', status: 'broken' }),
       // alpha: 1 broken = 1 row (ties mike on broken+total → name breaks it)
-      row({ id: '4', projectId: 'a', projectName: 'alpha', status: 'broken' }),
+      row({ id: '4', workspaceId: 'a', workspaceName: 'alpha', status: 'broken' }),
     ]);
-    expect(groups.map((g) => g.projectId)).toEqual(['z', 'a', 'm']);
+    expect(groups.map((g) => g.workspaceId)).toEqual(['z', 'a', 'm']);
   });
 
   it('within a group, orders broken rows before drifted', () => {
-    const groups = groupDriftByProject([
-      row({ id: '1', projectId: 'a', status: 'drifted', detail: 'b' }),
-      row({ id: '2', projectId: 'a', status: 'broken', detail: 'a' }),
+    const groups = groupDriftByWorkspace([
+      row({ id: '1', workspaceId: 'a', status: 'drifted', detail: 'b' }),
+      row({ id: '2', workspaceId: 'a', status: 'broken', detail: 'a' }),
     ]);
     expect(groups[0].rows.map((r) => r.status)).toEqual(['broken', 'drifted']);
   });
@@ -122,26 +122,26 @@ describe('groupDriftByProject', () => {
 
 describe('rollupHeadline', () => {
   it('renders broken-only with plural agreement', () => {
-    expect(rollupHeadline({ total: 153, broken: 153, drifted: 0, projectsAffected: 4 })).toBe(
-      '153 broken references across 4 projects.',
+    expect(rollupHeadline({ total: 153, broken: 153, drifted: 0, workspacesAffected: 4 })).toBe(
+      '153 broken references across 4 workspaces.',
     );
   });
 
-  it('uses singular for a single reference and a single project', () => {
-    expect(rollupHeadline({ total: 1, broken: 1, drifted: 0, projectsAffected: 1 })).toBe(
-      '1 broken reference across 1 project.',
+  it('uses singular for a single reference and a single workspace', () => {
+    expect(rollupHeadline({ total: 1, broken: 1, drifted: 0, workspacesAffected: 1 })).toBe(
+      '1 broken reference across 1 workspace.',
     );
   });
 
   it('joins broken and drifted when both are present', () => {
-    expect(rollupHeadline({ total: 7, broken: 5, drifted: 2, projectsAffected: 3 })).toBe(
-      '5 broken references and 2 drifted references across 3 projects.',
+    expect(rollupHeadline({ total: 7, broken: 5, drifted: 2, workspacesAffected: 3 })).toBe(
+      '5 broken references and 2 drifted references across 3 workspaces.',
     );
   });
 
   it('falls back to a plain reference count when neither status is set', () => {
-    expect(rollupHeadline({ total: 4, broken: 0, drifted: 0, projectsAffected: 2 })).toBe(
-      '4 references across 2 projects.',
+    expect(rollupHeadline({ total: 4, broken: 0, drifted: 0, workspacesAffected: 2 })).toBe(
+      '4 references across 2 workspaces.',
     );
   });
 });

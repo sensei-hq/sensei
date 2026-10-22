@@ -1,6 +1,6 @@
 //! Recommendation ranking pass (analyzer L2 tail, #65 "…and ranking them").
 //!
-//! Scores every *pending* recommendation for a project via the pure
+//! Scores every *pending* recommendation for a workspace via the pure
 //! [`crate::ranking`] core and marks the single focal "do first" pick. Runs at
 //! the end of [`analyze_workspace`](super::analyze::analyze_workspace), after the
 //! generator and consolidation have written all recs, so the whole pending set
@@ -11,15 +11,18 @@ use super::super::executor::TaskContext;
 use crate::ranking::{self, ScoreFactors};
 use std::collections::HashMap;
 
-/// Score + rank a project's pending recommendations; returns how many were
+/// Score + rank a workspace's pending recommendations; returns how many were
 /// scored. Clears any stale focal flag first so exactly one (or zero, when
 /// nothing is pending) survives.
-pub async fn rank_for_project(ctx: &TaskContext, project_id: &uuid::Uuid) -> Result<u32, String> {
-    let pending = ctx.pg().get_pending_recs_for_ranking(project_id).await?;
+pub async fn rank_for_workspace(
+    ctx: &TaskContext,
+    workspace_id: &uuid::Uuid,
+) -> Result<u32, String> {
+    let pending = ctx.pg().get_pending_recs_for_ranking(workspace_id).await?;
 
     // Always clear focal up front: a previously-focal rec that was acted on (no
     // longer pending) or out-scored must not stay flagged.
-    ctx.pg().clear_project_focal(project_id).await?;
+    ctx.pg().clear_workspace_focal(workspace_id).await?;
     if pending.is_empty() {
         return Ok(0);
     }
@@ -58,9 +61,9 @@ pub async fn rank_for_project(ctx: &TaskContext, project_id: &uuid::Uuid) -> Res
         };
         match ctx.pg().set_recommendation_rank(&r.id, r.score, r.focal, &breakdown).await {
             Ok(_) => written += 1,
-            Err(e) => tracing::warn!(error = %e, rec = %r.id, "rank_for_project: persist failed"),
+            Err(e) => tracing::warn!(error = %e, rec = %r.id, "rank_for_workspace: persist failed"),
         }
     }
-    tracing::info!("rank_for_project: {project_id} — ranked {written} recs");
+    tracing::info!("rank_for_workspace: {workspace_id} — ranked {written} recs");
     Ok(written)
 }

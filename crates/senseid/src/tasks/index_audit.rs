@@ -14,8 +14,8 @@
 //! |------------------------------------------------------|-----------------------|
 //! | a node whose `file_path` no longer exists on disk    | [`scan::prune_vanished`] |
 //! | a `kind='folder'` row whose directory vanished       | [`scan::detect_vanished_folders`] + [`scan::apply_folder_prune`] |
-//! | a `standalone` project nested inside another repo    | [`PgStore::detect_nested_standalone_roots`] / [`PgStore::heal_nested_standalone_roots`] |
-//! | duplicate-name phantom projects                      | [`PgStore::detect_duplicate_name_phantoms`] / [`PgStore::heal_duplicate_name_projects`] |
+//! | a `standalone` workspace nested inside another repo    | [`PgStore::detect_nested_standalone_roots`] / [`PgStore::heal_nested_standalone_roots`] |
+//! | duplicate-name phantom workspaces                      | [`PgStore::detect_duplicate_name_phantoms`] / [`PgStore::heal_duplicate_name_workspaces`] |
 //!
 //! Two entry points share [`audit_index_integrity`]:
 //! - [`run_audit`]`(pg, true)` — the periodic REPAIR pass, wired into the daemon
@@ -69,8 +69,8 @@ pub struct AuditSamples {
     pub ghost_folders: Vec<String>,
     /// Absolute paths of standalone roots mis-scoped inside a git repo.
     pub nested_standalone: Vec<String>,
-    /// Ids of duplicate-name phantom projects.
-    pub duplicate_name_projects: Vec<String>,
+    /// Ids of duplicate-name phantom workspaces.
+    pub duplicate_name_workspaces: Vec<String>,
     /// One repository registered at several paths, rendered as
     /// `name: /path/a | /path/b` so the report names the copies to choose between.
     pub duplicate_repository_paths: Vec<String>,
@@ -111,8 +111,8 @@ pub struct AuditReport {
     pub ghost_folders: u64,
     /// Standalone roots mis-scoped inside a git repo (re-absorbed / to re-absorb).
     pub nested_standalone: u64,
-    /// Duplicate-name phantom projects (merged / to merge).
-    pub duplicate_name_projects: u64,
+    /// Duplicate-name phantom workspaces (merged / to merge).
+    pub duplicate_name_workspaces: u64,
     /// Repositories registered at MORE THAN ONE path — a clone, a symlink or a
     /// stale checkout. REPORTED ONLY, never repaired: which copy is canonical is
     /// the user's call. Measured before symlink grouping existed, the largest
@@ -136,7 +136,7 @@ impl AuditReport {
         self.orphan_files > 0
             || self.ghost_folders > 0
             || self.nested_standalone > 0
-            || self.duplicate_name_projects > 0
+            || self.duplicate_name_workspaces > 0
             || self.duplicate_repository_paths > 0
             || self.contained_duplicate_folders > 0
             || self.misrooted_folders > 0
@@ -175,13 +175,13 @@ pub async fn audit_index_integrity(
         // deletion to `prune_vanished`, which drops any indexed path NOT in the
         // live set — so the live set is every indexed file NOT confirmed absent.
         for f in &folders {
-            // Only project roots own file nodes (repo-relative to their abs_path),
+            // Only workspace roots own file nodes (repo-relative to their abs_path),
             // exactly as `process_git_folder` calls `prune_vanished`.
             if !matches!(f["kind"].as_str().unwrap_or(""), "git" | "standalone" | "subtree") {
                 continue;
             }
             let Some(abs) = f["abs_path"].as_str() else { continue };
-            // A project-root folder whose own dir is absent (moved repo, unmounted)
+            // A workspace-root folder whose own dir is absent (moved repo, unmounted)
             // is left entirely alone — statting its files would mark them all
             // absent and mass-prune a live index. `reconcile_roots` owns absent roots.
             if !scan::dir_present(Path::new(abs)) {
@@ -231,7 +231,7 @@ pub async fn audit_index_integrity(
     // ── Global, structural classes (gated on ≥1 present root above) ───────────
     // These are pure DB-structural re-attributions; they run once, not per root.
 
-    // Class 3 — a standalone project root nested inside another repo.
+    // Class 3 — a standalone workspace root nested inside another repo.
     match pg.detect_nested_standalone_roots().await {
         Ok(paths) => {
             report.nested_standalone = paths.len() as u64;
@@ -248,25 +248,25 @@ pub async fn audit_index_integrity(
         }
     }
 
-    // Class 4 — duplicate-name phantom projects. Detected after the nested-heal so
+    // Class 4 — duplicate-name phantom workspaces. Detected after the nested-heal so
     // the count reflects the phantoms that heal itself did not already fold away.
     match pg.detect_duplicate_name_phantoms().await {
         Ok(ids) => {
-            report.duplicate_name_projects = ids.len() as u64;
+            report.duplicate_name_workspaces = ids.len() as u64;
             AuditSamples::extend_capped(
-                &mut report.samples.duplicate_name_projects,
+                &mut report.samples.duplicate_name_workspaces,
                 ids.iter().map(|id| id.to_string()),
             );
         }
         Err(e) => tracing::warn!(error = %e, "index_audit: detect_duplicate_name_phantoms failed"),
     }
-    if repair && report.duplicate_name_projects > 0 {
-        match pg.heal_duplicate_name_projects().await {
+    if repair && report.duplicate_name_workspaces > 0 {
+        match pg.heal_duplicate_name_workspaces().await {
             Ok(n) => {
-                tracing::info!(healed = n, "index_audit: merged duplicate-name phantom projects")
+                tracing::info!(healed = n, "index_audit: merged duplicate-name phantom workspaces")
             }
             Err(e) => {
-                tracing::warn!(error = %e, "index_audit: heal_duplicate_name_projects failed")
+                tracing::warn!(error = %e, "index_audit: heal_duplicate_name_workspaces failed")
             }
         }
     }
@@ -311,8 +311,8 @@ pub async fn audit_index_integrity(
     // `folders_to_watch.path` prefixing the folder's `abs_path`. Nothing today
     // lets a user set it independently, which is why the live DB measured clean
     // (13,724 of 13,724 agreeing, 2026-10-02) — but nothing NOTICED either, and
-    // an unchecked cache of a derivable fact is precisely how `project_id` came
-    // to let one repository's folders name two different projects (#210).
+    // an unchecked cache of a derivable fact is precisely how `workspace_id` came
+    // to let one repository's folders name two different workspaces (#210).
     //
     // DB-WIDE rather than per-root, deliberately: the drift this looks for is a
     // folder stamped with the WRONG root, so scoping the check to one root is
@@ -427,7 +427,7 @@ async fn audit_pass(pg: &PgStore) {
             orphan_files = report.orphan_files,
             ghost_folders = report.ghost_folders,
             nested_standalone = report.nested_standalone,
-            duplicate_name_projects = report.duplicate_name_projects,
+            duplicate_name_workspaces = report.duplicate_name_workspaces,
             roots_present = report.roots_present,
             roots_absent = report.roots_absent,
             "index_audit: repaired index drift",
@@ -466,8 +466,8 @@ mod tests {
     ///
     /// `folders.root_id` is a cache of a derivable fact: the watch root is the
     /// longest `folders_to_watch.path` prefixing the folder's `abs_path`. A
-    /// cache that nothing checks is how `folders.project_id` came to have a
-    /// repository's folders naming two different projects (#210) — the drift was
+    /// cache that nothing checks is how `folders.workspace_id` came to have a
+    /// repository's folders naming two different workspaces (#210) — the drift was
     /// invisible until someone went looking.
     ///
     /// Measured 2026-10-02 the live DB is clean, 13,724 of 13,724 agreeing. That
@@ -638,9 +638,9 @@ mod tests {
         std::fs::create_dir_all(&nested).unwrap();
 
         let (root, root_id) = present_root(&pg, tmp.path()).await;
-        // A git repo with its own project.
+        // A git repo with its own workspace.
         let gpid = pg
-            .create_project(&format!("mono-{}", uuid::Uuid::new_v4().simple()), None, None)
+            .create_workspace(&format!("mono-{}", uuid::Uuid::new_v4().simple()), None, None)
             .await
             .unwrap();
         let g_fid = pg
@@ -655,12 +655,12 @@ mod tests {
             )
             .await
             .unwrap();
-        crate::tasks::test_support::place_folder_in_project(&pg, &g_fid, &gpid, "monorepo")
+        crate::tasks::test_support::place_folder_in_workspace(&pg, &g_fid, &gpid, "monorepo")
             .await
             .unwrap();
-        // A standalone root mis-scoped INSIDE the repo, attributed to a DIFFERENT project.
+        // A standalone root mis-scoped INSIDE the repo, attributed to a DIFFERENT workspace.
         let spid = pg
-            .create_project(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None)
+            .create_workspace(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None)
             .await
             .unwrap();
         let s_fid = pg
@@ -675,7 +675,7 @@ mod tests {
             )
             .await
             .unwrap();
-        crate::tasks::test_support::place_folder_in_project(&pg, &s_fid, &spid, "sub")
+        crate::tasks::test_support::place_folder_in_workspace(&pg, &s_fid, &spid, "sub")
             .await
             .unwrap();
 
@@ -696,13 +696,13 @@ mod tests {
             kind, "folder",
             "nested standalone re-absorbed as a folder of the enclosing repo"
         );
-        assert_eq!(pid, Some(gpid), "re-absorbed folder re-pointed to the repo's project");
+        assert_eq!(pid, Some(gpid), "re-absorbed folder re-pointed to the repo's workspace");
 
         pg.remove_watch_root(&root_id).await.unwrap();
     }
 
     #[tokio::test]
-    async fn audit_repairs_duplicate_name_projects() {
+    async fn audit_repairs_duplicate_name_workspaces() {
         let pg = PgStore::connect_test().await.unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
@@ -710,25 +710,25 @@ mod tests {
 
         let (root, root_id) = present_root(&pg, tmp.path()).await;
         let name = format!("dupname-{}", uuid::Uuid::new_v4().simple());
-        // Survivor: a folder-bearing project.
-        let survivor = pg.create_project(&name, None, None).await.unwrap();
+        // Survivor: a folder-bearing workspace.
+        let survivor = pg.create_workspace(&name, None, None).await.unwrap();
         let sv_fid = pg
             .upsert_folder(&root_id, "git", "repo", "repo", &repo.to_string_lossy(), None, None)
             .await
             .unwrap();
-        crate::tasks::test_support::place_folder_in_project(&pg, &sv_fid, &survivor, "repo")
+        crate::tasks::test_support::place_folder_in_workspace(&pg, &sv_fid, &survivor, "repo")
             .await
             .unwrap();
-        // Phantom: a same-name, 0-folder, discovery project.
-        let phantom = pg.create_project(&name, None, None).await.unwrap();
+        // Phantom: a same-name, 0-folder, discovery workspace.
+        let phantom = pg.create_workspace(&name, None, None).await.unwrap();
 
         // Assert the REPAIR OUTCOME on our own uniquely-named rows.
-        // `heal_duplicate_name_projects` is GLOBAL, but the name is unique to this
+        // `heal_duplicate_name_workspaces` is GLOBAL, but the name is unique to this
         // test, so after a repair pass MY phantom is guaranteed merged away (by
         // this pass or a concurrent one) while the folder-bearing survivor stays.
         audit_index_integrity(&pg, std::slice::from_ref(&root), true).await;
-        assert!(pg.get_project(&phantom).await.unwrap().is_none(), "phantom merged away");
-        assert!(pg.get_project(&survivor).await.unwrap().is_some(), "survivor kept");
+        assert!(pg.get_workspace(&phantom).await.unwrap().is_none(), "phantom merged away");
+        assert!(pg.get_workspace(&survivor).await.unwrap().is_some(), "survivor kept");
 
         pg.remove_watch_root(&root_id).await.unwrap();
     }
@@ -757,9 +757,9 @@ mod tests {
 
         let (root, root_id) = present_root(&pg, tmp.path()).await;
 
-        // (a) git repo with a project + a present + vanished FILE node (orphan class).
+        // (a) git repo with a workspace + a present + vanished FILE node (orphan class).
         let gpid = pg
-            .create_project(&format!("mono-{}", uuid::Uuid::new_v4().simple()), None, None)
+            .create_workspace(&format!("mono-{}", uuid::Uuid::new_v4().simple()), None, None)
             .await
             .unwrap();
         let repo_fid = pg
@@ -774,7 +774,7 @@ mod tests {
             )
             .await
             .unwrap();
-        crate::tasks::test_support::place_folder_in_project(&pg, &repo_fid, &gpid, "monorepo")
+        crate::tasks::test_support::place_folder_in_workspace(&pg, &repo_fid, &gpid, "monorepo")
             .await
             .unwrap();
         pg.seed_node(&repo_fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
@@ -800,7 +800,7 @@ mod tests {
         let nested = repo.join("crates").join("sub");
         std::fs::create_dir_all(&nested).unwrap();
         let spid = pg
-            .create_project(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None)
+            .create_workspace(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None)
             .await
             .unwrap();
         let c_fid = pg
@@ -815,23 +815,23 @@ mod tests {
             )
             .await
             .unwrap();
-        crate::tasks::test_support::place_folder_in_project(&pg, &c_fid, &spid, "sub")
+        crate::tasks::test_support::place_folder_in_workspace(&pg, &c_fid, &spid, "sub")
             .await
             .unwrap();
 
-        // (d) duplicate-name phantom project (duplicate-name class).
+        // (d) duplicate-name phantom workspace (duplicate-name class).
         let dupname = format!("dupname-{}", uuid::Uuid::new_v4().simple());
-        let survivor = pg.create_project(&dupname, None, None).await.unwrap();
+        let survivor = pg.create_workspace(&dupname, None, None).await.unwrap();
         let extra_repo = tmp.path().join("dup");
         std::fs::create_dir_all(&extra_repo).unwrap();
         let d_fid = pg
             .upsert_folder(&root_id, "git", "dup", "dup", &extra_repo.to_string_lossy(), None, None)
             .await
             .unwrap();
-        crate::tasks::test_support::place_folder_in_project(&pg, &d_fid, &survivor, "dup")
+        crate::tasks::test_support::place_folder_in_workspace(&pg, &d_fid, &survivor, "dup")
             .await
             .unwrap();
-        let phantom = pg.create_project(&dupname, None, None).await.unwrap();
+        let phantom = pg.create_workspace(&dupname, None, None).await.unwrap();
 
         // One repair pass fixes every class it can see. The per-root classes
         // (orphan/ghost) are scoped to THIS unique root, so their counts are
@@ -865,7 +865,7 @@ mod tests {
             Some("folder".to_string()),
             "nested standalone now a folder of the repo"
         );
-        assert!(pg.get_project(&phantom).await.unwrap().is_none(), "phantom merged");
+        assert!(pg.get_workspace(&phantom).await.unwrap().is_none(), "phantom merged");
 
         // A second full audit over this root is a no-op for the per-root classes.
         let again = audit_index_integrity(&pg, std::slice::from_ref(&root), true).await;

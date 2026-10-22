@@ -230,7 +230,7 @@ pub(crate) async fn mcp_call_tool(
             let name = params["name"].as_str().filter(|s| !s.is_empty()).unwrap_or(query);
             let component = params["component"].as_str().filter(|s| !s.is_empty());
             // The asking folder, so the answer can be matched to the version
-            // this project actually pins (02b S9). Absent, the latest is served
+            // this workspace actually pins (02b S9). Absent, the latest is served
             // and no caveat is invented — there is no pin to miss.
             let folder = params["folder"].as_str().filter(|s| !s.is_empty());
             let docs = state.pg.get_library_docs(name, component, folder).await.map_err(|e| {
@@ -279,7 +279,7 @@ pub(crate) async fn mcp_call_tool(
                 tracing::warn!(error = %e, "mcp list_projects: list_repositories failed");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
-            serde_json::json!({"projects": repos})
+            serde_json::json!({"workspaces": repos})
         }
         "create_session" => {
             let repo_id_str = params["repoId"].as_str().unwrap_or(query);
@@ -427,9 +427,9 @@ pub(crate) async fn mcp_call_tool(
             } else {
                 (0, 0)
             };
-            // Prefer project row for name/metadata; fall back to folder row.
-            let project = match state.pg.get_project_by_name(repo_id).await
-                .map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_project_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?
+            // Prefer workspace row for name/metadata; fall back to folder row.
+            let workspace = match state.pg.get_workspace_by_name(repo_id).await
+                .map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_workspace_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?
             {
                 Some(proj) => Some(proj),
                 None => state.pg.get_repo_by_name(repo_id).await
@@ -460,7 +460,7 @@ pub(crate) async fn mcp_call_tool(
                 )
             };
             serde_json::json!({
-                "project": project,
+                "workspace": workspace,
                 "functions": fns,
                 "types": types,
                 "graphHealth": graph_health,
@@ -485,15 +485,15 @@ pub(crate) async fn mcp_call_tool(
                         .iter()
                         .filter(|s| s["outcome"].as_str() == Some("completed"))
                         .count();
-                    // FTR is store-backed (project_metrics, metric='ftr') — the SAME
+                    // FTR is store-backed (workspace_metrics, metric='ftr') — the SAME
                     // number the Phase-7 endpoints serve. Honest-absent (null) when
-                    // the folder has no project or no ftr rows; NEVER a fabricated 0.
-                    let ftr: Option<f64> = match json_uuid(&folder["project_id"]) {
-                        Some(pid) => state.pg.get_project_ftr_rate(&pid).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_metrics: get_project_ftr_rate failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
+                    // the folder has no workspace or no ftr rows; NEVER a fabricated 0.
+                    let ftr: Option<f64> = match json_uuid(&folder["workspace_id"]) {
+                        Some(pid) => state.pg.get_workspace_ftr_rate(&pid).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_metrics: get_workspace_ftr_rate failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
                         None => None,
                     };
                     serde_json::json!({
-                        "project": repo_id,
+                        "workspace": repo_id,
                         "sessions": session_count,
                         "completed": completed,
                         "ftr": ftr,
@@ -502,13 +502,13 @@ pub(crate) async fn mcp_call_tool(
                     serde_json::json!({"error": "invalid folder id"})
                 }
             } else {
-                serde_json::json!({"error": "project not found"})
+                serde_json::json!({"error": "workspace not found"})
             }
         }
         "get_ftr_daily" => {
             let days = params["days"].as_i64().unwrap_or(14) as i32;
-            let project_id = resolve_folder_id(&state, repo_id).await?;
-            let data = state.pg.get_ftr_daily(project_id.as_ref(), days).await.map_err(|e| { tracing::warn!(error = %e, repo_id, days, "mcp get_ftr_daily: get_ftr_daily failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            let workspace_id = resolve_folder_id(&state, repo_id).await?;
+            let data = state.pg.get_ftr_daily(workspace_id.as_ref(), days).await.map_err(|e| { tracing::warn!(error = %e, repo_id, days, "mcp get_ftr_daily: get_ftr_daily failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             serde_json::json!({"ftr_daily": data})
         }
         "get_hotspots" => {
@@ -524,7 +524,7 @@ pub(crate) async fn mcp_call_tool(
             if let Some(fid) = resolve_folder_id(&state, repo_id).await? {
                 state.pg.get_quality_signals(&fid).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_quality_signals: get_quality_signals failed"); StatusCode::INTERNAL_SERVER_ERROR })?
             } else {
-                serde_json::json!({"error": "project not found"})
+                serde_json::json!({"error": "workspace not found"})
             }
         }
         _ => serde_json::json!({"error": format!("Unknown tool: {}", tool)}),

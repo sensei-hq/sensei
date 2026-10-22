@@ -9,10 +9,16 @@
 -- the rows came through under the new names — then runs it again, which must
 -- change nothing.
 --
+-- R3b adds the stored KEYS sensei names after a project: the retired metric
+-- `project_health` and the setup wizard's `setup.projects` config key become
+-- `workspace_health` / `setup.workspaces`, the row kept (the metric's id, so its
+-- recorded values follow it).
+--
 -- WHAT BREAKS THIS TEST: a DDL file that still declares a `project` name; the
 -- hook missing a table, column, type, enum label or constraint, so dbd would
 -- recreate it empty or leave the old name behind; a rename that drops rows; a
--- hook that is not a no-op once it has run.
+-- hook that is not a no-op once it has run; a stored key still saying project,
+-- or converted by inserting a fresh row instead of renaming the one there.
 --
 -- What keeps the word `project` is another system's: `mcp_servers.scope`
 -- holds Claude Code's `'user' | 'project'` (a VALUE, not a name), the task
@@ -65,6 +71,11 @@ select 'enum label ' || n.nspname || '.' || t.typname || ' ' || e.enumlabel
    -- A compiler's projects (rust-analyzer, tsc): another system's word.
    and not (t.typname = 'task_execution_kind' and e.enumlabel = 'compile_projects');
 
+create temp view sensei_project_keys as
+select 'metric key ' || key as what from sensei.metrics where key = 'project_health'
+union all
+select 'config key ' || key from sensei.config where key = 'setup.projects';
+
 do $$
 declare
     left_over text;
@@ -72,6 +83,13 @@ begin
     select string_agg(what, E'\n  ' order by what) into left_over from sensei_project_names;
     if left_over is not null then
         raise exception E'the converged schema still says project:\n  %', left_over;
+    end if;
+    select string_agg(what, E'\n  ' order by what) into left_over from sensei_project_keys;
+    if left_over is not null then
+        raise exception E'the converged database still stores a project key:\n  %', left_over;
+    end if;
+    if not exists (select 1 from sensei.metrics where key = 'workspace_health') then
+        raise exception 'the metric catalogue has no workspace_health';
     end if;
 end $$;
 
@@ -113,6 +131,12 @@ values ('e0000000-0000-4000-8000-0000000307a3', 'project', 'convention', 'ztest-
 insert into sensei.workflow_state (project) values ('ztest-r3a');
 insert into inference.recommendations (workspace_id, title, why, action_type)
 values ('e0000000-0000-4000-8000-0000000307a3', 'ztest-r3a', 'ztest-r3a', 'cross_project');
+
+-- The stored keys as an older database holds them.
+create temp table health_metric as select id from sensei.metrics where key = 'workspace_health';
+update sensei.metrics set key = 'project_health' where key = 'workspace_health';
+delete from sensei.config where key = 'setup.workspaces';
+insert into sensei.config (key, value) values ('setup.projects', 'done');
 
 create temp table counts_before as
 select (select count(*) from sensei.projects)                 as workspaces
@@ -174,6 +198,15 @@ begin
             and 'workspace_repository' = any (enum_range(null::sensei.sync_entity)::text[])
             and 'workspace' = any (enum_range(null::sensei.extension_scope)::text[])) then
         raise exception 'an enum label was not renamed';
+    end if;
+    if exists (select 1 from sensei.metrics where key = 'project_health')
+       or not exists (select 1 from sensei.metrics m join health_metric h on h.id = m.id
+                       where m.key = 'workspace_health') then
+        raise exception 'project_health did not become workspace_health in place (its id kept)';
+    end if;
+    if exists (select 1 from sensei.config where key = 'setup.projects')
+       or not exists (select 1 from sensei.config where key = 'setup.workspaces' and value = 'done') then
+        raise exception 'the setup.projects config key did not become setup.workspaces with its value';
     end if;
     if not exists (select 1 from pg_constraint where conname = 'repository_metrics_pkey') then
         raise exception 'repository_metrics kept its stale project_metrics_ constraint names';

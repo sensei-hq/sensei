@@ -42,11 +42,11 @@ const KEY_CACHE_REUSE: &str = "cache_reuse";
 
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<chrono::NaiveDate>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("usage: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("usage: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
     let ids = pg.active_metric_ids(MetricGroup::Usage.as_str()).await?;
@@ -55,7 +55,7 @@ pub(super) async fn compute(
     };
 
     let window_days = crate::tasks::metrics_scheduler::window_days(pg).await;
-    let rows = pg.usage_cache_reuse_by_day(&project_id, window_days, as_of).await?;
+    let rows = pg.usage_cache_reuse_by_day(&workspace_id, window_days, as_of).await?;
 
     let mut written = 0u32;
     for (day, repository_id, mean_ratio, pooled_ratio, sessions) in rows {
@@ -64,7 +64,7 @@ pub(super) async fn compute(
             "pooled_ratio": pooled_ratio,
             "mean_of_session_ratios": mean_ratio,
         });
-        pg.upsert_project_metric_repo(&MetricRow {
+        pg.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mid,
             repository_id: &repository_id,
             scope: SCOPE_USER,
@@ -87,14 +87,14 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn a_bad_project_id_is_an_error_not_a_silent_zero() {
+    async fn a_bad_workspace_id_is_an_error_not_a_silent_zero() {
         let ctx = crate::tasks::test_support::make_ctx().await;
         assert!(compute(&ctx, "not-a-uuid", None).await.is_err());
     }
 
     #[tokio::test]
-    async fn a_project_with_no_token_accounted_turns_writes_no_row() {
-        // Honest-empty: Zed/OpenCode turns carry no token split yet, and a project
+    async fn a_workspace_with_no_token_accounted_turns_writes_no_row() {
+        // Honest-empty: Zed/OpenCode turns carry no token split yet, and a workspace
         // with only those must produce NO row rather than a fabricated 0.0 — which
         // would read as "every request missed cache".
         let ctx = crate::tasks::test_support::make_ctx().await;

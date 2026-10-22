@@ -131,11 +131,11 @@ pub enum InsightKind {
     SessionMetricObservation,
     // Code graph
     CommunityDescription,
-    // Project metrics narrative (the metrics screen)
+    // Workspace metrics narrative (the metrics screen)
     MetricNarrativeHeadline,
     MetricSignalInsight,
     // Per-datapoint metric explainer — one "why this day's value is what it is"
-    // line per (project, metric, day) at DAILY grain. Generated at COMPUTE time
+    // line per (workspace, metric, day) at DAILY grain. Generated at COMPUTE time
     // alongside the value and keyed on facts that INCLUDE the value, so an
     // unchanged value re-hits the cache (no model call) and a changed value
     // misses and regenerates.
@@ -239,10 +239,10 @@ impl InsightKind {
                 "Kind: community_description. In one plain sentence, say what this cluster of code is responsible for, grounded in the given hub symbols and their kinds. Name the shared responsibility; do not list every symbol. The title is a short 2-4 word name for the cluster; the detail is the sentence."
             }
             InsightKind::MetricNarrativeHeadline => {
-                "Kind: metric_narrative_headline. These are software-engineering signals about a code repository — its files, sessions, and tools — never business, sales, or customer metrics (e.g. \"churn\" here means code churn, not customers leaving). Summarise how the project's signals moved this period, reading the facts as a whole. The title is one plain sentence naming how many signals moved and the overall direction; the detail is one sentence naming the most important shifts and what they suggest. Ground both strictly in the given facts — never invent a number."
+                "Kind: metric_narrative_headline. These are software-engineering signals about a code repository — its files, sessions, and tools — never business, sales, or customer metrics (e.g. \"churn\" here means code churn, not customers leaving). Summarise how the workspace's signals moved this period, reading the facts as a whole. The title is one plain sentence naming how many signals moved and the overall direction; the detail is one sentence naming the most important shifts and what they suggest. Ground both strictly in the given facts — never invent a number."
             }
             InsightKind::MetricSignalInsight => {
-                "Kind: metric_signal_insight. This is a software-engineering signal about a code repository — its files, sessions, and tools — never a business or customer metric (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what it actually measures. In one or two plain sentences, say how this metric is trending for the project. When a `trend` fact is given, report its `assessment` (improving, worsening, or steady) as the overall trend over `trend.window` — this is the direction the chart shows; you may add the `recent` step as the latest move, but only if you mark it as recent, and never present that one step as the overall trend. When no `trend` is given, describe only the `recent` step and say it is recent. Use only the given numbers — never invent one, and never call the metric improving when the given `assessment` is worsening. The title is a 2-4 word label; the detail is the observation."
+                "Kind: metric_signal_insight. This is a software-engineering signal about a code repository — its files, sessions, and tools — never a business or customer metric (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what it actually measures. In one or two plain sentences, say how this metric is trending for the workspace. When a `trend` fact is given, report its `assessment` (improving, worsening, or steady) as the overall trend over `trend.window` — this is the direction the chart shows; you may add the `recent` step as the latest move, but only if you mark it as recent, and never present that one step as the overall trend. When no `trend` is given, describe only the `recent` step and say it is recent. Use only the given numbers — never invent one, and never call the metric improving when the given `assessment` is worsening. The title is a 2-4 word label; the detail is the observation."
             }
             InsightKind::MetricDayExplainer => {
                 "Kind: metric_day_explainer. This is a software-engineering signal about a code repository — its files, sessions, and tools — never a business or customer metric (e.g. \"churn\" here means code churn, not customers leaving). Read the given `meaning` field for what this metric measures. In one plain line, explain why THIS day's value is what it is, grounded strictly in the given numbers (value, prev_value, delta, and the day's session counts) and the `day` context — never invent a number, and never state a direction the given `delta` does not support. The title is a 2-4 word label; the detail is that one line."

@@ -92,7 +92,7 @@ pub async fn run_checkers(
     let rules = pg.resolve_local_checker_rules(folder_id).await?;
     let mut results = Vec::with_capacity(rules.len());
     for (rule_statement, checker_ref) in rules {
-        let run = match pg.project_command_for(folder_id, &checker_ref).await? {
+        let run = match pg.workspace_command_for(folder_id, &checker_ref).await? {
             Some(command) => {
                 let (verdict, exit_code, out) = run_command(&command, cwd).await;
                 pg.insert_check_run(

@@ -1,5 +1,5 @@
 //! Scan phase: discover folders, classify, enqueue ProcessGitFolder.
-//! Only emits activity events. Project + folder events come from ProcessGitFolder.
+//! Only emits activity events. Workspace + folder events come from ProcessGitFolder.
 
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
@@ -52,7 +52,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
     // Per-root exclusions (`folders_to_watch.excluded` on the effective root,
     // relative entries resolved to absolute `root/entry` prefixes). Filter the
-    // discovered set so excluded subtrees are never classified as projects; the
+    // discovered set so excluded subtrees are never classified as workspaces; the
     // watcher gets the same list so it ignores changes there.
     let exclusions = ctx
         .pg()
@@ -64,7 +64,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     //    A repository is a directory holding a `.git`, which is a DIRECTORY for
     //    a clone and a FILE for a submodule or linked worktree. There is no
     //    second kind: the `standalone` quasi-repo (a manifest-bearing directory
-    //    with no `.git`) was retired, because "looks like a project" is a guess
+    //    with no `.git`) was retired, because "looks like a workspace" is a guess
     //    and a `.git` is a fact.
     // OFF THE ASYNC WORKER — see `repo_scan::process_git_folder`. A hung mount
     // inside a synchronous walk holds a tokio worker that no timeout can reach.
@@ -153,10 +153,10 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
     // 4.5 Reconcile: self-heal the index the scan can't fix additively.
     //     First re-absorb any `standalone` root mis-scoped inside a git repo
-    //     (Bug 3) — it becomes a `kind=folder` of the repo's project, so a
+    //     (Bug 3) — it becomes a `kind=folder` of the repo's workspace, so a
     //     later `reconcile_roots` no longer sees it as a stale root. Then prune
     //     roots the scan no longer discovers (a root that lost its `.git`, was
-    //     emptied, or moved lingers forever as a phantom project otherwise).
+    //     emptied, or moved lingers forever as a phantom workspace otherwise).
     let reabsorbed = ctx.pg().heal_nested_standalone_roots().await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "scan_root: heal_nested_standalone_roots failed");
         0
@@ -234,13 +234,13 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         }
     };
     // Then prune ghost folder subtrees whose directory was deleted/moved on disk
-    // (e.g. a renamed sub-crate). `reconcile_roots` only prunes project ROOTS and
+    // (e.g. a renamed sub-crate). `reconcile_roots` only prunes workspace ROOTS and
     // `prune_vanished` only reconciles files *within* an indexed folder, so nothing
     // else removes a non-root `kind='folder'` row whose dir vanished — it lingers
     // dragging its whole subtree of nodes/edges/files.
     let ghosts = prune_vanished_folders(ctx.pg(), &root_id).await;
     // Enforce one-node-one-owner: prune any code node a structural (folder-kind)
-    // subfolder still holds a duplicate of under the project's canonical root
+    // subfolder still holds a duplicate of under the workspace's canonical root
     // owner. Twin-guarded (never removes a uniquely-held symbol); self-heals the
     // pre-fix #101 double-index residue and blocks future accumulation.
     let deduped = ctx.pg().dedup_structural_folder_nodes(&root_id).await.unwrap_or_else(|e| {
@@ -311,14 +311,14 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             "scan_root reconcile: collected {stubs_collected} stub(s) the dedup orphaned"
         );
     }
-    let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed");
+    let orphaned = ctx.pg().mark_orphaned_workspaces().await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_root: mark_orphaned_workspaces failed");
         0
     });
-    // Delete the provably-empty phantom projects (no folder / session / artifact)
-    // — pre-#101 residue that would otherwise inflate the project count.
+    // Delete the provably-empty phantom workspaces (no folder / session / artifact)
+    // — pre-#101 residue that would otherwise inflate the workspace count.
     // Keyless repositories no folder references can never be reached again
-    // (#271); dropping them first lets the project prune below see what they
+    // (#271); dropping them first lets the workspace prune below see what they
     // left empty. Fail-open like the other housekeeping here.
     let orphan_repositories =
         ctx.pg().prune_orphan_keyless_repositories(60).await.unwrap_or_else(|e| {
@@ -330,8 +330,8 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             "scan_root reconcile: removed {orphan_repositories} orphan keyless repositor(ies)"
         );
     }
-    let pruned_projects = ctx.pg().prune_empty_projects(60).await.unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "scan_root: prune_empty_projects failed");
+    let pruned_workspaces = ctx.pg().prune_empty_workspaces(60).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_root: prune_empty_workspaces failed");
         0
     });
     // Tag file nodes with the framework kinds of the symbols they contain
@@ -345,7 +345,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     }
     if reabsorbed > 0 {
         tracing::info!(
-            "scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's project"
+            "scan_root reconcile: re-absorbed {reabsorbed} nested standalone root(s) into their enclosing repo's workspace"
         );
     }
     if removed > 0
@@ -355,19 +355,19 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         || ghosts > 0
         || deduped > 0
         || stubs_collected > 0
-        || pruned_projects > 0
+        || pruned_workspaces > 0
         || repos_assigned > 0
         || symlinks_linked > 0
     {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
             &format!(
-                "reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {stubs_collected} orphaned stubs collected · {pruned_projects} empty projects purged · {repos_assigned} folders linked to repositories · {symlinks_linked} symlinked checkouts grouped · {marked} flagged stale · {orphaned} projects re-tagged"
+                "reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {stubs_collected} orphaned stubs collected · {pruned_workspaces} empty workspaces purged · {repos_assigned} folders linked to repositories · {symlinks_linked} symlinked checkouts grouped · {marked} flagged stale · {orphaned} workspaces re-tagged"
             ),
             start.elapsed().as_secs_f64(),
         )));
         tracing::info!(
-            "scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} stubs_collected={stubs_collected} empty_projects_purged={pruned_projects} repos_assigned={repos_assigned} symlinks_linked={symlinks_linked} marked={marked} orphaned_retagged={orphaned}"
+            "scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} stubs_collected={stubs_collected} empty_workspaces_purged={pruned_workspaces} repos_assigned={repos_assigned} symlinks_linked={symlinks_linked} marked={marked} orphaned_retagged={orphaned}"
         );
     }
 
@@ -395,7 +395,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     Ok(found as u32)
 }
 
-/// Prune project roots the scan no longer discovers, healing the index after a
+/// Prune workspace roots the scan no longer discovers, healing the index after a
 /// repo loses its `.git`, is emptied, or is moved. Diffs the DB's recorded roots
 /// (`kind` git/standalone/subtree) under this watch root against the freshly
 /// discovered `live` set and applies [`scan_logic::classify_stale_root`]:
@@ -436,7 +436,7 @@ async fn reconcile_roots(
     let live_abs: Vec<String> = live.iter().filter_map(|p| p.to_str().map(String::from)).collect();
     let mut out = ReconcileRootsOutcome::default();
     for r in &recorded {
-        // Only project roots are reconciled here; kind=folder rows are owned by
+        // Only workspace roots are reconciled here; kind=folder rows are owned by
         // their root and re-materialised when it is processed.
         if !matches!(r["kind"].as_str().unwrap_or(""), "git" | "standalone" | "subtree") {
             continue;
@@ -534,13 +534,13 @@ async fn reconcile_roots(
 /// `kind='folder'` row whose DIRECTORY was deleted or moved on disk (e.g.
 /// `crates/hive-mind` renamed to `crates/dojo-mind`). The scanner never descends
 /// into a directory that is gone, [`prune_vanished`] only reconciles FILE nodes
-/// *within* one indexed folder, and [`reconcile_roots`] only prunes project
+/// *within* one indexed folder, and [`reconcile_roots`] only prunes workspace
 /// ROOTS — so nothing else ever removes such a row, and it lingers dragging its
 /// whole subtree of nodes/edges/files (137 orphan nodes in the live sensei
 /// index). Each ghost folder row is deleted via [`crate::db::pg_store::PgStore::delete_folder_tree`],
 /// cascading its nodes, edges, files and descendant folder rows.
 ///
-/// SAFETY: a subfolder is pruned only when its enclosing project ROOT (kind
+/// SAFETY: a subfolder is pruned only when its enclosing workspace ROOT (kind
 /// git/standalone/subtree) is confirmed PRESENT on disk. A root whose own
 /// directory is absent (unmounted drive, moved repo) is skipped entirely so a
 /// temporarily-missing volume never nukes a live index — [`reconcile_roots`] owns
@@ -558,7 +558,7 @@ async fn prune_vanished_folders(pg: &crate::db::pg_store::PgStore, root_id: &uui
 
 /// Detect (WITHOUT mutating) the ghost folder subtrees under one watch root: a
 /// non-root `kind='folder'` row whose directory is *confirmed* gone on disk, and
-/// which sits under a confirmed-PRESENT project root (the unmounted-volume guard —
+/// which sits under a confirmed-PRESENT workspace root (the unmounted-volume guard —
 /// see [`prune_vanished_folders`]). Returns `(folder_id, abs_path)` per ghost.
 ///
 /// This is the detection half shared by [`prune_vanished_folders`] (which deletes
@@ -571,7 +571,7 @@ pub(crate) async fn detect_vanished_folders(
 ) -> Vec<(uuid::Uuid, String)> {
     let recorded = pg.list_folders_by_root(root_id).await.unwrap_or_else(|e| { tracing::warn!(error = %e, root_id = %root_id, "detect_vanished_folders: list_folders_by_root failed, skipping"); Vec::new() });
 
-    // Present project roots — a subfolder is eligible only when the root it lives
+    // Present workspace roots — a subfolder is eligible only when the root it lives
     // under is confirmed on disk (guards against an unmounted volume / moved repo).
     let present_roots: Vec<String> = recorded
         .iter()
@@ -586,12 +586,12 @@ pub(crate) async fn detect_vanished_folders(
     let mut ghosts = Vec::new();
     for r in &recorded {
         // Only structural subfolders (`folder` + the monorepo-member `workspace_member`,
-        // D5a); project ROOTS (git/standalone/subtree) are owned by reconcile_roots.
+        // D5a); workspace ROOTS (git/standalone/subtree) are owned by reconcile_roots.
         if !matches!(r["kind"].as_str(), Some("folder") | Some("module")) {
             continue;
         }
         let Some(abs) = r["abs_path"].as_str() else { continue };
-        // Must sit under a confirmed-present project root (exact-prefix + '/',
+        // Must sit under a confirmed-present workspace root (exact-prefix + '/',
         // mirroring heal_nested_standalone_roots' starts_with).
         if !present_roots.iter().any(|root| abs.starts_with(&format!("{root}/"))) {
             continue; // enclosing root absent/unknown → leave the subtree intact
@@ -923,7 +923,7 @@ mod tests {
     #[tokio::test]
     async fn dedup_structural_folder_nodes_removes_root_twins_keeps_uniques() {
         // #101 self-heal: a structural (folder-kind) subfolder must not carry a
-        // code node the project's ROOT owner already holds. Twin-guarded: prune
+        // code node the workspace's ROOT owner already holds. Twin-guarded: prune
         // only a duplicate the root owns (name+kind+path-suffix), NEVER a symbol
         // held uniquely under the subfolder. This is the reconcile that cleans
         // the pre-fix double-index residue without any risk of data loss.
@@ -936,21 +936,21 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
         let root_id =
             ctx.pg().add_watch_root(&root_str, "dedup", &serde_json::json!([])).await.unwrap();
-        // Both the repo root and its member share ONE project (as in prod, where
-        // ProcessGitFolder attributes them) — the twin-guard scopes by project.
-        let pid = ctx.pg().create_project("dedup-proj", None, None).await.unwrap();
+        // Both the repo root and its member share ONE workspace (as in prod, where
+        // ProcessGitFolder attributes them) — the twin-guard scopes by workspace.
+        let pid = ctx.pg().create_workspace("dedup-proj", None, None).await.unwrap();
         let repo_fid = ctx
             .pg()
             .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
             .await
             .unwrap();
-        // The repo needs its `repositories` row before the project: membership
-        // is the repository's, so without one `set_folder_project` records
-        // nothing and the twin-guard's project intersection finds no overlap.
+        // The repo needs its `repositories` row before the workspace: membership
+        // is the repository's, so without one `set_folder_workspace` records
+        // nothing and the twin-guard's workspace intersection finds no overlap.
         crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &repo_fid, "dedup-repo")
             .await
             .unwrap();
-        ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
+        ctx.pg().set_folder_workspace(&repo_fid, &pid, "root", None).await.unwrap();
 
         // The canonical git-root copies, stored repo-relative: a code symbol AND
         // a `file` node (whose `name` IS the repo-relative path).
@@ -1094,7 +1094,7 @@ mod tests {
 
         let root_id =
             ctx.pg().add_watch_root(&root_str, "gcorder", &serde_json::json!([])).await.unwrap();
-        let pid = ctx.pg().create_project("gcorder-proj", None, None).await.unwrap();
+        let pid = ctx.pg().create_workspace("gcorder-proj", None, None).await.unwrap();
         let repo_fid = ctx
             .pg()
             .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
@@ -1103,7 +1103,7 @@ mod tests {
         crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &repo_fid, "gcorder-repo")
             .await
             .unwrap();
-        ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
+        ctx.pg().set_folder_workspace(&repo_fid, &pid, "root", None).await.unwrap();
         let member_fid = ctx
             .pg()
             .upsert_subfolder(
@@ -1237,11 +1237,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prune_empty_projects_deletes_phantoms_keeps_populated() {
-        // Phantom project-count fix: a `discovery` project with no folder / session
-        // / artifact is deleted; a project with a folder + nodes is kept.
+    async fn prune_empty_workspaces_deletes_phantoms_keeps_populated() {
+        // Phantom workspace-count fix: a `discovery` workspace with no folder / session
+        // / artifact is deleted; a workspace with a folder + nodes is kept.
         let ctx = make_ctx().await;
-        let phantom = ctx.pg().create_project("phantom-crate", None, None).await.unwrap();
+        let phantom = ctx.pg().create_workspace("phantom-crate", None, None).await.unwrap();
         // Age it past the mid-population grace window so the prune can see it.
         sqlx_core::query::query(
             "UPDATE sensei.workspaces SET modified_at = now() - interval '2 minutes' WHERE id=$1",
@@ -1257,7 +1257,7 @@ mod tests {
             .add_watch_root(&tmp.path().to_string_lossy(), "pp", &serde_json::json!([]))
             .await
             .unwrap();
-        let live = ctx.pg().create_project("live-repo", None, None).await.unwrap();
+        let live = ctx.pg().create_workspace("live-repo", None, None).await.unwrap();
         let repo_fid = ctx
             .pg()
             .upsert_repo_kind(&root_id, "git", "live", &tmp.path().join("live").to_string_lossy())
@@ -1266,7 +1266,7 @@ mod tests {
         crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &repo_fid, "live-repo")
             .await
             .unwrap();
-        ctx.pg().set_folder_project(&repo_fid, &live, "root", None).await.unwrap();
+        ctx.pg().set_folder_workspace(&repo_fid, &live, "root", None).await.unwrap();
         ctx.pg()
             .seed_node(&repo_fid, "function", "f", "live/lib.rs", None, None, None, None)
             .await
@@ -1274,27 +1274,27 @@ mod tests {
 
         // Global `rows_affected` is racy in the shared test DB (a concurrent
         // scan's reconcile prunes too), so assert on our specific rows below.
-        ctx.pg().prune_empty_projects(60).await.unwrap();
+        ctx.pg().prune_empty_workspaces(60).await.unwrap();
         let (ph_alive,): (i64,) =
             sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.workspaces WHERE id=$1")
                 .bind(phantom)
                 .fetch_one(ctx.pg().pool())
                 .await
                 .unwrap();
-        assert_eq!(ph_alive, 0, "empty phantom project deleted");
+        assert_eq!(ph_alive, 0, "empty phantom workspace deleted");
         let (live_alive,): (i64,) =
             sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.workspaces WHERE id=$1")
                 .bind(live)
                 .fetch_one(ctx.pg().pool())
                 .await
                 .unwrap();
-        assert_eq!(live_alive, 1, "populated project kept");
+        assert_eq!(live_alive, 1, "populated workspace kept");
     }
 
     #[tokio::test]
     async fn scan_root_skips_excluded_subtree() {
         // Exclusion path: a git repo under an excluded prefix is never
-        // classified as a project → no ProcessGitFolder enqueued for it, while a
+        // classified as a workspace → no ProcessGitFolder enqueued for it, while a
         // repo outside the prefix is still processed.
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
@@ -1517,7 +1517,7 @@ mod tests {
 
         // A folder that LOST its `.git` is no longer a repository. It used to
         // be relabelled `standalone` — a quasi-repo — on the grounds that it
-        // still held code; that kind is retired, because "looks like a project"
+        // still held code; that kind is retired, because "looks like a workspace"
         // is a guess and a `.git` is a fact. It is now simply not rediscovered,
         // and `reconcile_roots` decides its fate from its content and history.
         let revived_row = ctx.pg().get_repo_by_path(&revived.to_string_lossy()).await.unwrap();
@@ -1668,7 +1668,7 @@ mod tests {
         let root = tmp.path();
         let root_str = root.to_string_lossy().to_string();
 
-        // A present git repo — the enclosing project root, confirmed on disk.
+        // A present git repo — the enclosing workspace root, confirmed on disk.
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         let root_id =
@@ -1880,7 +1880,7 @@ mod tests {
         let root_id =
             ctx.pg().add_watch_root(&root_str, "pvf_absent", &serde_json::json!([])).await.unwrap();
 
-        // A project root whose OWN directory is absent on disk (never created) —
+        // A workspace root whose OWN directory is absent on disk (never created) —
         // simulates an unmounted volume / moved repo. reconcile_roots owns this;
         // prune_vanished_folders must NOT touch anything under it.
         let absent_repo = root.join("absent-repo"); // NOT created on disk
@@ -1938,7 +1938,7 @@ mod tests {
             events.push(evt);
         }
 
-        // ALL events must be activity — no project or folder events from ScanRoot
+        // ALL events must be activity — no workspace or folder events from ScanRoot
         for evt in &events {
             assert_eq!(
                 evt.entity, "activity",

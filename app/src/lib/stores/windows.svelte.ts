@@ -2,30 +2,30 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { emit } from '@tauri-apps/api/event';
 
 export interface OpenWindow {
-  projectId: string;
+  workspaceId: string;
   label: string;
-  projectName: string;
+  workspaceName: string;
 }
 
 let openWindowsState = $state<Map<string, OpenWindow>>(new Map());
 
 export const openWindows = {
   get all(): OpenWindow[] { return [...openWindowsState.values()]; },
-  has(projectId: string): boolean { return openWindowsState.has(projectId); },
+  has(workspaceId: string): boolean { return openWindowsState.has(workspaceId); },
 };
 
-/** Push the current open project windows to the native menu (Rust rebuilds the
+/** Push the current open workspace windows to the native menu (Rust rebuilds the
  *  Window submenu). macOS doesn't auto-list Tauri windows, so the menu only
  *  reflects reality if we emit on every open/close. */
 function syncWindowMenu(): void {
   void emit(
     'sync-window-menu',
-    openWindows.all.map((w) => ({ label: w.label, title: w.projectName })),
+    openWindows.all.map((w) => ({ label: w.label, title: w.workspaceName })),
   );
 }
 
-export async function openProjectWindow(projectId: string, projectName: string): Promise<void> {
-  const label = `project-${projectId.replace(/-/g, '')}`;
+export async function openWorkspaceWindow(workspaceId: string, workspaceName: string): Promise<void> {
+  const label = `workspace-${workspaceId.replace(/-/g, '')}`;
 
   // If window already open, bring to front
   const existing = await WebviewWindow.getByLabel(label);
@@ -34,13 +34,13 @@ export async function openProjectWindow(projectId: string, projectName: string):
     return;
   }
 
-  openWindowsState.set(projectId, { projectId, label, projectName });
+  openWindowsState.set(workspaceId, { workspaceId, label, workspaceName });
 
   let win: WebviewWindow;
   try {
     win = new WebviewWindow(label, {
-      url: `/project/${projectId}`,
-      title: `Sensei · ${projectName}`,
+      url: `/workspace/${workspaceId}`,
+      title: `Sensei · ${workspaceName}`,
       width: 1200,
       height: 820,
       minWidth: 900,
@@ -56,13 +56,13 @@ export async function openProjectWindow(projectId: string, projectName: string):
       hiddenTitle: true,
     });
   } catch (err) {
-    openWindowsState.delete(projectId);
+    openWindowsState.delete(workspaceId);
     throw err;
   }
   syncWindowMenu(); // the window exists now — add it to the native Window menu
 
   await win.once('tauri://destroyed', () => {
-    openWindowsState.delete(projectId);
+    openWindowsState.delete(workspaceId);
     syncWindowMenu(); // window gone — drop it from the Window menu
   });
 }
