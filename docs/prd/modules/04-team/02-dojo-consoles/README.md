@@ -3,8 +3,7 @@
 **Plane:** team · **Status:** [roadmap/04-team.md](../../../../roadmap/04-team.md) ·
 **Serves:** team developer ([persona 2](../../../03-personas.md#2--team-developer--the-inheritor)),
 maintainer ([persona 3](../../../03-personas.md#3--maintainer--the-curator)),
-org admin ([persona 4](../../../03-personas.md#4--org-admin--the-plane-owner)),
-engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--client-lead--the-confidentiality-guard))
+org admin ([persona 4](../../../03-personas.md#4--org-admin--the-plane-owner))
 
 ## Purpose
 
@@ -42,7 +41,8 @@ for everyone below. That half of the console is specified in
     contributor; there is no "read-only" role.
   - **Maintainer** — **manage governance at org level**: author rules/stance on
     the ladder, triage/approve findings, manage knowledge.
-  - **Lead** — client engagements, confidentiality, audit trail.
+  - **Lead** — a rung between maintainer and admin, never derived from the forge.
+    Since D34 (no Clients section) it unlocks nothing a maintainer lacks.
   - **Admin** — **change member roles + access policies**: members, identities/SSO,
     scopes & precedence, billing.
   - The **org context `/org/[slug]` exists** (`+page.svelte` + `/projects` +
@@ -73,9 +73,10 @@ for everyone below. That half of the console is specified in
   constitution);
   `/org/[slug]/members`, `/identities`, `/policies`, `/billing` (admin);
   `/org/[slug]/triage`, `/approvals`, `/knowledge` (maintainer);
-  `/org/[slug]/engagements`, `/incidents`, `/audit` (lead). **Two audit screens, kept
-  apart (D19):** Clients › **Client audit** — the confidentiality ledger (lead) — and Admin ›
-  **Audit** — who did what in the dōjō (admin). Different data, different owners.
+  `/org/[slug]/audit` (admin) — who did what in the dōjō. **No Clients section
+  (D34):** a client is just another dōjō, so there are no engagements, incidents or
+  client audit screens; the confidentiality ledger D19 kept apart from the admin
+  audit is gone with them.
 - **App (built personal)** — `/` (personal landing: your work + My Dōjōs);
   `/you/projects`, `/you/inbox`, `/you/relay`, `/library`, `/preview`, `/me`.
 - **Mockup (authoring source of record)** — `mockups/Sensei/lib/dojo/dojo-governance.jsx`
@@ -118,9 +119,9 @@ for everyone below. That half of the console is specified in
   adopts it **at each repository where the stack is detected** (D29, D33), so its
   rules apply there like any rule written at the repository. Teams are not a
   governance level — they are reporting only (D13). Client is not a governance
-  level either (D32): a client engagement is the dōjō it lives in plus the
-  workspace classification `client`, and client-only standards are rules at that
-  dōjō or workspace. An individual's own rules live in sensei, not in the dōjō.
+  level either (D32): client work is the dōjō it lives in plus the workspace
+  classification `client`, and client-only standards are rules at that dōjō or
+  workspace. An individual's own rules live in sensei, not in the dōjō.
 - **Lead.** **Composition is most-specific-wins**, and it is not the first line
   of resolution: confidentiality resolves first, then a mandatory (★) lock that
   no narrower scope may relax, then specificity — T1's three-step order.
@@ -148,7 +149,7 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 | Rail group | Kanji | Example | Marker |
 |---|---|---|---|
 | Personal | 己 | My workspaces | free |
-| Dōjō | 社 | Company · Globex | **paid** · *your employer* or *engagement · not your employer* |
+| Dōjō | 社 | Company · Globex | **paid** · *your employer* or *client · not your employer* |
 | Workspace | 件 | personal-site · lumen-auth · billing-svc | *(none)* |
 | Repository | 庫 | lumen-auth-api · billing-svc-web | *(none)* |
 
@@ -290,9 +291,9 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 
 | Element | Meaning | Worked example |
 |---|---|---|
-| Org context nav | workspaces / governance / members / triage / engagements | maintainer sees governance + triage |
+| Org context nav | workspaces / governance / members / triage | maintainer sees governance + triage |
 | Role badge | the user's role in this org | `maintainer` |
-| Scope rail | the ladder, grouped by kind, paid-marked, with a rules+skills count | `社 Company · paid · 4` · `社 Globex · paid · engagement` |
+| Scope rail | the ladder, grouped by kind, paid-marked, with a rules+skills count | `社 Company · paid · 4` · `社 Globex · paid · client` |
 | Scope chip | which scope you are authoring | `件 lumen-auth · Project` |
 | Stance dial | the selected stop **and** its consequence | `Sharing → Automatic: lessons past the confidence bar are sent up on a cadence` |
 | Artifact section | what is authored here vs inherited | `2 here · 5 inherited` |
@@ -325,8 +326,8 @@ inherits. Header: 掟 · *Govern · define* — "Governance & shared knowledge".
 - Anonymization is **not** editable at any scope — the client floor holds.
 - An admin opens `/org/[slug]/members` and changes a user's role; the access
   floor updates immediately in `resolveTenantAccess`.
-- A lead opens `/org/[slug]/engagements` and sees client engagements with
-  confidentiality pinned; the audit trail is immutable.
+- An admin opens `/org/[slug]/audit` and sees the immutable audit trail; no
+  role sees an Engagements, Incidents or Client audit section (D34).
 - A contributor opens `/org/[slug]` and sees workspaces in jurisdiction; clicking
   one drills to `/org/[slug]/projects/[id]` previewing which ladder levels built
   the constitution.
