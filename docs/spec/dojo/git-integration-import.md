@@ -60,7 +60,27 @@ mandatory: a partial read never ends a membership (#309's rule).
 
 - **D35 · Azure DevOps sign-in is a personal access token** an admin pastes (no app registration).
 - **D36 · Azure maps organization → dōjō, project → workspace** by default.
-- **D37 · The first slice is GitHub (refactored behind the adapter) + Azure DevOps**; GitLab and Bitbucket later.
+- **D37 (revised, user 2026-10-22) · One complete source first.** **R5a** finishes the flow for GitHub end to
+  end; **R5b** adds Azure DevOps on the same adapter and screen only after R5a is done and verified. GitLab
+  and Bitbucket later.
+
+## R5a · GitHub, complete
+
+1. The adapter interface (`listUnits`, `proveAdmin`, `listMembers`, each with `complete`); `forge-github.ts`
+   moves behind it unchanged in behaviour.
+2. Proof of control: an org admin (GitHub org role `admin`) claims the org's dōjō — `claimed_at`,
+   `claimed_by`, `tenant_connections.verified_at`; an unclaimed org dōjō shows who can claim it.
+3. The import screen (Admin → Integrations): the GitHub orgs the person can see, each mapped to **its own
+   dōjō** (today's default) or **a workspace in a dōjō they administer**; units they cannot prove can only
+   become workspaces.
+4. Repositories file by the mapping (`repo-mapping.ts` → unit → dōjō + workspace); unmapped stays unmapped.
+5. Unchanged: provisioning on sign-in, and #309's membership lifecycle.
+Done when an org admin, on the local and then the production dōjō, claims an org, maps a second org as a
+workspace of it, and its repositories file there.
+
+## R5b · Azure DevOps (after R5a)
+
+The same adapter and screen; organization → dōjō, project → workspace (D36); the PAT in Vault (D35).
 
 ## The PAT is a secret (D35's consequence)
 

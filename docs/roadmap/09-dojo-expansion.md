@@ -45,7 +45,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D34 | Does a dōjō keep a Clients section (Engagements, Incidents, Client audit)? | **No** (user 2026-10-22). A client is just another dōjō, and there is no client rung (D32). A dōjō's work is its Epics, Sprints and Tasks, which come from its integrations. The engagement and incident model, and the confidentiality ledger built on it, are removed. |
 | D35 | How does a dōjō sign in to Azure DevOps? (R5 Q1) | **A personal access token an admin pastes** (user 2026-10-22), stored in Supabase Vault and never returned, logged or audited as a value. |
 | D36 | How does an Azure DevOps organization map? (R5 Q2) | **Organization → dōjō, project → workspace** (user 2026-10-22). |
-| D37 | What is R5's first slice? (R5 Q3) | **GitHub (refactored behind the adapter) + Azure DevOps**; GitLab and Bitbucket later (user 2026-10-22). |
+| D37 | What is R5's first slice? (R5 Q3) | **One complete source first** (user 2026-10-22, revised): R5a finishes GitHub end to end (adapter, claim by an org admin, the import/mapping screen, repositories filing by the mapping); R5b adds Azure DevOps only after that. GitLab and Bitbucket later. |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
