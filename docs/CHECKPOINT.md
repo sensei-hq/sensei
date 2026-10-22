@@ -20,12 +20,13 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** R3 on branch `r3-workspace` (worktree .claude/worktrees/agent-a8cdfaacfada2a58c, pushed).
-R3a done there (0ec8271c, 91894026): schema renamed in place + the daemon's SQL. Verified by me: `cargo test -p
-senseid` 3803 passed / 0 failed, SQL suite 47/47; rehearsed twice on `ztest_r3a` (daemon DB copy, counts held) and on
-a copy of the production dōjō (release steps green, in sync, counts held). R3b part 1 done (d20a5b72:
-daemon, `/api/workspaces`, app; my re-run: senseid 3803/0, app check 0 errors + 2334 tests, SQL 47/47). Part 2
-running as an agent: the ladder rung + D31 (README `project:` → `workspace:` migrated in place, user); then R3c (MCP, CLI, skills, plugin); merge to develop when R3 is whole, then release.
+**Next command:** R3 continues on branch **`r3-workspace-r3b`** (worktree .claude/worktrees/agent-a8cdfaacfada2a58c;
+the old `r3-workspace` diverged after a rebase and is NOT force-pushed — leave it). Done there: R3a (5417d32f,
+3326862b), R3b part 1 (50318fe8), part 2 (7d6853ae ladder rung in both DBs + relay `workspace_slug`; d21d796e D31
+README key). Rehearsed on the daemon copy (namespaces 355 → 355, 334 moved to the `workspace` rung, 0 orphans) and on
+the production dōjō dump (in sync, counts held). Next: confirm my gate re-run, then R3c (MCP tool names/args, CLI,
+skills, plugin; and the dōjō billing response's leftover `project_name`/`projects` fields), then merge R3 to develop and release.
+Checked 2026-10-21: R2a's dōjō rename DOES run in place on the release path (probe row in a prod-dump copy survived as a workspace).
 **R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
 extension_projects; 19 `project_id`-style columns (activity, history, inference, sensei) + staging.memories.project_name;
 17 views (project_metric_*, project_*); fn sole_project_of; enums project_maturity + 'project' in entity_scope,
