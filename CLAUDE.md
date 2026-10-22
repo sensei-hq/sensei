@@ -24,7 +24,15 @@
 ## Version
 
 `VERSION` at the repo root is the single source of truth.
-Run `make bump v=patch|minor|major|X.Y.Z` to update all manifests, commit, tag, push, and sync subtrees.
+
+**A release ships from `main`, by version tag (user, 2026-10-22).** Every release bumps the version (patch or
+minor): one tag, one release run. develop is for scanning, coverage and tests; it never publishes.
+1. develop → PR → `main`, green.
+2. On `main` (clean, equal to `origin/main`): `make bump v=patch|minor|major|X.Y.Z` — updates every manifest,
+   commits, tags, pushes main + the tag, syncs the marketplace, installs locally, then merges main back into
+   develop. `scripts/release-guard.sh` refuses to bump anywhere else.
+3. The tag runs `release.yml`: its `on-main` job fails unless the tagged commit is on main; then the builds,
+   the GitHub release, the tap, and the dōjō database (`dojo-prod`, approved by a person).
 
 ## Common commands
 
@@ -69,7 +77,7 @@ DB. For iterating on DDL without publishing a release tag, set
 - Create a todo list for complex tasks
 - TDD — always use zero-errors-policy before starting work
 - Commit and push when a logical chunk is complete
-- Work in `develop` branch; merge to `main` when a feature is complete
+- Work in `develop` branch; merge to `main` (PR, green) to release — then bump and tag ON main (see Version)
 - `homebrew/` and `marketplace/` are edited in-repo and mirrored to their own GitHub repos (not git subtrees despite the name — each target clones and copies)
   - `marketplace/` → `make marketplace-push`, run by `make bump`
   - `homebrew/` holds **templates** with `REPLACE_WITH_*_SHA256`, since a checksum needs the release assets. `release.yml`'s `update-tap` is the SOLE writer of the tap's formula and cask: it renders these templates via `scripts/render-homebrew-tap.py`. `make bump` does NOT push the tap, and `make tap-push` refuses while a placeholder remains — pushing an unrendered template is what left `brew install` broken for ~8 releases

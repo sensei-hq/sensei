@@ -592,6 +592,9 @@ ship:
 
 bump:
 	@if [ -z "$(v)" ]; then echo "Usage: make bump v=patch|minor|major|<version>"; exit 1; fi
+	@# A release is cut only from a clean `main` that matches origin/main (wave 0b,
+	@# user 2026-10-22): the tag is what release.yml publishes and deploys from.
+	@./scripts/release-guard.sh
 	$(eval _v := $(shell \
 	  cur=$$(cat VERSION); \
 	  if [ "$(v)" = "patch" ]; then echo "$$cur" | awk -F. '{printf "%s.%s.%s", $$1, $$2, $$3+1}'; \
@@ -728,6 +731,10 @@ bump:
 	@# The trade is deliberate: the next dev build after a bump is COLD (a full
 	@# rebuild, several minutes). A release is infrequent and target/ reaches tens
 	@# of GB, so paying the rebuild once per release beats carrying the disk.
+	@# develop carries the release's version bump: merge main back and return there.
+	@git checkout -q develop && git pull -q --ff-only origin develop && \
+	  git merge --no-ff -q main -m "Merge main (v$(_v)) into develop" && \
+	  git push -q origin develop && echo "develop now carries v$(_v)"
 
 # Clear the dbd schema-source cache. The daemon resolves its DDL from
 # `sensei-hq/sensei/database@v<VERSION>` and dbd caches resolved sources per
