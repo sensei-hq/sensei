@@ -86,7 +86,7 @@ mod tests {
     fn composes_effective_rules_in_daemon_scope_vocabulary_strongest_first() {
         let out = compose_constitution(vec![
             raw("never log secrets", "mandatory", "organization"),
-            raw("prefer early returns", "recommended", "project"),
+            raw("prefer early returns", "recommended", "workspace"),
             raw("tabs over spaces", "advisory", "technology"),
         ]);
         assert_eq!(out.rules.len(), 3);
@@ -94,7 +94,7 @@ mod tests {
         assert_eq!(out.rules[0].title, "never log secrets");
         assert_eq!(out.rules[0].enforcement, "mandatory");
         assert_eq!(out.rules[0].namespace.as_deref(), Some("ns-organization"));
-        assert_eq!(out.rules[1].scope_key, "project");
+        assert_eq!(out.rules[1].scope_key, "workspace");
         assert_eq!(out.rules[2].scope_key, "technology");
         assert_eq!(out.locks, 1, "one mandatory rule locked");
         assert!(out.conflicts.is_empty(), "no duplicates → no discards");
@@ -107,7 +107,7 @@ mod tests {
         let out = compose_constitution(vec![
             raw("never log secrets", "mandatory", "organization"),
             raw("never log secrets", "advisory", "repository"),
-            raw("prefer early returns", "recommended", "project"),
+            raw("prefer early returns", "recommended", "workspace"),
         ]);
         assert_eq!(out.rules.len(), 2, "the weaker duplicate is not an effective rule");
         assert_eq!(out.conflicts.len(), 1);
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn skips_empty_content() {
-        let out = compose_constitution(vec![raw("   ", "required", "project")]);
+        let out = compose_constitution(vec![raw("   ", "required", "workspace")]);
         assert!(out.rules.is_empty());
         assert!(out.conflicts.is_empty());
         assert_eq!(out.locks, 0);

@@ -27,7 +27,7 @@ impl PgStore {
             sqlx_core::query_as::query_as(
                 "SELECT m.id, m.title, m.content, m.impact, m.enforcement::text,
                         COALESCE(n.scope_key,
-                                 CASE WHEN m.workspace_id IS NOT NULL THEN 'project' ELSE 'general' END) AS scope,
+                                 CASE WHEN m.workspace_id IS NOT NULL THEN 'workspace' ELSE 'general' END) AS scope,
                         n.name AS namespace
                    FROM sensei.memories m
                    LEFT JOIN sensei.namespaces n ON n.id = m.namespace_id
@@ -108,7 +108,7 @@ impl PgStore {
     /// Effective tier is never-weaken: an adoption override can only RAISE a rule's
     /// enforcement, never lower it (ranked in SQL so the enum's storage order does
     /// not matter). Maps to `RawRule`: scope = the GOVERNANCE scope the pack was
-    /// ADOPTED at (the adoption namespace's `scope_key` — general/user/project/…, as
+    /// ADOPTED at (the adoption namespace's `scope_key` — general/user/workspace/…, as
     /// `resolve_rules_raw` does for memories), NOT the pack's own area/category, so
     /// the constitution ladder groups pack rules on the same scope axis as memories;
     /// namespace = the pack source.

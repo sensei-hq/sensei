@@ -24,12 +24,12 @@ export type EffectiveRule = KitRule & { level: string };
  *  (the old mockup scaffold) silently dropped every composed scope whose key
  *  wasn't one of a hardcoded few (e.g. `general`, `organization`, `team`), so a
  *  real 30-rule constitution showed as one rule. The workspace rung (the daemon's
- *  scope key `project`) is relabelled to the workspace's own name; when the daemon
+ *  scope key `workspace`) is relabelled to the workspace's own name; when the daemon
  *  composed no workspace-scoped rung, an empty one is synthesized as the most-specific anchor so the ladder always ends
  *  at the repository (honest empty, never a fabricated rule). */
 export function previewRungs(workspace: KitWorkspace, ladder: KitLadderRung[]): KitLadderRung[] {
-	const rungs = ladder.map((r) => (r.id === 'project' ? { ...r, name: workspace.name } : r));
-	if (!rungs.some((r) => r.id === 'project')) rungs.push(workspaceAnchor(workspace));
+	const rungs = ladder.map((r) => (r.id === 'workspace' ? { ...r, name: workspace.name } : r));
+	if (!rungs.some((r) => r.id === 'workspace')) rungs.push(workspaceAnchor(workspace));
 	return rungs;
 }
 
@@ -71,7 +71,7 @@ export function lockCount(rungs: KitLadderRung[]): number {
  *  (honest empty, never a fabricated rule). */
 function workspaceAnchor(workspace: KitWorkspace): KitLadderRung {
 	return {
-		id: 'project',
+		id: 'workspace',
 		kanji: '件',
 		scope: 'Workspace',
 		name: workspace.name,

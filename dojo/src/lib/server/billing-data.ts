@@ -145,17 +145,18 @@ export async function getBillingAccount(
 	return (data as BillingAccount | null) ?? null;
 }
 
-/** Resolve a project namespace slug to its `sensei.namespaces` id (scope=project),
- *  or null when unknown. The daemon federates the run's project by slug (its
- *  cross-DB stable identity); the seat binds to the resolved namespace id. */
-export async function resolveProjectNamespaceId(
+/** Resolve a workspace namespace slug to its `sensei.namespaces` id
+ *  (scope=workspace), or null when unknown. The daemon federates the run's
+ *  workspace by slug (its cross-DB stable identity); the seat binds to the
+ *  resolved namespace id. */
+export async function resolveWorkspaceNamespaceId(
 	db: DojoClient,
 	slug: string
 ): Promise<string | null> {
 	const { data, error } = await db
 		.from('namespaces')
 		.select('id')
-		.eq('scope_key', 'project')
+		.eq('scope_key', 'workspace')
 		.eq('slug', slug)
 		.maybeSingle();
 	if (error) throw new BillingError(500, error.message);

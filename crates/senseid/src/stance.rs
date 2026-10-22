@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn most_specific_scoped_stance_beats_default_and_lower_rungs() {
-        // org rung (20), project rung (60), and a default row — the project rung wins.
+        // org rung (20), workspace rung (60), and a default row — the workspace rung wins.
         let r = pick_stance(&[
             cand(None, "ask_always"),
             cand(Some(20), "ask_on_guarded"),

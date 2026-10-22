@@ -745,14 +745,14 @@ async fn workspace_learned_convention_scopes_to_its_own_workspace_not_general() 
         .await
         .unwrap();
 
-    // Workspace A's ruleset: A's convention (labeled with the ladder's `project`
-    // rung, which keeps its name until the dōjō converts it) + the global rule.
+    // Workspace A's ruleset: A's convention (labeled with the ladder's
+    // `workspace` rung) + the global rule.
     let a_rules = pg.resolve_rules_raw(&folder_a).await.unwrap();
     let a_conv =
         a_rules.iter().find(|r| r.content == conv_content).expect("A's convention resolves for A");
     assert_eq!(
-        a_conv.scope, "project",
-        "a workspace-tied unscoped convention is labeled at the project rung, not general"
+        a_conv.scope, "workspace",
+        "a workspace-tied unscoped convention is labeled at the workspace rung, not general"
     );
     assert!(
         a_rules.iter().any(|r| r.content == global_content),

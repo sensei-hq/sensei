@@ -257,7 +257,7 @@ enum ScopeTarget {
 /// team-wide principle applies across the user's workspaces — the memory records
 /// it globally rather than dropping the tag on the floor).
 fn scope_target(scope: &ArtifactScope) -> ScopeTarget {
-    if let Some(p) = scope.project.as_ref().filter(|s| !s.trim().is_empty()) {
+    if let Some(p) = scope.workspace.as_ref().filter(|s| !s.trim().is_empty()) {
         ScopeTarget::Workspace { name: p.clone() }
     } else if let Some(s) = scope.stack.as_ref().filter(|s| !s.trim().is_empty()) {
         ScopeTarget::Stack(s.clone())
@@ -912,7 +912,8 @@ mod tests {
     #[tokio::test]
     async fn apply_workspace_scope_mismatch_returns_reason_and_lands_nothing() {
         let m = membership();
-        let scope = ArtifactScope { project: Some("Ghost Workspace".into()), ..Default::default() };
+        let scope =
+            ArtifactScope { workspace: Some("Ghost Workspace".into()), ..Default::default() };
         let page = ArtifactPullResponse {
             artifacts: vec![pulled(
                 1,
@@ -939,7 +940,7 @@ mod tests {
     #[tokio::test]
     async fn apply_workspace_scope_lands_when_workspace_is_present() {
         let m = membership();
-        let scope = ArtifactScope { project: Some("Known".into()), ..Default::default() };
+        let scope = ArtifactScope { workspace: Some("Known".into()), ..Default::default() };
         let page = ArtifactPullResponse {
             artifacts: vec![pulled(
                 1,
@@ -1074,7 +1075,7 @@ mod tests {
             ScopeTarget::Stack(s) if s == "rust"
         ));
         assert!(matches!(
-            scope_target(&ArtifactScope { project: Some("P".into()), stack: Some("rust".into()), ..Default::default() }),
+            scope_target(&ArtifactScope { workspace: Some("P".into()), stack: Some("rust".into()), ..Default::default() }),
             ScopeTarget::Workspace { name } if name == "P"
         ));
         // company/team without workspace/stack → global (org-wide practice).

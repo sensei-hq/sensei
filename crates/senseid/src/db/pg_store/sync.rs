@@ -748,7 +748,7 @@ mod offered_workspace_tests {
             exec(&pg, "INSERT INTO sensei.workspaces (name) VALUES ($1)", &[name]).await;
             exec(
                 &pg,
-                "INSERT INTO sensei.namespaces (scope_key, name, slug) VALUES ('project', $1, $1 || '-slug')",
+                "INSERT INTO sensei.namespaces (scope_key, name, slug) VALUES ('workspace', $1, $1 || '-slug')",
                 &[name],
             )
             .await;
@@ -775,7 +775,7 @@ mod offered_workspace_tests {
         for name in [&pa, &pb] {
             exec(
                 &pg,
-                "DELETE FROM sensei.namespaces WHERE scope_key = 'project' AND name = $1",
+                "DELETE FROM sensei.namespaces WHERE scope_key = 'workspace' AND name = $1",
                 &[name],
             )
             .await;

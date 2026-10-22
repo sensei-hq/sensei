@@ -44,7 +44,7 @@ ended_at is set on removal (soft close, history retained), never a hard delete.'
 comment on column dojo.seats.user_id
      is 'The accountable user (Supabase auth.uid, GitHub-linked via dojo.identities). Not a local FK — identity is owned by Supabase. Deduped across a user''s projects to one billable seat.';
 comment on column dojo.seats.namespace_id
-     is 'The project the user is a member of (a sensei.namespaces instance, scope=project). Its visibility (private/public) decides whether this participation is billable.';
+     is 'The project the user is a member of (a sensei.namespaces instance, scope=workspace). Its visibility (private/public) decides whether this participation is billable.';
 comment on column dojo.seats.role
      is 'The user''s role on THIS project (contributor/maintainer/lead/…) — per-project, distinct from the tenant-global dojo.memberships.role.';
 comment on column dojo.seats.last_active_at

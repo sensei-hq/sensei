@@ -21,13 +21,33 @@
 -- policies` recreates them under the new names; until then the tables have RLS
 -- on and no policy — they read EMPTY, never open.
 --
--- No-op where dojo.projects is absent (the daemon's own database).
+-- The artifact scope tag (R3b, D16) is converted on every run, before the
+-- rename's guard: `{"project": …}` becomes `{"workspace": …}` in the dōjō's
+-- artifacts, queues and decisions.
+--
+-- The rename is a no-op where dojo.projects is absent (the daemon's own
+-- database).
 do $$
 declare
     r record;
     pair text[];
     renamed oid[];
 begin
+    -- ── the artifact scope tag (D16, R3b), wherever the dōjō holds one ────────
+    -- `{"project": …}` → `{"workspace": …}`: an artifact, the queues it moves
+    -- through and a decision's distribution. Runs on every deploy (a no-op once
+    -- no tag says project), so it reaches a dōjō that already took the rename.
+    foreach pair slice 1 in array array[['artifacts', 'scope'], ['upstream_queue', 'scope'],
+                                        ['downstream_inbox', 'scope'], ['triage_queue', 'owner_scope'],
+                                        ['decisions', 'distribution_scope']] loop
+        if to_regclass('dojo.' || pair[1]) is not null then
+            execute format('update dojo.%1$I set %2$I = (%2$I - ''project'') '
+                           '|| jsonb_build_object(''workspace'', %2$I -> ''project'') '
+                           'where jsonb_typeof(%2$I) = ''object'' and %2$I ? ''project'' '
+                           'and not %2$I ? ''workspace''', pair[1], pair[2]);
+        end if;
+    end loop;
+
     if to_regclass('dojo.projects') is null or to_regclass('dojo.workspaces') is not null then
         return;
     end if;

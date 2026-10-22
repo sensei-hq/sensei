@@ -314,7 +314,7 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
     //    conflict target), read it back, then re-upsert to prove update. The
     //    `workspace` scope may be absent in an unseeded test DB — seed it idempotently.
     sqlx_core::query::query(
-        "INSERT INTO sensei.scopes (key, name, level) VALUES ('project', 'Project', 60)
+        "INSERT INTO sensei.scopes (key, name, level) VALUES ('workspace', 'Workspace', 60)
              ON CONFLICT (key) DO NOTHING",
     )
     .execute(pg.pool())
@@ -323,7 +323,7 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
     let ns = uuid::Uuid::new_v4();
     sqlx_core::query::query(
         "INSERT INTO sensei.namespaces (id, scope_key, name, slug, level)
-             VALUES ($1, 'project', 'stance-test', $2, 60)",
+             VALUES ($1, 'workspace', 'stance-test', $2, 60)",
     )
     .bind(ns)
     .bind(format!("stance-test-{ns}"))

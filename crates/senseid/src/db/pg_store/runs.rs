@@ -526,7 +526,7 @@ impl PgStore {
     /// or None when the run has no workspace or no workspace-scope namespace. Fed to
     /// the relay federation so the Worker can open the caller's billing seat on
     /// this workspace (proof the user is actively using sensei there).
-    pub async fn run_project_slug(&self, run_id: &uuid::Uuid) -> Result<Option<String>, String> {
+    pub async fn run_workspace_slug(&self, run_id: &uuid::Uuid) -> Result<Option<String>, String> {
         // Straight from the run's WORKSPACE to that workspace's namespace. It used to
         // detour through a folder of the workspace and that folder's namespace
         // binding, so a run reported no slug whenever the detour had a gap — and

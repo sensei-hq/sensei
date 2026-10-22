@@ -107,7 +107,7 @@ pub fn run_to_session_update(
         heartbeat_at: run.heartbeat_at.clone(),
         // Set by the impure federation path (publish_run) from the run's workspace;
         // the pure projection has no DB to resolve the namespace slug / workspace row.
-        project_slug: None,
+        workspace_slug: None,
         workspace: None,
     }
 }

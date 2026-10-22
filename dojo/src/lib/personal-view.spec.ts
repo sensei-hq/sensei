@@ -24,11 +24,11 @@ describe('personalRungs — your standing constitution', () => {
 		expect(rungs.map((r) => r.id)).toEqual(['personal', 'stack']);
 	});
 
-	it('drops the org-scoped rungs (company · client · project)', () => {
+	it('drops the org-scoped rungs (company · client · workspace)', () => {
 		const ids = personalRungs(ladder).map((r) => r.id);
 		expect(ids).not.toContain('company');
 		expect(ids).not.toContain('client');
-		expect(ids).not.toContain('project');
+		expect(ids).not.toContain('workspace');
 	});
 });
 

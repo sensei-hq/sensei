@@ -72,7 +72,7 @@ pub async fn reconcile_repo_identity(
     // Workspace identity + role + namespaces (only when linked to a workspace).
     if let Some(pid) = folder["workspace_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
         // Authoritative workspace name (matches what the scan created) for the
-        // `project`-rung namespace; fall back to frontmatter / folder name. Fetched
+        // `workspace`-rung namespace; fall back to frontmatter / folder name. Fetched
         // once and reused below for icon inference (name + current icon).
         let workspace = ctx.pg().get_workspace(&pid).await.ok().flatten();
         let workspace_name = workspace
@@ -153,7 +153,7 @@ pub async fn reconcile_repo_identity(
             ns.push(("organization", org.to_string()));
         }
         if !workspace_name.is_empty() {
-            ns.push(("project", workspace_name.clone()));
+            ns.push(("workspace", workspace_name.clone()));
         }
         if let Some(team) = fm.team.as_deref() {
             ns.push(("team", team.to_string()));
@@ -181,7 +181,7 @@ pub async fn reconcile_repo_identity(
             let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await else {
                 continue;
             };
-            if *scope == "project" {
+            if *scope == "workspace" {
                 continue;
             }
             let Some(rid) = repository_id else {

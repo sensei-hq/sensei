@@ -33,7 +33,7 @@ describe('rulesToLadder', () => {
 	it('orders rungs broad→specific by scope level', () => {
 		// deliberately out of order on input
 		const rungs = rulesToLadder([
-			rule('project', 'p'),
+			rule('workspace', 'p'),
 			rule('organization', 'o'),
 			rule('user', 'u'),
 			rule('technology', 't')
@@ -65,7 +65,7 @@ describe('rulesToLadder', () => {
 const CONSTITUTION: RelayConstitution = {
 	rules: [
 		{ scope_key: 'organization', namespace: 'Acme', title: 'never log secrets', enforcement: 'mandatory' },
-		{ scope_key: 'project', namespace: null, title: 'prefer early returns', enforcement: 'recommended' }
+		{ scope_key: 'workspace', namespace: null, title: 'prefer early returns', enforcement: 'recommended' }
 	],
 	conflicts: [
 		{

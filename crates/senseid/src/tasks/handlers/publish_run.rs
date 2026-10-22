@@ -112,7 +112,7 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     // Seat attribution (P4): tell the Worker which workspace this run is on so it can
     // open/refresh the caller's billing seat. Best-effort — a missing workspace or
     // namespace just means no seat is touched; never fail federation over it.
-    update.project_slug = ctx.pg().run_project_slug(&run_id).await.ok().flatten();
+    update.workspace_slug = ctx.pg().run_workspace_slug(&run_id).await.ok().flatten();
 
     // The workspace's resolved constitution → federated so the dōjō can DISPLAY the
     // "before you start" preview without re-resolving (F4). Composed ONCE from the
@@ -131,7 +131,7 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     // The workspace the run is in — the same for every dōjō, which attaches the
     // session to the shared workspace the sync filed (#299, D12).
     update.workspace =
-        crate::dojo::relay_run_project::run_workspace(update.project_slug.clone(), constitution);
+        crate::dojo::relay_run_project::run_workspace(update.workspace_slug.clone(), constitution);
 
     let mut published = 0u32;
     // Persist the cloud session id once — from the first membership that acks it.

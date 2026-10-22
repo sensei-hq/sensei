@@ -14,7 +14,7 @@ import {
 	loadActiveSeatRows,
 	getBillingAccount,
 	refreshSeatsUsed,
-	resolveProjectNamespaceId,
+	resolveWorkspaceNamespaceId,
 	openOrRefreshSeat,
 	closeSeat,
 	BillingError,
@@ -239,23 +239,23 @@ describe('refreshSeatsUsed', () => {
 	});
 });
 
-describe('resolveProjectNamespaceId', () => {
-	it('looks up a project-scope namespace by slug via the dojo.namespaces view', async () => {
+describe('resolveWorkspaceNamespaceId', () => {
+	it('looks up a workspace-scope namespace by slug via the dojo.namespaces view', async () => {
 		const db = makeDb();
 		db.queue({ data: { id: 'ns-1' }, error: null });
-		const id = await resolveProjectNamespaceId(db.client, 'my-proj');
+		const id = await resolveWorkspaceNamespaceId(db.client, 'my-ws');
 		expect(id).toBe('ns-1');
 		expect(db.calls[0]).toMatchObject({ schema: undefined, table: 'namespaces' });
 		expect(db.calls[0].filters).toEqual([
-			['eq', 'scope_key', 'project'],
-			['eq', 'slug', 'my-proj']
+			['eq', 'scope_key', 'workspace'],
+			['eq', 'slug', 'my-ws']
 		]);
 	});
 
 	it('returns null for an unknown slug', async () => {
 		const db = makeDb();
 		db.queue({ data: null, error: null });
-		expect(await resolveProjectNamespaceId(db.client, 'nope')).toBeNull();
+		expect(await resolveWorkspaceNamespaceId(db.client, 'nope')).toBeNull();
 	});
 });
 

@@ -1439,22 +1439,22 @@ mod tests {
         let set = ResolvedRuleset {
             rules: vec![
                 mk("no secrets", "organization", "mandatory"),
-                mk("idempotency key", "project", "mandatory"),
-                mk("small commits", "project", "advisory"),
+                mk("idempotency key", "workspace", "mandatory"),
+                mk("small commits", "workspace", "advisory"),
             ],
             total: 3,
             mandatory_count: 2,
         };
         let scopes = vec![
             ("organization".into(), "Organization".into(), 20),
-            ("project".into(), "Project".into(), 60),
+            ("workspace".into(), "Workspace".into(), 60),
         ];
         let rungs = group_into_ladder(&set, &scopes);
         assert_eq!(rungs.len(), 2);
         // most-general first
         assert_eq!(rungs[0]["scope_key"], "organization");
         assert_eq!(rungs[0]["level"], 20);
-        assert_eq!(rungs[1]["scope_key"], "project");
+        assert_eq!(rungs[1]["scope_key"], "workspace");
         assert_eq!(rungs[1]["mandatory_count"], 1);
         assert_eq!(rungs[1]["rules"].as_array().unwrap().len(), 2);
     }

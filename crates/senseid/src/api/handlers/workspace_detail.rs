@@ -639,7 +639,7 @@ pub(crate) async fn preview_recommendation_materialization(
     if crate::db::pg_store::PgStore::is_rule_class_action(&action_type) {
         return Ok(Json(serde_json::json!({
             "materializable": true, "kind": "rule", "action_type": action_type,
-            "title": title, "body": why, "gov_scope": "project", "enforcement": "recommended",
+            "title": title, "body": why, "gov_scope": "workspace", "enforcement": "recommended",
         })));
     }
     // File-class (P-B): render the exact SKILL.md / agent .md + target path.
@@ -704,7 +704,7 @@ pub(crate) async fn materialize_recommendation(
     // ── Rule-class (P-A) ──────────────────────────────────────────────────
     if crate::db::pg_store::PgStore::is_rule_class_action(&action_type) {
         let gov_scope =
-            b.gov_scope.as_deref().filter(|s| !s.is_empty()).unwrap_or("project").to_string();
+            b.gov_scope.as_deref().filter(|s| !s.is_empty()).unwrap_or("workspace").to_string();
         let enforcement = b.enforcement.as_deref().map(str::trim).filter(|s| !s.is_empty());
         if let Some(e) = enforcement
             && !ENFORCEMENT_TIERS.contains(&e)

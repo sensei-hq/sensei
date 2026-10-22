@@ -28,11 +28,17 @@
 -- each at the design's definition. A retired function is also dropped by
 -- apply/after/retired_functions.sql.
 --
--- NOT HERE: the governance ladder's `project` rung (sensei.scopes,
--- sensei.namespaces.scope_key). The dōjō shares that vocabulary over its wire
--- and in its own database, so it converts with the dōjō, not before it. Nor
--- `task_execution_kind`'s `compile_projects`: it compiles a COMPILER's projects
--- (rust-analyzer, tsc), another system's word.
+-- The any-plane half also moves the governance ladder's `project` rung to
+-- `workspace` (R3b, D16): `sensei.scopes` and `sensei.namespaces` are deployed
+-- to the dōjō too, and the two exchange the key (a rule's `scope_key`, a
+-- folder's `scope_key:slug` pairs), so both databases convert in the same
+-- release — this hook runs on each. The namespaces are MOVED, never re-made:
+-- their ids carry every stance, binding, shared rule and billing seat on them.
+-- And an inbox artifact's scope tag `{"project": …}` (the dōjō's artifact scope,
+-- mirrored) and the memory history's text copy of `memory_scope` follow.
+--
+-- NOT HERE: `task_execution_kind`'s `compile_projects`: it compiles a
+-- COMPILER's projects (rust-analyzer, tsc), another system's word.
 do $$
 declare
     r record;
@@ -74,6 +80,28 @@ begin
         update sensei.config set key = 'setup.workspaces'
          where key = 'setup.projects'
            and not exists (select 1 from sensei.config where key = 'setup.workspaces');
+    end if;
+
+    -- ── the ladder's rung (D16, R3b), on any plane ───────────────────────────
+    -- The new rung is made from the old one, the namespaces moved onto it, and
+    -- only then the old one dropped: `namespaces.scope_key` is an FK. The seed
+    -- import that follows refreshes the rung's name and description.
+    if to_regclass('sensei.scopes') is not null
+       and exists (select 1 from sensei.scopes where key = 'project') then
+        insert into sensei.scopes (key, name, level, shareable, description, modified_at)
+        select 'workspace', 'Workspace', level, shareable, description, modified_at
+          from sensei.scopes where key = 'project'
+        on conflict (key) do nothing;
+        update sensei.namespaces set scope_key = 'workspace' where scope_key = 'project';
+        delete from sensei.scopes where key = 'project';
+    end if;
+    if to_regclass('sensei.dojo_inbox') is not null then
+        update sensei.dojo_inbox
+           set scope = (scope - 'project') || jsonb_build_object('workspace', scope -> 'project')
+         where jsonb_typeof(scope) = 'object' and scope ? 'project' and not scope ? 'workspace';
+    end if;
+    if to_regclass('history.past_memories') is not null then
+        update history.past_memories set scope = 'workspace' where scope = 'project';
     end if;
 
     if to_regclass('sensei.projects') is null or to_regclass('sensei.workspaces') is not null then

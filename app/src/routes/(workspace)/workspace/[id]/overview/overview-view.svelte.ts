@@ -355,7 +355,7 @@ export async function decideRecommendation(
   }
   if (p.materializable) {
     return settle(
-      await api.tryMaterializeRecommendation(workspaceId, recId, { gov_scope: 'project', enforcement: 'recommended' }),
+      await api.tryMaterializeRecommendation(workspaceId, recId, { gov_scope: 'workspace', enforcement: 'recommended' }),
     );
   }
   return settle(await api.tryAcceptWorkspaceRecommendation(workspaceId, recId));

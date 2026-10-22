@@ -10,14 +10,14 @@ import { kindKanji, relativeAge } from './triage/view';
 import type { KitKnowledge, KitKnowledgeRow, KitCatalogItem } from './components/kit/types';
 
 /**
- * Readable label for an artifact's `scope` jsonb ({company|team|project|stack}).
+ * Readable label for an artifact's `scope` jsonb ({company|team|workspace|stack}).
  * Defensive: reads the common keys, falls back to "Unscoped"; never throws.
  */
 export function scopeLabel(scope: unknown): string {
 	if (scope && typeof scope === 'object') {
 		const s = scope as Record<string, unknown>;
 		if (typeof s.team === 'string' && s.team) return `Team · ${s.team}`;
-		if (typeof s.project === 'string' && s.project) return `Workspace · ${s.project}`;
+		if (typeof s.workspace === 'string' && s.workspace) return `Workspace · ${s.workspace}`;
 		if (typeof s.stack === 'string' && s.stack) return `Stack · ${s.stack}`;
 		if (s.company) return typeof s.company === 'string' && s.company !== 'true' ? `Company · ${s.company}` : 'Company';
 	}

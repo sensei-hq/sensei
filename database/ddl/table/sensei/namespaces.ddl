@@ -17,11 +17,11 @@ create index if not exists namespaces_scope_key_idx
 
 comment on table namespaces is
 'Concrete instances of a scope — e.g. (organization, "Sensei HQ"),
-(project, "sensei"), (technology, "rust"). A repo belongs to a SET of these
-(via repository_namespaces, or for a `project` namespace via the workspace of the
+(workspace, "sensei"), (technology, "rust"). A repo belongs to a SET of these
+(via repository_namespaces, or for a `workspace` namespace via the workspace of the
 same name); there is no parent_id tree — precedence comes from the
 scope level (optionally overridden per namespace). Created at scan time from
-README frontmatter (organization/project/team) and detected stack.';
+README frontmatter (organization/workspace/team) and detected stack.';
 
 comment on column namespaces.id
      is 'Surrogate primary key (UUID).';
@@ -36,7 +36,7 @@ comment on column namespaces.level
 comment on column namespaces.props
      is 'Extensible metadata (icons, source, etc.).';
 comment on column namespaces.visibility
-     is 'private | public. For project-scope namespaces this is the workspace''s visibility; a member consumes a tenant billing seat only through a `private` workspace. Other scopes carry the default and are ignored by billing. Defaults to private (opt into public, never accidentally out).';
+     is 'private | public. For workspace-scope namespaces this is the workspace''s visibility; a member consumes a tenant billing seat only through a `private` workspace. Other scopes carry the default and are ignored by billing. Defaults to private (opt into public, never accidentally out).';
 comment on column namespaces.modified_at
      is 'Timestamp of the last modification to this row.';
 

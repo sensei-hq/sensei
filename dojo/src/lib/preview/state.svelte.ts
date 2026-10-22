@@ -31,7 +31,7 @@ export interface WorkspacePreviewState {
 	readonly locks: number;
 	/** Whether the ladder shows its discarded conflicts. */
 	readonly showConflicts: boolean;
-	/** The focused rung id (the workspace rung, scope key `project`, on open). */
+	/** The focused rung id (the workspace rung, scope key `workspace`, on open). */
 	readonly active: string;
 	/** The current view (`layer` on open). */
 	readonly view: PreviewView;
@@ -56,7 +56,7 @@ export function createWorkspacePreview(
 	const locks = lockCount(rungs);
 	const showConflicts = showsConflicts(workspace);
 
-	let active = $state('project');
+	let active = $state('workspace');
 	let view = $state<PreviewView>('layer');
 
 	return {

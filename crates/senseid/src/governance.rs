@@ -245,7 +245,7 @@ mod tests {
         let rows = vec![
             raw("never log secrets", "mandatory", "organization"),
             raw("never log secrets", "advisory", "repository"),
-            raw("prefer early returns", "recommended", "project"),
+            raw("prefer early returns", "recommended", "workspace"),
         ];
         let set = structure_ruleset(rows);
         assert_eq!(set.total, 2, "the duplicate is dropped");
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn empty_content_skipped_and_empty_input_is_empty() {
-        let rows = vec![raw("   ", "required", "project")];
+        let rows = vec![raw("   ", "required", "workspace")];
         assert_eq!(structure_ruleset(rows).total, 0);
         assert_eq!(structure_ruleset(vec![]).total, 0);
     }
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn mandatory_flag_only_for_mandatory() {
         let rows = vec![
-            raw("a", "required", "project"),
+            raw("a", "required", "workspace"),
             raw("b", "mandatory", "organization"),
             raw("c", "advisory", "user"),
         ];

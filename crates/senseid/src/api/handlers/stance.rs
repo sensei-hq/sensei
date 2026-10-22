@@ -79,7 +79,7 @@ pub(crate) async fn get_stance(
 }
 
 /// POST /api/stance — set a user's stance. `scope` (a `sensei.scopes` key like
-/// `project` / `organization`) picks the rung; omitted / `user` / `general` sets
+/// `workspace` / `organization`) picks the rung; omitted / `user` / `general` sets
 /// the user's default row. The three dials (`autonomy` · `sharing` · `review`)
 /// are validated (400 on a bad value); an absent dial takes its DDL default
 /// (full-replace, mirroring the collective-preferences PUT). Setting a non-default

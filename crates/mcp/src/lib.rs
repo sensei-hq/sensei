@@ -633,11 +633,11 @@ pub fn handle_list_tools() -> Value {
             tool("get_user_for_project", "Resolve the git author identity — user.name and user.email, using git's own local-over-global precedence (a repo .git/config override wins; otherwise ~/.gitconfig) — for the folder you're working in, plus the sensei project that owns it. This is the same identity as the commit author and the Dōjō sign-in, so it's how a run or plan gets registered to the right person for relay attribution. Defaults to the current working directory when 'under' is omitted.", &[], &[
                 ("under", "string", "Absolute folder path to resolve the identity + owning project for. Defaults to the current working directory."),
             ]),
-            tool("set_stance", "Set the user's behavioural stance — the three dials that govern HOW a run behaves (autonomy: how far it goes before asking · sharing: what surfaces to the dōjō · review: who signs off a rule) — at a scope. Complements the governance rules (WHAT a run may do). User-scoped and daemon-local. Omitting 'scope' sets the user's default across scopes; a scope key (e.g. 'project', 'organization') sets it for that rung and overrides the default there. Each omitted dial keeps its stored default. Defaults 'under' to the current working directory to resolve the git identity + scope namespace.", &[], &[
+            tool("set_stance", "Set the user's behavioural stance — the three dials that govern HOW a run behaves (autonomy: how far it goes before asking · sharing: what surfaces to the dōjō · review: who signs off a rule) — at a scope. Complements the governance rules (WHAT a run may do). User-scoped and daemon-local. Omitting 'scope' sets the user's default across scopes; a scope key (e.g. 'workspace', 'organization') sets it for that rung and overrides the default there. Each omitted dial keeps its stored default. Defaults 'under' to the current working directory to resolve the git identity + scope namespace.", &[], &[
                 ("autonomy", "string", "How far a run goes before asking: ask_always | ask_on_guarded (default) | ask_on_risky | run_freely."),
                 ("sharing",  "string", "What surfaces to the dōjō: private | patterns (default) | patterns_prompts | derived."),
                 ("review",   "string", "Approvers before a rule adopts: me_alone | one_maintainer (default) | two_maintainers | quorum."),
-                ("scope",    "string", "Scope key to set the stance at (e.g. 'project', 'organization'). Omit for the user's default across scopes."),
+                ("scope",    "string", "Scope key to set the stance at (e.g. 'workspace', 'organization'). Omit for the user's default across scopes."),
                 ("under",    "string", "Absolute folder path — resolves the git identity + the scope's namespace. Defaults to the current working directory."),
                 ("user",     "string", "Explicit user key (git email) to set the stance for. Defaults to the git identity at 'under'."),
             ]),
@@ -755,7 +755,7 @@ pub fn handle_list_tools() -> Value {
                     ("scope_filter", "string", "Required when scope=stack (e.g. 'rust')"),
                     ("impact",       "string", "What breaks if ignored"),
                     ("tags",         "string", "Comma-separated tag list (e.g. 'security,performance')"),
-                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|project|repository (resolved against the current repo)"),
+                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|workspace|repository (resolved against the current repo)"),
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                     ("spine_slot",   "string", "spine slot to anchor to: vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests"),
                     ("feature",      "string", "feature name — required for feature-scope slots (brief/plan/tests)"),
@@ -775,7 +775,7 @@ pub fn handle_list_tools() -> Value {
                     ("scope_filter", "string", "Required when scope=stack"),
                     ("impact",       "string", "What breaks if ignored"),
                     ("tags",         "string", "Comma-separated tags"),
-                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|project|repository (resolved against the current repo)"),
+                    ("gov_scope",    "string", "Governance scope this rule governs: general|user|organization|client|technology|team|workspace|repository (resolved against the current repo)"),
                     ("enforcement",  "string", "Authority: advisory|recommended|required|mandatory (default recommended; mandatory = non-overridable)"),
                     ("spine_slot",   "string", "spine slot to anchor to: vision|personas|journeys|roadmap|design|mockups|decisions|brief|plan|tests"),
                     ("feature",      "string", "feature name — required for feature-scope slots (brief/plan/tests)"),
@@ -786,7 +786,7 @@ pub fn handle_list_tools() -> Value {
                  Creates a proposal at the new scope for the user to accept; it never auto-applies.",
                 &[("id", "string", "Memory id (UUID) to promote")],
                 &[
-                    ("gov_scope",   "string", "Target scope: organization|client|technology|team|project (resolved against the project's repo)"),
+                    ("gov_scope",   "string", "Target scope: organization|client|technology|team|workspace (resolved against the project's repo)"),
                     ("project",     "string", "Project the gov_scope resolves against (e.g. 'sensei'). Prefer this over the working directory."),
                     ("enforcement", "string", "Authority at the new scope: advisory|recommended|required|mandatory"),
                 ]),
@@ -2211,14 +2211,14 @@ mod tests {
     fn set_stance_forwards_scope_and_explicit_under() {
         let req = daemon_request_for(
             "set_stance",
-            &json!({ "under": "/repo", "scope": "project", "review": "quorum" }),
+            &json!({ "under": "/repo", "scope": "workspace", "review": "quorum" }),
             "/my/cwd",
             None,
         )
         .unwrap();
         let body = req.body.unwrap();
         assert_eq!(body["under"], json!("/repo"), "explicit under overrides cwd");
-        assert_eq!(body["scope"], json!("project"));
+        assert_eq!(body["scope"], json!("workspace"));
         assert_eq!(body["review"], json!("quorum"));
     }
 

@@ -1,14 +1,13 @@
 use crate::runs::{NewRun, Run, RunEvent, RunEventKind};
 
 /// How a sensei workspace is named to the dōjō: its namespace on the ladder's
-/// `project` rung (the rung keeps that name until the dōjō converts it),
-/// matched on the workspace's name (the namespaces' documented link — "for a
-/// `project` namespace via the workspace of the same name"). ONE fragment,
+/// `workspace` rung, matched on the workspace's name (the namespaces' documented
+/// link — "for a `workspace` namespace via the workspace of the same name"). ONE fragment,
 /// spliced into the relay's queries and the sync's offer (#299), so the two
 /// paths cannot file the same workspace under different slugs. Expects the
 /// workspace aliased `p`; binds the namespace as `n`.
 pub(crate) const WORKSPACE_NAMESPACE_JOIN: &str =
-    "JOIN sensei.namespaces n ON n.scope_key = 'project' AND n.name = p.name";
+    "JOIN sensei.namespaces n ON n.scope_key = 'workspace' AND n.name = p.name";
 use dojo_protocol::relay::RelayRunStatus;
 use sensei_bootstrap::{
     DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS, DB_POOL_MAX_CONNECTIONS,

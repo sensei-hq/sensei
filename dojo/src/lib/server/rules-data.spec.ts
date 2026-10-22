@@ -399,8 +399,8 @@ describe('parseNamespacePairs', () => {
 			{ scope_key: 'stack', slug: 'react' }
 		]);
 		// slugs may contain colons (only the first splits scope from slug)
-		expect(parseNamespacePairs('project:acme/lumen-auth')).toEqual([
-			{ scope_key: 'project', slug: 'acme/lumen-auth' }
+		expect(parseNamespacePairs('workspace:acme/lumen-auth')).toEqual([
+			{ scope_key: 'workspace', slug: 'acme/lumen-auth' }
 		]);
 		expect(parseNamespacePairs('')).toEqual([]);
 		expect(parseNamespacePairs('garbage,,:x,y:')).toEqual([]);

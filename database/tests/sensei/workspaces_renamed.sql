@@ -12,7 +12,11 @@
 -- R3b adds the stored KEYS sensei names after a project: the retired metric
 -- `project_health` and the setup wizard's `setup.projects` config key become
 -- `workspace_health` / `setup.workspaces`, the row kept (the metric's id, so its
--- recorded values follow it).
+-- recorded values follow it). And the governance ladder's `project` rung (D16):
+-- `sensei.scopes.key` becomes `workspace` with every namespace on it carried
+-- across (their ids kept, so a stance or rule attached to one follows it), an
+-- inbox artifact's scope tag `{"project": …}` becomes `{"workspace": …}`, and the
+-- memory history's text copy of the scope follows the live enum.
 --
 -- WHAT BREAKS THIS TEST: a DDL file that still declares a `project` name; the
 -- hook missing a table, column, type, enum label or constraint, so dbd would
@@ -22,8 +26,7 @@
 --
 -- What keeps the word `project` is another system's: `mcp_servers.scope`
 -- holds Claude Code's `'user' | 'project'` (a VALUE, not a name), the task
--- kind `compile_projects` compiles a compiler's projects, and the governance
--- ladder's `project` rung waits on the dōjō (see the hook).
+-- kind `compile_projects` compiles a compiler's projects.
 
 begin;
 set local client_min_messages = warning;
@@ -74,7 +77,15 @@ select 'enum label ' || n.nspname || '.' || t.typname || ' ' || e.enumlabel
 create temp view sensei_project_keys as
 select 'metric key ' || key as what from sensei.metrics where key = 'project_health'
 union all
-select 'config key ' || key from sensei.config where key = 'setup.projects';
+select 'config key ' || key from sensei.config where key = 'setup.projects'
+union all
+select 'ladder rung ' || key from sensei.scopes where key = 'project'
+union all
+select 'namespace ' || scope_key || ':' || slug from sensei.namespaces where scope_key = 'project'
+union all
+select 'inbox artifact scope ' || id from sensei.dojo_inbox where scope ? 'project'
+union all
+select 'memory history scope ' || id from history.past_memories where scope = 'project';
 
 do $$
 declare
@@ -90,6 +101,9 @@ begin
     end if;
     if not exists (select 1 from sensei.metrics where key = 'workspace_health') then
         raise exception 'the metric catalogue has no workspace_health';
+    end if;
+    if not exists (select 1 from sensei.scopes where key = 'workspace' and level = 60) then
+        raise exception 'the ladder has no workspace rung at level 60';
     end if;
 end $$;
 
@@ -138,13 +152,36 @@ update sensei.metrics set key = 'project_health' where key = 'workspace_health';
 delete from sensei.config where key = 'setup.workspaces';
 insert into sensei.config (key, value) values ('setup.projects', 'done');
 
+-- The ladder as an older database holds it: the rung keyed `project`, every
+-- workspace namespace on it, one with a stance attached (an FK on its id), and
+-- an inbox artifact tagged with the old scope key.
+insert into sensei.scopes (key, name, level, shareable, description, modified_at)
+select 'project', 'Project', level, shareable, 'Rules for one logical project.', '2026-06-05'
+  from sensei.scopes where key = 'workspace';
+update sensei.namespaces set scope_key = 'project' where scope_key = 'workspace';
+delete from sensei.scopes where key = 'workspace';
+insert into sensei.namespaces (id, scope_key, name, slug)
+values ('e0000000-0000-4000-8000-0000000307b1', 'project', 'ztest-r3b', 'ztest-r3b');
+insert into sensei.stances (user_key, namespace_id)
+values ('ztest-r3b', 'e0000000-0000-4000-8000-0000000307b1');
+insert into sensei.dojo_memberships (id, registry_url, tenant_key, dojo_url, kind)
+values ('e0000000-0000-4000-8000-0000000307b2', 'https://ztest', 'org/ztest', 'https://ztest/org/ztest', 'employer');
+insert into sensei.dojo_inbox (membership_id, artifact_seq, artifact_signature, kind, title, body, scope)
+values ('e0000000-0000-4000-8000-0000000307b2', 1, 'ztest-r3b', 'principle', 'ztest-r3b', 'ztest-r3b',
+        '{"project": "ztest-r3b", "stack": "rust"}');
+insert into history.past_memories (memory_id, scope, type, title, content, strength, status,
+                                   operation, effective_from)
+values (gen_random_uuid(), 'project', 'convention', 'ztest-r3b', 'ztest-r3b', 1, 'active',
+        'UPDATE', now());
+
 create temp table counts_before as
 select (select count(*) from sensei.projects)                 as workspaces
      , (select count(*) from sensei.repositories_in_projects) as repositories_in_workspaces
      , (select count(*) from sensei.extension_projects)       as extension_workspaces
      , (select count(*) from sensei.service_projects)         as service_workspaces
      , (select count(*) from sensei.memories where scope = 'project') as workspace_memories
-     , (select count(*) from activity.sessions where project_id is not null) as attributed_sessions;
+     , (select count(*) from activity.sessions where project_id is not null) as attributed_sessions
+     , (select count(*) from sensei.namespaces where scope_key = 'project') as workspace_namespaces;
 
 \ir ../../apply/before/sensei_workspaces_renamed.sql
 
@@ -207,6 +244,28 @@ begin
     if exists (select 1 from sensei.config where key = 'setup.projects')
        or not exists (select 1 from sensei.config where key = 'setup.workspaces' and value = 'done') then
         raise exception 'the setup.projects config key did not become setup.workspaces with its value';
+    end if;
+    if exists (select 1 from sensei.scopes where key = 'project')
+       or not exists (select 1 from sensei.scopes where key = 'workspace' and level = 60) then
+        raise exception 'the ladder''s project rung did not become workspace';
+    end if;
+    if (select count(*) from sensei.namespaces where scope_key = 'workspace') <> before.workspace_namespaces then
+        raise exception 'namespaces on the project rung did not all move to workspace';
+    end if;
+    if not exists (select 1 from sensei.stances s
+                     join sensei.namespaces n on n.id = s.namespace_id
+                    where s.user_key = 'ztest-r3b'
+                      and n.id = 'e0000000-0000-4000-8000-0000000307b1'
+                      and n.scope_key = 'workspace' and n.slug = 'ztest-r3b') then
+        raise exception 'the fixture namespace (and the stance on it) is not found under workspace';
+    end if;
+    if not exists (select 1 from sensei.dojo_inbox
+                    where artifact_signature = 'ztest-r3b'
+                      and scope = '{"workspace": "ztest-r3b", "stack": "rust"}'::jsonb) then
+        raise exception 'an inbox artifact''s project scope tag did not become workspace';
+    end if;
+    if exists (select 1 from history.past_memories where scope = 'project') then
+        raise exception 'the memory history still says project';
     end if;
     if not exists (select 1 from pg_constraint where conname = 'repository_metrics_pkey') then
         raise exception 'repository_metrics kept its stale project_metrics_ constraint names';

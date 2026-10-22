@@ -30,7 +30,7 @@ set search_path to sensei, extensions;
 -- on their own.
 --
 -- The workspace side joins on NAME because that is the key `upsert_namespace`
--- writes with (`upsert_namespace('project', workspace_name, slug)`), and there is
+-- writes with (`upsert_namespace('workspace', workspace_name, slug)`), and there is
 -- no FK from a workspace to its namespace. Reading by the same key the writer
 -- used is correct today; giving `sensei.workspaces` an explicit `namespace_id`
 -- would make a rename safe, and is filed rather than smuggled in here.
@@ -44,13 +44,13 @@ returns setof uuid language sql stable as $$
   select n.id
     from sensei.folder_workspaces fp
     join sensei.workspaces p   on p.id = fp.workspace_id
-    join sensei.namespaces n on n.scope_key = 'project' and n.name = p.name
+    join sensei.namespaces n on n.scope_key = 'workspace' and n.name = p.name
    where fp.folder_id = p_folder_id
 $$;
 
 comment on function namespaces_for_folder(uuid) is
 'Every namespace governing a folder, on both axes: its repository
 (`repository_namespaces`) and the workspace(s) that repository belongs to
-(`folder_workspaces` → the `project`-scope namespace of the same name). Empty
+(`folder_workspaces` → the `workspace`-scope namespace of the same name). Empty
 when neither is attached. Used by every governance resolver so the lift off a
 folder is spelled exactly once.';

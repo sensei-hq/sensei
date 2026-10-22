@@ -72,7 +72,7 @@ export interface Attribution {
 export interface ArtifactScope {
 	company?: string | null;
 	team?: string | null;
-	project?: string | null;
+	workspace?: string | null;
 	stack?: string | null;
 }
 

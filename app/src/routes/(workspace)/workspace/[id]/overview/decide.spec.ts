@@ -43,7 +43,7 @@ describe('decideRecommendation', () => {
   it('a rule-class rec materializes at workspace scope, recommended', async () => {
     const { a, calls } = api({ tryPreviewRecommendation: async () => ok({ materializable: true }) });
     await decideRecommendation(a, 'p', 'r', 'accept', () => true);
-    expect(calls).toEqual(['materialize {"gov_scope":"project","enforcement":"recommended"}']);
+    expect(calls).toEqual(['materialize {"gov_scope":"workspace","enforcement":"recommended"}']);
   });
 
   it('anything else is a plain accept', async () => {

@@ -18,7 +18,7 @@ SET of namespaces across these scopes (no single-parent tree); resolution
 orders by level. Seeded via staging.import_scopes().';
 
 comment on column scopes.key
-     is 'Stable identifier (e.g. general, user, organization, client, technology, team, project, repository).';
+     is 'Stable identifier (e.g. general, user, organization, client, technology, team, workspace, repository).';
 comment on column scopes.name
      is 'Human-readable label.';
 comment on column scopes.level

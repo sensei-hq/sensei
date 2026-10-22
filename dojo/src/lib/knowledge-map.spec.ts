@@ -21,7 +21,7 @@ function art(over: Partial<KnowledgeArtifactWire> = {}): KnowledgeArtifactWire {
 describe('scopeLabel', () => {
 	it('formats team / workspace / stack with a middot', () => {
 		expect(scopeLabel({ team: 'Payments' })).toBe('Team · Payments');
-		expect(scopeLabel({ project: 'ledger' })).toBe('Workspace · ledger');
+		expect(scopeLabel({ workspace: 'ledger' })).toBe('Workspace · ledger');
 		expect(scopeLabel({ stack: 'React' })).toBe('Stack · React');
 	});
 	it('reads company as a bare label (or with a value)', () => {

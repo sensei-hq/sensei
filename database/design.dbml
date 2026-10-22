@@ -641,7 +641,7 @@ Enum "sensei"."task_execution_kind" {
   "process_file"
   "process_manifest"
   "process_repo_files"
-  "compile_workspaces"
+  "compile_projects"
   "delete_file"
   "delete_folder"
   "branch_switch"
@@ -1535,7 +1535,7 @@ modified_at, so a user edit is never clobbered by a re-deploy.'''
 }
 
 Table "sensei"."scopes" {
-  "key" text [pk, not null, note: 'Stable identifier (e.g. general, user, organization, client, technology, team, project, repository).']
+  "key" text [pk, not null, note: 'Stable identifier (e.g. general, user, organization, client, technology, team, workspace, repository).']
   "name" text [not null, note: 'Human-readable label.']
   "level" int [not null, note: 'Precedence rank. Higher = more specific = wins. general=0 … repository=70.']
   "shareable" boolean [not null, default: false, note: 'Whether knowledge at this scope federates to a shared DÅjÅ (organization/client/team = true).']
@@ -2527,7 +2527,7 @@ Table "sensei"."namespaces" {
   "slug" text [not null, note: 'Normalized identifier, unique within a scope (e.g. "sensei-hq").']
   "level" int [note: 'Optional per-namespace override of scopes.level. Null = inherit from scope.']
   "props" jsonb [not null, default: '{}', note: 'Extensible metadata (icons, source, etc.).']
-  "visibility" sensei.namespace_visibility [not null, default: 'private', note: 'private | public. For project-scope namespaces this is the workspace\'s visibility; a member consumes a tenant billing seat only through a `private` workspace. Other scopes carry the default and are ignored by billing. Defaults to private (opt into public, never accidentally out).']
+  "visibility" sensei.namespace_visibility [not null, default: 'private', note: 'private | public. For workspace-scope namespaces this is the workspace\'s visibility; a member consumes a tenant billing seat only through a `private` workspace. Other scopes carry the default and are ignored by billing. Defaults to private (opt into public, never accidentally out).']
   "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
   indexes {
@@ -2536,11 +2536,11 @@ Table "sensei"."namespaces" {
   }
 
   Note: '''Concrete instances of a scope — e.g. (organization, "Sensei HQ"),
-(project, "sensei"), (technology, "rust"). A repo belongs to a SET of these
-(via repository_namespaces, or for a `project` namespace via the workspace of the
+(workspace, "sensei"), (technology, "rust"). A repo belongs to a SET of these
+(via repository_namespaces, or for a `workspace` namespace via the workspace of the
 same name); there is no parent_id tree — precedence comes from the
 scope level (optionally overridden per namespace). Created at scan time from
-README frontmatter (organization/project/team) and detected stack.'''
+README frontmatter (organization/workspace/team) and detected stack.'''
 }
 
 Table "sensei"."persona_emails" {

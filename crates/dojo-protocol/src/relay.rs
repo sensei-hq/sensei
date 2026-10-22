@@ -274,12 +274,12 @@ pub struct RelaySessionUpdate {
     /// backs the watchdog's `stalled` status the bridge also publishes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat_at: Option<String>,
-    /// The slug of the run's project namespace (`sensei.namespaces` scope=project).
-    /// Lets the Worker open/refresh the caller's billing seat on this project —
+    /// The slug of the run's workspace namespace (`sensei.namespaces` scope=workspace).
+    /// Lets the Worker open/refresh the caller's billing seat on this workspace —
     /// proof the user is actively using sensei there (only such users are billed).
     /// Optional + backward-compatible: absent → no seat is touched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_slug: Option<String>,
+    pub workspace_slug: Option<String>,
     /// The workspace the run is in (D12), so the dōjō attaches the session to it
     /// (and shows its constitution). Optional: absent → the session stays under none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -581,7 +581,7 @@ mod tests {
             paused_until: Some("2026-07-16T11:29:00Z".into()),
             pause_reason: Some("weekly cap".into()),
             heartbeat_at: Some("2026-07-16T10:04:30Z".into()),
-            project_slug: None,
+            workspace_slug: None,
             workspace: None,
         };
         let js = serde_json::to_string(&u).unwrap();
@@ -592,9 +592,9 @@ mod tests {
         assert_eq!(v["heartbeat_at"], json!("2026-07-16T10:04:30Z"));
         assert!(v.get("goal").is_none(), "None fields are omitted");
         assert!(v.get("current_feature").is_none());
-        assert!(v.get("project_slug").is_none(), "None project_slug is omitted");
+        assert!(v.get("workspace_slug").is_none(), "None workspace_slug is omitted");
 
-        // With a project set, the slug rides the wire (drives seat attribution).
+        // With a workspace set, the slug rides the wire (drives seat attribution).
         // D12: the run's workspace rides the wire under `workspace`, never `project`.
         let placed = RelaySessionUpdate {
             workspace: Some(RelayWorkspaceInfo { slug: "sensei-hq".into(), constitution: None }),
@@ -603,10 +603,11 @@ mod tests {
         let pv = serde_json::to_value(&placed).unwrap();
         assert_eq!(pv["workspace"], json!({ "slug": "sensei-hq" }));
         assert!(pv.get("project").is_none(), "the old key is gone from the wire");
-        let seated = RelaySessionUpdate { project_slug: Some("my-proj".into()), ..u };
+        let seated = RelaySessionUpdate { workspace_slug: Some("my-ws".into()), ..u };
         let jv: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&seated).unwrap()).unwrap();
-        assert_eq!(jv["project_slug"], json!("my-proj"));
+        assert_eq!(jv["workspace_slug"], json!("my-ws"));
+        assert!(jv.get("project_slug").is_none(), "the old slug key is gone from the wire");
     }
 
     #[test]
