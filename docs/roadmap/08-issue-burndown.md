@@ -31,7 +31,7 @@ duplicate, leaving 89. The production-readiness items
 | `deploy-dojo` + live check of user-scoped metrics | #240 |
 | Write `dojo_memberships.sync_status` from the sync, or retire it; drop the 2026-08-29 held row | #184 |
 
-## Wave 0b — release from main tags (user, 2026-10-22) — items 1, 2, 4, 5 done (335618b9); item 3 waits on the user
+## Wave 0b — release from main tags (user, 2026-10-22) — all items done in code (335618b9, 8afc5bcc two-step, cec18935 Worker-on-tag); proven on the next release, then the user removes the Worker's Cloudflare git triggers
 
 Every release bumps the version (patch or minor): one tag, one release run. A tagged release ships from
 **main**; develop is for scanning, coverage and tests. Mirrors rokkit/kavach.

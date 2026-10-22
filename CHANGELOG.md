@@ -15,6 +15,40 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-10-22
+
+### Changed
+
+- **BREAKING — the governance ladder is dōjō → workspace → repository** (R6; D25,
+  D29, D32, D33).
+  - **Retired rungs:** Team and Client.
+  - **Stacks:** each one (technology namespace) becomes a rule pack, adopted at
+    every repository where the stack is detected, so its reach is unchanged.
+  - **Precedence:** a stack's rules now rank at repository precedence, above
+    workspace.
+  - **Upgrade:** the daemon converts your database in place.
+- **BREAKING — a dōjō has no Clients section** (R7, D34). A client is just
+  another dōjō.
+  - **Removed:** Engagements, Incidents, Client audit, the confidentiality
+    ledger and their tables.
+  - **Audit trail:** readable by admins only.
+- **Releases ship from `main` by version tag.** `make bump` refuses anywhere
+  else, and `release.yml` checks that the tag is on main before anything
+  publishes.
+
+### Fixed
+
+- **A library docs URL reaches only the public internet** (CodeQL #1, SSRF).
+  Every hop is checked, including redirects, and the connection is pinned to the
+  address that was checked.
+- **CodeQL's remaining alerts are triaged.** Each was fixed or dismissed with a
+  written reason.
+- **The pre-upgrade backup handles a renamed table**, saving it under the name
+  the database still has.
+- **The release-guard tests no longer write the real repository's git config**
+  when run from the commit hook.
+- **A flaky token test no longer races another test's refresh.**
+
 ## [0.17.0] — 2026-10-22
 
 ### Changed
