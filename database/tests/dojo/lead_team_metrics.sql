@@ -146,7 +146,7 @@ begin
              array['a0000000-0000-4000-8000-000000000801', 'a0000000-0000-4000-8000-000000000802',
                    'a0000000-0000-4000-8000-000000000803', 'a0000000-0000-4000-8000-000000000804',
                    'a0000000-0000-4000-8000-000000000806', 'a0000000-0000-4000-8000-000000000807']::uuid[],
-             array[(select key from sensei.metrics order by key limit 1)],
+             array[(select key from dojo.metric_catalogue order by key limit 1)],
              current_date - 7);
     if got is distinct from '801=13/1,802=3/1,803=5/1' then
         raise exception 'team_member_metrics as the lead returned [%], expected [801=13/1,802=3/1,803=5/1]', got;
@@ -164,7 +164,7 @@ begin
              'b0000000-0000-4000-8000-00000000080a',
              array['a0000000-0000-4000-8000-000000000801', 'a0000000-0000-4000-8000-000000000802',
                    'a0000000-0000-4000-8000-000000000803']::uuid[],
-             array[(select key from sensei.metrics order by key limit 1)],
+             array[(select key from dojo.metric_catalogue order by key limit 1)],
              current_date - 7);
     if got is distinct from '803' then
         raise exception 'team_member_metrics as a contributor returned [%], expected [803]', got;
