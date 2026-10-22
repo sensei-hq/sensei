@@ -27,31 +27,31 @@ pub struct Layout {
     pub entries: Vec<Entry>,
 }
 
-/// The canonical doc structure (spec §5). Pure — takes the project name + date
+/// The canonical doc structure (spec §5). Pure — takes the repository name + date
 /// and returns the layout; no IO, no clock. Identical for code and non-code
 /// projects (the structure is the invariant).
-pub fn canonical_layout(project: &str, date: &str) -> Layout {
+pub fn canonical_layout(repository: &str, date: &str) -> Layout {
     let dir = |p: &str| Entry::Dir(p.to_string());
     let file = |p: &str, c: String| Entry::File { path: p.to_string(), contents: c };
     Layout {
         entries: vec![
-            file("docs/README.md", readme_md(project, date)),
-            file("docs/vision.md", vision_md(project, date)),
+            file("docs/README.md", readme_md(repository, date)),
+            file("docs/vision.md", vision_md(repository, date)),
             dir("docs/personas"),
             dir("docs/journeys"),
             dir("docs/roadmap"),
             dir("docs/design"),
             dir("docs/mockups"),
             dir("docs/features"),
-            file("docs/features/README.md", features_md(project, date)),
-            file("docs/decisions.md", decisions_md(project, date)),
+            file("docs/features/README.md", features_md(repository, date)),
+            file("docs/decisions.md", decisions_md(repository, date)),
         ],
     }
 }
 
-fn vision_md(project: &str, date: &str) -> String {
+fn vision_md(repository: &str, date: &str) -> String {
     format!(
-        "---\nname: Vision — {project}\nupdated: {date}\n---\n\n# Vision\n\n\
+        "---\nname: Vision — {repository}\nupdated: {date}\n---\n\n# Vision\n\n\
          > The why. What this project is for, who it serves, and what \"good\" looks like.\n\
          > Keep it living — sharpen it as the objective clarifies.\n\n\
          ## Objective\n\n<!-- One paragraph: the problem and the outcome. -->\n\n\
@@ -60,17 +60,17 @@ fn vision_md(project: &str, date: &str) -> String {
     )
 }
 
-fn decisions_md(project: &str, date: &str) -> String {
+fn decisions_md(repository: &str, date: &str) -> String {
     format!(
-        "---\nname: Decisions log — {project}\nupdated: {date}\n---\n\n# Decisions\n\n\
+        "---\nname: Decisions log — {repository}\nupdated: {date}\n---\n\n# Decisions\n\n\
          > Append-only. One entry per decision: date · decision · why · alternatives.\n\
          > The anti-rework memory — never re-derive a settled choice.\n"
     )
 }
 
-fn readme_md(project: &str, date: &str) -> String {
+fn readme_md(repository: &str, date: &str) -> String {
     format!(
-        "---\nname: Docs structure — {project}\nupdated: {date}\n---\n\n\
+        "---\nname: Docs structure — {repository}\nupdated: {date}\n---\n\n\
          # Project docs — the spine of record\n\n\
          Canonical structure (scaffolded by `sensei scaffold`). The *shape* never\n\
          changes; the method that fills it does.\n\n\
@@ -89,9 +89,9 @@ fn readme_md(project: &str, date: &str) -> String {
     )
 }
 
-fn features_md(project: &str, date: &str) -> String {
+fn features_md(repository: &str, date: &str) -> String {
     format!(
-        "---\nname: Features — {project}\nupdated: {date}\n---\n\n# Features\n\n\
+        "---\nname: Features — {repository}\nupdated: {date}\n---\n\n# Features\n\n\
          The FR/NFR registry — the \"what\". Each feature is a dossier that mirrors\n\
          the project shape:\n\n\
          ```\n\
@@ -142,10 +142,10 @@ pub fn materialize(base: &Path, layout: &Layout) -> ScaffoldReport {
     report
 }
 
-/// Scaffold the canonical structure into `target`. Derives the project name from
+/// Scaffold the canonical structure into `target`. derives the repository name from
 /// the directory name and stamps today's date (via the crate's `format_date`).
 pub fn run(target: &Path) -> ScaffoldReport {
-    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("project");
+    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("repository");
     let date = crate::format_date();
     let layout = canonical_layout(name, &date);
     materialize(target, &layout)
@@ -153,7 +153,7 @@ pub fn run(target: &Path) -> ScaffoldReport {
 
 /// The per-feature dossier (spec §3.2, feature-scope column). Pure — takes the
 /// feature name + date, returns the layout rooted at `docs/features/<feature>/`.
-/// Mirrors the project spine, lighter: Intent(brief) · Structure(design) ·
+/// Mirrors the repository spine, lighter: Intent(brief) · Structure(design) ·
 /// Outcomes/Signals(tests) · Decisions(decisions) + plan + optional mockup-ref.
 pub fn feature_layout(feature: &str, date: &str) -> Layout {
     let base = format!("docs/features/{feature}");
@@ -176,7 +176,7 @@ fn feature_brief_md(feature: &str, date: &str) -> String {
     format!(
         "---\nname: {feature} — brief\nupdated: {date}\n---\n\n# {feature} — brief\n\n\
          > Intent. The user objective + the data it moves — not the layout.\n\
-         > Audience inherits the project personas. Keep it short; sharpen as it clarifies.\n\n\
+         > Audience inherits the repository personas. Keep it short; sharpen as it clarifies.\n\n\
          ## Goal\n\n<!-- One paragraph: the user objective this chunk delivers. -->\n\n\
          ## Acceptance\n\n<!-- Observable outcomes that mean done. Mirror into tests/. -->\n\n\
          ## Data\n\n<!-- The entities/fields this touches (not screens). -->\n"
@@ -252,7 +252,7 @@ pub fn run_feature(target: &Path, feature: &str) -> Result<ScaffoldReport, Strin
     Ok(materialize(target, &layout))
 }
 
-/// The kind of project a baseline contract targets — selects the adapter column.
+/// The kind of repository a baseline contract targets — selects the adapter column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 #[value(rename_all = "lower")]
 pub enum BaselineKind {
@@ -318,7 +318,7 @@ fn baseline_md(kind: BaselineKind, date: &str) -> String {
          > Installed once at project start (recommend-and-confirm); after that it's just\n\
          > `bun run x` / `make x`. Sensei detects the stack and fills concrete tools\n\
          > (rides the manifest-adapter); conformance streams into the Signals slot as the\n\
-         > project health score.\n\n\
+         > workspace health score.\n\n\
          {table}\n\
          ## Gates\n\n\
          - **Security scan — block.**\n\
@@ -383,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn vision_interpolates_project_and_date() {
+    fn vision_interpolates_repository_and_date() {
         let l = canonical_layout("acme", "2026-07-17");
         let vision = l
             .entries
@@ -393,7 +393,7 @@ mod tests {
                 _ => None,
             })
             .expect("vision.md present");
-        assert!(vision.contains("acme"), "vision names the project");
+        assert!(vision.contains("acme"), "vision names the repository");
         assert!(vision.contains("2026-07-17"), "vision carries the date");
     }
 

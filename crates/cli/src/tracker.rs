@@ -1,5 +1,5 @@
-//! `sensei tracker …` — connect a project to its issue tracker (spec R10).
-//! The HTTP calls are thin; the decisions (which project, what body, where the
+//! `sensei tracker …` — connect a workspace to its issue tracker (spec R10).
+//! The HTTP calls are thin; the decisions (which workspace, what body, where the
 //! token comes from, what to print) are pure functions with tests.
 
 use clap::Subcommand;
@@ -11,30 +11,30 @@ pub const TOKEN_ENV: &str = "SENSEI_JIRA_TOKEN";
 
 #[derive(Subcommand, Debug, PartialEq)]
 pub enum TrackerCmd {
-    /// Connect a project to a tracker board (token from SENSEI_JIRA_TOKEN, else stdin)
+    /// Connect a workspace to a tracker board (token from SENSEI_JIRA_TOKEN, else stdin)
     Connect {
         #[command(subcommand)]
         kind: ConnectKind,
     },
-    /// Sync the project's tracker now
+    /// Sync the workspace's tracker now
     Sync {
         #[arg(long)]
-        project: String,
+        workspace: String,
     },
-    /// Disconnect the project's tracker (Jira itself is not changed)
+    /// Disconnect the workspace's tracker (Jira itself is not changed)
     Disconnect {
         #[arg(long)]
-        project: String,
+        workspace: String,
     },
-    /// The project's sprints, with ticket counts and sessions in each window
+    /// The workspace's sprints, with ticket counts and sessions in each window
     Sprints {
         #[arg(long)]
-        project: String,
+        workspace: String,
     },
     /// Active AI time and tokens per ticket: all tickets, a sprint's, or one
     Usage {
         #[arg(long)]
-        project: String,
+        workspace: String,
         /// A sprint id or exact name
         #[arg(long, conflicts_with = "key")]
         sprint: Option<String>,
@@ -51,7 +51,7 @@ pub enum ConnectKind {
     /// Jira Cloud
     Jira {
         #[arg(long)]
-        project: String,
+        workspace: String,
         /// The board's address, e.g. https://acme.atlassian.net/jira/software/projects/AUTH/boards/42
         #[arg(long, conflicts_with_all = ["url", "board"])]
         board_url: Option<String>,
@@ -70,10 +70,10 @@ pub enum ConnectKind {
     },
 }
 
-/// The project id for `input` (a uuid or an exact project name) from the
+/// The workspace id for `input` (a uuid or an exact workspace name) from the
 /// `GET /api/workspaces` list. Zero or several matches is an error naming them.
-pub fn resolve_project(projects: &Value, input: &str) -> Result<String, String> {
-    resolve_named(projects, input, "project")
+pub fn resolve_workspace(workspaces: &Value, input: &str) -> Result<String, String> {
+    resolve_named(workspaces, input, "workspace")
 }
 
 /// The id of the one `noun` in `list` whose id or exact name is `input`.
@@ -105,7 +105,7 @@ fn resolve_named(list: &Value, input: &str, noun: &str) -> Result<String, String
 }
 
 /// The sprint id for `input` (a uuid or an exact sprint name) from the
-/// `GET …/sprints` list, by the same rule as projects.
+/// `GET …/sprints` list, by the same rule as workspaces.
 pub fn resolve_sprint(sprints: &Value, input: &str) -> Result<String, String> {
     resolve_named(sprints, input, "sprint")
 }
@@ -258,7 +258,7 @@ pub fn describe_error(status: u16, body: &Value) -> String {
             let p = body.get("workspace");
             let name = p.and_then(|p| p.get("name")).and_then(Value::as_str).unwrap_or("?");
             let id = p.and_then(|p| p.get("id")).and_then(Value::as_str).unwrap_or("?");
-            format!("This board is already connected to project {name} ({id}).")
+            format!("This board is already connected to workspace {name} ({id}).")
         }
         "board_project_mismatch" => "That board belongs to a different Jira project than --project-key.".into(),
         "invalid_base_url" => {
@@ -270,9 +270,9 @@ pub fn describe_error(status: u16, body: &Value) -> String {
         "email_required" => "Pass --email: the Atlassian account the token belongs to.".into(),
         "token_required" => format!("No API token: set {TOKEN_ENV} or pipe it on stdin."),
         "unsupported_tracker" => "This tracker type isn't available in this version of sensei.".into(),
-        "not_connected" => "This project has no tracker connected.".into(),
-        "workspace_not_found" => "No such project.".into(),
-        "busy" => "A sync is already running for this project.".into(),
+        "not_connected" => "This workspace has no tracker connected.".into(),
+        "workspace_not_found" => "No such workspace.".into(),
+        "busy" => "A sync is already running for this workspace.".into(),
         "rate_limited" => "Jira is rate-limiting requests. Try again in a minute.".into(),
         "token_missing" | "credential_store" => {
             "The saved token can't be read from the system keychain. Connect again to replace it.".into()
@@ -299,15 +299,15 @@ pub fn run(cmd: TrackerCmd) -> i32 {
 fn execute(cmd: TrackerCmd) -> Result<(), String> {
     let base = crate::daemon_url();
     let client = crate::client();
-    let project_id = |input: &str| -> Result<String, String> {
-        let projects = get_json(&client, &format!("{base}/api/workspaces"))?;
-        resolve_project(&projects, input)
+    let workspace_id = |input: &str| -> Result<String, String> {
+        let workspaces = get_json(&client, &format!("{base}/api/workspaces"))?;
+        resolve_workspace(&workspaces, input)
     };
     match cmd {
         TrackerCmd::Connect {
-            kind: ConnectKind::Jira { project, board_url, url, board, email, project_key },
+            kind: ConnectKind::Jira { workspace, board_url, url, board, email, project_key },
         } => {
-            let id = project_id(&project)?;
+            let id = workspace_id(&workspace)?;
             let env = std::env::var(TOKEN_ENV).ok();
             if env.as_deref().is_none_or(|t| t.trim().is_empty()) {
                 eprintln!("Paste the Jira API token, then press Enter:");
@@ -343,8 +343,8 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             println!("First sync running…");
             wait_for_first_sync(&client, &format!("{base}/api/workspaces/{id}/trackers"))
         }
-        TrackerCmd::Sync { project } => {
-            let id = project_id(&project)?;
+        TrackerCmd::Sync { workspace } => {
+            let id = workspace_id(&workspace)?;
             let resp = crate::client_with_timeout(660)
                 .post(format!("{base}/api/workspaces/{id}/trackers/sync"))
                 .send()
@@ -361,8 +361,8 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             );
             Ok(())
         }
-        TrackerCmd::Disconnect { project } => {
-            let id = project_id(&project)?;
+        TrackerCmd::Disconnect { workspace } => {
+            let id = workspace_id(&workspace)?;
             let resp = client
                 .delete(format!("{base}/api/workspaces/{id}/trackers"))
                 .send()
@@ -374,8 +374,8 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             }
             Err(describe_error(status, &resp.json().unwrap_or(Value::Null)))
         }
-        TrackerCmd::Sprints { project } => {
-            let id = project_id(&project)?;
+        TrackerCmd::Sprints { workspace } => {
+            let id = workspace_id(&workspace)?;
             let sprints = get_json(&client, &format!("{base}/api/workspaces/{id}/sprints"))?;
             let rows: Vec<Vec<String>> = sprints
                 .as_array()
@@ -424,8 +424,8 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             );
             Ok(())
         }
-        TrackerCmd::Usage { project, sprint, key, by_repo } => {
-            let id = project_id(&project)?;
+        TrackerCmd::Usage { workspace, sprint, key, by_repo } => {
+            let id = workspace_id(&workspace)?;
             let mut rows = Vec::new();
             let mut footer = Vec::new();
             if let Some(key) = key {
@@ -561,7 +561,7 @@ mod tests {
         let c = parse(&[
             "connect",
             "jira",
-            "--project",
+            "--workspace",
             "p",
             "--board-url",
             "https://a.atlassian.net/x/boards/4",
@@ -576,7 +576,7 @@ mod tests {
             parse(&[
                 "connect",
                 "jira",
-                "--project",
+                "--workspace",
                 "p",
                 "--url",
                 "https://a.atlassian.net",
@@ -595,7 +595,7 @@ mod tests {
             parse(&[
                 "connect",
                 "jira",
-                "--project",
+                "--workspace",
                 "p",
                 "--board-url",
                 "u",
@@ -609,14 +609,14 @@ mod tests {
             .is_err()
         );
         assert!(
-            parse(&["connect", "jira", "--project", "p", "--url", "s", "--email", "e"]).is_err(),
+            parse(&["connect", "jira", "--workspace", "p", "--url", "s", "--email", "e"]).is_err(),
             "--url needs --board"
         );
         assert!(
             parse(&[
                 "connect",
                 "jira",
-                "--project",
+                "--workspace",
                 "p",
                 "--board-url",
                 "u",
@@ -629,24 +629,24 @@ mod tests {
             "never argv"
         );
         assert!(
-            parse(&["connect", "jira", "--project", "p", "--board-url", "u"]).is_err(),
+            parse(&["connect", "jira", "--workspace", "p", "--board-url", "u"]).is_err(),
             "email is required"
         );
     }
 
     #[test]
-    fn sync_and_disconnect_take_a_project() {
+    fn sync_and_disconnect_take_a_workspace() {
         assert_eq!(
-            parse(&["sync", "--project", "p"]).unwrap(),
-            TrackerCmd::Sync { project: "p".into() }
+            parse(&["sync", "--workspace", "p"]).unwrap(),
+            TrackerCmd::Sync { workspace: "p".into() }
         );
         assert_eq!(
-            parse(&["disconnect", "--project", "p"]).unwrap(),
-            TrackerCmd::Disconnect { project: "p".into() }
+            parse(&["disconnect", "--workspace", "p"]).unwrap(),
+            TrackerCmd::Disconnect { workspace: "p".into() }
         );
     }
 
-    fn projects() -> Value {
+    fn workspaces() -> Value {
         json!([
             {"id": "11111111-1111-1111-1111-111111111111", "name": "got_a_guy"},
             {"id": "22222222-2222-2222-2222-222222222222", "name": "twin"},
@@ -655,24 +655,24 @@ mod tests {
     }
 
     #[test]
-    fn projects_resolve_by_exact_name_or_uuid() {
+    fn workspaces_resolve_by_exact_name_or_uuid() {
         assert_eq!(
-            resolve_project(&projects(), "got_a_guy"),
+            resolve_workspace(&workspaces(), "got_a_guy"),
             Ok("11111111-1111-1111-1111-111111111111".into())
         );
         assert_eq!(
-            resolve_project(&projects(), "22222222-2222-2222-2222-222222222222"),
+            resolve_workspace(&workspaces(), "22222222-2222-2222-2222-222222222222"),
             Ok("22222222-2222-2222-2222-222222222222".into())
         );
-        let none = resolve_project(&projects(), "got_a").unwrap_err();
-        assert!(none.contains("no project") && none.contains("got_a_guy"), "{none}");
-        let two = resolve_project(&projects(), "twin").unwrap_err();
+        let none = resolve_workspace(&workspaces(), "got_a").unwrap_err();
+        assert!(none.contains("no workspace") && none.contains("got_a_guy"), "{none}");
+        let two = resolve_workspace(&workspaces(), "twin").unwrap_err();
         assert!(
-            two.contains("2 projects") && two.contains("2222") && two.contains("3333"),
+            two.contains("2 workspaces") && two.contains("2222") && two.contains("3333"),
             "{two}"
         );
         assert!(
-            resolve_project(&projects(), "99999999-9999-9999-9999-999999999999").is_err(),
+            resolve_workspace(&workspaces(), "99999999-9999-9999-9999-999999999999").is_err(),
             "an unknown uuid"
         );
     }
@@ -749,36 +749,39 @@ mod tests {
     #[test]
     fn sprints_and_usage_parse() {
         assert_eq!(
-            parse(&["sprints", "--project", "p"]).unwrap(),
-            TrackerCmd::Sprints { project: "p".into() }
+            parse(&["sprints", "--workspace", "p"]).unwrap(),
+            TrackerCmd::Sprints { workspace: "p".into() }
         );
         assert_eq!(
-            parse(&["usage", "--project", "p", "AUTH-1", "--by-repo"]).unwrap(),
+            parse(&["usage", "--workspace", "p", "AUTH-1", "--by-repo"]).unwrap(),
             TrackerCmd::Usage {
-                project: "p".into(),
+                workspace: "p".into(),
                 sprint: None,
                 key: Some("AUTH-1".into()),
                 by_repo: true
             }
         );
         assert_eq!(
-            parse(&["usage", "--project", "p", "--sprint", "Sprint 2"]).unwrap(),
+            parse(&["usage", "--workspace", "p", "--sprint", "Sprint 2"]).unwrap(),
             TrackerCmd::Usage {
-                project: "p".into(),
+                workspace: "p".into(),
                 sprint: Some("Sprint 2".into()),
                 key: None,
                 by_repo: false
             }
         );
         assert!(
-            parse(&["usage", "--project", "p", "--sprint", "s", "AUTH-1"]).is_err(),
+            parse(&["usage", "--workspace", "p", "--sprint", "s", "AUTH-1"]).is_err(),
             "both is an error"
         );
-        assert!(parse(&["usage", "--project", "p", "--by-repo"]).is_err(), "--by-repo needs a key");
+        assert!(
+            parse(&["usage", "--workspace", "p", "--by-repo"]).is_err(),
+            "--by-repo needs a key"
+        );
     }
 
     #[test]
-    fn sprints_resolve_like_projects() {
+    fn sprints_resolve_like_workspaces() {
         let sprints = json!([
             {"id": "44444444-4444-4444-4444-444444444444", "name": "Sprint 2"},
             {"id": "55555555-5555-5555-5555-555555555555", "name": "Sprint 1"},

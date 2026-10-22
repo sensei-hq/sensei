@@ -72,7 +72,7 @@ enum Commands {
         target: String,
         /// For "acp" target: ACP name or ID (e.g. claude, cursor, windsurf) or "all"
         name: Option<String>,
-        /// Also remove data (sessions, indexes, project artifacts)
+        /// Also remove data (sessions, indexes, workspace artifacts)
         #[arg(long)]
         purge: bool,
     },
@@ -97,7 +97,7 @@ enum Commands {
     /// Show daemon status
     Status,
 
-    /// Issue-tracker connections (Jira) for a project
+    /// Issue-tracker connections (Jira) for a workspace
     Tracker {
         #[command(subcommand)]
         cmd: tracker::TrackerCmd,
@@ -117,9 +117,9 @@ enum Commands {
         force: bool,
     },
 
-    /// Scaffold the canonical Sensei doc structure into a project
+    /// Scaffold the canonical Sensei doc structure into a repository
     Scaffold {
-        /// What to scaffold (default: the project-level doc structure)
+        /// What to scaffold (default: the repository-level doc structure)
         #[command(subcommand)]
         what: Option<ScaffoldTarget>,
         /// Target directory (default: current directory)
@@ -174,7 +174,7 @@ enum Commands {
     },
 }
 
-/// `sensei scaffold <what>` targets. Absent = the project-level doc structure.
+/// `sensei scaffold <what>` targets. Absent = the repository-level doc structure.
 #[derive(Subcommand)]
 enum ScaffoldTarget {
     /// Scaffold a per-feature dossier under docs/features/<name>/
@@ -184,7 +184,7 @@ enum ScaffoldTarget {
     },
     /// Scaffold the baseline capability contract (docs/baseline.md)
     Baseline {
-        /// Project kind — selects the adapter column
+        /// Repository kind — selects the adapter column
         #[arg(long, value_enum, default_value_t = scaffold::BaselineKind::Code)]
         kind: scaffold::BaselineKind,
     },
@@ -194,7 +194,7 @@ enum ScaffoldTarget {
 #[derive(Subcommand)]
 enum IndexCommands {
     /// Report index integrity drift (orphan nodes, ghost folders, mis-scoped
-    /// roots, duplicate-name projects) without repairing — read-only.
+    /// roots, duplicate-name workspaces) without repairing — read-only.
     Doctor,
 }
 
@@ -645,11 +645,11 @@ fn init_project_scope(_recommended: bool) {
     // Rules
     let rules_file = sensei_dir.join("rules.md");
     if !rules_file.exists() {
-        let project_name = repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("project");
+        let repo_name = repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("repository");
         let today = format_date();
         fs::write(&rules_file, format!(
-            "---\nname: Project Rules — {}\nupdated: {}\nmindsets: .sensei/mindsets/\npersonas: .sensei/personas/\n---\n\n# Rules\n\n## Patterns\n\n<!-- Add project patterns here -->\n\n## Quality\n\n- **Zero errors** — test suite must pass before and after every change\n\n## Process\n\n- **Design before code** — analyst mindset first\n- **One issue at a time** — complete, verify, close, then next\n",
-            project_name, today,
+            "---\nname: Repository Rules — {}\nupdated: {}\nmindsets: .sensei/mindsets/\npersonas: .sensei/personas/\n---\n\n# Rules\n\n## Patterns\n\n<!-- Add repository patterns here -->\n\n## Quality\n\n- **Zero errors** — test suite must pass before and after every change\n\n## Process\n\n- **Design before code** — analyst mindset first\n- **One issue at a time** — complete, verify, close, then next\n",
+            repo_name, today,
         )).ok();
         println!("  [created] .sensei/rules.md");
     } else {
@@ -855,7 +855,7 @@ fn remove_all(purge: bool) {
     if purge {
         println!("=== sensei remove all --purge ===\n");
         println!(
-            "This will remove ALL sensei data including sessions, indexes, and project artifacts."
+            "This will remove ALL sensei data including sessions, indexes, and workspace artifacts."
         );
         if !confirm("Continue?", false) {
             println!("Cancelled.");
@@ -904,7 +904,7 @@ fn remove_all(purge: bool) {
             }
 
             for p in result["workspaces_cleaned"].as_array().unwrap_or(&vec![]) {
-                println!("  ✓ Project cleaned: {}", p.as_str().unwrap_or("?"));
+                println!("  ✓ Workspace cleaned: {}", p.as_str().unwrap_or("?"));
             }
 
             for e in result["errors"].as_array().unwrap_or(&vec![]) {
@@ -1175,7 +1175,7 @@ fn print_index_doctor(r: &serde_json::Value) {
         ("orphan nodes (indexed file gone)", "orphan_files", "orphan_files"),
         ("ghost folders (directory gone)", "ghost_folders", "ghost_folders"),
         ("nested standalone (mis-scoped in a repo)", "nested_standalone", "nested_standalone"),
-        ("duplicate-name projects", "duplicate_name_workspaces", "duplicate_name_workspaces"),
+        ("duplicate-name workspaces", "duplicate_name_workspaces", "duplicate_name_workspaces"),
     ];
     let total: u64 = classes.iter().map(|(_, count_key, _)| n(count_key)).sum();
     // Advisory classes — surfaced separately below because the daemon does NOT
@@ -1559,7 +1559,7 @@ mod tests {
     }
 
     #[test]
-    fn scaffold_subcommand_parses_project_form() {
+    fn scaffold_subcommand_parses_repository_form() {
         let bare = Cli::parse_from(["sensei", "scaffold"]);
         match bare.command {
             Some(Commands::Scaffold { what, path }) => {
