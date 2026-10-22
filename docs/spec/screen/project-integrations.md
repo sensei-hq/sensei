@@ -128,7 +128,7 @@ failure, focus moves to the alert.
   through the reused `ALLOWED_ORIGINS` (`tauri://localhost`, dev
   `http://localhost:5173` and `http://127.0.0.1:5173`).
 - The screen shows no ticket/sprint usage; that is the Sprints screen's
-  ([`project-sprints.md`](project-sprints.md)).
+  ([`workspace-tickets.md`](workspace-tickets.md)).
 
 ## Done gate
 

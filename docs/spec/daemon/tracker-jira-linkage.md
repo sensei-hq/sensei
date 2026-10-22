@@ -632,7 +632,7 @@ Jira Server/DC; assignee or any per-person figure; discovery from live session h
 (R11 triggers on transcript ingest and lookup only); daemon-wide route auth/CORS
 (backlog). The desktop **connection** and **sprints** screens are in scope:
 [`screen/project-integrations.md`](../screen/project-integrations.md),
-[`screen/project-sprints.md`](../screen/project-sprints.md).
+[`screen/workspace-tickets.md`](../screen/workspace-tickets.md).
 
 ## Future adapters (not built in this slice)
 

@@ -1,4 +1,4 @@
-// The workspace window's Sprints screen. Spec: docs/spec/screen/workspace-sprints.md.
+// The workspace window's Tickets screen. Spec: docs/spec/screen/workspace-tickets.md.
 import type { ApiResult } from '$lib/api.js';
 import { activeMinutes, compactDuration, compactTokens } from '$lib/sessions-digest.js';
 import { errorFor } from '$lib/tracker-errors.js';
@@ -22,7 +22,8 @@ export interface SprintsApi {
   tryListBacklogTasks: (workspaceId: string) => Promise<ApiResult<TrackerTaskRow[]>>;
 }
 
-/** The id the sprint list uses for its Backlog row (tickets in no sprint). */
+/** Sprint-filter values besides a sprint's id: every ticket, or those in no sprint. */
+export const ALL = 'all';
 export const BACKLOG = 'backlog';
 
 export interface UsageCells {
@@ -49,17 +50,6 @@ export function usageCells(u: TrackerUsage): UsageCells {
   };
 }
 
-const day = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null;
-
-function dateRange(s: SprintUsageRow): string {
-  const from = day(s.start_at);
-  const to = day(s.complete_at ?? s.end_at);
-  if (from && to) return `${from} – ${to}`;
-  if (from) return `from ${from}`;
-  return 'no dates';
-}
-
 const tickets = (n: number) => `${n} ticket${n === 1 ? '' : 's'}`;
 
 const REASONS: Record<string, string> = {
@@ -67,13 +57,10 @@ const REASONS: Record<string, string> = {
   no_dates: 'Jira has no dates for this sprint, so its sessions can’t be placed in it.',
 };
 
-export interface SprintRowView {
-  id: string;
-  name: string;
-  state: string;
-  dates: string;
-  tickets: string;
-  current: boolean;
+/** One option of the sprint filter. */
+export interface FilterItem {
+  value: string;
+  label: string;
 }
 
 export type Strip =
@@ -82,17 +69,20 @@ export type Strip =
 
 type View = 'loading' | 'not_connected' | 'daemon_error' | 'ready';
 
-export class SprintsState {
+export class TicketsState {
   #api: SprintsApi;
   #workspaceId: string;
-  /** Bumped per selection, so a slower earlier answer is dropped. */
+  /** Bumped per filter change, so a slower earlier answer is dropped. */
   #seq = 0;
 
   view = $state<View>('loading');
   loadError = $state<string | null>(null);
   boardTitle = $state('');
   sprints = $state<SprintUsageRow[]>([]);
-  selectedId = $state<string | null>(null);
+  /** All tickets, one sprint's (its id), or the Backlog. */
+  filter = $state<string>(ALL);
+  /** Narrow the list to tickets with AI sessions. */
+  aiOnly = $state(false);
   tasks = $state<TrackerTaskRow[] | null>(null);
   tasksError = $state<string | null>(null);
   ticket = $state<TrackerTaskDetail | null>(null);
@@ -107,41 +97,30 @@ export class SprintsState {
     this.#workspaceId = workspaceId;
   }
 
+  /** The sprint the filter names, if it names one. */
   get selected(): SprintUsageRow | null {
-    return this.sprints.find((s) => s.id === this.selectedId) ?? null;
+    return this.sprints.find((s) => s.id === this.filter) ?? null;
   }
 
-  /** The selected row's name: a sprint's, or "Backlog". */
-  get selectedName(): string {
-    return this.selectedId === BACKLOG ? 'Backlog' : (this.selected?.name ?? '');
+  /** The sprint filter's options: All tickets, each sprint newest first, Backlog. */
+  get filterItems(): FilterItem[] {
+    const items: FilterItem[] = [{ value: ALL, label: 'All tickets' }];
+    items.push(...this.sprints.map((s) => ({ value: s.id, label: `${s.name} · ${s.state}` })));
+    if (this.backlog) items.push({ value: BACKLOG, label: `Backlog · ${tickets(this.backlog.tickets)}` });
+    return items;
   }
 
-  get rows(): SprintRowView[] {
-    const rows = this.sprints.map((s) => ({
-      id: s.id,
-      name: s.name,
-      state: s.state,
-      dates: dateRange(s),
-      tickets: tickets(s.tasks),
-      current: s.id === this.selectedId,
-    }));
-    if (!this.backlog) return rows;
-    return [
-      ...rows,
-      {
-        id: BACKLOG,
-        name: 'Backlog',
-        state: 'no sprint',
-        dates: '',
-        tickets: tickets(this.backlog.tickets),
-        current: this.selectedId === BACKLOG,
-      },
-    ];
+  /** What the filter shows, in a word: "All tickets", a sprint's name, "Backlog". */
+  get filterLabel(): string {
+    if (this.filter === ALL) return 'All tickets';
+    if (this.filter === BACKLOG) return 'Backlog';
+    return this.selected?.name ?? '';
   }
 
-  /** The selected sprint's own usage — never a sum of its tickets. */
+  /** The chosen sprint's or the Backlog's own usage — never a sum of its tickets.
+   *  All tickets has no strip. */
   get strip(): Strip | null {
-    if (this.selectedId === BACKLOG && this.backlog) {
+    if (this.filter === BACKLOG && this.backlog) {
       // No window: the backlog has no dates, so its total is all-time.
       const { tickets: n, usage } = this.backlog;
       const c = usageCells(usage);
@@ -173,15 +152,27 @@ export class SprintsState {
     };
   }
 
+  /** The rows shown: every loaded ticket, or only those with AI sessions. */
+  get visibleTasks(): TrackerTaskRow[] {
+    const all = this.tasks ?? [];
+    return this.aiOnly ? all.filter((t) => t.usage.sessions > 0) : all;
+  }
+
+  /** "730 tickets", or with the switch on "12 of 730 tickets has AI sessions". */
+  get countLine(): string {
+    const total = this.tasks?.length ?? 0;
+    return this.aiOnly ? `${this.visibleTasks.length} of ${tickets(total)} has AI sessions` : tickets(total);
+  }
+
+  /** A ticket's current sprint, or "Backlog" when no sprint lists it. */
+  sprintOf(t: TrackerTaskRow): string {
+    return t.current_sprint?.name ?? 'Backlog';
+  }
+
   get sharedNote(): string | null {
     return this.tasks?.some((t) => t.usage.shared > 0)
       ? 'A session linked to several tickets counts in full for each; the sprint total counts it once.'
       : null;
-  }
-
-  /** "now in Sprint 14" for a ticket carried on to another sprint. */
-  movedTo(t: TrackerTaskRow): string | null {
-    return t.current_sprint && t.current_sprint.id !== this.selectedId ? `now in ${t.current_sprint.name}` : null;
   }
 
   /** "branch · prompt ×2 · as AUTH-420": how a session names the ticket. */
@@ -230,13 +221,13 @@ export class SprintsState {
     this.sprints = sprints.data;
     this.backlog = backlog.data;
     this.view = 'ready';
-    const first = sprints.data.find((s) => s.state === 'active') ?? sprints.data[0];
-    await this.select(first?.id ?? BACKLOG);
+    await this.setFilter(ALL);
   }
 
-  async select(id: string) {
+  /** Show All tickets, one sprint's (its id), or the Backlog's. */
+  async setFilter(value: string) {
     const seq = ++this.#seq;
-    this.selectedId = id;
+    this.filter = value;
     this.tasks = null;
     this.tasksError = null;
     this.ticket = null;
@@ -244,9 +235,9 @@ export class SprintsState {
     this.unlinked = null;
     this.unlinkedError = null;
     const res =
-      id === BACKLOG
+      value === BACKLOG
         ? await this.#api.tryListBacklogTasks(this.#workspaceId)
-        : await this.#api.tryListTrackerTasks(this.#workspaceId, id);
+        : await this.#api.tryListTrackerTasks(this.#workspaceId, value === ALL ? undefined : value);
     if (seq !== this.#seq) return;
     if (res.ok) this.tasks = res.data;
     else this.tasksError = failureText(res.error);
@@ -267,17 +258,18 @@ export class SprintsState {
     this.ticketError = null;
   }
 
-  /** Show or hide the selected sprint's unlinked sessions. */
+  /** Show or hide the chosen sprint's unlinked sessions (a sprint only: All
+   *  tickets and the Backlog have no window). */
   async toggleUnlinked() {
     if (this.unlinked) {
       this.unlinked = null;
       return;
     }
-    const id = this.selectedId;
-    if (!id || id === BACKLOG) return;
+    const id = this.filter;
+    if (id === ALL || id === BACKLOG) return;
     this.unlinkedError = null;
     const res = await this.#api.tryListUnlinkedSessions(this.#workspaceId, id);
-    if (id !== this.selectedId) return;
+    if (id !== this.filter) return;
     if (res.ok) this.unlinked = res.data;
     else this.unlinkedError = failureText(res.error);
   }

@@ -1,9 +1,9 @@
-// The Sprints screen's state (docs/spec/screen/workspace-sprints.md).
+// The Sprints screen's state (docs/spec/screen/workspace-tickets.md).
 //
 // What must never happen here: "no tracker connected" because a read failed, a
 // 0 where the daemon said null, or a sprint total built by adding its tickets.
 import { describe, it, expect } from 'vitest';
-import { BACKLOG, SprintsState, usageCells, type SprintsApi } from './sprints-state.svelte.js';
+import { ALL, BACKLOG, TicketsState, usageCells, type SprintsApi } from './tickets-state.svelte.js';
 import type { ApiResult } from '$lib/api.js';
 import type {
   SprintUsageRow,
@@ -135,26 +135,21 @@ function daemon(over: Partial<SprintsApi> = {}) {
 
 async function ready(over: Partial<SprintsApi> = {}) {
   const d = daemon(over);
-  const s = new SprintsState(d.api, P);
+  const s = new TicketsState(d.api, P);
   await s.load();
   return { s, ...d };
 }
 
 describe('loading', () => {
-  it('selects the active sprint and reads its tickets', async () => {
+  it('starts with every ticket, not a sprint', async () => {
     const { s, calls } = await ready();
     expect(s.view).toBe('ready');
     expect(s.boardTitle).toBe('AUTH Scrum');
-    expect(s.selected?.name).toBe('Sprint 13');
-    expect(calls).toContain('tasks:s13');
+    expect(s.filter).toBe(ALL);
+    expect(calls).toContain('tasks:undefined');
+    expect(calls).not.toContain('tasks:s13');
     expect(s.tasks?.map((t) => t.key)).toEqual(['AUTH-2']);
-  });
-
-  it('without an active sprint, selects the newest', async () => {
-    const { s } = await ready({
-      tryListSprints: async () => ok([sprint({ id: 'a' }), sprint({ id: 'b', name: 'Sprint 11' })]),
-    });
-    expect(s.selected?.id).toBe('a');
+    expect(s.strip).toBe(null);
   });
 
   it('no tracker is the not-connected state', async () => {
@@ -173,37 +168,35 @@ describe('loading', () => {
     ]);
   });
 
-  it('a failed ticket read says so instead of showing an empty sprint', async () => {
+  it('a failed ticket read says so instead of showing no tickets', async () => {
     const { s } = await ready({ tryListTrackerTasks: async () => fail(500, 'internal') });
     expect(s.tasks).toBe(null);
     expect(s.tasksError).toBe('The sensei daemon hit a database error.');
   });
-});
 
-describe('selecting', () => {
-  it('reads the chosen sprint’s tickets; a slower earlier answer never wins', async () => {
-    let releaseFirst!: () => void;
-    const { s, api } = await ready();
-    api.tryListTrackerTasks = (_p, id) =>
-      id === 's13'
-        ? new Promise((r) => {
-            releaseFirst = () => r(ok([task({ key: 'STALE-1' })]));
-          })
-        : Promise.resolve(ok([task({ key: 'AUTH-9' })]));
-    const first = s.select('s13');
-    const second = s.select('s12');
-    await second;
-    releaseFirst();
-    await first;
-    expect(s.selected?.id).toBe('s12');
-    expect(s.tasks?.map((t) => t.key)).toEqual(['AUTH-9']);
+  // A failed backlog read is never "Backlog · 0 tickets".
+  it('a failed backlog read is the daemon error', async () => {
+    const { s } = await ready({ tryGetBacklog: async () => fail(500, 'internal') });
+    expect([s.view, s.loadError]).toEqual(['daemon_error', 'The sensei daemon hit a database error.']);
   });
 });
 
-describe('the usage strip', () => {
-  it('shows the window total and three parts, from the sprint’s own numbers', async () => {
+describe('the sprint filter', () => {
+  it('offers All tickets, each sprint newest first, then Backlog', async () => {
     const { s } = await ready();
-    await s.select('s12');
+    expect(s.filterItems).toEqual([
+      { value: ALL, label: 'All tickets' },
+      { value: 's13', label: 'Sprint 13 · active' },
+      { value: 's12', label: 'Sprint 12 · closed' },
+      { value: BACKLOG, label: 'Backlog · 2 tickets' },
+    ]);
+  });
+
+  it('a sprint reads its tickets and shows its own usage', async () => {
+    const { s, calls } = await ready();
+    await s.setFilter('s12');
+    expect(calls).toContain('tasks:s12');
+    expect(s.filterLabel).toBe('Sprint 12');
     expect(s.strip).toEqual({
       kind: 'window',
       total: '3 sessions in this sprint’s window',
@@ -215,6 +208,44 @@ describe('the usage strip', () => {
     });
   });
 
+  it('Backlog reads the tickets in no sprint and shows their total, each session once', async () => {
+    const { s, calls } = await ready();
+    await s.setFilter(BACKLOG);
+    expect(calls).toContain('backlog-tasks');
+    expect(s.tasks?.map((t) => t.key)).toEqual(['P-783']);
+    expect(s.filterLabel).toBe('Backlog');
+    expect(s.strip).toEqual({
+      kind: 'window',
+      total: '2 tickets in no sprint',
+      parts: [{ label: 'Linked to backlog tickets', sessions: '1', active: '10m', fresh: '—' }],
+    });
+  });
+
+  it('back to All tickets drops the strip', async () => {
+    const { s } = await ready();
+    await s.setFilter('s12');
+    await s.setFilter(ALL);
+    expect([s.filter, s.strip]).toEqual([ALL, null]);
+  });
+
+  it('a slower earlier answer never wins', async () => {
+    let releaseFirst!: () => void;
+    const { s, api } = await ready();
+    api.tryListTrackerTasks = (_p, id) =>
+      id === 's13'
+        ? new Promise((r) => {
+            releaseFirst = () => r(ok([task({ key: 'STALE-1' })]));
+          })
+        : Promise.resolve(ok([task({ key: 'AUTH-9' })]));
+    const first = s.setFilter('s13');
+    const second = s.setFilter('s12');
+    await second;
+    releaseFirst();
+    await first;
+    expect(s.filter).toBe('s12');
+    expect(s.tasks?.map((t) => t.key)).toEqual(['AUTH-9']);
+  });
+
   it('a sprint without a window says why, with no zeros', async () => {
     const { s } = await ready({
       tryListSprints: async () =>
@@ -223,23 +254,17 @@ describe('the usage strip', () => {
           sprint({ id: 'n', reason: 'no_dates', candidates_in_window: null, linked_sprint: null, linked_other: null, unlinked: null }),
         ]),
     });
-    await s.select('f');
+    await s.setFilter('f');
     expect(s.strip).toEqual({ kind: 'reason', text: 'Not started. Usage counts from the sprint’s start.' });
-    await s.select('n');
+    await s.setFilter('n');
     expect(s.strip).toEqual({
       kind: 'reason',
       text: 'Jira has no dates for this sprint, so its sessions can’t be placed in it.',
     });
   });
-
-  it('lists a sprint’s rows with state, dates and ticket count', async () => {
-    const { s } = await ready();
-    expect(s.rows[1]).toEqual({ id: 's12', name: 'Sprint 12', state: 'closed', dates: 'Jun 15 – Jun 25', tickets: '5 tickets', current: false });
-    expect(s.rows[0].current).toBe(true);
-  });
 });
 
-describe('ticket cells', () => {
+describe('ticket rows', () => {
   it('formats known values and leaves unknown ones as —', () => {
     expect(usageCells(task().usage)).toEqual({
       sessions: '3 (3/1)',
@@ -252,20 +277,28 @@ describe('ticket cells', () => {
     expect(usageCells(usage()).sessions).toBe('0 (0/0)');
   });
 
-  it('marks a ticket that has moved on, and notes shared sessions', async () => {
+  it('name each ticket’s current sprint, or Backlog', async () => {
+    const { s } = await ready();
+    expect(s.sprintOf(task({ current_sprint: { id: 's14', name: 'Sprint 14' } }))).toBe('Sprint 14');
+    expect(s.sprintOf(task({ current_sprint: null, sprints: [] }))).toBe('Backlog');
+  });
+
+  it('can narrow to the tickets with AI sessions, and says how many are shown', async () => {
     const { s } = await ready({
       tryListTrackerTasks: async () =>
-        ok([
-          task({ current_sprint: { id: 's14', name: 'Sprint 14' } }),
-          task({
-            key: 'AUTH-3',
-            current_sprint: { id: 's13', name: 'Sprint 13' },
-            usage: usage({ sessions: 1, shared: 1 }),
-          }),
-        ]),
+        ok([task({ key: 'AUTH-2' }), task({ key: 'AUTH-3', usage: usage() }), task({ key: 'AUTH-4', usage: usage() })]),
     });
-    expect(s.movedTo(s.tasks![0])).toBe('now in Sprint 14');
-    expect(s.movedTo(s.tasks![1])).toBe(null);
+    expect(s.visibleTasks.map((t) => t.key)).toEqual(['AUTH-2', 'AUTH-3', 'AUTH-4']);
+    expect(s.countLine).toBe('3 tickets');
+    s.aiOnly = true;
+    expect(s.visibleTasks.map((t) => t.key)).toEqual(['AUTH-2']);
+    expect(s.countLine).toBe('1 of 3 tickets has AI sessions');
+  });
+
+  it('notes shared sessions', async () => {
+    const { s } = await ready({
+      tryListTrackerTasks: async () => ok([task({ key: 'AUTH-3', usage: usage({ sessions: 1, shared: 1 }) })]),
+    });
     expect(s.sharedNote).toBe(
       'A session linked to several tickets counts in full for each; the sprint total counts it once.',
     );
@@ -292,8 +325,9 @@ describe('a ticket', () => {
 });
 
 describe('unlinked sessions', () => {
-  it('reads them for the selected sprint on demand', async () => {
+  it('reads them for the chosen sprint on demand', async () => {
     const { s, calls } = await ready();
+    await s.setFilter('s13');
     await s.toggleUnlinked();
     expect(calls).toContain('unlinked:s13');
     expect(s.unlinked?.map((u) => u.id)).toEqual(['u1']);
@@ -301,44 +335,19 @@ describe('unlinked sessions', () => {
     expect(s.unlinked).toBe(null);
   });
 
+  it('has none for All tickets or the Backlog (they have no window)', async () => {
+    const { s, calls } = await ready();
+    await s.toggleUnlinked();
+    await s.setFilter(BACKLOG);
+    await s.toggleUnlinked();
+    expect(calls.some((c) => c.startsWith('unlinked:'))).toBe(false);
+  });
+
   it('a failed read is an error, not an empty list', async () => {
     const { s } = await ready({ tryListUnlinkedSessions: async () => fail(0) });
+    await s.setFilter('s13');
     await s.toggleUnlinked();
     expect(s.unlinked).toBe(null);
     expect(s.unlinkedError).toBe('The sensei daemon didn’t respond.');
-  });
-});
-
-describe('the backlog (tickets in no sprint)', () => {
-  it('is the last row of the sprint list, with its ticket count', async () => {
-    const { s } = await ready();
-    expect(s.rows.at(-1)).toEqual({
-      id: BACKLOG,
-      name: 'Backlog',
-      state: 'no sprint',
-      dates: '',
-      tickets: '2 tickets',
-      current: false,
-    });
-  });
-
-  it('selecting it reads the backlog’s tickets and shows its own total, each session once', async () => {
-    const { s, calls } = await ready();
-    await s.select(BACKLOG);
-    expect(calls).toContain('backlog-tasks');
-    expect(s.tasks?.map((t) => t.key)).toEqual(['P-783']);
-    expect(s.rows.at(-1)?.current).toBe(true);
-    expect(s.strip).toEqual({
-      kind: 'window',
-      total: '2 tickets in no sprint',
-      parts: [{ label: 'Linked to backlog tickets', sessions: '1', active: '10m', fresh: '—' }],
-    });
-    expect(s.movedTo(s.tasks![0])).toBe(null);
-  });
-
-  // A failed backlog read is never "0 tickets in no sprint".
-  it('a failed backlog read is the daemon error', async () => {
-    const { s } = await ready({ tryGetBacklog: async () => fail(500, 'internal') });
-    expect([s.view, s.loadError]).toEqual(['daemon_error', 'The sensei daemon hit a database error.']);
   });
 });

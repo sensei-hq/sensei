@@ -99,7 +99,7 @@ CLI are the v1 contract.
 - **Issue:** TBD
 - **Layers:** app (`project-sidebar-view.ts` section 期 Sprints; `sprints/+page.svelte`, `sprints-state.svelte.ts`, `SprintsScreen.svelte`; `api.ts` wrappers for the four F4 read routes; the tracker error words moved to `$lib` as their second consumer appears)
 - **Depends on:** F4 (routes), F6 (error words, sidebar placement)
-- **Acceptance criteria:** [`spec/screen/project-sprints.md`](../spec/screen/project-sprints.md) done gate 1–7.
+- **Acceptance criteria:** [`spec/screen/workspace-tickets.md`](../spec/screen/workspace-tickets.md) done gate 1–7.
 - **Test scenarios:**
   - Given a connected project, When the screen opens, Then the active sprint is selected and its tickets are listed with active AI time and tokens.
   - Given a future sprint, When it is selected, Then "Not started…" shows and no zero.
@@ -128,6 +128,13 @@ CLI are the v1 contract.
   - Given P-783 in no sprint, When the backlog is read, Then P-783 is listed and a sprint's ticket is not.
   - Given one session linked to two backlog tickets, When backlog usage is read, Then `sessions = 1`.
 
+### Feature 10: Tickets first (sprint as a filter)
+
+- **Issue:** TBD
+- **Layers:** app only — the Sprints screen becomes 札 Tickets (`/workspace/[id]/tickets`): every ticket by default, a searchable sprint filter (All / each sprint / Backlog, rokkit `Select filterable`), an AI-only switch, a Sprint column. No daemon change.
+- **Depends on:** F7, F9
+- **Acceptance criteria:** [`spec/screen/workspace-tickets.md`](../spec/screen/workspace-tickets.md) done gate 1–7.
+
 ### Feature 5: Live verification (human)
 
 - **Issue:** TBD
@@ -155,6 +162,8 @@ graph LR
   F8 --> F5
   F7 --> F9
   F9 --> F5
+  F9 --> F10
+  F10 --> F5
 ```
 
 First task: **F1.1** — needs the user's Jira Cloud site, board id and API token.

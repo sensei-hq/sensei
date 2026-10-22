@@ -8,8 +8,8 @@ import { flushSync } from 'svelte';
 import axe from 'axe-core';
 import { mountComponent } from '$lib/test-mount.js';
 import { replayHref } from '$lib/sessions-digest.js';
-import SprintsScreen from './SprintsScreen.svelte';
-import { SprintsState, type SprintsApi } from './sprints-state.svelte.js';
+import TicketsScreen from './TicketsScreen.svelte';
+import { TicketsState, type SprintsApi } from './tickets-state.svelte.js';
 import type { SprintUsageRow, TrackerUsage } from '$lib/types.js';
 
 let cleanup: Array<() => void> = [];
@@ -135,9 +135,9 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
 }
 
 async function open(over: Partial<SprintsApi> = {}) {
-  const screen = new SprintsState(api(over), 'p-1');
+  const screen = new TicketsState(api(over), 'p-1');
   await screen.load();
-  const m = mountComponent(SprintsScreen, { screen, workspaceId: 'p-1' });
+  const m = mountComponent(TicketsScreen, { screen, workspaceId: 'p-1' });
   cleanup.push(m.destroy);
   flushSync();
   const q = <T extends Element = HTMLElement>(sel: string) => m.container.querySelector(sel) as T | null;
@@ -150,12 +150,36 @@ const settle = async () => {
 };
 
 describe('ready', () => {
-  it('lists sprints as buttons and marks the selected one', async () => {
+  it('starts with every ticket and a sprint filter, not a sprint list', async () => {
     const { q, m } = await open();
-    const rows = Array.from(m.container.querySelectorAll<HTMLButtonElement>('button[data-sprint]'));
-    expect(rows.map((r) => r.dataset.sprint)).toEqual(['s14', 's13', 'backlog']);
-    expect(q('button[data-sprint="s13"]')!.getAttribute('aria-current')).toBe('true');
-    expect(q('button[data-sprint="s14"]')!.getAttribute('aria-current')).toBe(null);
+    expect(m.container.querySelectorAll('button[data-sprint]').length).toBe(0);
+    expect(q('[data-filter="sprint"]')).not.toBe(null);
+    expect(q('[data-ticket="AUTH-2"]')).not.toBe(null);
+    expect(q('[data-strip]')).toBe(null);
+  });
+
+  it('each row names its sprint', async () => {
+    const { q } = await open();
+    expect(q('[data-ticket="AUTH-2"] [data-cell="sprint"]')!.textContent!.trim()).toBe('Sprint 13');
+  });
+
+  it('an AI-only switch narrows the list and says how many are shown', async () => {
+    const { q } = await open({
+      tryListTrackerTasks: async () => ({
+        ok: true,
+        data: [
+          { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', current_sprint: { id: 's13', name: 'Sprint 13' }, sprints: [], removed: false, usage: usage({ sessions: 1 }) },
+          { key: 'AUTH-9', summary: 'Idle', issue_type: 'Story', status: 'To Do', current_sprint: null, sprints: [], removed: false, usage: usage() },
+        ],
+      }),
+    });
+    const toggle = q<HTMLInputElement>('input[data-filter="ai-only"]')!;
+    expect(q(`label[for="${toggle.id}"]`)!.textContent).toContain('Only tickets with AI sessions');
+    expect(q('[data-count]')!.textContent).toContain('2 tickets');
+    toggle.click();
+    flushSync();
+    expect(q('[data-ticket="AUTH-9"]')).toBe(null);
+    expect(q('[data-count]')!.textContent).toContain('1 of 2 tickets has AI sessions');
   });
 
   it('labels time as active AI time and never as hours', async () => {
@@ -173,11 +197,10 @@ describe('ready', () => {
     expect(row.querySelector('[data-cell="active"]')!.textContent!.trim()).toBe('10m');
   });
 
-  it('a future sprint says it has not started, with no zeros', async () => {
+  it('a future sprint, filtered to, says it has not started, with no zeros', async () => {
     const { q, screen } = await open();
-    q<HTMLButtonElement>('button[data-sprint="s14"]')!.click();
-    await settle();
-    expect(screen.selected?.id).toBe('s14');
+    await screen.setFilter('s14');
+    flushSync();
     const strip = q('[data-strip]')!;
     expect(strip.textContent).toContain('Not started.');
     expect(strip.textContent).not.toMatch(/\b0m\b|\$0/);
@@ -198,15 +221,12 @@ describe('ready', () => {
 });
 
 describe('backlog', () => {
-  it('is a selectable row that lists the tickets in no sprint', async () => {
-    const { q } = await open();
-    const row = q<HTMLButtonElement>('button[data-sprint="backlog"]')!;
-    expect(row.textContent).toContain('Backlog');
-    row.click();
-    await settle();
-    expect(row.getAttribute('aria-current')).toBe('true');
+  it('filtering to Backlog lists the tickets in no sprint, with their total', async () => {
+    const { q, screen } = await open();
+    await screen.setFilter('backlog');
+    flushSync();
     expect(q('[data-strip]')!.textContent).toContain('1 ticket in no sprint');
-    expect(q('[data-ticket="P-783"]')).not.toBe(null);
+    expect(q('[data-ticket="P-783"] [data-cell="sprint"]')!.textContent!.trim()).toBe('Backlog');
   });
 });
 

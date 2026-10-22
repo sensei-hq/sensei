@@ -106,7 +106,7 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   (`/project/[id]/sprints`): sprint list (active selected), the sprint's own usage split
   (linked / other / not linked) or why it has none, its tickets with sessions, active AI
   time, tokens and cost, a ticket's per-repo breakdown and sessions (old keys shown "as
-  <key>"), unlinked sessions on demand. Spec `docs/spec/screen/project-sprints.md`; the
+  <key>"), unlinked sessions on demand. Spec `docs/spec/screen/workspace-tickets.md`; the
   tracker error words moved to `$lib/tracker-errors.ts` (second consumer). 27 new tests;
   app 1864/1864, svelte-check 0; checked live on the real board.
 - **F8 on-demand discovery (R11)** ✅ (asked for 2026-10-19) a ticket first named in a
@@ -125,6 +125,12 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   Live: 199 backlog tickets on board 333, P057542601-782/783 among them.
 - **Live discovery check (2026-10-21):** lookup fetched P057542601-782 in 1.6 s; a Claude
   Code session naming P057542601-783 had it inserted and linked 0.7 s after ingest.
+- **Branch split (2026-10-22):** PR #274 merged F1–F8 to develop; F9 and F10 continue on
+  `feature/jira_ticket_linkage_1`, rebased onto the workspace rename (R3).
+- **F10 tickets first** ✅ (asked for 2026-10-21) the Sprints screen became 札 Tickets
+  (`/workspace/[id]/tickets`): every ticket by default, a filterable sprint Select (All
+  tickets, each sprint, Backlog), an "Only tickets with AI sessions" switch, a count line,
+  a Sprint column; the usage strip shows only for a sprint or the Backlog. App-only.
 - **Next:** F5 live verification once Claude Code transcript consent is on.
 
 ## Gate for `/sensei:build`
