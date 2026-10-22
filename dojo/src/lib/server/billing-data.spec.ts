@@ -1,6 +1,6 @@
 // Unit tests for the billing store logic (`billing-data.ts`). Exercises:
 //   • summarizeSeatUsage — the pure per-seat count: PRIVATE-only, deduped per
-//     user across projects, public-only users excluded, breakdown sorted.
+//     user across workspaces, public-only users excluded, breakdown sorted.
 //   • loadActiveSeatRows — active-seat query (eq tenant, is ended_at null) then
 //     the cross-schema (sensei) namespace join on the system client, orphan-seat
 //     drop, empty short-cut.
@@ -92,12 +92,12 @@ function makeDb() {
 	};
 }
 
-const seat = (user_id: string, visibility: 'private' | 'public', project: string, role = 'contributor'): SeatRow => ({
+const seat = (user_id: string, visibility: 'private' | 'public', workspace: string, role = 'contributor'): SeatRow => ({
 	user_id,
 	role,
-	namespace_id: `ns-${project}`,
-	project_name: project,
-	project_slug: project.toLowerCase(),
+	namespace_id: `ns-${workspace}`,
+	workspace_name: workspace,
+	workspace_slug: workspace.toLowerCase(),
 	visibility
 });
 
@@ -106,7 +106,7 @@ describe('summarizeSeatUsage', () => {
 		expect(summarizeSeatUsage([])).toEqual({ seats_used: 0, total_active_seats: 0, billable_users: [] });
 	});
 
-	it('counts unique users on private projects, deduped across projects', () => {
+	it('counts unique users on private workspaces, deduped across workspaces', () => {
 		// A: private P1 · B: private P1 + public P2 · C: public P2 only
 		const rows = [
 			seat('userB', 'private', 'P1', 'maintainer'),
@@ -119,18 +119,18 @@ describe('summarizeSeatUsage', () => {
 		expect(u.total_active_seats).toBe(4);
 		// sorted by user_id; C absent
 		expect(u.billable_users.map((x) => x.user_id)).toEqual(['userA', 'userB']);
-		// B's breakdown lists only the PRIVATE project, not the public one
-		expect(u.billable_users[1].projects).toEqual([{ name: 'P1', slug: 'p1', role: 'maintainer' }]);
+		// B's breakdown lists only the PRIVATE workspace, not the public one
+		expect(u.billable_users[1].workspaces).toEqual([{ name: 'P1', slug: 'p1', role: 'maintainer' }]);
 	});
 
-	it('counts a user once even across multiple private projects', () => {
+	it('counts a user once even across multiple private workspaces', () => {
 		const rows = [seat('u', 'private', 'P1'), seat('u', 'private', 'P2')];
 		const u = summarizeSeatUsage(rows);
 		expect(u.seats_used).toBe(1);
-		expect(u.billable_users[0].projects).toHaveLength(2);
+		expect(u.billable_users[0].workspaces).toHaveLength(2);
 	});
 
-	it('excludes everyone when all projects are public', () => {
+	it('excludes everyone when all workspaces are public', () => {
 		expect(summarizeSeatUsage([seat('u', 'public', 'P1')]).seats_used).toBe(0);
 	});
 });
@@ -168,15 +168,15 @@ describe('loadActiveSeatRows', () => {
 		expect(db.calls[1].filters).toEqual([['in', 'id', ['n1', 'n2', 'gone']]]);
 		// join result: orphan (namespace 'gone') dropped
 		expect(rows).toEqual([
-			{ user_id: 'u1', role: 'contributor', namespace_id: 'n1', project_name: 'Alpha', project_slug: 'alpha', visibility: 'private' },
-			{ user_id: 'u2', role: 'lead', namespace_id: 'n2', project_name: 'Beta', project_slug: 'beta', visibility: 'public' }
+			{ user_id: 'u1', role: 'contributor', namespace_id: 'n1', workspace_name: 'Alpha', workspace_slug: 'alpha', visibility: 'private' },
+			{ user_id: 'u2', role: 'lead', namespace_id: 'n2', workspace_name: 'Beta', workspace_slug: 'beta', visibility: 'public' }
 		]);
 	});
 
-	// Seats are read as the signed-in admin; the project names for them are a
+	// Seats are read as the signed-in admin; the workspace names for them are a
 	// system lookup (no session reads sensei.namespaces — names can be clients'),
 	// for the ids on the seats the admin's read returned (#236).
-	it('reads seats with the caller\'s client and project names with the system\'s', async () => {
+	it('reads seats with the caller\'s client and workspace names with the system\'s', async () => {
 		const asCaller = makeDb();
 		asCaller.queue({ data: [{ user_id: 'u1', role: 'contributor', namespace_id: 'n1' }], error: null });
 		const system = makeDb();
@@ -185,7 +185,7 @@ describe('loadActiveSeatRows', () => {
 		expect(asCaller.calls.map((c) => c.table)).toEqual(['seats']);
 		expect(system.calls.map((c) => c.table)).toEqual(['namespaces']);
 		expect(system.calls[0].filters).toEqual([['in', 'id', ['n1']]]);
-		expect(rows[0]).toMatchObject({ project_name: 'Alpha' });
+		expect(rows[0]).toMatchObject({ workspace_name: 'Alpha' });
 	});
 
 	it('short-circuits with no namespace query when there are no seats', async () => {

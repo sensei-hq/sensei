@@ -26,6 +26,7 @@ import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from '
 import type { DojoCallOpts } from './dojo-api';
 import type { DojoViewerWire } from './viewers-view';
 import type { TeamWire } from './teams-view';
+import type { BillableUserWire, BillingAccountWire, SeatUsageWire } from './billing-view';
 
 // Re-export the shared error under the admin name so admin screens `instanceof`
 // against a local symbol without reaching into the shared module directly.
@@ -361,34 +362,16 @@ export async function getHealth(
 
 // billing ────────────────────────────────────────────────────────────────────
 
-/** A billable user and the private projects seating them. */
-export interface BillingBillableUser {
-	user_id: string;
-	projects: { name: string; slug: string; role: string }[];
-}
-
-/** Live seat usage for a tenant (`dojo.tenant_seat_usage`). */
-export interface BillingUsage {
-	seats_used: number;
-	total_active_seats: number;
-	billable_users: BillingBillableUser[];
-}
-
-/** A tenant's billing account snapshot (`dojo.billing_accounts`), or null. */
-export interface BillingAccount {
-	plan: string;
-	status: string;
-	seats_included: number;
-	seats_used: number;
-	seats_computed_at: string | null;
-	period_start: string | null;
-	period_end: string | null;
-}
+export type {
+	BillableUserWire as BillingBillableUser,
+	SeatUsageWire as BillingUsage,
+	BillingAccountWire as BillingAccount
+} from './billing-view';
 
 /** `GET …/billing` envelope. */
 export interface BillingResponse {
-	account: BillingAccount | null;
-	usage: BillingUsage;
+	account: BillingAccountWire | null;
+	usage: SeatUsageWire;
 }
 
 /** `GET …/billing` — the tenant's billing account + LIVE seat usage (admin). */
