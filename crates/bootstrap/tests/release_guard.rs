@@ -1,7 +1,8 @@
-//! `scripts/release-guard.sh` (wave 0b, user 2026-10-22): a release is cut only
-//! from `main` — clean, and exactly what `origin/main` holds — so a version tag
-//! never lands on develop or on an unpushed commit. Driven against real
-//! throwaway git repositories, not fakes.
+//! `scripts/release-guard.sh` (wave 0b, user 2026-10-22). Two steps, because
+//! `main` is protected (a push needs its status checks): the version BUMP is a
+//! commit on a clean develop that reaches main through the PR; the RELEASE tags
+//! main's head — clean, exactly `origin/main`, its VERSION not yet tagged — and
+//! pushes only the tag. Driven against real throwaway git repositories.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -51,33 +52,39 @@ fn repo() -> (tempfile::TempDir, PathBuf) {
     (t, work)
 }
 
-fn guard(dir: &Path) -> std::process::Output {
-    isolated("bash", dir).arg(script()).output().unwrap()
+fn guard(dir: &Path, mode: &str) -> std::process::Output {
+    isolated("bash", dir).arg(script()).arg(mode).output().unwrap()
 }
+
+fn err(o: &std::process::Output) -> String {
+    String::from_utf8_lossy(&o.stderr).into_owned()
+}
+
+// ── the release: tag main ────────────────────────────────────────────────────
 
 #[test]
 fn a_clean_main_that_matches_origin_may_release() {
     let (_t, work) = repo();
-    let o = guard(&work);
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let o = guard(&work, "release");
+    assert!(o.status.success(), "{}", err(&o));
 }
 
 #[test]
 fn a_release_from_develop_is_refused() {
     let (_t, work) = repo();
     git(&work, &["checkout", "develop"]);
-    let o = guard(&work);
+    let o = guard(&work, "release");
     assert!(!o.status.success());
-    assert!(String::from_utf8_lossy(&o.stderr).contains("main"), "says to release from main");
+    assert!(err(&o).contains("main"), "says to release from main");
 }
 
 #[test]
 fn uncommitted_changes_refuse_a_release() {
     let (_t, work) = repo();
     std::fs::write(work.join("VERSION"), "0.2.0\n").unwrap();
-    let o = guard(&work);
+    let o = guard(&work, "release");
     assert!(!o.status.success());
-    assert!(String::from_utf8_lossy(&o.stderr).contains("clean"));
+    assert!(err(&o).contains("clean"));
 }
 
 #[test]
@@ -86,7 +93,42 @@ fn a_main_that_is_not_what_origin_holds_refuses_a_release() {
     std::fs::write(work.join("NOTE"), "x\n").unwrap();
     git(&work, &["add", "NOTE"]);
     git(&work, &["commit", "-m", "unpushed"]);
-    let o = guard(&work);
+    let o = guard(&work, "release");
     assert!(!o.status.success());
-    assert!(String::from_utf8_lossy(&o.stderr).contains("origin/main"));
+    assert!(err(&o).contains("origin/main"));
+}
+
+#[test]
+fn a_version_already_tagged_is_not_released_again() {
+    let (_t, work) = repo();
+    git(&work, &["tag", "v0.1.0"]);
+    git(&work, &["push", "origin", "v0.1.0"]);
+    let o = guard(&work, "release");
+    assert!(!o.status.success(), "one tag per version");
+    assert!(err(&o).contains("v0.1.0"), "names the tag: {}", err(&o));
+}
+
+// ── the bump: a commit on develop ────────────────────────────────────────────
+
+#[test]
+fn a_clean_develop_that_matches_origin_may_bump() {
+    let (_t, work) = repo();
+    git(&work, &["checkout", "develop"]);
+    git(&work, &["push", "-u", "origin", "develop"]);
+    let o = guard(&work, "bump");
+    assert!(o.status.success(), "{}", err(&o));
+}
+
+#[test]
+fn a_bump_on_main_is_refused() {
+    let (_t, work) = repo();
+    let o = guard(&work, "bump");
+    assert!(!o.status.success());
+    assert!(err(&o).contains("develop"), "says to bump on develop");
+}
+
+#[test]
+fn an_unknown_step_is_refused() {
+    let (_t, work) = repo();
+    assert!(!guard(&work, "ship").status.success());
 }
