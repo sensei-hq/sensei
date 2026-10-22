@@ -20,7 +20,7 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** v0.19.0 (R5a + Worker-on-tag) tagged from main (Release run 39860545647); local daemon 0.19.0. Waiting: the user approves `deploy-dojo`; then the FIRST `deploy-worker` run. If it passes and the live /version shows the tag's commit, tell the user it is safe to remove the Worker's Cloudflare git connection. Then verify R5a in production with a real GitHub org admin (the user). Open: #328 (audit_repairs_nested_standalone, intermittent in CI). Next work: R8 (D38), then R5b (Azure).
+**Next command:** R8 (lead sees the teams they are on, D38) runs as an agent on `r8-lead-team-metrics`. Validate locally e2e, then release. **v0.19.0 live 2026-10-22:** R5a in production (prod dōjō in sync), and the Worker deployed from the tag by deploy-worker (version 29f5754b, live builtAt matches). The user removes the Cloudflare git connection. Pending the user: verify R5a in production as a real GitHub org admin. Open: #328 (intermittent test). After R8: R5b (Azure).
 Wave 0b code done (335618b9: release-guard + `on-main` job; next release = PR → main → `make bump` ON main). Worker-on-tag waits on the user (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID secrets; remove the Worker's git triggers).
 Wave 0c done (SSRF fixed 9381ec2e, the rest triaged and dismissed with reasons; #1 closes with the next release).
 **v0.17.0 released 2026-10-22:** prod dōjō DB in sync (approved deploy-dojo), Worker 0.17.0 (6df9990, PR #324 merged
