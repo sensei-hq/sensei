@@ -46,6 +46,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D35 | How does a dōjō sign in to Azure DevOps? (R5 Q1) | **A personal access token an admin pastes** (user 2026-10-22), stored in Supabase Vault and never returned, logged or audited as a value. |
 | D36 | How does an Azure DevOps organization map? (R5 Q2) | **Organization → dōjō, project → workspace** (user 2026-10-22). |
 | D37 | What is R5's first slice? (R5 Q3) | **One complete source first** (user 2026-10-22, revised): R5a finishes GitHub end to end (adapter, claim by an org admin, the import/mapping screen, repositories filing by the mapping); R5b adds Azure DevOps only after that. GitLab and Bitbucket later. |
+| D38 | What is the lead role for, now that Clients is gone (D34)? | **A team lead** (user 2026-10-22): a lead sees the metrics of every team member, per person, across all the workspaces the lead can access. Viewers stay aggregate-only (D6); a lead is a member, not a viewer. |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -141,6 +142,10 @@ slice builds, passes and ships on its own.
   `confidentiality_ledger` view, `is_confidentiality_action`, and `audit_events.engagement_id`, pruned through dbd
   (pre-v1: dropping data is approved). Update the PRD passages that describe engagements as a model, and the mockups.
   The daemon's own anonymization of what it contributes is separate, and stays.
+- **R8 · The lead sees their team's per-person metrics (D38).** *Planned 2026-10-22, after R5a.* A lead reads
+  per-person metrics (`repository_metrics` by principal, sessions, AI usage) for the members of the teams they
+  lead, across every workspace the lead can access; the read policy and the lead's console view follow. Viewers
+  stay aggregate-only (D6, pinned by #313's SQL test).
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
