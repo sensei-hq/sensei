@@ -24,13 +24,13 @@ mod metric_rows_tests;
 mod misc_tests;
 mod patterns_tests;
 mod personas_tests;
-mod projects_tests;
 mod receivers_tests;
 mod repo_anchor_tests;
 mod scan_tests;
 mod stub_gc_tests;
 mod tasks_tests;
 mod turn_usage_tests;
+mod workspaces_tests;
 
 // Fixtures one group defines and others reuse.
 use dojo_tests::{seed_sync_fixture, seed_sync_fixture_at};
@@ -53,7 +53,7 @@ fn tkey(test: &str, key: &str) -> String {
 /// 13,722 on the live DB — so a folder without one is a state production can no
 /// longer produce. Modelling it here is not a harmless simplification: it is
 /// what let `version_conflicts_view_flags_multi_version_pins_and_excludes_local`
-/// keep asserting on a view that, resolved through `folder_projects`, could
+/// keep asserting on a view that, resolved through `folder_workspaces`, could
 /// never have matched its fixture.
 ///
 /// The repository is keyed on `suffix`, so the same suffix returns the same
@@ -102,18 +102,18 @@ pub(crate) async fn create_test_folder_unattributed(s: &PgStore, suffix: &str) -
     row.0
 }
 
-/// Create a unique (project, folder) pair for FK tests that need both,
-/// wiring the folder to the project. Used by the pattern tests since
-/// detected_patterns is project-scoped (#82) and needs a non-null
-/// project_id, while `list_patterns_by_folder` still keys on folder.
+/// Create a unique (workspace, folder) pair for FK tests that need both,
+/// wiring the folder to the workspace. Used by the pattern tests since
+/// detected_patterns is workspace-scoped (#82) and needs a non-null
+/// workspace_id, while `list_patterns_by_folder` still keys on folder.
 ///
-/// Goes through `set_folder_project`, the production API, so the membership
-/// reaches `repositories_in_projects` as well as `folders.project_id`. A raw
-/// `UPDATE … SET project_id` writes only the half that `folder_projects` does
+/// Goes through `set_folder_workspace`, the production API, so the membership
+/// reaches `repositories_in_workspaces` as well as `folders.workspace_id`. A raw
+/// `UPDATE … SET workspace_id` writes only the half that `folder_workspaces` does
 /// not read.
-async fn create_test_project_and_folder(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid) {
-    let pid = s.create_project(&format!("_test:{}", suffix), None, None).await.unwrap();
+async fn create_test_workspace_and_folder(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid) {
+    let pid = s.create_workspace(&format!("_test:{}", suffix), None, None).await.unwrap();
     let fid = create_test_folder(s, suffix).await;
-    s.set_folder_project(&fid, &pid, "root", None).await.unwrap();
+    s.set_folder_workspace(&fid, &pid, "root", None).await.unwrap();
     (pid, fid)
 }

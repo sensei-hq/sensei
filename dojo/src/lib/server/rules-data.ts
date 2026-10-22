@@ -351,7 +351,7 @@ export interface ResolvedPackRule {
 	source: string; // the pack's attribution
 	area: string; // from the pack (the category — provenance only)
 	/** The GOVERNANCE scope the pack was ADOPTED at (the adopting namespace's
-	 *  scope_key: general/organization/project/…). This — not `area` — is the
+	 *  scope_key: general/organization/workspace/…). This — not `area` — is the
 	 *  scope the rule governs at, so a federated pack rule groups on the same
 	 *  ladder axis as a memory (parity with the daemon's LOCAL resolver). */
 	scope_key: string;

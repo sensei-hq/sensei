@@ -1,5 +1,5 @@
 /**
- * Inspect the REAL project Metrics screens for live projects (sensei, dbd,
+ * Inspect the REAL workspace Metrics screens for live workspaces (sensei, dbd,
  * rokkit). Not a regression gate — captures /tmp/sensei-shots/*.png and logs the
  * rendered signals so the "merge" landing + the master-detail drill-down can be
  * eyeballed against live data. Run: `bun run test:inspect`.
@@ -9,34 +9,34 @@ import { navigateToScreen, DAEMON_URL, shot } from '../helpers';
 import { mkdirSync } from 'fs';
 
 const DIR = '/tmp/sensei-shots';
-const PROJECTS = ['sensei', 'dbd', 'rokkit'];
+const WORKSPACES = ['sensei', 'dbd', 'rokkit'];
 const settle = (ms = 2500) => new Promise<void>((r) => setTimeout(r, ms));
 
-type Project = { id: string; name: string };
+type Workspace = { id: string; name: string };
 
 async function idForName(name: string): Promise<string | null> {
-  const res = await fetch(`${DAEMON_URL}/api/projects`);
+  const res = await fetch(`${DAEMON_URL}/api/workspaces`);
   const body = await res.json();
-  const list: Project[] = Array.isArray(body) ? body : (body.projects ?? []);
+  const list: Workspace[] = Array.isArray(body) ? body : (body.workspaces ?? []);
   return list.find((p) => p.name === name)?.id ?? null;
 }
 
-test.describe('inspect real project metrics', () => {
-  for (const name of PROJECTS) {
+test.describe('inspect real workspace metrics', () => {
+  for (const name of WORKSPACES) {
     test(`metrics — ${name}`, async ({ tauriPage }) => {
       mkdirSync(DIR, { recursive: true });
 
       const id = await idForName(name);
       if (!id) {
-        test.skip(true, `no project named "${name}" on the real daemon`);
+        test.skip(true, `no workspace named "${name}" on the real daemon`);
         return;
       }
 
       // ── Landing: interpreted headline + movers + uniform grid ──
       await navigateToScreen(
         tauriPage,
-        `/project/${id}/metrics`,
-        '[data-component="project-shell"]',
+        `/workspace/${id}/metrics`,
+        '[data-component="workspace-shell"]',
       );
       await settle();
 
@@ -69,7 +69,7 @@ test.describe('inspect real project metrics', () => {
       if (drillKey) {
         await navigateToScreen(
           tauriPage,
-          `/project/${id}/metrics/${drillKey}`,
+          `/workspace/${id}/metrics/${drillKey}`,
           '[data-component="signal-detail"]',
         );
         await settle();

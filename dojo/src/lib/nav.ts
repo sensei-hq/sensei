@@ -24,7 +24,7 @@ export const NAV_YOU: KitNavGroup[] = [
 		group: 'Work',
 		items: [
 			{ id: 'inbox', icon: 'inbox', label: 'Inbox', kanji: '受' },
-			{ id: 'projects', icon: 'folder', label: 'Projects', kanji: '場' }
+			{ id: 'workspaces', icon: 'folder', label: 'Workspaces', kanji: '場' }
 		]
 	},
 	{
@@ -63,7 +63,7 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 		items: [
 			{ id: 'home', icon: 'buildings-2', label: 'Home', kanji: '社' },
 			{ id: 'ladder', icon: 'scale', label: 'Constitution', kanji: '則' },
-			{ id: 'projects', icon: 'folder', label: 'Projects', kanji: '場' }
+			{ id: 'workspaces', icon: 'folder', label: 'Workspaces', kanji: '場' }
 		]
 	},
 	{
@@ -134,7 +134,7 @@ export function navGroupsFor(role: string | null | undefined): KitNavGroup[] {
 /** Personal bottom tabs — Inbox leads (the landing). */
 export const TABS_YOU: KitNavItem[] = [
 	{ id: 'inbox', icon: 'inbox', label: 'Inbox', kanji: '受' },
-	{ id: 'projects', icon: 'folder', label: 'Projects', kanji: '場' },
+	{ id: 'workspaces', icon: 'folder', label: 'Workspaces', kanji: '場' },
 	{ id: 'rules', icon: 'scale', label: 'Rules', kanji: '則' },
 	{ id: 'dojos', icon: 'users-group-two-rounded', label: 'Dōjōs', kanji: '結' }
 ];
@@ -142,7 +142,7 @@ export const TABS_YOU: KitNavItem[] = [
 /** Org bottom tabs (mockup `TABS_ORG`). */
 export const TABS_ORG: KitNavItem[] = [
 	{ id: 'home', icon: 'buildings-2', label: 'Home', kanji: '社' },
-	{ id: 'projects', icon: 'folder', label: 'Projects', kanji: '場' },
+	{ id: 'workspaces', icon: 'folder', label: 'Workspaces', kanji: '場' },
 	{ id: 'ladder', icon: 'scale', label: 'Rules', kanji: '則' },
 	{ id: 'members', icon: 'users-group-rounded', label: 'Members', kanji: '員' }
 ];

@@ -15,6 +15,41 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-10-22
+
+### Changed
+
+- **BREAKING — sensei says workspace, everywhere** (#307 R2b, R3; D12, D16, D30,
+  D31). A project is a workspace: a group of repositories.
+  - **Daemon database:** renamed in place on upgrade, with no data lost
+    (`sensei.workspaces`, every `workspace_id`, the views, enums and stored
+    values).
+  - **API and app:** the daemon's API is now `/api/workspaces`. The desktop app
+    and the dōjō's pages, URLs and words follow.
+  - **Governance ladder:** the `project` rung is now `workspace` in both
+    databases.
+  - **README frontmatter:** a README's `project:` key is rewritten to
+    `workspace:` on the next scan.
+  - **MCP tools:** `list_workspaces`, `find_workspaces`, `use_workspace`,
+    `get_workspace_summary`, `get_workspace_conventions`, `get_user_for_workspace`.
+    The old names are gone.
+  - **CLI:** `sensei tracker … --workspace`.
+  - **Not renamed:** other systems' "project": Claude Code's, Jira's, dbd's,
+    and compilers'.
+
+### Fixed
+
+- **An unanswered hard-block in an unattended run is denied** (#312, D28). It
+  used to proceed when no one answered. Interactive sessions keep failing open.
+- **Viewer grants are audited** (#313). Every grant, team grant, revoke, viewer
+  invite and removal writes an audit row in the same transaction. A viewer
+  reads no row keyed to another person.
+- **The Viewers tab shows a viewer's workspaces again.** v0.16.0 read the wrong
+  field, so it showed none.
+- **The nightly placement floor is green again.** `@sensei/glyphs` has a
+  tsconfig, and the plugin's hooks are typed against Claude Code's declarations
+  (`make plugin-types` refreshes them).
+
 ## [0.16.0] — 2026-10-21
 
 ### Added

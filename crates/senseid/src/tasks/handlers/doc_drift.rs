@@ -1,33 +1,33 @@
 //! Doc-drift scan — populate `inference.drift_items` from the analyzer.
 //!
-//! Reuses [`PgStore::scan_project_doc_drift`](crate::db::pg_store::PgStore::scan_project_doc_drift)
-//! — the same writer the manual `POST /api/projects/{id}/drift/scan` endpoint
-//! calls — so drift populates on its own as projects become due, instead of
-//! only when a user clicks scan. `task.path` carries the project id (UUID
-//! string), exactly like `AnalyzeProject`.
+//! Reuses [`PgStore::scan_workspace_doc_drift`](crate::db::pg_store::PgStore::scan_workspace_doc_drift)
+//! — the same writer the manual `POST /api/workspaces/{id}/drift/scan` endpoint
+//! calls — so drift populates on its own as workspaces become due, instead of
+//! only when a user clicks scan. `task.path` carries the workspace id (UUID
+//! string), exactly like `AnalyzeWorkspace`.
 
 use super::super::Task;
 use super::super::executor::TaskContext;
 
-/// Handler for `TaskKind::ScanDocDrift`: scan the project's doc nodes for
+/// Handler for `TaskKind::ScanDocDrift`: scan the workspace's doc nodes for
 /// backtick identifier mentions that no longer resolve to a live code node,
 /// writing `broken` rows and resolving any that the code caught up to. The
-/// scan itself (dedup + resolve-in-place) lives in `scan_project_doc_drift`;
+/// scan itself (dedup + resolve-in-place) lives in `scan_workspace_doc_drift`;
 /// this handler is the thin task-side wrapper. Returns the count of
 /// newly-broken references.
 pub async fn scan_doc_drift(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let project_id = task.project_id()?;
+    let workspace_id = task.workspace_id()?;
     let summary = ctx
         .pg()
-        .scan_project_doc_drift(&project_id)
+        .scan_workspace_doc_drift(&workspace_id)
         .await
-        .map_err(|e| format!("scan_project_doc_drift failed: {e}"))?;
+        .map_err(|e| format!("scan_workspace_doc_drift failed: {e}"))?;
     let field = |k: &str| summary.get(k).and_then(serde_json::Value::as_i64).unwrap_or(0);
     let (scanned, new_broken, resolved) =
         (field("scannedDocs"), field("newBroken"), field("resolved"));
     tracing::info!(
-        project = %project_id, scanned_docs = scanned, new_broken, resolved,
-        "scan_doc_drift: {project_id} — scanned {scanned} docs, {new_broken} new broken, {resolved} resolved"
+        workspace = %workspace_id, scanned_docs = scanned, new_broken, resolved,
+        "scan_doc_drift: {workspace_id} — scanned {scanned} docs, {new_broken} new broken, {resolved} resolved"
     );
     Ok(new_broken as u32)
 }
@@ -41,12 +41,12 @@ mod tests {
     use crate::tasks::test_support::make_ctx;
 
     #[tokio::test]
-    async fn rejects_bad_project_id_payload() {
+    async fn rejects_bad_workspace_id_payload() {
         let ctx = make_ctx().await;
         // A non-UUID payload is a bug, not empty work — fail loudly (parse guard).
         let bad = Task::new(TaskKind::ScanDocDrift, "", "not-a-uuid");
         let err = scan_doc_drift(&ctx, &bad).await.unwrap_err();
-        assert!(err.contains("expected a project id"), "got: {err}");
+        assert!(err.contains("expected a workspace id"), "got: {err}");
         // An empty payload is likewise rejected rather than scanning nothing.
         let empty = Task::new(TaskKind::ScanDocDrift, "", "");
         assert!(scan_doc_drift(&ctx, &empty).await.is_err());
@@ -72,7 +72,7 @@ mod tests {
         let abs = dir.path().to_string_lossy().to_string();
 
         let pid = pg
-            .create_project(&format!("_test:drift-{}", uuid::Uuid::new_v4()), None, None)
+            .create_workspace(&format!("_test:drift-{}", uuid::Uuid::new_v4()), None, None)
             .await
             .unwrap();
         let root = pg
@@ -86,7 +86,7 @@ mod tests {
         let fid = crate::tasks::test_support::seed_repo_folder(pg, &root, "drift-repo", &abs)
             .await
             .unwrap();
-        pg.set_folder_project(&fid, &pid, "primary", None).await.unwrap();
+        pg.set_folder_workspace(&fid, &pid, "primary", None).await.unwrap();
         // Stage 3's barrier (R14) first: `nodes.file_id` is a foreign key into
         // `sensei.files` (R13), so the file a doc node names has to be tracked
         // before the node can be written. The scan does this; a fixture calling
@@ -103,8 +103,8 @@ mod tests {
         let broken = |pid| async move {
             let n: (i64,) = sqlx_core::query_as::query_as(
                 "SELECT count(*) FROM inference.drift_items di
-                   JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
-                  WHERE fp.project_id = $1 AND di.status = 'broken' AND di.resolved_at IS NULL",
+                   JOIN sensei.folder_workspaces fp ON fp.folder_id = di.folder_id
+                  WHERE fp.workspace_id = $1 AND di.status = 'broken' AND di.resolved_at IS NULL",
             )
             .bind(pid)
             .fetch_one(pg.pool())
@@ -154,8 +154,8 @@ mod tests {
         assert_eq!(scan_doc_drift(&ctx, &task).await.unwrap(), 0, "no new broken on re-scan");
         let total: (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM inference.drift_items di
-               JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
-              WHERE fp.project_id = $1",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = di.folder_id
+              WHERE fp.workspace_id = $1",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -179,8 +179,8 @@ mod tests {
         assert_eq!(broken(pid).await, 0, "the previously-broken row is no longer open");
         let resolved: (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM inference.drift_items di
-               JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
-              WHERE fp.project_id = $1 AND di.status = 'current' AND di.resolved_at IS NOT NULL",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = di.folder_id
+              WHERE fp.workspace_id = $1 AND di.status = 'current' AND di.resolved_at IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -215,7 +215,7 @@ mod tests {
             .execute(pool)
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(pool)
             .await

@@ -93,7 +93,7 @@ pub struct RemoveResult {
     pub agents_removed: u32,
     pub hooks_removed: bool,
     pub cache_cleared: bool,
-    pub projects_cleaned: Vec<String>,
+    pub workspaces_cleaned: Vec<String>,
     pub errors: Vec<String>,
 }
 

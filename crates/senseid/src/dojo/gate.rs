@@ -53,6 +53,28 @@ pub fn decision_from_reply(reply: Option<&serde_json::Value>) -> &'static str {
     if verdict_deny || approve_false { "deny" } else { "allow" }
 }
 
+/// The decision when a raised gate got no human answer — no dōjō to ask, a
+/// failed raise, an unreachable relay or a timeout (`why` names which).
+///
+/// D28 (#312): in an **unattended** run (driven from the relay, nobody at the
+/// keyboard) a hard-block call — a deploy, a push to main, a destructive action,
+/// credentials or money — is **denied**, with its reason. Everything else keeps
+/// the gate's fail-open posture: an interactive session has Claude Code's own
+/// prompt in front of the person, and an allow-list gate is not a hard-block.
+pub fn unanswered_decision(
+    unattended: bool,
+    hard_block: Option<&HardBlock>,
+    why: &str,
+) -> (&'static str, String) {
+    match hard_block {
+        Some(hb) if unattended => (
+            "deny",
+            format!("{} — {why}, and no one can answer in an unattended run: denied", hb.reason),
+        ),
+        _ => ("allow", format!("{why} — allowed")),
+    }
+}
+
 // ── Hard-block classifier (relay-engine P3.5) ────────────────────────────────
 //
 // An autonomous run *progresses, not asks* by default. It only HALTS (raises a
@@ -684,6 +706,36 @@ pub fn semantic_user_message(cmd: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── #312 (D28): no human answer in an unattended run ────────────────────
+
+    fn deploy() -> HardBlock {
+        HardBlock::new("deploy", "make deploy ships to an environment")
+    }
+
+    #[test]
+    fn an_unanswered_hard_block_in_an_unattended_run_is_denied_with_its_reason() {
+        let (decision, reason) = unanswered_decision(true, Some(&deploy()), "gate timed out");
+        assert_eq!(decision, "deny");
+        assert!(reason.contains("make deploy ships to an environment"), "{reason}");
+        assert!(reason.contains("gate timed out"), "{reason}");
+        assert!(reason.contains("unattended"), "{reason}");
+    }
+
+    #[test]
+    fn an_unanswered_hard_block_in_an_interactive_session_is_allowed() {
+        let (decision, reason) = unanswered_decision(false, Some(&deploy()), "gate timed out");
+        assert_eq!(decision, "allow");
+        assert_eq!(reason, "gate timed out — allowed");
+    }
+
+    #[test]
+    fn an_unanswered_allow_list_gate_in_an_unattended_run_is_allowed() {
+        // Only the hard-block categories fail closed; a tool gated by the
+        // SENSEI_RELAY_GATE_TOOLS allow-list alone still progresses.
+        let (decision, _) = unanswered_decision(true, None, "gate unavailable");
+        assert_eq!(decision, "allow");
+    }
 
     #[test]
     fn gated_tools_parses_and_trims() {

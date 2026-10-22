@@ -21,8 +21,8 @@ pub trait FileClassifier: Send + Sync {
     fn is_binary(&self, ext: &str) -> bool;
 
     /// True if `ext` names a first-party source language or docs format that
-    /// signals a project. Data / config / binaries (`.csv`, `.json`, `.png`)
-    /// deliberately return `false` — a folder of only those is not a project.
+    /// signals a workspace. Data / config / binaries (`.csv`, `.json`, `.png`)
+    /// deliberately return `false` — a folder of only those is not a workspace.
     fn is_source_file(&self, ext: &str) -> bool;
 }
 
@@ -465,7 +465,7 @@ const DEFAULT_BINARY_EXTS: &[&str] = &[
 /// they used to be recognised only because v1's C adapter claimed them, and
 /// that adapter is gone — `tree-sitter-c` parses C, and C++ is a different
 /// language nothing here reads. They are still SOURCE, so a folder holding them
-/// is still a project; they simply get a file node and no symbols.
+/// is still a workspace; they simply get a file node and no symbols.
 const DEFAULT_SOURCE_EXTS: &[&str] = &[
     "go", "rb", "sh", "bash", "zsh", "fish", "pl", "pm", "php", "lua", "r", "jl", "scala", "ex",
     "exs", "erl", "hs", "ml", "dart", "cs", "fs", "fsx", "clj", "cljs", "groovy", "m", "mm", "cpp",
@@ -476,7 +476,7 @@ const DEFAULT_SOURCE_EXTS: &[&str] = &[
 /// trim this via `scan.exclude_globs.add` / `scan.exclude_globs.remove`.
 ///
 /// NOTE this gates folder discovery, NOT file indexing. The `**/*.spec.ts`-style
-/// patterns read as "don't treat a directory of only specs as a project"; test
+/// patterns read as "don't treat a directory of only specs as a workspace"; test
 /// files themselves are deliberately indexed and flagged via `nodes.is_test`.
 const DEFAULT_EXCLUDE_GLOBS: &[&str] = &[
     "**/node_modules/**",
@@ -538,7 +538,7 @@ impl FileClassifier for DefaultClassifier {
 
     fn is_source_file(&self, ext: &str) -> bool {
         let e = ext.trim_start_matches('.').to_ascii_lowercase();
-        // Markdown docs: a docs-only folder is a documentation project.
+        // Markdown docs: a docs-only folder is a documentation workspace.
         if matches!(e.as_str(), "md" | "mdx") {
             return true;
         }

@@ -6,9 +6,9 @@
     wizardState.assistants.assistants.filter(familyIsConfigured).length,
   );
   const rootsCount = $derived(wizardState.roots.roots.length);
-  const projectsCount = $derived(wizardState.projects.projects.length);
+  const workspacesCount = $derived(wizardState.workspaces.workspaces.length);
   const foldersCount = $derived(
-    wizardState.projects.projects.reduce((n, p) => n + p.folders.length, 0),
+    wizardState.workspaces.workspaces.reduce((n, p) => n + p.folders.length, 0),
   );
   const libsWrapped = $derived(wizardState.libraries.libs.filter(l => l.enabled).length);
   const mcpsSelected = $derived(wizardState.instruments.mcps.filter(m => m.selected).length);
@@ -26,7 +26,7 @@
       kanji: '庵',
       label: rootsCount === 0 ? 'No roots' : `${rootsCount} root${rootsCount === 1 ? '' : 's'}`,
       sub: foldersCount > 0
-        ? `${foldersCount} folder${foldersCount === 1 ? '' : 's'} across ${projectsCount} project${projectsCount === 1 ? '' : 's'}`
+        ? `${foldersCount} folder${foldersCount === 1 ? '' : 's'} across ${workspacesCount} workspace${workspacesCount === 1 ? '' : 's'}`
         : 'no folders scanned yet',
     },
     {
@@ -83,7 +83,7 @@
   <div class="grid grid-cols-3 gap-4 py-5 border-t border-b border-paper-edge">
     {#each [
       { kanji: '観', label: 'Observing', sub: 'sessions tracked in real time' },
-      { kanji: '師', label: 'Teaching', sub: 'after ~3 sessions per project' },
+      { kanji: '師', label: 'Teaching', sub: 'after ~3 sessions per workspace' },
       { kanji: '静', label: 'Local', sub: 'nothing leaves your machine' },
     ] as s}
       <div>

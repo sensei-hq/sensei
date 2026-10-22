@@ -26,20 +26,20 @@ async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   `);
 }
 
-async function getAnyProjectId(): Promise<string> {
-  const res = await fetch(`${DAEMON_URL}/api/projects`);
-  const projects: { id: string }[] = await res.json();
-  if (!projects.length) throw new Error('No projects in dev DB');
-  return projects[0].id;
+async function getAnyWorkspaceId(): Promise<string> {
+  const res = await fetch(`${DAEMON_URL}/api/workspaces`);
+  const workspaces: { id: string }[] = await res.json();
+  if (!workspaces.length) throw new Error('No workspaces in dev DB');
+  return workspaces[0].id;
 }
 
-async function createProposal(projectId: string, title: string): Promise<string> {
+async function createProposal(workspaceId: string, title: string): Promise<string> {
   const res = await fetch(`${DAEMON_URL}/api/knowledge/proposals`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      project_id: projectId,
-      scope: 'project',
+      workspace_id: workspaceId,
+      scope: 'workspace',
       type: 'convention',
       title,
       content: 'reject me',
@@ -54,9 +54,9 @@ async function createProposal(projectId: string, title: string): Promise<string>
 
 test.describe('Learnings — Reject → Archive', () => {
   test('rejecting a proposal moves it to the Archive tab', async ({ tauriPage }) => {
-    const projectId = await getAnyProjectId();
+    const workspaceId = await getAnyWorkspaceId();
     const uniqueTitle = 'e2e-reject-' + Date.now();
-    await createProposal(projectId, uniqueTitle);
+    await createProposal(workspaceId, uniqueTitle);
 
     await seedSetupComplete(tauriPage);
     await navigateTo(tauriPage, '/learnings');

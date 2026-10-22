@@ -1,6 +1,6 @@
 // Derivations for the composite-health radar — the "all metrics combined" view.
 //
-// The daemon already does the judging: `GET /api/projects/{id}/health` returns
+// The daemon already does the judging: `GET /api/workspaces/{id}/health` returns
 // each included metric's 0-5 `rating` (its reading scored against that metric's
 // rating_scale) plus the `weight` it carries in the composite score. This module
 // only shapes those into radar rows + axes; it never re-derives a rating, so a
@@ -18,12 +18,12 @@ export interface HealthComponent {
   weight: number;
 }
 
-/** `GET /api/projects/{id}/health`. Absent when nothing was rated. */
-export interface ProjectHealth {
+/** `GET /api/workspaces/{id}/health`. Absent when nothing was rated. */
+export interface WorkspaceHealth {
   health_score: number;
   rated_metrics: number;
   components: Record<string, HealthComponent>;
-  /** Weekly history of the score, oldest-first, from `project_health_trend`. */
+  /** Weekly history of the score, oldest-first, from `workspace_health_trend`. */
   trend?: HealthTrendPoint[];
 }
 
@@ -37,14 +37,14 @@ export interface HealthTrendPoint {
  * The hero readout for the composite score: its sparkline series and the
  * week-over-week change.
  *
- * The screen used to fall back to FTR here — the old `project_health` METRIC was
- * retired in favour of the `project_health_score` view, so the composite signal
+ * The screen used to fall back to FTR here — the old `workspace_health` METRIC was
+ * retired in favour of the `workspace_health_score` view, so the composite signal
  * the hero looked for never appears in the metric rows (it has produced zero of
  * them). That is why the card read "First-turn resolution" where the mockup reads
  * "HEALTH". Null when there is no score to show, never a fabricated 0.
  */
 export function healthHeroReadout(
-  health: ProjectHealth | null | undefined,
+  health: WorkspaceHealth | null | undefined,
 ): { value: string; series: number[]; delta: number | null } | null {
   if (health == null || health.health_score == null) return null;
   const series = (health.trend ?? []).map((p) => p.health_score);

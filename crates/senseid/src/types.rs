@@ -244,7 +244,7 @@ pub struct HierarchyNode {
     pub file: Option<String>,
     #[serde(default)]
     pub line: u32,
-    pub project: String,
+    pub workspace: String,
     // ── Specialized fields (nullable, only for relevant kinds) ──
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sig: Option<String>,
@@ -265,7 +265,7 @@ pub struct HierarchyNode {
 impl HierarchyNode {
     /// Create a minimal node (grouping/structural).
     #[allow(dead_code)]
-    pub fn group(id: String, name: String, kind: NodeKind, project: String) -> Self {
+    pub fn group(id: String, name: String, kind: NodeKind, workspace: String) -> Self {
         Self {
             id,
             name,
@@ -274,7 +274,7 @@ impl HierarchyNode {
             parent_id: None,
             file: None,
             line: 0,
-            project,
+            workspace,
             sig: None,
             body: None,
             docstring: None,
@@ -298,7 +298,7 @@ impl HierarchyNode {
         body: Option<String>,
         docstring: Option<String>,
         complexity: u32,
-        project: String,
+        workspace: String,
     ) -> Self {
         Self {
             id,
@@ -308,7 +308,7 @@ impl HierarchyNode {
             parent_id: None,
             file: Some(file),
             line,
-            project,
+            workspace,
             sig,
             body,
             docstring,
@@ -328,7 +328,7 @@ impl HierarchyNode {
         file: String,
         doc_type: Option<String>,
         doc_category: Option<String>,
-        project: String,
+        workspace: String,
     ) -> Self {
         Self {
             id,
@@ -338,7 +338,7 @@ impl HierarchyNode {
             parent_id: None,
             file: Some(file),
             line: 0,
-            project,
+            workspace,
             sig: None,
             body: None,
             docstring: None,
@@ -354,7 +354,7 @@ impl HierarchyNode {
 
 // ── Package / Module info ────────────────────────────────────────────────────
 
-/// A workspace member / crate / sub-package discovered inside a project.
+/// A workspace member / crate / sub-package discovered inside a workspace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageInfo {
     pub name: String,

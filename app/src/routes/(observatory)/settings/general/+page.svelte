@@ -161,7 +161,7 @@
                         <div>
                             <div class="text-sm text-ink">Nudge on regression</div>
                             <div class="text-xs text-ink-mute mt-0.5">
-                                If FTR drops sharply on a project, sensei surfaces it on Today.
+                                If FTR drops sharply on a workspace, sensei surfaces it on Today.
                             </div>
                         </div>
                         <Switch

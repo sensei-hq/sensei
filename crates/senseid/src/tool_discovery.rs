@@ -27,11 +27,11 @@ use std::path::{Path, PathBuf};
 pub trait ToolDiscovery: Send + Sync {
     /// The `assistant_family` string stored on rows this adapter produces.
     fn family(&self) -> &'static str;
-    /// Discover the MCP servers configured for this assistant, user + project scope.
+    /// Discover the MCP servers configured for this assistant, user + project scope (the assistants' config scopes).
     fn discover_mcp(
         &self,
         home: &Path,
-        project_roots: &[(uuid::Uuid, PathBuf)],
+        workspace_roots: &[(uuid::Uuid, PathBuf)],
     ) -> Vec<DiscoveredMcp>;
 }
 
@@ -202,7 +202,7 @@ pub fn discover_claude_plugin_mcps(home: &Path) -> Vec<DiscoveredMcp> {
             out.push(DiscoveredMcp {
                 acp_family: AcpFamily::Claude,
                 mcp_key: "plugin_sensei_sensei".to_string(),
-                project_id: None,
+                workspace_id: None,
                 config_source: sensei_cfg.clone(),
                 command,
                 args: srv.get("args").cloned().unwrap_or(Value::Array(vec![])),
@@ -229,14 +229,14 @@ pub struct CaptureCounts {
 pub async fn run_capture(pg: &PgStore) -> Result<CaptureCounts, String> {
     let home = crate::paths::home();
 
-    // Project roots (project-scope MCP config: .mcp.json, .cursor/…, .zed/…).
-    let projects = pg.list_projects().await?;
+    // Workspace roots (the assistants' project-scope MCP config: .mcp.json, .cursor/…, .zed/…).
+    let workspaces = pg.list_workspaces().await?;
     let mut roots: Vec<(uuid::Uuid, PathBuf)> = Vec::new();
-    for p in projects {
+    for p in workspaces {
         let Some(pid) = p["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) else {
             continue;
         };
-        let repos = pg.get_project_repos(&pid).await.unwrap_or_default();
+        let repos = pg.get_workspace_repos(&pid).await.unwrap_or_default();
         if let Some(first) = repos.first()
             && let Some(path) = first["path"].as_str()
         {
@@ -253,7 +253,7 @@ pub async fn run_capture(pg: &PgStore) -> Result<CaptureCounts, String> {
                 .upsert_mcp_server(
                     e.acp_family.as_str(),
                     &e.mcp_key,
-                    e.project_id,
+                    e.workspace_id,
                     &e.config_source.to_string_lossy(),
                     &e.command,
                     &e.args,

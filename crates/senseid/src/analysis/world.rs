@@ -1,6 +1,6 @@
 //! Nesting every indexed declaration by what contains it (#219).
 //!
-//! The World diagram is containment as area: a circle per project, repository
+//! The World diagram is containment as area: a circle per workspace, repository
 //! and test-or-code split, sized by how many declarations it holds. `@rokkit/graph`'s
 //! `world` layout draws it from a flat list of nodes, each carrying its OWN full
 //! path — outermost first and including itself — so a container is an ordinary
@@ -9,7 +9,7 @@
 //!
 //! ## Three groupings, one set of cells
 //!
-//! The screen offers "group first by" project, repository, or code-vs-tests.
+//! The screen offers "group first by" workspace, repository, or code-vs-tests.
 //! They are three ORDERINGS of the same three dimensions, not three queries:
 //! the chosen dimension leads and the rest follow in a fixed order. One read,
 //! one statement the SQL planner can check, and the grouping is a pure function
@@ -39,7 +39,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GroupFirst {
-    Project,
+    Workspace,
     Repository,
     /// Code against tests. NOT "code · tests · docs" — see the module docs.
     CodeOrTests,
@@ -49,7 +49,7 @@ impl GroupFirst {
     /// The wire spelling, and the one the screen's control sends back.
     pub fn from_label(label: &str) -> Option<Self> {
         match label {
-            "project" => Some(Self::Project),
+            "workspace" => Some(Self::Workspace),
             "repository" => Some(Self::Repository),
             "kind" => Some(Self::CodeOrTests),
             _ => None,
@@ -58,21 +58,21 @@ impl GroupFirst {
 
     pub fn as_label(self) -> &'static str {
         match self {
-            Self::Project => "project",
+            Self::Workspace => "workspace",
             Self::Repository => "repository",
             Self::CodeOrTests => "kind",
         }
     }
 }
 
-/// One (project, repository, test-or-not) cell, as the database holds it.
+/// One (workspace, repository, test-or-not) cell, as the database holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
-    pub project: String,
+    pub workspace: String,
     pub repository: String,
     /// Which folder the repository is, so a cell can find its edge placement.
-    /// A repository NAME is not unique — two projects can hold repositories of
-    /// one name, and one repository can belong to two projects.
+    /// A repository NAME is not unique — two workspaces can hold repositories of
+    /// one name, and one repository can belong to two workspaces.
     pub folder: uuid::Uuid,
     pub is_test: bool,
     pub declarations: i64,
@@ -127,7 +127,7 @@ pub struct Totals {
     pub documented: i64,
     pub tests: i64,
     pub repositories: i64,
-    pub projects: i64,
+    pub workspaces: i64,
 }
 
 /// The circles to draw, and what they add up to.
@@ -151,13 +151,13 @@ fn bucket(is_test: bool) -> &'static str {
 /// leading. Written as one function so a fourth grouping is one arm rather than
 /// a fourth tree builder.
 fn path_of(cell: &Cell, group: GroupFirst) -> Vec<String> {
-    let project = cell.project.clone();
+    let workspace = cell.workspace.clone();
     let repository = cell.repository.clone();
     let kind = bucket(cell.is_test).to_string();
     match group {
-        GroupFirst::Project => vec![project, repository, kind],
-        GroupFirst::Repository => vec![repository, project, kind],
-        GroupFirst::CodeOrTests => vec![kind, project, repository],
+        GroupFirst::Workspace => vec![workspace, repository, kind],
+        GroupFirst::Repository => vec![repository, workspace, kind],
+        GroupFirst::CodeOrTests => vec![kind, workspace, repository],
     }
 }
 
@@ -170,7 +170,7 @@ fn path_of(cell: &Cell, group: GroupFirst) -> Vec<String> {
 /// cannot disagree.
 fn repository_depth(group: GroupFirst) -> usize {
     match group {
-        GroupFirst::Project => 2,
+        GroupFirst::Workspace => 2,
         GroupFirst::Repository => 1,
         GroupFirst::CodeOrTests => 3,
     }
@@ -255,9 +255,9 @@ pub fn nest(cells: &[Cell], placements: &[Placement], group: GroupFirst) -> Worl
             .map(|c| c.folder)
             .collect::<std::collections::BTreeSet<_>>()
             .len() as i64,
-        projects: cells
+        workspaces: cells
             .iter()
-            .map(|c| c.project.as_str())
+            .map(|c| c.workspace.as_str())
             .collect::<std::collections::BTreeSet<_>>()
             .len() as i64,
     };
@@ -273,11 +273,11 @@ mod tests {
         uuid::Uuid::from_bytes([n; 16])
     }
 
-    /// Two projects, one shared repository, each with a code and a test cell.
+    /// Two workspaces, one shared repository, each with a code and a test cell.
     fn corpus() -> (Vec<Cell>, Vec<Placement>) {
         let cells = vec![
             Cell {
-                project: "alpha".into(),
+                workspace: "alpha".into(),
                 repository: "core".into(),
                 folder: folder(1),
                 is_test: false,
@@ -285,7 +285,7 @@ mod tests {
                 documented: 8,
             },
             Cell {
-                project: "alpha".into(),
+                workspace: "alpha".into(),
                 repository: "core".into(),
                 folder: folder(1),
                 is_test: true,
@@ -293,7 +293,7 @@ mod tests {
                 documented: 0,
             },
             Cell {
-                project: "beta".into(),
+                workspace: "beta".into(),
                 repository: "core".into(),
                 folder: folder(1),
                 is_test: false,
@@ -301,7 +301,7 @@ mod tests {
                 documented: 8,
             },
             Cell {
-                project: "beta".into(),
+                workspace: "beta".into(),
                 repository: "web".into(),
                 folder: folder(2),
                 is_test: false,
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn every_ring_weighs_what_is_inside_it() {
         let (cells, placements) = corpus();
-        let w = nest(&cells, &placements, GroupFirst::Project);
+        let w = nest(&cells, &placements, GroupFirst::Workspace);
 
         assert_eq!(unit(&w, "alpha").weight, 100, "80 code + 20 tests");
         assert_eq!(unit(&w, "alpha / core").weight, 100);
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn a_path_names_itself_last() {
         let (cells, placements) = corpus();
-        let w = nest(&cells, &placements, GroupFirst::Project);
+        let w = nest(&cells, &placements, GroupFirst::Workspace);
         let u = unit(&w, "alpha / core / tests");
         assert_eq!(u.path, vec!["alpha", "core", "tests"]);
         assert_eq!(u.label, "tests", "the label is what it is called in its parent");
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn every_grouping_covers_the_same_corpus() {
         let (cells, placements) = corpus();
-        for group in [GroupFirst::Project, GroupFirst::Repository, GroupFirst::CodeOrTests] {
+        for group in [GroupFirst::Workspace, GroupFirst::Repository, GroupFirst::CodeOrTests] {
             let w = nest(&cells, &placements, group);
             let roots: i64 = w.units.iter().filter(|u| u.path.len() == 1).map(|u| u.weight).sum();
             assert_eq!(roots, 230, "{group:?}: the outermost ring holds the whole corpus");
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn a_repositorys_edges_are_counted_once_however_many_cells_it_has() {
         let (cells, placements) = corpus();
-        let w = nest(&cells, &placements, GroupFirst::Project);
+        let w = nest(&cells, &placements, GroupFirst::Workspace);
         // alpha holds only `core`: 50 missed of 200.
         assert_eq!(unit(&w, "alpha").measures.unresolved_share, Some(0.25));
         assert_eq!(unit(&w, "alpha / core").measures.unresolved_share, Some(0.25));
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn the_unresolved_share_is_none_below_the_repository_ring() {
         let (cells, placements) = corpus();
-        let w = nest(&cells, &placements, GroupFirst::Project);
+        let w = nest(&cells, &placements, GroupFirst::Workspace);
         assert_eq!(unit(&w, "alpha / core / code").measures.unresolved_share, None);
         assert_eq!(unit(&w, "alpha / core / tests").measures.unresolved_share, None);
 
@@ -418,14 +418,14 @@ mod tests {
     #[test]
     fn a_repository_with_no_edges_has_no_share() {
         let cells = vec![Cell {
-            project: "solo".into(),
+            workspace: "solo".into(),
             repository: "quiet".into(),
             folder: folder(9),
             is_test: false,
             declarations: 5,
             documented: 0,
         }];
-        let w = nest(&cells, &[], GroupFirst::Project);
+        let w = nest(&cells, &[], GroupFirst::Workspace);
         assert_eq!(unit(&w, "solo").measures.unresolved_share, None);
     }
 
@@ -433,7 +433,7 @@ mod tests {
     #[test]
     fn the_declaration_shares_are_weighted_by_declarations() {
         let (cells, placements) = corpus();
-        let w = nest(&cells, &placements, GroupFirst::Project);
+        let w = nest(&cells, &placements, GroupFirst::Workspace);
         // alpha: 8 documented of 100, 20 tests of 100.
         assert_eq!(unit(&w, "alpha").measures.documented_share, 0.08);
         assert_eq!(unit(&w, "alpha").measures.test_share, 0.2);
@@ -441,9 +441,9 @@ mod tests {
         assert_eq!(unit(&w, "beta").measures.test_share, 0.0);
     }
 
-    /// ONE REPOSITORY IN TWO PROJECTS IS COUNTED ONCE in the totals.
+    /// ONE REPOSITORY IN TWO WORKSPACES IS COUNTED ONCE in the totals.
     ///
-    /// Membership comes through `folder_projects`, so `core` legitimately
+    /// Membership comes through `folder_workspaces`, so `core` legitimately
     /// appears under both `alpha` and `beta`. The picture draws it twice — that
     /// is what the rings mean — but "how many repositories are there" has one
     /// answer.
@@ -453,9 +453,9 @@ mod tests {
     #[test]
     fn a_shared_repository_is_drawn_twice_and_counted_once() {
         let (cells, placements) = corpus();
-        let w = nest(&cells, &placements, GroupFirst::Project);
-        assert_eq!(w.totals.repositories, 2, "core and web, however many projects hold them");
-        assert_eq!(w.totals.projects, 2);
+        let w = nest(&cells, &placements, GroupFirst::Workspace);
+        assert_eq!(w.totals.repositories, 2, "core and web, however many workspaces hold them");
+        assert_eq!(w.totals.workspaces, 2);
         assert!(w.units.iter().any(|u| u.id == "alpha / core"));
         assert!(w.units.iter().any(|u| u.id == "beta / core"));
     }
@@ -464,7 +464,7 @@ mod tests {
     /// drift apart.
     #[test]
     fn every_grouping_survives_its_label() {
-        for group in [GroupFirst::Project, GroupFirst::Repository, GroupFirst::CodeOrTests] {
+        for group in [GroupFirst::Workspace, GroupFirst::Repository, GroupFirst::CodeOrTests] {
             assert_eq!(GroupFirst::from_label(group.as_label()), Some(group));
         }
         assert_eq!(GroupFirst::from_label("docs"), None, "there is no docs grouping");

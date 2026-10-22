@@ -1,5 +1,5 @@
 // Measured-verdict domain logic — shared by the observatory-wide Impact
-// screen and the project-scoped Impact tab. Both render the same primitive: a
+// screen and the workspace-scoped Impact tab. Both render the same primitive: a
 // measured recommendation after the analyzer's MeasureVerdicts pass records a
 // verdict. Pure functions + types only; no runes.
 
@@ -28,13 +28,13 @@ export type ImpactVerdict = 'pending' | 'positive' | 'neutral' | 'negative';
  *  pending) — rendered in muted ink, never a status colour. */
 export type VerdictTone = 'success' | 'warning' | 'ink';
 
-/** One measured recommendation row. `projectId`/`projectName` are always
- *  present so the observatory-wide list can label cross-project rows; the
- *  project-scoped tab fills them from its own project and hides the column. */
+/** One measured recommendation row. `workspaceId`/`workspaceName` are always
+ *  present so the observatory-wide list can label cross-workspace rows; the
+ *  workspace-scoped tab fills them from its own workspace and hides the column. */
 export interface ImpactRow {
   id: string;
-  projectId: string;
-  projectName: string;
+  workspaceId: string;
+  workspaceName: string;
   title: string;
   status: string;
   /** Canonical action verb (`create_agent`, `enrich_memory`, …) or null when
@@ -47,10 +47,10 @@ export interface ImpactRow {
   reasoning: ImpactReasoning | null;
 }
 
-/** One row of `GET /api/projects/{id}/impact` as the daemon sends it: a rec
+/** One row of `GET /api/workspaces/{id}/impact` as the daemon sends it: a rec
  *  that carries a reasoning trace or a non-pending verdict. `reasoning` is
  *  `null` when the rec has no trace; `modelsUsed` lists the models that ran. */
-export interface ProjectImpactWire {
+export interface WorkspaceImpactWire {
   id: string;
   title: string;
   actionType: string;
@@ -63,13 +63,13 @@ export interface ProjectImpactWire {
   reasoning: ImpactReasoning | null;
 }
 
-/** A wire row as the shared `ImpactRow`, labelled with its project — one
- *  mapping for the observatory-wide list and the project tab. */
-export function toImpactRow(r: ProjectImpactWire, project: { id: string; name: string }): ImpactRow {
+/** A wire row as the shared `ImpactRow`, labelled with its workspace — one
+ *  mapping for the observatory-wide list and the workspace tab. */
+export function toImpactRow(r: WorkspaceImpactWire, workspace: { id: string; name: string }): ImpactRow {
   return {
     id: r.id,
-    projectId: project.id,
-    projectName: project.name,
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
     title: r.title,
     status: r.status,
     actionType: r.actionType ?? null,

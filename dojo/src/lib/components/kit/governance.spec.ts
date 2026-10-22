@@ -17,7 +17,7 @@ describe('kit governance components render', () => {
 		const { getByText } = render(LadderRung, { rung: ladder[0] });
 		expect(getByText('Company')).toBeTruthy();
 		expect(getByText('Acme Corp')).toBeTruthy();
-		expect(getByText('your employer · every project')).toBeTruthy();
+		expect(getByText('your employer · every workspace')).toBeTruthy();
 		expect(getByText('4 rules')).toBeTruthy();
 		// company rung has 3 hard rules → a "3 locked" chip.
 		expect(getByText('3 locked')).toBeTruthy();

@@ -15,8 +15,8 @@ const down = { ok: false as const, error: { status: 503, message: 'Service Unava
 function mockApi(overrides: Partial<SenseiApi> = {}): SenseiApi {
   return {
     tryGetInsights: vi.fn().mockResolvedValue(ok(EMPTY_INSIGHTS_BOARD)),
-    tryAcceptProjectRecommendation: vi.fn().mockResolvedValue(ok({ ok: true })),
-    tryRejectProjectRecommendation: vi.fn().mockResolvedValue(ok({ ok: true })),
+    tryAcceptWorkspaceRecommendation: vi.fn().mockResolvedValue(ok({ ok: true })),
+    tryRejectWorkspaceRecommendation: vi.fn().mockResolvedValue(ok({ ok: true })),
     ...overrides,
   } as unknown as SenseiApi;
 }
@@ -27,17 +27,17 @@ function mockApi(overrides: Partial<SenseiApi> = {}): SenseiApi {
 // settled: m2 (in-force memory)                                → count 1
 const fixture = (over: Partial<InsightsBoard> = {}): InsightsBoard => ({
   counts: { now: 3, soon: 2, settled: 1 },
-  projects: [{ id: 'p1', name: 'sensei', kanji: '禅' }],
+  workspaces: [{ id: 'p1', name: 'sensei', kanji: '禅' }],
   recommendations: [
-    { id: 'r1', urgency: 'high', title: 'Now rec', why: 'w1', impact: 'i1', evidence: [], project_id: 'p1', name: 'sensei', column: 'now' },
-    { id: 'r2', urgency: 'medium', title: 'Soon rec', why: '', impact: '', evidence: [], project_id: 'p1', name: 'sensei', column: 'soon' },
+    { id: 'r1', urgency: 'high', title: 'Now rec', why: 'w1', impact: 'i1', evidence: [], workspace_id: 'p1', name: 'sensei', column: 'now' },
+    { id: 'r2', urgency: 'medium', title: 'Soon rec', why: '', impact: '', evidence: [], workspace_id: 'p1', name: 'sensei', column: 'soon' },
   ],
   memories: [
-    { id: 'm1', status: 'active', title: 'Violated', content: 'c', violated_count: 3, strength: 0.4, scope: 'project', project_id: 'p1', column: 'now' },
-    { id: 'm2', status: 'active', title: 'Settled', content: 'c', violated_count: 0, strength: 1, scope: 'project', project_id: 'p1', column: 'settled' },
+    { id: 'm1', status: 'active', title: 'Violated', content: 'c', violated_count: 3, strength: 0.4, scope: 'workspace', workspace_id: 'p1', column: 'now' },
+    { id: 'm2', status: 'active', title: 'Settled', content: 'c', violated_count: 0, strength: 1, scope: 'workspace', workspace_id: 'p1', column: 'settled' },
   ],
   patterns: [
-    { id: 'pat1', name: 'rule-candidates', family: null, lifecycle: 'suggested', instance_count: 8, project_id: 'p1', column: 'soon' },
+    { id: 'pat1', name: 'rule-candidates', family: null, lifecycle: 'suggested', instance_count: 8, workspace_id: 'p1', column: 'soon' },
   ],
   corrections: [
     { id: 'c1', text: 'oops', suggestion: null, count: 3, column: 'now' },
@@ -71,17 +71,17 @@ describe('InsightsBoardState — column bucketing', () => {
   it('sorts Settled memories by strength descending', () => {
     const s = new InsightsBoardState(fixture({
       memories: [
-        { id: 'weak', status: 'active', title: 'weak', content: '', violated_count: 0, strength: 0.2, scope: 'project', project_id: 'p1', column: 'settled' },
-        { id: 'strong', status: 'active', title: 'strong', content: '', violated_count: 0, strength: 0.9, scope: 'project', project_id: 'p1', column: 'settled' },
+        { id: 'weak', status: 'active', title: 'weak', content: '', violated_count: 0, strength: 0.2, scope: 'workspace', workspace_id: 'p1', column: 'settled' },
+        { id: 'strong', status: 'active', title: 'strong', content: '', violated_count: 0, strength: 0.9, scope: 'workspace', workspace_id: 'p1', column: 'settled' },
       ],
     }));
     expect(s.settled.memories.map((m) => m.id)).toEqual(['strong', 'weak']);
   });
 
-  it('joins the project kanji onto rec view-models', () => {
+  it('joins the workspace kanji onto rec view-models', () => {
     const s = new InsightsBoardState(fixture());
-    expect(s.now.recs[0].projectKanji).toBe('禅');
-    expect(s.now.recs[0].projectName).toBe('sensei');
+    expect(s.now.recs[0].workspaceKanji).toBe('禅');
+    expect(s.now.recs[0].workspaceName).toBe('sensei');
   });
 
   it('reports isEmpty only when every column is empty', () => {
@@ -99,7 +99,7 @@ describe('InsightsBoardState — one decision, one default', () => {
 describe('InsightsBoardState — actions', () => {
   it('apply() optimistically removes the rec and calls accept (schedules MeasureVerdicts)', async () => {
     const accept = vi.fn().mockResolvedValue(ok({ ok: true }));
-    const api = mockApi({ tryAcceptProjectRecommendation: accept });
+    const api = mockApi({ tryAcceptWorkspaceRecommendation: accept });
     const s = new InsightsBoardState(fixture());
     const rec = s.now.recs[0];
 
@@ -113,7 +113,7 @@ describe('InsightsBoardState — actions', () => {
 
   it('apply() restores the card and surfaces an error when accept fails', async () => {
     const accept = vi.fn().mockResolvedValue(down);
-    const api = mockApi({ tryAcceptProjectRecommendation: accept });
+    const api = mockApi({ tryAcceptWorkspaceRecommendation: accept });
     const s = new InsightsBoardState(fixture());
     const rec = s.now.recs[0];
 
@@ -128,7 +128,7 @@ describe('InsightsBoardState — actions', () => {
 
   it('dismiss() optimistically removes the rec and calls reject', async () => {
     const reject = vi.fn().mockResolvedValue(ok({ ok: true }));
-    const api = mockApi({ tryRejectProjectRecommendation: reject });
+    const api = mockApi({ tryRejectWorkspaceRecommendation: reject });
     const s = new InsightsBoardState(fixture());
     const rec = s.soon.recs[0];
 
@@ -140,7 +140,7 @@ describe('InsightsBoardState — actions', () => {
 
   it('dismiss() restores the card and surfaces an error when reject fails', async () => {
     const reject = vi.fn().mockResolvedValue(down);
-    const api = mockApi({ tryRejectProjectRecommendation: reject });
+    const api = mockApi({ tryRejectWorkspaceRecommendation: reject });
     const s = new InsightsBoardState(fixture());
     const rec = s.now.recs[0];
 
@@ -151,12 +151,12 @@ describe('InsightsBoardState — actions', () => {
   });
 });
 
-describe('InsightsBoardState — project filter re-scope', () => {
-  it('selectProject(id) refetches scoped and resets optimistic removals', async () => {
+describe('InsightsBoardState — workspace filter re-scope', () => {
+  it('selectWorkspace(id) refetches scoped and resets optimistic removals', async () => {
     const scoped = fixture({
       counts: { now: 1, soon: 0, settled: 0 },
       recommendations: [
-        { id: 'only', urgency: 'high', title: 'Scoped', why: '', impact: '', evidence: [], project_id: 'p1', name: 'sensei', column: 'now' },
+        { id: 'only', urgency: 'high', title: 'Scoped', why: '', impact: '', evidence: [], workspace_id: 'p1', name: 'sensei', column: 'now' },
       ],
       memories: [],
       patterns: [],
@@ -166,32 +166,32 @@ describe('InsightsBoardState — project filter re-scope', () => {
     const api = mockApi({ tryGetInsights: getInsights });
     const s = new InsightsBoardState(fixture());
 
-    await s.selectProject(api, 'p1');
+    await s.selectWorkspace(api, 'p1');
 
     expect(getInsights).toHaveBeenCalledWith('p1');
-    expect(s.selectedProjectId).toBe('p1');
+    expect(s.selectedWorkspaceId).toBe('p1');
     expect(s.now.recs.map((r) => r.id)).toEqual(['only']);
     expect(s.loading).toBe(false);
   });
 
-  it('selectProject(null) refetches the unscoped board', async () => {
+  it('selectWorkspace(null) refetches the unscoped board', async () => {
     const getInsights = vi.fn().mockResolvedValue(ok(fixture()));
     const api = mockApi({ tryGetInsights: getInsights });
     const s = new InsightsBoardState(fixture());
-    s.selectedProjectId = 'p1';
+    s.selectedWorkspaceId = 'p1';
 
-    await s.selectProject(api, null);
+    await s.selectWorkspace(api, null);
 
     expect(getInsights).toHaveBeenCalledWith(undefined);
-    expect(s.selectedProjectId).toBeNull();
+    expect(s.selectedWorkspaceId).toBeNull();
   });
 
-  it('selectProject is a no-op when the scope is unchanged', async () => {
+  it('selectWorkspace is a no-op when the scope is unchanged', async () => {
     const getInsights = vi.fn().mockResolvedValue(ok(fixture()));
     const api = mockApi({ tryGetInsights: getInsights });
     const s = new InsightsBoardState(fixture());
 
-    await s.selectProject(api, null);
+    await s.selectWorkspace(api, null);
 
     expect(getInsights).not.toHaveBeenCalled();
   });
@@ -206,13 +206,13 @@ describe('InsightsBoardState — a failed read', () => {
 
   it('a failed re-scope is an error, and drops the previous scope\'s board', async () => {
     const s = new InsightsBoardState(fixture());
-    await s.selectProject(mockApi({ tryGetInsights: vi.fn().mockResolvedValue(down) }), 'p1');
+    await s.selectWorkspace(mockApi({ tryGetInsights: vi.fn().mockResolvedValue(down) }), 'p1');
     expect([s.loadError, s.now.count, s.loading]).toEqual(['Service Unavailable', 0, false]);
   });
 
   it('a successful re-scope clears the error', async () => {
     const s = new InsightsBoardState(null, 'Service Unavailable');
-    await s.selectProject(mockApi({ tryGetInsights: vi.fn().mockResolvedValue(ok(fixture())) }), 'p1');
+    await s.selectWorkspace(mockApi({ tryGetInsights: vi.fn().mockResolvedValue(ok(fixture())) }), 'p1');
     expect(s.loadError).toBeNull();
     expect(s.now.count).toBeGreaterThan(0);
   });
@@ -220,7 +220,7 @@ describe('InsightsBoardState — a failed read', () => {
   it('retry() re-reads the current scope', async () => {
     const getInsights = vi.fn().mockResolvedValue(ok(fixture()));
     const s = new InsightsBoardState(null, 'Service Unavailable');
-    s.selectedProjectId = 'p1';
+    s.selectedWorkspaceId = 'p1';
     await s.retry(mockApi({ tryGetInsights: getInsights }));
     expect(getInsights).toHaveBeenCalledWith('p1');
     expect(s.loadError).toBeNull();

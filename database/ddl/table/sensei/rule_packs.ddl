@@ -51,13 +51,13 @@ a namespace adopts the pack via sensei.rule_pack_adoptions. Shared plane
 packs resolve offline, never poured into sensei.memories. Distinct from
 dojo.shared_rules (the Dōjō-plane per-namespace resolved registry).';
 comment on column rule_packs.owner_namespace_id
-     is 'The org namespace that authored a private pack; NULL = a global curated library pack. Never a project — a pack is reusable across repos and scopes.';
+     is 'The org namespace that authored a private pack; NULL = a global curated library pack. Never a workspace — a pack is reusable across repos and scopes.';
 comment on column rule_packs.enforcement
      is 'The pack''s DEFAULT enforcement tier. Each rule (rule_pack_rules.enforcement) may set its own; an adoption may override per-namespace (rule_pack_adoptions.enforcement).';
 comment on column rule_packs.version
      is 'Pack version, bumped on any change to its rules/membership. An adoption pins the version it adopted (rule_pack_adoptions.pinned_version); re-adopt to take an update.
 
-the ORG that authored a PRIVATE pack; NULL = global curated library. Never a project — packs are cross-repo.';
+the ORG that authored a PRIVATE pack; NULL = global curated library. Never a workspace — packs are cross-repo.';
 
 -- ── Dōjō (Supabase) plane: security_invoker read path ───────────────────────────────────
 -- dojo.rule_pack_library runs with security_invoker, so the CALLING role reads this table

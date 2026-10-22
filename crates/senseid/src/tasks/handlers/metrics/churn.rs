@@ -1,9 +1,9 @@
 //! `churn` metric group computer.
 //!
 //! Follows the `session_outcomes` template (resolve `key → metric_id` via the
-//! active registry, write daily rows to `sensei.project_metrics`) but at the
+//! active registry, write daily rows to `sensei.workspace_metrics`) but at the
 //! REPOSITORY grain (spec 2026-08-18): metrics key on the GLOBAL `repository_id`,
-//! not the project. Its two git-sourced churn metrics are sourced from **git**, not
+//! not the workspace. Its two git-sourced churn metrics are sourced from **git**, not
 //! the file-indexing feed:
 //!
 //! - `churn_rate` (count, per-repository daily): the number of DISTINCT source
@@ -16,13 +16,13 @@
 //!   commits but zero line-churn (only binary/mode changes) has no denominator ⇒ NO
 //!   concentration row (never a fabricated 0/0), though `churn_rate` still counts
 //!   the touched files.
-//! - `rework_density` (ratio, PROJECT-level, attributed to the project's PRIMARY
+//! - `rework_density` (ratio, WORKSPACE-level, attributed to the workspace's PRIMARY
 //!   repository): a forward-only snapshot of `inference.detected_patterns`
-//!   (`name LIKE 'rework: %'`) over `sensei.nodes` project files. It has no natural
-//!   per-repository git grain, so it is written ONCE per project against
-//!   [`PgStore::primary_repository_for_project`] (`scope = 'user'`, `folder_id =
+//!   (`name LIKE 'rework: %'`) over `sensei.nodes` workspace files. It has no natural
+//!   per-repository git grain, so it is written ONCE per workspace against
+//!   [`PgStore::primary_repository_for_workspace`] (`scope = 'user'`, `folder_id =
 //!   NULL`). The former per-module (`folder_id`-set) rows are RETIRED — under the
-//!   repo-grain identity (`project_metrics_identity`, which does NOT include
+//!   repo-grain identity (`workspace_metrics_identity`, which does NOT include
 //!   `folder_id`) they would collide. It keeps its DB source and its
 //!   historical-`as_of`-skip behavior.
 //!
@@ -32,7 +32,7 @@
 //!   the repository-wide churn twin.
 //! - `scope = 'user'`: `git log --author=<email>` per local git identity,
 //!   `identity = <email>` — the local user's OWN churn. This is the value the
-//!   default project read pools (the project view filters `scope = 'user'`).
+//!   default workspace read pools (the workspace view filters `scope = 'user'`).
 //!
 //! Local identities are the checkout's effective git author email (git's own
 //! local→global precedence via [`crate::git_identity::read_git_user`]); sensei
@@ -44,9 +44,9 @@
 //! The two churn metrics were previously counted from `activity.task_executions`
 //! (the file-INDEXING feed), so a re-index spiked `churn_rate` and only recent
 //! history existed. Real churn is files-changed-over-time from GIT, so they now
-//! read `git log` for EACH of the project's repository checkout roots — resolved
-//! via [`PgStore::repository_roots_for_project`] (one `(repository_id, abs_path)`
-//! per distinct repository, shallowest checkout wins). A project with no
+//! read `git log` for EACH of the workspace's repository checkout roots — resolved
+//! via [`PgStore::repository_roots_for_workspace`] (one `(repository_id, abs_path)`
+//! per distinct repository, shallowest checkout wins). A workspace with no
 //! repository-linked checkout, a root that is not a git repo, git being absent, or
 //! a repo with no commits on the selected day all produce NO row: an honest "no git
 //! churn data", never a fabricated value. This mirrors the git discipline already
@@ -317,7 +317,7 @@ fn git_day_file_churn(
     by_day
 }
 
-/// Compute the `churn` group for one project. `project_raw` is the project uuid
+/// Compute the `churn` group for one workspace. `workspace_raw` is the workspace uuid
 /// carried in `task.folder_path`. `as_of` is the target `computed_on` day:
 /// - `churn_rate` / `churn_concentration` (git-sourced, per-repository): `Some(D)`
 ///   computes ONLY day `D`'s commits (`computed_on = D`, the backfill/gap-fill
@@ -325,17 +325,17 @@ fn git_day_file_churn(
 /// - `rework_density` (forward-only snapshot): a historical `as_of` (`Some(D)`,
 ///   `D != today`) skips it (see [`super::is_historical`]).
 ///
-/// Returns the number of `project_metrics` rows written (`0` = honest-empty: no git
+/// Returns the number of `workspace_metrics` rows written (`0` = honest-empty: no git
 /// churn on the day-set, no rework/file data, no resolvable repository, or none of
 /// the group's metrics active). Idempotent — re-running backfills in place via the
-/// upsert identity (`project_metrics_identity`).
+/// upsert identity (`workspace_metrics_identity`).
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<NaiveDate>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("churn: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("churn: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
     // Reuse the scheduler's window reader (config key + parser + default) — DRY.
@@ -355,9 +355,9 @@ pub(super) async fn compute(
 
     // ── churn_rate + churn_concentration (git-sourced, per-repository, per-day) ──
     if churn_rate_id.is_some() || concentration_id.is_some() {
-        // Iterate the project's repository roots (D2: a project is a GROUP of
+        // Iterate the workspace's repository roots (D2: a workspace is a GROUP of
         // repositories). Each root is the shallowest checkout dir for a repository —
-        // the working tree we run the git-log numstat walk in. A project with no
+        // the working tree we run the git-log numstat walk in. A workspace with no
         // repository-linked checkout yields no roots → honest-empty (no rows). A
         // repository is NEVER fabricated (I-E).
         let today = super::today(pg).await?;
@@ -368,7 +368,7 @@ pub(super) async fn compute(
         // Loaded once, not per repository: it is one config read and the ruling
         // does not change mid-pass.
         let gate = super::MetricGate::load(pg).await;
-        for (repository_id, root) in pg.repository_roots_for_project(&project_id).await? {
+        for (repository_id, root) in pg.repository_roots_for_workspace(&workspace_id).await? {
             // Resolve this repository's history floor. A repo with no captured AI
             // activity is SKIPPED under the default (nothing to measure).
             let floor = repo_history_floor(pg, &repository_id, &root, baseline).await?;
@@ -377,7 +377,7 @@ pub(super) async fn compute(
             }
             // Dual derivation (I-B): the whole-tree twin (scope=repo, ALL authors,
             // identity=NULL) then one author-filtered row per local git identity
-            // (scope=user, identity=that email — the value the project view pools).
+            // (scope=user, identity=that email — the value the workspace view pools).
             // A checkout with no git identity contributes only the scope=repo twin.
             // The whole-tree twin is the expensive half — a `git log` over ALL
             // authors, and nothing outside the dōjō reads it. Skipped when every
@@ -417,7 +417,7 @@ pub(super) async fn compute(
                     // fabricated 0. A count metric carries no numerator/denominator.
                     if let Some(mid) = churn_rate_id {
                         let no_props = serde_json::json!({});
-                        pg.upsert_project_metric_repo(&MetricRow {
+                        pg.upsert_workspace_metric_repo(&MetricRow {
                             metric_id: &mid,
                             repository_id: &repository_id,
                             scope,
@@ -453,7 +453,7 @@ pub(super) async fn compute(
                         // I-F: pct rows carry props.numerator + props.denominator.
                         let props =
                             serde_json::json!({ "numerator": numerator, "denominator": total });
-                        pg.upsert_project_metric_repo(&MetricRow {
+                        pg.upsert_workspace_metric_repo(&MetricRow {
                             metric_id: &mid,
                             repository_id: &repository_id,
                             scope,
@@ -473,8 +473,8 @@ pub(super) async fn compute(
         }
     }
 
-    // ── rework_density (ratio): PROJECT-level snapshot, primary-repository grain ──
-    // Forward-only: a rework snapshot reflects the CURRENT signal vs current project
+    // ── rework_density (ratio): WORKSPACE-level snapshot, primary-repository grain ──
+    // Forward-only: a rework snapshot reflects the CURRENT signal vs current workspace
     // files and cannot be reconstructed for a past day, so a historical `as_of`
     // (Some(D), D != today) skips it entirely — no fabricated historical snapshot.
     // This is the LAST block, so a `return` here is equivalent to skipping it.
@@ -482,25 +482,24 @@ pub(super) async fn compute(
         if super::is_historical(pg, as_of).await? {
             return Ok(written);
         }
-        // Attribute the PROJECT-level rework snapshot to the project's PRIMARY
+        // Attribute the WORKSPACE-level rework snapshot to the workspace's PRIMARY
         // repository (the repo-grain identity). rework_density has no per-author or
-        // per-repository git derivation — it is a whole-project count — so it is
-        // written ONCE (scope=user, identity=NULL: attributing a project-wide value
+        // per-repository git derivation — it is a whole-workspace count — so it is
+        // written ONCE (scope=user, identity=NULL: attributing a workspace-wide value
         // to a single author would be a fabricated attribution, I-C/I-E). No
         // repository → honest-empty (no row). The former per-module (folder_id-set)
-        // rows are retired (they collide under project_metrics_identity).
-        if let Some(repository_id) = pg.primary_repository_for_project(&project_id).await? {
-            let project_files = pg.churn_project_file_count(&project_id).await?;
-            // 0 project files → no denominator → NO row (a real denominator of 0
+        // rows are retired (they collide under workspace_metrics_identity).
+        if let Some(repository_id) = pg.primary_repository_for_workspace(&workspace_id).await? {
+            let workspace_files = pg.churn_workspace_file_count(&workspace_id).await?;
+            // 0 workspace files → no denominator → NO row (a real denominator of 0
             // would be a fabricated 0/0). 0 rework over real files → a real 0.0.
-            if project_files > 0 {
-                let rework_total = pg.churn_rework_flagged_file_count(&project_id).await?;
+            if workspace_files > 0 {
+                let rework_total = pg.churn_rework_flagged_file_count(&workspace_id).await?;
                 let day = super::today(pg).await?;
-                let value = rework_total as f64 / project_files as f64;
+                let value = rework_total as f64 / workspace_files as f64;
                 // I-F: ratio rows carry props.numerator + props.denominator.
-                let props =
-                    serde_json::json!({ "numerator": rework_total, "denominator": project_files });
-                pg.upsert_project_metric_repo(&MetricRow {
+                let props = serde_json::json!({ "numerator": rework_total, "denominator": workspace_files });
+                pg.upsert_workspace_metric_repo(&MetricRow {
                     metric_id: &mid,
                     repository_id: &repository_id,
                     scope: SCOPE_USER,
@@ -526,9 +525,9 @@ mod tests {
     use super::*;
     use crate::tasks::metrics_scheduler::BaselineHistory;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, git_commit_on_day,
+        cleanup_metrics_fixture, daily_workspace_metric_rows as daily_rows, git_commit_on_day,
         make_ctx, repository_for_folder, seed_detected_pattern, seed_file_node,
-        seed_git_project_folder, seed_metrics_project_folder, seed_repo_ai_start,
+        seed_git_workspace_folder, seed_metrics_workspace_folder, seed_repo_ai_start,
     };
     use sqlx_core::query_as::query_as;
 
@@ -609,14 +608,14 @@ mod tests {
     #[tokio::test]
     async fn churn_git_single_day_as_of_over_seeded_commits() {
         // THE re-sourcing test: churn_rate + churn_concentration come from `git log`
-        // for the project's repository root, computed for a SINGLE historical day D
+        // for the workspace's repository root, computed for a SINGLE historical day D
         // via as_of=Some(D), stamped computed_on=D (mirrors session_outcomes/autonomy).
         // Under repo grain the fixture repo (author test@sensei.test) yields a DUAL
         // derivation: the scope=repo whole-tree twin AND the scope=user author twin.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
 
         // A commit on D (60 days ago, well outside the default 14-day window):
         // a.rs +4 lines, b.rs +2 lines. Line-churn a=4, b=2 (total 6); 2 files.
@@ -639,7 +638,7 @@ mod tests {
         let written = compute(&ctx, &pid.to_string(), Some(d)).await.unwrap();
         assert_eq!(written, 4, "churn_rate + churn_concentration × {{repo, user}} scope for day D");
 
-        // The project read pools scope=user (daily_rows filters scope='user').
+        // The workspace read pools scope=user (daily_rows filters scope='user').
         let daily = daily_rows(pg, &pid).await;
         let rate = daily.iter().find(|r| r.0 == "churn_rate").expect("churn_rate scope=user row");
         assert!((rate.1 - 2.0).abs() < 1e-9, "churn_rate = 2 distinct files changed (a.rs, b.rs)");
@@ -664,8 +663,8 @@ mod tests {
         // computed_on is stamped to the true commit day D (60 days ago); the row is
         // keyed to the resolved repository at scope=user (I-A/I-B).
         let (rate_on_d,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' \
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' \
                 AND m.key = 'churn_rate' AND pm.computed_on = $2",
         )
         .bind(pid)
@@ -682,7 +681,7 @@ mod tests {
         let again = compute(&ctx, &pid.to_string(), Some(d)).await.unwrap();
         assert_eq!(again, 4, "re-running the same day backfills in place");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -705,7 +704,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
 
         let d = (chrono::Utc::now() - chrono::Duration::days(45)).date_naive();
@@ -724,8 +723,8 @@ mod tests {
             String,
         )> = query_as(
             "SELECT pm.scope::text, pm.identity, pm.repository_id, pm.commit_sha, pm.grain::text \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'churn_rate' \
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'churn_rate' \
               ORDER BY pm.scope",
         )
         .bind(pid)
@@ -771,7 +770,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
 
         let d = (chrono::Utc::now() - chrono::Duration::days(30)).date_naive();
         let day = d.format("%Y-%m-%d").to_string();
@@ -807,17 +806,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn churn_non_git_project_writes_no_churn_rows_but_rework_still_computes() {
-        // A project whose repository checkout folder is NOT a real git repo (the
+    async fn churn_non_git_workspace_writes_no_churn_rows_but_rework_still_computes() {
+        // A workspace whose repository checkout folder is NOT a real git repo (the
         // synthetic `/_test/metrics-*` path, still repository-linked by the fixture) →
         // the git churn source misses → NO churn_rate / churn_concentration rows
         // (honest-empty, never a fabricated 0). rework_density is DB-sourced and
         // unaffected — it still computes its real 0.0 over real files, attributed to
-        // the project's primary repository.
+        // the workspace's primary repository.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await; // synthetic, non-git path
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await; // synthetic, non-git path
         for f in ["a.rs", "b.rs", "c.rs"] {
             seed_file_node(pg, &fid, &format!("/_test/metrics-{uniq}/{f}")).await;
         }
@@ -825,7 +824,7 @@ mod tests {
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(
             written, 1,
-            "only the rework_density project row (0.0 over 3 files); no git churn rows"
+            "only the rework_density workspace row (0.0 over 3 files); no git churn rows"
         );
 
         let daily = daily_rows(pg, &pid).await;
@@ -846,44 +845,44 @@ mod tests {
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
-    // ── rework_density (project-level, primary-repository grain) ─────────────
+    // ── rework_density (workspace-level, primary-repository grain) ─────────────
 
     #[tokio::test]
     async fn churn_no_data_writes_zero_rows() {
-        // Never-fabricate: a project with no repository-linked folder, no patterns,
+        // Never-fabricate: a workspace with no repository-linked folder, no patterns,
         // and no files writes NO rows (not a defaulted 0).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
         let pid =
-            pg.create_project(&format!("_test:churn-empty:{uniq}"), None, None).await.unwrap();
+            pg.create_workspace(&format!("_test:churn-empty:{uniq}"), None, None).await.unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no repository / rework / files → zero rows written");
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
-        assert_eq!(total, 0, "no project_metrics rows for an empty project (never fabricated)");
+        assert_eq!(total, 0, "no workspace_metrics rows for an empty workspace (never fabricated)");
 
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
     }
 
     #[tokio::test]
-    async fn churn_rework_density_ratio_and_zero_project_files() {
-        // rework_density = # rework-flagged files ÷ # project files, with exact
-        // props.numerator/denominator, written PROJECT-LEVEL ONLY (attributed to the
-        // primary repository, scope=user) — no per-module rows. The 0-project-files
+    async fn churn_rework_density_ratio_and_zero_workspace_files() {
+        // rework_density = # rework-flagged files ÷ # workspace files, with exact
+        // props.numerator/denominator, written WORKSPACE-LEVEL ONLY (attributed to the
+        // primary repository, scope=user) — no per-module rows. The 0-workspace-files
         // case writes NO row.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
 
-        // ── Project A: 2 rework files over 4 project files → 2/4 = 0.5 ──
+        // ── Workspace A: 2 rework files over 4 workspace files → 2/4 = 0.5 ──
         let uniq_a = uuid::Uuid::new_v4();
-        let (pid_a, fid_a) = seed_metrics_project_folder(pg, &uniq_a).await;
+        let (pid_a, fid_a) = seed_metrics_workspace_folder(pg, &uniq_a).await;
         for f in ["a.rs", "b.rs", "c.rs", "d.rs"] {
             seed_file_node(pg, &fid_a, &format!("/_test/metrics-{uniq_a}/{f}")).await;
         }
@@ -895,22 +894,22 @@ mod tests {
         let written_a = compute(&ctx, &pid_a.to_string(), None).await.unwrap();
         assert_eq!(
             written_a, 1,
-            "one PROJECT-level rework_density row (non-git root → no churn rows; per-module rows retired)"
+            "one WORKSPACE-level rework_density row (non-git root → no churn rows; per-module rows retired)"
         );
 
         let daily_a = daily_rows(pg, &pid_a).await;
         let rd =
-            daily_a.iter().find(|r| r.0 == "rework_density").expect("rework_density project row");
+            daily_a.iter().find(|r| r.0 == "rework_density").expect("rework_density workspace row");
         assert!(
             (rd.1 - 0.5).abs() < 1e-9,
-            "rework_density = 2 rework files / 4 project files = 0.5"
+            "rework_density = 2 rework files / 4 workspace files = 0.5"
         );
         assert_eq!(
             rd.2["numerator"].as_i64(),
             Some(2),
             "numerator = # rework-flagged files (correction-prone excluded)"
         );
-        assert_eq!(rd.2["denominator"].as_i64(), Some(4), "denominator = # project files");
+        assert_eq!(rd.2["denominator"].as_i64(), Some(4), "denominator = # workspace files");
 
         // Repo grain retires the per-module rows. This used to assert
         // `folder_id IS NOT NULL` returned nothing; the column has since been
@@ -918,23 +917,23 @@ mod tests {
         // no per-module column left to write. Asserting on a column that cannot
         // exist would be a test that can never fail.
 
-        // ── Project B: rework flagged but ZERO project files → NO row ──
+        // ── Workspace B: rework flagged but ZERO workspace files → NO row ──
         let uniq_b = uuid::Uuid::new_v4();
-        let (pid_b, fid_b) = seed_metrics_project_folder(pg, &uniq_b).await;
+        let (pid_b, fid_b) = seed_metrics_workspace_folder(pg, &uniq_b).await;
         seed_detected_pattern(pg, &pid_b, Some(&fid_b), "rework: x.rs", true).await;
 
         let written_b = compute(&ctx, &pid_b.to_string(), None).await.unwrap();
         assert_eq!(
             written_b, 0,
-            "0 project files → no denominator → NO rework_density row (never a fabricated 0/0)"
+            "0 workspace files → no denominator → NO rework_density row (never a fabricated 0/0)"
         );
         let (total_b,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid_b)
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
-        assert_eq!(total_b, 0, "no rows at all for the zero-project-files project");
+        assert_eq!(total_b, 0, "no rows at all for the zero-workspace-files workspace");
 
         cleanup_metrics_fixture(pg, &pid_a, Some(&fid_a), &[]).await;
         cleanup_metrics_fixture(pg, &pid_b, Some(&fid_b), &[]).await;
@@ -942,13 +941,13 @@ mod tests {
 
     #[tokio::test]
     async fn churn_rework_density_writes_real_zero() {
-        // A project with REAL project files but ZERO rework patterns → a rework_density
+        // A workspace with REAL workspace files but ZERO rework patterns → a rework_density
         // row IS written with value 0.0 / numerator 0 (a real zero over a real
         // denominator), never a suppressed row.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         for f in ["a.rs", "b.rs", "c.rs"] {
             seed_file_node(pg, &fid, &format!("/_test/metrics-{uniq}/{f}")).await;
         }
@@ -956,7 +955,7 @@ mod tests {
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(
             written, 1,
-            "one PROJECT-level rework_density row (real 0.0); no churn rows on a non-git root"
+            "one WORKSPACE-level rework_density row (real 0.0); no churn rows on a non-git root"
         );
 
         let daily = daily_rows(pg, &pid).await;
@@ -972,7 +971,7 @@ mod tests {
         assert_eq!(
             rd.2["denominator"].as_i64(),
             Some(3),
-            "denominator = 3 project files (real denominator → row written)"
+            "denominator = 3 workspace files (real denominator → row written)"
         );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -981,14 +980,14 @@ mod tests {
     #[tokio::test]
     async fn churn_rework_density_historical_as_of_skips() {
         // Forward-only guard: `rework_density` is a snapshot of the CURRENT rework
-        // signal vs current project files and cannot be reconstructed for a past day,
+        // signal vs current workspace files and cannot be reconstructed for a past day,
         // so a historical `as_of` (Some(D), D != today) writes NO rework_density row —
         // never a fabricated historical snapshot. Seeds ONLY rework data (a non-git
         // root, so no git churn) so the row count isolates rework_density.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         for f in ["a.rs", "b.rs", "c.rs", "d.rs"] {
             seed_file_node(pg, &fid, &format!("/_test/metrics-{uniq}/{f}")).await;
         }
@@ -1003,14 +1002,14 @@ mod tests {
         );
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
         assert_eq!(
             total, 0,
-            "no project_metrics rows for a historical as_of (never a fabricated snapshot)"
+            "no workspace_metrics rows for a historical as_of (never a fabricated snapshot)"
         );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
@@ -1025,7 +1024,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, _repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, _repo) = seed_git_workspace_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
 
         // The fixture seeds one AI-start session at 2000-01-01.
@@ -1059,7 +1058,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
         let root = repo.path().to_string_lossy().to_string();
 
@@ -1141,7 +1140,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
 
         // Replace the fixture's 2000 AI-start with a MID anchor 40 days ago.
         clear_ai_sessions(pg, &fid).await;
@@ -1186,7 +1185,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
         let root = repo.path().to_string_lossy().to_string();
         let sid = format!("_test:enrich:{uniq}");
@@ -1194,7 +1193,7 @@ mod tests {
         // (tool_name, cwd, payload) — an MCP plugin call in the repo, a Bash call, and a builtin.
         let events: [(&str, Option<&str>, serde_json::Value); 3] = [
             (
-                "mcp__plugin_sensei_sensei__get_project_conventions",
+                "mcp__plugin_sensei_sensei__get_workspace_conventions",
                 Some(root.as_str()),
                 serde_json::json!({"tool_input": {"repoId": "sensei"}}),
             ),
@@ -1252,11 +1251,11 @@ mod tests {
             rows.iter().find(|r| r.0 == t).unwrap_or_else(|| panic!("row for {t}")).clone()
         };
 
-        let mcp = by("mcp__plugin_sensei_sensei__get_project_conventions");
+        let mcp = by("mcp__plugin_sensei_sensei__get_workspace_conventions");
         assert_eq!(mcp.2.as_deref(), Some("sensei"), "plugin parsed from mcp__plugin_<plugin>_");
         assert_eq!(
             mcp.3.as_deref(),
-            Some("get_project_conventions"),
+            Some("get_workspace_conventions"),
             "method = segment after final __"
         );
         assert_eq!(mcp.4.as_deref(), Some("mcp"), "tool_kind = mcp");
@@ -1314,8 +1313,8 @@ mod tests {
     // ── rating scales + weighted 0-100 health (SQL views) ───────────────────
 
     #[tokio::test]
-    async fn metric_ratings_and_project_health_score_views() {
-        // The metric_ratings + project_health_score views: each metric's latest pooled
+    async fn metric_ratings_and_workspace_health_score_views() {
+        // The metric_ratings + workspace_health_score views: each metric's latest pooled
         // value → a 0-5 rating via its rating_scale (direction-aware bands), then the
         // weighted 0-100 health. Seed coverage (higher_better, wt 3) at 0.86 → rating 4
         // and maintainability (lower_better, wt 3) at 0.001 → rating 5.
@@ -1323,7 +1322,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, _repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, _repo) = seed_git_workspace_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
         let day = chrono::Utc::now().date_naive();
 
@@ -1340,8 +1339,8 @@ mod tests {
             .get("module_quality")
             .expect("module_quality seeded");
 
-        // ratio metrics pool Σnum/Σden in project_metric_daily → value = num/den.
-        pg.upsert_project_metric_repo(&MetricRow {
+        // ratio metrics pool Σnum/Σden in workspace_metric_daily → value = num/den.
+        pg.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &cov,
             repository_id: &rid,
             scope: "user",
@@ -1355,7 +1354,7 @@ mod tests {
         })
         .await
         .unwrap();
-        pg.upsert_project_metric_repo(&MetricRow {
+        pg.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mq,
             repository_id: &rid,
             scope: "user",
@@ -1371,7 +1370,7 @@ mod tests {
         .unwrap();
 
         let ratings: Vec<(String, Option<i32>)> = query_as(
-            "SELECT metric, rating FROM sensei.metric_ratings WHERE project_id = $1 ORDER BY metric",
+            "SELECT metric, rating FROM sensei.metric_ratings WHERE workspace_id = $1 ORDER BY metric",
         ).bind(pid).fetch_all(pg.pool()).await.unwrap();
         let rating_of = |k: &str| ratings.iter().find(|r| r.0 == k).and_then(|r| r.1);
         assert_eq!(rating_of("coverage"), Some(4), "coverage 0.86 → rating 4 (below 0.90)");
@@ -1382,15 +1381,15 @@ mod tests {
         );
 
         let (health, rated): (i32, i32) = query_as(
-            "SELECT health_score, rated_metrics FROM sensei.project_health_score WHERE project_id = $1",
+            "SELECT health_score, rated_metrics FROM sensei.workspace_health_score WHERE workspace_id = $1",
         ).bind(pid).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(rated, 2, "two rated metrics for this project");
+        assert_eq!(rated, 2, "two rated metrics for this workspace");
         assert_eq!(health, 90, "weighted 0-100 health = round(20 · (3·4 + 3·5)/6) = 90");
 
         // The API read the hero card uses must carry the score AND its weekly
         // history. The card previously fell back to FTR because the composite
         // arrived as a (retired, never-computed) metric row instead of from here.
-        let payload = pg.get_project_health(&pid).await.unwrap();
+        let payload = pg.get_workspace_health(&pid).await.unwrap();
         assert_eq!(payload["health_score"], serde_json::json!(90), "score comes from the view");
         assert_eq!(payload["rated_metrics"], serde_json::json!(2));
         let trend = payload["trend"].as_array().expect("trend is an array, never absent");
@@ -1400,11 +1399,11 @@ mod tests {
         );
         assert!(
             !trend.is_empty(),
-            "a project with rated metrics has at least one weekly point: {trend:?}"
+            "a workspace with rated metrics has at least one weekly point: {trend:?}"
         );
         // Upper bound only — this fixture spans fewer than 12 weeks, so this cannot
         // prove the LIMIT fires. It guards the payload from becoming unbounded as a
-        // project ages (the view keeps every period), and pins the number the hero
+        // workspace ages (the view keeps every period), and pins the number the hero
         // card's "last twelve" label promises.
         assert!(trend.len() <= 12, "the weekly trend is bounded: {} points", trend.len());
 

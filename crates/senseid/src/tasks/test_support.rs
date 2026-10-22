@@ -8,7 +8,7 @@
 //! The `seed_metrics_*` / `cleanup_metrics_fixture` helpers are the shared metric
 //! fixture the per-group compute-handler tests build on (`session_outcomes` and
 //! the churn/quality/autonomy/knowledge/tool groups that copy its template),
-//! so the groups don't each re-implement project/folder/session/turn seeding.
+//! so the groups don't each re-implement workspace/folder/session/turn seeding.
 
 use std::sync::Arc;
 
@@ -50,7 +50,7 @@ impl TestGate {
 
 /// Serialises tests that mutate `inference.corrections` GLOBALLY.
 ///
-/// Two operations on that table are table-wide by design, not per-project:
+/// Two operations on that table are table-wide by design, not per-workspace:
 /// - `delete_corrections_not_in(keep)` deletes every signature outside `keep`,
 ///   so a test passing only its OWN signature wipes every other test's rows.
 /// - `aggregate_corrections` prunes to the signatures it just recomputed, and
@@ -245,20 +245,20 @@ pub(crate) async fn ensure_test_watch_root(pg: &PgStore) {
     .unwrap();
 }
 
-/// Create a project + a git-kind folder wired to it at an EXPLICIT `abs_path`
+/// Create a workspace + a git-kind folder wired to it at an EXPLICIT `abs_path`
 /// under the fixed `/_test` watch root. The generalized core of
-/// [`seed_metrics_project_folder`] (which passes the synthetic `/_test/metrics-*`
-/// path): churn's git tests pass a REAL temp-repo path so `project_root_path`
+/// [`seed_metrics_workspace_folder`] (which passes the synthetic `/_test/metrics-*`
+/// path): churn's git tests pass a REAL temp-repo path so `workspace_root_path`
 /// (the git churn source resolves the repo through it) points at an on-disk repo.
 /// Also seeds a canonical `sensei.repositories` row (repo_key `test/{uniq}`) and
 /// points `folders.repository_id` at it — every metric-fixture folder resolves to a
-/// repository, the repo-grain metric key. Returns `(project_id, folder_id)`.
-pub(crate) async fn seed_project_folder_at(
+/// repository, the repo-grain metric key. Returns `(workspace_id, folder_id)`.
+pub(crate) async fn seed_workspace_folder_at(
     pg: &PgStore,
     uniq: &uuid::Uuid,
     abs_path: &str,
 ) -> (uuid::Uuid, uuid::Uuid) {
-    let pid = pg.create_project(&format!("_test:metrics:{uniq}"), None, None).await.unwrap();
+    let pid = pg.create_workspace(&format!("_test:metrics:{uniq}"), None, None).await.unwrap();
     ensure_test_watch_root(pg).await;
     let name = format!("metrics-{uniq}");
     let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
@@ -293,40 +293,40 @@ pub(crate) async fn seed_project_folder_at(
         .await
         .unwrap();
     // AND THE JUNCTION, through the production primitive. Since #210 membership
-    // lives in `sensei.repositories_in_projects`, and `folder_projects` — which
+    // lives in `sensei.repositories_in_workspaces`, and `folder_workspaces` — which
     // every migrated view resolves through — reads ONLY that. A fixture that
-    // sets `folders.project_id` alone models a state production can no longer
+    // sets `folders.workspace_id` alone models a state production can no longer
     // produce, so the view under test reads nothing and the test asserts
     // against an empty set it mistakes for a real one.
-    pg.link_project_repository(&pid, &rid).await.unwrap();
+    pg.link_workspace_repository(&pid, &rid).await.unwrap();
     (pid, fid)
 }
 
-/// Create a project + a folder wired to it under the fixed `/_test` watch root
+/// Create a workspace + a folder wired to it under the fixed `/_test` watch root
 /// (the same root-id convention the pg_store tests use). Returns
-/// `(project_id, folder_id)`. `uniq` keeps `abs_path` collision-free across tests.
-pub(crate) async fn seed_metrics_project_folder(
+/// `(workspace_id, folder_id)`. `uniq` keeps `abs_path` collision-free across tests.
+pub(crate) async fn seed_metrics_workspace_folder(
     pg: &PgStore,
     uniq: &uuid::Uuid,
 ) -> (uuid::Uuid, uuid::Uuid) {
-    seed_project_folder_at(pg, uniq, &format!("/_test/metrics-{uniq}")).await
+    seed_workspace_folder_at(pg, uniq, &format!("/_test/metrics-{uniq}")).await
 }
 
-/// Create a project + a git-kind folder whose `abs_path` is a REAL on-disk git
+/// Create a workspace + a git-kind folder whose `abs_path` is a REAL on-disk git
 /// repo (a fresh [`tempfile::TempDir`]), returning
-/// `(project_id, folder_id, TempDir)`. The git-sourced churn computer resolves the
-/// repo via `project_root_path`, so churn tests need the folder to point at an
+/// `(workspace_id, folder_id, TempDir)`. The git-sourced churn computer resolves the
+/// repo via `workspace_root_path`, so churn tests need the folder to point at an
 /// actual repo. KEEP the returned `TempDir` bound for the test's duration —
 /// dropping it removes the repo. The repo carries a local `user.name`/`user.email`
 /// so commits succeed with no ambient git identity (CI).
-pub(crate) async fn seed_git_project_folder(
+pub(crate) async fn seed_git_workspace_folder(
     pg: &PgStore,
     uniq: &uuid::Uuid,
 ) -> (uuid::Uuid, uuid::Uuid, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     git_init_repo(dir.path());
     let root = dir.path().to_string_lossy().to_string();
-    let (pid, fid) = seed_project_folder_at(pg, uniq, &root).await;
+    let (pid, fid) = seed_workspace_folder_at(pg, uniq, &root).await;
     // Anchor an early AI-transcript start (2000-01-01) on the repository. The
     // git-cadence metrics (churn/quality) floor at the repository's first AI
     // transcript day by DEFAULT (spec D17, `metrics.baseline_history = off`), so a
@@ -352,7 +352,7 @@ pub(crate) async fn seed_repo_ai_start(
 ) -> uuid::Uuid {
     let started_at: chrono::DateTime<chrono::Utc> = started_at_rfc3339.parse().unwrap();
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO activity.sessions (folder_id, repo_folder_id, project_id, started_at) \
+        "INSERT INTO activity.sessions (folder_id, repo_folder_id, workspace_id, started_at) \
          VALUES ($1, $1, $2, $3) RETURNING id",
     )
     .bind(fid)
@@ -366,10 +366,10 @@ pub(crate) async fn seed_repo_ai_start(
 
 /// Read a folder's resolved `repository_id` — the repo-grain key the fixture seeded
 /// onto it. Panics if the folder has none: a fixture folder always carries one after
-/// [`seed_project_folder_at`] / [`seed_second_repository`], so a NULL means the
+/// [`seed_workspace_folder_at`] / [`seed_second_repository`], so a NULL means the
 /// fixture is broken and should fail loud rather than silently mis-key a metric row.
 /// Tests use it to pass the right `repository_id` to
-/// [`PgStore::upsert_project_metric_repo`] when seeding rows to read back under `_v2`.
+/// [`PgStore::upsert_workspace_metric_repo`] when seeding rows to read back under `_v2`.
 pub(crate) async fn repository_for_folder(pg: &PgStore, folder_id: &uuid::Uuid) -> uuid::Uuid {
     let (rid,): (uuid::Uuid,) =
         sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
@@ -380,24 +380,24 @@ pub(crate) async fn repository_for_folder(pg: &PgStore, folder_id: &uuid::Uuid) 
     rid
 }
 
-/// Seed a SECOND repository into an existing project: a git-kind checkout folder at a
+/// Seed a SECOND repository into an existing workspace: a git-kind checkout folder at a
 /// distinct `abs_path` (`/_test/metrics-{uniq}-b`) with its own `sensei.repositories`
-/// row (repo_key `test/{uniq}-b`), wired to `project_id`. The multi-repo pooling test
-/// uses this so a project spans two repositories and the `project_metric_daily` view
+/// row (repo_key `test/{uniq}-b`), wired to `workspace_id`. The multi-repo pooling test
+/// uses this so a workspace spans two repositories and the `workspace_metric_daily` view
 /// pools their repo-grain rows (Σnum/Σden). Returns `(folder_id2, repository_id2)`.
 /// [`cleanup_metrics_fixture`] deletes the repo row (it walks every folder in the
-/// project); pass `folder_id2` as a fixture `fid` to also clear the folder.
-/// Attach an already-created test repository to a project via a folder.
+/// workspace); pass `folder_id2` as a fixture `fid` to also clear the folder.
+/// Attach an already-created test repository to a workspace via a folder.
 ///
-/// `sensei.project_metrics` derives `project_id` by looking up the repository's
-/// folder, so a repository with none yields NULL and every project-filtered read
+/// `sensei.workspace_metrics` derives `workspace_id` by looking up the repository's
+/// folder, so a repository with none yields NULL and every workspace-filtered read
 /// silently returns nothing — the rows exist but are invisible. Tests that create
 /// a repository inline (rather than through [`seed_bare_repository`]) need this
-/// to be readable by project.
-pub(crate) async fn link_repository_to_project(
+/// to be readable by workspace.
+pub(crate) async fn link_repository_to_workspace(
     pg: &PgStore,
     repository_id: &uuid::Uuid,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     name: &str,
 ) {
     ensure_test_watch_root(pg).await;
@@ -414,29 +414,29 @@ pub(crate) async fn link_repository_to_project(
     .await
     .unwrap();
     // AND THE JUNCTION, through the production primitive — see
-    // `seed_project_folder_at`. `folder_projects` reads only
-    // `repositories_in_projects`, so setting `folders.project_id` alone leaves the
+    // `seed_workspace_folder_at`. `folder_workspaces` reads only
+    // `repositories_in_workspaces`, so setting `folders.workspace_id` alone leaves the
     // view under test with nothing to find.
-    pg.link_project_repository(project_id, repository_id).await.unwrap();
+    pg.link_workspace_repository(workspace_id, repository_id).await.unwrap();
 }
 
 /// A repository for tests that need a valid `repository_id` to hang metric rows
-/// on, LINKED to `project_id` through a folder.
+/// on, LINKED to `workspace_id` through a folder.
 ///
 /// Two constraints make the link mandatory rather than optional:
 ///   * `repository_metrics.repository_id` is NOT NULL with an FK, so a test can
-///     no longer pass a project id (or `None`) where a repository belongs.
+///     no longer pass a workspace id (or `None`) where a repository belongs.
 ///     Several did before the rename; the FK now rejects it.
-///   * `sensei.project_metrics` derives `project_id` by looking up the
-///     repository's folder. A repository with NO folder yields a NULL project_id,
-///     so any read filtered by project finds nothing — the row exists but is
+///   * `sensei.workspace_metrics` derives `workspace_id` by looking up the
+///     repository's folder. A repository with NO folder yields a NULL workspace_id,
+///     so any read filtered by workspace finds nothing — the row exists but is
 ///     invisible, which is the most confusing possible test failure.
 ///
 /// Keyed on `uniq` so parallel tests cannot collide on `repo_key`/`abs_path`, and
 /// upserting so a re-run is idempotent.
 pub(crate) async fn seed_bare_repository(
     pg: &PgStore,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     uniq: &uuid::Uuid,
 ) -> uuid::Uuid {
     ensure_test_watch_root(pg).await;
@@ -461,16 +461,16 @@ pub(crate) async fn seed_bare_repository(
     .await
     .unwrap();
     // AND THE JUNCTION, through the production primitive — see
-    // `seed_project_folder_at`. `folder_projects` reads only
-    // `repositories_in_projects`, so setting `folders.project_id` alone leaves the
+    // `seed_workspace_folder_at`. `folder_workspaces` reads only
+    // `repositories_in_workspaces`, so setting `folders.workspace_id` alone leaves the
     // view under test with nothing to find.
-    pg.link_project_repository(project_id, &rid).await.unwrap();
+    pg.link_workspace_repository(workspace_id, &rid).await.unwrap();
     rid
 }
 
 pub(crate) async fn seed_second_repository(
     pg: &PgStore,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     uniq: &uuid::Uuid,
 ) -> (uuid::Uuid, uuid::Uuid) {
     ensure_test_watch_root(pg).await;
@@ -502,12 +502,12 @@ pub(crate) async fn seed_second_repository(
         .await
         .unwrap();
     // AND THE JUNCTION, through the production primitive. Since #210 membership
-    // lives in `sensei.repositories_in_projects`, and `folder_projects` — which
+    // lives in `sensei.repositories_in_workspaces`, and `folder_workspaces` — which
     // every migrated view resolves through — reads ONLY that. A fixture that
-    // sets `folders.project_id` alone models a state production can no longer
+    // sets `folders.workspace_id` alone models a state production can no longer
     // produce, so the view under test reads nothing and the test asserts
     // against an empty set it mistakes for a real one.
-    pg.link_project_repository(project_id, &rid).await.unwrap();
+    pg.link_workspace_repository(workspace_id, &rid).await.unwrap();
     (fid, rid)
 }
 
@@ -571,7 +571,7 @@ pub(crate) async fn seed_metrics_session(
     started_at: chrono::DateTime<chrono::Utc>,
 ) -> uuid::Uuid {
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO activity.sessions (folder_id, repo_folder_id, project_id, outcome, ftr, corrections, started_at) \
+        "INSERT INTO activity.sessions (folder_id, repo_folder_id, workspace_id, outcome, ftr, corrections, started_at) \
          VALUES ($1, $1, $2, $3::sensei.session_outcome, $4, $5, $6) RETURNING id",
     )
     .bind(fid)
@@ -642,19 +642,19 @@ pub(crate) async fn seed_metrics_turn_ex(
 /// Shared so the churn (5.2) and knowledge (5.3) group tests reuse it.
 pub(crate) async fn seed_detected_pattern(
     pg: &PgStore,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     folder_id: Option<&uuid::Uuid>,
     name: &str,
     is_anti: bool,
 ) -> uuid::Uuid {
-    pg.upsert_pattern(project_id, folder_id, name, is_anti, None, &serde_json::json!([]))
+    pg.upsert_pattern(workspace_id, folder_id, name, is_anti, None, &serde_json::json!([]))
         .await
         .unwrap()
 }
 
-/// Insert one file-kind `sensei.nodes` row — a "project file" for the
-/// `rework_density` denominator (# project files = # `kind = 'file'` nodes in the
-/// project's folders). `file_path` doubles as the node name and must be unique per
+/// Insert one file-kind `sensei.nodes` row — a "workspace file" for the
+/// `rework_density` denominator (# workspace files = # `kind = 'file'` nodes in the
+/// workspace's folders). `file_path` doubles as the node name and must be unique per
 /// folder (governed by `nodes_unique_identity`); re-seeds are idempotent.
 ///
 /// The `files` row comes first (R13/R14): a node's file is a FOREIGN KEY now, and
@@ -670,19 +670,19 @@ pub(crate) async fn seed_file_node(pg: &PgStore, folder_id: &uuid::Uuid, file_pa
 /// defaulted to `now()`) so a test can place a memory inside or outside the
 /// rolling window — memory_promotion windows the numerator on `created_at` (the
 /// stable "learned" timestamp, distinct from `modified_at` which moves on every
-/// reinforcement). Project-attributed via `project_id`; `type`/`title`/`content`
+/// reinforcement). Workspace-attributed via `workspace_id`; `type`/`title`/`content`
 /// are the row's only other NOT-NULL-without-default columns. Cascades on the
-/// project delete, so [`cleanup_metrics_fixture`] clears it.
+/// workspace delete, so [`cleanup_metrics_fixture`] clears it.
 pub(crate) async fn seed_memory(
     pg: &PgStore,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     created_at: chrono::DateTime<chrono::Utc>,
 ) -> uuid::Uuid {
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO sensei.memories (project_id, type, title, content, created_at) \
+        "INSERT INTO sensei.memories (workspace_id, type, title, content, created_at) \
          VALUES ($1, 'decision'::sensei.memory_type, 'test-memory', 'test-content', $2) RETURNING id",
     )
-    .bind(project_id)
+    .bind(workspace_id)
     .bind(created_at)
     .fetch_one(pg.pool())
     .await
@@ -696,12 +696,12 @@ pub(crate) async fn seed_memory(
 /// ([`PgStore::upsert_pattern`], which derives `instance_count` from the
 /// `instances` array length) rather than re-implementing the SQL — so this seeds
 /// an eligible pattern by handing it `instance_count` synthetic instance objects.
-/// Distinct `name`s keep rows apart under `(project_id, name, is_anti_pattern)`.
+/// Distinct `name`s keep rows apart under `(workspace_id, name, is_anti_pattern)`.
 /// Returns the pattern id. Companion to [`seed_detected_pattern`] (which always
 /// seeds `instance_count = 0`, i.e. an INELIGIBLE pattern).
 pub(crate) async fn seed_pattern_with_instances(
     pg: &PgStore,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     folder_id: Option<&uuid::Uuid>,
     name: &str,
     is_anti: bool,
@@ -711,7 +711,7 @@ pub(crate) async fn seed_pattern_with_instances(
         .map(|i| serde_json::json!({ "file": format!("f{i}.rs"), "line": i }))
         .collect();
     pg.upsert_pattern(
-        project_id,
+        workspace_id,
         folder_id,
         name,
         is_anti,
@@ -725,24 +725,24 @@ pub(crate) async fn seed_pattern_with_instances(
 /// Insert one `inference.corrections` row via the production upsert (DRY —
 /// [`PgStore::upsert_correction`]) for the `memory_promotion` denominator. A
 /// correction is a GLOBAL recurrence cluster keyed by `signature` (unique) with a
-/// `count` recurrence tally and a `project_ids` array naming the projects it
-/// appeared in; it is "eligible" for a project when `count >= 3` AND the project
-/// is a member of `project_ids`. `count`/`project_ids` are the two the metric
-/// reads. Returns the correction id. NOTE: corrections have NO project FK
-/// (membership is the array), so they never cascade on a project delete — clear
+/// `count` recurrence tally and a `workspace_ids` array naming the workspaces it
+/// appeared in; it is "eligible" for a workspace when `count >= 3` AND the workspace
+/// is a member of `workspace_ids`. `count`/`workspace_ids` are the two the metric
+/// reads. Returns the correction id. NOTE: corrections have NO workspace FK
+/// (membership is the array), so they never cascade on a workspace delete — clear
 /// them with [`purge_corrections`].
 pub(crate) async fn seed_correction(
     pg: &PgStore,
     signature: &str,
     count: i32,
-    project_ids: &[uuid::Uuid],
+    workspace_ids: &[uuid::Uuid],
 ) -> uuid::Uuid {
     let row = crate::corrections::CorrectionRow {
         signature: signature.to_string(),
         text: "test correction".to_string(),
         suggestion: None,
         count,
-        project_ids: project_ids.to_vec(),
+        workspace_ids: workspace_ids.to_vec(),
         last_seen: chrono::Utc::now(),
         memory_id: None,
         instances: serde_json::json!([]),
@@ -751,8 +751,8 @@ pub(crate) async fn seed_correction(
 }
 
 /// Delete every `inference.corrections` row for the given `signature`s. That
-/// table attributes to projects through a `project_ids` array (NO FK), so it
-/// never cascades on a project delete and must be cleared explicitly. Idempotent
+/// table attributes to workspaces through a `workspace_ids` array (NO FK), so it
+/// never cascades on a workspace delete and must be cleared explicitly. Idempotent
 /// — safe to call at the START of a test (pre-clean against a prior crashed run
 /// that leaked rows) AND at the end. A no-op for an empty slice.
 pub(crate) async fn purge_corrections(pg: &PgStore, signatures: &[&str]) {
@@ -768,7 +768,7 @@ pub(crate) async fn purge_corrections(pg: &PgStore, signatures: &[&str]) {
 }
 
 /// Insert one `activity.sessions` row carrying a `client_session_id` and return its
-/// id — the autonomy (5.4) fixture. `assistant_events` are attributed to a project
+/// id — the autonomy (5.4) fixture. `assistant_events` are attributed to a workspace
 /// via `sessions.client_session_id = assistant_events.session_id`, so an event
 /// needs a session with this id set to be countable. Distinct from
 /// [`seed_metrics_session`], which leaves `client_session_id` NULL (its outcome/ftr
@@ -781,7 +781,7 @@ pub(crate) async fn seed_metrics_client_session(
     started_at: chrono::DateTime<chrono::Utc>,
 ) -> uuid::Uuid {
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO activity.sessions (folder_id, project_id, repo_folder_id, client_session_id, started_at) \
+        "INSERT INTO activity.sessions (folder_id, workspace_id, repo_folder_id, client_session_id, started_at) \
          VALUES ($1, $2, $1, $3, $4) RETURNING id",
     )
     .bind(fid)
@@ -868,15 +868,15 @@ pub(crate) async fn seed_assistant_event_tool(
 /// the computer windows + buckets on. Returns the run id.
 pub(crate) async fn seed_run(
     pg: &PgStore,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     status: &str,
     started_at: chrono::DateTime<chrono::Utc>,
 ) -> uuid::Uuid {
     let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO activity.runs (project_id, status, started_at) \
+        "INSERT INTO activity.runs (workspace_id, status, started_at) \
          VALUES ($1, $2::sensei.run_status, $3) RETURNING id",
     )
-    .bind(project_id)
+    .bind(workspace_id)
     .bind(status)
     .bind(started_at)
     .fetch_one(pg.pool())
@@ -887,7 +887,7 @@ pub(crate) async fn seed_run(
 
 /// Delete every `activity.assistant_events` row for the given `session_id`s. That
 /// table's `session_id` is a plain text client id with NO FK to `sessions`, so it
-/// never cascades on a session/folder/project delete and must be cleared explicitly.
+/// never cascades on a session/folder/workspace delete and must be cleared explicitly.
 /// Idempotent — safe to call at the START of a test (pre-clean against a prior
 /// crashed run that leaked rows) AND at the end. A no-op for an empty slice.
 pub(crate) async fn purge_assistant_events(pg: &PgStore, session_ids: &[&str]) {
@@ -902,17 +902,17 @@ pub(crate) async fn purge_assistant_events(pg: &PgStore, session_ids: &[&str]) {
         .unwrap();
 }
 
-/// Delete every `activity.runs` row for the given `project_id`s (cascading their
-/// `run_events`). `runs.project_id` is `ON DELETE SET NULL`, so a project delete
+/// Delete every `activity.runs` row for the given `workspace_id`s (cascading their
+/// `run_events`). `runs.workspace_id` is `ON DELETE SET NULL`, so a workspace delete
 /// ORPHANS its runs rather than removing them — this must therefore run BEFORE
-/// [`cleanup_metrics_fixture`] deletes the project (afterwards the runs' project_id
+/// [`cleanup_metrics_fixture`] deletes the workspace (afterwards the runs' workspace_id
 /// is NULL and no longer matches). Idempotent; a no-op for an empty slice.
-pub(crate) async fn purge_runs(pg: &PgStore, project_ids: &[&uuid::Uuid]) {
-    if project_ids.is_empty() {
+pub(crate) async fn purge_runs(pg: &PgStore, workspace_ids: &[&uuid::Uuid]) {
+    if workspace_ids.is_empty() {
         return;
     }
-    let ids: Vec<uuid::Uuid> = project_ids.iter().map(|p| **p).collect();
-    sqlx_core::query::query("DELETE FROM activity.runs WHERE project_id = ANY($1)")
+    let ids: Vec<uuid::Uuid> = workspace_ids.iter().map(|p| **p).collect();
+    sqlx_core::query::query("DELETE FROM activity.runs WHERE workspace_id = ANY($1)")
         .bind(&ids)
         .execute(pg.pool())
         .await
@@ -920,7 +920,7 @@ pub(crate) async fn purge_runs(pg: &PgStore, project_ids: &[&uuid::Uuid]) {
 }
 
 /// Delete every `activity.task_executions` row under the given `folder_path`s. That
-/// table is path-keyed with NO FK to the project/folder, so it never cascades and
+/// table is path-keyed with NO FK to the workspace/folder, so it never cascades and
 /// must be cleared explicitly. Idempotent — safe to call at the START of a test
 /// (pre-clean against a prior crashed run that leaked rows) AND at the end. A no-op
 /// for an empty slice.
@@ -936,12 +936,12 @@ pub(crate) async fn purge_task_executions(pg: &PgStore, folder_paths: &[&str]) {
         .unwrap();
 }
 
-/// Remove a metric fixture: the project (cascades its `project_metrics` and
+/// Remove a metric fixture: the workspace (cascades its `workspace_metrics` and
 /// `detected_patterns`) and, when given, the folder (cascades its `sessions` →
 /// `turns` and its `nodes`). `exec_folder_paths` names the `folder_path`s whose
 /// `activity.task_executions` to purge (see [`purge_task_executions`]) — pass `&[]`
 /// for fixtures that seed no executions. Also deletes the `sensei.repositories` rows
-/// seeded onto this project's folders (by [`seed_project_folder_at`] /
+/// seeded onto this workspace's folders (by [`seed_workspace_folder_at`] /
 /// [`seed_second_repository`]) so the unique `repo_key` (`test/{uniq}…`) can't collide
 /// across runs.
 pub(crate) async fn cleanup_metrics_fixture(
@@ -950,20 +950,20 @@ pub(crate) async fn cleanup_metrics_fixture(
     fid: Option<&uuid::Uuid>,
     exec_folder_paths: &[&str],
 ) {
-    // Capture the repositories seeded onto this project's folders BEFORE the project
-    // delete nulls their `project_id` (folders.project_id is ON DELETE SET NULL).
+    // Capture the repositories seeded onto this workspace's folders BEFORE the workspace
+    // delete nulls their `workspace_id` (folders.workspace_id is ON DELETE SET NULL).
     // Covers both the primary folder and any `seed_second_repository`; deleted at the
     // end (folders.repository_id is ON DELETE SET NULL, so the ordering is safe).
     let repo_ids: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
         "SELECT DISTINCT f.repository_id FROM sensei.folders f \
-           JOIN sensei.folder_projects fp ON fp.folder_id = f.id \
-          WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL",
+           JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id \
+          WHERE fp.workspace_id = $1 AND f.repository_id IS NOT NULL",
     )
     .bind(pid)
     .fetch_all(pg.pool())
     .await
     .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(pg.pool())
         .await
@@ -990,14 +990,14 @@ pub(crate) async fn cleanup_metrics_fixture(
 /// metric `key`: `(key, value, props)` ordered by key. The read-back the six
 /// metric compute-handler test modules assert against — was copy-pasted verbatim
 /// into each group's `#[cfg(test)]` module (a qlty duplication finding).
-pub(crate) async fn daily_project_metric_rows(
+pub(crate) async fn daily_workspace_metric_rows(
     pg: &PgStore,
     pid: &uuid::Uuid,
 ) -> Vec<(String, f64, serde_json::Value)> {
     sqlx_core::query_as::query_as(
         "SELECT m.key, pm.value::float8, pm.props \
-           FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-          WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' \
+           FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+          WHERE pm.workspace_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' \
           ORDER BY m.key",
     )
     .bind(pid)
@@ -1008,7 +1008,7 @@ pub(crate) async fn daily_project_metric_rows(
 
 // `module_metric_rows` (per-module folder_id-set rows) was removed with the repo-grain
 // cutover: no computer writes per-module rows anymore (folder_id is not part of the
-// `project_metrics_identity` key), so the helper had no callers.
+// `workspace_metrics_identity` key), so the helper had no callers.
 
 /// Write a node the way production does: the FILE ROW FIRST, then the node.
 ///
@@ -1070,11 +1070,11 @@ pub async fn seed_file(
 /// `repository_id = NULL`, which is a state production never produces —
 /// `write_one_repo` creates the repository and links it on every scan.
 ///
-/// The difference did not matter while `folders.project_id` existed, because a
-/// folder carried its project directly. Since #211 the project is the
-/// REPOSITORY's (`folders.repository_id` → `repositories_in_projects` →
-/// `projects`), so a folder with no repository can hold no project at all:
-/// `set_folder_project` records the props and nothing else, and every scoping
+/// The difference did not matter while `folders.workspace_id` existed, because a
+/// folder carried its workspace directly. Since #211 the workspace is the
+/// REPOSITORY's (`folders.repository_id` → `repositories_in_workspaces` →
+/// `workspaces`), so a folder with no repository can hold no workspace at all:
+/// `set_folder_workspace` records the props and nothing else, and every scoping
 /// read comes back empty.
 ///
 /// Keyless (`remote = None`) on purpose. `upsert_repository` keys on the
@@ -1090,22 +1090,22 @@ pub async fn give_folder_a_repository(
     Ok(repository_id)
 }
 
-/// Put a repo-root folder in a project — the whole chain, in the order a scan
+/// Put a repo-root folder in a workspace — the whole chain, in the order a scan
 /// writes it.
 ///
-/// This is what a fixture used to express by passing `Some(&project_id)` to
+/// This is what a fixture used to express by passing `Some(&workspace_id)` to
 /// `upsert_folder`. That parameter is gone with the column, and the three facts
 /// it used to stand for are now distinct: the folder exists, the folder has a
-/// repository, and the repository belongs to a project. Only the last of those
-/// is membership, and `link_project_repository` is its only writer.
-pub async fn place_folder_in_project(
+/// repository, and the repository belongs to a workspace. Only the last of those
+/// is membership, and `link_workspace_repository` is its only writer.
+pub async fn place_folder_in_workspace(
     pg: &crate::db::pg_store::PgStore,
     folder_id: &uuid::Uuid,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     name: &str,
 ) -> Result<(), String> {
     let repository_id = give_folder_a_repository(pg, folder_id, name).await?;
-    pg.link_project_repository(project_id, &repository_id).await
+    pg.link_workspace_repository(workspace_id, &repository_id).await
 }
 
 /// Register a repo-root folder the way a SCAN does: the folder, its

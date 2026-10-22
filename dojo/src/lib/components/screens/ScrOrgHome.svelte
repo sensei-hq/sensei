@@ -6,39 +6,39 @@
 		NeedsYouBand,
 		ListSection,
 		Btn,
-		ProjectRow,
+		WorkspaceRow,
 		EmptyState
 	} from '$lib/components/kit';
-	import type { KitProject, KitNeed, KitOrgStats } from '$lib/components/kit/types';
+	import type { KitWorkspace, KitNeed, KitOrgStats } from '$lib/components/kit/types';
 	import { type NeedsAction } from '$lib/components/kit/needs';
 
-	// The org-zone home (mockup ScrOrgHome) — the projects in the dōjō's
+	// The org-zone home (mockup ScrOrgHome) — the workspaces in the dōjō's
 	// jurisdiction plus an org "needs a maintainer" band and the jurisdiction stat
-	// row. Renders at /org/[slug]. The stat badges (members · needs · projects)
+	// row. Renders at /org/[slug]. The stat badges (members · needs · workspaces)
 	// summarize the jurisdiction (desktop only — the phone drops the row); the band
 	// is the maintainer's remote control (act inline, nothing routes away); the
-	// list is every project under this dōjō. Presentational: the page supplies the
-	// projects · needs (the open triage queue) · stats; `onOpenProject` bubbles a
-	// row open → the org project preview, `onAct` an inline band action. Degrades to
+	// list is every workspace under this dōjō. Presentational: the page supplies the
+	// workspaces · needs (the open triage queue) · stats; `onOpenWorkspace` bubbles a
+	// row open → the org workspace preview, `onAct` an inline band action. Degrades to
 	// an honest empty state when nothing is in jurisdiction (DJ1).
 	let {
 		orgName,
-		projects = [],
+		workspaces = [],
 		needs = [],
 		needsError = null,
 		stats,
 		resolved,
-		onOpenProject,
+		onOpenWorkspace,
 		onAct
 	}: {
 		orgName: string;
-		projects?: KitProject[];
+		workspaces?: KitWorkspace[];
 		needs?: KitNeed[];
 		/** A failed read of the band's queue — shown, never an empty band. */
 		needsError?: string | null;
 		stats?: KitOrgStats;
 		resolved?: Record<string, string>;
-		onOpenProject?: (p: KitProject) => void;
+		onOpenWorkspace?: (p: KitWorkspace) => void;
 		onAct?: (item: KitNeed, action: NeedsAction) => void;
 	} = $props();
 </script>
@@ -48,7 +48,7 @@
 		<div class="px-4 pt-4 md:px-8 md:pt-8">
 			<SectionHead
 				eyebrow={orgName + ' · jurisdiction'}
-				title={projects.length + ' projects under this dōjō'}
+				title={workspaces.length + ' workspaces under this dōjō'}
 			/>
 		</div>
 	{/snippet}
@@ -71,7 +71,7 @@
 					/>
 					<span class="bg-paper-edge flex-shrink-0" style="width: 1px; height: 34px"></span>
 				{/if}
-				<StatBadge n={stats.projects} label="projects" sub="in flight" />
+				<StatBadge n={stats.workspaces} label="workspaces" sub="in flight" />
 			</div>
 		{/if}
 
@@ -81,17 +81,17 @@
 			<NeedsYouBand items={needs} {resolved} title="Needs a maintainer" {onAct} />
 		{/if}
 
-		<ListSection icon="folder" title="Projects" count={projects.length}>
+		<ListSection icon="folder" title="Workspaces" count={workspaces.length}>
 			{#snippet right()}
 				<Btn size="sm" variant="ghost" icon="tuning-2">By team</Btn>
 			{/snippet}
-			{#if projects.length}
-				{#each projects as p (p.id)}
-					<ProjectRow {p} onopen={onOpenProject} showDojo={false} />
+			{#if workspaces.length}
+				{#each workspaces as p (p.id)}
+					<WorkspaceRow {p} onopen={onOpenWorkspace} showDojo={false} />
 				{/each}
 			{:else}
-				<EmptyState kanji="空" title="No projects in this jurisdiction yet.">
-					Projects appear here once sensei starts watching a repository under this dōjō. Nothing is
+				<EmptyState kanji="空" title="No workspaces in this jurisdiction yet.">
+					Workspaces appear here once sensei starts watching a repository under this dōjō. Nothing is
 					hidden — this is everything the dōjō governs.
 				</EmptyState>
 			{/if}

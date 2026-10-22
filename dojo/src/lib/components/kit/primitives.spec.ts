@@ -6,12 +6,12 @@ import ClassChip from './ClassChip.svelte';
 import RoleTag from './RoleTag.svelte';
 import PhasePill from './PhasePill.svelte';
 import StatBadge from './StatBadge.svelte';
-import ProjectRow from './ProjectRow.svelte';
+import WorkspaceRow from './WorkspaceRow.svelte';
 import MyDojoRow from './MyDojoRow.svelte';
 import ConfidenceBar from './ConfidenceBar.svelte';
 import Spark from './Spark.svelte';
 import Enso from './Enso.svelte';
-import { projects, dojos } from './fixtures';
+import { workspaces, dojos } from './fixtures';
 
 // Render smoke tests for the kit primitives — they mount with a fixture and show
 // the expected content + carry the variant's token class, so a screen built on
@@ -62,20 +62,20 @@ describe('kit primitives render', () => {
 		expect(getByText('this month')).toBeTruthy();
 	});
 
-	it('ProjectRow shows name, repo, classification and needs count', () => {
-		const { getByText } = render(ProjectRow, { p: projects[0] });
+	it('WorkspaceRow shows name, repo, classification and needs count', () => {
+		const { getByText } = render(WorkspaceRow, { p: workspaces[0] });
 		expect(getByText('lumen-auth')).toBeTruthy();
 		expect(getByText('acme/lumen-auth')).toBeTruthy();
 		expect(getByText('company')).toBeTruthy();
 		expect(getByText('notice')).toBeTruthy();
 	});
 
-	it('ProjectRow is one row at every width — phone cells always, table cells at md', () => {
+	it('WorkspaceRow is one row at every width — phone cells always, table cells at md', () => {
 		// Replaces a `compact` prop that rendered a second, near-identical block.
 		// The phone cells (name · repo · needs · phase · lastRun) are unconditional;
 		// the four table-only cells are in the DOM but hidden below md, so CSS — not
 		// a prop — picks the layout.
-		const { getByText, container } = render(ProjectRow, { p: projects[0] });
+		const { getByText, container } = render(WorkspaceRow, { p: workspaces[0] });
 		expect(getByText('lumen-auth')).toBeTruthy();
 		expect(getByText('8m')).toBeTruthy();
 		const row = container.querySelector('button')!;

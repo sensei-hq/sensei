@@ -29,7 +29,7 @@ describe('instruments view', () => {
     expect(heroCopy('playground').tagline).toBe('Sensei · what your instruments can do.');
   });
 
-  it('prefills repoId with the active project, then defaults, then placeholders', () => {
+  it('prefills repoId with the active workspace, then defaults, then placeholders', () => {
     const m = manifest([
       { key: 'repoId', kind: 'text', required: true, label: 'Repo', placeholder: 'sensei' },
       { key: 'limit', kind: 'text', required: false, label: 'Limit', default: '10' },

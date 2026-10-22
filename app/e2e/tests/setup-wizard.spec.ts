@@ -31,23 +31,23 @@ import { mkdirSync, writeFileSync, existsSync } from 'fs';
 
 const EMPTY_CORPUS = '/tmp/sensei-e2e-empty';
 const REAL_CORPUS  = '/tmp/sensei-e2e-corpus';
-const REAL_PROJECT = `${REAL_CORPUS}/sample-app`;
+const REAL_WORKSPACE = `${REAL_CORPUS}/sample-app`;
 
 function createEmptyCorpus(): void {
   if (!existsSync(EMPTY_CORPUS)) mkdirSync(EMPTY_CORPUS, { recursive: true });
 }
 
 function createRealCorpus(): void {
-  if (existsSync(`${REAL_PROJECT}/.git`)) return;
-  mkdirSync(`${REAL_PROJECT}/src`, { recursive: true });
-  writeFileSync(`${REAL_PROJECT}/package.json`, JSON.stringify({
+  if (existsSync(`${REAL_WORKSPACE}/.git`)) return;
+  mkdirSync(`${REAL_WORKSPACE}/src`, { recursive: true });
+  writeFileSync(`${REAL_WORKSPACE}/package.json`, JSON.stringify({
     name: 'sample-app',
     version: '1.0.0',
     dependencies: { 'lodash': '^4.17.21' },
   }, null, 2));
-  writeFileSync(`${REAL_PROJECT}/src/index.ts`,
+  writeFileSync(`${REAL_WORKSPACE}/src/index.ts`,
     `import { cloneDeep } from 'lodash';\nexport const copy = cloneDeep;\n`);
-  const opts = { cwd: REAL_PROJECT, stdio: 'ignore' as const };
+  const opts = { cwd: REAL_WORKSPACE, stdio: 'ignore' as const };
   execFileSync('git', ['init'],                                          opts);
   execFileSync('git', ['config', 'user.email', 'test@sensei.test'],     opts);
   execFileSync('git', ['config', 'user.name',  'Sensei Test'],          opts);

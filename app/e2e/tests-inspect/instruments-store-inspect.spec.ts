@@ -25,9 +25,9 @@ test('instruments shows the daemon reads', async ({ tauriPage }) => {
   // A read-only query with no inputs: the panel shows what the daemon answers.
   const expected = await (await fetch(`${DAEMON_URL}/api/mcp/call`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tool: 'list_projects', params: {} }),
+    body: JSON.stringify({ tool: 'list_workspaces', params: {} }),
   })).json();
-  await tauriPage.evaluate(`document.querySelector('[data-testid="tool-row-list_projects"]')?.click()`);
+  await tauriPage.evaluate(`document.querySelector('[data-testid="tool-row-list_workspaces"]')?.click()`);
   await tauriPage.evaluate(`document.querySelector('[data-testid="tool-execute"]')?.click()`);
   await expect
     .poll(() => tauriPage.evaluate(`document.querySelector('[data-testid="tool-error"]')?.textContent ?? (document.body.textContent.includes('200 ok') ? 'ok' : null)`), { timeout: 30_000 })
@@ -59,6 +59,6 @@ test('instruments shows the daemon reads', async ({ tauriPage }) => {
     .toBe(String(replay.calls.length));
   const rep = (await tauriPage.evaluate(errors)) as number;
 
-  console.log(`\n[inspect] instruments: sensei tools ${tools}, list_projects ${JSON.stringify(expected).length}B shown, sources ${sources}, replay ${session.id.slice(0, 8)} ${replay.calls.length} calls; errors ${[playground, health, rep]}`);
+  console.log(`\n[inspect] instruments: sensei tools ${tools}, list_workspaces ${JSON.stringify(expected).length}B shown, sources ${sources}, replay ${session.id.slice(0, 8)} ${replay.calls.length} calls; errors ${[playground, health, rep]}`);
   expect([playground, health, rep]).toEqual([0, 0, 0]);
 });

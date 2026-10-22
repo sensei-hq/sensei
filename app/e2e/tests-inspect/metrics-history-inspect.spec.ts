@@ -23,9 +23,9 @@ async function setConsent(source: string, consented: boolean) {
 
 test('metrics name the assistants whose history is not read', async ({ tauriPage }) => {
   mkdirSync(DIR, { recursive: true });
-  const projects: { id: string; name: string }[] = await (await fetch(`${DAEMON_URL}/api/projects`)).json();
-  const sensei = projects.find((p) => p.name === 'sensei');
-  test.skip(!sensei, 'no sensei project on this daemon');
+  const workspaces: { id: string; name: string }[] = await (await fetch(`${DAEMON_URL}/api/workspaces`)).json();
+  const sensei = workspaces.find((p) => p.name === 'sensei');
+  test.skip(!sensei, 'no sensei workspace on this daemon');
   const before: { source: string; consented: boolean }[] = await (
     await fetch(`${DAEMON_URL}/api/transcripts/consent`)
   ).json();
@@ -33,7 +33,7 @@ test('metrics name the assistants whose history is not read', async ({ tauriPage
 
   try {
     await setConsent('zed', false);
-    await navigateToScreen(tauriPage, `/project/${sensei!.id}/metrics`, '[data-component="project-shell"]');
+    await navigateToScreen(tauriPage, `/workspace/${sensei!.id}/metrics`, '[data-component="workspace-shell"]');
     await expect(tauriPage.locator(NOTICE)).toBeVisible({ timeout: 20_000 });
     const text = await tauriPage.locator(NOTICE).innerText();
     console.log(`\n[inspect] metrics notice: ${text}`);
@@ -47,7 +47,7 @@ test('metrics name the assistants whose history is not read', async ({ tauriPage
       // Back through Settings, as a person would after switching it on — a load
       // only re-runs on a route change.
       await navigateToScreen(tauriPage, '/settings/assistants', '[data-testid="transcript-consent"]');
-      await navigateToScreen(tauriPage, `/project/${sensei!.id}/metrics`, '[data-component="project-shell"]');
+      await navigateToScreen(tauriPage, `/workspace/${sensei!.id}/metrics`, '[data-component="workspace-shell"]');
       await new Promise((r) => setTimeout(r, 2000));
       expect(await tauriPage.locator(NOTICE).count(), 'no notice when every assistant is read').toBe(0);
     }

@@ -526,14 +526,14 @@ pub struct PushableMetric {
 /// elected). The two answer different questions and stopped having the same answer
 /// in `docs/spec/dojo/daemon-sync.md` §8a, so the type is named for what it
 /// carries rather than for either gate.
-/// One offered repository as read: `(repo_key, remote_url, name, project slug,
-/// project name)`.
+/// One offered repository as read: `(repo_key, remote_url, name, workspace slug,
+/// workspace name)`.
 type OfferedRow = (String, Option<String>, String, Option<String>, Option<String>);
 
-/// A sensei project as the dōjō knows it: the project-scope namespace slug and
-/// the project's name — the same pair a relay run sends.
+/// A sensei workspace as the dōjō knows it: the workspace-scope namespace slug and
+/// the workspace's name — the same pair a relay run sends.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OfferedProject {
+pub struct OfferedWorkspace {
     pub slug: String,
     pub name: String,
 }
@@ -548,9 +548,9 @@ pub struct OfferedRepo {
     pub remote_url: Option<String>,
     /// Display name — typically the repository basename.
     pub name: String,
-    /// Its sensei project, named as a relay run names it (#299) — offered only
-    /// when the repository is in exactly ONE project; two is never a guess.
-    pub project: Option<OfferedProject>,
+    /// Its sensei workspace, named as a relay run names it (#299) — offered only
+    /// when the repository is in exactly ONE workspace; two is never a guess.
+    pub workspace: Option<OfferedWorkspace>,
 }
 
 impl PgStore {
@@ -679,7 +679,7 @@ impl PgStore {
         predicate: &str,
         limit: i64,
     ) -> Result<Vec<OfferedRepo>, String> {
-        // The project: counted by PROJECT, not by namespace — two projects of
+        // The workspace: counted by WORKSPACE, not by namespace — two workspaces of
         // which only one has a namespace are still two, and still not a guess.
         let rows: Vec<OfferedRow> = sqlx_core::query_as::query_as(&format!(
             "SELECT r.repo_key, r.remote_url, r.name, pj.slug, pj.name \
@@ -687,15 +687,15 @@ impl PgStore {
                    LEFT JOIN LATERAL ( \
                         SELECT CASE WHEN count(DISTINCT p.id) = 1 THEN max(n.slug) END AS slug, \
                                CASE WHEN count(DISTINCT p.id) = 1 THEN max(p.name) END AS name \
-                          FROM sensei.repositories_in_projects rip \
-                          JOIN sensei.projects p ON p.id = rip.project_id \
+                          FROM sensei.repositories_in_workspaces rip \
+                          JOIN sensei.workspaces p ON p.id = rip.workspace_id \
                           LEFT {join} \
                          WHERE rip.repository_id = r.id \
                    ) pj ON true \
                   WHERE {predicate} \
                   ORDER BY (r.tenant_id IS NULL) DESC, r.modified_at DESC, r.repo_key \
                   LIMIT $1",
-            join = super::PROJECT_NAMESPACE_JOIN
+            join = super::WORKSPACE_NAMESPACE_JOIN
         ))
         .bind(limit)
         .fetch_all(&self.pool)
@@ -703,23 +703,25 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(repo_key, remote_url, name, slug, project_name)| OfferedRepo {
+            .map(|(repo_key, remote_url, name, slug, workspace_name)| OfferedRepo {
                 repo_key,
                 remote_url,
                 name,
-                project: slug.zip(project_name).map(|(slug, name)| OfferedProject { slug, name }),
+                workspace: slug
+                    .zip(workspace_name)
+                    .map(|(slug, name)| OfferedWorkspace { slug, name }),
             })
             .collect())
     }
 }
 
 #[cfg(test)]
-mod offered_project_tests {
+mod offered_workspace_tests {
     use super::*;
 
-    // #299: the sync files a repository under its sensei project. The project
+    // #299: the sync files a repository under its sensei workspace. The workspace
     // offered is the SAME (slug, name) a relay run sends, and only when the
-    // repository is in exactly one project — never a guess between two.
+    // repository is in exactly one workspace — never a guess between two.
     async fn exec(pg: &PgStore, sql: &str, args: &[&str]) {
         let mut q = sqlx_core::query::query(sql);
         for a in args {
@@ -729,7 +731,7 @@ mod offered_project_tests {
     }
 
     #[tokio::test]
-    async fn a_repository_in_exactly_one_project_offers_that_project() {
+    async fn a_repository_in_exactly_one_workspace_offers_that_workspace() {
         let Ok(pg) = PgStore::connect_test().await else { return };
         let tag = uuid::Uuid::new_v4().simple().to_string();
         let (one, two, none) = (
@@ -743,16 +745,16 @@ mod offered_project_tests {
                 .await;
         }
         for name in [&pa, &pb] {
-            exec(&pg, "INSERT INTO sensei.projects (name) VALUES ($1)", &[name]).await;
+            exec(&pg, "INSERT INTO sensei.workspaces (name) VALUES ($1)", &[name]).await;
             exec(
                 &pg,
-                "INSERT INTO sensei.namespaces (scope_key, name, slug) VALUES ('project', $1, $1 || '-slug')",
+                "INSERT INTO sensei.namespaces (scope_key, name, slug) VALUES ('workspace', $1, $1 || '-slug')",
                 &[name],
             )
             .await;
         }
-        let link = "INSERT INTO sensei.repositories_in_projects (project_id, repository_id) \
-                    SELECT p.id, r.id FROM sensei.projects p, sensei.repositories r \
+        let link = "INSERT INTO sensei.repositories_in_workspaces (workspace_id, repository_id) \
+                    SELECT p.id, r.id FROM sensei.workspaces p, sensei.repositories r \
                      WHERE p.name = $1 AND r.repo_key = $2";
         exec(&pg, link, &[&pa, &one]).await;
         exec(&pg, link, &[&pa, &two]).await;
@@ -761,11 +763,11 @@ mod offered_project_tests {
         let offered = pg.offerable_repositories(100_000).await.unwrap();
         let find = |k: &str| offered.iter().find(|r| r.repo_key == k).cloned().expect("offered");
         assert_eq!(
-            find(&one).project,
-            Some(OfferedProject { slug: format!("{pa}-slug"), name: pa.clone() })
+            find(&one).workspace,
+            Some(OfferedWorkspace { slug: format!("{pa}-slug"), name: pa.clone() })
         );
-        assert_eq!(find(&two).project, None, "two projects: never a guess");
-        assert_eq!(find(&none).project, None);
+        assert_eq!(find(&two).workspace, None, "two workspaces: never a guess");
+        assert_eq!(find(&none).workspace, None);
 
         for key in [&one, &two, &none] {
             exec(&pg, "DELETE FROM sensei.repositories WHERE repo_key = $1", &[key]).await;
@@ -773,11 +775,11 @@ mod offered_project_tests {
         for name in [&pa, &pb] {
             exec(
                 &pg,
-                "DELETE FROM sensei.namespaces WHERE scope_key = 'project' AND name = $1",
+                "DELETE FROM sensei.namespaces WHERE scope_key = 'workspace' AND name = $1",
                 &[name],
             )
             .await;
-            exec(&pg, "DELETE FROM sensei.projects WHERE name = $1", &[name]).await;
+            exec(&pg, "DELETE FROM sensei.workspaces WHERE name = $1", &[name]).await;
         }
     }
 }

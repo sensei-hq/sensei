@@ -9,7 +9,7 @@
  * Rail layout mirrors docs/mockups/Sensei/lib/observatory.jsx (~L247-323).
  */
 
-import { PROJECT_ICON } from "./projects/buckets";
+import { WORKSPACE_ICON } from "./workspaces/buckets";
 
 /** A navigable rail entry. `value` mirrors `href` so List's value-match
  * (`proxy.value === value`) highlights the active route. */
@@ -40,8 +40,8 @@ export type NavEntry = NavLink | NavGroup | NavSeparator;
 
 export interface NavOptions {
   /** Focus mode collapses the rail to anchors + "Needs you". */
-  /** Live project count for the Projects badge (from `appState.projectCount`). */
-  projectCount?: number;
+  /** Live workspace count for the Workspaces badge (from `appState.workspaceCount`). */
+  workspaceCount?: number;
 }
 
 const link = (
@@ -55,7 +55,7 @@ const link = (
 // Badge counts and the Impact alert were hardcoded MOCK placeholders — a
 // fabricated "6 insights / 3 impact / alert" that lied about pending work when
 // nothing was pending (the #109 fabrication audit). Removed until wired to real
-// daemon counts. The only live badge is Projects (`projectCount` from app state);
+// daemon counts. The only live badge is Workspaces (`workspaceCount` from app state);
 // each other rail entry shows its count on its own screen, honestly.
 
 /**
@@ -70,13 +70,13 @@ const link = (
  * hover/focus rule is not guarded against `[data-selected]`, and is more
  * specific, so focusing the chosen segment erases its own highlight).
  */
-export function buildNavItems({ projectCount }: NavOptions = {}): NavEntry[] {
+export function buildNavItems({ workspaceCount }: NavOptions = {}): NavEntry[] {
   const entries: NavEntry[] = [
     // Anchors — where every day starts (top-level).
-    // Intake (the front door) lives in the project window now — a chunk of work
-    // always starts IN a project, so it's a per-project section, not observatory-wide.
+    // Intake (the front door) lives in the workspace window now — a chunk of work
+    // always starts IN a workspace, so it's a per-workspace section, not observatory-wide.
     link("家", "i-solar-home-smile-bold-duotone", "Today", "/"),
-    link("場", PROJECT_ICON, "Projects", "/projects", { badge: projectCount }),
+    link("場", WORKSPACE_ICON, "Workspaces", "/workspaces", { badge: workspaceCount }),
     // Needs you — the daily payoff: everything with a pending decision.
     {
       text: "Needs you",
@@ -131,8 +131,8 @@ function allHrefs(): string[] {
 
 /**
  * Which rail href should be highlighted for `pathname`. Exact match wins;
- * otherwise the longest non-root href that is a path prefix (so `/projects/123`
- * highlights Projects). `/` (Today) only matches exactly. Empty string when
+ * otherwise the longest non-root href that is a path prefix (so `/workspaces/123`
+ * highlights Workspaces). `/` (Today) only matches exactly. Empty string when
  * nothing matches.
  */
 export function resolveActiveHref(pathname: string): string {

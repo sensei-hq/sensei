@@ -4,13 +4,13 @@
 	import type { InviteState, InviteAccess, InviteKind } from '$lib/invite-state.svelte';
 
 	// The admin invite (#307 A3, D8). A member joins at a role; a viewer is not a
-	// member — they read only the projects an admin then grants them. Once the
+	// member — they read only the workspaces an admin then grants them. Once the
 	// dōjō issues the invite, the accept link is shown for the admin to share.
 	let { invite }: { invite: InviteState } = $props();
 
 	const ACCESS_OPTS = [
 		{ label: 'Member', value: 'member', description: 'Joins the dōjō at a role' },
-		{ label: 'Viewer', value: 'viewer', description: 'Reads only the projects you grant' }
+		{ label: 'Viewer', value: 'viewer', description: 'Reads only the workspaces you grant' }
 	];
 	const ROLE_OPTS = MEMBER_ROLES.map((r) => ({ label: r, value: r }));
 	const KIND_OPTS = MEMBERSHIP_KINDS.map((k) => ({ label: k, value: k }));

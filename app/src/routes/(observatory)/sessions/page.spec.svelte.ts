@@ -19,14 +19,14 @@ describe('Sessions /+page — a failed read', () => {
   });
 });
 
-// #293: the Observatory's totals line names how many projects the week spans.
+// #293: the Observatory's totals line names how many workspaces the week spans.
 describe('Sessions /+page — totals', () => {
-  it('counts sessions across projects', () => {
+  it('counts sessions across workspaces', () => {
     const at = new Date().toISOString();
-    const row = (id: string, project: string) => ({ id, project, task: id, summary: null, outcome: 'completed', ftr: true, turns: 3, corrections: 0, startedAt: at, completedAt: null, agent: 'claude' });
+    const row = (id: string, workspace: string) => ({ id, workspace, task: id, summary: null, outcome: 'completed', ftr: true, turns: 3, corrections: 0, startedAt: at, completedAt: null, agent: 'claude' });
     const m = mountComponent(Page, { data: { sessions: [row('a', 'alpha'), row('b', 'beta')], range: '7d', error: null } as unknown as PageData });
     cleanup.push(m.destroy);
     const totals = m.container.querySelector('[data-testid="quality-tally"]')?.parentElement?.textContent ?? '';
-    expect(totals).toMatch(/2\s+sessions\s+across\s+2\s+projects/);
+    expect(totals).toMatch(/2\s+sessions\s+across\s+2\s+workspaces/);
   });
 });

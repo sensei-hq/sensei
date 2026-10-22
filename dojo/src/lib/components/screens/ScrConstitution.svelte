@@ -7,7 +7,7 @@
 	// Your constitution (mockup ScrConstitution) — the personal-zone governance
 	// screen. Your stance dials (autonomy · sharing · review) over a three-up
 	// grid, then your effective standing constitution: the personal + stack
-	// rungs that apply to every project you touch. A "Rule packs →" link routes
+	// rungs that apply to every workspace you touch. A "Rule packs →" link routes
 	// to the adoptable bundles. Presentational: the page supplies the stance +
 	// ladder (kit fixtures this chunk); the dials forward `onStance(id, value)`
 	// and the packs link fires `onGoPacks` — real /v1 wiring lands later.
@@ -52,7 +52,7 @@
 				<span class="text-ink text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
 					Your effective constitution
 				</span>
-				<span class="mono text-ink-mute text-xs">— personal + stack · every project you touch</span>
+				<span class="mono text-ink-mute text-xs">— personal + stack · every workspace you touch</span>
 			</div>
 			<div class="flex flex-col gap-3">
 				{#each rungs as rung (rung.id)}

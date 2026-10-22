@@ -5,7 +5,7 @@
   // a negative verdict) a suggested revision. There is ONE verdict, not an
   // N-model vote, so this shows no fabricated consensus tally or per-model
   // roles/notes (the #109 fabrication audit). Shared by the observatory-wide
-  // Impact screen and the project-scoped Impact tab.
+  // Impact screen and the workspace-scoped Impact tab.
   import type { ImpactReasoning, VerdictTone } from '$lib/impact.js';
 
   let { reasoning, tone = 'ink' }: {

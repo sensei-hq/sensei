@@ -29,6 +29,11 @@ begin
     insert into dojo.workspace_viewers (workspace_id, principal_id, granted_by)
     values (p_workspace, p_principal, dojo.current_principal_id())
     on conflict (workspace_id, principal_id) do nothing;
+    if found then
+        perform dojo.append_audit_event(
+            (select tenant_id from dojo.workspaces where id = p_workspace), dojo.current_principal_id(),
+            'workspace_view_granted', jsonb_build_object('workspace_id', p_workspace, 'principal_id', p_principal));
+    end if;
 end;
 $$;
 

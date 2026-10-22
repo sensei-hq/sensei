@@ -3,7 +3,7 @@
 // the components against the exact shapes the screens will bind to.
 
 import type {
-	KitProject,
+	KitWorkspace,
 	KitDojo,
 	KitMe,
 	KitOrg,
@@ -49,7 +49,7 @@ export const dojos: KitDojo[] = [
 		role: 'admin',
 		route: 'sensei-hq.com/acme',
 		members: 48,
-		projects: 9,
+		workspaces: 9,
 		needs: 4
 	},
 	{
@@ -60,7 +60,7 @@ export const dojos: KitDojo[] = [
 		role: 'lead',
 		route: 'sensei-hq.com/globex',
 		members: 12,
-		projects: 3,
+		workspaces: 3,
 		needs: 2
 	},
 	{
@@ -71,7 +71,7 @@ export const dojos: KitDojo[] = [
 		role: 'contributor',
 		route: 'sensei-hq.com/rust-guild',
 		members: 340,
-		projects: 18,
+		workspaces: 18,
 		needs: 0
 	}
 ];
@@ -85,7 +85,7 @@ export const org: KitOrg = {
 	route: 'sensei-hq.com/acme'
 };
 
-export const projects: KitProject[] = [
+export const workspaces: KitWorkspace[] = [
 	{
 		id: 'auth',
 		name: 'lumen-auth',
@@ -140,7 +140,7 @@ export const nav: KitNavGroup[] = [
 	{
 		group: 'Me',
 		items: [
-			{ id: 'projects', icon: 'folder', label: 'Projects' },
+			{ id: 'workspaces', icon: 'folder', label: 'Workspaces' },
 			{ id: 'contributions', kanji: '共', label: 'Contributions' }
 		]
 	}
@@ -148,7 +148,7 @@ export const nav: KitNavGroup[] = [
 
 export const tabs: KitNavItem[] = [
 	{ id: 'today', kanji: '今', label: 'Today', badge: 4 },
-	{ id: 'projects', icon: 'folder', label: 'Projects' },
+	{ id: 'workspaces', icon: 'folder', label: 'Workspaces' },
 	{ id: 'runs', icon: 'eye', label: 'Runs' }
 ];
 
@@ -160,7 +160,7 @@ export const ladder: KitLadderRung[] = [
 		kanji: '社',
 		scope: 'Company',
 		name: 'Acme Corp',
-		caption: 'your employer · every project',
+		caption: 'your employer · every workspace',
 		tone: 'ink',
 		rules: [
 			{ kanji: '守', text: 'No secrets in source — vault only, never .env in git', hard: true },
@@ -186,7 +186,7 @@ export const ladder: KitLadderRung[] = [
 		kanji: '己',
 		scope: 'Personal',
 		name: 'Rin Saito',
-		caption: 'your standing preferences · every project',
+		caption: 'your standing preferences · every workspace',
 		tone: 'ink',
 		rules: [
 			{ kanji: '己', text: 'Explain the plan before editing more than three files' },
@@ -212,8 +212,8 @@ export const conflicts: KitConflict[] = [
 		id: 'cf1',
 		topic: 'retry behaviour on money-moving calls',
 		loser: { level: 'Company', text: 'retry freely on transient failure' },
-		winner: { level: 'Project', text: 'idempotency key required before retry' },
-		why: 'More specific scope refines the broader one — Project > Company.',
+		winner: { level: 'Workspace', text: 'idempotency key required before retry' },
+		why: 'More specific scope refines the broader one — Workspace > Company.',
 		locked: false
 	},
 	{
@@ -649,15 +649,15 @@ export const decisions: KitDecision[] = [
 		id: 'd1',
 		project: 'globex-portal',
 		title: 'adopt ‘verify webhook signature’ as a client guard',
-		options: ['adopt to Client rung', 'keep as project note', 'decline'],
+		options: ['adopt to Client rung', 'keep as workspace note', 'decline'],
 		context: '4 sessions · dereferenced · confidence 0.91',
 		age: '1h'
 	},
 	{
 		id: 'd2',
 		project: 'lumen-auth',
-		title: 'promote ‘idempotency key’ from Project to Company',
-		options: ['promote to Company', 'keep at Project', 'decline'],
+		title: 'promote ‘idempotency key’ from Workspace to Company',
+		options: ['promote to Company', 'keep at Workspace', 'decline'],
 		context: 'adopted in 6 repos · no conflicts',
 		age: '5h'
 	}
@@ -672,7 +672,7 @@ export const chat: KitChatTurn[] = [
 	},
 	{
 		who: 'rin',
-		text: 'Yes. And add the integration test the project rung asks for.',
+		text: 'Yes. And add the integration test the workspace rung asks for.',
 		when: '36m'
 	},
 	{
@@ -686,10 +686,10 @@ export const chat: KitChatTurn[] = [
 
 // ── Org context ──────────────────────────────────────────────────────────────
 
-/** A project in a dōjō's jurisdiction, before the org-list mapping (dojo2-data
- *  `orgProjects[slug][]`). The team + maintainers + weekly-run cadence are the
- *  raw org-scoped fields the mockup folds into a `KitProject`. */
-interface OrgProjectSeed {
+/** A workspace in a dōjō's jurisdiction, before the org-list mapping (the
+ *  dojo2-data per-org list). The team + maintainers + weekly-run cadence are the
+ *  raw org-scoped fields the mockup folds into a `KitWorkspace`. */
+interface OrgWorkspaceSeed {
 	id: string;
 	kanji: string;
 	name: string;
@@ -701,10 +701,10 @@ interface OrgProjectSeed {
 	needs: number;
 }
 
-// Projects under a dōjō's jurisdiction, keyed by slug (dojo2-data `orgProjects`).
+// Workspaces under a dōjō's jurisdiction, keyed by slug (the dojo2-data per-org list).
 // Only `acme` is authored; an unknown slug returns empty (no fake fallback) so a
 // real org route renders honestly until its own `/v1` data is wired.
-const orgProjectSeeds: Record<string, OrgProjectSeed[]> = {
+const orgWorkspaceSeeds: Record<string, OrgWorkspaceSeed[]> = {
 	acme: [
 		{
 			id: 'auth',
@@ -753,11 +753,11 @@ const orgProjectSeeds: Record<string, OrgProjectSeed[]> = {
 	]
 };
 
-/** The projects in a dōjō's jurisdiction as `KitProject` rows (mockup mapping:
+/** The workspaces in a dōjō's jurisdiction as `KitWorkspace` rows (mockup mapping:
  *  `repo = slug/name`, `note = team · N maintainers`, `lastRun = N/wk`). An
  *  unknown slug returns an empty list. */
-export function orgProjectsFor(slug: string): KitProject[] {
-	const seeds = orgProjectSeeds[slug] ?? [];
+export function orgWorkspacesFor(slug: string): KitWorkspace[] {
+	const seeds = orgWorkspaceSeeds[slug] ?? [];
 	return seeds.map((p) => ({
 		id: p.id,
 		name: p.name,
@@ -775,7 +775,7 @@ export function orgProjectsFor(slug: string): KitProject[] {
 // The dōjō's OWN authored constitution, by section (dojo2-data
 // `orgConstitution`). A dōjō authors rules at the scopes it owns: company-wide,
 // per team, per stack (stacks also adopt rule packs). This is NOT the resolution
-// ladder — that only appears at project-preview time. Keyed by slug; only `acme`
+// ladder — that only appears at workspace-preview time. Keyed by slug; only `acme`
 // is authored, and an unknown slug returns empty (no fake fallback).
 const orgConstitutions: Record<string, KitConstitutionSection[]> = {
 	acme: [
@@ -784,7 +784,7 @@ const orgConstitutions: Record<string, KitConstitutionSection[]> = {
 			kanji: '社',
 			scope: 'Company-wide',
 			group: 'Company',
-			caption: 'every project in the dōjō',
+			caption: 'every workspace in the dōjō',
 			rules: [
 				{ kanji: '守', text: 'No secrets in source — vault only, never .env in git', hard: true },
 				{ kanji: '守', text: 'Never log tokens or PII, even at debug level', hard: true },
@@ -943,7 +943,7 @@ const candidateDetail: KitCandidateDetail = {
 	],
 	conflict: {
 		loser: 'Company · retry freely on transient failure',
-		winner: 'Project · idempotency key required'
+		winner: 'Workspace · idempotency key required'
 	},
 	scopes: ['Company', 'Team · Payments', 'Stack · Node']
 };
@@ -976,7 +976,7 @@ const approvals: Record<string, KitApproval[]> = {
 		{
 			id: 'a2',
 			kanji: '紋',
-			title: 'Promote idempotency key from Project to Company',
+			title: 'Promote idempotency key from Workspace to Company',
 			scope: 'Company',
 			first: 'Marco Diaz',
 			when: '5h',
@@ -1285,7 +1285,7 @@ export const billing: KitBilling = {
 			lines: [
 				'Public / open-source or personal solo dōjō',
 				'Unlimited members · full governance authoring',
-				'Relay for your own projects — watch · approve · decide · chat',
+				'Relay for your own workspaces — watch · approve · decide · chat',
 				'Fair use: 1 active machine · standard realtime'
 			]
 		},
@@ -1319,7 +1319,7 @@ export const billing: KitBilling = {
 		}
 	],
 	relayRows: [
-		{ label: 'Relay on your own projects — watch · approve · decide · chat', free: true },
+		{ label: 'Relay on your own workspaces — watch · approve · decide · chat', free: true },
 		{ label: 'One active machine · standard realtime · native push', free: true },
 		{ label: "Shared team inbox & queue · presence (who's handling this)", free: false },
 		{ label: 'Higher concurrency · priority realtime · approval audit trail', free: false }

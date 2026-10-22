@@ -25,7 +25,7 @@ Grouped by what the assistant needs:
 
 | Group | Tools | State |
 |---|---|---|
-| **Code navigation** | `search`, `get_callers`, `get_callees`, `get_project_summary`, `get_project_conventions`, `get_duplicates`, `get_communities` | mostly **works** (clean post-#101); two bugs ↓ |
+| **Code navigation** | `search`, `get_callers`, `get_callees`, `get_workspace_summary`, `get_workspace_conventions`, `get_duplicates`, `get_communities` | mostly **works** (clean post-#101); two bugs ↓ |
 | **Patterns / rules** | `get_patterns`, `get_pattern_for`, `match_pattern`, `get_rules`, `get_commands` | `get_patterns` empty (tagger unrun) |
 | **Context** | `get_layered_context`, (spec: `context_pack`) | layered context works; `context_pack` **unbuilt** |
 | **Libraries** | `get_lib_docs`, `search_lib_docs`, `add_library` | works (text-match, not semantic) |

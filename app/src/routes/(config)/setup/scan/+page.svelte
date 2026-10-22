@@ -3,7 +3,7 @@
     import { onMount } from "svelte";
     import { scanState } from "$lib/scan-state.svelte.js";
 
-    const projects = scanState.projects;
+    const workspaces = scanState.workspaces;
     const activities = scanState.activities;
 
     // The scan is owned by this stage. Auto-engage on mount so the page
@@ -66,7 +66,7 @@
         <div
             class="grid grid-cols-4 gap-4 mb-6 pb-6 border-b border-paper-edge"
         >
-            {#each [{ value: scanState.rootCount, label: "ROOTS" }, { value: activities.discovered, label: "DISCOVERED" }, { value: projects.pendingFolders, label: "QUEUED" }, { value: projects.readyFolders, label: "PROCESSED" }] as stat}
+            {#each [{ value: scanState.rootCount, label: "ROOTS" }, { value: activities.discovered, label: "DISCOVERED" }, { value: workspaces.pendingFolders, label: "QUEUED" }, { value: workspaces.readyFolders, label: "PROCESSED" }] as stat}
                 <div class="text-center">
                     <div class="display text-3xl leading-tight">
                         {stat.value}
@@ -79,10 +79,10 @@
         </div>
 
         <div class="grid grid-cols-[1fr_340px] gap-6">
-            <!-- Left: Project cards -->
+            <!-- Left: Workspace cards -->
             <div class="flex flex-col gap-4">
-                {#each projects.sortedItems as proj (proj.id)}
-                    {@const path = projects.projectPath(proj)}
+                {#each workspaces.sortedItems as proj (proj.id)}
+                    {@const path = workspaces.workspacePath(proj)}
                     {@const folderCount = proj.folders.length}
                     {@const readyCount = proj.folders.filter(
                         (f) => f.status === "indexed",
@@ -158,9 +158,9 @@
                     </div>
                 {/each}
 
-                {#if projects.items.length === 0 && scanState.started}
+                {#if workspaces.items.length === 0 && scanState.started}
                     <div class="text-sm text-ink-soft p-6 text-center">
-                        Discovering projects...
+                        Discovering workspaces...
                     </div>
                 {/if}
             </div>
@@ -180,11 +180,11 @@
                     <div class="flex flex-col gap-3" data-testid="scan-summary">
                         <div class="flex justify-between text-sm">
                             <span class="text-ink-mute">Folders scanned</span>
-                            <span class="font-mono">{projects.readyFolders}</span>
+                            <span class="font-mono">{workspaces.readyFolders}</span>
                         </div>
                         <div class="flex justify-between text-sm">
                             <span class="text-ink-mute">Files indexed</span>
-                            <span class="font-mono">{projects.completedFiles.toLocaleString()}</span>
+                            <span class="font-mono">{workspaces.completedFiles.toLocaleString()}</span>
                         </div>
                         <div class="flex justify-between text-sm">
                             <span class="text-ink-mute">Time elapsed</span>
@@ -204,13 +204,13 @@
                     >
                         <span class="font-mono">TASKS</span>
                         <span class="font-mono text-ink-mute"
-                            >{projects.pendingFolders} active · {activities.totalElapsed.toFixed(
+                            >{workspaces.pendingFolders} active · {activities.totalElapsed.toFixed(
                                 1,
                             )}s</span
                         >
                     </div>
                     <div class="flex-1 overflow-y-auto flex flex-col gap-0.5">
-                        {#each projects.allFolders as f (f.id)}
+                        {#each workspaces.allFolders as f (f.id)}
                             <div
                                 class="flex gap-3 text-xs py-1 items-baseline border-b border-paper-edge last:border-b-0"
                             >
@@ -234,7 +234,7 @@
                                 {/if}
                             </div>
                         {/each}
-                        {#if projects.allFolders.length === 0}
+                        {#if workspaces.allFolders.length === 0}
                             <div class="text-xs text-ink-soft text-center p-4">
                                 Waiting for the daemon to discover folders…
                             </div>

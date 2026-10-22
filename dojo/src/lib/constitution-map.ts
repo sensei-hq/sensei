@@ -5,8 +5,8 @@
 // ScrOrgLadder). Side-effect-free so the mapping unit-tests without a DOM or a Worker.
 //
 // Scope vocabulary + precedence come from `sensei.scopes` (key · level 0→70, higher =
-// more specific): general·user·organization·client·technology·team·project·repository.
-// Ladder glyphs match the kit (社 Company · 客 Client · 己 Personal · 件 Project · 技
+// more specific): general·user·organization·client·technology·team·workspace·repository.
+// Ladder glyphs match the kit (社 Company · 客 Client · 己 Personal · 件 Workspace · 技
 // Stack) and section groups (社 Company · 組 Teams · 技 Stacks).
 
 import type {
@@ -44,7 +44,7 @@ const SCOPE_META: Record<string, ScopeMeta> = {
 	client: { label: 'Client', kanji: '客', group: 'Company', level: 30 },
 	technology: { label: 'Stack', kanji: '技', group: 'Stacks', level: 40 },
 	team: { label: 'Team', kanji: '組', group: 'Teams', level: 50 },
-	project: { label: 'Project', kanji: '件', group: 'Stacks', level: 60 },
+	workspace: { label: 'Workspace', kanji: '件', group: 'Stacks', level: 60 },
 	repository: { label: 'Repository', kanji: '庫', group: 'Stacks', level: 70 }
 };
 
@@ -99,11 +99,11 @@ export function rulesToLadder(rules: ConstitutionRule[]): KitLadderRung[] {
 	});
 }
 
-// ── Per-project resolved constitution (F4) ────────────────────────────────────
+// ── Per-workspace resolved constitution (F4) ──────────────────────────────────
 // The daemon federates the folder's RESOLVED constitution (authority resolution,
 // dedup + mandatory locks + the discards the ladder made — all server-side) as
-// `dojo.projects.constitution`. Here we map that wire shape onto the SAME kit
-// ladder + conflicts the shipped `ScrProjectPreview` renders, reusing
+// `dojo.workspaces.constitution`. Here we map that wire shape onto the SAME kit
+// ladder + conflicts the shipped `ScrWorkspacePreview` renders, reusing
 // `rulesToLadder` for the rungs (the dōjō only DISPLAYS; it never re-resolves).
 
 /** The `RelayConstitution` wire shape the daemon federates (mirrors
@@ -123,7 +123,7 @@ export interface RelayConstitution {
 }
 
 /** Federated constitution rules → the `ConstitutionRule[]` `rulesToLadder` takes,
- *  so the per-project ladder reuses the shared scope→rung mapping. A rule with no
+ *  so the per-workspace ladder reuses the shared scope→rung mapping. A rule with no
  *  namespace falls back to its scope label (honest, never a blank rung name). */
 export function relayRules(c: RelayConstitution): ConstitutionRule[] {
 	return c.rules.map((r) => ({

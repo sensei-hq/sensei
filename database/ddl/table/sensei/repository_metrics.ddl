@@ -2,16 +2,16 @@ set search_path to sensei, extensions;
 
 -- The value store — the single source of truth for every computed metric value.
 --
--- RENAMED from `project_metrics`, which was a misnomer rather than a mismodel:
--- the identity index has keyed on repository_id (NOT project_id) since D1/D2, so
+-- RENAMED from `workspace_metrics`, which was a misnomer rather than a mismodel:
+-- the identity index has keyed on repository_id (NOT workspace_id) since D1/D2, so
 -- the table was already repository-grained and only its name disagreed.
 -- Measured before the rename, across 15,389 rows: repository_id NULL = 0,
--- folder_id set = 0, session_id set = 0, and 0 rows whose project_id disagreed
+-- folder_id set = 0, session_id set = 0, and 0 rows whose workspace_id disagreed
 -- with the folders mapping. So the rename dropped three columns that held
 -- nothing and derived the fourth.
 --
--- `sensei.project_metrics` survives as a VIEW over this table, restoring
--- project_id by lookup, so every dependent view and read path is unchanged.
+-- `sensei.workspace_metrics` survives as a VIEW over this table, restoring
+-- workspace_id by lookup, so every dependent view and read path is unchanged.
 create table if not exists repository_metrics (
   id            uuid          primary key default gen_random_uuid()
 , metric_id     uuid          not null references sensei.metrics(id) on delete cascade
@@ -65,7 +65,7 @@ Never-fabricate invariants:
 comment on column repository_metrics.metric_id
      is 'FK to sensei.metrics — which registered metric this value is for.';
 comment on column repository_metrics.repository_id
-     is 'The grain. A value is attributed to the repository, regardless of which project(s) include it — which is why the same number is shared rather than recomputed per project.
+     is 'The grain. A value is attributed to the repository, regardless of which workspace(s) include it — which is why the same number is shared rather than recomputed per workspace.
 
 NOT NULL now. It was nullable for "legacy rows pending migration"; that migration is done (0 nulls), so the column states the invariant instead of documenting an exception that no longer exists.';
 comment on column repository_metrics.scope

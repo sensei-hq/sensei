@@ -1,5 +1,5 @@
 //! Per-datapoint metric explainer — the one-line companion that explains WHY a
-//! single day's metric value is what it is (project × metric × day, DAILY grain).
+//! single day's metric value is what it is (workspace × metric × day, DAILY grain).
 //!
 //! Architecture (this is the load-bearing rule — get it exactly right): the
 //! explainer is produced at COMPUTE time, together with the value, by the
@@ -28,7 +28,7 @@ use super::narration_cache::{self, CopyLimits, InsightKind};
 use crate::db::pg_store::PgStore;
 
 /// The deterministic facts one day's explainer is built from — a single
-/// (project, metric, day) datapoint. `value`/`prev_value`/`delta` are the
+/// (workspace, metric, day) datapoint. `value`/`prev_value`/`delta` are the
 /// load-bearing part of the cache key: the `facts_hash` changes iff the value (or
 /// its day-over-day context) changes, so an unchanged value re-hits the cache and
 /// never re-calls the model. The display-only metric label is deliberately absent
@@ -110,7 +110,7 @@ fn fmt_num(v: f64) -> String {
     trimmed.to_string()
 }
 
-/// Produce the explainer line for ONE (project, metric, day) datapoint.
+/// Produce the explainer line for ONE (workspace, metric, day) datapoint.
 ///
 /// Cache-guarded and safe to `await` INLINE from a background compute task: on a
 /// cache HIT it returns the persisted copy with no model call (so an unchanged

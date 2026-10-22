@@ -13,7 +13,7 @@
             <h2 class="text-base font-bold m-0 mb-2.5">Quick Start</h2>
             <ol class="text-sm leading-loose pl-5 m-0">
                 <li>
-                    <strong>Scan</strong> — Point Sensei at your project folders to index
+                    <strong>Scan</strong> — Point Sensei at your workspace folders to index
                     them.
                 </li>
                 <li>
@@ -77,8 +77,8 @@
                 </dd>
                 <dt class="font-bold mt-3">What does memory scope mean?</dt>
                 <dd class="opacity-70 mt-1 leading-normal ml-0">
-                    Memories can be <em>project-scoped</em> (apply to one project)
-                    or shared to the <em>collective</em> (apply globally across all projects).
+                    Memories can be <em>workspace-scoped</em> (apply to one workspace)
+                    or shared to the <em>collective</em> (apply globally across all workspaces).
                 </dd>
             </dl>
         </section>

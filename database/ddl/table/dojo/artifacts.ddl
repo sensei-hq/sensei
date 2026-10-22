@@ -47,7 +47,7 @@ comment on column dojo.artifacts.kind
 comment on column dojo.artifacts.payload
      is 'Type-specific fields keyed by kind (e.g. a skill''s manifest, an agent''s tools/scope, a guard''s check).';
 comment on column dojo.artifacts.scope
-     is 'Scope tag deciding who receives it downstream: {company|team|project|stack}.';
+     is 'Scope tag deciding who receives it downstream: {company|team|workspace|stack}.';
 comment on column dojo.artifacts.signature
      is 'Content signature for dedup/clustering — near-identical contributions share a signature and are merged in triage.';
 comment on column dojo.artifacts.attribution

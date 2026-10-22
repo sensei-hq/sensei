@@ -11,17 +11,17 @@ const json = async (path: string) => (await fetch(`${DAEMON_URL}${path}`)).json(
 const DAY = 86_400_000;
 
 test('metric detail windows the daemon series', async ({ tauriPage }) => {
-  const projects: Array<{ id: string; name: string }> = await json('/api/projects');
-  const sensei = projects.find((p) => p.name === 'sensei');
-  test.skip(!sensei, 'no sensei project on this daemon');
-  const { series } = await json(`/api/projects/${sensei!.id}/metrics/ftr?grain=daily`);
+  const workspaces: Array<{ id: string; name: string }> = await json('/api/workspaces');
+  const sensei = workspaces.find((p) => p.name === 'sensei');
+  test.skip(!sensei, 'no sensei workspace on this daemon');
+  const { series } = await json(`/api/workspaces/${sensei!.id}/metrics/ftr?grain=daily`);
   test.skip(series.length < 2, 'ftr has no history here');
   const first = Date.parse(series[0].period.slice(0, 10));
   const last = Date.parse(series[series.length - 1].period.slice(0, 10));
   const full = Math.round((last - first) / DAY) + 1;
   const window = Math.min(14, full);
 
-  await navigateToScreen(tauriPage, `/project/${sensei!.id}/metrics/ftr`, '[data-component="chart-window"], [data-screen-state="error"]', 60_000);
+  await navigateToScreen(tauriPage, `/workspace/${sensei!.id}/metrics/ftr`, '[data-component="chart-window"], [data-screen-state="error"]', 60_000);
   const read = `({
     label: document.querySelector('[data-component="chart-window"]')?.nextElementSibling?.textContent?.replace(/\\s+/g, ' ').trim() ?? null,
     // Only days with a value get a marker; the selected one should be the latest.

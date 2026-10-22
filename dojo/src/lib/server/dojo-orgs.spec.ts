@@ -91,13 +91,13 @@ describe('listUserOrgs — fail closed on a memberships query error', () => {
 		expect(orgs[0].kanji).toBe('社');
 	});
 
-	it('does NOT fabricate counts — members/projects/pending are undefined when not computed', async () => {
+	it('does NOT fabricate counts — members/workspaces/pending are undefined when not computed', async () => {
 		stub = makeDb({ data: [{ role: 'admin', kind: 'client', tenant: TENANT_ROW }], error: null });
 		const [org] = await listUserOrgs(stub as never, 'u1');
 		// `kind: 'client'` in the row is ignored — origin decides.
 		expect(org.kind).toBe('Organization');
 		expect(org.members).toBeUndefined();
-		expect(org.projects).toBeUndefined();
+		expect(org.workspaces).toBeUndefined();
 		expect(org.pending).toBeUndefined();
 	});
 });

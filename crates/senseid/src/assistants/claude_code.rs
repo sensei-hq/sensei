@@ -664,7 +664,7 @@ impl Assistant for ClaudeCodeAssistant {
         // plugin's bundled MCP comes back to life on the next install via the
         // plugin manifest, so the actual leak risk is stale entries from
         // pre-plugin installs (`claude mcp add sensei …`) that survive at
-        // user scope and at each registered project's `.mcp.json`.
+        // user scope and at each registered workspace's `.mcp.json`.
         let home_dir = home();
         let user_mcp = home_dir.join(".claude/mcp.json");
         if let Ok(removed) = clean_sensei_from_mcp_file(&user_mcp)

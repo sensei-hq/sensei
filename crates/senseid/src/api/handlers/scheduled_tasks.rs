@@ -56,7 +56,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     ("library_update", "Library-update detection — a new upstream version → a recommendation"),
     ("log_prune", "Structured-log TTL pruning"),
-    ("metrics", "Metrics engine — one compute wave per project against its watermark"),
+    ("metrics", "Metrics engine — one compute wave per workspace against its watermark"),
     ("reconcile", "Folder/index reconcile — self-healing scan-drift repair"),
     (
         "tracker_sync",

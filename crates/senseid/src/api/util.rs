@@ -55,23 +55,23 @@ pub(crate) fn parse_enum_field(
     }
 }
 
-/// Resolve `id` (from a path segment) as either a project UUID or a
-/// project *name* → project UUID. Every `GET /api/projects/{id}/...`
+/// Resolve `id` (from a path segment) as either a workspace UUID or a
+/// workspace *name* → workspace UUID. Every `GET /api/workspaces/{id}/...`
 /// endpoint should reach for this so an MCP caller passing `sensei`
 /// (natural for assistants) works the same as passing the UUID.
 ///
 /// Root cause of the "empty result" reports Dev hit on 2026-07-07:
 /// dozens of handlers only ran `Uuid::parse_str(id)` and 400'd on the
 /// name shape, so `get_ftr_daily` / `get_quality_signals` /
-/// `get_hotspots` for `project=sensei` came back empty even though the
+/// `get_hotspots` for `workspace=sensei` came back empty even though the
 /// data was there.
 ///
 /// Returns `Ok(Some(uuid))` when resolved, `Ok(None)` on a genuine miss (no such
-/// project — caller 404s/400s), and `Err(500)` when the name lookup itself fails.
+/// workspace — caller 404s/400s), and `Err(500)` when the name lookup itself fails.
 /// Failing closed on the DB error is deliberate: swallowing it (the old
 /// `.ok().flatten()`) turned a transient failure into an indistinguishable
-/// "unknown project", masking outages as 404s. See the #109 fabrication audit.
-pub(crate) async fn resolve_project_uuid(
+/// "unknown workspace", masking outages as 404s. See the #109 fabrication audit.
+pub(crate) async fn resolve_workspace_uuid(
     state: &crate::api::state::AppState,
     id: &str,
 ) -> Result<Option<uuid::Uuid>, axum::http::StatusCode> {
@@ -80,25 +80,25 @@ pub(crate) async fn resolve_project_uuid(
     }
     let row = state
         .pg
-        .get_project_by_name(id)
+        .get_workspace_by_name(id)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(row.and_then(|r| json_uuid(&r["id"])))
 }
 
-/// Resolve `{id}` to its project uuid AND confirm the project row exists — the
-/// two-step guard the `/api/projects/{id}/…` handlers repeat: [`resolve_project_uuid`]
-/// (404 on an unknown name/uuid) then `get_project` (500 on a DB error, 404 if the
+/// Resolve `{id}` to its workspace uuid AND confirm the workspace row exists — the
+/// two-step guard the `/api/workspaces/{id}/…` handlers repeat: [`resolve_workspace_uuid`]
+/// (404 on an unknown name/uuid) then `get_workspace` (500 on a DB error, 404 if the
 /// row is gone). Returns the uuid on success. Fail-closed on the DB error — never a
-/// masked 404 (same discipline as [`resolve_project_uuid`]; see the #109 audit).
-pub(crate) async fn resolve_existing_project(
+/// masked 404 (same discipline as [`resolve_workspace_uuid`]; see the #109 audit).
+pub(crate) async fn resolve_existing_workspace(
     state: &crate::api::state::AppState,
     id: &str,
 ) -> Result<uuid::Uuid, axum::http::StatusCode> {
-    let uuid = resolve_project_uuid(state, id).await?.ok_or(axum::http::StatusCode::NOT_FOUND)?;
+    let uuid = resolve_workspace_uuid(state, id).await?.ok_or(axum::http::StatusCode::NOT_FOUND)?;
     state
         .pg
-        .get_project(&uuid)
+        .get_workspace(&uuid)
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(axum::http::StatusCode::NOT_FOUND)?;
@@ -107,13 +107,13 @@ pub(crate) async fn resolve_existing_project(
 
 #[cfg(test)]
 mod tests {
-    /// #100 guard: a `{id}` on an `/api/projects/{id}/*` route is name-or-uuid
-    /// (AI callers pass a project name), so it MUST resolve via
-    /// [`resolve_project_uuid`] — never `Uuid::parse_str` directly, which 400s
+    /// #100 guard: a `{id}` on an `/api/workspaces/{id}/*` route is name-or-uuid
+    /// (AI callers pass a workspace name), so it MUST resolve via
+    /// [`resolve_workspace_uuid`] — never `Uuid::parse_str` directly, which 400s
     /// on a name and returns a silent empty. This scans handler source for the
-    /// `let project_id = …Uuid::parse_str` smell so the 2026-07-07 fix can't
-    /// regress. (Non-project uuids — chain/memory/session ids — are unaffected;
-    /// the pattern keys on the `project_id` binding specifically.)
+    /// `let workspace_id = …Uuid::parse_str` smell so the 2026-07-07 fix can't
+    /// regress. (Non-workspace uuids — chain/memory/session ids — are unaffected;
+    /// the pattern keys on the `workspace_id` binding specifically.)
     /// Split source into `;`-terminated statements, each collapsed to one line
     /// and paired with the line it starts on.
     ///
@@ -153,22 +153,23 @@ mod tests {
     fn the_statement_scanner_sees_through_a_line_break() {
         // The property the guard depends on: wrapping a statement must not hide
         // it. Without this, the #100 guard is one `cargo fmt` away from silence.
-        let wrapped = "    let project_id = id\n        .and_then(|s| Uuid::parse_str(s).ok());\n";
+        let wrapped =
+            "    let workspace_id = id\n        .and_then(|s| Uuid::parse_str(s).ok());\n";
         let found = statements(wrapped)
             .iter()
-            .any(|(_, s)| s.starts_with("let project_id") && s.contains("Uuid::parse_str"));
+            .any(|(_, s)| s.starts_with("let workspace_id") && s.contains("Uuid::parse_str"));
         assert!(found, "a wrapped statement must still be matched");
     }
 
     #[test]
     fn the_statement_scanner_ignores_comments() {
         // Otherwise this very file's documentation would report itself.
-        let commented = "    // let project_id = Uuid::parse_str(&id);\n";
+        let commented = "    // let workspace_id = Uuid::parse_str(&id);\n";
         assert!(statements(commented).is_empty(), "prose must not read as code");
     }
 
     #[test]
-    fn no_handler_parses_a_project_id_raw() {
+    fn no_handler_parses_a_workspace_id_raw() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/api/handlers");
         let mut offenders = Vec::new();
         for entry in std::fs::read_dir(dir).expect("handlers dir readable") {
@@ -183,7 +184,7 @@ mod tests {
             // blind to, which means the reverse was equally possible: wrap the
             // offending statement and the guard goes quiet.
             for (i, stmt) in statements(&src) {
-                if stmt.starts_with("let project_id") && stmt.contains("Uuid::parse_str") {
+                if stmt.starts_with("let workspace_id") && stmt.contains("Uuid::parse_str") {
                     offenders.push(format!(
                         "{}:{}: {}",
                         path.file_name().unwrap().to_string_lossy(),
@@ -195,8 +196,8 @@ mod tests {
         }
         assert!(
             offenders.is_empty(),
-            "project ids on /api/projects/{{id}}/* must resolve via \
-             resolve_project_uuid (name-or-uuid), not raw Uuid::parse_str:\n{}",
+            "workspace ids on /api/workspaces/{{id}}/* must resolve via \
+             resolve_workspace_uuid (name-or-uuid), not raw Uuid::parse_str:\n{}",
             offenders.join("\n")
         );
     }
@@ -223,28 +224,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_existing_project_unknown_uuid_is_not_found() {
+    async fn resolve_existing_workspace_unknown_uuid_is_not_found() {
         let Some(state) = make_state().await else { return };
-        // A well-formed but nonexistent uuid resolves (parses) yet `get_project`
+        // A well-formed but nonexistent uuid resolves (parses) yet `get_workspace`
         // misses → 404. The fail-closed guard, never a masked success.
         let unknown = uuid::Uuid::new_v4().to_string();
-        let err = super::resolve_existing_project(&state, &unknown).await.unwrap_err();
+        let err = super::resolve_existing_workspace(&state, &unknown).await.unwrap_err();
         assert_eq!(err, axum::http::StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn resolve_existing_project_resolves_by_uuid_and_name() {
+    async fn resolve_existing_workspace_resolves_by_uuid_and_name() {
         let Some(state) = make_state().await else { return };
         let uniq = uuid::Uuid::new_v4();
         let name = format!("_test:util:{uniq}");
-        let pid = state.pg.create_project(&name, None, None).await.unwrap();
+        let pid = state.pg.create_workspace(&name, None, None).await.unwrap();
 
-        // Both the uuid and the project NAME resolve to the same existing id
-        // (the name-or-uuid contract, then the get_project existence check).
-        assert_eq!(super::resolve_existing_project(&state, &pid.to_string()).await.unwrap(), pid,);
-        assert_eq!(super::resolve_existing_project(&state, &name).await.unwrap(), pid,);
+        // Both the uuid and the workspace NAME resolve to the same existing id
+        // (the name-or-uuid contract, then the get_workspace existence check).
+        assert_eq!(super::resolve_existing_workspace(&state, &pid.to_string()).await.unwrap(), pid,);
+        assert_eq!(super::resolve_existing_workspace(&state, &name).await.unwrap(), pid,);
 
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(state.pg.pool())
             .await

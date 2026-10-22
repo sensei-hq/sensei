@@ -8,11 +8,11 @@ impl PgStore {
     pub async fn create_run(&self, new: &NewRun) -> Result<uuid::Uuid, String> {
         let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.runs
-                (project_id, plan_ref, goal, dojo_session_id, max_concurrency,
+                (workspace_id, plan_ref, goal, dojo_session_id, max_concurrency,
                  author_name, author_email, plan_graph)
              VALUES($1, COALESCE($2, ''), $3, $4, COALESCE($5, 1), $6, $7, $8) RETURNING id",
         )
-        .bind(new.project_id)
+        .bind(new.workspace_id)
         .bind(new.plan_ref.as_deref())
         .bind(new.goal.as_deref())
         .bind(new.dojo_session_id)
@@ -129,15 +129,15 @@ impl PgStore {
         rows.into_iter().map(Self::map_run_row).collect()
     }
 
-    /// The newest `running` or `stalled` run for a project, if any — the target
-    /// of the workflow→run phase bridge ([`Self::advance_run_phase_for_project`]).
+    /// The newest `running` or `stalled` run for a workspace, if any — the target
+    /// of the workflow→run phase bridge ([`Self::advance_run_phase_for_workspace`]).
     /// `stalled` is included so an agent that went quiet (→ watchdog-stalled) and
     /// then resumes revives its run on the next `update_phase`. `paused`/`blocked`
     /// are excluded — a paused (limit-wait) or gate-blocked run shouldn't be
     /// silently advanced by a stray `update_phase`.
-    pub async fn active_run_for_project(
+    pub async fn active_run_for_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Option<Run>, String> {
         let row: Option<(
             uuid::Uuid,
@@ -157,18 +157,18 @@ impl PgStore {
             String,
             String,
         )> = sqlx_core::query_as::query_as(&format!(
-            "{} WHERE project_id = $1 AND status IN ('running', 'stalled') \
+            "{} WHERE workspace_id = $1 AND status IN ('running', 'stalled') \
              ORDER BY started_at DESC LIMIT 1",
             Self::RUN_SELECT
         ))
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
         row.map(Self::map_run_row).transpose()
     }
 
-    /// Bridge a workflow phase transition onto a project's active run: append the
+    /// Bridge a workflow phase transition onto a workspace's active run: append the
     /// pairing cadence events ([`crate::runs::phase_transition_events`]) and move
     /// the run's `current_phase`, so the run streams phases→segments to the relay
     /// while an agent works (`drive` stays OFF — this is status only). If the run
@@ -176,15 +176,15 @@ impl PgStore {
     /// `running`. Returns the advanced run id, or `None` when there's no active
     /// run / no phase change. Best-effort: the caller logs and swallows errors so
     /// a bridge hiccup never fails the workflow-state write.
-    pub async fn advance_run_phase_for_project(
+    pub async fn advance_run_phase_for_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         phase: &str,
     ) -> Result<Option<uuid::Uuid>, String> {
         if phase.is_empty() {
             return Ok(None);
         }
-        let Some(run) = self.active_run_for_project(project_id).await? else {
+        let Some(run) = self.active_run_for_workspace(workspace_id).await? else {
             return Ok(None);
         };
         let events = crate::runs::phase_transition_events(run.current_phase.as_deref(), phase);
@@ -502,15 +502,15 @@ impl PgStore {
 
     // ── PG Function Wrappers ───────────────────────────────────────────
 
-    /// The folder (repo) a run's project maps to
-    /// (`sensei.folders.project_id = activity.runs.project_id`). Lets the
+    /// The folder (repo) a run's workspace maps to
+    /// (`sensei.folders.workspace_id = activity.runs.workspace_id`). Lets the
     /// constitution federation resolve the run's ruleset. `None` when the run has
-    /// no project or no folder is indexed for it.
+    /// no workspace or no folder is indexed for it.
     pub async fn run_folder_id(&self, run_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.id
                FROM activity.runs r
-               JOIN sensei.folder_projects fp ON fp.project_id = r.project_id
+               JOIN sensei.folder_workspaces fp ON fp.workspace_id = r.workspace_id
                JOIN sensei.folders f ON f.id = fp.folder_id
               WHERE r.id = $1
               LIMIT 1",
@@ -522,21 +522,21 @@ impl PgStore {
         Ok(row.map(|(id,)| id))
     }
 
-    /// The slug of a run's project namespace (`sensei.namespaces` scope=project),
-    /// or None when the run has no project or no project-scope namespace. Fed to
+    /// The slug of a run's workspace namespace (`sensei.namespaces` scope=workspace),
+    /// or None when the run has no workspace or no workspace-scope namespace. Fed to
     /// the relay federation so the Worker can open the caller's billing seat on
-    /// this project (proof the user is actively using sensei there).
-    pub async fn run_project_slug(&self, run_id: &uuid::Uuid) -> Result<Option<String>, String> {
-        // Straight from the run's PROJECT to that project's namespace. It used to
-        // detour through a folder of the project and that folder's namespace
+    /// this workspace (proof the user is actively using sensei there).
+    pub async fn run_workspace_slug(&self, run_id: &uuid::Uuid) -> Result<Option<String>, String> {
+        // Straight from the run's WORKSPACE to that workspace's namespace. It used to
+        // detour through a folder of the workspace and that folder's namespace
         // binding, so a run reported no slug whenever the detour had a gap — and
-        // reported a DIFFERENT project's slug whenever the folder binding
-        // disagreed with project membership, as eight did.
+        // reported a DIFFERENT workspace's slug whenever the folder binding
+        // disagreed with workspace membership, as eight did.
         let sql = format!(
             "SELECT n.slug FROM activity.runs r \
-               JOIN sensei.projects p ON p.id = r.project_id {} \
+               JOIN sensei.workspaces p ON p.id = r.workspace_id {} \
               WHERE r.id = $1 LIMIT 1",
-            super::PROJECT_NAMESPACE_JOIN
+            super::WORKSPACE_NAMESPACE_JOIN
         );
         let row: Option<(String,)> = sqlx_core::query_as::query_as(&sql)
             .bind(run_id)

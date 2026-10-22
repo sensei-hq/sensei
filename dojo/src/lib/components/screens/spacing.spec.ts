@@ -1,8 +1,8 @@
 import { render, cleanup } from '@testing-library/svelte';
 import { afterEach, describe, expect, it } from 'vitest';
-import ScrProjects from './ScrProjects.svelte';
+import ScrWorkspaces from './ScrWorkspaces.svelte';
 import ScrConstitution from './ScrConstitution.svelte';
-import { projects, stance, ladder } from '$lib/components/kit/fixtures';
+import { workspaces, stance, ladder } from '$lib/components/kit/fixtures';
 
 // Screen spacing is mobile-first (§1.7): the phone rhythm (`p-4`=16 · `gap-4`=16)
 // is the base, and the desktop rhythm (`p-8`=32 · `gap-6`=24) sits behind `md:`.
@@ -22,7 +22,7 @@ function root(container: HTMLElement): HTMLElement {
 
 const SCREENS = [
 	['ScrConstitution', () => render(ScrConstitution, { props: { stance, ladder } })],
-	['ScrProjects', () => render(ScrProjects, { props: { projects } })]
+	['ScrWorkspaces', () => render(ScrWorkspaces, { props: { workspaces } })]
 ] as const;
 
 describe('dojo screen spacing — mobile-first 4px-grid utilities', () => {

@@ -1,6 +1,6 @@
 ---
 organization: Sensei HQ
-project: sensei
+workspace: sensei
 role: website
 tagline: Sensei marketing site
 summary: Marketing website for Sensei.

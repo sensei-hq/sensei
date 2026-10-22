@@ -53,8 +53,8 @@ for the vocabulary — cite it, don't restate it.
 Navigate with the **sensei MCP tools first** — they use the indexed code graph and return richer
 results than blind grep. Fall back to Grep/Glob only if a tool errors or returns empty, and say so.
 
-1. `get_project_summary()` + `get_project_conventions()` — establish stack, structure, and the
-   house style you are reviewing against. `get_rules()` — honor any project styling rules.
+1. `get_workspace_summary()` + `get_workspace_conventions()` — establish stack, structure, and the
+   house style you are reviewing against. `get_rules()` — honor any repository styling rules.
 2. Locate and Read `rokkit.config.js` and `uno.config.js`. Resolve the active colormap the way the
    preset does: `skins.default ?? skin ?? colors`. Record the roles, `colorSpace`, `tokens` mode,
    `overrides`, `shape`, and `typography`.

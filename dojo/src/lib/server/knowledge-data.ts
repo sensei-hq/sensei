@@ -28,7 +28,7 @@ export interface KnowledgeArtifact {
 	id: string;
 	kind: string;
 	title: string;
-	/** `dojo.artifacts.scope` jsonb ({company|team|project|stack}), verbatim. */
+	/** `dojo.artifacts.scope` jsonb ({company|team|workspace|stack}), verbatim. */
 	scope: unknown;
 	adopted_count: number;
 	created_at: string;

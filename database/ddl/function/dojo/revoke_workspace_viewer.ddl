@@ -14,6 +14,11 @@ begin
             using errcode = 'insufficient_privilege';
     end if;
     delete from dojo.workspace_viewers where workspace_id = p_workspace and principal_id = p_principal;
+    if found then
+        perform dojo.append_audit_event(
+            (select tenant_id from dojo.workspaces where id = p_workspace), dojo.current_principal_id(),
+            'workspace_view_revoked', jsonb_build_object('workspace_id', p_workspace, 'principal_id', p_principal));
+    end if;
 end;
 $$;
 

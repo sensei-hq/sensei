@@ -1,5 +1,5 @@
 /**
- * Scan state classes — project state + activity state for the scan page,
+ * Scan state classes — workspace state + activity state for the scan page,
  * plus the ScanState orchestrator singleton that owns the SSE subscription
  * and survives stage navigation.
  */
@@ -8,7 +8,7 @@ import { ReactiveStageContext } from './stage.svelte.js';
 import { EventManager } from './events.js';
 import { senseiApi, dataOrThrow, type ApiResult } from './api.js';
 import { appState } from './appstate.svelte.js';
-import type { ScanProject, ScanProjectFolder, ScanFolderEvent, ActivityEvent, StateEvent } from './types.js';
+import type { ScanWorkspace, ScanWorkspaceFolder, ScanFolderEvent, ActivityEvent, StateEvent } from './types.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -32,15 +32,15 @@ export function commonParent(paths: string[]): string {
   return common.join('/') || '/';
 }
 
-// ── ScanProjectState ─────────────────────────────────────────────────────────
+// ── ScanWorkspaceState ─────────────────────────────────────────────────────────
 
-export class ScanProjectState extends ReactiveStageContext<ScanProject> {
+export class ScanWorkspaceState extends ReactiveStageContext<ScanWorkspace> {
 
   /**
    * Override update to merge folders by id rather than replacing the whole array.
    * Daemon sends partial folder updates — only changed folders in the array.
    */
-  override update(data: ScanProject | Partial<ScanProject> | (ScanProject | Partial<ScanProject>)[]) {
+  override update(data: ScanWorkspace | Partial<ScanWorkspace> | (ScanWorkspace | Partial<ScanWorkspace>)[]) {
     const patches = Array.isArray(data) ? data : [data];
     let changed = false;
 
@@ -53,7 +53,7 @@ export class ScanProjectState extends ReactiveStageContext<ScanProject> {
       // Filter out empty-string / undefined / empty-array fields from patch so the
       // daemon can emit partial updates (e.g., status flips only) without nulling
       // out the existing name, folders, etc.
-      const cleaned: Partial<ScanProject> = {};
+      const cleaned: Partial<ScanWorkspace> = {};
       for (const [k, v] of Object.entries(patch)) {
         if (v === '' || v === undefined) continue;
         if (Array.isArray(v) && v.length === 0) continue;
@@ -65,12 +65,12 @@ export class ScanProjectState extends ReactiveStageContext<ScanProject> {
       if (patch.folders && existing.folders) {
         const folderMap = new Map(existing.folders.map(f => [f.id, f]));
         for (const pf of patch.folders) {
-          folderMap.set(pf.id, { ...(folderMap.get(pf.id) ?? pf as ScanProjectFolder), ...pf });
+          folderMap.set(pf.id, { ...(folderMap.get(pf.id) ?? pf as ScanWorkspaceFolder), ...pf });
         }
         merged.folders = Array.from(folderMap.values());
       }
 
-      this.items[idx] = merged as ScanProject;
+      this.items[idx] = merged as ScanWorkspace;
       changed = true;
     }
 
@@ -79,49 +79,49 @@ export class ScanProjectState extends ReactiveStageContext<ScanProject> {
 
   /**
    * Apply a folder-entity SSE event. The daemon sends folder events with a
-   * projectId field for routing. On add: find the project and add/merge the
-   * folder, or create a placeholder project if the project isn't in state yet
-   * (happens on re-scans where project_add is not re-emitted). On update:
+   * workspaceId field for routing. On add: find the workspace and add/merge the
+   * folder, or create a placeholder workspace if the workspace isn't in state yet
+   * (happens on re-scans where workspace_add is not re-emitted). On update:
    * delegate to the existing folder-merge logic in update().
    */
   applyFolder(event: StateEvent<ScanFolderEvent>) {
     const folders = Array.isArray(event.data) ? event.data : [event.data];
     const now = Date.now();
     for (const folder of folders) {
-      const { projectId, ...rest } = folder;
+      const { workspaceId, ...rest } = folder;
       const folderData = { ...rest, lastUpdated: now };
-      const proj = this.items.find(p => p.id === projectId);
+      const proj = this.items.find(p => p.id === workspaceId);
 
       if (event.action === 'add') {
         if (proj) {
           if (!proj.folders.find(f => f.id === folder.id)) {
             this.items = this.items.map(p =>
-              p.id === projectId ? { ...p, folders: [...p.folders, folderData] } : p
+              p.id === workspaceId ? { ...p, folders: [...p.folders, folderData] } : p
             );
           }
         } else {
-          // Project not yet in state (re-scan of existing project) — create placeholder
+          // Workspace not yet in state (re-scan of existing workspace) — create placeholder
           this.add({
-            id: projectId,
+            id: workspaceId,
             name: folder.name,
             status: 'scanning',
             folders: [folderData],
             autoDetected: true,
             confidence: 'high',
-          } as ScanProject);
+          } as ScanWorkspace);
         }
       } else if (event.action === 'update') {
         // Reuse the folder-merge logic already in update()
-        this.update({ id: projectId, folders: [folderData] } as Partial<ScanProject>);
+        this.update({ id: workspaceId, folders: [folderData] } as Partial<ScanWorkspace>);
       }
     }
   }
 
   // ── Derived ──────────────────────────────────────────────
 
-  /** Derive project display path from its folders. */
-  projectPath(project: ScanProject): string {
-    return commonParent(project.folders.map(f => f.path));
+  /** Derive workspace display path from its folders. */
+  workspacePath(workspace: ScanWorkspace): string {
+    return commonParent(workspace.folders.map(f => f.path));
   }
 
   get totalFolders() {
@@ -143,27 +143,27 @@ export class ScanProjectState extends ReactiveStageContext<ScanProject> {
   }
 
   /**
-   * Flattened folder list across all projects, sorted by lastUpdated DESC.
+   * Flattened folder list across all workspaces, sorted by lastUpdated DESC.
    * Drives the per-task panel on the scan stage — folders are keyed by id
    * so status transitions show through, unlike activity events which are
    * append-only. Folders without lastUpdated (hydrated from DB, never
    * touched by SSE) sort to the bottom.
    */
-  get allFolders(): ScanProjectFolder[] {
+  get allFolders(): ScanWorkspaceFolder[] {
     return this.items.flatMap(p => p.folders).sort((a, b) =>
       (b.lastUpdated ?? 0) - (a.lastUpdated ?? 0)
     );
   }
 
   /**
-   * Projects sorted by their newest folder's lastUpdated DESC, so the
-   * project card with the most recent activity (a fresh folder_update from
-   * the daemon) bubbles to the top. Projects whose folders have no
+   * Workspaces sorted by their newest folder's lastUpdated DESC, so the
+   * workspace card with the most recent activity (a fresh folder_update from
+   * the daemon) bubbles to the top. Workspaces whose folders have no
    * lastUpdated (hydrated, no SSE traffic) sort to the bottom in their
    * original order.
    */
-  get sortedItems(): ScanProject[] {
-    const recency = (p: ScanProject) =>
+  get sortedItems(): ScanWorkspace[] {
+    const recency = (p: ScanWorkspace) =>
       p.folders.reduce((m, f) => (f.lastUpdated && f.lastUpdated > m ? f.lastUpdated : m), 0);
     return [...this.items].sort((a, b) => recency(b) - recency(a));
   }
@@ -181,14 +181,14 @@ export class ScanProjectState extends ReactiveStageContext<ScanProject> {
   }
 
   /**
-   * Every project has reached a terminal state (active or failed).
+   * Every workspace has reached a terminal state (active or failed).
    *
    * NOTE: This is NOT the canonical "scan complete" signal — that lives on
    * `wizardState.scan.done`, set by the task-queue idle poller in the scan
-   * page. Use this getter only for per-project UI ("3 of 5 projects ready"),
+   * page. Use this getter only for per-workspace UI ("3 of 5 workspaces ready"),
    * never to gate stage advancement.
    */
-  get allProjectsResolved() {
+  get allWorkspacesResolved() {
     return this.items.length > 0 && this.items.every(p => p.status === 'active' || p.status === 'failed');
   }
 }
@@ -239,7 +239,7 @@ export class ScanActivityState extends ReactiveStageContext<ActivityEvent> {
 export type ScanRunStatus = 'idle' | 'starting' | 'scanning' | 'done' | 'error';
 
 /**
- * Owns the live scan: SSE subscription, projects/activities state, and the
+ * Owns the live scan: SSE subscription, workspaces/activities state, and the
  * task-queue idle poller. Singleton-scoped because a scan runs for minutes
  * and the user can navigate between wizard stages while it runs. Component-
  * local state would tear down on unmount, lose the SSE stream, and leave
@@ -252,7 +252,7 @@ export type ScanRunStatus = 'idle' | 'starting' | 'scanning' | 'done' | 'error';
  *   - SSE is held open until reset() — page mount/unmount does not touch it.
  */
 export class ScanState {
-  readonly projects = new ScanProjectState();
+  readonly workspaces = new ScanWorkspaceState();
   readonly activities = new ScanActivityState();
 
   status = $state<ScanRunStatus>('idle');
@@ -284,7 +284,7 @@ export class ScanState {
    *   1. Open SSE and await the handshake. Without the await the
    *      subsequent scanFolder POST can race the connection and the
    *      first wave of events fans out to zero subscribers.
-   *   2. Hydrate already-known projects/folders from /api/projects.
+   *   2. Hydrate already-known workspaces/folders from /api/workspaces.
    *      Covers the case where the scan finished (or partly finished)
    *      before this page was mounted.
    *   3. Trigger scanFolder for any roots still flagged unscanned.
@@ -297,7 +297,7 @@ export class ScanState {
     const api = senseiApi(port);
 
     this.#teardown();
-    this.projects.items = [];
+    this.workspaces.items = [];
     this.activities.items = [];
     this.error = null;
     this.daemonReachable = true;
@@ -342,14 +342,14 @@ export class ScanState {
   }
 
   /**
-   * Pull current project + folder state from the daemon and seed the
+   * Pull current workspace + folder state from the daemon and seed the
    * reactive stores. Status flags default to 'indexed' for hydrated
    * folders — if a folder is in DB it has at least been registered, and
    * any in-flight folder will have its status corrected by the next
    * folder_update SSE event.
    */
   async #hydrate(api: ReturnType<typeof senseiApi>): Promise<void> {
-    const projects = dataOrThrow(await api.tryListProjects(), 'projects') as unknown as Array<{
+    const workspaces = dataOrThrow(await api.tryListWorkspaces(), 'workspaces') as unknown as Array<{
       id: string;
       name: string;
       folders?: Array<{
@@ -362,7 +362,7 @@ export class ScanState {
         stack?: string[];
       }>;
     }>;
-    const items: ScanProject[] = projects
+    const items: ScanWorkspace[] = workspaces
       .filter((p) => (p.folders ?? []).length > 0)
       .map((p) => ({
         id: p.id,
@@ -377,10 +377,10 @@ export class ScanState {
           stack: f.stack ?? [],
           filesTotal: 0,
           filesCompleted: 0,
-          status: (f.status as ScanProjectFolder['status']) ?? 'indexed',
+          status: (f.status as ScanWorkspaceFolder['status']) ?? 'indexed',
         })),
       }));
-    this.projects.set(items);
+    this.workspaces.set(items);
   }
 
   /**
@@ -390,7 +390,7 @@ export class ScanState {
    */
   reset(): void {
     this.#teardown();
-    this.projects.items = [];
+    this.workspaces.items = [];
     this.activities.items = [];
     this.rootCount = 0;
     this.error = null;
@@ -399,10 +399,10 @@ export class ScanState {
   }
 
   #dispatch(event: StateEvent<{ id: string }>): void {
-    if (event.entity === 'project')
-      this.projects.apply(event as StateEvent<ScanProject>);
+    if (event.entity === 'workspace')
+      this.workspaces.apply(event as StateEvent<ScanWorkspace>);
     else if (event.entity === 'folder')
-      this.projects.applyFolder(event as StateEvent<ScanFolderEvent>);
+      this.workspaces.applyFolder(event as StateEvent<ScanFolderEvent>);
     else if (event.entity === 'activity')
       this.activities.apply(event as StateEvent<ActivityEvent>);
   }

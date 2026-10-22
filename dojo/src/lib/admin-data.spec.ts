@@ -188,13 +188,13 @@ describe('listAudit', () => {
 
 describe("the dōjō's viewers (#307 D8)", () => {
 	it('lists them', async () => {
-		const row = { principal_id: 'v/1', display_name: null, email: 'v@x.co', joined_at: 't', projects: [] };
+		const row = { principal_id: 'v/1', display_name: null, email: 'v@x.co', joined_at: 't', workspaces: [] };
 		const { fn, calls } = fakeFetch(200, { viewers: [row] });
 		expect(await listViewers('personal/acme', { fetch: fn })).toEqual([row]);
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/personal/acme/viewers`);
 	});
 
-	it('removes one, and grants and revokes a project (ids encoded)', async () => {
+	it('removes one, and grants and revokes a workspace (ids encoded)', async () => {
 		const { fn, calls } = fakeFetch(204, null);
 		await removeViewer('personal/acme', 'v/1', { fetch: fn });
 		await grantWorkspaceView('personal/acme', 'v/1', 'p/1', { fetch: fn });

@@ -146,7 +146,7 @@ describe('the daemon’s relay calls run as the person (#236 step 4)', () => {
 		const platform = { context: { waitUntil: (p: Promise<unknown>) => scheduled.push(p) } };
 		const res = await sessionPOST(
 			ev({
-				body: { run_id: 'run-1', project_slug: 'acme-api', workspace: { slug: 'acme/api', name: 'api' } },
+				body: { run_id: 'run-1', workspace_slug: 'acme-api', workspace: { slug: 'acme/api', name: 'api' } },
 				platform
 			})
 		);

@@ -58,9 +58,9 @@ test.describe('Settings — Rail sub-routes', () => {
     await expect(tauriPage.locator('.folder-input').first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test('/settings/projects renders', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/settings/projects');
-    await expect(tauriPage.locator('[data-testid="settings-projects"]')).toBeVisible({ timeout: 10_000 });
+  test('/settings/workspaces renders', async ({ tauriPage }) => {
+    await navigateTo(tauriPage, '/settings/workspaces');
+    await expect(tauriPage.locator('[data-testid="settings-workspaces"]')).toBeVisible({ timeout: 10_000 });
   });
 
   test('/settings/libraries renders (summary or empty state)', async ({ tauriPage }) => {

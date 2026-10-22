@@ -1,13 +1,13 @@
 // The dōjō's viewers (#307 D8) as the Viewers tab shows them. Pure: the wire rows
 // from GET …/viewers in, the view rows out.
 
-export interface ViewerProjectView {
+export interface ViewerWorkspaceView {
 	id: string;
 	name: string;
 }
 
 export interface DojoViewerView extends PersonView {
-	projects: ViewerProjectView[];
+	workspaces: ViewerWorkspaceView[];
 }
 
 /** One row of GET /v1/t/{tenant}/viewers. */
@@ -16,11 +16,11 @@ export interface DojoViewerWire {
 	display_name: string | null;
 	email: string | null;
 	joined_at: string;
-	projects: ViewerProjectView[];
+	workspaces: ViewerWorkspaceView[];
 }
 
 export function toViewerViews(rows: DojoViewerWire[]): DojoViewerView[] {
-	return rows.map((r) => ({ principalId: r.principal_id, name: r.display_name, email: r.email, projects: r.projects }));
+	return rows.map((r) => ({ principalId: r.principal_id, name: r.display_name, email: r.email, workspaces: r.workspaces }));
 }
 
 /** Someone the admin surfaces name: a viewer, a team member. */

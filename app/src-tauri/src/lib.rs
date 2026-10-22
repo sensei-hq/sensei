@@ -19,7 +19,7 @@ fn install_tracing() {
 }
 
 /// Build the full application menu. The Window submenu lists the currently-open
-/// project windows (label → focus item) after the standard minimize/maximize, so
+/// workspace windows (label → focus item) after the standard minimize/maximize, so
 /// the user can raise any of them from the menu bar. macOS does not auto-populate
 /// a Tauri Window menu, so the caller rebuilds this whenever the set changes.
 fn build_app_menu(
@@ -47,7 +47,7 @@ fn build_app_menu(
         .build()?;
 
     let file_menu = SubmenuBuilder::new(app, "File")
-        .text("new-project", "New Project")
+        .text("new-workspace", "New Workspace")
         .separator()
         .close_window()
         .build()?;
@@ -83,7 +83,7 @@ fn build_app_menu(
         .text("go-setup",       "Setup")
         .build()?;
 
-    // Window: standard actions, then one focus item per open project window.
+    // Window: standard actions, then one focus item per open workspace window.
     let mut window_builder = SubmenuBuilder::new(app, "Window").minimize().maximize();
     let mut win_items = Vec::with_capacity(windows.len());
     for (label, title) in windows {
@@ -201,13 +201,13 @@ pub fn run() {
             app.manage(LogCollector::new(log_dir));
 
             // ── Menu ──────────────────────────────────────────────────────────
-            // Built by `build_app_menu`; the Window submenu lists open project
+            // Built by `build_app_menu`; the Window submenu lists open workspace
             // windows. Start empty — the store emits `sync-window-menu` as windows
             // open/close and we rebuild.
             let menu = build_app_menu(app.handle(), &[])?;
             app.set_menu(menu)?;
 
-            // Rebuild the Window menu whenever the set of open project windows
+            // Rebuild the Window menu whenever the set of open workspace windows
             // changes. macOS does NOT auto-populate a Tauri Window menu, so the
             // app's windows store (windows.svelte.ts) emits the current list and
             // we swap the whole menu (cheap; happens only on open/close).
@@ -254,7 +254,7 @@ pub fn run() {
                         );
                         let _ = app.opener().open_url(&url, None::<&str>);
                     }
-                    // Window menu → raise the chosen open project window.
+                    // Window menu → raise the chosen open workspace window.
                     id if id.starts_with("focus-window:") => {
                         let label = &id["focus-window:".len()..];
                         if let Some(w) = app.get_webview_window(label) {

@@ -53,7 +53,7 @@ describe('My teams overlay', () => {
 	});
 
 	it('followsForMembership falls back for a membership the overlay does not cover', () => {
-		expect(followsForMembership('brand-new-org')).toBe('your projects');
+		expect(followsForMembership('brand-new-org')).toBe('your workspaces');
 	});
 
 	// `isAnonymizedMembership` / `clientMembershipCount` were removed with the

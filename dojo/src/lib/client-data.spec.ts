@@ -53,17 +53,17 @@ describe('client-data reuses the shared dojo base url', () => {
 
 describe('listWorkspaces / listUserWorkspaces — tenant vs user-wide reads', () => {
 	it('listWorkspaces GETs the tenant-scoped workspaces path', async () => {
-		const projects = [{ id: 'p1' }];
-		const { fn, calls } = fakeFetch(200, { workspaces: projects });
-		expect(await listWorkspaces('github/globex', { fetch: fn })).toEqual(projects);
+		const workspaces = [{ id: 'p1' }];
+		const { fn, calls } = fakeFetch(200, { workspaces });
+		expect(await listWorkspaces('github/globex', { fetch: fn })).toEqual(workspaces);
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/github/globex/workspaces`);
 	});
 
 	it('listUserWorkspaces GETs the user-wide /v1/you/workspaces path (no tenant)', async () => {
-		const projects = [{ id: 'p1' }, { id: 'p2' }];
-		const { fn, calls } = fakeFetch(200, { workspaces: projects });
+		const workspaces = [{ id: 'p1' }, { id: 'p2' }];
+		const { fn, calls } = fakeFetch(200, { workspaces });
 		const out = await listUserWorkspaces({ fetch: fn });
-		expect(out).toEqual(projects);
+		expect(out).toEqual(workspaces);
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/workspaces`);
 		expect(calls[0].init?.method ?? 'GET').toBe('GET');
 	});

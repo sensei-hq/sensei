@@ -12,7 +12,7 @@ import type { DaemonAssistantFamily, DaemonLibEntry, PreferencesData, WizardLoad
 
 const STAGES = [
   'welcome', 'preferences', 'assistants', 'roots', 'scan',
-  'projects', 'libraries', 'instruments', 'inference', 'assignments', 'done',
+  'workspaces', 'libraries', 'instruments', 'inference', 'assignments', 'done',
 ];
 
 
@@ -102,13 +102,13 @@ export function mapLibraries(libs: LibEntry[], config: Record<string, unknown>):
 /** Fetch all wizard data from daemon in parallel. */
 export async function loadWizardData(port: number): Promise<WizardLoadData> {
   const api = senseiApi(port);
-  const [configRead, familiesRead, rootsRead, projectsRead, libsRead, instrumentsRead, routers] = await Promise.all([
+  const [configRead, familiesRead, rootsRead, workspacesRead, libsRead, instrumentsRead, routers] = await Promise.all([
     // Error-propagating: the config says whether setup is complete, and a
     // fallback `{}` reads as "incomplete" — sending a set-up user back to setup.
     api.tryGetConfig(),
     api.tryDetectAssistantFamilies(),
     api.tryGetScanRoots(),
-    api.tryListProjects(),
+    api.tryListWorkspaces(),
     api.tryGetLibs(),
     api.tryListInstruments(),
     api.tryListGatewayRouters(),
@@ -122,7 +122,7 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
   // was then committed as the user's answer (#288). A failed read rejects.
   const families = dataOrThrow(familiesRead, 'assistants');
   const roots = dataOrThrow(rootsRead, 'roots');
-  const projects = dataOrThrow(projectsRead, 'projects');
+  const workspaces = dataOrThrow(workspacesRead, 'workspaces');
   const libs = dataOrThrow(libsRead, 'libraries');
   const instruments = dataOrThrow(instrumentsRead, 'instruments');
 
@@ -132,7 +132,7 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     preferences: extractPreferences(config),
     assistantFamilies: mapFamilies(families),
     roots: roots as any[],
-    projects: projects as any[],
+    workspaces: workspaces as any[],
     libraries: { total: libs.total, libs: mapLibraries(libs.libs, config) },
     mcps: instruments.mcps,
     routers: routers.ok ? routers.data.routers : null,

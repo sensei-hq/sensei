@@ -44,7 +44,7 @@ const matureToday = (): ObservatoryToday => ({
     { kanji: '昇', label: 'Teaching adopted', text: 'Canvas smoothing promoted to rule', tag: '+7% FTR', tone: 'good' },
   ],
   adopted: [
-    { when: '1w ago', what: 'Prefer queue_duration over queue_time_ms', scope: 'project', source: 'from 3 prompts' },
+    { when: '1w ago', what: 'Prefer queue_duration over queue_time_ms', scope: 'workspace', source: 'from 3 prompts' },
   ],
   recentSessions: [],
 });
@@ -70,7 +70,7 @@ const earlyToday = (): ObservatoryToday => ({
 });
 
 const recent = (): RecentSession[] => [
-  { id: 's1', task: 'Fix auth', project: 'lumen-auth', startedAt: '2026-07-06T10:00:00Z', completedAt: '2026-07-06T10:38:00Z', ftr: 1, corrections: 0 },
+  { id: 's1', task: 'Fix auth', workspace: 'lumen-auth', startedAt: '2026-07-06T10:00:00Z', completedAt: '2026-07-06T10:38:00Z', ftr: 1, corrections: 0 },
 ];
 
 describe('Observatory /+page — maturity is the daemon decision', () => {

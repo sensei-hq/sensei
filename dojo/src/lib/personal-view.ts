@@ -15,7 +15,7 @@ import type {
 /* ── constitution ───────────────────────────────────────────────────────── */
 
 /** The rungs that make up your standing personal constitution — personal +
- *  stack, the two scopes that apply to every project you touch (mockup
+ *  stack, the two scopes that apply to every workspace you touch (mockup
  *  `ScrConstitution` `personalRungs`). Order-preserving against the ladder. */
 export function personalRungs(ladder: KitLadderRung[]): KitLadderRung[] {
 	return ladder.filter((r) => r.id === 'personal' || r.id === 'stack');

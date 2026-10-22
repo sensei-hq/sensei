@@ -6,7 +6,7 @@ import { loadReplaySessions } from './replay-sessions';
 describe('loadReplaySessions', () => {
   it('keeps each session\'s id, task, start and FTR', async () => {
     const api = { tryGetSessions: async () => ({ ok: true as const, data: { stats: null, sessions: [
-      { id: 's1', task: 'Fix auth', project: 'p', startedAt: '2026-10-20T08:00:00Z', ftr: 1, outcome: 'completed' },
+      { id: 's1', task: 'Fix auth', workspace: 'p', startedAt: '2026-10-20T08:00:00Z', ftr: 1, outcome: 'completed' },
     ] } }) };
     expect(await loadReplaySessions(api)).toEqual({
       sessions: [{ id: 's1', task: 'Fix auth', startedAt: '2026-10-20T08:00:00Z', ftr: 1 }],

@@ -1,5 +1,5 @@
 //! Corrections aggregation (#65 step 5) — pure clustering of recurring corrective
-//! prompts into project-tagged groups. No IO and no gateway here: the handler
+//! prompts into workspace-tagged groups. No IO and no gateway here: the handler
 //! (`tasks/handlers/corrections.rs`) supplies embeddings and persistence so this
 //! logic is unit-testable over plain data.
 
@@ -11,7 +11,7 @@ pub const SIMILARITY_THRESHOLD: f32 = 0.82;
 /// A cluster must reach this many members to surface as a "recurring" correction.
 /// Default; caller can override via `sensei.config.corrections.cluster_min` (≥1).
 ///
-/// Gap 2 tuning note: the current corpus (114K events across 4 projects)
+/// Gap 2 tuning note: the current corpus (114K events across 4 workspaces)
 /// surfaces exactly one cluster at threshold 0.82 + min 2, which suggests
 /// corrective prompts are more scattered than the default assumes. Lowering
 /// the threshold to ~0.75 or the min to 2 (already the default) is worth
@@ -41,7 +41,7 @@ const SNIPPET_MAX: usize = 200;
 /// One corrective prompt projected to the fields clustering needs.
 #[derive(Debug, Clone)]
 pub struct CorrItem {
-    pub project_id: uuid::Uuid,
+    pub workspace_id: uuid::Uuid,
     pub session_id: String,
     pub ts: i64, // epoch ms (activity.assistant_events.ts)
     pub prompt: String,
@@ -53,9 +53,9 @@ pub struct Cluster {
     pub signature: String,
     pub representative_text: String, // normalized snippet of the seed (earliest) member
     pub count: usize,
-    pub last_seen_ms: i64,            // max ts across members
-    pub project_ids: Vec<uuid::Uuid>, // distinct, sorted
-    pub member_idxs: Vec<usize>,      // indices into the input slice
+    pub last_seen_ms: i64,              // max ts across members
+    pub workspace_ids: Vec<uuid::Uuid>, // distinct, sorted
+    pub member_idxs: Vec<usize>,        // indices into the input slice
 }
 
 /// A row ready to upsert into `inference.corrections`. Plain data carrier shared
@@ -67,7 +67,7 @@ pub struct CorrectionRow {
     pub text: String,
     pub suggestion: Option<String>,
     pub count: i32,
-    pub project_ids: Vec<uuid::Uuid>,
+    pub workspace_ids: Vec<uuid::Uuid>,
     pub last_seen: chrono::DateTime<chrono::Utc>,
     pub memory_id: Option<uuid::Uuid>,
     pub instances: serde_json::Value,
@@ -133,7 +133,7 @@ struct ClusterAcc {
     seed_idx: usize,
     members: Vec<usize>,
     last_seen_ms: i64,
-    projects: Vec<uuid::Uuid>,
+    workspaces: Vec<uuid::Uuid>,
 }
 
 impl ClusterAcc {
@@ -142,7 +142,7 @@ impl ClusterAcc {
             seed_idx,
             members: vec![seed_idx],
             last_seen_ms: item.ts,
-            projects: vec![item.project_id],
+            workspaces: vec![item.workspace_id],
         }
     }
     fn push(&mut self, idx: usize, item: &CorrItem) {
@@ -150,19 +150,19 @@ impl ClusterAcc {
         if item.ts > self.last_seen_ms {
             self.last_seen_ms = item.ts;
         }
-        if !self.projects.contains(&item.project_id) {
-            self.projects.push(item.project_id);
+        if !self.workspaces.contains(&item.workspace_id) {
+            self.workspaces.push(item.workspace_id);
         }
     }
     fn finish(mut self, items: &[CorrItem]) -> Cluster {
         let seed = &items[self.seed_idx];
-        self.projects.sort();
+        self.workspaces.sort();
         Cluster {
             signature: signature(&seed.session_id, &seed.prompt),
             representative_text: normalize(&seed.prompt),
             count: self.members.len(),
             last_seen_ms: self.last_seen_ms,
-            project_ids: self.projects,
+            workspace_ids: self.workspaces,
             member_idxs: self.members,
         }
     }
@@ -224,7 +224,7 @@ mod tests {
     use super::*;
 
     fn item(pid: uuid::Uuid, session: &str, ts: i64, prompt: &str) -> CorrItem {
-        CorrItem { project_id: pid, session_id: session.into(), ts, prompt: prompt.into() }
+        CorrItem { workspace_id: pid, session_id: session.into(), ts, prompt: prompt.into() }
     }
 
     // ── parse_similarity_threshold ──────────────────────────────────────
@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(clusters.len(), 2);
         let big = clusters.iter().find(|c| c.count == 2).unwrap();
         assert_eq!(big.last_seen_ms, 200, "max ts of members");
-        assert_eq!(big.project_ids, vec![p]);
+        assert_eq!(big.workspace_ids, vec![p]);
     }
 
     #[test]
@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn cluster_dedups_projects() {
+    fn cluster_dedups_workspaces() {
         let p1 = uuid::Uuid::new_v4();
         let p2 = uuid::Uuid::new_v4();
         let items = vec![
@@ -345,7 +345,7 @@ mod tests {
         let embs = vec![vec![1.0, 0.0], vec![0.99, 0.14], vec![0.98, 0.2]];
         let c = cluster(&items, &embs, 0.82);
         assert_eq!(c.len(), 1);
-        assert_eq!(c[0].project_ids.len(), 2, "two distinct projects, deduped");
+        assert_eq!(c[0].workspace_ids.len(), 2, "two distinct workspaces, deduped");
     }
 
     #[test]

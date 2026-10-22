@@ -32,6 +32,10 @@ pub struct DriveStep<'a> {
     pub cwd: &'a Path,
     /// The step prompt (logical text; never code/diffs — relay-engine D10).
     pub prompt: &'a str,
+    /// The daemon-owned run this step advances (`activity.runs.id`). A spawned
+    /// agent carries it as `SENSEI_RUN_ID`, which is how its gate hook knows the
+    /// session is unattended (#312, D28).
+    pub run_id: &'a str,
     /// Hard wall-clock cap for this step.
     pub timeout: Duration,
 }

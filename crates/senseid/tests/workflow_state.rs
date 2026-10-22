@@ -8,21 +8,21 @@ fn daemon_url() -> String {
     std::env::var("SENSEID_URL").unwrap_or_else(|_| "http://127.0.0.1:7744".to_string())
 }
 
-fn test_project(suffix: &str) -> String {
+fn test_workspace(suffix: &str) -> String {
     format!("test-wf-{}-{}", std::process::id(), suffix)
 }
 
 #[tokio::test]
 #[ignore] // requires running daemon
-async fn get_state_empty_project() {
+async fn get_state_empty_workspace() {
     let client = reqwest::Client::new();
-    let proj = test_project("empty");
+    let proj = test_workspace("empty");
 
     let resp = client.get(format!("{}/api/state/{}", daemon_url(), proj)).send().await.unwrap();
     assert!(resp.status().is_success());
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["project"], proj);
+    assert_eq!(body["workspace"], proj);
     assert!(body["active_phase"].is_null());
     assert!(body["active_task"].is_null());
     assert!(body["active_issue"].is_null());
@@ -32,7 +32,7 @@ async fn get_state_empty_project() {
 #[ignore]
 async fn put_and_get_state() {
     let client = reqwest::Client::new();
-    let proj = test_project("putget");
+    let proj = test_workspace("putget");
 
     // PUT
     let resp = client
@@ -61,7 +61,7 @@ async fn put_and_get_state() {
 #[ignore]
 async fn put_partial_preserves_existing() {
     let client = reqwest::Client::new();
-    let proj = test_project("partial");
+    let proj = test_workspace("partial");
 
     // Set all fields
     client
@@ -95,9 +95,9 @@ async fn put_partial_preserves_existing() {
 
 #[tokio::test]
 #[ignore]
-async fn put_with_project_path_syncs_state_yaml() {
+async fn put_with_workspace_path_syncs_state_yaml() {
     let client = reqwest::Client::new();
-    let proj = test_project("sync");
+    let proj = test_workspace("sync");
     let tmp = tempfile::TempDir::new().unwrap();
     let sensei_dir = tmp.path().join(".sensei");
 
@@ -106,7 +106,7 @@ async fn put_with_project_path_syncs_state_yaml() {
         .json(&json!({
             "active_phase": "ideate",
             "active_task": "brainstorm feature",
-            "project_path": tmp.path().to_string_lossy()
+            "workspace_path": tmp.path().to_string_lossy()
         }))
         .send()
         .await

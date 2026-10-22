@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { DojoMembership } from '$lib/types.js';
 import {
-  boundProjectsSummary,
+  boundWorkspacesSummary,
   connectionsHeadline,
   kindPill,
   syncChip,
@@ -24,7 +24,7 @@ const membership = (over: Partial<DojoMembership> = {}): DojoMembership => ({
   last_seq: 0,
   last_heartbeat_at: null,
   enabled: true,
-  bound_projects: [],
+  bound_workspaces: [],
   ...over,
 });
 
@@ -94,17 +94,17 @@ describe('kindPill', () => {
   });
 });
 
-describe('boundProjectsSummary', () => {
-  it('none bound', () => expect(boundProjectsSummary([])).toBe('no projects bound'));
+describe('boundWorkspacesSummary', () => {
+  it('none bound', () => expect(boundWorkspacesSummary([])).toBe('no workspaces bound'));
   it('singular', () =>
-    expect(boundProjectsSummary([{ id: 'a', name: 'lumen-auth' }])).toBe('1 project bound'));
+    expect(boundWorkspacesSummary([{ id: 'a', name: 'lumen-auth' }])).toBe('1 workspace bound'));
   it('plural', () =>
     expect(
-      boundProjectsSummary([
+      boundWorkspacesSummary([
         { id: 'a', name: 'lumen-auth' },
         { id: 'b', name: 'billing' },
       ]),
-    ).toBe('2 projects bound'));
+    ).toBe('2 workspaces bound'));
 });
 
 describe('connectionsHeadline', () => {

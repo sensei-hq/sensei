@@ -14,7 +14,7 @@
 
 /** Glyphs taken from the mockups — the design's own assignments. */
 const FROM_MOCKUP: Record<string, string> = {
-	project_health: '健', // health
+	workspace_health: '健', // health
 	churn_concentration: '紋', // crest/pattern — where change concentrates
 	churn_rate: '流', // flow
 	time_to_useful_result: '連', // continuity, elapsing

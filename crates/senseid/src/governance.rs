@@ -92,7 +92,7 @@ pub fn render_rules_md(set: &ResolvedRuleset) -> String {
     out.push_str("\n\n# Sensei Rules\n\n");
     out.push_str(
         "Your always-on rules (user + general scope). Repository-specific rules \
-         (organization / project / technology) are **not** listed here — call the \
+         (organization / workspace / technology) are **not** listed here — call the \
          `get_rules` MCP tool in a repo to resolve them.\n",
     );
 
@@ -245,7 +245,7 @@ mod tests {
         let rows = vec![
             raw("never log secrets", "mandatory", "organization"),
             raw("never log secrets", "advisory", "repository"),
-            raw("prefer early returns", "recommended", "project"),
+            raw("prefer early returns", "recommended", "workspace"),
         ];
         let set = structure_ruleset(rows);
         assert_eq!(set.total, 2, "the duplicate is dropped");
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn empty_content_skipped_and_empty_input_is_empty() {
-        let rows = vec![raw("   ", "required", "project")];
+        let rows = vec![raw("   ", "required", "workspace")];
         assert_eq!(structure_ruleset(rows).total, 0);
         assert_eq!(structure_ruleset(vec![]).total, 0);
     }
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn mandatory_flag_only_for_mandatory() {
         let rows = vec![
-            raw("a", "required", "project"),
+            raw("a", "required", "workspace"),
             raw("b", "mandatory", "organization"),
             raw("c", "advisory", "user"),
         ];

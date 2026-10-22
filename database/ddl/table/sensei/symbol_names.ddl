@@ -8,7 +8,7 @@ create table if not exists symbol_names (
 
 comment on table symbol_names is
 'Global registry of every code-symbol name ever indexed. The doc-drift scan
-(scan_project_doc_drift) uses it as the "was ever a real symbol" gate: a doc
+(scan_workspace_doc_drift) uses it as the "was ever a real symbol" gate: a doc
 mention is flagged broken only when the name IS in this registry (it was a real
 symbol at some point) but no longer resolves to a current sensei.nodes row
 (removed / renamed). Identifiers that were NEVER symbols — Rust enum variants,

@@ -3,10 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const listTriage = vi.fn();
-const listProjects = vi.fn();
+const listWorkspaces = vi.fn();
 vi.mock('$lib/triage-data', () => ({ listTriage }));
 vi.mock('$lib/client-data', () => ({
-	listProjects,
+	listWorkspaces,
 	DojoApiError: class DojoApiError extends Error {}
 }));
 vi.mock('@sveltejs/kit', () => ({ redirect: (s: number, l: string) => { throw new Error(`${s} ${l}`); } }));
@@ -27,7 +27,7 @@ const run = (role: string) =>
 	});
 
 beforeEach(() => {
-	listProjects.mockReset().mockResolvedValue([]);
+	listWorkspaces.mockReset().mockResolvedValue([]);
 	listTriage.mockReset().mockResolvedValue([ROW]);
 });
 

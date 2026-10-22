@@ -20,6 +20,10 @@ begin
        and not exists (select 1 from dojo.memberships m
                         where m.tenant_id = p_tenant and m.user_id = p_principal and m.disabled_at is null);
     delete from dojo.dojo_viewers where tenant_id = p_tenant and principal_id = p_principal;
+    if found then
+        perform dojo.append_audit_event(p_tenant, dojo.current_principal_id(), 'viewer_removed',
+                                        jsonb_build_object('principal_id', p_principal));
+    end if;
 end;
 $$;
 

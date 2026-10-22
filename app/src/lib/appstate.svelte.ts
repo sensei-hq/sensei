@@ -22,14 +22,14 @@ export class AppState {
   config = $state<Record<string, string>>({});
   loaded = $state(false);
 
-  /** Cached project count for the observatory rail badge. Projects change
-   *  rarely, so this is fetched once (on layout mount via loadProjectCount)
+  /** Cached workspace count for the observatory rail badge. Workspaces change
+   *  rarely, so this is fetched once (on layout mount via loadWorkspaceCount)
    *  and reused — the rail reads this rather than re-fetching on every
    *  render. `null` until loaded → the badge stays hidden. */
-  projectCount = $state<number | null>(null);
+  workspaceCount = $state<number | null>(null);
 
-  get activeProjectId(): string | null {
-    return this.config['active_project'] || this.config['active_solution'] || null;
+  get activeWorkspaceId(): string | null {
+    return this.config['active_workspace'] || this.config['active_solution'] || null;
   }
 
   get sidebarMaxItems(): number {
@@ -38,7 +38,7 @@ export class AppState {
 
   get globalSkills(): string[] {
     try {
-      return JSON.parse(this.config['global_skills'] ?? '["zero-errors-policy","managing-project-sessions","pattern-based-development"]');
+      return JSON.parse(this.config['global_skills'] ?? '["zero-errors-policy","managing-workspace-sessions","pattern-based-development"]');
     } catch (e) {
       console.warn('[appState] global_skills JSON.parse failed; returning empty list', e);
       return [];
@@ -109,14 +109,14 @@ export class AppState {
   get healthOk(): boolean { return healthState.isOk; }
   get setupOk():  boolean { return this.setupComplete; }
 
-  async setActiveProjectId(id: string | null) {
+  async setActiveWorkspaceId(id: string | null) {
     if (id) {
-      await this.setConfig('active_project', id);
+      await this.setConfig('active_workspace', id);
     } else {
-      delete this.config['active_project'];
+      delete this.config['active_workspace'];
       this.config = { ...this.config };
       const api = senseiApi(this.port);
-      await api.deleteConfig('active_project');
+      await api.deleteConfig('active_workspace');
     }
   }
 
@@ -173,20 +173,20 @@ export class AppState {
   }
 
   /**
-   * Fetch + cache the project count for rail badges. No-op without Tauri
+   * Fetch + cache the workspace count for rail badges. No-op without Tauri
    * (browser dev). A failed read leaves the count unknown (null — no badge),
-   * never 0, which read as "no projects" (#288); the rail must never block.
+   * never 0, which read as "no workspaces" (#288); the rail must never block.
    */
-  async loadProjectCount(): Promise<void> {
+  async loadWorkspaceCount(): Promise<void> {
     if (!hasTauri()) return;
-    const read = await senseiApi(this.port).tryListProjects();
-    if (read.ok) this.projectCount = read.data.length;
+    const read = await senseiApi(this.port).tryListWorkspaces();
+    if (read.ok) this.workspaceCount = read.data.length;
   }
 
   async reset() {
     this.config = {};
     this.loaded = false;
-    this.projectCount = null;
+    this.workspaceCount = null;
 
     // sensei:health is owned by HealthState — do not touch it here.
     // sensei:app-version is owned by the upgrader so an in-flight staged

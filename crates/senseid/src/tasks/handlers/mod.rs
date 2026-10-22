@@ -35,7 +35,7 @@ mod verdicts;
 mod verdicts_classify;
 mod warm_narration_cache;
 
-pub use analyze::analyze_project;
+pub use analyze::analyze_workspace;
 pub use community::detect_communities;
 pub use consolidate_governance::consolidate_governance;
 pub use corrections::aggregate_corrections;

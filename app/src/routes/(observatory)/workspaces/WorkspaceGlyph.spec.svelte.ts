@@ -1,0 +1,52 @@
+// @vitest-environment jsdom
+import { describe, it, expect, afterEach } from 'vitest';
+import { mountComponent } from '$lib/test-mount.js';
+import Harness from './WorkspaceGlyph.harness.svelte';
+import type { WorkspaceIcon } from './buckets.js';
+
+let cleanup: Array<() => void> = [];
+afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
+
+function mount(icon: WorkspaceIcon) {
+  const m = mountComponent(Harness, { icon });
+  cleanup.push(m.destroy);
+  return m;
+}
+
+const img = (m: { container: HTMLElement }) => m.container.querySelector('img');
+const kanji = (m: { container: HTMLElement }) => m.container.querySelector('span.kanji');
+
+describe('WorkspaceGlyph', () => {
+  it('renders the image with its src and no kanji for an image icon', () => {
+    const m = mount({ kind: 'image', src: 'http://127.0.0.1:7744/api/workspaces/p/icon', glyph: '場' });
+    expect(img(m)?.getAttribute('src')).toBe('http://127.0.0.1:7744/api/workspaces/p/icon');
+    expect(kanji(m)).toBeNull();
+  });
+
+  it('renders the kanji glyph and no image for a kanji icon', () => {
+    const m = mount({ kind: 'kanji', glyph: '禅' });
+    expect(kanji(m)?.textContent).toBe('禅');
+    expect(img(m)).toBeNull();
+  });
+
+  it('falls back to the kanji glyph when the image fails to load', async () => {
+    const m = mount({ kind: 'image', src: 'http://127.0.0.1:7744/api/workspaces/p/icon', glyph: '場' });
+    const el = img(m);
+    expect(el).not.toBeNull();
+    // Simulate a broken image (e.g. a workspace whose icon 404s) — the component
+    // swaps to the kanji fallback rather than showing a broken image.
+    el!.dispatchEvent(new Event('error'));
+    await Promise.resolve();
+    expect(img(m)).toBeNull();
+    expect(kanji(m)?.textContent).toBe('場');
+  });
+
+  // #133: icon mode's default workspace mark.
+  it('renders the Solar icon for an icon mark', () => {
+    const m = mount({ kind: 'icon', cls: 'i-solar-folder-with-files-bold-duotone', glyph: '場' });
+    const icon = m.container.querySelector('[data-workspace-icon]');
+    expect(icon?.className).toContain('i-solar-folder-with-files-bold-duotone');
+    expect(kanji(m)).toBeNull();
+    expect(img(m)).toBeNull();
+  });
+});

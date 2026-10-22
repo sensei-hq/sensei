@@ -24,10 +24,10 @@ export interface StateEvent<T extends { id: string }> {
 // ─── Scan ──────────────────────────────────────────────────────────────────────
 
 export type FolderStatus = 'discovered' | 'queued' | 'indexing' | 'indexed' | 'failed';
-export type ProjectStatus = 'scanning' | 'indexing' | 'active' | 'failed';
+export type WorkspaceStatus = 'scanning' | 'indexing' | 'active' | 'failed';
 export type ActivityLevel = 'discover' | 'queue' | 'process' | 'info' | 'success' | 'error';
 
-export interface ScanProjectFolder {
+export interface ScanWorkspaceFolder {
   id: string;
   name: string;
   path: string;
@@ -40,21 +40,21 @@ export interface ScanProjectFolder {
    * for this folder. Drives the task-list panel's reverse-chronological
    * ordering — in-flight folders bubble up as their progress events arrive,
    * terminal-status folders drift down once their lastUpdated freezes.
-   * Optional because hydration from /api/projects has no event timestamp.
+   * Optional because hydration from /api/workspaces has no event timestamp.
    */
   lastUpdated?: number;
 }
 
-/** Folder-level SSE event from daemon — includes projectId for routing. */
-export interface ScanFolderEvent extends ScanProjectFolder {
-  projectId: string;
+/** Folder-level SSE event from daemon — includes workspaceId for routing. */
+export interface ScanFolderEvent extends ScanWorkspaceFolder {
+  workspaceId: string;
 }
 
-export interface ScanProject {
+export interface ScanWorkspace {
   id: string;
   name: string;
-  status: ProjectStatus;
-  folders: ScanProjectFolder[];
+  status: WorkspaceStatus;
+  folders: ScanWorkspaceFolder[];
   autoDetected: boolean;
   confidence: 'high' | 'medium' | 'low';
 }
@@ -144,7 +144,7 @@ export interface RemoveResult {
   agents_removed: number;
   hooks_removed: boolean;
   cache_cleared: boolean;
-  projects_cleaned: string[];
+  workspaces_cleaned: string[];
   errors: string[];
 }
 
@@ -227,42 +227,42 @@ export interface DirtyStatus {
   total: number;
 }
 
-// ─── Project Model (group of 1+ repos) ──────────────────────────────────────
+// ─── Workspace Model (group of 1+ repos) ──────────────────────────────────────
 
 export type RepoRole =
   | 'backend' | 'frontend' | 'mobile' | 'middleware'
   | 'infra' | 'docs' | 'library' | 'shared' | 'unknown';
 
-export type ProjectCategory = 'active' | 'side' | 'idea';
+export type WorkspaceCategory = 'active' | 'side' | 'idea';
 
-export interface ProjectRepo {
+export interface WorkspaceRepo {
   repoId: string;
   path: string;
   role: RepoRole;
   label?: string;
 }
 
-export interface Project {
+export interface Workspace {
   id: string;
   name: string;
   description?: string;
   client?: string;
-  category: ProjectCategory;
-  repos: ProjectRepo[];
+  category: WorkspaceCategory;
+  repos: WorkspaceRepo[];
   createdAt: string;
   updatedAt: string;
 }
 
-/** @deprecated Use Project instead */
-export type Solution = Project;
-/** @deprecated Use ProjectRepo instead */
-export type SolutionRepo = ProjectRepo;
-/** @deprecated Use ProjectCategory instead */
-export type SolutionCategory = ProjectCategory;
+/** @deprecated Use Workspace instead */
+export type Solution = Workspace;
+/** @deprecated Use WorkspaceRepo instead */
+export type SolutionRepo = WorkspaceRepo;
+/** @deprecated Use WorkspaceCategory instead */
+export type SolutionCategory = WorkspaceCategory;
 
 // ─── Server API response shapes ──────────────────────────────────────────────
 
-export interface ServerProject {
+export interface ServerWorkspace {
   repo_id: string;
   name: string;
   path: string;
@@ -279,8 +279,8 @@ export interface ServerProject {
   partiallyIndexed?: boolean;
 }
 
-/** Shape returned by GET /api/projects (project groups, not individual repos). */
-export interface ProjectListItem {
+/** Shape returned by GET /api/workspaces (workspace groups, not individual repos). */
+export interface WorkspaceListItem {
   id: string;
   name: string;
   description?: string | null;
@@ -289,28 +289,28 @@ export interface ProjectListItem {
   maturity: string;
   stack: { languages?: string[]; frameworks?: string[]; runtimes?: string[]; services?: string[] };
   /** Small icon union. `kind:"kanji"` → `value` is a single glyph;
-   *  `kind:"image"` → `value` is a URL/path from the project-icon pipeline.
+   *  `kind:"image"` → `value` is a URL/path from the workspace-icon pipeline.
    *  The wire may send an empty `{}` (nothing inferred yet) or `null`. */
   icon?: { kind?: string; value?: string } | null;
   preferred_acp?: string;
-  /** Project "purpose" text — sourced from `sensei.projects.goal` and
+  /** Workspace "purpose" text — sourced from `sensei.workspaces.goal` and
    *  exposed by the list endpoint as `vision`. Null when absent. */
   vision?: string | null;
-  /** The Dōjō membership this project is bound to (`projects.dojo_id`), or null
+  /** The Dōjō membership this workspace is bound to (`workspaces.dojo_id`), or null
    *  when unbound. Drives the About-panel binding chip's confirmed state. */
   dojo_id?: string | null;
-  /** COUNT of the project's repo-root folders (not nested subfolders). */
+  /** COUNT of the workspace's repo-root folders (not nested subfolders). */
   repos_count?: number;
-  /** COUNT of the project's linked libraries. */
+  /** COUNT of the workspace's linked libraries. */
   libs_count?: number;
-  /** MAX(sessions.started_at) for the project, ISO. Null when never run. */
+  /** MAX(sessions.started_at) for the workspace, ISO. Null when never run. */
   last_session_at?: string | null;
   /** COUNT of sessions in the last 7 days. Also available via the /ftr fanout. */
   sessions7d?: number;
   [key: string]: unknown;
 }
 
-export interface ProjectSummary {
+export interface WorkspaceSummary {
   repoId: string;
   name: string;
   path: string;
@@ -384,19 +384,19 @@ export interface GraphCallEdge {
 export interface GraphData {
   summary: { totalSymbols: number; totalEdges: number; communities: number };
   communities: Array<{
-    id: string; label: string; project: string; color: string;
+    id: string; label: string; workspace: string; color: string;
     symbolCount: number; godNodes: string[];
   }>;
   godNodes: Array<{
-    name: string; project: string; degree: number; community: string; file: string;
+    name: string; workspace: string; degree: number; community: string; file: string;
   }>;
   rationale: Array<{
-    file: string; tag: string; project: string; text: string;
+    file: string; tag: string; workspace: string; text: string;
   }>;
 }
 
-export interface ProjectGraphResponse {
-  projectId: string;
+export interface WorkspaceGraphResponse {
+  workspaceId: string;
   name: string;
   nodes: number;
   edges: number;
@@ -404,8 +404,8 @@ export interface ProjectGraphResponse {
   graph: { nodes: GraphNode[]; edges: GraphEdge[] };
 }
 
-export interface ProjectAnalysis {
-  project_id: string;
+export interface WorkspaceAnalysis {
+  workspace_id: string;
   links: Array<{
     from_repo: string; to_repo: string; link_type: string;
     details: string[]; strength: number;
@@ -414,10 +414,10 @@ export interface ProjectAnalysis {
   shared_libs: Array<{ name: string; repos: string[] }>;
 }
 
-/** @deprecated Use ProjectGraphResponse instead */
-export type SolutionGraphResponse = ProjectGraphResponse;
-/** @deprecated Use ProjectAnalysis instead */
-export type SolutionAnalysis = ProjectAnalysis;
+/** @deprecated Use WorkspaceGraphResponse instead */
+export type SolutionGraphResponse = WorkspaceGraphResponse;
+/** @deprecated Use WorkspaceAnalysis instead */
+export type SolutionAnalysis = WorkspaceAnalysis;
 
 export interface InferredRole {
   repo_id: string;
@@ -552,9 +552,9 @@ export interface DepVersion {
 export interface SessionData {
   stats: Record<string, unknown> | null;
   sessions: Array<{
-    // project is LEFT JOINed from the session's project_id, so it can be null
-    // for a session whose folder isn't linked to a project yet.
-    id: string; task: string; project: string | null; startedAt: string;
+    // workspace is LEFT JOINed from the session's workspace_id, so it can be null
+    // for a session whose folder isn't linked to a workspace yet.
+    id: string; task: string; workspace: string | null; startedAt: string;
     completedAt?: string; outcome?: string; summary?: string;
     cost?: number; tokensIn?: number; tokensOut?: number; ftr?: number | null;
     // First-try-right feed carries a rework count (0 ⇒ first-try, N ⇒ N× rework).
@@ -566,7 +566,7 @@ export interface SessionData {
 }
 
 // ── Observatory · Sessions digest (Slot 6) ────────────────────────────────
-// Wire shape for the range/project-scoped `GET /api/sessions?range=&project=`.
+// Wire shape for the range/workspace-scoped `GET /api/sessions?range=&workspace=`.
 // `outcome` is the real `sensei.session_outcome` enum; `agent` is the captured
 // assistant family ("claude" / "zed"). `ftr` is a boolean on this endpoint
 // (true = first-try-right) or null when the session isn't scored yet.
@@ -575,7 +575,7 @@ export type SessionOutcome =
 
 export interface SessionRow {
   id: string;
-  project: string | null;
+  workspace: string | null;
   task: string;
   summary: string | null;
   // Kept string-tolerant so an unrecognized daemon enum value renders neutral
@@ -587,7 +587,7 @@ export interface SessionRow {
   startedAt: string;
   completedAt: string | null;
   agent: string | null;
-  // Populated only for multi-repo projects once the daemon LEFT JOINs
+  // Populated only for multi-repo workspaces once the daemon LEFT JOINs
   // sensei.folders for `role`. Absent on the current endpoint, so the
   // session row's folder-role chip stays dormant until then.
   folderRole?: string | null;
@@ -668,8 +668,8 @@ export interface IndexError {
   timestamp: string;
 }
 
-// ── Project detail types ──────────────────────────────────────────────────
-export interface ProjectMemory {
+// ── Workspace detail types ──────────────────────────────────────────────────
+export interface WorkspaceMemory {
   id: string;
   name: string;
   title: string;
@@ -688,7 +688,7 @@ export interface ProjectMemory {
   // Ready-to-share lane — `generalised` is sensei's assessment that this memory
   // has been rewritten stack-agnostic and is safe to widen up the scope ladder;
   // `generalisedContent` carries that portable rewrite (null until generalised).
-  // Both are served by GET /api/projects/{id}/memories.
+  // Both are served by GET /api/workspaces/{id}/memories.
   generalised?: boolean;
   generalisedContent?: string | null;
   /** MAX(reinforced_at, violated_at) — null for freshly minted memories. */
@@ -722,8 +722,8 @@ export interface PatternEntry {
   example?: string | null;
   /** Free-form enforcement guidance surfaced when lifecycle = rule. */
   enforcement?: string | null;
-  /** Signed FTR delta between the pattern's folder and the project baseline.
-   *  Positive → the pattern's locus performs above the project average;
+  /** Signed FTR delta between the pattern's folder and the workspace baseline.
+   *  Positive → the pattern's locus performs above the workspace average;
    *  negative → below. Null when either baseline can't be computed. */
   ftrDelta?: number | null;
   /** How many code sites carry this pattern (or the anti-pattern). */
@@ -756,17 +756,17 @@ export interface Recommendation {
 
 export type InsightColumn = 'now' | 'soon' | 'settled';
 
-/** Project reference for the filter-chip strip. */
-export interface InsightProjectRef {
+/** Workspace reference for the filter-chip strip. */
+export interface InsightWorkspaceRef {
   id: string;
   name: string;
   kanji: string;
   /** MAX(sessions.started_at), ISO — drives the Insights filter's "recent 3"
-   *  chips. Null when the project has never run a session. */
+   *  chips. Null when the workspace has never run a session. */
   last_session_at?: string | null;
 }
 
-/** A pending recommendation, pre-bucketed. `name` is the project name;
+/** A pending recommendation, pre-bucketed. `name` is the workspace name;
  *  `impact` is a plain-language sentence (may be null). */
 export interface InsightRecommendation {
   id: string;
@@ -775,7 +775,7 @@ export interface InsightRecommendation {
   why: string | null;
   impact: string | null;
   evidence: string[];
-  project_id: string;
+  workspace_id: string;
   name: string;
   column: InsightColumn;
 }
@@ -790,7 +790,7 @@ export interface InsightMemory {
   violated_count: number;
   strength: number;
   scope: string;
-  project_id: string;
+  workspace_id: string;
   column: InsightColumn;
 }
 
@@ -801,7 +801,7 @@ export interface InsightPattern {
   family: string | null;
   lifecycle: string;
   instance_count: number;
-  project_id: string;
+  workspace_id: string;
   column: InsightColumn;
 }
 
@@ -817,7 +817,7 @@ export interface InsightCorrection {
 /** The whole triage board in one payload. */
 export interface InsightsBoard {
   counts: { now: number; soon: number; settled: number };
-  projects: InsightProjectRef[];
+  workspaces: InsightWorkspaceRef[];
   recommendations: InsightRecommendation[];
   memories: InsightMemory[];
   patterns: InsightPattern[];
@@ -871,7 +871,7 @@ export interface PlaybookRecommendation {
   trust: PlaybookTrust;
 }
 
-export interface ProjectSession {
+export interface WorkspaceSession {
   id: string;
   task: string;
   outcome: string | null;
@@ -977,8 +977,8 @@ export interface SyncStats {
 // Each membership arrives with the signed-in persona's sync (#236 step 4e);
 // nothing here carries a credential.
 
-/** A local project bound to a membership via `projects.dojo_id`. */
-export interface DojoBoundProject {
+/** A local workspace bound to a membership via `workspaces.dojo_id`. */
+export interface DojoBoundWorkspace {
   id: string;
   name: string;
 }
@@ -1005,17 +1005,17 @@ export interface DojoMembership {
   last_seq: number;
   last_heartbeat_at: string | null;
   enabled: boolean;
-  bound_projects: DojoBoundProject[];
+  bound_workspaces: DojoBoundWorkspace[];
 }
 
-/** The inferred (confirm-inferred) project→Dōjō binding surfaced in the project
- *  About panel — `GET /api/projects/{id}/dojo-suggestion`. The user confirms it
+/** The inferred (confirm-inferred) workspace→Dōjō binding surfaced in the workspace
+ *  About panel — `GET /api/workspaces/{id}/dojo-suggestion`. The user confirms it
  *  (`POST …/dojo-binding`); it is never auto-committed. */
 export interface DojoBindingSuggestion {
   membership_id: string;
   /** employer | client | community | personal. */
   kind: string;
-  /** The project's git-remote owner slug that matched the membership. */
+  /** The workspace's git-remote owner slug that matched the membership. */
   matched_slug: string;
   tenant_key: string;
   dojo_url: string;
@@ -1122,8 +1122,9 @@ export interface McpServerRow {
   id: string;
   acp_family: string;
   mcp_key: string;
+  /** Claude Code's MCP config scope (`.mcp.json` in the repo is its `project`). */
   scope: 'user' | 'project';
-  project_id: string | null;
+  workspace_id: string | null;
   config_source: string;
   command: string;
   args: unknown[];
@@ -1180,9 +1181,9 @@ export interface ImpactVerdictEntry {
   decidedAt: string | null;
 }
 
-// ─── Project-scoped MCP tool stats (T2 Slice F) ──────────────────────────────
+// ─── Workspace-scoped MCP tool stats (T2 Slice F) ──────────────────────────────
 
-export interface ProjectMcpToolStat {
+export interface WorkspaceMcpToolStat {
   id: string;
   name: string;
   mcp: string;
@@ -1208,7 +1209,7 @@ export interface ToolSignal {
 
 // ─── Service scoping (T2 Slice B) ────────────────────────────────────────────
 
-export interface ProjectService {
+export interface WorkspaceService {
   id: string;
   name: string;
   displayName: string;
@@ -1220,8 +1221,8 @@ export interface ProjectService {
   verified: boolean;
   installed: boolean;
   /** Effective enable state (scoped > global > default true). */
-  enabledForProject: boolean;
-  /** Raw scoped override for this project; null when no override row exists. */
+  enabledForWorkspace: boolean;
+  /** Raw scoped override for this workspace; null when no override row exists. */
   scopedEnabled: boolean | null;
   /** Raw global scope; null when no global row exists. */
   globalEnabled: boolean | null;
@@ -1285,38 +1286,38 @@ export interface ToolInsight {
   detail: string | null;
 }
 
-// ─── Project window · Overview (Slot 4) ──────────────────────────────────────
-// Shape of GET /api/projects/{id}/overview — a server-side assembler that
-// composes the project window's landing pane from several sources. The wire is
+// ─── Workspace window · Overview (Slot 4) ──────────────────────────────────────
+// Shape of GET /api/workspaces/{id}/overview — a server-side assembler that
+// composes the workspace window's landing pane from several sources. The wire is
 // camelCase throughout, except the top-level `top_recommendation` key.
 
-export interface ProjectOverviewFolder {
+export interface WorkspaceOverviewFolder {
   id: string;
   name: string;
-  /** Folder-project membership role (backend/frontend/library/…); null when
+  /** Folder-workspace membership role (backend/frontend/library/…); null when
    *  the folder has no assigned role. */
   role: string | null;
   primary: boolean;
 }
 
-export interface ProjectOverviewHeader {
+export interface WorkspaceOverviewHeader {
   id: string;
   name: string;
-  /** Single glyph from the project's icon; 場 when nothing is set. */
+  /** Single glyph from the workspace's icon; 場 when nothing is set. */
   kanji: string;
   client: string | null;
   goal: string | null;
   /** 14-day rolling FTR, 0..1 — the same store-backed FTR number
-   *  (project_metrics, metric='ftr') the projects-index card reads, so the
-   *  two numbers never disagree. Null when the project has no analyzed sessions
+   *  (workspace_metrics, metric='ftr') the workspaces-index card reads, so the
+   *  two numbers never disagree. Null when the workspace has no analyzed sessions
    *  in the window (honest no-data, rendered "—"; never a fabricated 0%). */
   ftr: number | null;
   warn: boolean;
   sessions7d: number;
-  folders: ProjectOverviewFolder[];
+  folders: WorkspaceOverviewFolder[];
 }
 
-export interface ProjectOverviewTopRec {
+export interface WorkspaceOverviewTopRec {
   id: string;
   title: string;
   why: string;
@@ -1326,14 +1327,14 @@ export interface ProjectOverviewTopRec {
   defaultAcp: string | null;
 }
 
-export interface ProjectOverviewStats {
+export interface WorkspaceOverviewStats {
   sessions7d: number;
   sessions7dCorrected: number;
   memories: { total: number; readyToShare: number; toMerge: number };
   docDrift: { open: number; referencedDocs: number };
 }
 
-export interface ProjectOverviewSession {
+export interface WorkspaceOverviewSession {
   id: string;
   title: string;
   startedAt: string;
@@ -1341,15 +1342,15 @@ export interface ProjectOverviewSession {
   corrections: number;
   ftr: boolean;
   /** Folder role for the repo this session touched; null for single-repo
-   *  projects or unassigned folders. */
+   *  workspaces or unassigned folders. */
   role: string | null;
 }
 
-export interface ProjectOverview {
-  project: ProjectOverviewHeader;
-  top_recommendation: ProjectOverviewTopRec | null;
-  stats: ProjectOverviewStats;
-  recentSessions: ProjectOverviewSession[];
+export interface WorkspaceOverview {
+  workspace: WorkspaceOverviewHeader;
+  top_recommendation: WorkspaceOverviewTopRec | null;
+  stats: WorkspaceOverviewStats;
+  recentSessions: WorkspaceOverviewSession[];
 }
 
 // ─── Dōjō downstream inbox (Observatory · Upgrades · C7) ──────────────────────
@@ -1373,6 +1374,7 @@ export type DojoUpgradeState = 'pending' | 'applied' | 'muted' | 'pinned';
 export interface DojoUpgradeScope {
   company?: string;
   team?: string;
+  /** The dōjō wire's word (dojo-protocol `ArtifactScope.project`): a workspace name. */
   project?: string;
   stack?: string;
 }
@@ -1838,7 +1840,7 @@ export interface StructurePayload {
  *  documentation file ever becomes one (#246). An always-empty docs ring is a
  *  lie the picture would tell confidently, so `kind` is code-vs-tests and
  *  documentation appears as a SHARE instead, where it is real. */
-export type WorldGroupBy = 'project' | 'repository' | 'kind';
+export type WorldGroupBy = 'workspace' | 'repository' | 'kind';
 
 /** What the shade control can colour a circle by.
  *
@@ -1873,17 +1875,17 @@ export interface WorldTotals {
   declarations: number;
   documented: number;
   tests: number;
-  /** DISTINCT repositories. One repository can belong to two projects and is
+  /** DISTINCT repositories. One repository can belong to two workspaces and is
    *  drawn in both — that is what the rings mean — but "how many are there" has
    *  one answer. */
   repositories: number;
-  projects: number;
+  workspaces: number;
 }
 
 export interface WorldPayload {
   groupBy: WorldGroupBy;
-  /** The project the reader opened this from. The picture is deliberately
-   *  WIDER than that project — it is all indexed code — so the payload names
+  /** The workspace the reader opened this from. The picture is deliberately
+   *  WIDER than that workspace — it is all indexed code — so the payload names
    *  which circle they are standing in. */
   viewing: string;
   units: WorldUnit[];
@@ -2070,7 +2072,7 @@ export interface NeighbourCard {
   language: string | null;
   file: string | null;
   line: number | null;
-  /** A library symbol, or another project's: drawn, never walked through. */
+  /** A library symbol, or another workspace's: drawn, never walked through. */
   external: boolean;
   rows: [];
 }
@@ -2092,7 +2094,7 @@ export interface NeighbourCoverage {
   cut: { in: number; out: number };
   /** Calls the focus makes that the graph could not place. */
   unplacedCallees: number;
-  /** Unplaced calls elsewhere in the project that use the focus's NAME — some
+  /** Unplaced calls elsewhere in the workspace that use the focus's NAME — some
    *  may be calls to it, so the callers column is a floor. */
   namedUnplaced: number;
 }
@@ -2108,11 +2110,11 @@ export interface NeighbourhoodPayload {
 // ── Pruner (#247) ───────────────────────────────────────────────────────────
 
 /** What one prune removed: folders (with their files and graph), repository
- *  rows no other checkout still uses, and projects that prune left empty. */
+ *  rows no other checkout still uses, and workspaces that prune left empty. */
 export interface PruneReport {
   folders: number;
   repositories: number;
-  projects: number;
+  workspaces: number;
 }
 
 /** A repository root under a watch root — what stops syncing if the root goes. */
@@ -2139,7 +2141,7 @@ export interface PruneResult {
 
 // ── Issue trackers (docs/spec/daemon/tracker-jira-linkage.md R8, R9) ─────────
 
-/** A project's tracker connection as `GET /api/projects/{id}/trackers` returns
+/** A workspace's tracker connection as `GET /api/workspaces/{id}/trackers` returns
  *  it. Never the token, never the keyring name. */
 export interface TrackerConnection {
   id: string;

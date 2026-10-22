@@ -23,11 +23,11 @@ export interface LibLevel {
 	kanji: string;
 }
 
-/** The four levels, in ladder order (Org → Team → Project → Stack). */
+/** The four levels, in ladder order (Org → Team → Workspace → Stack). */
 export const LIB_LEVELS: readonly LibLevel[] = [
 	{ id: 'org', label: 'Org', kanji: '社' },
 	{ id: 'team', label: 'Team', kanji: '組' },
-	{ id: 'proj', label: 'Project', kanji: '件' },
+	{ id: 'proj', label: 'Workspace', kanji: '件' },
 	{ id: 'stack', label: 'Stack', kanji: '技' }
 ] as const;
 

@@ -1,21 +1,21 @@
-//! Project maturity signal (L3, #71).
+//! Workspace maturity signal (L3, #71).
 //!
-//! The Observatory shows a project as **early** or **mature** and a
+//! The Observatory shows a workspace as **early** or **mature** and a
 //! "watched N / target M" progress hint on first entry. This is a *derived*
-//! signal, not the stored `projects.maturity` lifecycle enum
+//! signal, not the stored `workspaces.maturity` lifecycle enum
 //! (discovery/active/maintenance/archived) — that stays under the user's
 //! control; this is computed on read from observed activity.
 //!
-//! A project is **mature** once it has watched at least `target` enriched
+//! A workspace is **mature** once it has watched at least `target` enriched
 //! sessions AND produced at least one insight (a recommendation or a learned
 //! memory). Until then it's **early** — there isn't enough signal yet to teach
 //! anything, and the UI says so honestly ("~N more sessions until the first
 //! lesson").
 
-/// Sessions to watch before a project can be considered mature.
+/// Sessions to watch before a workspace can be considered mature.
 pub const MATURITY_TARGET: i64 = 3;
 
-/// The derived early/mature signal for a project.
+/// The derived early/mature signal for a workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MaturitySignal {
     /// `"early"` or `"mature"`.
@@ -31,8 +31,8 @@ pub struct MaturitySignal {
 /// Derive the early/mature signal. Pure.
 ///
 /// `mature` ⇔ `watched >= target` AND `has_insights`. Both gates matter: a
-/// project with many sessions but no derived insight is still early (nothing
-/// learned yet), and a project with an insight but only one session hasn't
+/// workspace with many sessions but no derived insight is still early (nothing
+/// learned yet), and a workspace with an insight but only one session hasn't
 /// shown a stable enough pattern.
 pub fn maturity_signal(watched: i64, has_insights: bool, target: i64) -> MaturitySignal {
     let mature = watched >= target && has_insights;
@@ -64,7 +64,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_project_is_early() {
+    fn fresh_workspace_is_early() {
         let s = maturity_signal(0, false, MATURITY_TARGET);
         assert_eq!(s.stage, "early");
         assert!(!s.has_insights);

@@ -25,12 +25,12 @@ pub(crate) async fn get_sessions_stub(
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let range_days = range_to_days(q.get("range").map(String::as_str));
-    // `?project=<name-or-uuid>` scopes the digest to one project (honours the
+    // `?workspace=<name-or-uuid>` scopes the digest to one workspace (honours the
     // name-or-UUID contract). An unresolvable name yields None → no scope.
-    let project = match q.get("project") {
+    let workspace = match q.get("workspace") {
         // Fail closed on a resolver DB error (→ 500); a genuine unresolvable name
         // still yields None → no scope (unchanged).
-        Some(p) => crate::api::util::resolve_project_uuid(&state, p).await?,
+        Some(p) => crate::api::util::resolve_workspace_uuid(&state, p).await?,
         None => None,
     };
     // PgStore uses list_sessions_by_folder(&Uuid, limit) instead of get_sessions(repo_id)
@@ -43,8 +43,8 @@ pub(crate) async fn get_sessions_stub(
         }
     } else {
         // 500 comfortably covers the real corpus within any range window; range +
-        // project narrow it. The digest aggregates these client-side per day.
-        state.pg.list_all_sessions(500, range_days, project.as_ref()).await.map_err(|e| {
+        // workspace narrow it. The digest aggregates these client-side per day.
+        state.pg.list_all_sessions(500, range_days, workspace.as_ref()).await.map_err(|e| {
             tracing::warn!(error = %e, "get_sessions_stub: list_all_sessions failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?
@@ -317,14 +317,14 @@ pub(crate) async fn ingest_hook_event(
         && let Some(cwd) = f.cwd
     {
         match state.pg.find_folder_for_path(cwd).await {
-            Ok(Some((folder_id, project_id))) => {
+            Ok(Some((folder_id, workspace_id))) => {
                 let is_end = matches!(f.event_type, "Stop" | "SessionEnd");
                 if let Err(e) = state
                     .pg
                     .record_session_event(
                         f.session_id,
                         &folder_id,
-                        project_id.as_ref(),
+                        workspace_id.as_ref(),
                         f.family,
                         is_end,
                     )
@@ -367,11 +367,14 @@ fn gate_decision(decision: &str, reason: &str) -> Json<serde_json::Value> {
 /// `SENSEI_RELAY_GATE_TOOLS` allow-list AND a Dōjō is enrolled, it raises a
 /// blocking relay gate to the phone, waits (bounded ~50s) for the human's
 /// answer, and returns allow/deny. Everything else — gating off, non-uuid
-/// session, no dojo, any raise/poll error, timeout — is **fail-open → allow**.
+/// session, no dojo, any raise/poll error, timeout — is **fail-open → allow**,
+/// with one exception (#312, D28): a hard-block in an **unattended** run (the
+/// body's `unattended: true`) that gets no human answer is **denied**, with its
+/// reason.
 ///
 /// ALWAYS returns 200 with an allow/deny body; NEVER a 5xx. Fail-open error
-/// paths `tracing::warn!` (never swallowed). Only an explicit human `deny`
-/// reply blocks. The payload raised to the phone carries only the tool NAME —
+/// paths `tracing::warn!` (never swallowed). Otherwise only an explicit human
+/// `deny` reply blocks. The payload raised to the phone carries only the tool NAME —
 /// no tool args, code, or diffs (zero-knowledge, D10).
 pub(crate) async fn hook_gate(
     State(state): State<AppState>,
@@ -380,11 +383,16 @@ pub(crate) async fn hook_gate(
     use crate::dojo::gate::{
         classify_hard_block, decision_from_reply, gated_tools_from_env, needs_semantic_review,
         parse_semantic_verdict, semantic_system_prompt, semantic_user_message, should_gate,
+        unanswered_decision,
     };
 
     let session_id = payload["session_id"].as_str().unwrap_or("");
     let tool_name = payload["tool_name"].as_str().unwrap_or("");
     let cwd = payload["cwd"].as_str();
+    // The plugin's gate hook says when nobody is at the keyboard: a step the
+    // daemon spawned (SENSEI_RUN_ID) or a session its run drive steers. Absent
+    // means interactive (#312, D28).
+    let unattended = payload["unattended"].as_bool() == Some(true);
     // The PreToolUse event carries the tool's input alongside its name. Parse
     // defensively — a missing/malformed `tool_input` defaults to `{}`, which the
     // classifier treats as progress (no danger inferable ⇒ don't over-block).
@@ -492,19 +500,34 @@ pub(crate) async fn hook_gate(
         );
     }
 
+    // No human answer from here on: fail open, except a hard-block in an
+    // unattended run, which is denied with its reason (#312, D28).
+    let unanswered = |why: &str| {
+        let (decision, reason) = unanswered_decision(unattended, hard_block.as_ref(), why);
+        if decision == "deny" {
+            tracing::warn!(
+                session_id,
+                tool_name,
+                why,
+                "hook_gate: unanswered hard-block in an unattended run — denied (fail-closed)"
+            );
+        }
+        gate_decision(decision, &reason)
+    };
+
     // Fail-open: a non-uuid session (non-Claude harness) would 500 the Worker
     // (relay run_id is uuid NOT NULL), so never gate it.
     if uuid::Uuid::parse_str(session_id).is_err() {
-        tracing::warn!(session_id, tool_name, "hook_gate: non-uuid session — allowing (fail-open)");
-        return gate_decision("allow", "gate unavailable — allowed");
+        tracing::warn!(session_id, tool_name, "hook_gate: non-uuid session — no gate to raise");
+        return unanswered("gate unavailable");
     }
 
     // Fail-open: no enrolled Dōjō ⇒ nowhere to raise the gate ⇒ allow.
     let memberships = match state.pg.list_dojo_memberships().await {
         Ok(ms) => ms.into_iter().filter(|m| m.enabled).collect::<Vec<_>>(),
         Err(e) => {
-            tracing::warn!(error = %e, "hook_gate: list_dojo_memberships failed — allowing (fail-open)");
-            return gate_decision("allow", "gate unavailable — allowed");
+            tracing::warn!(error = %e, "hook_gate: list_dojo_memberships failed — no gate to raise");
+            return unanswered("gate unavailable");
         }
     };
     // Personal beta = one dōjō. Multi-dōjō gating (which phone answers, quorum,
@@ -520,7 +543,7 @@ pub(crate) async fn hook_gate(
         );
     }
     let Some(membership) = memberships.into_iter().next() else {
-        return gate_decision("allow", "no dojo enrolled");
+        return unanswered("no dōjō enrolled");
     };
     let client = crate::dojo::client::DojoClient::for_membership(&membership);
 
@@ -532,8 +555,8 @@ pub(crate) async fn hook_gate(
         &[],
     );
     if let Err(e) = client.publish_session_update(&update).await {
-        tracing::warn!(session_id, error = %e, "hook_gate: session update failed — allowing (fail-open)");
-        return gate_decision("allow", "gate unavailable — allowed");
+        tracing::warn!(session_id, error = %e, "hook_gate: session update failed — no gate raised");
+        return unanswered("gate unavailable");
     }
 
     // Raise the gate. Zero-knowledge: the payload names the tool and — for a
@@ -566,8 +589,8 @@ pub(crate) async fn hook_gate(
     let ack = match client.raise_inbox_item(&item).await {
         Ok(ack) => ack,
         Err(e) => {
-            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: raise failed — allowing (fail-open)");
-            return gate_decision("allow", "gate unavailable — allowed");
+            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: raise failed — no gate raised");
+            return unanswered("gate unavailable");
         }
     };
 
@@ -579,18 +602,14 @@ pub(crate) async fn hook_gate(
     // mechanism compensating for asking the wrong question. The daemon RAISED
     // this gate and holds its id; "has it been answered" is a lookup.
     match client.await_reply(&ack.id, std::time::Duration::from_secs(50)).await {
-        Ok(reply) => {
-            let decision = decision_from_reply(reply.as_ref());
-            let reason = match (decision, reply.is_some()) {
-                ("deny", _) => "declined from your phone",
-                (_, true) => "approved from your phone",
-                (_, false) => "gate timed out — allowed",
-            };
-            gate_decision(decision, reason)
-        }
+        Ok(None) => unanswered("gate timed out"),
+        Ok(Some(reply)) => match decision_from_reply(Some(&reply)) {
+            "deny" => gate_decision("deny", "declined from your phone"),
+            _ => gate_decision("allow", "approved from your phone"),
+        },
         Err(e) => {
-            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: await_reply failed — allowing (fail-open)");
-            gate_decision("allow", "gate unavailable — allowed")
+            tracing::warn!(session_id, tool_name, error = %e, "hook_gate: await_reply failed — no answer");
+            unanswered("gate unavailable")
         }
     }
 }
@@ -687,10 +706,10 @@ fn workflow_state_md(ws: &serde_json::Value) -> String {
 
 pub(crate) async fn get_workflow_state(
     State(state): State<AppState>,
-    Path(project): Path<String>,
+    Path(workspace): Path<String>,
     Query(q): Query<StateQuery>,
 ) -> Response {
-    let ws = match state.pg.get_workflow_state(&project).await {
+    let ws = match state.pg.get_workflow_state(&workspace).await {
         Ok(v) => v,
         Err(e) => return Json(serde_json::json!({"error": e})).into_response(),
     };
@@ -704,7 +723,7 @@ pub(crate) async fn get_workflow_state(
     match ws {
         Some(ws) => Json(ws).into_response(),
         None => Json(serde_json::json!({
-            "project": project,
+            "workspace": workspace,
             "active_phase": null,
             "active_plan": null,
             "active_task": null,
@@ -718,13 +737,13 @@ pub(crate) async fn get_workflow_state(
 
 pub(crate) async fn update_workflow_state(
     State(state): State<AppState>,
-    Path(project): Path<String>,
+    Path(workspace): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let result = state
         .pg
         .upsert_workflow_state(
-            &project,
+            &workspace,
             body["active_phase"].as_str(),
             body["active_plan"].as_str(),
             body["active_task"].as_str(),
@@ -738,7 +757,7 @@ pub(crate) async fn update_workflow_state(
         return Json(serde_json::json!({"ok": false, "error": e}));
     }
 
-    // Phase bridge: mirror the workflow phase onto the project's active run so a
+    // Phase bridge: mirror the workflow phase onto the workspace's active run so a
     // daemon-owned run streams phases→segments to the relay while the agent works
     // (drive stays OFF — this is status only, and it's how the "watch me build
     // through phases" view is fed). Best-effort: a bridge hiccup must never fail
@@ -746,22 +765,23 @@ pub(crate) async fn update_workflow_state(
     if let Some(phase) = body["active_phase"].as_str().filter(|s| !s.is_empty()) {
         // Best-effort mirror: a bridge hiccup must never fail the primary write.
         // But surface (log) a resolver DB error rather than swallow it silently.
-        match crate::api::util::resolve_project_uuid(&state, &project).await {
-            Ok(Some(project_id)) => {
-                if let Err(e) = state.pg.advance_run_phase_for_project(&project_id, phase).await {
-                    tracing::warn!(project = %project, error = %e, "update_phase: run phase bridge failed");
+        match crate::api::util::resolve_workspace_uuid(&state, &workspace).await {
+            Ok(Some(workspace_id)) => {
+                if let Err(e) = state.pg.advance_run_phase_for_workspace(&workspace_id, phase).await
+                {
+                    tracing::warn!(workspace = %workspace, error = %e, "update_phase: run phase bridge failed");
                 }
             }
             Ok(None) => {}
-            Err(_) => tracing::warn!(project = %project,
-                "update_phase: run phase bridge skipped — project resolve failed"),
+            Err(_) => tracing::warn!(workspace = %workspace,
+                "update_phase: run phase bridge skipped — workspace resolve failed"),
         }
     }
 
     // Workflow state lives ONLY in Postgres (`sensei.workflow_state`), read back
-    // via `GET /api/state/{project}`. We no longer mirror it to a per-repo
+    // via `GET /api/state/{workspace}`. We no longer mirror it to a per-repo
     // `.sensei/state.yaml`: that file drifted (it was written only when a
-    // `project_path` was supplied, which the MCP update_phase doesn't send), so
+    // `workspace_path` was supplied, which the MCP update_phase doesn't send), so
     // the session hooks injected a STALE phase/issue and misdirected the agent.
     // The hooks + `/sensei:session` now read the daemon (the DB) directly.
     Json(serde_json::json!({"ok": true}))
@@ -860,5 +880,67 @@ mod tests {
         };
         let Json(body) = hook_nudge(State(state), Json(serde_json::json!({}))).await;
         assert_eq!(body["nudge"], serde_json::json!(false));
+    }
+}
+
+/// `/hook/gate` through the real router (#312, D28). A non-uuid session has no
+/// gate to raise, so these exercise the no-answer decision without a dōjō.
+#[cfg(test)]
+mod hook_gate_tests {
+    use axum::body::Body;
+    use axum::http::Request;
+    use serde_json::{Value, json};
+    use tower::ServiceExt;
+
+    async fn gate(body: Value) -> Value {
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let app = crate::api::routes::create_router(ctx.app_state.clone());
+        let req = Request::builder()
+            .method("POST")
+            .uri("/hook/gate")
+            .header("host", "127.0.0.1:7744")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice::<Value>(&bytes).unwrap()["hookSpecificOutput"].clone()
+    }
+
+    fn deploy(unattended: Option<bool>) -> Value {
+        let mut body = json!({
+            "session_id": "not-a-uuid",
+            "tool_name": "Bash",
+            "tool_input": { "command": "make deploy" },
+        });
+        if let Some(u) = unattended {
+            body["unattended"] = json!(u);
+        }
+        body
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_deploy_in_an_unattended_run_is_denied() {
+        let out = gate(deploy(Some(true))).await;
+        assert_eq!(out["permissionDecision"], "deny", "{out}");
+        assert!(out["permissionDecisionReason"].as_str().unwrap().contains("unattended"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_deploy_in_an_interactive_session_is_allowed() {
+        assert_eq!(gate(deploy(None)).await["permissionDecision"], "allow");
+        assert_eq!(gate(deploy(Some(false))).await["permissionDecision"], "allow");
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_call_in_an_unattended_run_progresses() {
+        let out = gate(json!({
+            "session_id": "not-a-uuid",
+            "tool_name": "Bash",
+            "tool_input": { "command": "cargo test" },
+            "unattended": true,
+        }))
+        .await;
+        assert_eq!(out["permissionDecision"], "allow", "{out}");
     }
 }

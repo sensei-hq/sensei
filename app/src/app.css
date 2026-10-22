@@ -11,7 +11,7 @@
  * transparent }`, and `[type="button"]` is an ATTRIBUTE selector — specificity
  * (0,1,0), the same as `.bg-primary` or `.bg-ink`. A tie goes to source order
  * and the reset came later, so the utility lost. Measured in the browser: the
- * selected chip on project Sessions carried `bg-ink text-paper` and computed
+ * selected chip on workspace Sessions carried `bg-ink text-paper` and computed
  * `rgba(0, 0, 0, 0)` behind `oklch(0.975 0.008 85)` — near-white on paper,
  * unreadable. 13 sites across seven screens were in that state.
  *

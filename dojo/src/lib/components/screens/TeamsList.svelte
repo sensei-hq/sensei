@@ -1,20 +1,20 @@
 <script lang="ts">
 	import { Button } from '@rokkit/ui';
 	import { Chip, Icon } from '$lib/components/kit';
-	import { personLabel, type ViewerProjectView } from '$lib/viewers-view';
+	import { personLabel, type ViewerWorkspaceView } from '$lib/viewers-view';
 	import { addableMembers, type TeamView } from '$lib/teams-view';
 	import type { TeamDraft, SaveTeam } from '$lib/teams-state.svelte';
 	import type { KitMember } from '$lib/components/kit/types';
 
 	// A dōjō's teams (#307 A3, D7) — groups of its members for reports by team and
-	// for granting a project to many people at once. A team grants no access. Each
+	// for granting a workspace to many people at once. A team grants no access. Each
 	// row: the team, its members (each removable), a picker of the dōjō's members
-	// not yet on it, a picker granting a project to everyone on it, rename and
+	// not yet on it, a picker granting a workspace to everyone on it, rename and
 	// delete. The open draft (New team / Rename) shows a name field. Presentational.
 	let {
 		teams,
 		members,
-		projects,
+		workspaces,
 		draft,
 		onSave,
 		onDelete,
@@ -25,14 +25,14 @@
 		teams: TeamView[];
 		/** The dōjō's members — who can be put on a team. */
 		members: KitMember[];
-		/** The dōjō's projects — what a team can be granted. */
-		projects: ViewerProjectView[];
+		/** The dōjō's workspaces — what a team can be granted. */
+		workspaces: ViewerWorkspaceView[];
 		draft: TeamDraft;
 		onSave?: SaveTeam;
 		onDelete?: (team: TeamView) => void;
 		onAddMember?: (team: TeamView, principalId: string) => void;
 		onRemoveMember?: (team: TeamView, principalId: string) => void;
-		onGrant?: (team: TeamView, projectId: string) => void;
+		onGrant?: (team: TeamView, workspaceId: string) => void;
 	} = $props();
 
 	/** A picker that fires once per choice, then resets to its prompt. */
@@ -64,7 +64,7 @@
 
 {#if teams.length === 0}
 	<div class="bg-paper-soft border-paper-edge text-ink-mute rounded-lg border p-4 text-sm">
-		No teams yet. A team groups members for reports and for granting a project to all of them at once.
+		No teams yet. A team groups members for reports and for granting a workspace to all of them at once.
 	</div>
 {:else}
 	<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
@@ -127,16 +127,16 @@
 							{/each}
 						</select>
 					{/if}
-					{#if onGrant && projects.length > 0 && t.members.length > 0}
-						<label class="sr-only" for={'grant-team-' + t.id}>Grant a project to everyone on {t.name}</label>
+					{#if onGrant && workspaces.length > 0 && t.members.length > 0}
+						<label class="sr-only" for={'grant-team-' + t.id}>Grant a workspace to everyone on {t.name}</label>
 						<select
 							id={'grant-team-' + t.id}
 							class="bg-paper border-paper-edge text-ink rounded border px-2 py-1 text-xs"
 							value=""
 							onchange={(e) => picked(e, (id) => onGrant?.(t, id))}
 						>
-							<option value="">grant a project…</option>
-							{#each projects as p (p.id)}
+							<option value="">grant a workspace…</option>
+							{#each workspaces as p (p.id)}
 								<option value={p.id}>{p.name}</option>
 							{/each}
 						</select>

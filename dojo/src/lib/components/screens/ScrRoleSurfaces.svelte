@@ -18,7 +18,7 @@
 	import TeamsList from './TeamsList.svelte';
 	import type { TeamView } from '$lib/teams-view';
 	import type { TeamDraft, SaveTeam } from '$lib/teams-state.svelte';
-	import type { DojoViewerView, ViewerProjectView } from '$lib/viewers-view';
+	import type { DojoViewerView, ViewerWorkspaceView } from '$lib/viewers-view';
 
 	// The admin Members & Roles / Policies / Audit surface (mockup
 	// ScrRoleSurfaces) — ONE screen the org nav shares between two ids: the
@@ -38,7 +38,7 @@
 		onSetRole,
 		invite,
 		viewers = [],
-		viewerProjects = [],
+		viewerWorkspaces = [],
 		onGrantView,
 		onRevokeView,
 		onRemoveViewer,
@@ -62,11 +62,11 @@
 		/** The admin invite (#307 A3) — the Members tab's Invite button opens it;
 		 *  absent = the button does nothing (fixture render). */
 		invite?: InviteState;
-		/** The dōjō's viewers (#307 D8) and the projects they can be granted. */
+		/** The dōjō's viewers (#307 D8) and the workspaces they can be granted. */
 		viewers?: DojoViewerView[];
-		viewerProjects?: ViewerProjectView[];
-		onGrantView?: (viewer: DojoViewerView, projectId: string) => void;
-		onRevokeView?: (viewer: DojoViewerView, projectId: string) => void;
+		viewerWorkspaces?: ViewerWorkspaceView[];
+		onGrantView?: (viewer: DojoViewerView, workspaceId: string) => void;
+		onRevokeView?: (viewer: DojoViewerView, workspaceId: string) => void;
 		onRemoveViewer?: (viewer: DojoViewerView) => void;
 		/** The dōjō's teams (#307 D7) and the draft behind New team / Rename. */
 		teams?: TeamView[];
@@ -75,7 +75,7 @@
 		onDeleteTeam?: (team: TeamView) => void;
 		onAddTeamMember?: (team: TeamView, principalId: string) => void;
 		onRemoveTeamMember?: (team: TeamView, principalId: string) => void;
-		onGrantTeam?: (team: TeamView, projectId: string) => void;
+		onGrantTeam?: (team: TeamView, workspaceId: string) => void;
 	} = $props();
 
 
@@ -190,10 +190,10 @@
 			{#if invite?.open}
 				<InvitePanel {invite} />
 			{/if}
-			<!-- Viewers (#307 D8) — invited as viewers, not members; granted projects. -->
+			<!-- Viewers (#307 D8) — invited as viewers, not members; granted workspaces. -->
 			<ViewersList
 				{viewers}
-				projects={viewerProjects}
+				workspaces={viewerWorkspaces}
 				onGrant={onGrantView}
 				onRevoke={onRevokeView}
 				onRemove={onRemoveViewer}
@@ -203,7 +203,7 @@
 				<TeamsList
 					{teams}
 					{members}
-					projects={viewerProjects}
+					workspaces={viewerWorkspaces}
 					draft={teamDraft}
 					onSave={onSaveTeam}
 					onDelete={onDeleteTeam}

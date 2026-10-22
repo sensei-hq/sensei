@@ -7,7 +7,7 @@ set search_path to sensei, extensions;
 -- schedule that is not due yet and an org that has not enabled sharing are both
 -- "didn't happen", and only one of them needs anybody's attention.
 --
--- Generalises a call this project already made once: sensei.sync_state has
+-- Generalises a call this workspace already made once: sensei.sync_state has
 -- `skipped` alongside `error` precisely because "a private repository is not a
 -- sync failure, it is a choice".
 create type reason_kind as enum ('normal', 'refusal', 'fault');

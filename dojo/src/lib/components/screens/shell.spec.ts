@@ -10,7 +10,7 @@ import type { DojoOrg } from '$lib/dojo-data';
 // Chunk-1 shell + landing wiring. The pure nav/role/chrome logic is unit-tested
 // in nav.spec.ts + chrome.spec.ts; here we render the kit chrome the
 // (app) layout drives (nav groups per context + role rank; the switcher lists
-// memberships) and the ScrYourWork landing (band / runs / projects; honest empty
+// memberships) and the ScrYourWork landing (band / runs / workspaces; honest empty
 // for a membership-less viewer).
 
 const acme: DojoOrg = {

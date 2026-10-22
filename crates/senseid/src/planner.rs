@@ -4,7 +4,7 @@
 //! `docs/plan/*.md` format the plan-as-run engine consumes via `plan_ref`.
 //!
 //! v0 is a **stateless generate**: no plan tables are persisted (the run engine
-//! is file-based today — it takes a `plan_ref` path — and the project-window
+//! is file-based today — it takes a `plan_ref` path — and the workspace-window
 //! Tasks tab that would consume structured rows isn't built yet, so storing them
 //! now would be YAGNI). The daemon returns the structured plan AND the rendered
 //! markdown; the caller writes `docs/plan/<slug>.md`, reviews it against the
@@ -87,7 +87,7 @@ state, command output, or row you can point at. Never \"tests pass\" or \"it wor
 - Order phases so nothing depends on a later one. Keep the goal singular and aligned.";
 
 /// Build the `(system, user)` prompt pair. `context` is optional grounding
-/// (a spec, an issue body, project conventions) appended verbatim.
+/// (a spec, an issue body, workspace conventions) appended verbatim.
 pub fn build_planner_prompt(goal: &str, context: Option<&str>) -> (String, String) {
     let mut user = format!("Goal:\n{}\n", goal.trim());
     if let Some(ctx) = context.map(str::trim).filter(|c| !c.is_empty()) {

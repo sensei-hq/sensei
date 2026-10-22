@@ -3,7 +3,7 @@ set search_path to staging, dojo, extensions;
 -- Seed dojo.tenants from staging.tenants (dbd auto-runs this on import).
 --
 -- Replaces dojo.seed_global_dojo(), which held the same row as literal VALUES in
--- plpgsql. Every seeded row in this project now comes from a datafile, so there
+-- plpgsql. Every seeded row in this workspace now comes from a datafile, so there
 -- is no second mechanism to remember — and no procedure that can silently drift
 -- from the table it writes to, which is exactly how seed_ponytail_pack came to
 -- reference a column that had been renamed.

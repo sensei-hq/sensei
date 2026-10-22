@@ -47,11 +47,11 @@ const KEY_SYMBOL_SIZE_P95: &str = "symbol_size_p95";
 
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<chrono::NaiveDate>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("architecture: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("architecture: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
     let day = as_of.unwrap_or_else(|| chrono::Utc::now().date_naive());
 
@@ -60,7 +60,7 @@ pub(super) async fn compute(
 
     if let Some(mid) = ids.get(KEY_GRAPH_CONFIDENCE).copied() {
         for (repository_id, placed, total) in
-            pg.architecture_edge_confidence_by_repo(&project_id).await?
+            pg.architecture_edge_confidence_by_repo(&workspace_id).await?
         {
             // `total > 0` is guaranteed by the HAVING, but the division is
             // spelled defensively anyway: a query edited later must not be able
@@ -70,7 +70,7 @@ pub(super) async fn compute(
                 continue;
             }
             let props = serde_json::json!({ "placed": placed, "total": total });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_REPO,
@@ -89,13 +89,13 @@ pub(super) async fn compute(
 
     if let Some(mid) = ids.get(KEY_PUBLIC_SURFACE).copied() {
         for (repository_id, exported, total) in
-            pg.architecture_public_surface_by_repo(&project_id).await?
+            pg.architecture_public_surface_by_repo(&workspace_id).await?
         {
             if total == 0 {
                 continue;
             }
             let props = serde_json::json!({ "exported": exported, "declared": total });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_REPO,
@@ -114,10 +114,10 @@ pub(super) async fn compute(
 
     if let Some(mid) = ids.get(KEY_SYMBOL_SIZE_P95).copied() {
         for (repository_id, p95, over_100, callables) in
-            pg.architecture_symbol_size_by_repo(&project_id).await?
+            pg.architecture_symbol_size_by_repo(&workspace_id).await?
         {
             let props = serde_json::json!({ "over_100_lines": over_100, "callables": callables });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_REPO,
@@ -142,18 +142,18 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn a_bad_project_id_is_an_error_not_a_silent_zero() {
+    async fn a_bad_workspace_id_is_an_error_not_a_silent_zero() {
         let ctx = crate::tasks::test_support::make_ctx().await;
         assert!(compute(&ctx, "not-a-uuid", None).await.is_err());
     }
 
-    /// A project with nothing indexed writes NO row.
+    /// A workspace with nothing indexed writes NO row.
     ///
     /// Honest-empty rather than 0.0: a zero `graph_confidence` reads as "nothing
     /// in this repository resolves", which is a damning and false statement about
     /// a repository that simply has not been walked yet.
     #[tokio::test]
-    async fn an_unindexed_project_writes_no_row_rather_than_a_zero() {
+    async fn an_unindexed_workspace_writes_no_row_rather_than_a_zero() {
         let ctx = crate::tasks::test_support::make_ctx().await;
         let pid = uuid::Uuid::new_v4();
         assert_eq!(compute(&ctx, &pid.to_string(), None).await.unwrap(), 0);
@@ -165,7 +165,7 @@ mod tests {
     /// a value picked because it cannot be produced by accident. Three
     /// declarations, one exported, so the surface ratio is 1/3. The two tests
     /// above prove the error and empty paths; only this one proves the arithmetic,
-    /// and it reads the value back out of `project_metrics` rather than trusting
+    /// and it reads the value back out of `workspace_metrics` rather than trusting
     /// the return count, because a handler that writes the wrong number still
     /// returns a healthy-looking row count.
     ///
@@ -177,8 +177,8 @@ mod tests {
         let ctx = crate::tasks::test_support::make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = crate::tasks::test_support::seed_metrics_project_folder(pg, &uniq).await;
-        // `seed_metrics_project_folder` already wires the folder to a repository;
+        let (pid, fid) = crate::tasks::test_support::seed_metrics_workspace_folder(pg, &uniq).await;
+        // `seed_metrics_workspace_folder` already wires the folder to a repository;
         // this only reads it back, so nodes seeded into `fid` roll up to `rid`.
         let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
 
@@ -252,7 +252,7 @@ mod tests {
         assert!(written >= 3, "one row per architecture metric, got {written}");
 
         let confidence: f64 = sqlx_core::query_scalar::query_scalar(
-            "SELECT pm.value::float8 FROM sensei.project_metrics pm \
+            "SELECT pm.value::float8 FROM sensei.workspace_metrics pm \
                JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE m.key = 'graph_confidence' AND pm.repository_id = $1",
         )
@@ -263,7 +263,7 @@ mod tests {
         assert!((confidence - 0.5).abs() < 1e-9, "2 placed of 4 edges is 0.5, got {confidence}");
 
         let surface: f64 = sqlx_core::query_scalar::query_scalar(
-            "SELECT pm.value::float8 FROM sensei.project_metrics pm \
+            "SELECT pm.value::float8 FROM sensei.workspace_metrics pm \
                JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE m.key = 'public_surface_ratio' AND pm.repository_id = $1",
         )

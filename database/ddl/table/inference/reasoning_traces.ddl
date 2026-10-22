@@ -2,7 +2,7 @@ set search_path to inference, sensei, extensions;
 
 create table if not exists reasoning_traces (
   id                       uuid        primary key default gen_random_uuid()
-, project_id               uuid        references sensei.projects(id) on delete set null
+, workspace_id             uuid        references sensei.workspaces(id) on delete set null
 , trigger_event            text        not null
 , trigger_detail           jsonb       not null default '{}'
 , models_used              text[]      not null default '{}'
@@ -11,9 +11,9 @@ create table if not exists reasoning_traces (
 , action_proposed          jsonb
 );
 
-create index if not exists reasoning_traces_project_id_idx
-    on reasoning_traces(project_id)
- where project_id is not null;
+create index if not exists reasoning_traces_workspace_id_idx
+    on reasoning_traces(workspace_id)
+ where workspace_id is not null;
 
 comment on table reasoning_traces is
 'MOE consensus panel reasoning traces. Stores the full debate between local models.
@@ -25,8 +25,8 @@ comment on table reasoning_traces is
 
 comment on column reasoning_traces.id
      is 'Surrogate primary key (UUID).';
-comment on column reasoning_traces.project_id
-     is 'Foreign key to projects — which project this reasoning was about. Nullable for system-level.';
+comment on column reasoning_traces.workspace_id
+     is 'Foreign key to workspaces — which workspace this reasoning was about. Nullable for system-level.';
 comment on column reasoning_traces.trigger_event
      is 'What triggered this reasoning: ftr_drop, recurring_correction, pattern_emerging, negative_impact, etc.';
 comment on column reasoning_traces.trigger_detail

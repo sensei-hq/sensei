@@ -17,7 +17,7 @@ set of tools the assistant calls to do exactly that.
 This pipeline governs:
 
 1. **Sensei's own tool surface** — the ~40 tools in
-   `crates/mcp/src/tools/` (`search`, `get_callers`, `get_project_summary`,
+   `crates/mcp/src/tools/` (`search`, `get_callers`, `get_workspace_summary`,
    `add_library`, `get_memories`, `save_memory`, …).
 2. **Third-party MCP discovery** — Postgres MCP, Stripe MCP, GitHub
    MCP, etc. Discovered from the developer's assistant config
@@ -51,8 +51,8 @@ Kanji is 具 — *instrument*.
   empty). See (memory: feedback_no_command_guessing).
 - Categories used today:
   - `Codebase` — `search`, `get_callers`, `get_callees`,
-    `get_project_summary`, `get_duplicates`, `get_communities`,
-    `get_project_conventions`, `get_layered_context`
+    `get_workspace_summary`, `get_duplicates`, `get_communities`,
+    `get_workspace_conventions`, `get_layered_context`
   - `Session` — `create_session`, `update_session`,
     `update_phase`, `get_workflow_state`, `record_outcome`,
     `log_event`

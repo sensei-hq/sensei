@@ -411,9 +411,9 @@ async fn plan_persona(
             repo_key: &r.repo_key,
             remote_url: r.remote_url.as_deref(),
             name: &r.name,
-            // The repository's sensei project, so the dōjō files it there (#299).
+            // The repository's sensei workspace, so the dōjō files it there (#299).
             workspace: r
-                .project
+                .workspace
                 .as_ref()
                 .map(|p| RepoWorkspaceInput { slug: &p.slug, name: &p.name }),
         })
@@ -441,11 +441,11 @@ async fn plan_persona(
         }
     };
     for m in &registered.mapped {
-        // Filing under the project failed though the registration stood (#299):
-        // said, so a project that never appears in the dōjō has a reason on record.
+        // Filing under the workspace failed though the registration stood (#299):
+        // said, so a workspace that never appears in the dōjō has a reason on record.
         if let Some(e) = &m.workspace_error {
             tracing::warn!(persona, repo = m.repo_key, error = %e,
-                           "dojo_sync: the dōjō could not file this repository under its project");
+                           "dojo_sync: the dōjō could not file this repository under its workspace");
         }
         match uuid::Uuid::parse_str(&m.tenant_id) {
             // Store what the dōjō said, never a guess: an unparseable tenant id
@@ -1508,7 +1508,7 @@ mod tests {
     /// anyway.
     async fn seed_at(pg: &PgStore, visibility: &str) -> (uuid::Uuid, String, String) {
         let uniq = uuid::Uuid::new_v4();
-        let pid = pg.create_project(&format!("_test:cycle:{uniq}"), None, None).await.unwrap();
+        let pid = pg.create_workspace(&format!("_test:cycle:{uniq}"), None, None).await.unwrap();
         let rid = crate::tasks::test_support::seed_bare_repository(pg, &pid, &uniq).await;
         sqlx_core::query::query(
             "UPDATE sensei.repositories \
@@ -1538,7 +1538,7 @@ mod tests {
         .await
         .unwrap();
         let mid = mid.0;
-        pg.upsert_project_metric_repo(&MetricRow {
+        pg.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mid,
             repository_id: &rid,
             scope: "repo",

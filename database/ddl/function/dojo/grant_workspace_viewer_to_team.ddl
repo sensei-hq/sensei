@@ -26,6 +26,12 @@ begin
      where tm.team_id = p_team
     on conflict (workspace_id, principal_id) do nothing;
     get diagnostics v_count = row_count;
+    if v_count > 0 then
+        perform dojo.append_audit_event(
+            (select tenant_id from dojo.workspaces where id = p_workspace), dojo.current_principal_id(),
+            'workspace_view_granted_to_team',
+            jsonb_build_object('workspace_id', p_workspace, 'team_id', p_team, 'granted', v_count));
+    end if;
     return v_count;
 end;
 $$;

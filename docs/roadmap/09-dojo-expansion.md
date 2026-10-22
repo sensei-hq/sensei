@@ -38,6 +38,10 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D27 | Is Relay or push live in production? | **Not yet** — neither Relay nor push notifications has been seen on the production dōjō, and the VAPID secret is untested. Tracked as a production gap ([06-gaps](06-gaps.md#security-and-production-gaps-2026-10-21)). |
 | D28 | Should relay approval gates fail closed? (#312) | **Only for the hard-block categories, only in unattended runs.** In a relay-driven autonomous run, a deploy, a push to main, a destructive action, credentials or money with no human answer is **denied**, with the reason. Interactive sessions keep fail-open — Claude Code's own prompt covers the person at the keyboard. The semantic backstop stays fail-open. |
 | D29 | Are stack scopes governance levels? (D25 follow-up) | **No.** A stack is a tech stack's rules and packs (React, Rust, …), **applied at a level** — the dōjō, a workspace or a repository (user 2026-10-21). The ladder stays dōjō → workspace → repository. Client scopes are still to decide. |
+| D30 | How deep does R3 go in the daemon's own database? | **Everywhere, schema too** (user 2026-10-21): `sensei.projects` and every `project_id` column are renamed in place on upgrade, rehearsed twice on a copy of a real daemon database. Another system's `project` stays (R3's rule). |
+| D31 | The README frontmatter key that groups a repository into a workspace? | **Migrated in place** (user 2026-10-21): sensei reads and writes only `workspace:`, and on its next scan rewrites an existing `project:` line to `workspace:` in that README — a one-time conversion, no permanent dual-read. |
+| D32 | Is Client a governance level? | **No — retired** (user 2026-10-22). A client engagement is the dōjō it lives in plus workspace classification `client`; client-only standards are rules at that dōjō or workspace. 0 rows stored. |
+| D33 | Where does a converted stack pack apply? (Q-R6) | **At each repository where the stack is detected** (user 2026-10-22) — exactly today's reach; repository-rung namespaces are created as needed, and a new repository adopts by detection as today. |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -79,12 +83,49 @@ slice builds, passes and ships on its own.
 - **R1 · Retire the hand-made dōjō (D11).** *Done (7478fe8d).* Drop `dojo.create_dojo`, the `team` tenant origin, the
   `team:<slug>` pack namespace and the "create a dōjō" path in the dōjō UI and API; a dōjō comes only
   from an organization or a person.
-- **R2 · The dōjō says workspace.** *R2a done (65eede4d): schema (renamed in place), server, `/v1` wire, the daemon's dōjō client. R2b next: page URLs and screen words; D17 self-hosting removal.* Also removes self-hosting from the dōjō (D17: `tenants.self_hosted`, the self-hosted badge). `dojo.projects` → `dojo.workspaces` with its links, viewer grants,
+- **R2 · The dōjō says workspace.** *R2a done (65eede4d): schema (renamed in place), server, `/v1` wire, the daemon's dōjō client. R2b done (f080e38a, e6c58885): page URLs, screens, nav and words; fixed the Viewers tab's R2a drift. D17's self-hosting removal done in #318 (5da293d5).* Also removes self-hosting from the dōjō (D17: `tenants.self_hosted`, the self-hosted badge). `dojo.projects` → `dojo.workspaces` with its links, viewer grants,
   team links (reporting only, D13), predicates, policies and tests; the `/v1` paths and payloads; the
   dōjō UI. The daemon's dōjō client and relay payload change in the same release (they share the wire).
-- **R3 · Sensei says workspace.** Includes the stored values (D16): the ladder's `project` level, pack namespaces and artifact scopes, converted. `sensei.projects` and its tables, views and functions; the daemon's
+- **R3 · Sensei says workspace.** *Done 2026-10-22 (merged to develop): R3a schema in place, R3b daemon + `/api/workspaces` + app + ladder rung in both DBs + D31 README key, R3c MCP tools, CLI, plugin, skills, dōjō billing. Ships in the next release.* Includes the stored values (D16): the ladder's `project` level, pack namespaces and artifact scopes, converted. `sensei.projects` and its tables, views and functions; the daemon's
   routes and pipeline; the MCP tools (`list_projects`, `use_project`, `get_project_summary`, …) and the
   plugin, skills and hooks that call them; the desktop app.
+  *Sized 2026-10-21: ~13,700 occurrences — database 1.9k, daemon 7.8k, app 3.1k, MCP 0.5k, plugin 0.2k, CLI 0.2k.*
+  **The rule:** rename sensei's own concept; **never another system's word.** These stay `project`:
+  Claude Code's config scope (`mcp_servers.scope` `user|project`, i.e. `.mcp.json` in the repo), Jira's
+  project (a board key), a forge's project (Azure DevOps), a compiler's projects (`compile_projects`:
+  rust-analyzer, tsc), dbd's `project`, and English ("projection"). `extension_scope` IS sensei's word.
+  Slices, each green on develop, all in one release (the app and the daemon share `/api`):
+  - **R3a · database + the daemon's database layer, one change (D30).** `sensei.projects`,
+    `repositories_in_projects`, `service_projects`, `extension_projects`, every `project_id` column, and the
+    views, functions and indexes that name them, renamed in place by an apply/before hook (as R2a); D16's
+    stored values (the ladder level, `memory_scope`, `entity_scope`, `sync_entity`, pack namespaces,
+    artifact scopes) converted in the same hook; `pg_store`'s SQL and row types in the same commit, so the
+    daemon stays green. Rehearse on a copy of a real daemon database, twice.
+  - **R3b · daemon + app together.** `pg_store`'s names, the `/api/projects` routes → `/api/workspaces`, the
+    pipeline, and the app's clients, screens and words in the same change. Also: the governance ladder's
+    `project` rung (D16: `sensei.scopes.key`, `namespaces.scope_key`, the shared `scopes.jsonl` seed) converted
+    in BOTH databases with the dōjō app's readers (`billing-data`, the preview rung) and the relay's
+    `scope_key` in the same change, since federation needs the key on both sides; the `project_health` metric
+    key and `setup.projects`; and R3a's temporary `scope_to_db` / `scope_to_api` translation removed.
+    Part 1 done (d20a5b72: the daemon, `/api/workspaces`, the app). Part 2: the ladder rung, D31's README key.
+    *R3a done on its branch (0ec8271c, 91894026): rehearsed twice on a copy of the daemon DB (counts held) and
+    on a copy of the production dōjō (in sync, counts held).*
+  - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
+    `get_workspace_summary`, …), the plugin's hooks and skills that call them, both `SKILL.md` copies, and
+    `sensei` CLI words.
+- **R6 · The ladder is dōjō → workspace → repository (D25, D29, D32).** *Built 2026-10-22 on branch `r6-ladder` (50094d60…6b8df79c); merges after the R3 release. Rehearsed: rule reach identical (234 repository-rule pairs, all 87 repositories); 111 stack adoptions = 111 bindings. Note: a stack pack applied at a repository ranks at repository precedence (70), above workspace (60) — reach unchanged, precedence per D29.* Today the
+  ladder still has `general · user · organization · client · technology · team · workspace · repository`.
+  - **Retire `team` and `client`** (0 namespaces locally and in production): the seed, both databases (a guarded
+    hook that FAILS, never deletes, if a namespace still sits on either), and every reader — the dōjō preview
+    rungs (`company, client, personal, stack, workspace`), the library levels (`org · team · proj · stack`),
+    `gov_scope: team` in the MCP tests.
+  - **`technology` becomes packs (D29).** 19 technology namespaces on the user's machine (typescript 38 repos,
+    svelte 14, java 10, python 10, …) are bound to repositories by detected stack. Each becomes a rule pack
+    (its rules → `rule_pack_rules`) adopted at a level through `rule_pack_adoptions` — **adopted at each repository where
+    the stack is detected (D33)** — exactly today's reach; repository-rung namespaces created as needed.
+  - The library screen's levels become **dōjō · workspace · repository**; the preview shows that ladder with
+    the packs applied at each rung.
+  - Rehearsed on copies of both databases, counts and rule reach compared before/after.
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the

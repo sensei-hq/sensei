@@ -4,7 +4,7 @@
   import { PageHeader, Screen, EmptyState, Kanji, ScreenState } from '$lib/components';
   import type { DojoMembership } from '$lib/types.js';
   import {
-    boundProjectsSummary,
+    boundWorkspacesSummary,
     connectionsHeadline,
     kindPill,
     syncChip,
@@ -43,7 +43,7 @@
     >
       <span>role · {c.role}</span>
       <span>attribution · {c.attribution_default}</span>
-      <span data-bound-count>{boundProjectsSummary(c.bound_projects)}</span>
+      <span data-bound-count>{boundWorkspacesSummary(c.bound_workspaces)}</span>
       {#if c.org_slugs.length > 0}
         <span class="flex flex-wrap items-center gap-1.5" data-testid="membership-orgs">
           orgs ·
@@ -54,9 +54,9 @@
       {/if}
     </div>
 
-    {#if c.bound_projects.length > 0}
+    {#if c.bound_workspaces.length > 0}
       <div class="flex flex-wrap gap-1.5 mt-2">
-        {#each c.bound_projects as p (p.id)}
+        {#each c.bound_workspaces as p (p.id)}
           {@render chip(p.name, 'bg-paper-mute', 'text-ink-mute')}
         {/each}
       </div>

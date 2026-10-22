@@ -9,12 +9,12 @@ import { AppState } from './appstate.svelte.js';
 // Mock senseiApi — prevent real HTTP calls. The mock surface is exposed as
 // `apiMock` so individual tests can adjust per-call behavior.
 const apiMock = {
-  getConfig:    vi.fn().mockResolvedValue({ setup_complete: '1', active_project: 'proj-1' }),
-  tryGetConfig: vi.fn().mockResolvedValue({ ok: true,  data: { setup_complete: '1', active_project: 'proj-1' } }),
+  getConfig:    vi.fn().mockResolvedValue({ setup_complete: '1', active_workspace: 'proj-1' }),
+  tryGetConfig: vi.fn().mockResolvedValue({ ok: true,  data: { setup_complete: '1', active_workspace: 'proj-1' } }),
   setConfig:    vi.fn().mockResolvedValue(undefined),
   trySetConfig: vi.fn().mockResolvedValue({ ok: true,  data: undefined }),
   deleteConfig: vi.fn().mockResolvedValue(undefined),
-  tryListProjects: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+  tryListWorkspaces: vi.fn().mockResolvedValue({ ok: true, data: [] }),
 };
 
 vi.mock('./api.js', () => ({
@@ -53,10 +53,10 @@ describe('AppState', () => {
   beforeEach(() => {
     storage.clear();
     sessionStore.clear();
-    apiMock.getConfig.mockResolvedValue({ setup_complete: '1', active_project: 'proj-1' });
-    apiMock.tryGetConfig.mockResolvedValue({ ok: true, data: { setup_complete: '1', active_project: 'proj-1' } });
+    apiMock.getConfig.mockResolvedValue({ setup_complete: '1', active_workspace: 'proj-1' });
+    apiMock.tryGetConfig.mockResolvedValue({ ok: true, data: { setup_complete: '1', active_workspace: 'proj-1' } });
     apiMock.trySetConfig.mockResolvedValue({ ok: true, data: undefined });
-    apiMock.tryListProjects.mockResolvedValue({ ok: true, data: [] });
+    apiMock.tryListWorkspaces.mockResolvedValue({ ok: true, data: [] });
     state = new AppState();
   });
 
@@ -90,18 +90,18 @@ describe('AppState', () => {
     expect(state.setupComplete).toBe(false);
   });
 
-  it('activeProjectId returns null when empty', () => {
-    expect(state.activeProjectId).toBeNull();
+  it('activeWorkspaceId returns null when empty', () => {
+    expect(state.activeWorkspaceId).toBeNull();
   });
 
-  it('activeProjectId reads from config', () => {
-    state.config = { active_project: 'proj-42' };
-    expect(state.activeProjectId).toBe('proj-42');
+  it('activeWorkspaceId reads from config', () => {
+    state.config = { active_workspace: 'proj-42' };
+    expect(state.activeWorkspaceId).toBe('proj-42');
   });
 
-  it('activeProjectId falls back to active_solution', () => {
+  it('activeWorkspaceId falls back to active_solution', () => {
     state.config = { active_solution: 'sol-1' };
-    expect(state.activeProjectId).toBe('sol-1');
+    expect(state.activeWorkspaceId).toBe('sol-1');
   });
 
   it('sidebarMaxItems defaults to 5', () => {
@@ -161,17 +161,17 @@ describe('AppState', () => {
     expect(state.config['new_key']).toBe('new_value');
   });
 
-  // ── setActiveProjectId ─────────────────────────────────────
+  // ── setActiveWorkspaceId ─────────────────────────────────────
 
-  it('setActiveProjectId sets project', async () => {
-    await state.setActiveProjectId('proj-1');
-    expect(state.config['active_project']).toBe('proj-1');
+  it('setActiveWorkspaceId sets workspace', async () => {
+    await state.setActiveWorkspaceId('proj-1');
+    expect(state.config['active_workspace']).toBe('proj-1');
   });
 
-  it('setActiveProjectId null clears project', async () => {
-    state.config = { active_project: 'proj-1' };
-    await state.setActiveProjectId(null);
-    expect(state.config['active_project']).toBeUndefined();
+  it('setActiveWorkspaceId null clears workspace', async () => {
+    state.config = { active_workspace: 'proj-1' };
+    await state.setActiveWorkspaceId(null);
+    expect(state.config['active_workspace']).toBeUndefined();
   });
 
   // ── setSidebarMaxItems ─────────────────────────────────────
@@ -235,7 +235,7 @@ describe('AppState', () => {
   it('load populates config from API', async () => {
     await state.load();
     expect(state.config['setup_complete']).toBe('1');
-    expect(state.config['active_project']).toBe('proj-1');
+    expect(state.config['active_workspace']).toBe('proj-1');
   });
 
   // The `setup_complete` ↔ localStorage reconciliation moved to
@@ -274,37 +274,37 @@ describe('AppState', () => {
     expect(state.config).toEqual({});
   });
 
-  // ── loadProjectCount ───────────────────────────────────────
+  // ── loadWorkspaceCount ───────────────────────────────────────
 
-  it('projectCount starts null (no badge until loaded)', () => {
-    expect(state.projectCount).toBeNull();
+  it('workspaceCount starts null (no badge until loaded)', () => {
+    expect(state.workspaceCount).toBeNull();
   });
 
-  it('loadProjectCount caches the number of projects from the daemon', async () => {
-    apiMock.tryListProjects.mockResolvedValueOnce({ ok: true, data: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] });
-    await state.loadProjectCount();
-    expect(state.projectCount).toBe(3);
+  it('loadWorkspaceCount caches the number of workspaces from the daemon', async () => {
+    apiMock.tryListWorkspaces.mockResolvedValueOnce({ ok: true, data: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] });
+    await state.loadWorkspaceCount();
+    expect(state.workspaceCount).toBe(3);
   });
 
-  // #288: a failed read used to leave the badge at 0 — "no projects".
-  it('loadProjectCount leaves the count unknown (null) when the read fails', async () => {
-    apiMock.tryListProjects.mockResolvedValueOnce({ ok: false, error: { status: 503, message: 'Service Unavailable' } });
-    await state.loadProjectCount();
-    expect(state.projectCount).toBeNull();
+  // #288: a failed read used to leave the badge at 0 — "no workspaces".
+  it('loadWorkspaceCount leaves the count unknown (null) when the read fails', async () => {
+    apiMock.tryListWorkspaces.mockResolvedValueOnce({ ok: false, error: { status: 503, message: 'Service Unavailable' } });
+    await state.loadWorkspaceCount();
+    expect(state.workspaceCount).toBeNull();
   });
 
-  it('loadProjectCount is a no-op without Tauri (count stays null)', async () => {
+  it('loadWorkspaceCount is a no-op without Tauri (count stays null)', async () => {
     const tauri = win.__TAURI__;
     delete win.__TAURI__;
-    await state.loadProjectCount();
-    expect(state.projectCount).toBeNull();
+    await state.loadWorkspaceCount();
+    expect(state.workspaceCount).toBeNull();
     win.__TAURI__ = tauri;
   });
 
-  it('reset clears the cached project count', async () => {
-    state.projectCount = 7;
+  it('reset clears the cached workspace count', async () => {
+    state.workspaceCount = 7;
     await state.reset();
-    expect(state.projectCount).toBeNull();
+    expect(state.workspaceCount).toBeNull();
   });
 
   // ── reset ──────────────────────────────────────────────────

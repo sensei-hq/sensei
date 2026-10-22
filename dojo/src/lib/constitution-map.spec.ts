@@ -33,12 +33,12 @@ describe('rulesToLadder', () => {
 	it('orders rungs broad→specific by scope level', () => {
 		// deliberately out of order on input
 		const rungs = rulesToLadder([
-			rule('project', 'p'),
+			rule('workspace', 'p'),
 			rule('organization', 'o'),
 			rule('user', 'u'),
 			rule('technology', 't')
 		]);
-		expect(rungs.map((r) => r.scope)).toEqual(['Personal', 'Company', 'Stack', 'Project']);
+		expect(rungs.map((r) => r.scope)).toEqual(['Personal', 'Company', 'Stack', 'Workspace']);
 	});
 
 	it('groups rules under their scope and surfaces the mandatory ★ lock', () => {
@@ -65,7 +65,7 @@ describe('rulesToLadder', () => {
 const CONSTITUTION: RelayConstitution = {
 	rules: [
 		{ scope_key: 'organization', namespace: 'Acme', title: 'never log secrets', enforcement: 'mandatory' },
-		{ scope_key: 'project', namespace: null, title: 'prefer early returns', enforcement: 'recommended' }
+		{ scope_key: 'workspace', namespace: null, title: 'prefer early returns', enforcement: 'recommended' }
 	],
 	conflicts: [
 		{
@@ -82,7 +82,7 @@ const CONSTITUTION: RelayConstitution = {
 describe('relayRules — federated constitution → ConstitutionRule[] (reuses rulesToLadder)', () => {
 	it('maps scope_key/title/enforcement through and uses the namespace as the rung name', () => {
 		const rungs = rulesToLadder(relayRules(CONSTITUTION));
-		expect(rungs.map((r) => r.scope)).toEqual(['Company', 'Project']);
+		expect(rungs.map((r) => r.scope)).toEqual(['Company', 'Workspace']);
 		const company = rungs.find((r) => r.scope === 'Company')!;
 		expect(company.name).toBe('Acme'); // real namespace name, not a stub
 		expect(company.rules?.[0]).toMatchObject({ text: 'never log secrets', hard: true });
@@ -90,7 +90,7 @@ describe('relayRules — federated constitution → ConstitutionRule[] (reuses r
 
 	it('falls back to the scope label when a rule has no namespace (honest, not blank)', () => {
 		const rungs = rulesToLadder(relayRules(CONSTITUTION));
-		expect(rungs.find((r) => r.scope === 'Project')!.name).toBe('Project');
+		expect(rungs.find((r) => r.scope === 'Workspace')!.name).toBe('Workspace');
 	});
 });
 

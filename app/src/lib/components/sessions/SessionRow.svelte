@@ -3,10 +3,10 @@
   // for this session (the parent builds the href / goto). Pure presentation:
   // every field is pre-derived on the EnrichedSession.
   //
-  // Shared by the Observatory Sessions screen and the project-scoped Sessions
+  // Shared by the Observatory Sessions screen and the workspace-scoped Sessions
   // screen. The folder-role chip renders only when `folderRole` is populated
-  // (multi-repo projects); it stays dormant on the multi-project observatory
-  // view and on single-folder projects.
+  // (multi-repo workspaces); it stays dormant on the multi-workspace observatory
+  // view and on single-folder workspaces.
   import type { EnrichedSession, QualityTone } from '$lib/sessions-digest.js';
 
   interface Props {
@@ -58,7 +58,7 @@
   <span class="flex flex-col gap-0.5 min-w-0">
     <span class="text-sm text-ink truncate">{session.title}</span>
     <span class="text-xs text-ink-soft truncate flex items-center gap-1.5">
-      <span class="truncate">{session.project || 'unlinked'}{#if session.agent} · {session.agent}{/if}</span>
+      <span class="truncate">{session.workspace || 'unlinked'}{#if session.agent} · {session.agent}{/if}</span>
       {#if session.folderRole}
         <span
           class="shrink-0 py-px px-1.5 rounded-full bg-paper-mute text-ink-mute uppercase tracking-wide text-xs"

@@ -7,7 +7,7 @@
 		setRepoElection
 	} from '$lib/client-data';
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
-	import ScrProjects from '$lib/components/screens/ScrProjects.svelte';
+	import ScrWorkspaces from '$lib/components/screens/ScrWorkspaces.svelte';
 	import ScrConstitution from '$lib/components/screens/ScrConstitution.svelte';
 	import ScrRulePacks from '$lib/components/screens/ScrRulePacks.svelte';
 	import ScrMyDojos from '$lib/components/screens/ScrMyDojos.svelte';
@@ -15,9 +15,9 @@
 	import ScrContributions from '$lib/components/screens/ScrContributions.svelte';
 	import { youHref, orgHref } from '$lib/nav';
 	import { YouSectionState, type YouApi } from '$lib/you-state.svelte';
-	import type { KitProject, KitDojo, KitDownstream, KitRulePack } from '$lib/components/kit/types';
+	import type { KitWorkspace, KitDojo, KitDownstream, KitRulePack } from '$lib/components/kit/types';
 
-	// The personal-zone section screen — the non-inbox destinations (projects ·
+	// The personal-zone section screen — the non-inbox destinations (workspaces ·
 	// rules · packs · sharing · dojos · contributions). Presentation only: the
 	// writes run in YouSectionState, which says why each one failed; the load is
 	// +page.ts and every write re-reads it.
@@ -26,9 +26,9 @@
 	const you = new YouSectionState();
 	const api: YouApi = { adoptContribution, setPackAdoption, provisionFromForge, setRepoElection };
 
-	// Opening a project routes to the preview drill-in; a dōjō row steps into its
+	// Opening a workspace routes to the preview drill-in; a dōjō row steps into its
 	// org console (the slug is the org id, which /org/[slug] resolves).
-	const openProject = (p: KitProject) => goto(youHref('projects') + '/' + p.id);
+	const openWorkspace = (p: KitWorkspace) => goto(youHref('workspaces') + '/' + p.id);
 	const goPacks = () => goto(youHref('packs'));
 	const openDojo = (d: KitDojo) => goto(orgHref(d.slug));
 
@@ -43,12 +43,12 @@
 
 <svelte:head><title>{data.title} · Dōjō</title></svelte:head>
 
-{#if data.section === 'projects'}
-	<ScrProjects
-		projects={data.projects}
-		error={data.projectsError}
+{#if data.section === 'workspaces'}
+	<ScrWorkspaces
+		workspaces={data.workspaces}
+		error={data.workspacesError}
 		showDojo={false}
-		onOpenProject={openProject}
+		onOpenWorkspace={openWorkspace}
 	/>
 {:else if data.section === 'rules'}
 	<ScrConstitution stance={data.stance} ladder={data.ladder} onGoPacks={goPacks} />

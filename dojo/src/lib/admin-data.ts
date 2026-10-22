@@ -26,6 +26,7 @@ import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from '
 import type { DojoCallOpts } from './dojo-api';
 import type { DojoViewerWire } from './viewers-view';
 import type { TeamWire } from './teams-view';
+import type { BillableUserWire, BillingAccountWire, SeatUsageWire } from './billing-view';
 
 // Re-export the shared error under the admin name so admin screens `instanceof`
 // against a local symbol without reaching into the shared module directly.
@@ -177,37 +178,37 @@ async function sendJson<T>(
 // viewers (#307 D8) ────────────────────────────────────────────────────────────
 
 const viewerPath = (principalId: string) => `/viewers/${encodeURIComponent(principalId)}`;
-const grantPath = (principalId: string, projectId: string) =>
-	`${viewerPath(principalId)}/workspaces/${encodeURIComponent(projectId)}`;
+const grantPath = (principalId: string, workspaceId: string) =>
+	`${viewerPath(principalId)}/workspaces/${encodeURIComponent(workspaceId)}`;
 
-/** `GET …/viewers` — the dōjō's viewers, each with the projects granted to them (admin). */
+/** `GET …/viewers` — the dōjō's viewers, each with the workspaces granted to them (admin). */
 export async function listViewers(tenantKey: string, opts: DojoCallOpts = {}): Promise<DojoViewerWire[]> {
 	return (await getJson<{ viewers: DojoViewerWire[] }>(adminUrl(tenantKey, '/viewers'), opts)).viewers;
 }
 
-/** `DELETE …/viewers/{id}` — remove a viewer from the dōjō, and their project views. */
+/** `DELETE …/viewers/{id}` — remove a viewer from the dōjō, and their workspace views. */
 export async function removeViewer(tenantKey: string, principalId: string, opts: DojoCallOpts = {}): Promise<void> {
 	await sendJson(adminUrl(tenantKey, viewerPath(principalId)), 'DELETE', undefined, opts);
 }
 
-/** `PUT …/viewers/{id}/workspaces/{project}` — grant the view of one of the dōjō's projects. */
+/** `PUT …/viewers/{id}/workspaces/{workspace}` — grant the view of one of the dōjō's workspaces. */
 export async function grantWorkspaceView(
 	tenantKey: string,
 	principalId: string,
-	projectId: string,
+	workspaceId: string,
 	opts: DojoCallOpts = {}
 ): Promise<void> {
-	await sendJson(adminUrl(tenantKey, grantPath(principalId, projectId)), 'PUT', undefined, opts);
+	await sendJson(adminUrl(tenantKey, grantPath(principalId, workspaceId)), 'PUT', undefined, opts);
 }
 
-/** `DELETE …/viewers/{id}/workspaces/{project}` — revoke it. */
+/** `DELETE …/viewers/{id}/workspaces/{workspace}` — revoke it. */
 export async function revokeWorkspaceView(
 	tenantKey: string,
 	principalId: string,
-	projectId: string,
+	workspaceId: string,
 	opts: DojoCallOpts = {}
 ): Promise<void> {
-	await sendJson(adminUrl(tenantKey, grantPath(principalId, projectId)), 'DELETE', undefined, opts);
+	await sendJson(adminUrl(tenantKey, grantPath(principalId, workspaceId)), 'DELETE', undefined, opts);
 }
 
 // teams (#307 D7) ──────────────────────────────────────────────────────────────
@@ -227,7 +228,7 @@ export async function renameTeam(tenantKey: string, teamId: string, name: string
 	await sendJson(adminUrl(tenantKey, teamPath(teamId)), 'PATCH', { name }, opts);
 }
 
-/** The project views a team granted were granted to people, and stay. */
+/** The workspace views a team granted were granted to people, and stay. */
 export async function deleteTeam(tenantKey: string, teamId: string, opts: DojoCallOpts = {}): Promise<void> {
 	await sendJson(adminUrl(tenantKey, teamPath(teamId)), 'DELETE', undefined, opts);
 }
@@ -255,14 +256,14 @@ export async function removeTeamMember(
 	);
 }
 
-/** Grant everyone now on the team the view of one of the dōjō's projects. */
+/** Grant everyone now on the team the view of one of the dōjō's workspaces. */
 export async function grantTeamWorkspaceView(
 	tenantKey: string,
 	teamId: string,
-	projectId: string,
+	workspaceId: string,
 	opts: DojoCallOpts = {}
 ): Promise<void> {
-	await sendJson(adminUrl(tenantKey, `${teamPath(teamId)}/workspaces/${encodeURIComponent(projectId)}`), 'PUT', undefined, opts);
+	await sendJson(adminUrl(tenantKey, `${teamPath(teamId)}/workspaces/${encodeURIComponent(workspaceId)}`), 'PUT', undefined, opts);
 }
 
 // members ──────────────────────────────────────────────────────────────────────
@@ -361,34 +362,16 @@ export async function getHealth(
 
 // billing ────────────────────────────────────────────────────────────────────
 
-/** A billable user and the private projects seating them. */
-export interface BillingBillableUser {
-	user_id: string;
-	projects: { name: string; slug: string; role: string }[];
-}
-
-/** Live seat usage for a tenant (`dojo.tenant_seat_usage`). */
-export interface BillingUsage {
-	seats_used: number;
-	total_active_seats: number;
-	billable_users: BillingBillableUser[];
-}
-
-/** A tenant's billing account snapshot (`dojo.billing_accounts`), or null. */
-export interface BillingAccount {
-	plan: string;
-	status: string;
-	seats_included: number;
-	seats_used: number;
-	seats_computed_at: string | null;
-	period_start: string | null;
-	period_end: string | null;
-}
+export type {
+	BillableUserWire as BillingBillableUser,
+	SeatUsageWire as BillingUsage,
+	BillingAccountWire as BillingAccount
+} from './billing-view';
 
 /** `GET …/billing` envelope. */
 export interface BillingResponse {
-	account: BillingAccount | null;
-	usage: BillingUsage;
+	account: BillingAccountWire | null;
+	usage: SeatUsageWire;
 }
 
 /** `GET …/billing` — the tenant's billing account + LIVE seat usage (admin). */

@@ -9,9 +9,9 @@ afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 
 const rec = (over: Partial<RecCardVm> = {}): RecCardVm => ({
   id: 'r1',
-  projectId: 'p1',
-  projectName: 'sensei',
-  projectKanji: '禅',
+  workspaceId: 'p1',
+  workspaceName: 'sensei',
+  workspaceKanji: '禅',
   title: 'Promote the retry pattern to a rule',
   why: 'seen in 8 places across the last week',
   impact: 'Projected FTR uplift toward 71%',
@@ -20,13 +20,13 @@ const rec = (over: Partial<RecCardVm> = {}): RecCardVm => ({
 });
 
 describe('RecCard', () => {
-  it('renders title, why, impact and project name', () => {
+  it('renders title, why, impact and workspace name', () => {
     const m = mountComponent(RecCardHarness, { rec: rec() });
     cleanup.push(m.destroy);
     expect(m.container.textContent).toContain('Promote the retry pattern to a rule');
     expect(m.container.textContent).toContain('seen in 8 places');
     expect(m.container.querySelector('[data-rec-impact]')?.textContent).toContain('Projected FTR uplift');
-    expect(m.container.querySelector('[data-rec-project]')?.textContent).toContain('sensei');
+    expect(m.container.querySelector('[data-rec-workspace]')?.textContent).toContain('sensei');
   });
 
   it('offers the same three verbs on every card', () => {

@@ -11,14 +11,14 @@ use serde::Deserialize;
 use super::workspace::TagBody;
 // One canonical name-or-uuid resolver (was duplicated here — see the #109 audit).
 // It returns Err(500) on a DB error and Ok(None) on a genuine miss, so callers
-// distinguish an outage from an unknown project instead of masking both as 404.
-use crate::api::util::resolve_project_uuid;
+// distinguish an outage from an unknown workspace instead of masking both as 404.
+use crate::api::util::resolve_workspace_uuid;
 
 // ── Solutions CRUD ──────────────────────────────────────────────────────────
 
-/// Query params for [`list_solutions`]. `under` scopes the list to projects
-/// whose folders live under an absolute path (the sensei MCP `find_projects`
-/// tool sends it); omitted → every project (unchanged).
+/// Query params for [`list_solutions`]. `under` scopes the list to workspaces
+/// whose folders live under an absolute path (the sensei MCP `find_workspaces`
+/// tool sends it); omitted → every workspace (unchanged).
 #[derive(Deserialize)]
 pub(crate) struct ListSolutionsQuery {
     #[serde(default)]
@@ -30,50 +30,53 @@ pub(crate) async fn list_solutions(
     Query(q): Query<ListSolutionsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let under = q.under.as_deref().filter(|s| !s.is_empty());
-    let projects =
-        state.pg.list_projects_under(under).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let workspaces = state
+        .pg
+        .list_workspaces_under(under)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Enrich each project with its folder membership so the Projects setup
-    // page (and any future project detail view) can render folder names,
-    // paths, and roles without an extra round trip per project.
+    // Enrich each workspace with its folder membership so the Workspaces setup
+    // page (and any future workspace detail view) can render folder names,
+    // paths, and roles without an extra round trip per workspace.
     //
-    // Folder-scope matters here: the `?under=` call is the MCP `find_projects`
+    // Folder-scope matters here: the `?under=` call is the MCP `find_workspaces`
     // discovery path, which only needs the repo-root folders — attaching the
     // hundreds of nested `kind:'folder'` descendants blew the response past the
     // MCP client's token cap (~72K chars for sensei). So when `under` is set we
-    // send only the compact repo roots (still enough for cwd→project
-    // resolution). The un-scoped app path (`GET /api/projects`, no `under`)
+    // send only the compact repo roots (still enough for cwd→workspace
+    // resolution). The un-scoped app path (`GET /api/workspaces`, no `under`)
     // keeps the full folder tree — unchanged.
     let compact = under.is_some();
-    let mut enriched = Vec::with_capacity(projects.len());
-    for mut project in projects {
+    let mut enriched = Vec::with_capacity(workspaces.len());
+    for mut workspace in workspaces {
         // A uuid read back out of a DB row, NOT the `{id}` of a route — this
-        // handler lists projects and takes no path parameter. Named `row_*` to
+        // handler lists workspaces and takes no path parameter. Named `row_*` to
         // say so: a route `{id}` is name-or-uuid and must go through
-        // `resolve_project_uuid`, and the #100 guard keys on that distinction.
-        let row_project_id = project["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
-        if let Some(pid) = row_project_id {
+        // `resolve_workspace_uuid`, and the #100 guard keys on that distinction.
+        let row_workspace_id = workspace["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
+        if let Some(pid) = row_workspace_id {
             // Fail closed: a folder-enrichment read error is a 500, not a
-            // silently folder-less project (which reads as "this project has no
+            // silently folder-less workspace (which reads as "this workspace has no
             // repos"). A genuinely empty result stays an empty array.
             let folders = if compact {
                 state
                     .pg
-                    .list_root_folders_by_project(&pid)
+                    .list_root_folders_by_workspace(&pid)
                     .await
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             } else {
                 state
                     .pg
-                    .list_folders_by_project(&pid)
+                    .list_folders_by_workspace(&pid)
                     .await
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             };
-            project["folders"] = serde_json::Value::Array(folders);
+            workspace["folders"] = serde_json::Value::Array(folders);
         } else {
-            project["folders"] = serde_json::Value::Array(vec![]);
+            workspace["folders"] = serde_json::Value::Array(vec![]);
         }
-        enriched.push(project);
+        enriched.push(workspace);
     }
     Ok(Json(serde_json::json!(enriched)))
 }
@@ -91,11 +94,11 @@ pub(crate) struct CreateSolutionBody {
     category: String,
     #[serde(default)]
     #[allow(dead_code)]
-    repos: Vec<CreateProjectRepo>,
+    repos: Vec<CreateWorkspaceRepo>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct CreateProjectRepo {
+pub(crate) struct CreateWorkspaceRepo {
     repo_id: String,
     #[serde(default = "default_role")]
     role: String,
@@ -115,23 +118,23 @@ pub(crate) async fn create_solution(
 ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
     let id = state
         .pg
-        .create_project(&body.name, body.description.as_deref(), body.client.as_deref())
+        .create_workspace(&body.name, body.description.as_deref(), body.client.as_deref())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // TODO: repo-to-project membership not yet modeled.
+    // TODO: repo-to-workspace membership not yet modeled.
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({"ok": true, "id": id}))))
 }
 
-/// A jsonb project field from the request body: present as an object or array
+/// A jsonb workspace field from the request body: present as an object or array
 /// (icon/stack are objects, links an array). A scalar or `null` is treated as
 /// "not provided" so a malformed value can't clobber a good column.
 fn jsonb_field<'a>(body: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
     body.get(key).filter(|v| v.is_object() || v.is_array())
 }
 
-/// PUT /api/projects/{id} — update a project's editable identity. Persists the
+/// PUT /api/workspaces/{id} — update a workspace's editable identity. Persists the
 /// full About-form field set (name/description/maturity/client/goal/
 /// preferred_acp + icon/stack/links jsonb); omitted fields are left unchanged
 /// (partial-update). An unknown `maturity` is rejected with 400 before the DB
@@ -141,23 +144,23 @@ pub(crate) async fn update_solution(
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::db::pg_store::{PROJECT_MATURITIES, ProjectPatch};
+    use crate::db::pg_store::{WORKSPACE_MATURITIES, WorkspacePatch};
 
-    // Name-or-uuid: resolve so `PUT /api/projects/sensei` works, not only a uuid
-    // (#100). 404 when no such project.
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    // Name-or-uuid: resolve so `PUT /api/workspaces/sensei` works, not only a uuid
+    // (#100). 404 when no such workspace.
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
 
     // Validate the only enum-backed field (maturity) up front → 400, not 500.
     // client/goal/preferred_acp are free text; icon/stack/links are jsonb.
     let maturity = body.get("maturity").and_then(|v| v.as_str());
     if let Some(m) = maturity
-        && !PROJECT_MATURITIES.contains(&m)
+        && !WORKSPACE_MATURITIES.contains(&m)
     {
         tracing::warn!(maturity = m, "update_solution rejected unknown maturity");
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let patch = ProjectPatch {
+    let patch = WorkspacePatch {
         name: body.get("name").and_then(|v| v.as_str()),
         description: body.get("description").and_then(|v| v.as_str()),
         maturity,
@@ -169,7 +172,7 @@ pub(crate) async fn update_solution(
         links: jsonb_field(&body, "links"),
     };
 
-    state.pg.update_project(&project_id, &patch).await.map_err(|e| {
+    state.pg.update_workspace(&workspace_id, &patch).await.map_err(|e| {
         tracing::error!(error = %e, "update_solution failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -180,36 +183,36 @@ pub(crate) async fn delete_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
-        .delete_project(&project_id)
+        .delete_workspace(&workspace_id)
         .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[derive(serde::Deserialize)]
-pub(crate) struct MergeProjectsBody {
-    /// Project(s) whose folders + sessions + memories fold into `target`.
+pub(crate) struct MergeWorkspacesBody {
+    /// Workspace(s) whose folders + sessions + memories fold into `target`.
     /// Empty is an error. Deduped by the handler before running the merge.
     pub sources: Vec<String>,
-    /// Destination project id. Must not appear in `sources`.
+    /// Destination workspace id. Must not appear in `sources`.
     pub target: String,
 }
 
-/// POST /api/projects/merge — merge one or more source projects into a
-/// target project (#41). Derived signals (patterns / recommendations /
-/// reasoning_traces / impact_verdicts) on the source projects are dropped
+/// POST /api/workspaces/merge — merge one or more source workspaces into a
+/// target workspace (#41). Derived signals (patterns / recommendations /
+/// reasoning_traces / impact_verdicts) on the source workspaces are dropped
 /// via ON DELETE CASCADE and regenerated by the analyzer on the next tick
 /// over the merged corpus.
 ///
 /// Returns `{ok: true, merged: <count>}` on success; per-source failures
 /// short-circuit and roll back that source's transaction only (previously
 /// merged sources stay merged).
-pub(crate) async fn merge_projects(
+pub(crate) async fn merge_workspaces(
     State(state): State<AppState>,
-    Json(body): Json<MergeProjectsBody>,
+    Json(body): Json<MergeWorkspacesBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let target = uuid::Uuid::parse_str(&body.target).map_err(|_| {
         (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "target is not a valid uuid"})))
@@ -244,8 +247,8 @@ pub(crate) async fn merge_projects(
 
     let mut merged = 0u32;
     for src in &sources {
-        state.pg.merge_projects(src, &target).await.map_err(|e| {
-            tracing::error!(error = %e, source = %src, target = %target, "merge_projects failed");
+        state.pg.merge_workspaces(src, &target).await.map_err(|e| {
+            tracing::error!(error = %e, source = %src, target = %target, "merge_workspaces failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -263,9 +266,9 @@ pub(crate) async fn merge_projects(
 pub(crate) async fn add_solution_repo(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<CreateProjectRepo>,
+    Json(body): Json<CreateWorkspaceRepo>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
 
     // Look up the folder by name (old string repo_id)
     let folder = state
@@ -279,7 +282,7 @@ pub(crate) async fn add_solution_repo(
 
     state
         .pg
-        .set_folder_project(&folder_id, &project_id, &body.role, body.label.as_deref())
+        .set_folder_workspace(&folder_id, &workspace_id, &body.role, body.label.as_deref())
         .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -289,7 +292,7 @@ pub(crate) async fn remove_solution_repo(
     State(state): State<AppState>,
     Path((_id, repo_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Clear folder-project association by setting props to remove project link
+    // Clear folder-workspace association by setting props to remove workspace link
     let folder = state
         .pg
         .get_repo_by_name(&repo_id)
@@ -299,10 +302,10 @@ pub(crate) async fn remove_solution_repo(
     let folder_id =
         crate::api::util::json_uuid(&folder["id"]).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Clear the project association by setting project_id to null via props
+    // Clear the workspace association by setting workspace_id to null via props
     state
         .pg
-        .set_folder_props(&folder_id, &serde_json::json!({"project_id": null}))
+        .set_folder_props(&folder_id, &serde_json::json!({"workspace_id": null}))
         .await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -341,79 +344,79 @@ pub(crate) async fn analyze_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    let project = state
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
         .pg
-        .get_project(&project_id)
+        .get_workspace(&workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // On-demand analyzer trigger (#67): enqueue session enrichment / analysis
-    // for this project (the scheduler does this periodically). Task::new(kind,
-    // folder_path, path) — the handler reads the project id from `path`.
+    // for this workspace (the scheduler does this periodically). Task::new(kind,
+    // folder_path, path) — the handler reads the workspace id from `path`.
     state
         .task_queue
-        .enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeProject, "", &id))
+        .enqueue(crate::tasks::Task::new(crate::tasks::TaskKind::AnalyzeWorkspace, "", &id))
         .await;
 
     // TODO: implement full cross-repo analysis
     Ok(Json(serde_json::json!({
-        "project": project,
+        "workspace": workspace,
         "links": [],
         "shared_libs": [],
     })))
 }
 
-/// `POST /api/projects/{id}/process/analyze` — on-demand LLM process-quality pass
-/// (spec 2026-08-20): enqueue `AnalyzeSessionProcess` for this project so its
+/// `POST /api/workspaces/{id}/process/analyze` — on-demand LLM process-quality pass
+/// (spec 2026-08-20): enqueue `AnalyzeSessionProcess` for this workspace so its
 /// un-scored sessions get spec-depth/deviation + refuted-findings +
 /// incomplete-analysis judgments (the scheduler also runs this daily). The task is
 /// watermark-gated + batch-capped, so repeated calls drain the backlog
-/// incrementally. Fail-closed: 404 for an unknown project. Returns `{ queued }`.
+/// incrementally. Fail-closed: 404 for an unknown workspace. Returns `{ queued }`.
 pub(crate) async fn analyze_process(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state
         .task_queue
         .enqueue(crate::tasks::Task::new(
             crate::tasks::TaskKind::AnalyzeSessionProcess,
             "",
-            &project_id.to_string(),
+            &workspace_id.to_string(),
         ))
         .await;
     Ok(Json(serde_json::json!({ "ok": true, "queued": true })))
 }
 
-/// `POST /api/projects/{id}/backfill` — RE-DERIVE this project's session signals
+/// `POST /api/workspaces/{id}/backfill` — RE-DERIVE this workspace's session signals
 /// from scratch: clear `analyzed_at` (so every captured session re-enriches with
-/// the CURRENT transcript-ground-truth logic) and enqueue `AnalyzeProject` (which
+/// the CURRENT transcript-ground-truth logic) and enqueue `AnalyzeWorkspace` (which
 /// re-enriches them and chains a metrics recompute). Distinct from
 /// [`backfill_metrics`] (day-history recovery) — this refreshes the SESSION
 /// derivations, so it is the button to press after a metric-definition change.
-/// Returns `{ reset, queued }`. Fail-closed: 404 for an unknown project, 500 on a
+/// Returns `{ reset, queued }`. Fail-closed: 404 for an unknown workspace, 500 on a
 /// read/write error.
-pub(crate) async fn backfill_project_sessions(
+pub(crate) async fn backfill_workspace_sessions(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let uuid = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let uuid = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     state
         .pg
-        .get_project(&uuid)
+        .get_workspace(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     let reset = state
         .pg
-        .reset_project_sessions_for_reenrichment(&uuid)
+        .reset_workspace_sessions_for_reenrichment(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state
         .task_queue
-        .enqueue(crate::tasks::Task::for_project(crate::tasks::TaskKind::AnalyzeProject, &uuid))
+        .enqueue(crate::tasks::Task::for_workspace(crate::tasks::TaskKind::AnalyzeWorkspace, &uuid))
         .await;
     Ok(Json(serde_json::json!({ "reset": reset, "queued": true })))
 }
@@ -502,12 +505,12 @@ pub(crate) async fn set_transcript_consent(
     Ok(Json(serde_json::json!({ "ok": true, "source": source, "consented": body.consented })))
 }
 
-/// Enqueue a metrics backfill (Phase 5 — history recovery): one `ComputeProjectMetrics` per
-/// project. The planner then backfills every data day its sources reach and recomputes
+/// Enqueue a metrics backfill (Phase 5 — history recovery): one `ComputeWorkspaceMetrics` per
+/// workspace. The planner then backfills every data day its sources reach and recomputes
 /// today, so the metric charts render months of history. Overlap-guarded
 /// (`has_pending_kind`), so this is safe to call repeatedly; a re-plan is idempotent
-/// (per-day upserts). Mirrors [`ingest_captures`]. A project-list read failure is
-/// a 500 — never masked into a fake `enqueued: 0` (which would read as "no projects").
+/// (per-day upserts). Mirrors [`ingest_captures`]. A workspace-list read failure is
+/// a 500 — never masked into a fake `enqueued: 0` (which would read as "no workspaces").
 pub(crate) async fn backfill_metrics(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -520,12 +523,12 @@ pub(crate) async fn backfill_metrics(
 
 // ── Per-Repo Summary ────────────────────────────────────────────────────────
 
-pub(crate) async fn project_summary(
+pub(crate) async fn workspace_summary(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Resolve to project-scoped folder ids; fall back to NOT_FOUND only if
-    // neither a project name/UUID nor a repo name matches.
+    // Resolve to workspace-scoped folder ids; fall back to NOT_FOUND only if
+    // neither a workspace name/UUID nor a repo name matches.
     let ids =
         state.pg.scope_folder_ids(&repo_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if ids.is_empty() {
@@ -533,7 +536,7 @@ pub(crate) async fn project_summary(
     }
 
     // Derive counts across all folders in scope. A DB error is a 500 — never
-    // masked as 0 counts (which would read as "this project has no code").
+    // masked as 0 counts (which would read as "this workspace has no code").
     let counts = state
         .pg
         .count_nodes_by_kind_scoped(&ids)
@@ -551,31 +554,33 @@ pub(crate) async fn project_summary(
     let pkg_count = counts.get("package").copied().unwrap_or(0);
     let mod_count = counts.get("module").copied().unwrap_or(0);
 
-    // Resolve name/path: prefer project row if repo_id is a project name/UUID,
+    // Resolve name/path: prefer workspace row if repo_id is a workspace name/UUID,
     // else fall back to the first (root) folder row.
-    // Resolve the REAL project/folder row. `repo_id` may be a project name, a
-    // project UUID, or a repo name. When it's a UUID the two name lookups miss, so
-    // look the project up by id. NEVER fabricate: no returning the UUID as the
+    // Resolve the REAL workspace/folder row. `repo_id` may be a workspace name, a
+    // workspace UUID, or a repo name. When it's a UUID the two name lookups miss, so
+    // look the workspace up by id. NEVER fabricate: no returning the UUID as the
     // name, no hardcoded status — if nothing resolves (the scope came from an
     // orphaned folder set), 404.
-    let project = match state.pg.get_project_by_name(&repo_id).await {
+    let workspace = match state.pg.get_workspace_by_name(&repo_id).await {
         Ok(Some(p)) => Some(p),
         Ok(None) => match uuid::Uuid::parse_str(&repo_id) {
-            Ok(uuid) => {
-                state.pg.get_project(&uuid).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            }
+            Ok(uuid) => state
+                .pg
+                .get_workspace(&uuid)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
             Err(_) => None,
         },
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
-    let (name, path, stack, libs, tags, status, indexed_at) = if let Some(proj) = project {
+    let (name, path, stack, libs, tags, status, indexed_at) = if let Some(proj) = workspace {
         (
             proj["name"].clone(),
             proj.get("path").cloned().unwrap_or(serde_json::Value::Null),
             proj.get("stack").cloned().unwrap_or(serde_json::json!([])),
             serde_json::json!([]),
             proj.get("tags").cloned().unwrap_or(serde_json::json!([])),
-            // Real lifecycle (project_maturity), not a hardcoded "active".
+            // Real lifecycle (workspace_maturity), not a hardcoded "active".
             proj.get("maturity").cloned().unwrap_or(serde_json::Value::Null),
             serde_json::Value::Null,
         )
@@ -618,23 +623,23 @@ pub(crate) async fn solution_graph(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    let project = state
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
         .pg
-        .get_project(&project_id)
+        .get_workspace(&workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let project_name = project["name"].as_str().unwrap_or("unknown");
+    let workspace_name = workspace["name"].as_str().unwrap_or("unknown");
 
-    // Get all repos (folders) and filter those belonging to this project.
+    // Get all repos (folders) and filter those belonging to this workspace.
     // Fail closed on a read error (500) — an empty repo list here would render
     // as an empty solution graph, indistinguishable from a real single-node one.
     let all_repos =
         state.pg.list_repositories().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_repos: Vec<&serde_json::Value> =
-        all_repos.iter().filter(|r| r["project_id"].as_str() == Some(&id)).collect();
+    let workspace_repos: Vec<&serde_json::Value> =
+        all_repos.iter().filter(|r| r["workspace_id"].as_str() == Some(&id)).collect();
 
     let mut all_nodes = Vec::new();
     let mut all_edges = Vec::new();
@@ -644,7 +649,7 @@ pub(crate) async fn solution_graph(
     let mut folder_id_to_repo: std::collections::HashMap<uuid::Uuid, (&serde_json::Value, String)> =
         std::collections::HashMap::new();
     let mut seen_repo_ids = std::collections::HashSet::new();
-    for repo in &project_repos {
+    for repo in &workspace_repos {
         let repo_name = repo["name"].as_str().unwrap_or("").to_string();
         if !seen_repo_ids.insert(repo_name.clone()) {
             continue;
@@ -697,13 +702,13 @@ pub(crate) async fn solution_graph(
         }));
     }
 
-    // Inject project-level hierarchy: soln -> repo nodes for each member
+    // Inject workspace-level hierarchy: soln -> repo nodes for each member
     let soln_node_id = format!("soln:{}", id);
     all_nodes.push(serde_json::json!({
-        "id": &soln_node_id, "name": project_name, "kind": "solution",
+        "id": &soln_node_id, "name": workspace_name, "kind": "solution",
         "file": "", "line": 0, "complexity": null,
     }));
-    for repo in &project_repos {
+    for repo in &workspace_repos {
         let repo_name = repo["name"].as_str().unwrap_or("");
         let repo_node_id = format!("repo:{}", repo_name);
         if !all_nodes.iter().any(|n| n.get("id").and_then(|v| v.as_str()) == Some(&repo_node_id)) {
@@ -723,10 +728,10 @@ pub(crate) async fn solution_graph(
 
     Ok(Json(serde_json::json!({
         "solutionId": id,
-        "name": project_name,
+        "name": workspace_name,
         "nodes": all_nodes.len(),
         "edges": all_edges.len(),
-        "repos": project_repos.len(),
+        "repos": workspace_repos.len(),
         "graph": {"nodes": all_nodes, "edges": all_edges},
     })))
 }
@@ -735,24 +740,24 @@ pub(crate) async fn solution_roles(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
-    // Verify project exists
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    // Verify workspace exists
     state
         .pg
-        .get_project(&project_id)
+        .get_workspace(&workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // Get repos belonging to this project. Fail closed on a read error (500) —
+    // Get repos belonging to this workspace. Fail closed on a read error (500) —
     // an empty list would render as "this solution has no repos / roles".
     let all_repos =
         state.pg.list_repositories().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let project_repos: Vec<serde_json::Value> =
-        all_repos.into_iter().filter(|r| r["project_id"].as_str() == Some(&id)).collect();
+    let workspace_repos: Vec<serde_json::Value> =
+        all_repos.into_iter().filter(|r| r["workspace_id"].as_str() == Some(&id)).collect();
 
     // Build simple role list from folder data
-    let roles: Vec<serde_json::Value> = project_repos
+    let roles: Vec<serde_json::Value> = workspace_repos
         .iter()
         .map(|r| {
             serde_json::json!({
@@ -770,36 +775,36 @@ pub(crate) async fn solution_roles(
 
 pub(crate) async fn get_metrics(
     State(state): State<AppState>,
-    Path(project): Path<String>,
+    Path(workspace): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Metrics are computed from session data in PgStore. Look up the folder to
     // get its UUID, then query sessions. Fail closed: a lookup error is a 500
     // (never masked as a miss); a genuine miss is a 404 — NOT a 200 carrying a
-    // fabricated {"error":"project not found"} body a caller can't distinguish
+    // fabricated {"error":"workspace not found"} body a caller can't distinguish
     // from real metrics.
     let folder = state
         .pg
-        .get_repo_by_name(&project)
+        .get_repo_by_name(&workspace)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     let folder_id =
         crate::api::util::json_uuid(&folder["id"]).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await
-        .map_err(|e| { tracing::warn!(error = %e, project = %project, "get_metrics: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "get_metrics: list_sessions_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     let session_count = sessions.len();
     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
-    // FTR is store-backed (project_metrics, metric='ftr') — the SAME number the
+    // FTR is store-backed (workspace_metrics, metric='ftr') — the SAME number the
     // Phase-7 endpoints serve. Honest-absent (null) when the folder isn't
-    // attached to a project or the project has no ftr rows in the window; NEVER a
+    // attached to a workspace or the workspace has no ftr rows in the window; NEVER a
     // fabricated 0. A read error is a 500, never masked.
-    let ftr: Option<f64> = match crate::api::util::json_uuid(&folder["project_id"]) {
-        Some(pid) => state.pg.get_project_ftr_rate(&pid).await
-            .map_err(|e| { tracing::warn!(error = %e, project = %project, "get_metrics: get_project_ftr_rate failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
+    let ftr: Option<f64> = match crate::api::util::json_uuid(&folder["workspace_id"]) {
+        Some(pid) => state.pg.get_workspace_ftr_rate(&pid).await
+            .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "get_metrics: get_workspace_ftr_rate failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
         None => None,
     };
     Ok(Json(serde_json::json!({
-        "project": project,
+        "workspace": workspace,
         "sessions": session_count,
         "completed": completed,
         "ftr": ftr,
@@ -826,7 +831,7 @@ fn default_limit() -> i64 {
     10
 }
 
-/// GET /api/observatory/ftr-daily?days=14 — holistic FTR sparkline (all projects)
+/// GET /api/observatory/ftr-daily?days=14 — holistic FTR sparkline (all workspaces)
 pub(crate) async fn holistic_ftr_daily(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
@@ -838,61 +843,61 @@ pub(crate) async fn holistic_ftr_daily(
     Ok(Json(serde_json::json!({ "ftr_daily": data })))
 }
 
-/// GET /api/projects/{id}/ftr-daily?days=14 — per-project FTR sparkline
-pub(crate) async fn project_ftr_daily(
+/// GET /api/workspaces/{id}/ftr-daily?days=14 — per-workspace FTR sparkline
+pub(crate) async fn workspace_ftr_daily(
     State(state): State<AppState>,
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let data = state
         .pg
-        .get_ftr_daily(Some(&project_id), q.days)
+        .get_ftr_daily(Some(&workspace_id), q.days)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "ftr_daily": data })))
 }
 
-/// GET /api/projects/{id}/hotspots?days=7 — files with highest rework
-pub(crate) async fn project_hotspots(
+/// GET /api/workspaces/{id}/hotspots?days=7 — files with highest rework
+pub(crate) async fn workspace_hotspots(
     State(state): State<AppState>,
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let data = state
         .pg
-        .get_hotspots(&project_id, q.days)
+        .get_hotspots(&workspace_id, q.days)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "hotspots": data })))
 }
 
-/// GET /api/projects/{id}/quality-signals — 4 quality indicators
-pub(crate) async fn project_quality_signals(
+/// GET /api/workspaces/{id}/quality-signals — 4 quality indicators
+pub(crate) async fn workspace_quality_signals(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let data = state
         .pg
-        .get_quality_signals(&project_id)
+        .get_quality_signals(&workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(data))
 }
 
-/// GET /api/projects/{id}/maturity — the derived early/mature signal (#71)
-/// plus watched/target progress. Not the stored `projects.maturity` lifecycle
+/// GET /api/workspaces/{id}/maturity — the derived early/mature signal (#71)
+/// plus watched/target progress. Not the stored `workspaces.maturity` lifecycle
 /// enum; computed on read from enriched-session count + insight presence.
-pub(crate) async fn project_maturity(
+pub(crate) async fn workspace_maturity(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let (watched, has_insights) = state
         .pg
-        .get_project_maturity_inputs(&project_id)
+        .get_workspace_maturity_inputs(&workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let sig =
@@ -1001,16 +1006,16 @@ pub(crate) async fn library_usage(
     Ok(Json(serde_json::json!({ "usage": data })))
 }
 
-/// GET /api/projects/{id}/teachings?limit=10 — adopted rules
-pub(crate) async fn project_teachings(
+/// GET /api/workspaces/{id}/teachings?limit=10 — adopted rules
+pub(crate) async fn workspace_teachings(
     State(state): State<AppState>,
     Path(id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<LimitQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let project_id = resolve_project_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
+    let workspace_id = resolve_workspace_uuid(&state, &id).await?.ok_or(StatusCode::NOT_FOUND)?;
     let data = state
         .pg
-        .get_adopted_teachings(&project_id, q.limit)
+        .get_adopted_teachings(&workspace_id, q.limit)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "teachings": data })))
@@ -1047,7 +1052,7 @@ pub(crate) async fn observatory_today(
     let greeting = home::greeting(now_local.hour());
     let today = now_local.format("%a · %-d %b").to_string();
 
-    // Maturity is a daemon decision (aggregate across active projects), reusing
+    // Maturity is a daemon decision (aggregate across active workspaces), reusing
     // the shared, already-tested maturity gate.
     let (watched, has_insights) = state.pg.get_global_maturity_inputs().await.map_err(|e| {
         tracing::error!(error = %e, "observatory_today: maturity inputs failed");
@@ -1067,7 +1072,7 @@ pub(crate) async fn observatory_today(
         .into_iter()
         .filter(|s| {
             let has = |k: &str| s[k].as_str().map(|v| !v.trim().is_empty()).unwrap_or(false);
-            has("project") || has("task") || has("summary")
+            has("workspace") || has("task") || has("summary")
         })
         .take(5)
         .collect();
@@ -1165,7 +1170,7 @@ pub(crate) async fn observatory_today(
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                         .map(|t| relative_when(t.with_timezone(&chrono::Utc), now))
                         .unwrap_or_default();
-                    let scope = m["scope"].as_str().unwrap_or("project");
+                    let scope = m["scope"].as_str().unwrap_or("workspace");
                     let source = m["impact"]
                         .as_str()
                         .filter(|s| !s.trim().is_empty())
@@ -1215,15 +1220,15 @@ pub(crate) async fn observatory_ftr(
 #[derive(Deserialize)]
 pub(crate) struct InsightsQuery {
     #[serde(default)]
-    project: Option<String>,
+    workspace: Option<String>,
 }
 
-/// GET /api/insights?project=<name|uuid>? — the Learnings Triage aggregator.
+/// GET /api/insights?workspace=<name|uuid>? — the Learnings Triage aggregator.
 /// Bundles pending recommendations, in-force/violated memories, suggested/rule
 /// patterns, and top recurring corrections into Now / Soon / Settled columns
-/// (each item carries a `column` label the UI trusts). Cross-project by default;
-/// `?project=` scopes every column to one project. Read-only — the Apply/Dismiss
-/// actions reuse the per-project accept/reject endpoints.
+/// (each item carries a `column` label the UI trusts). Cross-workspace by default;
+/// `?workspace=` scopes every column to one workspace. Read-only — the Apply/Dismiss
+/// actions reuse the per-workspace accept/reject endpoints.
 pub(crate) async fn get_insights(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<InsightsQuery>,
@@ -1231,13 +1236,13 @@ pub(crate) async fn get_insights(
     use crate::analysis::narration_cache::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
     use crate::insights as ins;
 
-    let project: Option<uuid::Uuid> = match q.project.as_deref() {
+    let workspace: Option<uuid::Uuid> = match q.workspace.as_deref() {
         Some(p) if !p.trim().is_empty() => {
-            Some(resolve_project_uuid(&state, p).await?.ok_or(StatusCode::NOT_FOUND)?)
+            Some(resolve_workspace_uuid(&state, p).await?.ok_or(StatusCode::NOT_FOUND)?)
         }
         _ => None,
     };
-    let pref = project.as_ref();
+    let pref = workspace.as_ref();
 
     let err = |label: &'static str| {
         move |e: String| {
@@ -1313,7 +1318,7 @@ pub(crate) async fn get_insights(
     'cap: for col in [ins::NOW, ins::SOON, ins::SETTLED] {
         // Recommendations — title (headline) + why (impact sentence). Facts +
         // fallback come from the shared `ins::rec_copy_inputs` so this board and
-        // the per-project recommendations endpoint hash to the SAME cache key
+        // the per-workspace recommendations endpoint hash to the SAME cache key
         // (one warm serves both screens).
         for r in recs.iter_mut().filter(|r| r["column"].as_str() == Some(col)) {
             if budget == 0 {
@@ -1389,16 +1394,16 @@ pub(crate) async fn get_insights(
         "now": count_in(ins::NOW), "soon": count_in(ins::SOON), "settled": count_in(ins::SETTLED),
     });
 
-    // Project filter chips — the distinct projects that actually appear in the
-    // results, with their kanji from the project icon.
+    // Workspace filter chips — the distinct workspaces that actually appear in the
+    // results, with their kanji from the workspace icon.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for v in recs.iter().chain(memories.iter()).chain(patterns.iter()) {
-        if let Some(pid) = v["project_id"].as_str() {
+        if let Some(pid) = v["workspace_id"].as_str() {
             seen.insert(pid.to_string());
         }
     }
-    let all_projects = state.pg.list_projects().await.map_err(err("projects"))?;
-    let projects: Vec<serde_json::Value> = all_projects
+    let all_workspaces = state.pg.list_workspaces().await.map_err(err("workspaces"))?;
+    let workspaces: Vec<serde_json::Value> = all_workspaces
         .iter()
         .filter_map(|p| {
             let pid = p["id"].as_str()?;
@@ -1410,9 +1415,9 @@ pub(crate) async fn get_insights(
             } else {
                 "場"
             };
-            // last_session_at lets the Insights project filter show the 3 MOST-RECENT
-            // projects as chips (the rest reachable by search) instead of one chip per
-            // project. Already computed by list_projects; pass it through.
+            // last_session_at lets the Insights workspace filter show the 3 MOST-RECENT
+            // workspaces as chips (the rest reachable by search) instead of one chip per
+            // workspace. Already computed by list_workspaces; pass it through.
             Some(serde_json::json!({
                 "id": pid, "name": p["name"], "kanji": kanji,
                 "last_session_at": p["last_session_at"],
@@ -1422,7 +1427,7 @@ pub(crate) async fn get_insights(
 
     Ok(Json(serde_json::json!({
         "counts": counts,
-        "projects": projects,
+        "workspaces": workspaces,
         "memories": memories,
         "recommendations": recs,
         "patterns": patterns,

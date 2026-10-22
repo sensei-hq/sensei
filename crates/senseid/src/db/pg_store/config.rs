@@ -102,7 +102,7 @@ impl PgStore {
 
     pub async fn upsert_workflow_state(
         &self,
-        project: &str,
+        workspace: &str,
         phase: Option<&str>,
         plan: Option<&str>,
         task: Option<&str>,
@@ -111,9 +111,9 @@ impl PgStore {
         rules_hash: Option<&str>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.workflow_state(project, active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at)
+            "INSERT INTO sensei.workflow_state(workspace, active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at)
              VALUES($1, $2, $3, $4, $5, $6, $7, now())
-             ON CONFLICT(project) DO UPDATE SET
+             ON CONFLICT(workspace) DO UPDATE SET
                active_phase = COALESCE($2, workflow_state.active_phase),
                active_plan = COALESCE($3, workflow_state.active_plan),
                active_task = COALESCE($4, workflow_state.active_task),
@@ -122,7 +122,7 @@ impl PgStore {
                rules_hash = COALESCE($7, workflow_state.rules_hash),
                updated_at = now()"
         )
-            .bind(project).bind(phase).bind(plan).bind(task)
+            .bind(workspace).bind(phase).bind(plan).bind(task)
             .bind(issue).bind(checkpoint).bind(rules_hash)
             .execute(&self.pool)
             .await
@@ -132,23 +132,23 @@ impl PgStore {
 
     pub async fn get_workflow_state(
         &self,
-        project: &str,
+        workspace: &str,
     ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(
             Option<String>, Option<String>, Option<String>,
             Option<i32>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>,
         )> = sqlx_core::query_as::query_as(
             "SELECT active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at
-             FROM sensei.workflow_state WHERE project = $1"
+             FROM sensei.workflow_state WHERE workspace = $1"
         )
-            .bind(project)
+            .bind(workspace)
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
 
         Ok(row.map(|(phase, plan, task, issue, checkpoint, hash, updated)| {
             serde_json::json!({
-                "project": project,
+                "workspace": workspace,
                 "active_phase": phase,
                 "active_plan": plan,
                 "active_task": task,
@@ -160,9 +160,9 @@ impl PgStore {
         }))
     }
 
-    pub async fn delete_workflow_state(&self, project: &str) -> Result<(), String> {
-        sqlx_core::query::query("DELETE FROM sensei.workflow_state WHERE project = $1")
-            .bind(project)
+    pub async fn delete_workflow_state(&self, workspace: &str) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.workflow_state WHERE workspace = $1")
+            .bind(workspace)
             .execute(&self.pool)
             .await
             .map_err(|e| e.to_string())?;

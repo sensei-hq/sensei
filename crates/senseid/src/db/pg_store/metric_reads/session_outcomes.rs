@@ -27,7 +27,7 @@ pub(crate) struct TokenDay {
 /// [`bind_day`] `$2` day-set contract: sessions bucket/window on `s.started_at`.
 const DAY_ANCHOR: &str = "s.started_at";
 
-/// One (day × repository) session-level aggregate for a project: `(day,
+/// One (day × repository) session-level aggregate for a workspace: `(day,
 /// repository_id, session_count, ftr_count, correction_count)`. Only
 /// (day, repository) pairs WITH ≥1 measurable session appear, so `session_count`
 /// (the `ftr` denominator) is always ≥ 1.
@@ -46,7 +46,7 @@ pub(crate) type TturDay = (chrono::NaiveDate, uuid::Uuid, f64, i64);
 impl PgStore {
     /// Per-(day × repository) session-level aggregates over the selected day-set
     /// (rolling window when `as_of=None`, the single day `D` when `Some(D)`),
-    /// project-scoped via `activity.sessions.project_id`. The session's repository is
+    /// workspace-scoped via `activity.sessions.workspace_id`. The session's repository is
     /// its repo anchor's `repository_id` (`sensei.folders.repository_id` WHERE
     /// `folders.id = s.repo_folder_id`); a session whose anchor can't be resolved to a
     /// repository is EXCLUDED (never fabricated into a made-up repository).
@@ -54,7 +54,7 @@ impl PgStore {
     /// sessions whose `ftr`/`outcome` are still `NULL` are excluded from the FTR base.
     pub(crate) async fn session_outcomes_sessions_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<SessionAggDay>, String> {
@@ -66,7 +66,7 @@ impl PgStore {
                   , coalesce(sum(s.corrections), 0)::int8              AS correction_count
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
                 AND {}
@@ -74,7 +74,7 @@ impl PgStore {
               ORDER BY 1, 2",
             day_filter(DAY_ANCHOR, as_of),
         );
-        let q = sqlx_core::query_as::query_as::<_, SessionAggDay>(&sql).bind(project_id);
+        let q = sqlx_core::query_as::query_as::<_, SessionAggDay>(&sql).bind(workspace_id);
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
@@ -86,7 +86,7 @@ impl PgStore {
     /// measurable base as [`PgStore::session_outcomes_sessions_by_day`].
     pub(crate) async fn session_outcomes_rework_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<ReworkDay>, String> {
@@ -98,7 +98,7 @@ impl PgStore {
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
                JOIN activity.turns    t  ON t.session_id = s.id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
                 AND {}
@@ -106,7 +106,7 @@ impl PgStore {
               ORDER BY 1, 2",
             day_filter(DAY_ANCHOR, as_of),
         );
-        let q = sqlx_core::query_as::query_as::<_, ReworkDay>(&sql).bind(project_id);
+        let q = sqlx_core::query_as::query_as::<_, ReworkDay>(&sql).bind(workspace_id);
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
@@ -120,7 +120,7 @@ impl PgStore {
     /// measurable base as [`PgStore::session_outcomes_sessions_by_day`].
     pub(crate) async fn session_outcomes_time_to_useful_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<TturDay>, String> {
@@ -139,7 +139,7 @@ impl PgStore {
                            ORDER BY t.turn_number \
                            LIMIT 1 \
                         ) fu ON true \
-                  WHERE s.project_id  = $1 \
+                  WHERE s.workspace_id  = $1 \
                     AND rf.repository_id IS NOT NULL \
                     AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome \
                     AND {} \
@@ -154,7 +154,7 @@ impl PgStore {
               ORDER BY day, repository_id",
             day_filter(DAY_ANCHOR, as_of),
         );
-        let q = sqlx_core::query_as::query_as::<_, TturDay>(&sql).bind(project_id);
+        let q = sqlx_core::query_as::query_as::<_, TturDay>(&sql).bind(workspace_id);
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
@@ -166,7 +166,7 @@ impl PgStore {
     /// as [`PgStore::session_outcomes_sessions_by_day`].
     pub(crate) async fn session_outcomes_context_pressure_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64)>, String> {
@@ -177,7 +177,7 @@ impl PgStore {
                   , count(*)::int8                                                                  AS total
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
                 AND {}
@@ -186,7 +186,7 @@ impl PgStore {
             day_filter(DAY_ANCHOR, as_of),
         );
         let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
-            .bind(project_id);
+            .bind(workspace_id);
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
@@ -196,7 +196,7 @@ impl PgStore {
     /// contributes nothing (never a fabricated 0).
     pub(crate) async fn session_outcomes_token_volume_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<TokenDay>, String> {
@@ -213,7 +213,7 @@ impl PgStore {
                   , count(*)::int8                                AS n
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.tokens_in IS NOT NULL
                 AND {}
@@ -225,7 +225,7 @@ impl PgStore {
             _,
             (chrono::NaiveDate, uuid::Uuid, i64, i64, Option<i64>, i64),
         >(&sql)
-        .bind(project_id);
+        .bind(workspace_id);
         let rows = bind_day(q, window_days, as_of)
             .fetch_all(&self.pool)
             .await
@@ -249,7 +249,7 @@ impl PgStore {
     /// nothing (honest-empty, never a fabricated 0). `n` = contributing sessions.
     pub(crate) async fn session_outcomes_session_duration_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, f64, i64)>, String> {
@@ -260,7 +260,7 @@ impl PgStore {
                   , count(*)::int8                                              AS n
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.duration   IS NOT NULL
                 AND {}
@@ -269,7 +269,7 @@ impl PgStore {
             day_filter(DAY_ANCHOR, as_of),
         );
         let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, f64, i64)>(&sql)
-            .bind(project_id);
+            .bind(workspace_id);
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
@@ -280,7 +280,7 @@ impl PgStore {
     /// token-bearing session writes NO row (honest-empty).
     pub(crate) async fn session_outcomes_tokens_per_result_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64)>, String> {
@@ -291,7 +291,7 @@ impl PgStore {
                   , count(*)::int8                                AS completed
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-              WHERE s.project_id  = $1
+              WHERE s.workspace_id  = $1
                 AND rf.repository_id IS NOT NULL
                 AND s.outcome    = 'completed'::sensei.session_outcome
                 AND s.tokens_out IS NOT NULL
@@ -301,7 +301,7 @@ impl PgStore {
             day_filter(DAY_ANCHOR, as_of),
         );
         let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
-            .bind(project_id);
+            .bind(workspace_id);
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
@@ -316,7 +316,7 @@ impl PgStore {
     /// the normalized `tool_name`), not intent.
     pub(crate) async fn session_outcomes_incomplete_analysis_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64)>, String> {
@@ -336,7 +336,7 @@ impl PgStore {
                    FROM activity.sessions s \
                    JOIN sensei.folders          rf ON rf.id = s.repo_folder_id \
                    JOIN activity.assistant_events e ON e.session_id = s.client_session_id \
-                  WHERE s.project_id  = $1 \
+                  WHERE s.workspace_id  = $1 \
                     AND rf.repository_id IS NOT NULL \
                     AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome \
                     AND {day} \
@@ -354,7 +354,7 @@ impl PgStore {
             day = day_filter(DAY_ANCHOR, as_of),
         );
         let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
-            .bind(project_id);
+            .bind(workspace_id);
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 }

@@ -2,8 +2,8 @@
  *  points at a concrete artifact (skill / agent / rule / lint). */
 export interface Upgrade {
   id: string;
-  projectId: string;
-  projectName: string;
+  workspaceId: string;
+  workspaceName: string;
   title: string;
   why: string;
   urgency: 'high' | 'medium' | 'low';
@@ -49,14 +49,14 @@ export function kindFor(actionType: string): UpgradeKind {
 
 /** Pure: bucket upgrades. Each bucket is sorted urgency-desc (high →
  *  medium → low) so the reader hits the loudest signal first, ties
- *  broken by project name for determinism. */
+ *  broken by workspace name for determinism. */
 export function bucketUpgrades(upgrades: Upgrade[]): UpgradeBuckets {
   const buckets: UpgradeBuckets = { skill: [], agent: [], rule: [], lint: [], other: [] };
   for (const u of upgrades) buckets[kindFor(u.actionType)].push(u);
   const rank = { high: 0, medium: 1, low: 2 } as const;
   for (const key of Object.keys(buckets) as UpgradeKind[]) {
     buckets[key].sort((a, b) =>
-      rank[a.urgency] - rank[b.urgency] || a.projectName.localeCompare(b.projectName),
+      rank[a.urgency] - rank[b.urgency] || a.workspaceName.localeCompare(b.workspaceName),
     );
   }
   return buckets;

@@ -1,9 +1,9 @@
-//! Relay segment-publish (A2) — project a run's `TodoWrite` list into the relay
+//! Relay segment-publish (A2) — workspace a run's `TodoWrite` list into the relay
 //! outline and push it to every enrolled Dōjō.
 //!
 //! When an assistant emits a `TodoWrite`, `ingest_hook_event` enqueues a
 //! `PublishRelaySegments` task carrying the assistant `session_id` in
-//! `task.path`. This handler reads that session's latest `TodoWrite`, projects
+//! `task.path`. This handler reads that session's latest `TodoWrite`, workspaces
 //! it via the pure [`crate::dojo::relay_project`] core (todos → segments →
 //! session update), and publishes to each enabled membership over the outbound
 //! [`DojoClient`] relay seam. P2 uses the assistant `session_id` (a UUID for
@@ -18,7 +18,7 @@ use super::super::executor::TaskContext;
 use crate::dojo::client::DojoClient;
 use crate::dojo::relay_project::{parse_todos, session_update, title_from_cwd, todos_to_segments};
 
-/// Handler for `TaskKind::PublishRelaySegments`: project the session's latest
+/// Handler for `TaskKind::PublishRelaySegments`: workspace the session's latest
 /// `TodoWrite` into the relay outline and publish it to every enabled Dōjō
 /// membership. Returns the number of memberships successfully published to.
 ///

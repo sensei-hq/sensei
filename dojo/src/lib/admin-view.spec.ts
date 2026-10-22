@@ -95,6 +95,15 @@ describe('audit action label + tone', () => {
 		expect(actionToneClass('policy_edited')).toBe('text-accent');
 		expect(actionToneClass('mystery')).toBe('text-ink-soft');
 	});
+
+	it('tones the viewer trail: a grant or invite adds, a revoke or removal takes away (#313)', () => {
+		expect(actionToneClass('workspace_view_granted')).toBe('text-success');
+		expect(actionToneClass('workspace_view_granted_to_team')).toBe('text-success');
+		expect(actionToneClass('viewer_invited')).toBe('text-success');
+		expect(actionToneClass('workspace_view_revoked')).toBe('text-warning');
+		expect(actionToneClass('viewer_removed')).toBe('text-warning');
+		expect(actionLabel('workspace_view_granted_to_team')).toBe('Workspace view granted to team');
+	});
 });
 
 describe('timestamps', () => {

@@ -65,6 +65,7 @@ mod tests {
             .drive_step(DriveStep {
                 cwd: Path::new("."),
                 prompt: "carried-through-marker",
+                run_id: "r-1",
                 timeout: Duration::from_secs(10),
             })
             .await

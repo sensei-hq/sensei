@@ -133,7 +133,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ExtractDeps => handlers::extract_deps(ctx, task).await,
             TaskKind::MeasureVerdicts => handlers::measure_verdicts(ctx, task).await,
             TaskKind::ReconcileRepoMetadata => handlers::reconcile_repo_metadata(ctx, task).await,
-            TaskKind::AnalyzeProject => handlers::analyze_project(ctx, task).await,
+            TaskKind::AnalyzeWorkspace => handlers::analyze_workspace(ctx, task).await,
             TaskKind::AnalyzeSessionProcess => handlers::analyze_session_process(ctx, task).await,
             TaskKind::ScanDocDrift => handlers::scan_doc_drift(ctx, task).await,
             TaskKind::AggregateCorrections => handlers::aggregate_corrections(ctx, task).await,
@@ -147,7 +147,9 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::PublishRelaySegments => handlers::publish_relay_segments(ctx, task).await,
             TaskKind::AdvanceRun => handlers::advance_run(ctx, task).await,
             TaskKind::PublishRun => handlers::publish_run(ctx, task).await,
-            TaskKind::ComputeProjectMetrics => handlers::metrics::compute_project(ctx, task).await,
+            TaskKind::ComputeWorkspaceMetrics => {
+                handlers::metrics::compute_workspace(ctx, task).await
+            }
             TaskKind::ComputeGroupMetrics => handlers::metrics::compute_group(ctx, task).await,
             TaskKind::ComputeHealth => handlers::metrics::compute_health(ctx, task).await,
             TaskKind::ScanGitHistory => handlers::git_history::scan_git_history(ctx, task).await,
@@ -314,12 +316,12 @@ mod tests {
     #[tokio::test]
     async fn execute_task_dispatches_scan_doc_drift() {
         let ctx = make_ctx().await;
-        // A bad project-id payload reaches the doc-drift handler's parse guard —
+        // A bad workspace-id payload reaches the doc-drift handler's parse guard —
         // proving the executor routes ScanDocDrift to scan_doc_drift.
         let task = Task::new(TaskKind::ScanDocDrift, "", "not-a-uuid");
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("expected a project id"));
+        assert!(result.unwrap_err().contains("expected a workspace id"));
     }
 
     #[tokio::test]
@@ -372,7 +374,7 @@ mod tests {
     #[tokio::test]
     async fn execute_task_dispatches_metrics_graph() {
         // The executor must route the metrics graph by IDENTITY:
-        //   ComputeProjectMetrics → handlers::metrics::compute_project (the parent),
+        //   ComputeWorkspaceMetrics → handlers::metrics::compute_workspace (the parent),
         //   ComputeGroupMetrics   → handlers::metrics::compute_group   (the child),
         //   ComputeHealth         → handlers::metrics::compute_health  (the barrier).
         // The handlers can honestly return Ok(0) on an empty fixture, so `.is_ok()`
@@ -423,18 +425,18 @@ mod tests {
             "ComputeHealth must dispatch to compute_health, not compute_group"
         );
 
-        // ComputeProjectMetrics → compute_project (the per-project parent), NOT a
+        // ComputeWorkspaceMetrics → compute_workspace (the per-workspace parent), NOT a
         // child group-compute or the health barrier.
         probe::reset();
-        let project = Task::new(TaskKind::ComputeProjectMetrics, &pid, "");
+        let workspace = Task::new(TaskKind::ComputeWorkspaceMetrics, &pid, "");
         assert!(
-            execute_task(&ctx, &project).await.is_ok(),
-            "ComputeProjectMetrics routes to the metrics project-parent handler"
+            execute_task(&ctx, &workspace).await.is_ok(),
+            "ComputeWorkspaceMetrics routes to the metrics workspace-parent handler"
         );
         assert_eq!(
             probe::take(),
-            Some("compute_project"),
-            "ComputeProjectMetrics must dispatch to compute_project"
+            Some("compute_workspace"),
+            "ComputeWorkspaceMetrics must dispatch to compute_workspace"
         );
     }
 

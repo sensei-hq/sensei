@@ -530,18 +530,18 @@ enabled; a missing row is a 500 (the row is seeded and test-enforced).
 ### R10 · CLI (`crates/cli`, via `daemon_url()` + the blocking client)
 
 - `sensei tracker connect <kind> …` — one subcommand per registered adapter; v1: `jira`.
-  `sensei tracker connect jira --project <p> (--board-url <url> | --url <site> --board <id>) --email <e> [--project-key <K>]`
+  `sensei tracker connect jira --workspace <w> (--board-url <url> | --url <site> --board <id>) --email <e> [--project-key <K>]`
   — token from `SENSEI_JIRA_TOKEN` if set, else one line read from stdin (the help
   text notes env vars are visible to same-user processes). Never an argv flag. The
   CLI sends the URL as typed; the server normalises it (R4). On 409
-  `board_already_connected` it prints which project owns the board. Connect uses
+  `board_already_connected` it prints which workspace owns the board. Connect uses
   `client_with_timeout(90)` (two validation requests at up to 30 s each, plus the
   keyring call). After a 201 it polls `GET …/trackers` every 2 s for up to 120 s,
   printing the first-sync result. On a polling timeout it says the sync is still
   running in the daemon; it never reports a connect failure.
-- `sensei tracker sync --project <p>` · `sensei tracker disconnect --project <p>`
-- `sensei tracker sprints --project <p>` — the project's sprints with ticket counts.
-- `sensei tracker usage --project <p> [--sprint <s> | <KEY>]` — giving both is an
+- `sensei tracker sync --workspace <w>` · `sensei tracker disconnect --workspace <w>`
+- `sensei tracker sprints --workspace <w>` — the workspace's sprints with ticket counts.
+- `sensei tracker usage --workspace <w> [--sprint <s> | <KEY>]` — giving both is an
   error. Table: key · summary · sessions (branch/prompt) · **"active AI time"** `h:mm` ·
   fresh / cache-read / out tokens · cost (blank when unknown, not `0`), then for a
   sprint the `unlinked` count. `--by-repo` adds one row per repository.

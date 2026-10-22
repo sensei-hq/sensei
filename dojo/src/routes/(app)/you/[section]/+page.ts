@@ -10,16 +10,16 @@ import {
 	ClientApiError,
 	type MyRepoWire
 } from '$lib/client-data';
-import { toKitProjects } from '$lib/projects-map';
+import { toKitWorkspaces } from '$lib/workspaces-map';
 import { toKitContributions, toKitDownstreams } from '$lib/contributions-map';
 import { toKitRulePacks } from '$lib/rulepacks-map';
-import type { KitProject, KitContribution, KitDownstream, KitRulePack } from '$lib/components/kit/types';
+import type { KitWorkspace, KitContribution, KitDownstream, KitRulePack } from '$lib/components/kit/types';
 import { stance, ladder } from '$lib/components/kit/fixtures';
 
-// The personal-zone section loader — the non-inbox destinations (projects ·
+// The personal-zone section loader — the non-inbox destinations (workspaces ·
 // rules · packs · dojos · contributions). `dojos` binds REAL memberships (from
-// the layout); `projects` binds the REAL user-wide `dojo.projects` read (F1,
-// GET /v1/you/projects) — honest-empty on a genuine empty, an error STATE on a
+// the layout); `workspaces` binds the REAL user-wide `dojo.workspaces` read (F1,
+// GET /v1/you/workspaces) — honest-empty on a genuine empty, an error STATE on a
 // read failure (never []-as-success masking a failure). Contributions still has
 // no backing route → honest empty (not a fabricated "helped 612"). Your own
 // governance (stance · constitution · rule packs) stays fixture-backed pending
@@ -29,15 +29,15 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 	const { memberships, accessToken } = await parent();
 	const section = params.section;
 
-	// Real projects — only fetched on the projects section (no needless /v1 call
+	// Real workspaces — only fetched on the workspaces section (no needless /v1 call
 	// on the fixture-backed sections). The read is user-wide (across every dōjō).
-	let projects: KitProject[] = [];
-	let projectsError: string | null = null;
-	if (section === 'projects') {
+	let workspaces: KitWorkspace[] = [];
+	let workspacesError: string | null = null;
+	if (section === 'workspaces') {
 		try {
-			projects = toKitProjects(await listUserWorkspaces({ fetch, accessToken }));
+			workspaces = toKitWorkspaces(await listUserWorkspaces({ fetch, accessToken }));
 		} catch (e) {
-			projectsError = e instanceof ClientApiError ? e.message : 'could not reach the dojo service';
+			workspacesError = e instanceof ClientApiError ? e.message : 'could not reach the dojo service';
 		}
 	}
 
@@ -95,9 +95,9 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		rulePacks,
 		// Memberships — real, from the layout's `listUserOrgs`, mapped to KitDojo.
 		dojos: toKitDojos(memberships),
-		// Projects — real user-wide read; error ≠ empty (F1).
-		projects,
-		projectsError,
+		// Workspaces — real user-wide read; error ≠ empty (F1).
+		workspaces,
+		workspacesError,
 		// Contributions — real user-wide read (F5); honest-empty until federated.
 		contributionsMine,
 		contributionsDownstream

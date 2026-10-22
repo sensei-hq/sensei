@@ -7,11 +7,11 @@ import { expect, test } from '../fixtures';
 import { DAEMON_URL, navigateToScreen } from '../helpers';
 
 test('atlas shows the daemon call-flow counts', async ({ tauriPage }) => {
-  const projects: { id: string; name: string }[] = await (await fetch(`${DAEMON_URL}/api/projects`)).json();
-  const sensei = projects.find((p) => p.name === 'sensei');
-  test.skip(!sensei, 'no sensei project on this daemon');
+  const workspaces: { id: string; name: string }[] = await (await fetch(`${DAEMON_URL}/api/workspaces`)).json();
+  const sensei = workspaces.find((p) => p.name === 'sensei');
+  test.skip(!sensei, 'no sensei workspace on this daemon');
 
-  await navigateToScreen(tauriPage, `/project/${sensei!.id}/atlas`, '[data-screen="atlas"], [data-screen-state="error"]', 60_000);
+  await navigateToScreen(tauriPage, `/workspace/${sensei!.id}/atlas`, '[data-screen="atlas"], [data-screen-state="error"]', 60_000);
   const seen = (await tauriPage.evaluate(`({
     repo: document.querySelector('[data-screen="atlas"]')?.getAttribute('data-atlas-repo') ?? null,
     error: document.querySelector('[data-screen-state="error"]')?.textContent?.trim() ?? null,

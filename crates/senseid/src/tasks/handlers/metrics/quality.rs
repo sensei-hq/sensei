@@ -5,9 +5,9 @@
 //! **`qlty` scans of a git worktree checked out to a PAST commit**, so it backfills
 //! over real history. It follows the `churn` template (git-sourced, per-day, honest-
 //! empty on non-git/missing-tool) but keys every row on the **repository** grain: it
-//! iterates the repositories a project spans ([`PgStore::repository_roots_for_project`],
-//! D2 — a project is a GROUP of repositories) and scans EACH checkout root, so a
-//! multi-repo project no longer collapses to a single root.
+//! iterates the repositories a workspace spans ([`PgStore::repository_roots_for_workspace`],
+//! D2 — a workspace is a GROUP of repositories) and scans EACH checkout root, so a
+//! multi-repo workspace no longer collapses to a single root.
 //!
 //! Two registry keys (`task_name = "quality"`), stamped `computed_on = the sampled
 //! commit-day` and `commit_sha = the sampled commit`:
@@ -53,7 +53,7 @@
 //! Each sampled commit is scanned in a detached `git worktree` under a temp path via
 //! [`scan_at_commit`]; a [`WorktreeGuard`] `git worktree remove --force`s it on Drop —
 //! even on error/panic — so no dangling worktree is ever left behind. A non-git
-//! project, an absent `qlty` CLI, a commit predating qlty's config, or any scan
+//! workspace, an absent `qlty` CLI, a commit predating qlty's config, or any scan
 //! failure produces NO row (honest-empty) + a warn log, never a fabricated score.
 //!
 //! ## Capture-scope split (governance, #3)
@@ -504,8 +504,8 @@ pub(super) fn sample_commit_days(commit_days: &[NaiveDate]) -> Vec<NaiveDate> {
 
 // ── compute ─────────────────────────────────────────────────────────────────
 
-/// Compute the `quality` group for one project from `qlty` scans of git worktrees at
-/// sampled past commits, keyed on the REPOSITORY grain. `project_raw` is the project
+/// Compute the `quality` group for one workspace from `qlty` scans of git worktrees at
+/// sampled past commits, keyed on the REPOSITORY grain. `workspace_raw` is the workspace
 /// uuid carried in `task.folder_path`. `as_of`:
 /// - `Some(D)` — scan ONLY the sampled commit-day `D` (`computed_on = D`, the
 ///   backfill/gap-fill + trailing-window path). A `D` that is not a sampled anchor is
@@ -513,7 +513,7 @@ pub(super) fn sample_commit_days(commit_days: &[NaiveDate]) -> Vec<NaiveDate> {
 ///   not force a scan on every calendar day.
 /// - `None` — the sampled anchors within the trailing [`metrics.window_days`] window.
 ///
-/// Returns the number of `project_metrics` rows written (`0` = honest-empty: no
+/// Returns the number of `workspace_metrics` rows written (`0` = honest-empty: no
 /// repository-linked checkout, non-git repos, absent qlty, no commit as-of the day, a
 /// scan miss, or none of the group's metrics active). Idempotent — re-running
 /// backfills in place via the upsert identity. A past day already covered (per
@@ -521,10 +521,10 @@ pub(super) fn sample_commit_days(commit_days: &[NaiveDate]) -> Vec<NaiveDate> {
 /// is immutable) — only `today` is always re-scanned.
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<NaiveDate>,
 ) -> Result<u32, String> {
-    compute_with_scanner(ctx, project_raw, as_of, |root, sha| {
+    compute_with_scanner(ctx, workspace_raw, as_of, |root, sha| {
         scan_at_commit(root, sha, run_qlty_scan)
     })
     .await
@@ -536,15 +536,15 @@ pub(super) async fn compute(
 /// real against the seeded repo). `scan` receives `(repository_root_abs_path, sha)`.
 async fn compute_with_scanner<S>(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<NaiveDate>,
     scan: S,
 ) -> Result<u32, String>
 where
     S: Fn(&str, &str) -> Result<Option<QualityScan>, String>,
 {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("quality: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("quality: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
     // Resolve key → metric_id for this group's ACTIVE metrics. Absent key = inactive
@@ -558,11 +558,11 @@ where
     }
     let active_ids: Vec<uuid::Uuid> = [dup_id, mq_id].into_iter().flatten().collect();
 
-    // The repositories this project spans (D2) — each scanned in its own checkout
-    // root. A project with no repository-linked checkout (a repo-less quasi-repo, or a
+    // The repositories this workspace spans (D2) — each scanned in its own checkout
+    // root. A workspace with no repository-linked checkout (a repo-less quasi-repo, or a
     // repository that cannot be resolved) writes NO row: honest-empty, never a
     // fabricated repository (I-E).
-    let repos = pg.repository_roots_for_project(&project_id).await?;
+    let repos = pg.repository_roots_for_workspace(&workspace_id).await?;
     if repos.is_empty() {
         return Ok(0);
     }
@@ -615,7 +615,7 @@ where
         };
 
         tracing::info!(
-            project = %project_raw,
+            workspace = %workspace_raw,
             repository = %repository_id,
             cadence = SAMPLE_CADENCE,
             sampled_anchors = sampled.len(),
@@ -639,7 +639,7 @@ where
             // A past day already covered (per repository) by EVERY active quality metric
             // is settled: a historical commit's code is immutable, so re-scanning can't
             // change it. Only `today` (whose HEAD may advance) is always re-scanned. The
-            // repository is GLOBAL, so a day another project already scanned for this
+            // repository is GLOBAL, so a day another workspace already scanned for this
             // repo is skipped here too (the shared code is identical).
             if day < today
                 && pg.quality_repo_day_fully_covered(&active_ids, &repository_id, day).await?
@@ -738,7 +738,7 @@ async fn write_ratio_rows(
             "denominator": denominator,
             "commit": sha,
         });
-        pg.upsert_project_metric_repo(&MetricRow {
+        pg.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mid,
             repository_id,
             scope,
@@ -761,7 +761,7 @@ async fn write_ratio_rows(
             "denominator": denominator,
             "commit": sha,
         });
-        pg.upsert_project_metric_repo(&MetricRow {
+        pg.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mid,
             repository_id,
             scope,
@@ -783,8 +783,8 @@ async fn write_ratio_rows(
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, git_commit_on_day,
-        make_ctx, repository_for_folder, seed_git_project_folder, seed_metrics_project_folder,
+        cleanup_metrics_fixture, daily_workspace_metric_rows as daily_rows, git_commit_on_day,
+        make_ctx, repository_for_folder, seed_git_workspace_folder, seed_metrics_workspace_folder,
     };
     use sqlx_core::query_as::query_as;
 
@@ -932,7 +932,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
 
         let dday = (chrono::Utc::now() - chrono::Duration::days(60)).date_naive();
@@ -991,7 +991,7 @@ mod tests {
         let repo_row: (f64, i64, i64, Option<String>, Option<String>) = query_as(
             "SELECT pm.value::float8, (pm.props->>'numerator')::int8, (pm.props->>'denominator')::int8, \
                     pm.identity, pm.commit_sha \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.repository_id = $1 AND pm.scope = 'repo' AND m.key = 'duplication_ratio' \
                 AND pm.computed_on = $2",
         )
@@ -1008,7 +1008,7 @@ mod tests {
 
         // computed_on stamped to the true commit day D; the user row carries the author.
         let (on_d,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.repository_id = $1 AND pm.scope = 'user' AND pm.identity = 'test@sensei.test' \
                 AND m.key = 'duplication_ratio' AND pm.computed_on = $2",
         )
@@ -1024,7 +1024,7 @@ mod tests {
         let again = compute_with_scanner(&ctx, &pid.to_string(), Some(dday), fake).await.unwrap();
         assert_eq!(again, 0, "a covered past day is skipped on re-run (immutable history)");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE repository_id = $1")
                 .bind(rid)
                 .fetch_one(pg.pool())
                 .await
@@ -1042,7 +1042,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let dday = (chrono::Utc::now() - chrono::Duration::days(30)).date_naive();
         git_commit_on_day(repo.path(), &dday.format("%Y-%m-%d").to_string(), &[("a.rs", "1\n2\n")]);
 
@@ -1073,7 +1073,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
         let dday = (chrono::Utc::now() - chrono::Duration::days(20)).date_naive();
         git_commit_on_day(repo.path(), &dday.format("%Y-%m-%d").to_string(), &[("a.rs", "1\n")]);
@@ -1090,7 +1090,7 @@ mod tests {
             compute_with_scanner(&ctx, &pid.to_string(), Some(dday), empty).await.unwrap();
         assert_eq!(written, 0, "0 total lines → no denominator → no row");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE repository_id = $1")
                 .bind(rid)
                 .fetch_one(pg.pool())
                 .await
@@ -1109,7 +1109,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
         let dday = (chrono::Utc::now() - chrono::Duration::days(45)).date_naive();
         git_commit_on_day(
@@ -1124,7 +1124,7 @@ mod tests {
         let ids = pg.active_metric_ids("quality").await.unwrap();
         for key in ["duplication_ratio", "module_quality"] {
             let mid = *ids.get(key).expect("active quality metric");
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &rid,
                 scope: "repo",
@@ -1156,7 +1156,7 @@ mod tests {
         );
 
         let (value,): (f64,) = query_as(
-            "SELECT pm.value::float8 FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+            "SELECT pm.value::float8 FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
               WHERE pm.repository_id = $1 AND pm.scope = 'repo' AND m.key = 'duplication_ratio' AND pm.computed_on = $2",
         )
         .bind(rid).bind(dday).fetch_one(pg.pool()).await.unwrap();
@@ -1171,17 +1171,17 @@ mod tests {
     // ── Honest-empty: non-git / real qlty path with no config ────────────────
 
     #[tokio::test]
-    async fn quality_non_git_project_writes_no_rows() {
-        // A project whose repo-root folder is NOT a git repo (the synthetic
+    async fn quality_non_git_workspace_writes_no_rows() {
+        // A workspace whose repo-root folder is NOT a git repo (the synthetic
         // `/_test/metrics-*` path, still assigned a repository row) → no git commit
         // history → NO rows (honest-empty). The scanner is never called because the
         // sampled-anchor set is empty for a non-git root.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let panic_scan = |_r: &str, _s: &str| -> Result<Option<QualityScan>, String> {
-            panic!("scanner must not run for a non-git project")
+            panic!("scanner must not run for a non-git workspace")
         };
         let written = compute_with_scanner(&ctx, &pid.to_string(), None, panic_scan).await.unwrap();
         assert_eq!(written, 0, "non-git root → no commit-days → no rows (scanner never called)");
@@ -1200,7 +1200,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
         let dday = (chrono::Utc::now() - chrono::Duration::days(10)).date_naive();
         git_commit_on_day(
@@ -1211,7 +1211,7 @@ mod tests {
 
         let written = compute(&ctx, &pid.to_string(), Some(dday)).await.unwrap();
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE repository_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE repository_id = $1")
                 .bind(rid)
                 .fetch_one(pg.pool())
                 .await
@@ -1253,7 +1253,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let dday = chrono::Utc::now().date_naive();
         git_commit_on_day(repo.path(), &dday.format("%Y-%m-%d").to_string(), &[("a.rs", "1\n2\n")]);
         let root = repo.path().to_string_lossy().to_string();

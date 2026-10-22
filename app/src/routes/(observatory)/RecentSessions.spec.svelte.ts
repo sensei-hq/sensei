@@ -9,14 +9,14 @@ afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 type Session = {
   id: string;
   task: string;
-  project: string;
+  workspace: string;
   startedAt: string;
   completedAt?: string;
   ftr?: number | null;
 };
 
 const session = (over: Partial<Session> = {}): Session => ({
-  id: 's-1', task: 'Fix refresh token rotation', project: 'lumen-auth',
+  id: 's-1', task: 'Fix refresh token rotation', workspace: 'lumen-auth',
   startedAt: '2026-05-29T10:42:00Z', completedAt: '2026-05-29T11:20:00Z',
   ftr: 1, ...over,
 });
@@ -28,10 +28,10 @@ describe('RecentSessions', () => {
     expect(m.container.textContent).toContain('Recent sessions');
   });
 
-  it('renders one row per session with task + project visible', () => {
+  it('renders one row per session with task + workspace visible', () => {
     const sessions: Session[] = [
-      session({ id: 's-1', task: 'Fix refresh token rotation', project: 'lumen-auth' }),
-      session({ id: 's-2', task: 'Bezier smoothing tool',      project: 'lumen-canvas' }),
+      session({ id: 's-1', task: 'Fix refresh token rotation', workspace: 'lumen-auth' }),
+      session({ id: 's-2', task: 'Bezier smoothing tool',      workspace: 'lumen-canvas' }),
     ];
     const m = mountComponent(RecentSessions, { sessions });
     cleanup.push(m.destroy);

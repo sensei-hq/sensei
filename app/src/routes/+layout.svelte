@@ -47,7 +47,7 @@
     // Expose appState + healthState on window for E2E test helpers (dev builds
     // only). Tests inject daemon config via `__sensei_state__.appState.config`
     // and can drive the boot gate via `__sensei_state__.healthState.status` to
-    // exercise the boot gate (e.g. the fresh-window project gate).
+    // exercise the boot gate (e.g. the fresh-window workspace gate).
     if (import.meta.env.DEV && typeof window !== "undefined") {
         (window as { __sensei_state__?: unknown }).__sensei_state__ = { appState, healthState };
     }

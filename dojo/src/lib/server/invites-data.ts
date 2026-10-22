@@ -28,7 +28,7 @@ export interface NewInviteInput {
 	role: string;
 	kind: string;
 	/** `member` makes a membership at `role`; `viewer` (#307 D8) makes the person a
-	 *  dōjō viewer — not a member — whom an admin then grants selected projects. */
+	 *  dōjō viewer — not a member — whom an admin then grants selected workspaces. */
 	access: InviteAccess;
 }
 
@@ -144,7 +144,7 @@ export async function acceptInvite(
 	}
 	if (invite.access === 'viewer') {
 		// A viewer is in the dōjō but is not a member: no member surface, no
-		// repository — an admin grants them the view of selected projects.
+		// repository — an admin grants them the view of selected workspaces.
 		const { error } = await db.rpc('add_dojo_viewer', {
 			p_tenant: invite.tenant_id,
 			p_principal: userId,

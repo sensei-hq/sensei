@@ -82,9 +82,9 @@ describe('GET /billing', () => {
 		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(4); // ACCESS.admin
 	});
 	// Seats and the account are read as the signed-in admin (the policies decide);
-	// the seats' project names are a system lookup — no session reads
+	// the seats' workspace names are a system lookup — no session reads
 	// sensei.namespaces (#236).
-	it('reads seats and the account as the caller, project names as the system', async () => {
+	it('reads seats and the account as the caller, workspace names as the system', async () => {
 		await route.GET(ev());
 		expect(mocks.loadActiveSeatRows.mock.calls[0]).toEqual([USER, 't1', SERVICE]);
 		expect(mocks.getBillingAccount.mock.calls[0][0]).toEqual(USER);

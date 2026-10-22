@@ -6,7 +6,7 @@ use crate::db::pg_store::LibraryPageRow;
 
 // ── Resolve Libs ──────────────────────────────────────────────────────────
 
-/// Classify imports as internal vs external libraries. Update project.libs.
+/// Classify imports as internal vs external libraries. Update workspace.libs.
 pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // folder_path is the repo abs_path (Task contract); look up the row
     // once and reuse for both repo_path and the later mark_folder_indexed
@@ -151,7 +151,7 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         Vec::new()
     });
 
-    // Check which libs are internal (match another repo in a project)
+    // Check which libs are internal (match another repo in a workspace)
     let all_repos = ctx.pg().list_repositories().await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "resolve_libs: list_repositories failed");
         Vec::new()
@@ -451,11 +451,11 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
     let folder_name = folder["name"].as_str().unwrap_or_else(|| task.folder_name());
     let folder_id = crate::api::util::json_uuid(&folder["id"]).ok_or("Invalid folder id")?;
-    // The folder's project (NULL for standalone folders) — used to roll each
-    // detected dependency up to library_enablement so it shows on the Projects
-    // screen (#30). library_enablement is the project↔library M2M the indexer
+    // The folder's workspace (NULL for standalone folders) — used to roll each
+    // detected dependency up to library_enablement so it shows on the Workspaces
+    // screen (#30). library_enablement is the workspace↔library M2M the indexer
     // owns; referenced_libraries below is only folder-grained.
-    let project_id = crate::api::util::json_uuid(&folder["project_id"]);
+    let workspace_id = crate::api::util::json_uuid(&folder["workspace_id"]);
 
     let repo_path = folder["abs_path"].as_str().ok_or("Folder has no abs_path")?;
 
@@ -472,18 +472,18 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
         // Local-protocol deps (link: / workspace: / file: / path=) do NOT
         // resolve to external registry libraries; skip the library upsert and
-        // try to record a project → project edge instead. If resolution
+        // try to record a workspace → workspace edge instead. If resolution
         // fails (target not indexed yet, workspace-name lookup, etc.), log
         // and move on — the next scan will retry.
         if let Some(target) = &dep.local_source {
             let protocol = local_source_protocol(&dep.source, &dep.raw_version);
             let resolved = resolve_local_target(repo_path, protocol, target);
             // FOLDER -> FOLDER (D11). The target folder is already in hand, so
-            // this no longer reaches through it to a project id. Two guards
+            // this no longer reaches through it to a workspace id. Two guards
             // went away with the regrain and their loss is the point: the old
-            // code required `project_id` to be Some and the two projects to
-            // DIFFER, which discarded every intra-project edge — measured, all
-            // 384 folders of this repo share one project, so all 8 workspace
+            // code required `workspace_id` to be Some and the two workspaces to
+            // DIFFER, which discarded every intra-workspace edge — measured, all
+            // 384 folders of this repo share one workspace, so all 8 workspace
             // members' `path=` deps were dropped and the table stayed empty.
             // Only the self-edge check remains, mirroring the table's CHECK so
             // the common case fails without a round trip.
@@ -535,17 +535,17 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         }
         count += 1;
 
-        // Roll the reference up to the project so it surfaces in
-        // project_libraries_resolved (the Projects screen). Idempotent;
-        // skips folders with no project (standalone).
-        if let Some(pid) = project_id
-            && let Err(e) = ctx.pg().upsert_project_library(&lib_id, &pid).await
+        // Roll the reference up to the workspace so it surfaces in
+        // workspace_libraries_resolved (the Workspaces screen). Idempotent;
+        // skips folders with no workspace (standalone).
+        if let Some(pid) = workspace_id
+            && let Err(e) = ctx.pg().upsert_workspace_library(&lib_id, &pid).await
         {
-            tracing::warn!(error = %e, lib = %dep.lib_name, folder = %folder_name, "extract_deps: upsert_project_library failed");
+            tracing::warn!(error = %e, lib = %dep.lib_name, folder = %folder_name, "extract_deps: upsert_workspace_library failed");
         }
     }
 
-    // First-party workspace packages are libraries this project PROVIDES — a
+    // First-party workspace packages are libraries this workspace PROVIDES — a
     // monorepo's own publishable packages (e.g. every @scope/* under
     // packages/*). Register the PUBLIC ones so they appear in the Libraries
     // view attributed to this folder, independent of whether any indexed repo
@@ -572,10 +572,10 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             continue;
         }
         member_count += 1;
-        if let Some(pid) = project_id
-            && let Err(e) = ctx.pg().upsert_project_library(&lib_id, &pid).await
+        if let Some(pid) = workspace_id
+            && let Err(e) = ctx.pg().upsert_workspace_library(&lib_id, &pid).await
         {
-            tracing::warn!(error = %e, lib = %name, "extract_deps: upsert_project_library (workspace member) failed");
+            tracing::warn!(error = %e, lib = %name, "extract_deps: upsert_workspace_library (workspace member) failed");
         }
     }
 
@@ -642,8 +642,8 @@ async fn extract_and_persist_commands(
 /// The protocol drives how the target is looked up:
 /// - `path` → filesystem path relative to the declaring folder (Cargo).
 /// - `link` / `file` → filesystem path relative to the declaring folder (npm).
-/// - `workspace` → name lookup inside the same monorepo (intra-project by
-///   design — no cross-project edge).
+/// - `workspace` → name lookup inside the same monorepo (intra-workspace by
+///   design — no cross-workspace edge).
 pub(crate) fn local_source_protocol(source: &str, raw_version: &str) -> &'static str {
     if source == "Cargo.toml" {
         return "path";
@@ -845,7 +845,7 @@ mod tests {
     #[test]
     fn resolve_local_target_workspace_returns_none() {
         // workspace: is a name-based lookup, not a path — caller must
-        // fall back to member-name resolution when it wants intra-project
+        // fall back to member-name resolution when it wants intra-workspace
         // routing. For 1a this branch is intentionally not wired.
         assert_eq!(resolve_local_target("/x/y", "workspace", "*"), None);
     }

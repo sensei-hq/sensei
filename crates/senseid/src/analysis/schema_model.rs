@@ -4,8 +4,8 @@
 //! 'er' | 'deps')` reads.
 //!
 //! The parts are dbd-core's own types, so the wire spelling is dbd's contract
-//! and cannot drift from it. The WHOLE `SchemaModel` is not: its `project` and
-//! `schemas` carry a dialect, a project note and per-schema enum counts the
+//! and cannot drift from it. The WHOLE `SchemaModel` is not: its `workspace` and
+//! `schemas` carry a dialect, a workspace note and per-schema enum counts the
 //! store does not hold, and rokkit reads neither. They are left out rather
 //! than filled with values nobody observed.
 

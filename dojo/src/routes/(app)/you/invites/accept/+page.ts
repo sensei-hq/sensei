@@ -23,8 +23,8 @@ export const load: PageLoad = async ({ url, fetch, parent }) => {
 		throw e;
 	}
 	// A viewer (#307 D8) is not a member, so the org would bounce them: they land on
-	// their projects, where the ones an admin grants them appear.
-	if (result.access === 'viewer') redirect(303, youHref('projects'));
+	// their workspaces, where the ones an admin grants them appear.
+	if (result.access === 'viewer') redirect(303, youHref('workspaces'));
 	// A member — into the dōjō you just joined (orgBySlug resolves it by tenant id).
 	redirect(303, orgHref(result.tenant_id));
 };

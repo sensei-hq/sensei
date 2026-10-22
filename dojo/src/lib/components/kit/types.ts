@@ -3,8 +3,8 @@
 // self-describing contract. Kept flat and optional-heavy to match the mock; the
 // wire types will refine these when the screens land.
 
-/** A project in flight — the row workhorse (dojo2-data `projects[]`). */
-export interface KitProject {
+/** A workspace in flight — the row workhorse (dojo2-data `workspaces[]`). */
+export interface KitWorkspace {
 	id: string;
 	name: string;
 	repo: string;
@@ -14,15 +14,15 @@ export interface KitProject {
 	phase: string;
 	/** Compact "how long ago" the last run was (e.g. "8m"). */
 	lastRun?: string;
-	/** Count of things in this project that need the viewer; 0 = none. */
+	/** Count of things in this workspace that need the viewer; 0 = none. */
 	needs?: number;
 	/** Owning dōjō display name (shown when `showDojo`). */
 	dojoName?: string | null;
-	/** A short human note about the project's current signal. */
+	/** A short human note about the workspace's current signal. */
 	note?: string | null;
 	/** Sparkline series for the recent run cadence. */
 	spark?: number[];
-	/** Sessions run against this project this week (dojo2-data `runsWeek`). */
+	/** Sessions run against this workspace this week (dojo2-data `runsWeek`). */
 	runsWeek?: number;
 }
 
@@ -40,7 +40,7 @@ export interface KitDojo {
 	/** Counts are optional — omitted (undefined) when not computed, so the row
 	 *  shows no chip rather than a fabricated 0. */
 	members?: number;
-	projects?: number;
+	workspaces?: number;
 	/** Count of things in this dōjō that need the viewer; 0/undefined = none. */
 	needs?: number;
 }
@@ -97,7 +97,7 @@ export interface KitLadderRung {
 	id: string;
 	/** Scope glyph (社 · 客 · 己 · 件 · 技). */
 	kanji: string;
-	/** Scope label — Company · Client · Personal · Project · Stack. */
+	/** Scope label — Company · Client · Personal · Workspace · Stack. */
 	scope: string;
 	/** The named entity at this scope (e.g. "Acme Corp"). */
 	name: string;
@@ -147,7 +147,7 @@ export interface KitRulePack {
 /** One section of a dōjō's OWN authored constitution (dojo2-data
  *  `orgConstitution[slug][]`). A dōjō authors rules at the scopes it owns —
  *  company-wide, per team, per stack (stacks also adopt rule packs). This is
- *  NOT the resolution ladder (that appears only at project-preview time): it is
+ *  NOT the resolution ladder (that appears only at workspace-preview time): it is
  *  the maintainer-authoring surface where the dōjō adds/edits/toggles its rules. */
 export interface KitConstitutionSection {
 	id: string;
@@ -165,15 +165,15 @@ export interface KitConstitutionSection {
 }
 
 /** The org-context stat row for the org home (dojo2-data `dojos[]` counts). The
- *  jurisdiction summary — members, items needing a maintainer, projects in flight. */
+ *  jurisdiction summary — members, items needing a maintainer, workspaces in flight. */
 export interface KitOrgStats {
 	/** Optional — omitted (undefined) when the per-tenant count isn't computed,
 	 *  so the badge is hidden rather than showing a fabricated 0. */
 	members?: number;
 	/** Items across this jurisdiction that need a maintainer; undefined = not computed. */
 	needs?: number;
-	/** Projects in flight under this dōjō (always real — the loaded project count). */
-	projects: number;
+	/** Workspaces in flight under this dōjō (always real — the loaded workspace count). */
+	workspaces: number;
 }
 
 /** A stance axis — a labelled discrete slider (dojo2-data `stance[]`). */

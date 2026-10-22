@@ -24,24 +24,24 @@ vi.mock('@tauri-apps/api/event', () => ({
   emit: mockEmit,
 }));
 
-import { openProjectWindow } from './windows.svelte.js';
+import { openWorkspaceWindow } from './windows.svelte.js';
 
-describe('openProjectWindow', () => {
+describe('openWorkspaceWindow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (MockWebviewWindow as any).getByLabel = vi.fn().mockResolvedValue(null);
   });
 
-  it('strips hyphens from project id for Tauri label', async () => {
-    await openProjectWindow('abc-def-1234-5678', 'My Project');
+  it('strips hyphens from workspace id for Tauri label', async () => {
+    await openWorkspaceWindow('abc-def-1234-5678', 'My Workspace');
     const label = (MockWebviewWindow as any).mock.calls[0][0] as string;
-    expect(label.startsWith('project-')).toBe(true);
-    // After 'project-' prefix, no hyphens from the UUID
-    expect(label.slice('project-'.length)).not.toContain('-');
+    expect(label.startsWith('workspace-')).toBe(true);
+    // After 'workspace-' prefix, no hyphens from the UUID
+    expect(label.slice('workspace-'.length)).not.toContain('-');
   });
 
   it('opens an opaque window with the overlay titlebar', async () => {
-    await openProjectWindow('abc-def-1234', 'My Project');
+    await openWorkspaceWindow('abc-def-1234', 'My Workspace');
     const opts = (MockWebviewWindow as any).mock.calls[0][1];
     // A transparent window leaves the Linux GTK menu bar see-through.
     expect(opts.transparent).toBeFalsy();
@@ -53,14 +53,14 @@ describe('openProjectWindow', () => {
     const fakeWin = { setFocus: mockSetFocus, once: mockOnce };
     (MockWebviewWindow as any).getByLabel = vi.fn().mockResolvedValue(fakeWin);
 
-    await openProjectWindow('abc-def-1234', 'My Project');
+    await openWorkspaceWindow('abc-def-1234', 'My Workspace');
 
     expect(mockSetFocus).toHaveBeenCalled();
     expect(MockWebviewWindow).not.toHaveBeenCalled();
   });
 
   it('emits the open windows to the native Window menu after opening one', async () => {
-    await openProjectWindow('feed-1111-2222-3333', 'Gateway');
+    await openWorkspaceWindow('feed-1111-2222-3333', 'Gateway');
     expect(mockEmit).toHaveBeenCalledWith(
       'sync-window-menu',
       expect.arrayContaining([expect.objectContaining({ title: 'Gateway' })]),

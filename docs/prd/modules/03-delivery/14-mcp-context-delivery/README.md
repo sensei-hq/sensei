@@ -54,9 +54,9 @@ to grep rather than inventing an empty answer.
   `api/handlers/mcp_manifests.rs` (Playground shapes);
   `tasks/mcp_discovery.rs` (boot + every 60s, 24h stale prune); `tool_discovery.rs`.
 - **MCP** — tools declared **inline** in `crates/mcp/src/lib.rs`: `context_pack`,
-  `get_layered_context`, `search`, `get_patterns`, `get_project_summary`,
-  `match_pattern`, `get_pattern_for`, `update_session`, `find_projects`,
-  `get_user_for_project`, `set_stance`, `use_project`, `pause_run`, `start_run`,
+  `get_layered_context`, `search`, `get_patterns`, `get_workspace_summary`,
+  `match_pattern`, `get_pattern_for`, `update_session`, `find_workspaces`,
+  `get_user_for_workspace`, `set_stance`, `use_workspace`, `pause_run`, `start_run`,
   `record_outcome`, … grouped by category: Codebase · Session · Memory · Library ·
   Pattern · Governance · Inference · Gateway.
 - **Data** — `sensei.mcp_servers`, `sensei.mcp_tool_manifests`, `sensei.assistant_tools`,

@@ -93,7 +93,7 @@ async function runAxe(tauriPage: TauriPageLike): Promise<Violation[]> {
 const OBSERVATORY: Array<{ route: string; sel: string }> = [
   { route: '/',              sel: '[data-ftr-header]' },
   { route: '/insights',      sel: '[data-triage-grid], [data-empty]' },
-  { route: '/projects',      sel: '[data-testid="library-search"], main' },
+  { route: '/workspaces',      sel: '[data-testid="library-search"], main' },
   { route: '/impact',        sel: 'main' },
   { route: '/traceability',  sel: '[data-traceability-total]' },
   { route: '/libraries',     sel: 'main' },
@@ -112,22 +112,22 @@ test.describe('accessibility (axe) — light + dark', () => {
     await seedSetupComplete(tauriPage);
     await navigateTo(tauriPage, '/logs');
 
-    // Project-window screens need a real project id.
-    const projects = await daemonGet<Array<{ id: string }>>('/api/projects');
-    const pid = projects[0]?.id;
-    const projectScreens = pid
+    // Workspace-window screens need a real workspace id.
+    const workspaces = await daemonGet<Array<{ id: string }>>('/api/workspaces');
+    const pid = workspaces[0]?.id;
+    const workspaceScreens = pid
       ? [
-          { route: `/project/${pid}/overview`, sel: '[data-component="project-sidebar"]' },
-          { route: `/project/${pid}/intake`,   sel: '[data-testid="intake-input"]' },
-          { route: `/project/${pid}/atlas`,    sel: '[data-screen="atlas"]' },
-          { route: `/project/${pid}/libraries`, sel: '[data-testid="library-search"]' },
-          { route: `/project/${pid}/about`,    sel: 'main' },
-          { route: `/project/${pid}/integrations`, sel: '[data-screen="integrations"]' },
-          { route: `/project/${pid}/sprints`, sel: '[data-screen="sprints"]' },
+          { route: `/workspace/${pid}/overview`, sel: '[data-component="workspace-sidebar"]' },
+          { route: `/workspace/${pid}/intake`,   sel: '[data-testid="intake-input"]' },
+          { route: `/workspace/${pid}/atlas`,    sel: '[data-screen="atlas"]' },
+          { route: `/workspace/${pid}/libraries`, sel: '[data-testid="library-search"]' },
+          { route: `/workspace/${pid}/about`,    sel: 'main' },
+          { route: `/workspace/${pid}/integrations`, sel: '[data-screen="integrations"]' },
+          { route: `/workspace/${pid}/sprints`, sel: '[data-screen="sprints"]' },
         ]
       : [];
 
-    const screens = [...OBSERVATORY, ...projectScreens];
+    const screens = [...OBSERVATORY, ...workspaceScreens];
     const report: Record<string, Record<string, Violation[]>> = {};
     const offenders: string[] = [];
 

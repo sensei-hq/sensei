@@ -3,7 +3,7 @@
 
 	// Classification chip (kit K2ClassChip) — company · client · personal ·
 	// community. A tone dot + the label, tinted from the shared vocab. `kind` is
-	// the project classification.
+	// the workspace classification.
 	let { kind }: { kind: string } = $props();
 
 	const c = $derived(classTone(kind));

@@ -6,7 +6,7 @@
  * step is about, and survives reordering without going stale. The numeric
  * "01 / 05" lives in the bottom bar for a sense of progression. Non-setup
  * concerns (Preferences, Libraries, Instruments, Inference/Assignments,
- * Projects) live in the Settings surface, not in the wizard.
+ * Workspaces) live in the Settings surface, not in the wizard.
  *
  * `brief` is the short rail copy (one sentence, tease voice).
  * `description` is the longer header tagline shown on the page.

@@ -39,7 +39,7 @@ pub async fn resume_pending_scans(queue: &TaskQueue, pg: &PgStore) -> u32 {
             _ => continue,
         };
         // Skip folders that have vanished, and `git` rows that no longer have a
-        // `.git` marker at this level — this guards the subfolder-as-project
+        // `.git` marker at this level — this guards the subfolder-as-workspace
         // inflation (#3), where a subfolder was mis-recorded as a repo. Subtrees
         // are deliberately-registered subdirs and carry no `.git` of their own.
         let path = std::path::Path::new(abs_path);
@@ -124,7 +124,7 @@ mod tests {
         let pending_a = seed(&pg, &rid, base, "a", "discovered", true).await;
         let pending_b = seed(&pg, &rid, base, "b", "queued", true).await;
         // A subfolder mis-recorded as a git folder (no .git marker) — must be
-        // skipped so it isn't promoted to a project (#3 inflation fix).
+        // skipped so it isn't promoted to a workspace (#3 inflation fix).
         let nogit = seed(&pg, &rid, base, "src", "discovered", false).await;
         // Terminal rows are filtered out by list_pending_folders, never resumed.
         seed(&pg, &rid, base, "c", "indexed", true).await;

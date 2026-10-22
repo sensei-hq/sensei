@@ -3,7 +3,7 @@ set search_path to history, sensei, extensions;
 create table if not exists past_memories (
   id                       uuid          primary key default gen_random_uuid()
 , memory_id                uuid          not null
-, project_id               uuid
+, workspace_id             uuid
 , scope                    text          not null
 , scope_filter             text
 , type                     text          not null

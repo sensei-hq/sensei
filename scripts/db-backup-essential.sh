@@ -42,7 +42,7 @@ tables=(
   sensei.playbook_rules sensei.consolidated_rulesets
   inference.detected_patterns inference.recommendations
   inference.reasoning_traces inference.corrections inference.drift_items
-  sensei.projects sensei.folders sensei.folders_to_watch
+  sensei.workspaces sensei.folders sensei.folders_to_watch
   sensei.repositories sensei.folder_path_aliases
 )
 
@@ -50,8 +50,32 @@ out="$dir/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out"
 echo "db-backup-essential: → $out"
 
+# The table a release renames (#307 R3: sensei.projects → sensei.workspaces).
+# The backup runs BEFORE the upgrade, with the new design but the database as it
+# still is: the design no longer knows the old name and the database does not
+# have the new one yet. Save it under the name the database has, so the snapshot
+# is the database as it was. Neither name present is a failure, never a skip.
+exists() { [ "$(psql "$url" -Atc "select to_regclass('$1') is not null")" = "t" ]; }
+export_renamed() { # NEW OLD
+  if exists "$1"; then
+    DATABASE_URL="$url" dbd export -n "$1" --format jsonl --output "$out" --source database 2>&1 >/dev/null
+  elif exists "$2"; then
+    mkdir -p "$out/${2%%.*}" &&
+      psql "$url" -Atc "\\copy (select row_to_json(t) from $2 t) to '$out/${2%%.*}/${2#*.}.jsonl'" 2>&1 >/dev/null
+  else
+    echo "neither $1 nor $2 exists"; return 1
+  fi
+}
+
 failed=()
 for t in "${tables[@]}"; do
+  if [ "$t" = "sensei.workspaces" ]; then
+    if ! err=$(export_renamed sensei.workspaces sensei.projects); then
+      echo "db-backup-essential: export of $t failed: $err" >&2
+      failed+=("$t")
+    fi
+    continue
+  fi
   if ! err=$(DATABASE_URL="$url" dbd export -n "$t" --format jsonl --output "$out" --source database 2>&1 >/dev/null); then
     echo "db-backup-essential: export of $t failed: $err" >&2
     failed+=("$t")

@@ -682,37 +682,42 @@ async fn write_file_rows(
     out
 }
 
-/// The project this repo belongs to, created if it does not exist yet.
+/// The workspace this repo belongs to, created if it does not exist yet.
 ///
-/// Every project root is its own project, named after itself. Grouping several
-/// folders into one project is OPT-IN via README frontmatter `project:` — never
+/// Every repository root is its own workspace, named after itself. Grouping several
+/// folders into one workspace is OPT-IN via README frontmatter `workspace:` — never
 /// by parent directory, which once conflated every unrelated repo under a scan
-/// root into a single "Developer" project. A git SUBTREE (composite folder name
-/// `parent:sub`) inherits its parent repository's project unless its own README
-/// overrides. Scanning is read-only; frontmatter is never written back.
+/// root into a single "Developer" workspace. A git SUBTREE (composite folder name
+/// `parent:sub`) inherits its parent repository's workspace unless its own README
+/// overrides. Scanning never writes identity back; its one write is D31's
+/// one-time key migration, run BEFORE the read: a README still on `project:` is
+/// rewritten to `workspace:`, the only key the reader understands. A README that
+/// cannot be migrated fails this repo (retried next tick) rather than regrouping
+/// it under its folder name.
 ///
 /// FAILS rather than fabricating: minting a synthetic `p-<name>` id here once
-/// pushed a phantom project into the UI that matched no row and never
+/// pushed a phantom workspace into the UI that matched no row and never
 /// reconciled. An error aborts this repo and the scan retries next tick.
-async fn resolve_project(
+async fn resolve_workspace(
     ctx: &TaskContext,
     repo_path: &Path,
     folder_name: &str,
 ) -> Result<(uuid::Uuid, bool), String> {
+    crate::tasks::processors::metadata::migrate_readme_workspace_key(repo_path)?;
     let fm = crate::tasks::processors::metadata::read_frontmatter(repo_path).unwrap_or_default();
     let name: String = match folder_name.split_once(':') {
-        Some((parent_repo, _)) if fm.project.is_none() => {
-            let parent_project = ctx
+        Some((parent_repo, _)) if fm.workspace.is_none() => {
+            let parent_workspace = ctx
                 .pg()
                 .get_repo_by_name(parent_repo)
                 .await
                 .ok()
                 .flatten()
-                .and_then(|f| crate::api::util::json_uuid(&f["project_id"]));
-            match parent_project {
+                .and_then(|f| crate::api::util::json_uuid(&f["workspace_id"]));
+            match parent_workspace {
                 Some(pid) => ctx
                     .pg()
-                    .get_project(&pid)
+                    .get_workspace(&pid)
                     .await
                     .ok()
                     .flatten()
@@ -721,9 +726,9 @@ async fn resolve_project(
                 None => parent_repo.to_string(),
             }
         }
-        _ => fm.project.clone().unwrap_or_else(|| folder_name.to_string()),
+        _ => fm.workspace.clone().unwrap_or_else(|| folder_name.to_string()),
     };
-    ctx.pg().get_or_create_project_by_name(&name).await
+    ctx.pg().get_or_create_workspace_by_name(&name).await
 }
 
 /// THE REPO SCAN. `ScanRoot` enqueues one of these per repository it found.
@@ -768,9 +773,9 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     else {
         return Err(format!("process_git_folder: folder row for {} has no ids", task.folder_path));
     };
-    // THE REPOSITORY FIRST, THEN THE PROJECT. Since #211 membership belongs to
-    // the repository (`folders.repository_id` → `repositories_in_projects`), so
-    // `set_folder_project` on a folder with no repository matches no row and
+    // THE REPOSITORY FIRST, THEN THE WORKSPACE. Since #211 membership belongs to
+    // the repository (`folders.repository_id` → `repositories_in_workspaces`), so
+    // `set_folder_workspace` on a folder with no repository matches no row and
     // records NOTHING.
     //
     // That is not a hypothetical ordering: `scan_root` writes folder rows and
@@ -778,8 +783,8 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // runs afterwards — calls `assign_repositories`. So on a fresh install this
     // handler always ran while `repository_id` was still NULL. Measured on a
     // from-scratch database against `~/Developer/sensei-hq`: 3 repositories, 3
-    // projects, 27,860 nodes indexed, and `repositories_in_projects` EMPTY — every
-    // project tagged `orphaned` with `repos_count: 0`, and every project-scoped
+    // workspaces, 27,860 nodes indexed, and `repositories_in_workspaces` EMPTY — every
+    // workspace tagged `orphaned` with `repos_count: 0`, and every workspace-scoped
     // screen an empty graph over a fully indexed codebase.
     //
     // Keyed on the REMOTE via the one reader that answers "what is this repo's
@@ -811,14 +816,15 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         }
     };
 
-    // The project, resolved and ATTACHED — a repository with no membership is
-    // invisible to every project surface (UI, list_projects, metrics), and
+    // The workspace, resolved and ATTACHED — a repository with no membership is
+    // invisible to every workspace surface (UI, list_workspaces, metrics), and
     // nothing downstream repairs it.
-    let (project_uuid, _created) = resolve_project(ctx, repo_abs, &name).await?;
+    let (workspace_uuid, _created) = resolve_workspace(ctx, repo_abs, &name).await?;
     if repository_id.is_some()
-        && let Err(e) = ctx.pg().set_folder_project(&folder_id, &project_uuid, "root", None).await
+        && let Err(e) =
+            ctx.pg().set_folder_workspace(&folder_id, &workspace_uuid, "root", None).await
     {
-        tracing::warn!(folder_id = %folder_id, error = %e, "process_git_folder: set_folder_project failed");
+        tracing::warn!(folder_id = %folder_id, error = %e, "process_git_folder: set_folder_workspace failed");
     }
 
     // AND ITS HISTORY (#224). Enqueued rather than run inline: a first walk
@@ -999,16 +1005,16 @@ mod scan_tests {
     use crate::db::pg_store::graph_seed::SeedGraph;
     use crate::tasks::test_support::make_ctx;
 
-    /// A repo folder with NO `repositories` row still ends up in its project.
+    /// A repo folder with NO `repositories` row still ends up in its workspace.
     ///
     /// THE FRESH-INSTALL PATH, and the one that was broken. `scan_root` writes
     /// folder rows and enqueues a `ProcessGitFolder` per repo; only its
     /// RECONCILE, which runs afterwards, calls `assign_repositories`. So when
     /// this handler ran, `folders.repository_id` was still NULL — and since
-    /// #211 membership is the repository's, so `set_folder_project` matched no
+    /// #211 membership is the repository's, so `set_folder_workspace` matched no
     /// row and recorded nothing. Measured on a from-scratch database against
-    /// `~/Developer/sensei-hq`: 3 repositories, 3 projects, 27,860 nodes, and
-    /// `repositories_in_projects` EMPTY — every project tagged `orphaned` with
+    /// `~/Developer/sensei-hq`: 3 repositories, 3 workspaces, 27,860 nodes, and
+    /// `repositories_in_workspaces` EMPTY — every workspace tagged `orphaned` with
     /// `repos_count: 0`, and the Structure diagram an empty graph.
     ///
     /// The handler must therefore establish the repository ITSELF rather than
@@ -1018,7 +1024,7 @@ mod scan_tests {
     /// `link_folder_to_repository` pair from `process_git_folder`.
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
-    async fn a_repo_with_no_repository_row_still_reaches_its_project() {
+    async fn a_repo_with_no_repository_row_still_reaches_its_workspace() {
         let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
@@ -1055,10 +1061,10 @@ mod scan_tests {
             .expect("the handler must give the folder a repository");
 
         // The MEMBERSHIP, which is the whole point — asserted through
-        // `folder_projects`, the view every project-scoped read resolves by,
+        // `folder_workspaces`, the view every workspace-scoped read resolves by,
         // rather than through the junction it happens to be built from.
         let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "SELECT project_id FROM sensei.folder_projects WHERE folder_id = $1",
+            "SELECT workspace_id FROM sensei.folder_workspaces WHERE folder_id = $1",
         )
         .bind(fid)
         .fetch_all(ctx.pg().pool())
@@ -1067,12 +1073,47 @@ mod scan_tests {
         assert_eq!(
             rows.len(),
             1,
-            "the folder must resolve to exactly one project; repository={rid}"
+            "the folder must resolve to exactly one workspace; repository={rid}"
         );
     }
 
+    /// D31: a README still on `project: X` is rewritten to `workspace: X` by the
+    /// scan, BEFORE it reads — so the repository stays grouped under X, and the
+    /// reader never has to understand the old key. A README already on
+    /// `workspace:` is read as it is: no write, byte-identical.
+    ///
+    /// Mutation that must break this test: drop the migration call from
+    /// `resolve_workspace` (the repo regroups under its folder name).
+    #[tokio::test]
+    async fn a_readme_on_project_is_migrated_by_the_scan_and_stays_grouped() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("d31-repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let name = format!("ztest-d31-{}", uuid::Uuid::new_v4().simple());
+        let readme = repo.join("README.md");
+        std::fs::write(&readme, format!("---\nproject: {name}\n---\n# r\n")).unwrap();
+
+        let (wid, _) = super::resolve_workspace(&ctx, &repo, "d31-repo").await.unwrap();
+        let ws = ctx.pg().get_workspace(&wid).await.unwrap().expect("the workspace exists");
+        assert_eq!(ws["name"], serde_json::json!(name), "grouped under the README's workspace");
+        let migrated = format!("---\nworkspace: {name}\n---\n# r\n");
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), migrated);
+
+        // The next scan: already on `workspace:` — same workspace, file untouched.
+        let (again, created) = super::resolve_workspace(&ctx, &repo, "d31-repo").await.unwrap();
+        assert_eq!((again, created), (wid, false));
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), migrated);
+
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(wid)
+            .execute(ctx.pg().pool())
+            .await
+            .unwrap();
+    }
+
     /// The whole pass over a real repository on disk: folder rows with parents,
-    /// file rows for supported AND unsupported files, a project attached, and
+    /// file rows for supported AND unsupported files, a workspace attached, and
     /// the manifest gate enqueued with the file fan-out behind it.
     #[tokio::test]
     #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
@@ -1118,10 +1159,10 @@ mod scan_tests {
         let unparsed = ctx.pg().list_unparsed_files(&fid).await.unwrap();
         assert_eq!(unparsed, vec!["src/lib.rs".to_string(), "src/main.rs".to_string()]);
 
-        // A project is attached — without it the folder is invisible to every
-        // project surface, and nothing downstream repairs it.
+        // A workspace is attached — without it the folder is invisible to every
+        // workspace surface, and nothing downstream repairs it.
         let row = ctx.pg().get_repo_by_path(&repo.to_string_lossy()).await.unwrap().unwrap();
-        assert!(crate::api::util::json_uuid(&row["project_id"]).is_some(), "project attached");
+        assert!(crate::api::util::json_uuid(&row["workspace_id"]).is_some(), "workspace attached");
 
         // The gate is queued, blocked on the one manifest, with the terminal
         // barrier behind it.
@@ -1137,7 +1178,7 @@ mod scan_tests {
     /// The pipeline writes a manifest-bearing directory as `module`; this scan
     /// wrote every subfolder as `folder`, and the upsert relabels between the
     /// two. Live, each watcher-driven rescan of this repository demoted all of
-    /// its workspace packages, and Settings → Projects lost the roles inferred
+    /// its workspace packages, and Settings → Workspaces lost the roles inferred
     /// from their manifests until the next full index.
     #[tokio::test]
     #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
@@ -1660,8 +1701,8 @@ mod scan_tests {
         let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
-        // A name of its own: the scan resolves the PROJECT by the repo's name, and
-        // a fixed name would share one project with every earlier run's folders.
+        // A name of its own: the scan resolves the WORKSPACE by the repo's name, and
+        // a fixed name would share one workspace with every earlier run's folders.
         let shop = format!("shop-{}", uuid::Uuid::new_v4().simple());
         let repo = t.path().join(&shop);
         let ddl = repo.join("database/ddl/table/app");
@@ -1784,17 +1825,17 @@ mod scan_tests {
         .unwrap();
         assert_eq!(spanned, 3, "the detail hangs off the walked nodes, spans and all");
 
-        // THE READ SIDE (step 5): the project's payload, as the Schema diagram
+        // THE READ SIDE (step 5): the workspace's payload, as the Schema diagram
         // gets it — the view's read of `orders` comes from the GRAPH's edge.
-        let (project,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "SELECT project_id FROM sensei.folder_projects WHERE folder_id = $1",
+        let (workspace,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT workspace_id FROM sensei.folder_workspaces WHERE folder_id = $1",
         )
         .bind(fid)
         .fetch_one(ctx.pg().pool())
         .await
         .unwrap();
-        let folders = ctx.pg().schema_folders_of_project(&project).await.unwrap();
-        // The repo's directory folders are placed in the project too; the nodes
+        let folders = ctx.pg().schema_folders_of_workspace(&workspace).await.unwrap();
+        // The repo's directory folders are placed in the workspace too; the nodes
         // hang off the REPO folder, which must be among them.
         assert!(folders.contains(&fid), "{folders:?} misses the repo folder {fid}");
         let (entities, deps) = tokio::try_join!(

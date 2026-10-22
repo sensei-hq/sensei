@@ -43,7 +43,7 @@ pub fn build_rows(
                 .filter_map(|&i| items.get(i))
                 .map(|it| {
                     serde_json::json!({
-                        "project_id": it.project_id,
+                        "workspace_id": it.workspace_id,
                         "session_id": it.session_id,
                         "ts": it.ts,
                         "prompt": corrections::normalize(&it.prompt),
@@ -56,7 +56,7 @@ pub fn build_rows(
             text,
             suggestion,
             count: c.count as i32,
-            project_ids: c.project_ids.clone(),
+            workspace_ids: c.workspace_ids.clone(),
             last_seen: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(c.last_seen_ms)
                 .unwrap_or_default(),
             memory_id,
@@ -151,8 +151,8 @@ pub async fn aggregate_corrections(ctx: &TaskContext, _task: &Task) -> Result<u3
     let mut candidates: Vec<CorrItem> = all
         .into_iter()
         .filter(|(_, _, _, _, prompt)| correction_signal(prompt).is_some())
-        .map(|(project_id, _pname, session_id, ts, prompt)| CorrItem {
-            project_id,
+        .map(|(workspace_id, _pname, session_id, ts, prompt)| CorrItem {
+            workspace_id,
             session_id,
             ts,
             prompt,
@@ -255,7 +255,7 @@ mod tests {
     use super::*;
 
     fn item(pid: uuid::Uuid, ts: i64, prompt: &str) -> CorrItem {
-        CorrItem { project_id: pid, session_id: "s".into(), ts, prompt: prompt.into() }
+        CorrItem { workspace_id: pid, session_id: "s".into(), ts, prompt: prompt.into() }
     }
 
     #[test]
@@ -272,7 +272,7 @@ mod tests {
                 representative_text: "use state".into(),
                 count: 2,
                 last_seen_ms: 200,
-                project_ids: vec![p],
+                workspace_ids: vec![p],
                 member_idxs: vec![0, 1],
             },
             Cluster {
@@ -280,7 +280,7 @@ mod tests {
                 representative_text: "lone".into(),
                 count: 1,
                 last_seen_ms: 300,
-                project_ids: vec![p],
+                workspace_ids: vec![p],
                 member_idxs: vec![2],
             },
         ];
@@ -309,7 +309,7 @@ mod tests {
             representative_text: "revert that".into(),
             count: 2,
             last_seen_ms: 200,
-            project_ids: vec![p],
+            workspace_ids: vec![p],
             member_idxs: vec![0, 1],
         }];
         let rows = build_rows(&clusters, &[None], &items, 2);

@@ -3,7 +3,7 @@ import type { SessionData } from '$lib/types.js';
 /** The display contract RecentSessions.svelte consumes. */
 export interface RecentSession {
   id: string;
-  project: string;
+  workspace: string;
   task: string;
   startedAt: string;
   completedAt?: string;
@@ -26,7 +26,7 @@ export function sessionLabel(s: Pick<WireSession, 'task' | 'summary' | 'outcome'
 
 /**
  * Shape raw `/api/sessions` rows into the RecentSessions display contract:
- * drop contentless ghost rows (no project AND no label — which is what made the
+ * drop contentless ghost rows (no workspace AND no label — which is what made the
  * observatory render blank rows, #61), give every surviving row a non-blank
  * label, normalize `ftr` to 0/1, and cap to `limit`. The daemon returns
  * newest-first, so order is preserved.
@@ -36,11 +36,11 @@ export function toRecentSessions(
   limit: number,
 ): RecentSession[] {
   return sessions
-    .filter((s) => (s.project ?? '').trim() || (s.task ?? '').trim() || (s.summary ?? '').trim())
+    .filter((s) => (s.workspace ?? '').trim() || (s.task ?? '').trim() || (s.summary ?? '').trim())
     .slice(0, limit)
     .map((s) => ({
       id: s.id,
-      project: (s.project ?? '').trim(),
+      workspace: (s.workspace ?? '').trim(),
       task: sessionLabel(s),
       startedAt: s.startedAt,
       completedAt: s.completedAt,

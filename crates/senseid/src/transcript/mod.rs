@@ -241,7 +241,7 @@ pub struct SynthEvent {
     pub ts: i64, // ms epoch
 }
 
-/// A session reconstructed from a transcript: the cwds seen (for project
+/// A session reconstructed from a transcript: the cwds seen (for workspace
 /// resolution) + the synthesized event stream (#75). Produced by the per-adapter
 /// `parse_*_session` helpers and folded into [`ParsedTranscript`].
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -255,7 +255,7 @@ pub struct SynthSession {
 ///
 /// Every adapter's [`TranscriptAdapter::parse`] produces exactly this, and the
 /// coordinator persists ONLY from it (turns → `transcript_turns`, events →
-/// `assistant_events`, cwds → project resolution, model + tokens → `sessions`).
+/// `assistant_events`, cwds → workspace resolution, model + tokens → `sessions`).
 /// Nothing downstream of `parse` sees adapter-specific raw content, so a format or
 /// parser change in any source never touches persistence, and the whole mapping is
 /// independently verifiable — a test asserts the struct from a fixture, no DB.
@@ -263,7 +263,7 @@ pub struct SynthSession {
 pub struct ParsedTranscript {
     /// Prose turns → `activity.transcript_turns`.
     pub turns: Vec<TranscriptTurn>,
-    /// Distinct working directories seen → project resolution.
+    /// Distinct working directories seen → workspace resolution.
     pub cwds: Vec<String>,
     /// Reconstructed hook-stream events → `activity.assistant_events` (#75). Empty
     /// when the source can't synthesize a session.
@@ -374,15 +374,15 @@ struct IngestOutcome {
     #[cfg_attr(not(test), allow(dead_code))] // read by backfill_all (test helper)
     skipped: bool,
     turns: u32,
-    /// Project to (re)analyze because a historical session was synthesized (#75).
-    analyze_project: Option<uuid::Uuid>,
+    /// Workspace to (re)analyze because a historical session was synthesized (#75).
+    analyze_workspace: Option<uuid::Uuid>,
     /// The client session whose turns were written, when any were.
     session_id: Option<String>,
 }
 
 impl IngestOutcome {
     fn skipped() -> Self {
-        Self { skipped: true, turns: 0, analyze_project: None, session_id: None }
+        Self { skipped: true, turns: 0, analyze_workspace: None, session_id: None }
     }
 }
 
@@ -529,7 +529,7 @@ async fn ingest_one(
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
-    let analyze_project = if needs_synth {
+    let analyze_workspace = if needs_synth {
         synthesize_session(pg, &parsed, &session_id, adapter.family()).await
     } else {
         None
@@ -540,7 +540,7 @@ async fn ingest_one(
     //    Idempotent; a miss leaves the column untouched (never a fabricated value).
     set_session_metadata(pg, &session_id, &parsed).await;
     let session_id = (turns > 0).then(|| session_id.clone());
-    Ok(IngestOutcome { skipped: false, turns, analyze_project, session_id })
+    Ok(IngestOutcome { skipped: false, turns, analyze_workspace, session_id })
 }
 
 /// Persist a session's inference model + token usage from the already-parsed
@@ -584,8 +584,8 @@ async fn set_session_metadata(
 
 /// Historical-bootstrap (#75): if this session has no events yet (not
 /// live-captured / not already imported), reconstruct it from the transcript —
-/// resolve the project from a cwd, create the session, and synthesize its event
-/// stream so `analyze_project` can enrich it. Returns the project to analyze.
+/// resolve the workspace from a cwd, create the session, and synthesize its event
+/// stream so `analyze_workspace` can enrich it. Returns the workspace to analyze.
 async fn synthesize_session(
     pg: &crate::db::pg_store::PgStore,
     parsed: &ParsedTranscript,
@@ -605,33 +605,33 @@ async fn synthesize_session(
             return None;
         }
     }
-    // project mapping: first cwd that is a tracked folder (exact) wins. Both the
+    // workspace mapping: first cwd that is a tracked folder (exact) wins. Both the
     // exact lookup and the ancestor fallback are alias-aware, so a cwd recorded
     // under a since-renamed path resolves to the current folder. When no cwd is an
     // exact folder, fall back to the nearest tracked ANCESTOR — so a subdirectory
     // cwd (or a subdir of a renamed repo covered by a single root alias) still
-    // attributes to the right project instead of being dropped.
+    // attributes to the right workspace instead of being dropped.
     let mut resolved = None;
     for cwd in &parsed.cwds {
-        if let Ok(Some((folder_id, project_id))) = pg.get_folder_ids_by_path(cwd).await {
-            resolved = Some((cwd.clone(), folder_id, project_id));
+        if let Ok(Some((folder_id, workspace_id))) = pg.get_folder_ids_by_path(cwd).await {
+            resolved = Some((cwd.clone(), folder_id, workspace_id));
             break;
         }
     }
     if resolved.is_none() {
         for cwd in &parsed.cwds {
-            if let Ok(Some((folder_id, project_id))) = pg.find_folder_for_path(cwd).await {
-                resolved = Some((cwd.clone(), folder_id, project_id));
+            if let Ok(Some((folder_id, workspace_id))) = pg.find_folder_for_path(cwd).await {
+                resolved = Some((cwd.clone(), folder_id, workspace_id));
                 break;
             }
         }
     }
-    let Some((cwd, folder_id, project_id)) = resolved else {
+    let Some((cwd, folder_id, workspace_id)) = resolved else {
         tracing::debug!(session = %session_id, "synthesize_session: no tracked folder for cwds — skipping");
         return None;
     };
     if let Err(e) =
-        pg.record_session_event(session_id, &folder_id, project_id.as_ref(), family, true).await
+        pg.record_session_event(session_id, &folder_id, workspace_id.as_ref(), family, true).await
     {
         tracing::warn!(error = %e, "synthesize_session: record_session_event failed");
         return None;
@@ -676,7 +676,7 @@ async fn synthesize_session(
         }
     }
     tracing::info!(session = %session_id, events = parsed.events.len(), "synthesize_session: imported historical session");
-    project_id
+    workspace_id
 }
 
 /// Ingest every file across all adapters in-process (no queue). Test helper
@@ -887,9 +887,11 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
     }
     let outcome = ingest_one(ctx.pg(), adapter.as_ref(), &task.path).await?;
     // A freshly-synthesized historical session needs enrichment to light up its
-    // FTR/churn/correction signals (#75). AnalyzeProject is idempotent + incremental.
-    if let Some(project_id) = outcome.analyze_project {
-        ctx.queue.enqueue(Task::new(TaskKind::AnalyzeProject, "", &project_id.to_string())).await;
+    // FTR/churn/correction signals (#75). AnalyzeWorkspace is idempotent + incremental.
+    if let Some(workspace_id) = outcome.analyze_workspace {
+        ctx.queue
+            .enqueue(Task::new(TaskKind::AnalyzeWorkspace, "", &workspace_id.to_string()))
+            .await;
     }
     // New turns may name a ticket the tracker hasn't synced yet (tracker spec R11).
     // A failure here costs only latency: the next full sync links it.
@@ -1115,7 +1117,7 @@ mod tests {
     async fn synthesize_imports_historical_session() {
         let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
         let pid = pg
-            .create_project(&format!("_test:imp-{}", uuid::Uuid::new_v4()), None, None)
+            .create_workspace(&format!("_test:imp-{}", uuid::Uuid::new_v4()), None, None)
             .await
             .unwrap();
         let root = pg
@@ -1130,9 +1132,9 @@ mod tests {
         let fid = crate::tasks::test_support::seed_repo_folder(&pg, &root, "imp-repo", &repo_path)
             .await
             .unwrap();
-        // link folder → project (scan/reconcile does this in production; the
-        // importer resolves project_id from the folder via cwd).
-        pg.set_folder_project(&fid, &pid, "root", None).await.unwrap();
+        // link folder → workspace (scan/reconcile does this in production; the
+        // importer resolves workspace_id from the folder via cwd).
+        pg.set_folder_workspace(&fid, &pid, "root", None).await.unwrap();
         let sid = format!("_test-imp-{}", uuid::Uuid::new_v4());
 
         // a historical transcript whose cwd == the tracked folder's abs_path
@@ -1151,12 +1153,12 @@ mod tests {
             vec![Box::new(claude::ClaudeAdapter::new(root_dir.clone()))];
         backfill_all(&pg, &ads).await;
 
-        // session synthesized, attributed to the project, flagged backfilled,
+        // session synthesized, attributed to the workspace, flagged backfilled,
         // with a historical started_at (not "today").
         // Named alias + a destructuring bind: the row is eight columns, and read
         // positionally (`s.5`, `s.6`) you have to count to know which is which.
         type SessionRow = (
-            Option<uuid::Uuid>, // project_id
+            Option<uuid::Uuid>, // workspace_id
             bool,               // backfilled
             bool,               // started_at is historical
             Option<String>,     // provider
@@ -1165,11 +1167,11 @@ mod tests {
             Option<i64>,        // tokens_out
             bool,               // meta_synced_at IS NOT NULL
         );
-        let (project_id, backfilled, historical, provider, model, tokens_in, tokens_out, meta_synced):
+        let (workspace_id, backfilled, historical, provider, model, tokens_in, tokens_out, meta_synced):
             SessionRow = sqlx_core::query_as::query_as(
-            "SELECT project_id, backfilled, (started_at < now() - interval '1 day'), provider, model, tokens_in, tokens_out, meta_synced_at IS NOT NULL FROM activity.sessions WHERE client_session_id=$1"
+            "SELECT workspace_id, backfilled, (started_at < now() - interval '1 day'), provider, model, tokens_in, tokens_out, meta_synced_at IS NOT NULL FROM activity.sessions WHERE client_session_id=$1"
         ).bind(&sid).fetch_one(pg.pool()).await.unwrap();
-        assert_eq!(project_id, Some(pid), "attributed to the project resolved from cwd");
+        assert_eq!(workspace_id, Some(pid), "attributed to the workspace resolved from cwd");
         assert!(backfilled, "flagged backfilled");
         assert!(historical, "started_at set from the transcript timestamp, not now()");
         assert_eq!(provider.as_deref(), Some("anthropic"), "provider captured at synthesis");
@@ -1256,7 +1258,7 @@ mod tests {
             .execute(pool)
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id=$1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id=$1")
             .bind(pid)
             .execute(pool)
             .await
@@ -1340,7 +1342,7 @@ mod tests {
     //
     // The fixtures are machine-generated by `scripts/anonymize-transcript.py`
     // and must never be hand-written, because a hand-copied session is exactly
-    // what put a contributor's username and their employer's project path into
+    // what put a contributor's username and their employer's workspace path into
     // a public repo. `check-no-leaks.sh` carves this directory out of its
     // transcript-path rule, so THESE TESTS ARE THAT CARVE-OUT'S OTHER HALF.
 

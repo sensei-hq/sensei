@@ -7,6 +7,36 @@
 
 import type { KitBilling } from './components/kit/types';
 
+// ── wire (GET /v1/t/{tenant}/billing) — the one declaration; the server's
+// billing-data and the admin client both import it ─────────────────────────
+
+/** A billable user and the private workspaces seating them. */
+export interface BillableUserWire {
+	user_id: string;
+	workspaces: { name: string; slug: string; role: string }[];
+}
+
+/** Live seat usage for a tenant (`dojo.tenant_seat_usage`). */
+export interface SeatUsageWire {
+	/** Unique users with ≥1 active seat on a private workspace — the billable count. */
+	seats_used: number;
+	/** All active seat rows considered (private + public), for transparency. */
+	total_active_seats: number;
+	/** Per-user breakdown of the billable seats (private workspaces only), sorted. */
+	billable_users: BillableUserWire[];
+}
+
+/** A tenant's billing account snapshot (`dojo.billing_accounts`). */
+export interface BillingAccountWire {
+	plan: string;
+	status: string;
+	seats_included: number;
+	seats_used: number;
+	seats_computed_at: string | null;
+	period_start: string | null;
+	period_end: string | null;
+}
+
 /** The live monthly total — active (billable) contributors × the per-seat price
  *  (mockup `b.seatsActive * b.perSeat`). */
 export function monthlyTotal(b: Pick<KitBilling, 'seatsActive' | 'perSeat'>): number {

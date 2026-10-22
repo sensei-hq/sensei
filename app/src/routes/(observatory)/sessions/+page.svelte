@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Observatory · Sessions — every project's sessions, through the one Sessions
+  // Observatory · Sessions — every workspace's sessions, through the one Sessions
   // screen. No route param, so the state is seeded once from the load; the
   // range chips refetch through it thereafter.
   import { untrack } from 'svelte';

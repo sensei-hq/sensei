@@ -3,11 +3,11 @@
 //!
 //! The walk itself is `analysis::neighbourhood`, a pure function. These reads
 //! only answer the question each ring step asks of the database, so a depth-2
-//! picture is four indexed reads rather than the project's whole call graph.
+//! picture is four indexed reads rather than the workspace's whole call graph.
 //!
-//! PROJECT-SCOPED THROUGH `sensei.folder_projects`, like every sibling diagram
-//! (#211). A caller in another project is real and is not this project's
-//! neighbourhood; a CALLEE in another project, or in a library, is drawn — the
+//! WORKSPACE-SCOPED THROUGH `sensei.folder_workspaces`, like every sibling diagram
+//! (#211). A caller in another workspace is real and is not this workspace's
+//! neighbourhood; a CALLEE in another workspace, or in a library, is drawn — the
 //! focus really does call it — but never walked through.
 
 use super::*;
@@ -36,7 +36,7 @@ pub struct Unplaced {
     /// Calls the focus makes that the graph could not place: absent from the
     /// right-hand column, whatever it shows.
     pub callees: i64,
-    /// Unplaced calls elsewhere in the project that NAME the focus. Some may be
+    /// Unplaced calls elsewhere in the workspace that NAME the focus. Some may be
     /// calls to it, so the left-hand column is a floor, not a census.
     pub named: i64,
 }
@@ -82,20 +82,20 @@ fn doubtful_reasons() -> Vec<String> {
 }
 
 impl PgStore {
-    /// The focus, if it is a node of this project. A node of another project is
+    /// The focus, if it is a node of this workspace. A node of another workspace is
     /// `None` — a neighbourhood drawn somewhere the reader is not standing is a
     /// wrong answer, not a wider one.
     pub async fn neighbourhood_focus(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         node_id: &uuid::Uuid,
     ) -> Result<Option<NeighbourNode>, String> {
         let row: Option<NeighbourNodeRow> = sqlx_core::query_as::query_as(
             "SELECT id, name, kind, fqn, language, file_path, line_start, locality
                FROM sensei.graph_nodes
-              WHERE id = $2 AND $1 = ANY(project_ids)",
+              WHERE id = $2 AND $1 = ANY(workspace_ids)",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(node_id)
         .fetch_optional(&self.pool)
         .await
@@ -107,16 +107,16 @@ impl PgStore {
     ///
     /// Every edge row between a pair folds into one [`Call`], weighted by call
     /// sites. `far_walkable` is false for a library node or one outside the
-    /// project: it is drawn and never seeds the next ring.
+    /// workspace: it is drawn and never seeds the next ring.
     pub async fn neighbourhood_hop(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         frontier: &[uuid::Uuid],
         side: Side,
     ) -> Result<Vec<Call>, String> {
         // Two statements, not one with the anchor column spliced in, because the
         // walkability test differs — a CALLER shares the edge's folder, so it is
-        // in the project by the join, while a callee may sit anywhere.
+        // in the workspace by the join, while a callee may sit anywhere.
         //
         // Both are `format!`-assembled (the call-site count and the one owner of
         // the `lib·` test), so `check-sql-against-schema.py` CANNOT plan them.
@@ -127,8 +127,8 @@ impl PgStore {
                       , sum({CALL_SITES})::bigint
                       , bool_and({walkable})
                    FROM sensei.edges e
-                   JOIN sensei.folder_projects fp ON fp.folder_id = e.folder_id
-                                                 AND fp.project_id = $1
+                   JOIN sensei.folder_workspaces fp ON fp.folder_id = e.folder_id
+                                                 AND fp.workspace_id = $1
                    JOIN sensei.nodes n ON n.id = e.source_id
                   WHERE e.kind = 'calls' AND e.target_id = ANY($2)
                   GROUP BY 1, 2",
@@ -138,11 +138,11 @@ impl PgStore {
                 "SELECT e.source_id, e.target_id
                       , sum({CALL_SITES})::bigint
                       , bool_and({walkable} AND EXISTS (
-                            SELECT 1 FROM sensei.folder_projects tp
-                             WHERE tp.folder_id = n.folder_id AND tp.project_id = $1))
+                            SELECT 1 FROM sensei.folder_workspaces tp
+                             WHERE tp.folder_id = n.folder_id AND tp.workspace_id = $1))
                    FROM sensei.edges e
-                   JOIN sensei.folder_projects fp ON fp.folder_id = e.folder_id
-                                                 AND fp.project_id = $1
+                   JOIN sensei.folder_workspaces fp ON fp.folder_id = e.folder_id
+                                                 AND fp.workspace_id = $1
                    JOIN sensei.nodes n ON n.id = e.target_id
                   WHERE e.kind = 'calls' AND e.source_id = ANY($2)
                   GROUP BY 1, 2",
@@ -150,7 +150,7 @@ impl PgStore {
             ),
         };
         let rows: Vec<(uuid::Uuid, uuid::Uuid, i64, bool)> = sqlx_core::query_as::query_as(&sql)
-            .bind(project_id)
+            .bind(workspace_id)
             .bind(frontier)
             .fetch_all(&self.pool)
             .await
@@ -166,7 +166,7 @@ impl PgStore {
             .collect())
     }
 
-    /// The cards for every node the rings reached. Unscoped by project on
+    /// The cards for every node the rings reached. Unscoped by workspace on
     /// purpose: a library callee is drawn, and the walk already decided who is in.
     pub async fn neighbourhood_nodes(
         &self,
@@ -191,7 +191,7 @@ impl PgStore {
     /// and the screen words it that way.
     pub async fn neighbourhood_unplaced(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         focus: &uuid::Uuid,
         name: &str,
     ) -> Result<Unplaced, String> {
@@ -199,13 +199,13 @@ impl PgStore {
             "SELECT count(*) FILTER (WHERE e.source_id = $2)::bigint
                   , count(*) FILTER (WHERE e.target_name = $3)::bigint
                FROM sensei.edges e
-               JOIN sensei.folder_projects fp ON fp.folder_id = e.folder_id
-                                             AND fp.project_id = $1
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = e.folder_id
+                                             AND fp.workspace_id = $1
               WHERE e.kind = 'calls' AND e.target_id IS NULL
                 AND e.unresolved_reason = ANY($4)
                 AND (e.source_id = $2 OR e.target_name = $3)",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(focus)
         .bind(name)
         .bind(doubtful_reasons())

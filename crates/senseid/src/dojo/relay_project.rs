@@ -118,7 +118,7 @@ pub fn session_update(run_id: &str, title: &str, segments: &[RelaySegment]) -> R
         heartbeat_at: None,
         // Seat attribution is driven from the run-bridge path (publish_run), not
         // this session-keyed TodoWrite projection.
-        project_slug: None,
+        workspace_slug: None,
         workspace: None,
     }
 }

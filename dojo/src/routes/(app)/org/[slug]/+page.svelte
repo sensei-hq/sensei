@@ -2,18 +2,18 @@
 	import { goto } from '$app/navigation';
 	import ScrOrgHome from '$lib/components/screens/ScrOrgHome.svelte';
 	import { orgHref } from '$lib/nav';
-	import type { KitProject } from '$lib/components/kit/types';
+	import type { KitWorkspace } from '$lib/components/kit/types';
 
-	// The org-zone home (mockup ScrOrgHome) — the projects in this dōjō's
+	// The org-zone home (mockup ScrOrgHome) — the workspaces in this dōjō's
 	// jurisdiction, an org "needs a maintainer" band, and the jurisdiction stat
 	// row. Renders at /org/[slug]. The org is resolved from the URL slug against
-	// the caller's real memberships (see +page.ts). Opening a project routes to the
-	// org project preview at /org/[slug]/projects/[id] (URL-driven, like
-	// /you/projects/[id]) — the shell keeps "Projects" active for that tail.
+	// the caller's real memberships (see +page.ts). Opening a workspace routes to the
+	// org workspace preview at /org/[slug]/workspaces/[id] (URL-driven, like
+	// /you/workspaces/[id]) — the shell keeps "Workspaces" active for that tail.
 	let { data } = $props();
 
-	function openProject(p: KitProject) {
-		goto(orgHref(data.slug, 'projects') + '/' + p.id);
+	function openWorkspace(p: KitWorkspace) {
+		goto(orgHref(data.slug, 'workspaces') + '/' + p.id);
 	}
 </script>
 
@@ -21,9 +21,9 @@
 
 <ScrOrgHome
 	orgName={data.orgName}
-	projects={data.projects}
+	workspaces={data.workspaces}
 	needs={data.needs}
 	needsError={data.needsError}
 	stats={data.stats}
-	onOpenProject={openProject}
+	onOpenWorkspace={openWorkspace}
 />

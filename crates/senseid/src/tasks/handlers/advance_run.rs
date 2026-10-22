@@ -10,7 +10,7 @@
 //! **P3.3b scope (this chunk):** OFF-by-default agent drive. When
 //! `SENSEI_RUN_DRIVE` is enabled the tick spawns `claude -p` headless (via the
 //! P3.3a [`crate::agent_spawn`] primitive) to drive the run's next step in the
-//! project's working directory, capturing the outcome as run_events. Disabled,
+//! workspace's working directory, capturing the outcome as run_events. Disabled,
 //! the handler keeps the exact P3.2 behavior (heartbeat + housekeeping only) so
 //! the daemon never autonomously executes Claude until the owner opts in — the
 //! same fail-safe posture as the feature-B hook gate.
@@ -258,14 +258,15 @@ pub async fn advance_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
 async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<(), String> {
     let run_id = run.id;
 
-    // 1. Resolve the working directory from the run's project. No project, no
+    // 1. Resolve the working directory from the run's workspace. No workspace, no
     //    resolvable repo root, or a path that isn't a real dir on disk → we do
     //    NOT spawn (a cwd-less agent could run anywhere). Flag it for triage and
     //    treat the tick as done.
     let cwd = match resolve_cwd(ctx, run).await? {
         Some(dir) => dir,
         None => {
-            return flag(ctx, run, "no resolvable project working directory; skipping drive").await;
+            return flag(ctx, run, "no resolvable workspace working directory; skipping drive")
+                .await;
         }
     };
 
@@ -319,7 +320,7 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
 
     // 4. Select the run-drive backend (P5.1). The driver owns *how* the step
     //    runs for its backend; for Claude that's the same `<agent_cmd> -p
-    //    <prompt>` spawn in the project cwd under a bounded timeout. The spawned
+    //    <prompt>` spawn in the workspace cwd under a bounded timeout. The spawned
     //    claude carries the sensei plugin, so its PreToolUse hook drives the
     //    existing `/hook/gate` — no gate wiring here. `driver_for` honors
     //    `cfg.agent_cmd` (so `SENSEI_RUN_AGENT_CMD` + the drive-smoke stub work).
@@ -336,7 +337,8 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
     //    kills+reaps; a bad exit / timeout rides in the returned AgentOutput.
     let phase = run.current_phase.clone();
     let feature = Some(label.clone());
-    let step = DriveStep { cwd: &cwd, prompt: &prompt, timeout: cfg.timeout };
+    let run_ref = run_id.to_string();
+    let step = DriveStep { cwd: &cwd, prompt: &prompt, run_id: &run_ref, timeout: cfg.timeout };
     let out = match driver.drive_step(step).await {
         Ok(out) => out,
         Err(e) => {
@@ -471,19 +473,19 @@ async fn apply_outcome(
     }
 }
 
-/// Resolve the run's cwd: `project_id` → project root path (pg_store) → an
+/// Resolve the run's cwd: `workspace_id` → workspace root path (pg_store) → an
 /// existing directory on disk. `Ok(None)` for every "can't resolve" case (no
-/// project, no repo root, path not a real dir) so the caller can Flag+skip
+/// workspace, no repo root, path not a real dir) so the caller can Flag+skip
 /// without spawning. Only a DB error bubbles up.
 async fn resolve_cwd(ctx: &TaskContext, run: &Run) -> Result<Option<std::path::PathBuf>, String> {
-    let Some(project_id) = run.project_id else {
+    let Some(workspace_id) = run.workspace_id else {
         return Ok(None);
     };
     let Some(path) = ctx
         .pg()
-        .project_root_path(&project_id)
+        .workspace_root_path(&workspace_id)
         .await
-        .map_err(|e| format!("project_root_path failed: {e}"))?
+        .map_err(|e| format!("workspace_root_path failed: {e}"))?
     else {
         return Ok(None);
     };
@@ -882,12 +884,12 @@ mod tests {
         }
     }
 
-    /// Seed a project whose single repo-root folder points at a freshly-created,
+    /// Seed a workspace whose single repo-root folder points at a freshly-created,
     /// per-test on-disk dir, so `resolve_cwd` yields a spawnable cwd. Each call
     /// mints a UNIQUE dir + abs_path so the three enabled-drive tests never race
     /// on the shared temp dir or the `folders.abs_path` UNIQUE constraint.
-    /// Returns `(project_id, watch_root_id, cwd_dir)` for cleanup.
-    async fn seed_project_with_cwd(
+    /// Returns `(workspace_id, watch_root_id, cwd_dir)` for cleanup.
+    async fn seed_workspace_with_cwd(
         pg: &crate::db::pg_store::PgStore,
     ) -> (uuid::Uuid, uuid::Uuid, std::path::PathBuf) {
         let uniq = uuid::Uuid::new_v4();
@@ -895,8 +897,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let abs = dir.to_string_lossy().into_owned();
 
-        let project_id =
-            pg.create_project(&format!("drive-test-{uniq}"), None, None).await.unwrap();
+        let workspace_id =
+            pg.create_workspace(&format!("drive-test-{uniq}"), None, None).await.unwrap();
         let root_id = pg
             .add_watch_root(&format!("/_test/drive/{uniq}"), "drive_root", &serde_json::json!([]))
             .await
@@ -905,31 +907,31 @@ mod tests {
             .upsert_folder(&root_id, "standalone", "repo", "repo", &abs, None, None)
             .await
             .unwrap();
-        crate::tasks::test_support::place_folder_in_project(
+        crate::tasks::test_support::place_folder_in_workspace(
             pg,
             &folder_id,
-            &project_id,
+            &workspace_id,
             &format!("drive-test-{uniq}"),
         )
         .await
         .unwrap();
-        (project_id, root_id, dir)
+        (workspace_id, root_id, dir)
     }
 
-    async fn cleanup_project(
+    async fn cleanup_workspace(
         pg: &crate::db::pg_store::PgStore,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         root_id: &uuid::Uuid,
         dir: &std::path::Path,
     ) {
-        // Deleting the watch root cascades its folders; then drop the project.
+        // Deleting the watch root cascades its folders; then drop the workspace.
         sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
             .bind(root_id)
             .execute(pg.pool())
             .await
             .ok();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
-            .bind(project_id)
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(workspace_id)
             .execute(pg.pool())
             .await
             .ok();
@@ -973,11 +975,11 @@ mod tests {
         };
         let pg = ctx.pg();
         // A real dir so resolve_cwd yields a spawnable cwd.
-        let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
+        let (workspace_id, root_id, dir) = seed_workspace_with_cwd(pg).await;
 
         let id = pg
             .create_run(&NewRun {
-                project_id: Some(project_id),
+                workspace_id: Some(workspace_id),
                 goal: Some("drive the next step".into()),
                 // Attributable run → resolves to the permissive fallback stance
                 // (none set). Unattributed runs now fail CLOSED (strict) — see
@@ -1012,7 +1014,7 @@ mod tests {
         );
 
         pg_delete_run(pg, &id).await;
-        cleanup_project(pg, &project_id, &root_id, &dir).await;
+        cleanup_workspace(pg, &workspace_id, &root_id, &dir).await;
     }
 
     #[tokio::test]
@@ -1021,7 +1023,7 @@ mod tests {
             return;
         };
         let pg = ctx.pg();
-        let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
+        let (workspace_id, root_id, dir) = seed_workspace_with_cwd(pg).await;
 
         // The run's author has an `ask_always` stance: an unattended headless
         // single-shot cannot ask a human before each step, so the drive must NOT
@@ -1038,7 +1040,7 @@ mod tests {
 
         let id = pg
             .create_run(&NewRun {
-                project_id: Some(project_id),
+                workspace_id: Some(workspace_id),
                 goal: Some("would drive but stance blocks".into()),
                 author_email: Some(author.clone()),
                 ..Default::default()
@@ -1066,16 +1068,16 @@ mod tests {
             .await
             .ok();
         pg_delete_run(pg, &id).await;
-        cleanup_project(pg, &project_id, &root_id, &dir).await;
+        cleanup_workspace(pg, &workspace_id, &root_id, &dir).await;
     }
 
     #[tokio::test]
-    async fn enabled_drive_without_project_flags_and_does_not_spawn() {
+    async fn enabled_drive_without_workspace_flags_and_does_not_spawn() {
         let Some(ctx) = make_ctx().await else {
             return;
         };
         let pg = ctx.pg();
-        // No project_id → no cwd. Use a bogus agent program to PROVE no spawn
+        // No workspace_id → no cwd. Use a bogus agent program to PROVE no spawn
         // happens (a spawn attempt of this name would surface a Spawn error path
         // that still Flags, but never a FeatureStarted).
         let id = pg
@@ -1103,12 +1105,12 @@ mod tests {
             return;
         };
         let pg = ctx.pg();
-        let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
+        let (workspace_id, root_id, dir) = seed_workspace_with_cwd(pg).await;
 
         // Resolvable cwd but a blank goal → Flag, no spawn.
         let id = pg
             .create_run(&NewRun {
-                project_id: Some(project_id),
+                workspace_id: Some(workspace_id),
                 goal: Some("   ".into()),
                 ..Default::default()
             })
@@ -1123,7 +1125,7 @@ mod tests {
         assert_eq!(events[0].kind, RunEventKind::Flagged);
 
         pg_delete_run(pg, &id).await;
-        cleanup_project(pg, &project_id, &root_id, &dir).await;
+        cleanup_workspace(pg, &workspace_id, &root_id, &dir).await;
     }
 
     #[tokio::test]
@@ -1132,11 +1134,11 @@ mod tests {
             return;
         };
         let pg = ctx.pg();
-        let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
+        let (workspace_id, root_id, dir) = seed_workspace_with_cwd(pg).await;
 
         let id = pg
             .create_run(&NewRun {
-                project_id: Some(project_id),
+                workspace_id: Some(workspace_id),
                 goal: Some("drive a failing step".into()),
                 // A driven run must be attributable — an author resolves to a
                 // stance (none set here → the permissive fallback). Without one,
@@ -1166,7 +1168,7 @@ mod tests {
         assert_eq!(run.status, RelayRunStatus::Running, "non-zero exit keeps the run Running");
 
         pg_delete_run(pg, &id).await;
-        cleanup_project(pg, &project_id, &root_id, &dir).await;
+        cleanup_workspace(pg, &workspace_id, &root_id, &dir).await;
     }
 
     /// Write an executable stub that IGNORES its args (the drive passes
@@ -1205,11 +1207,11 @@ mod tests {
             return;
         };
         let pg = ctx.pg();
-        let (project_id, root_id, dir) = seed_project_with_cwd(pg).await;
+        let (workspace_id, root_id, dir) = seed_workspace_with_cwd(pg).await;
 
         let id = pg
             .create_run(&NewRun {
-                project_id: Some(project_id),
+                workspace_id: Some(workspace_id),
                 goal: Some("drive the next step".into()),
                 // Attributable run → permissive fallback stance (none set), so the
                 // drive proceeds to the limit path. Unattributed → strict, no drive.
@@ -1255,7 +1257,7 @@ mod tests {
         assert!(!kinds.contains(&RunEventKind::Flagged), "a limit is a pause, not a flag");
 
         pg_delete_run(pg, &id).await;
-        cleanup_project(pg, &project_id, &root_id, &dir).await;
+        cleanup_workspace(pg, &workspace_id, &root_id, &dir).await;
         std::fs::remove_file(&stub).ok();
     }
 }

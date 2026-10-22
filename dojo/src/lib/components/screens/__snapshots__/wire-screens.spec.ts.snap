@@ -115,7 +115,7 @@ exports[`ScrEngagements — wired engagements > matches the rendered engagements
               class="text-ink-soft text-sm"
               style="line-height: 1.55; margin-top: 2px;"
             >
-              Findings from a client project are anonymized before they leave the machine — the pattern
+              Findings from a client workspace are anonymized before they leave the machine — the pattern
 			travels upstream; the client, repo and code never do.
               <!---->
             </div>

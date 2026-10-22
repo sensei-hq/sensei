@@ -17,7 +17,7 @@
 //! touched here.
 //!
 //! **Membership routing.** A run publishes to its owning membership: the one its
-//! project is bound to (`sensei.projects.dojo_id`), if any; otherwise it falls
+//! workspace is bound to (`sensei.workspaces.dojo_id`), if any; otherwise it falls
 //! back to every enabled membership (the personal-beta case = one). A
 //! per-membership failure is logged (never swallowed — house rule) and skipped so
 //! one down dojo can't wedge the others.
@@ -79,7 +79,7 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     let last_event_at = events.first().map(|e| e.created_at.clone());
 
     // Authored-vs-derived outline (AR-2). A run SEEDED from a registered plan
-    // carries its authored graph in `activity.runs.plan_graph` — project THAT
+    // carries its authored graph in `activity.runs.plan_graph` — workspace THAT
     // (phase→task structure + per-task agent/model/spec_ref + state). An ad-hoc /
     // start_run run has no graph, so derive the outline from its cadence phases
     // (`phase_started`/`phase_done` events). A malformed/failed graph read
@@ -109,12 +109,12 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
 
     let mut update =
         run_to_session_update(&run, last_event_at.as_deref(), progress_done, progress_total);
-    // Seat attribution (P4): tell the Worker which project this run is on so it can
-    // open/refresh the caller's billing seat. Best-effort — a missing project or
+    // Seat attribution (P4): tell the Worker which workspace this run is on so it can
+    // open/refresh the caller's billing seat. Best-effort — a missing workspace or
     // namespace just means no seat is touched; never fail federation over it.
-    update.project_slug = ctx.pg().run_project_slug(&run_id).await.ok().flatten();
+    update.workspace_slug = ctx.pg().run_workspace_slug(&run_id).await.ok().flatten();
 
-    // The project's resolved constitution → federated so the dōjō can DISPLAY the
+    // The workspace's resolved constitution → federated so the dōjō can DISPLAY the
     // "before you start" preview without re-resolving (F4). Composed ONCE from the
     // run's folder (identical for every recipient). Best-effort: a missing folder
     // or a resolve error just leaves it absent (the dōjō falls back to its
@@ -131,7 +131,7 @@ pub async fn publish_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     // The workspace the run is in — the same for every dōjō, which attaches the
     // session to the shared workspace the sync filed (#299, D12).
     update.workspace =
-        crate::dojo::relay_run_project::run_project(update.project_slug.clone(), constitution);
+        crate::dojo::relay_run_project::run_workspace(update.workspace_slug.clone(), constitution);
 
     let mut published = 0u32;
     // Persist the cloud session id once — from the first membership that acks it.
@@ -195,7 +195,7 @@ async fn surface_run_nudges(run_id: &uuid::Uuid, memberships: &[DojoMembership])
     // Steer must come from THIS run's dōjō. A bound run resolves to exactly one
     // membership; an unbound run with several enabled dōjōs is ambiguous — DON'T
     // poll an arbitrary tenant's inbox (that could surface another org's message
-    // as this run's steer). Skip on ambiguity; bind the project to scope steer.
+    // as this run's steer). Skip on ambiguity; bind the workspace to scope steer.
     let m = match crate::resolution::Resolution::from_unique(memberships.iter()) {
         crate::resolution::Resolution::Resolved(m) => m,
         crate::resolution::Resolution::Ambiguous { count } => {
@@ -224,10 +224,10 @@ async fn surface_run_nudges(run_id: &uuid::Uuid, memberships: &[DojoMembership])
     }
 }
 
-/// The memberships a run federates to: its project-bound membership if the
-/// project is bound (`sensei.projects.dojo_id`), otherwise every enabled
+/// The memberships a run federates to: its workspace-bound membership if the
+/// workspace is bound (`sensei.workspaces.dojo_id`), otherwise every enabled
 /// membership. Only enabled memberships are ever returned. DB errors bubble up;
-/// an unbound / unknown project cleanly falls back.
+/// an unbound / unknown workspace cleanly falls back.
 pub(crate) async fn resolve_run_memberships(
     pg: &crate::db::pg_store::PgStore,
     run: &Run,
@@ -243,17 +243,17 @@ pub(crate) async fn resolve_run_memberships(
         )
     };
 
-    let Some(project_id) = run.project_id else {
+    let Some(workspace_id) = run.workspace_id else {
         return all_enabled().await;
     };
     let bound = pg
-        .project_bound_membership(&project_id)
+        .workspace_bound_membership(&workspace_id)
         .await
-        .map_err(|e| format!("project_bound_membership failed: {e}"))?;
+        .map_err(|e| format!("workspace_bound_membership failed: {e}"))?;
     let Some(membership_id) = bound else {
         return all_enabled().await;
     };
-    // The project is bound — publish only to that membership, and only if it is
+    // The workspace is bound — publish only to that membership, and only if it is
     // still enabled (a disabled binding falls back to nothing, not to broadcast:
     // an explicit binding is a deliberate scoping the owner shouldn't have
     // silently widened).
@@ -377,7 +377,7 @@ mod tests {
         del_run(pg, &id).await;
     }
 
-    // Full-path bridge test against an axum stub Worker: seed a project-bound
+    // Full-path bridge test against an axum stub Worker: seed a workspace-bound
     // membership pointing at the stub, create a run with phase events, run the
     // handler, and assert it publishes the status + plan segments, polls the inbox
     // for nudges, and persists the cloud session id. Mirrors the client.rs relay
@@ -454,7 +454,7 @@ mod tests {
         .await
         .unwrap();
 
-        // A run (no project → falls back to all enabled memberships = our stub).
+        // A run (no workspace → falls back to all enabled memberships = our stub).
         let id = pg.create_run(&NewRun::default()).await.unwrap();
         // Stamp a heartbeat (as the AdvanceRun tick would) so the bridge has a
         // liveness instant to federate — a fresh run is NULL until first ticked.
@@ -504,7 +504,7 @@ mod tests {
     }
 
     // A run seeded WITH an authored plan graph federates the AUTHORED outline (the
-    // authored-vs-derived branch, AR-2): publish_run projects plan_graph → segments
+    // authored-vs-derived branch, AR-2): publish_run workspaces plan_graph → segments
     // (phase + tasks) carrying per-task agent/model, NOT the cadence-derived phases.
     // Captures the published segments and asserts them in the test thread (robust —
     // an assert inside the stub handler would be swallowed by axum's panic catch).

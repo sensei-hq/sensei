@@ -9,14 +9,14 @@
         port: number;
         /** Current route, passed from the layout (keeps this component pure). */
         pathname: string;
-        /** Cached project count for the Projects badge; omit until loaded. */
-        projectCount?: number;
+        /** Cached workspace count for the Workspaces badge; omit until loaded. */
+        workspaceCount?: number;
         /** Kanji or icons (#133); the layout reads it from the preference. */
         glyphs?: GlyphMode;
     }
-    let { port, pathname, projectCount, glyphs = 'kanji' }: Props = $props();
+    let { port, pathname, workspaceCount, glyphs = 'kanji' }: Props = $props();
 
-    const items = $derived(buildNavItems({ projectCount }));
+    const items = $derived(buildNavItems({ workspaceCount }));
     const activeHref = $derived(resolveActiveHref(pathname));
 
     // List's default rendering handles icon + label + badge; `glyphFields` says

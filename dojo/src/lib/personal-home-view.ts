@@ -1,9 +1,9 @@
 // Pure view-logic for the personal (solo) home — the landing a signed-in user
 // with NO Dōjō membership sees (DJ1, mockup dojo-saas.jsx `DojoOrgsEmpty`).
 //
-// The cloud Dōjō Worker cannot see the local machine's projects or running
+// The cloud Dōjō Worker cannot see the local machine's workspaces or running
 // tasks (those live in the desktop app's local daemon), so tonight the personal
-// home is honest-empty: no fabricated project rows, no fake "needs you" cards.
+// home is honest-empty: no fabricated workspace rows, no fake "needs you" cards.
 // This module owns only the small derivations the presentational component needs
 // (the solo identity + greeting + the library link), kept pure so it unit-tests
 // without a DOM. The display-name / initials derivation mirrors the server-side

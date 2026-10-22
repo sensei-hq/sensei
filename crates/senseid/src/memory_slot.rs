@@ -1,6 +1,6 @@
 //! Spine-slot anchoring for memories (design 2026-07-18-memory-anchoring).
 //! Pure: the slot vocabulary, the analyzer's default-slot heuristic, and the
-//! project-vs-feature scope rule. No IO.
+//! workspace-vs-feature scope rule. No IO.
 
 /// The doc-slot a memory anchors to. `as_str()` matches the `sensei.spine_slot`
 /// enum labels exactly.
@@ -48,8 +48,8 @@ impl SpineSlot {
             _ => return None,
         })
     }
-    /// Project-only slots never carry a feature.
-    fn is_project_only(self) -> bool {
+    /// Workspace-only slots never carry a feature.
+    fn is_workspace_only(self) -> bool {
         matches!(
             self,
             SpineSlot::Vision
@@ -81,8 +81,8 @@ pub fn default_slot(category: Option<&str>, mtype: &str) -> SpineSlot {
 /// Validate a (slot, feature) pair against the scope rule. Ok(()) or an error msg.
 pub fn validate_scope(slot: SpineSlot, feature: Option<&str>) -> Result<(), String> {
     let has_feature = feature.map(|f| !f.is_empty()).unwrap_or(false);
-    if slot.is_project_only() && has_feature {
-        return Err(format!("slot {:?} is project-scope — drop the feature", slot.as_str()));
+    if slot.is_workspace_only() && has_feature {
+        return Err(format!("slot {:?} is workspace-scope — drop the feature", slot.as_str()));
     }
     if slot.is_feature_only() && !has_feature {
         return Err(format!("slot {:?} is feature-scope — a feature is required", slot.as_str()));

@@ -1,7 +1,7 @@
 /**
  * #288 against the REAL daemon: Impact and Traceability, observatory-wide and
- * for this repository's project, show the daemon's totals — fanned out here
- * independently — with no error state and no project left unread.
+ * for this repository's workspace, show the daemon's totals — fanned out here
+ * independently — with no error state and no workspace left unread.
  * Run: `bun run test:inspect -- impact-traceability`.
  */
 import { expect, test } from '../fixtures';
@@ -11,16 +11,16 @@ const json = async (path: string) => (await fetch(`${DAEMON_URL}${path}`)).json(
 
 test('impact and traceability show the daemon totals', async ({ tauriPage }) => {
   test.setTimeout(180_000);
-  const projects: { id: string; name: string }[] = await json('/api/projects');
-  const impact = (await Promise.all(projects.map((p) => json(`/api/projects/${p.id}/impact`)))).flat().length;
-  const drift = (await Promise.all(projects.map((p) => json(`/api/projects/${p.id}/drift`))))
+  const workspaces: { id: string; name: string }[] = await json('/api/workspaces');
+  const impact = (await Promise.all(workspaces.map((p) => json(`/api/workspaces/${p.id}/impact`)))).flat().length;
+  const drift = (await Promise.all(workspaces.map((p) => json(`/api/workspaces/${p.id}/drift`))))
     .reduce((n, d) => n + d.items.length, 0);
 
   const read = async () =>
     (await tauriPage.evaluate(`({
       impact: document.querySelector('[data-impact-total]')?.getAttribute('data-impact-total') ?? null,
       trace: document.querySelector('[data-traceability-total]')?.getAttribute('data-traceability-total') ?? null,
-      bad: document.querySelectorAll('[data-screen-state="error"], [data-unread-projects]').length,
+      bad: document.querySelectorAll('[data-screen-state="error"], [data-unread-workspaces]').length,
     })`)) as { impact: string | null; trace: string | null; bad: number };
 
   await navigateToScreen(tauriPage, '/impact', '[data-impact-total], [data-screen-state="error"]', 60_000);
@@ -32,10 +32,10 @@ test('impact and traceability show the daemon totals', async ({ tauriPage }) => 
   expect(i.impact).toBe(String(impact));
   expect(t.trace).toBe(String(drift));
 
-  const sensei = projects.find((p) => p.name === 'sensei');
-  test.skip(!sensei, 'no sensei project on this daemon');
-  const own = await json(`/api/projects/${sensei!.id}/drift`);
-  await navigateToScreen(tauriPage, `/project/${sensei!.id}/traceability`, '[data-testid="drift-scan-button"]', 30_000);
+  const sensei = workspaces.find((p) => p.name === 'sensei');
+  test.skip(!sensei, 'no sensei workspace on this daemon');
+  const own = await json(`/api/workspaces/${sensei!.id}/drift`);
+  await navigateToScreen(tauriPage, `/workspace/${sensei!.id}/traceability`, '[data-testid="drift-scan-button"]', 30_000);
   const header = (await tauriPage.evaluate(
     `document.querySelector('[data-testid="drift-scan-button"]')?.parentElement?.textContent?.replace(/\\s+/g, ' ').trim() ?? null`,
   )) as string;
@@ -44,12 +44,12 @@ test('impact and traceability show the daemon totals', async ({ tauriPage }) => 
   expect(errs).toBe(0);
   expect(header).toContain(`${own.total} tracked · ${own.drifted} drifted · ${own.broken} broken`);
 
-  // #293: the project Impact tab — its measured total and the impact log's
+  // #293: the workspace Impact tab — its measured total and the impact log's
   // pending entries are the daemon's, and its log form is idle.
-  const measured = (await json(`/api/projects/${sensei!.id}/impact`)).length;
-  const { verdicts } = await json(`/api/projects/${sensei!.id}/impact-verdicts`);
+  const measured = (await json(`/api/workspaces/${sensei!.id}/impact`)).length;
+  const { verdicts } = await json(`/api/workspaces/${sensei!.id}/impact-verdicts`);
   const pending = verdicts.filter((v: { verdict: string }) => v.verdict === 'pending').length;
-  await navigateToScreen(tauriPage, `/project/${sensei!.id}/impact`, '[data-impact-total], [data-screen-state="error"]', 30_000);
+  await navigateToScreen(tauriPage, `/workspace/${sensei!.id}/impact`, '[data-impact-total], [data-screen-state="error"]', 30_000);
   const tab = (await tauriPage.evaluate(`({
     total: document.querySelector('[data-impact-total]')?.getAttribute('data-impact-total') ?? null,
     pending: document.querySelectorAll('[data-testid^="impact-pending-"]').length - (document.querySelector('[data-testid="impact-pending-list"]') ? 1 : 0),

@@ -93,6 +93,8 @@ pub struct AgentCommand {
     /// Bytes to write to the child's stdin, then close it. `None` → stdin is
     /// `/dev/null` so the child never blocks waiting for input.
     pub stdin: Option<String>,
+    /// Variables added to the child's environment (it inherits the rest).
+    pub env: Vec<(String, String)>,
     /// Hard wall-clock cap. On expiry the child is killed and reaped and the
     /// result is `AgentOutput { timed_out: true, .. }`.
     pub timeout: Duration,
@@ -103,12 +105,18 @@ impl AgentCommand {
     /// the inherited cwd. Chain [`AgentCommand::with_cwd`] /
     /// [`AgentCommand::with_stdin`] to set the rest.
     pub fn new(program: impl Into<String>, args: Vec<String>, timeout: Duration) -> Self {
-        Self { program: program.into(), args, cwd: None, stdin: None, timeout }
+        Self { program: program.into(), args, cwd: None, stdin: None, env: Vec::new(), timeout }
     }
 
     /// Run the child in `cwd`.
     pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = Some(cwd.into());
+        self
+    }
+
+    /// Add `key=value` to the child's environment.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
         self
     }
 
@@ -139,6 +147,7 @@ pub async fn run_agent(cmd: &AgentCommand) -> Result<AgentOutput, AgentSpawnErro
     if let Some(dir) = &cmd.cwd {
         command.current_dir(dir);
     }
+    command.envs(cmd.env.iter().map(|(k, v)| (k, v)));
     command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -279,6 +288,18 @@ mod tests {
 
     fn short() -> Duration {
         Duration::from_secs(10)
+    }
+
+    #[tokio::test]
+    async fn the_child_sees_the_environment_the_command_sets() {
+        let cmd = AgentCommand::new(
+            "sh",
+            vec!["-c".into(), "printf %s \"$SENSEI_TEST_MARK\"".into()],
+            short(),
+        )
+        .with_env("SENSEI_TEST_MARK", "run-42");
+        let out = run_agent(&cmd).await.expect("sh should run");
+        assert_eq!(out.stdout, "run-42");
     }
 
     #[tokio::test]

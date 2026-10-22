@@ -1,5 +1,5 @@
 /**
- * Multi-window E2E — observatory shell, projects page, and project window.
+ * Multi-window E2E — observatory shell, workspaces page, and workspace window.
  *
  * Selectors are the app's stable semantic hooks (data-component / data-* +
  * rokkit List's data-list-* / data-item-*), not utility classes — so they
@@ -43,16 +43,16 @@ test.describe('Observatory shell', () => {
     expect(sidebarText).toContain('daemon');
   });
 
-  test('sidebar nav lists the Today and Projects destinations', async ({ tauriPage }) => {
+  test('sidebar nav lists the Today and Workspaces destinations', async ({ tauriPage }) => {
     // Nav is a rokkit <List>: each entry is an anchor with a [data-item-label].
-    // Today + Projects are always-visible top-level anchors (the "Review" group
+    // Today + Workspaces are always-visible top-level anchors (the "Review" group
     // is hidden in Focus mode, so we don't assert those here).
     const labels = await tauriPage.evaluate(
       `Array.from(document.querySelectorAll('[data-component="observatory-sidebar"] [data-item-label]'))
         .map(el => el.textContent && el.textContent.trim())`,
     ) as string[];
     expect(labels).toContain('Today');
-    expect(labels).toContain('Projects');
+    expect(labels).toContain('Workspaces');
   });
 
   test('Today is the active nav item on /', async ({ tauriPage }) => {
@@ -85,108 +85,108 @@ test.describe('Observatory nav — section links', () => {
   });
 });
 
-// ─── Projects page ──────────────────────────────────────────────────────────
+// ─── Workspaces page ──────────────────────────────────────────────────────────
 
-test.describe('Projects page', () => {
+test.describe('Workspaces page', () => {
   test.beforeEach(async ({ tauriPage }) => {
-    await navigateToScreen(tauriPage, '/projects', '[data-component="projects-page"]');
+    await navigateToScreen(tauriPage, '/workspaces', '[data-component="workspaces-page"]');
   });
 
-  test('renders the Projects heading', async ({ tauriPage }) => {
+  test('renders the Workspaces heading', async ({ tauriPage }) => {
     const text = await tauriPage.evaluate(
-      `document.querySelector('[data-component="projects-page"]')?.textContent ?? ''`,
+      `document.querySelector('[data-component="workspaces-page"]')?.textContent ?? ''`,
     ) as string;
-    expect(text).toContain('Projects');
+    expect(text).toContain('Workspaces');
     expect(text).toContain('All the places you work.');
   });
 
-  test('shows project cards, or an honest empty state', async ({ tauriPage }) => {
+  test('shows workspace cards, or an honest empty state', async ({ tauriPage }) => {
     const cards = await tauriPage
-      .locator('[data-component="projects-page"] [data-project-card], [data-component="projects-page"] [data-project-row]')
+      .locator('[data-component="workspaces-page"] [data-workspace-card], [data-component="workspaces-page"] [data-workspace-row]')
       .count();
     if (cards === 0) {
       const text = await tauriPage.evaluate(
-        `document.querySelector('[data-component="projects-page"]')?.textContent ?? ''`,
+        `document.querySelector('[data-component="workspaces-page"]')?.textContent ?? ''`,
       ) as string;
-      expect(text).toMatch(/No projects/i);
+      expect(text).toMatch(/No workspaces/i);
       return;
     }
     expect(cards).toBeGreaterThan(0);
 
     // Each card carries an icon glyph and a non-empty name.
     const names = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('[data-project-card], [data-project-row]'))
+      `Array.from(document.querySelectorAll('[data-workspace-card], [data-workspace-row]'))
         .map(el => el.textContent && el.textContent.trim())`,
     ) as string[];
     expect(names.every((n) => n && n.length > 0)).toBe(true);
   });
 
-  test('Projects is the active nav item', async ({ tauriPage }) => {
+  test('Workspaces is the active nav item', async ({ tauriPage }) => {
     const active = await tauriPage.evaluate(
       `document.querySelector('[data-component="observatory-sidebar"] [data-active] [data-item-label]')?.textContent?.trim()
         ?? document.querySelector('[data-component="observatory-sidebar"] [aria-current="page"] [data-item-label]')?.textContent?.trim()`,
     ) as string;
-    expect(active).toBe('Projects');
+    expect(active).toBe('Workspaces');
   });
 });
 
-// ─── Project window ─────────────────────────────────────────────────────────
+// ─── Workspace window ─────────────────────────────────────────────────────────
 
-/** Fetch a real project ID from the daemon. Null when none exist. */
-async function getFirstProjectId(): Promise<string | null> {
+/** Fetch a real workspace ID from the daemon. Null when none exist. */
+async function getFirstWorkspaceId(): Promise<string | null> {
   try {
-    const projects = await daemonGet<Array<{ id: string; name: string }>>('/api/projects');
-    return projects[0]?.id ?? null;
+    const workspaces = await daemonGet<Array<{ id: string; name: string }>>('/api/workspaces');
+    return workspaces[0]?.id ?? null;
   } catch {
     return null;
   }
 }
 
-test.describe('Project window — chrome', () => {
-  let projectId: string | null = null;
+test.describe('Workspace window — chrome', () => {
+  let workspaceId: string | null = null;
 
   test.beforeAll(async () => {
-    projectId = await getFirstProjectId();
+    workspaceId = await getFirstWorkspaceId();
   });
 
   test('titlebar and sidebar identity are present', async ({ tauriPage }) => {
-    if (!projectId) {
-      test.skip(true, 'No projects in dev database — skipping project window tests');
+    if (!workspaceId) {
+      test.skip(true, 'No workspaces in dev database — skipping workspace window tests');
       return;
     }
-    await navigateToScreen(tauriPage, `/project/${projectId}/overview`, '[data-component="project-shell"]');
+    await navigateToScreen(tauriPage, `/workspace/${workspaceId}/overview`, '[data-component="workspace-shell"]');
 
-    // Titlebar: project name + "· project window" sub-label
-    await expect(tauriPage.locator('[data-component="project-titlebar"]')).toBeVisible();
+    // Titlebar: workspace name + "· workspace window" sub-label
+    await expect(tauriPage.locator('[data-component="workspace-titlebar"]')).toBeVisible();
     const sub = await tauriPage.evaluate(
-      `document.querySelector('[data-component="project-titlebar"] span:last-child')?.textContent?.trim()`,
+      `document.querySelector('[data-component="workspace-titlebar"] span:last-child')?.textContent?.trim()`,
     ) as string;
-    expect(sub).toBe('· project window');
+    expect(sub).toBe('· workspace window');
 
-    // Sidebar leads with the project identity (icon + name), not a bare FTR number.
-    await expect(tauriPage.locator('[data-component="project-sidebar"]')).toBeVisible();
+    // Sidebar leads with the workspace identity (icon + name), not a bare FTR number.
+    await expect(tauriPage.locator('[data-component="workspace-sidebar"]')).toBeVisible();
     const sidebarName = await tauriPage.evaluate(
-      `document.querySelector('[data-component="sidebar-project-name"]')?.textContent?.trim()`,
+      `document.querySelector('[data-component="sidebar-workspace-name"]')?.textContent?.trim()`,
     ) as string;
     expect(Boolean(sidebarName && sidebarName.length > 0)).toBe(true);
 
     // FTR is demoted into the Health readout at the foot of the sidebar.
-    await expect(tauriPage.locator('[data-component="project-health"]')).toBeVisible();
+    await expect(tauriPage.locator('[data-component="workspace-health"]')).toBeVisible();
     const healthText = await tauriPage.evaluate(
-      `document.querySelector('[data-component="project-health"]')?.textContent?.replace(/\\s+/g, ' ').trim()`,
+      `document.querySelector('[data-component="workspace-health"]')?.textContent?.replace(/\\s+/g, ' ').trim()`,
     ) as string;
     expect(healthText).toContain('FTR · 14d');
   });
 
   test('sidebar nav lists every section with correct kanji, including Metrics', async ({ tauriPage }) => {
-    if (!projectId) {
-      test.skip(true, 'No projects in dev database — skipping project window tests');
+    if (!workspaceId) {
+      test.skip(true, 'No workspaces in dev database — skipping workspace window tests');
       return;
     }
-    await navigateToScreen(tauriPage, `/project/${projectId}/overview`, '[data-component="project-sidebar"]');
+    await navigateToScreen(tauriPage, `/workspace/${workspaceId}/overview`, '[data-component="workspace-sidebar"]');
 
     const navItems = await tauriPage.evaluate(
-      `Array.from(document.querySelectorAll('[data-component="project-sidebar"] .proj-nav-item')).map(el => ({
+      `Array.from(document.querySelectorAll('[data-component="workspace-sidebar"] .proj-nav-item')).map(el => ({
         kanji: el.querySelector('.kanji')?.textContent?.trim(),
         label: el.querySelector('span:not(.kanji)')?.textContent?.trim(),
       }))`,
@@ -215,34 +215,34 @@ test.describe('Project window — chrome', () => {
     });
   });
 
-  test('project window renders with the project name clear of the traffic lights', async ({ tauriPage }) => {
-    if (!projectId) {
-      test.skip(true, 'No projects in dev database — skipping project window tests');
+  test('workspace window renders with the workspace name clear of the traffic lights', async ({ tauriPage }) => {
+    if (!workspaceId) {
+      test.skip(true, 'No workspaces in dev database — skipping workspace window tests');
       return;
     }
     test.setTimeout(150_000);
-    await navigateToScreen(tauriPage, `/project/${projectId}/overview`, '[data-component="project-shell"]');
+    await navigateToScreen(tauriPage, `/workspace/${workspaceId}/overview`, '[data-component="workspace-shell"]');
 
     const name = await tauriPage.evaluate(
-      `document.querySelector('[data-component="project-name"]')?.textContent?.trim()`,
+      `document.querySelector('[data-component="workspace-name"]')?.textContent?.trim()`,
     ) as string;
     expect(Boolean(name && name.length > 0 && name !== '…')).toBe(true);
 
     // Inset past the macOS overlay traffic lights (pl-[80px]) so it isn't hidden.
     const nameLeft = await tauriPage.evaluate(
-      `document.querySelector('[data-component="project-name"]')?.getBoundingClientRect().left`,
+      `document.querySelector('[data-component="workspace-name"]')?.getBoundingClientRect().left`,
     ) as number;
     expect(nameLeft).toBeGreaterThanOrEqual(78);
   });
 });
 
-// ─── Project section pages ───────────────────────────────────────────────────
+// ─── Workspace section pages ───────────────────────────────────────────────────
 
-test.describe('Project window — section pages', () => {
-  let projectId: string | null = null;
+test.describe('Workspace window — section pages', () => {
+  let workspaceId: string | null = null;
 
   test.beforeAll(async () => {
-    projectId = await getFirstProjectId();
+    workspaceId = await getFirstWorkspaceId();
   });
 
   const SECTIONS: Array<{ id: string; label: string; kanji: string }> = [
@@ -260,16 +260,16 @@ test.describe('Project window — section pages', () => {
 
   for (const section of SECTIONS) {
     test(`/${section.id} mounts the section and marks its nav active`, async ({ tauriPage }) => {
-      if (!projectId) {
-        test.skip(true, 'No projects in dev database — skipping project window tests');
+      if (!workspaceId) {
+        test.skip(true, 'No workspaces in dev database — skipping workspace window tests');
         return;
       }
 
       // <main> carries data-section={id}; wait for the specific section to mount.
       await navigateToScreen(
         tauriPage,
-        `/project/${projectId}/${section.id}`,
-        `[data-component="project-main"][data-section="${section.id}"]`,
+        `/workspace/${workspaceId}/${section.id}`,
+        `[data-component="workspace-main"][data-section="${section.id}"]`,
       );
 
       // Active nav item: .proj-nav-item.active, label is the non-.kanji span.
@@ -288,14 +288,14 @@ test.describe('Project window — section pages', () => {
   }
 
   test('overview surfaces three stat cards (sessions · memories · doc drift)', async ({ tauriPage }) => {
-    if (!projectId) {
-      test.skip(true, 'No projects in dev database — skipping project window tests');
+    if (!workspaceId) {
+      test.skip(true, 'No workspaces in dev database — skipping workspace window tests');
       return;
     }
     await navigateToScreen(
       tauriPage,
-      `/project/${projectId}/overview`,
-      '[data-component="project-main"][data-section="overview"]',
+      `/workspace/${workspaceId}/overview`,
+      '[data-component="workspace-main"][data-section="overview"]',
     );
 
     const labels = await tauriPage.evaluate(
@@ -308,35 +308,35 @@ test.describe('Project window — section pages', () => {
     expect(labels).toContain('Doc drift');
   });
 
-  test('redirect from /project/{id} to /overview', async ({ tauriPage }) => {
-    if (!projectId) {
-      test.skip(true, 'No projects in dev database — skipping project window tests');
+  test('redirect from /workspace/{id} to /overview', async ({ tauriPage }) => {
+    if (!workspaceId) {
+      test.skip(true, 'No workspaces in dev database — skipping workspace window tests');
       return;
     }
-    await navigateTo(tauriPage, `/project/${projectId}`);
+    await navigateTo(tauriPage, `/workspace/${workspaceId}`);
     await new Promise((r) => setTimeout(r, 1_200));
     const url = await tauriPage.evaluate(`window.location.href`) as string;
-    expect(url).toMatch(new RegExp(`/project/${projectId}/overview`));
+    expect(url).toMatch(new RegExp(`/workspace/${workspaceId}/overview`));
   });
 });
 
 // ─── Design fidelity ─────────────────────────────────────────────────────────
 
 test.describe('Design fidelity — chrome widths', () => {
-  let projectId: string | null = null;
+  let workspaceId: string | null = null;
 
   test.beforeAll(async () => {
-    projectId = await getFirstProjectId();
+    workspaceId = await getFirstWorkspaceId();
   });
 
-  test('project sidebar is 180px wide', async ({ tauriPage }) => {
-    if (!projectId) {
-      test.skip(true, 'No projects in dev database');
+  test('workspace sidebar is 180px wide', async ({ tauriPage }) => {
+    if (!workspaceId) {
+      test.skip(true, 'No workspaces in dev database');
       return;
     }
-    await navigateToScreen(tauriPage, `/project/${projectId}/overview`, '[data-component="project-sidebar"]');
+    await navigateToScreen(tauriPage, `/workspace/${workspaceId}/overview`, '[data-component="workspace-sidebar"]');
     const width = await tauriPage.evaluate(
-      `document.querySelector('[data-component="project-sidebar"]')?.getBoundingClientRect().width`,
+      `document.querySelector('[data-component="workspace-sidebar"]')?.getBoundingClientRect().width`,
     ) as number;
     expect(width).toBe(180);
   });
