@@ -110,7 +110,15 @@ impl PgStore {
                     'tokens_out', sum(s.tokens_out)::bigint, 'tokens_out_n', count(s.tokens_out),
                     'tokens_reasoning', sum(s.tokens_reasoning)::bigint,
                     'tokens_reasoning_n', count(s.tokens_reasoning),
-                    'metered_cost', sum(s.metered_cost)::float8, 'metered_cost_n', count(s.metered_cost))
+                    'metered_cost', sum(s.metered_cost)::float8, 'metered_cost_n', count(s.metered_cost),
+                    'claude_secs', sum(extract(epoch FROM s.claude_time))::float8,
+                    'claude_n', count(s.claude_time),
+                    'user_secs', sum(extract(epoch FROM s.user_time))::float8,
+                    'user_n', count(s.user_time),
+                    'wall_secs', sum(extract(epoch FROM s.completed_at - s.started_at))::float8,
+                    'wall_n', count(s.completed_at),
+                    'first_at', min(s.started_at),
+                    'last_at', max(s.completed_at))
                FROM m JOIN activity.sessions s ON s.id = m.sid
               GROUP BY m.g",
         )

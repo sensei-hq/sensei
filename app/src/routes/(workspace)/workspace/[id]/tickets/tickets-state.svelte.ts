@@ -1,6 +1,6 @@
 // The workspace window's Tickets screen. Spec: docs/spec/screen/workspace-tickets.md.
 import type { ApiResult } from '$lib/api.js';
-import { activeMinutes, compactDuration, compactTokens } from '$lib/sessions-digest.js';
+import { activeMinutes, compactDuration, compactTokens, durationMinutes } from '$lib/sessions-digest.js';
 import { errorFor } from '$lib/tracker-errors.js';
 import type {
   SprintUsageRow,
@@ -32,6 +32,13 @@ export interface UsageCells {
   fresh: string;
   out: string;
   cost: string;
+  /** Active AI time's split: Claude working, and you. */
+  claude: string;
+  you: string;
+  /** The sessions' clock time, idle inside them included. */
+  wall: string;
+  /** First session's start to the last one's end. */
+  cycle: string;
 }
 
 /** A failed request in the screens' shared words. */
@@ -47,6 +54,10 @@ export function usageCells(u: TrackerUsage): UsageCells {
     fresh: compactTokens(u.tokens_fresh),
     out: compactTokens(u.tokens_out),
     cost: u.metered_cost == null ? '—' : `$${u.metered_cost.toFixed(2)}`,
+    claude: compactDuration(activeMinutes(u.claude_secs)),
+    you: compactDuration(activeMinutes(u.user_secs)),
+    wall: compactDuration(activeMinutes(u.wall_secs)),
+    cycle: u.first_at && u.last_at ? compactDuration(durationMinutes(u.first_at, u.last_at)) : '—',
   };
 }
 

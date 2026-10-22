@@ -21,6 +21,8 @@ create table if not exists sessions (
 , metered_cost     numeric
 , list_cost_usd    numeric     -- Claude Code's /cost total (list price), not billed spend
 , duration                 interval
+, claude_time              interval    -- the part of duration Claude was working (prompt → Stop); NULL with no hook events
+, user_time                interval    -- the part of duration spent on you (reading, approving, typing); claude_time + user_time = duration
 , module                   text
 , summary                  text
 , provider                 text

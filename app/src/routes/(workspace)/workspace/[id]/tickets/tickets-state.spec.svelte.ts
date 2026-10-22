@@ -34,6 +34,14 @@ const usage = (over: Partial<TrackerUsage> = {}): TrackerUsage => ({
   tokens_reasoning_n: 0,
   metered_cost: null,
   metered_cost_n: 0,
+  claude_secs: null,
+  claude_n: 0,
+  user_secs: null,
+  user_n: 0,
+  wall_secs: null,
+  wall_n: 0,
+  first_at: null,
+  last_at: null,
   ...over,
 });
 
@@ -272,9 +280,35 @@ describe('ticket rows', () => {
       fresh: '7.7k',
       out: '—',
       cost: '—',
+      claude: '—',
+      you: '—',
+      wall: '—',
+      cycle: '—',
     });
     expect(usageCells(usage({ metered_cost: 1.5, metered_cost_n: 1 })).cost).toBe('$1.50');
     expect(usageCells(usage()).sessions).toBe('0 (0/0)');
+  });
+
+  it('splits active AI time into Claude and you, and spans the cycle from first start to last end', () => {
+    const c = usageCells(
+      usage({
+        active_secs: 2400,
+        active_n: 2,
+        claude_secs: 1800,
+        claude_n: 2,
+        user_secs: 600,
+        user_n: 2,
+        wall_secs: 3000,
+        wall_n: 2,
+        first_at: '2026-10-05T10:00:00Z',
+        last_at: '2026-10-07T17:20:00Z',
+      }),
+    );
+    expect([c.active, c.claude, c.you, c.wall, c.cycle]).toEqual(['40m', '30m', '10m', '50m', '55h 20m']);
+  });
+
+  it('has no cycle time while no session has ended', () => {
+    expect(usageCells(usage({ first_at: '2026-10-05T10:00:00Z', last_at: null })).cycle).toBe('—');
   });
 
   it('name each ticket’s current sprint, or Backlog', async () => {

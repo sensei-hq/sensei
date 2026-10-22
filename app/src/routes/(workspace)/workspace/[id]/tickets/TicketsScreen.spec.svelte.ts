@@ -36,6 +36,14 @@ const usage = (over: Partial<TrackerUsage> = {}): TrackerUsage => ({
   tokens_reasoning_n: 0,
   metered_cost: null,
   metered_cost_n: 0,
+  claude_secs: null,
+  claude_n: 0,
+  user_secs: null,
+  user_n: 0,
+  wall_secs: null,
+  wall_n: 0,
+  first_at: null,
+  last_at: null,
   ...over,
 });
 
@@ -195,6 +203,7 @@ describe('ready', () => {
     expect(row.querySelector('[data-cell="fresh"]')!.textContent!.trim()).toBe('—');
     expect(row.querySelector('[data-cell="cost"]')!.textContent!.trim()).toBe('—');
     expect(row.querySelector('[data-cell="active"]')!.textContent!.trim()).toBe('10m');
+    expect(row.querySelector('[data-cell="cycle"]')!.textContent!.trim()).toBe('—');
   });
 
   it('a future sprint, filtered to, says it has not started, with no zeros', async () => {
@@ -204,6 +213,46 @@ describe('ready', () => {
     const strip = q('[data-strip]')!;
     expect(strip.textContent).toContain('Not started.');
     expect(strip.textContent).not.toMatch(/\b0m\b|\$0/);
+  });
+
+  it('a ticket shows Claude and you, session time and cycle time', async () => {
+    const { q } = await open({
+      tryGetTrackerTask: async () => ({
+        ok: true,
+        data: {
+          task: { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', removed: false },
+          usage: usage({
+            sessions: 2,
+            active_secs: 2400,
+            active_n: 2,
+            claude_secs: 1800,
+            claude_n: 2,
+            user_secs: 600,
+            user_n: 2,
+            wall_secs: 3000,
+            wall_n: 2,
+            first_at: '2026-10-05T10:00:00Z',
+            last_at: '2026-10-07T17:20:00Z',
+          }),
+          by_repo: [],
+          sessions: [],
+        },
+      }),
+    });
+    q<HTMLButtonElement>('[data-ticket="AUTH-2"]')!.click();
+    await settle();
+    const time = (k: string) => q(`[data-view="ticket"] [data-time="${k}"]`)!.textContent!.trim();
+    expect([time('claude'), time('you'), time('wall'), time('cycle')]).toEqual(['30m', '10m', '50m', '55h 20m']);
+  });
+
+  it('a ticket with no measured time shows — for each, never 0m', async () => {
+    const { q } = await open();
+    q<HTMLButtonElement>('[data-ticket="AUTH-2"]')!.click();
+    await settle();
+    const detail = q('[data-view="ticket"]')!;
+    for (const k of ['claude', 'you', 'wall', 'cycle']) {
+      expect(detail.querySelector(`[data-time="${k}"]`)!.textContent!.trim()).toBe('—');
+    }
   });
 
   it('a ticket opens to its repos and sessions, each linking to the replay', async () => {

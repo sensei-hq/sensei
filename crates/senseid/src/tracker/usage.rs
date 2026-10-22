@@ -35,6 +35,17 @@ pub struct Usage {
     pub tokens_reasoning_n: i64,
     pub metered_cost: Option<f64>,
     pub metered_cost_n: i64,
+    /// Active time's split (R12): Claude working, and you.
+    pub claude_secs: Option<f64>,
+    pub claude_n: i64,
+    pub user_secs: Option<f64>,
+    pub user_n: i64,
+    /// Each ended session's clock time, idle inside it included.
+    pub wall_secs: Option<f64>,
+    pub wall_n: i64,
+    /// The first session's start and the last ended one's end: the cycle time's span.
+    pub first_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// A sprint's session window `[from, to)`, or why it has no usage.
@@ -358,6 +369,87 @@ mod tests {
         .execute(pg.pool())
         .await
         .unwrap();
+    }
+
+    /// R7/R12: the time a ticket took — the split, each session's clock time,
+    /// and the span from the first session's start to the last one's end.
+    #[tokio::test]
+    async fn ticket_usage_reports_the_split_session_time_and_span() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let a = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        let b = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        let c = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        // Mon 10:00–10:30 and Wed 17:00–17:20; c started Tue, never ended, never analysed.
+        for (s, started, ended, claude, you) in [
+            (
+                a,
+                at(10, 5, 10),
+                Some(at(10, 5, 10) + chrono::Duration::minutes(30)),
+                Some(1200.0),
+                Some(300.0),
+            ),
+            (
+                b,
+                at(10, 7, 17),
+                Some(at(10, 7, 17) + chrono::Duration::minutes(20)),
+                Some(600.0),
+                Some(300.0),
+            ),
+            (c, at(10, 6, 9), None, None, None),
+        ] {
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET started_at = $2, completed_at = $3,
+                        claude_time = make_interval(secs => $4::float8),
+                        user_time = make_interval(secs => $5::float8),
+                        duration = make_interval(secs => $4::float8 + $5::float8)
+                  WHERE id = $1",
+            )
+            .bind(s)
+            .bind(started)
+            .bind(ended)
+            .bind(claude)
+            .bind(you)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        sync(&pg, t, &FakeBoard::standard()).await;
+        let auth2 = task_id(&pg, t, "10002").await;
+        let u = ticket_usages(&pg, t, Some(&[auth2])).await.unwrap().remove(&auth2).unwrap();
+        assert_eq!((u.claude_secs, u.claude_n), (Some(1800.0), 2));
+        assert_eq!((u.user_secs, u.user_n), (Some(600.0), 2));
+        assert_eq!((u.active_secs, u.active_n), (Some(2400.0), 2), "Claude + you");
+        assert_eq!(
+            (u.wall_secs, u.wall_n),
+            (Some(3000.0), 2),
+            "an unended session has no clock time"
+        );
+        assert_eq!(u.first_at, Some(at(10, 5, 10)));
+        assert_eq!(u.last_at, Some(at(10, 7, 17) + chrono::Duration::minutes(20)));
+    }
+
+    #[tokio::test]
+    async fn a_ticket_with_no_ended_session_has_no_last_at() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let a = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        sqlx_core::query::query("UPDATE activity.sessions SET completed_at = NULL WHERE id = $1")
+            .bind(a)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sync(&pg, t, &FakeBoard::standard()).await;
+        let auth2 = task_id(&pg, t, "10002").await;
+        let u = ticket_usages(&pg, t, Some(&[auth2])).await.unwrap().remove(&auth2).unwrap();
+        assert!(u.first_at.is_some());
+        assert_eq!(
+            (u.last_at, u.wall_secs, u.wall_n),
+            (None, None, 0),
+            "no end: null, never a guess"
+        );
     }
 
     #[tokio::test]

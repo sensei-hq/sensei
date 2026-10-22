@@ -131,6 +131,14 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   (`/workspace/[id]/tickets`): every ticket by default, a filterable sprint Select (All
   tickets, each sprint, Backlog), an "Only tickets with AI sessions" switch, a count line,
   a Sprint column; the usage strip shows only for a sprint or the Backlog. App-only.
+- **F11 cycle time and the active-time split** ✅ (asked for 2026-10-22, branch
+  `feature/jira_cycle_time`) R12: active time split into Claude's and yours
+  (`sessions.claude_time`, `user_time`; Claude + you = `duration`); a session with no
+  hook events now stores NULL, not 0; sessions analysed before R12 are re-picked once.
+  R7 adds `claude_*`, `user_*`, `wall_*` (session clock time), `first_at`/`last_at`
+  (cycle time = last end − first start). Tickets screen: Cycle column and a Time line
+  on the detail; CLI `usage` gains claude / you / session time / cycle time. The new
+  columns carry inline comments only until the deploy-ordering bug is fixed (backlog).
 - **Next:** F5 live verification once Claude Code transcript consent is on.
 
 ## Gate for `/sensei:build`

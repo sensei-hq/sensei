@@ -88,7 +88,11 @@ pub struct SessionMetrics {
     /// The session carried an in-session `command_invoked{action:resume}` marker —
     /// it was reopened/continued (Phase B). Written to `sessions.props.resumed`.
     pub resumed: bool,
-    pub duration_ms: i64, // session-level gap-aware active time
+    /// Session-level gap-aware active time; `None` with no hook events.
+    pub duration_ms: Option<i64>,
+    /// The parts of `duration_ms` Claude was working and spent on you (R12).
+    pub claude_ms: Option<i64>,
+    pub user_ms: Option<i64>,
     pub module: Option<String>,
     pub tool_usage: serde_json::Value, // { "<tool>": { "pre", "post", "failed" } }
 }
@@ -220,13 +224,40 @@ pub fn abandonment_signal(user_text: &str, assistant_text: &str) -> bool {
 /// idle/away gaps (segment boundaries, multi-day resumes) excluded. Events are
 /// assumed oldest-first (the DB returns them ordered by ts).
 fn active_duration_ms(events: &[HookEvent], idle_ms: i64) -> i64 {
-    events
-        .windows(2)
-        .map(|w| {
-            let gap = w[1].ts - w[0].ts;
-            if gap > 0 && gap <= idle_ms { gap } else { 0 }
-        })
-        .sum()
+    events.windows(2).map(|w| counted_gap(&w[0], &w[1], idle_ms)).sum()
+}
+
+/// The active part of the gap between two consecutive events: all of it, or
+/// none when it is an idle/away gap.
+fn counted_gap(from: &HookEvent, to: &HookEvent, idle_ms: i64) -> i64 {
+    let gap = to.ts - from.ts;
+    if gap > 0 && gap <= idle_ms { gap } else { 0 }
+}
+
+/// Active time split by whom the session was waiting on (spec R12):
+/// `(claude_ms, user_ms)`, summing to [`active_duration_ms`]. A gap is Claude's
+/// from a prompt until `Stop`, except after a `Notification` (an approval or a
+/// question) until Claude's next tool event; every other gap is yours. `None`
+/// with no events: nothing was seen, so nothing is known.
+fn active_split_ms(events: &[HookEvent], idle_ms: i64) -> Option<(i64, i64)> {
+    if events.is_empty() {
+        return None;
+    }
+    let (mut claude, mut user) = (0, 0);
+    let mut in_turn = false;
+    let mut on_claude = false;
+    for w in events.windows(2) {
+        match w[0].event_type.as_str() {
+            "UserPromptSubmit" => (in_turn, on_claude) = (true, true),
+            "Stop" | "SessionStart" | "SessionEnd" => (in_turn, on_claude) = (false, false),
+            "Notification" => on_claude = false,
+            "PreToolUse" | "PostToolUse" => on_claude = in_turn,
+            _ => {}
+        }
+        let gap = counted_gap(&w[0], &w[1], idle_ms);
+        if on_claude { claude += gap } else { user += gap }
+    }
+    Some((claude, user))
 }
 
 /// Split a session's events into turns at `UserPromptSubmit` boundaries and
@@ -408,10 +439,13 @@ pub fn derive_session_metrics(
     };
     let real_turns = (turn_count as usize).max(turns.len());
     let resumed = was_resumed(events);
+    let split = active_split_ms(events, IDLE_GAP_MS);
     Some(SessionMetrics {
         outcome: derive_outcome(events, transcript, real_turns, corrections, resumed),
         ftr: corrections == 0,
-        duration_ms: active_duration_ms(events, IDLE_GAP_MS),
+        duration_ms: split.map(|(c, u)| c + u),
+        claude_ms: split.map(|(c, _)| c),
+        user_ms: split.map(|(_, u)| u),
         module: dominant_module(events),
         tool_usage: tally_tool_usage(events),
         corrections,
@@ -625,7 +659,7 @@ fn detect_session_trouble(
     events: &[HookEvent],
     transcript: &[TranscriptTurn],
     turn_count: i32,
-    duration_ms: i64,
+    duration_ms: Option<i64>,
 ) -> serde_json::Value {
     let Some(hint) = transcript.iter().find_map(|t| trouble_hint(&t.assistant_text)) else {
         return serde_json::Value::Null;
@@ -663,6 +697,8 @@ pub async fn enrich_session(
                     outcome: m.outcome,
                     ftr: m.ftr,
                     duration_ms: m.duration_ms,
+                    claude_ms: m.claude_ms,
+                    user_ms: m.user_ms,
                     module: m.module.as_deref(),
                     tool_usage: &m.tool_usage,
                 })
@@ -985,7 +1021,7 @@ mod tests {
         assert_eq!(m.corrections, 0);
         assert!(m.ftr);
         assert_eq!(m.outcome, "completed");
-        assert_eq!(m.duration_ms, 3000, "all gaps under idle ⇒ full span is active");
+        assert_eq!(m.duration_ms, Some(3000), "all gaps under idle ⇒ full span is active");
     }
 
     #[test]
@@ -1204,12 +1240,12 @@ mod tests {
             "do the migration",
             "we're running low on context, let's start a new session",
         )];
-        let trouble = detect_session_trouble(&events, &transcript, 12, 5000);
+        let trouble = detect_session_trouble(&events, &transcript, 12, Some(5000));
         assert_eq!(trouble["hint"], "context-pressure", "the earliest matching category wins");
         assert_eq!(trouble["precompact"], 2, "correlates the PreCompact count");
         assert_eq!(trouble["turns"], 12);
         assert_eq!(trouble["duration_ms"], 5000);
-        let clean = detect_session_trouble(&[], &[tt(0, "add a test", "done")], 3, 100);
+        let clean = detect_session_trouble(&[], &[tt(0, "add a test", "done")], 3, Some(100));
         assert!(clean.is_null(), "a clean session is not a trouble case");
     }
 
@@ -1249,7 +1285,66 @@ mod tests {
         );
         // active = 1m + 1m + 1m (within/between the first two turns) + 1m (turn 3) = 4 min;
         // the ~2h idle gap is excluded.
-        assert_eq!(m.duration_ms, 4 * MIN, "idle gap excluded from active duration");
+        assert_eq!(m.duration_ms, Some(4 * MIN), "idle gap excluded from active duration");
+    }
+
+    // R12: each counted gap belongs to whoever the session was waiting on.
+    #[test]
+    fn active_time_splits_into_claude_and_you() {
+        let events = vec![
+            ev("SessionStart", 0),
+            prompt_ev("a", 2 * MIN), // 0–2 yours: before the first prompt
+            tool_ev("PreToolUse", "Edit", 3 * MIN, false), // 2–3 Claude
+            tool_ev("PostToolUse", "Edit", 7 * MIN, false), // 3–7 Claude
+            ev("Stop", 12 * MIN),    // 7–12 Claude
+            prompt_ev("b", 17 * MIN), // 12–17 yours: reading, typing
+            ev("Stop", 22 * MIN),    // 17–22 Claude
+        ];
+        let m = derive_session_metrics(&events, &[]).unwrap();
+        assert_eq!((m.claude_ms, m.user_ms), (Some(15 * MIN), Some(7 * MIN)));
+        assert_eq!(m.duration_ms, Some(22 * MIN), "active = Claude + you");
+    }
+
+    #[test]
+    fn a_notification_hands_the_wait_to_you_until_claude_moves_again() {
+        let events = vec![
+            prompt_ev("a", 0),
+            tool_ev("PreToolUse", "Bash", MIN, false),
+            ev("Notification", 2 * MIN), // 2–5 yours: approving the command
+            tool_ev("PostToolUse", "Bash", 5 * MIN, false),
+            ev("Stop", 6 * MIN),
+        ];
+        let m = derive_session_metrics(&events, &[]).unwrap();
+        assert_eq!((m.claude_ms, m.user_ms), (Some(3 * MIN), Some(3 * MIN)));
+    }
+
+    #[test]
+    fn a_subagent_stop_does_not_end_claudes_turn() {
+        let events = vec![prompt_ev("a", 0), ev("SubagentStop", 4 * MIN), ev("Stop", 6 * MIN)];
+        let m = derive_session_metrics(&events, &[]).unwrap();
+        assert_eq!((m.claude_ms, m.user_ms), (Some(6 * MIN), Some(0)));
+    }
+
+    #[test]
+    fn an_idle_gap_is_neither_claudes_nor_yours() {
+        let events = vec![
+            prompt_ev("a", 0),
+            ev("Stop", 10 * MIN),
+            // ── 90 min away ──
+            prompt_ev("b", 100 * MIN),
+            ev("Stop", 105 * MIN),
+        ];
+        let m = derive_session_metrics(&events, &[]).unwrap();
+        assert_eq!(
+            (m.claude_ms, m.user_ms, m.duration_ms),
+            (Some(15 * MIN), Some(0), Some(15 * MIN))
+        );
+    }
+
+    #[test]
+    fn a_session_with_no_hook_events_has_no_active_time_not_zero() {
+        let m = derive_session_metrics(&[], &[tt(0, "fix the parser", "done")]).unwrap();
+        assert_eq!((m.duration_ms, m.claude_ms, m.user_ms), (None, None, None));
     }
 
     #[test]
@@ -1444,6 +1539,18 @@ mod tests {
         assert_eq!(row.2, Some(false));
         assert_eq!(row.3.as_deref(), Some("corrected"));
         assert_eq!(row.4, Some(2000.0), "gap-aware active duration");
+        // R12: the split is stored beside it — all of it Claude's here (no Stop
+        // before the last event), so Claude + you = active.
+        let split: (Option<f64>, Option<f64>) = sqlx_core::query_as::query_as(
+            "SELECT (extract(epoch from claude_time)*1000)::float8,
+                    (extract(epoch from user_time)*1000)::float8
+               FROM activity.sessions WHERE id = $1",
+        )
+        .bind(sid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(split, (Some(2000.0), Some(0.0)));
 
         // retrospective summary persisted by enrichment. The test gateway has no
         // narration-cache chain, so `generate_and_cache` misses → the deterministic
@@ -1687,6 +1794,61 @@ mod tests {
             .ok();
 
         assert_eq!((reset, due), (1, vec![sid]));
+    }
+
+    /// R12: a session analysed before the split (active time, no split) is due
+    /// again, once; one with the split, or with no active time at all, is not.
+    #[tokio::test]
+    async fn sessions_analysed_before_the_split_are_due_again() {
+        let ctx = make_ctx().await;
+        let pg = ctx.pg();
+        let pid = pg
+            .create_workspace(&format!("_test:split-{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+        let fid = crate::db::pg_store::tests::create_test_folder(
+            pg,
+            &format!("split-{}", uuid::Uuid::new_v4()),
+        )
+        .await;
+        let mut ids = Vec::new();
+        for set in [
+            "duration = interval '20 min', claude_time = NULL, user_time = NULL",
+            "duration = interval '20 min', claude_time = interval '15 min', user_time = interval '5 min'",
+            "duration = NULL, claude_time = NULL, user_time = NULL",
+        ] {
+            let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+            let sid =
+                pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+            sqlx_core::query::query(&format!(
+                "UPDATE activity.sessions SET analyzed_at = now() + interval '1 day', {set} WHERE id = $1"
+            ))
+            .bind(sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            ids.push(sid);
+        }
+        let due: Vec<uuid::Uuid> = pg
+            .get_workspace_sessions_needing_enrichment(&pid)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        for sid in &ids {
+            sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+                .bind(sid)
+                .execute(pg.pool())
+                .await
+                .ok();
+        }
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(pid)
+            .execute(pg.pool())
+            .await
+            .ok();
+        assert_eq!(due, vec![ids[0]]);
     }
 
     #[tokio::test]

@@ -58,12 +58,15 @@ message (same words as the Integrations screen's table; one shared mapping) and 
      tickets** — all-time (the backlog has no window), each session once.
 3. **Ticket table** (`GET …/tracker-tasks`, `?sprint=<id>`, or `?backlog=true`): ticket
    (key above its summary) · **sprint** (its current sprint, or "Backlog") · status ·
-   sessions (branch/prompt) · active AI time · fresh tokens · out tokens · cost. Rows are
+   sessions (branch/prompt) · active AI time · cycle time · fresh tokens · out tokens ·
+   cost. Rows are
    buttons that open the ticket. **Shared note** under it when any ticket's
    `usage.shared > 0`: "A session linked to several tickets counts in full for each; the
    sprint total counts it once."
 4. **Ticket detail** (replaces the table; **Back to <filter>** returns): key, summary,
-   status, the usage strip for the ticket, **By repository** (name, sessions, active AI
+   status, the usage strip for the ticket, a **Time** line (active AI time split as
+   "Claude 30m · you 10m", session time, and cycle time with its first and last dates:
+   "2d… · Mon 10:00 → Wed 17:20"), **By repository** (name, sessions, active AI
    time, fresh tokens), and **Sessions** (started, the links as text — "branch", "prompt
    ×2" — and the key as written when it differs from the ticket's current key: "as
    AUTH-420"), each linking to the session replay.
@@ -73,6 +76,11 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 - Active AI time: `compactDuration(activeMinutes(active_secs))` ("1h 04m"); tokens:
   `compactTokens`; cost: `$1.50`. An unknown value is "—", never `0`. The column header
   says **active AI time**, never "hours" or "time spent".
+- Claude / you: `claude_secs` / `user_secs`, formatted like active AI time; they add up
+  to it. Session time: `wall_secs`, the sessions' clock time, idle inside them included.
+- Cycle time: `durationMinutes(first_at, last_at)` through `compactDuration` ("55h 20m"),
+  from the first linked session's start to the last one's end; "—" when `last_at` is
+  `null`.
 - A sprint's total is its own `linked_sprint` usage, never a sum of its tickets (shared
   sessions would count twice).
 - `tokens_in` is not shown.
@@ -93,6 +101,9 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 6b. The Backlog filter lists exactly the tickets no sprint has (a discovered backlog ticket appears there at once); its total counts a session once.
 7. a11y: the filter and the switch are labelled; ticket rows are buttons with names; axe
    finds no serious/critical violations in the four states.
+8. A ticket row shows its cycle time; its detail shows Claude / you adding up to the
+   active AI time, the session time, and the cycle time with its first and last dates.
+   A ticket whose sessions have no hook events shows "—" for each, never `0m`.
 
 ## Wrong gate
 
@@ -100,6 +111,7 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 - A `0` (or `0m`, `$0.00`) for a value the daemon reported as `null`.
 - A sprint total computed by adding its tickets.
 - "hours" or "time spent" without "active AI time".
+- A cycle time computed by adding session times, or session time by adding active times.
 - Any assignee, author or other person attribute shown.
 - Any request that changes Jira, or any write route called from this screen.
 

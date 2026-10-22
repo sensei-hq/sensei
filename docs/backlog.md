@@ -64,6 +64,8 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   install meets it. Fix in the deploy order (reconcile the tables' columns
   before re-applying their comments), with a `deploy_upgrade.rs` test that adds
   a commented column.
+  Until then `sessions.claude_time` and `sessions.user_time` (tracker F11) carry
+  inline `--` comments only; give them `comment on column` with the fix.
 
 - **Library capability provisioning + version-aware doc queries** — nothing
   installs a library's declared skills/agents; `get_lib_docs` lacks a `version`

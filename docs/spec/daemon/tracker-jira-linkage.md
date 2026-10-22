@@ -455,6 +455,9 @@ known-key prefix set changes) is deferred — backlog.*
 | `by_source.branch`, `by_source.prompt` | sessions in `S` with ≥1 link of that source (to the ticket, for ticket usage; to any sprint member, for `linked_sprint`) — may sum past `sessions` |
 | `shared` | sessions in `S` linked to ≥2 distinct tasks of this tracker |
 | `active_secs`, `active_n` | `Σ extract(epoch from duration)` over sessions with `duration IS NOT NULL`; `active_n` = that count |
+| `claude_secs`, `claude_n` / `user_secs`, `user_n` | the same rule over `claude_time` / `user_time` (R12): active time split into Claude working and you interacting |
+| `wall_secs`, `wall_n` | `Σ (completed_at − started_at)` over sessions with `completed_at IS NOT NULL` — each session's clock time, idle inside it included |
+| `first_at`, `last_at` | `min(started_at)` over `S`; `max(completed_at)` over sessions that have one (`null` when none has). The **cycle time** shown is `last_at − first_at`: from the first session's start to the last one's end, the gaps between sessions included |
 | `tokens_fresh`, `cache_read`, `cache_write`, `tokens_out`, `tokens_reasoning` | each `Σ field` over sessions where **that field** IS NOT NULL, each with `<field>_n` |
 | `metered_cost`, `metered_cost_n` | same rule |
 
@@ -623,6 +626,31 @@ replace) supersedes any discovered link.
 `{error:"task_not_on_board", key, board_ref}`. Wrong shape/prefix, or within the
 negative cache → 404 `task_not_found` (no network call). Busy → 409 `busy`; a
 provider failure → 502 with its code.
+
+### R12 · Active time split (`tasks/handlers/analyze.rs`)
+
+The analyzer already derives `sessions.duration` (active time) from the session's hook
+events: the gaps between consecutive events, each counted when `0 < gap ≤ 30 min`.
+R12 attributes each counted gap to **who the session was waiting on** when it began,
+by the event that opened it:
+
+| Event opening the gap | Gap is |
+|---|---|
+| `UserPromptSubmit` | Claude's (it is working on the prompt) |
+| `PreToolUse`, `PostToolUse`, `SubagentStop`, `PreCompact` and any other event inside a turn | Claude's, unless a `Notification` came after the turn's latest tool event |
+| `Notification` | yours (Claude is waiting for an approval or an answer) |
+| `Stop`, `SessionStart`, `SessionEnd`, or any event before the first prompt | yours (reading, analysing, typing the next prompt) |
+
+- Stored on `activity.sessions` as `claude_time interval` and `user_time interval`
+  beside `duration`, and `duration = claude_time + user_time` for every session the
+  analyzer writes.
+- A session with **no hook events** (transcript only) gets `NULL` in all three. Before
+  R12 it got `0`, a fabricated zero.
+- Sessions analysed before R12 (`duration IS NOT NULL AND claude_time IS NULL`) are
+  picked up again by the enrichment pass, once, so their split is filled without a
+  data migration.
+- Time outside Claude Code (editing in the IDE with no session open) is not seen and
+  not counted.
 
 ### Out of scope
 

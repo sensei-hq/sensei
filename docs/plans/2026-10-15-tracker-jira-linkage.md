@@ -135,6 +135,18 @@ CLI are the v1 contract.
 - **Depends on:** F7, F9
 - **Acceptance criteria:** [`spec/screen/workspace-tickets.md`](../spec/screen/workspace-tickets.md) done gate 1–7.
 
+### Feature 11: Cycle time and the active-time split
+
+- **Issue:** TBD
+- **Layers:** DDL (`sessions.claude_time`, `sessions.user_time`) → analyzer (R12: split active time into Claude's and yours; `NULL`, not `0`, for a session with no hook events; re-pick sessions analysed before R12) → usage (R7: `claude_*`, `user_*`, `wall_*`, `first_at`, `last_at`) → app (Cycle column; ticket detail shows Claude / you, session time, cycle time) → CLI (`usage --key` prints the same).
+- **Depends on:** F4, F10
+- **Acceptance criteria:** spec R7 and R12; screen done gate 8.
+- **Test scenarios:**
+  - Given prompt 10:00, Stop 10:10, prompt 10:15, Stop 10:20, When analysed, Then Claude 15 min, you 5 min, active 20 min.
+  - Given a Notification at 10:02 and the next tool event at 10:05 inside a turn, Then those 3 min are yours.
+  - Given a session with a transcript and no hook events, When analysed, Then `duration`, `claude_time`, `user_time` are `NULL`.
+  - Given sessions on a ticket Mon 10:00–10:30 and Wed 17:00–17:20, When ticket usage is read, Then the cycle time is 2 d 7 h 20 m and `wall_secs` is 50 min.
+
 ### Feature 5: Live verification (human)
 
 - **Issue:** TBD
@@ -164,6 +176,8 @@ graph LR
   F9 --> F5
   F9 --> F10
   F10 --> F5
+  F10 --> F11
+  F11 --> F5
 ```
 
 First task: **F1.1** — needs the user's Jira Cloud site, board id and API token.

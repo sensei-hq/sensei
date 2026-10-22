@@ -113,7 +113,7 @@ pub fn resolve_sprint(sprints: &Value, input: &str) -> Result<String, String> {
     resolve_named(sprints, input, "sprint")
 }
 
-/// Active AI time as `h:mm`; blank when no session had a duration.
+/// A time (active AI time, its split, session or cycle time) as `h:mm`; blank when unknown.
 pub fn active_time(secs: Option<f64>) -> String {
     secs.map(|s| {
         let minutes = (s.max(0.0) / 60.0).floor() as u64;
@@ -137,12 +137,22 @@ pub fn backlog_row(backlog: &Value) -> Vec<String> {
     ]
 }
 
+/// The span from `first_at` to `last_at` in seconds; `None` while either is unknown.
+fn cycle_secs(usage: &Value) -> Option<f64> {
+    let at = |k: &str| usage[k].as_str().and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok());
+    Some((at("last_at")? - at("first_at")?).num_seconds() as f64)
+}
+
 /// The usage table's header.
-pub const USAGE_HEADER: [&str; 8] = [
+pub const USAGE_HEADER: [&str; 12] = [
     "key",
     "summary",
     "sessions (branch/prompt)",
     "active AI time",
+    "claude",
+    "you",
+    "session time",
+    "cycle time",
     "fresh tokens",
     "cache-read",
     "out tokens",
@@ -162,6 +172,10 @@ pub fn usage_cells(label: &str, summary: &str, usage: &Value) -> Vec<String> {
             usage["by_source"]["prompt"].as_i64().unwrap_or(0)
         ),
         active_time(usage["active_secs"].as_f64()),
+        active_time(usage["claude_secs"].as_f64()),
+        active_time(usage["user_secs"].as_f64()),
+        active_time(usage["wall_secs"].as_f64()),
+        active_time(cycle_secs(usage)),
         count(&usage["tokens_fresh"]),
         count(&usage["cache_read"]),
         count(&usage["tokens_out"]),
@@ -852,11 +866,33 @@ mod tests {
         });
         assert_eq!(
             usage_cells("AUTH-2", "Login", &usage),
-            vec!["AUTH-2", "Login", "3 (3/1)", "0:03", "15", "", "40", ""]
+            vec!["AUTH-2", "Login", "3 (3/1)", "0:03", "", "", "", "", "15", "", "40", ""]
         );
         assert!(USAGE_HEADER.contains(&"active AI time"), "never just \"hours\"");
         let priced = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0}, "metered_cost": 1.5, "metered_cost_n": 1});
-        assert_eq!(usage_cells("K-1", "", &priced)[7], "1.50");
+        assert_eq!(usage_cells("K-1", "", &priced)[11], "1.50");
+    }
+
+    #[test]
+    fn usage_cells_split_active_time_and_span_the_cycle() {
+        let usage = json!({
+            "sessions": 2, "by_source": {"branch": 2, "prompt": 0},
+            "active_secs": 2400.0, "active_n": 2,
+            "claude_secs": 1800.0, "claude_n": 2, "user_secs": 600.0, "user_n": 2,
+            "wall_secs": 3000.0, "wall_n": 2,
+            "first_at": "2026-10-05T10:00:00Z", "last_at": "2026-10-07T17:20:00Z"
+        });
+        assert_eq!(
+            USAGE_HEADER[3..8],
+            ["active AI time", "claude", "you", "session time", "cycle time"]
+        );
+        assert_eq!(
+            usage_cells("AUTH-2", "", &usage)[3..8],
+            ["0:40", "0:30", "0:10", "0:50", "55:20"]
+        );
+        let open = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0},
+                          "first_at": "2026-10-05T10:00:00Z", "last_at": null});
+        assert_eq!(usage_cells("AUTH-2", "", &open)[7], "", "no session ended: no cycle time");
     }
 
     #[test]

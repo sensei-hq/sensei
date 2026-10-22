@@ -9,7 +9,7 @@
 
   let { screen, workspaceId }: { screen: TicketsState; workspaceId: string } = $props();
 
-  const COLS = 'grid grid-cols-[minmax(12rem,1fr)_7rem_5rem_6rem_6rem_5rem_5rem_4rem] items-center gap-3';
+  const COLS = 'grid grid-cols-[minmax(12rem,1fr)_7rem_5rem_6rem_6rem_5rem_5rem_5rem_4rem] items-center gap-3';
   const button = 'rounded-md border border-paper-edge px-3 py-1.5 text-sm text-ink hover:bg-paper-mute';
 
   const when = (iso: string | null) =>
@@ -61,6 +61,7 @@
       <div class="flex min-w-0 flex-col gap-4">
         {#if screen.ticket}
           {@const t = screen.ticket}
+          {@const time = usageCells(t.usage)}
           <div data-view="ticket" class="flex flex-col gap-4">
             <div>
               <button type="button" class={button} data-action="back" onclick={() => screen.closeTicket()}
@@ -74,6 +75,17 @@
               </p>
             </div>
             {@render usageRow('This ticket', t.usage)}
+            <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+              <span class="text-ink">Time</span>
+              <span class="text-ink-mute">Claude <span class="text-ink" data-time="claude">{time.claude}</span></span>
+              <span class="text-ink-mute">you <span class="text-ink" data-time="you">{time.you}</span></span>
+              <span class="text-ink-mute">session time <span class="text-ink" data-time="wall">{time.wall}</span></span>
+              <span class="text-ink-mute"
+                >cycle time <span class="text-ink" data-time="cycle">{time.cycle}</span>{#if t.usage.first_at && t.usage.last_at}<span
+                    class="text-ink-soft"> · {when(t.usage.first_at)} → {when(t.usage.last_at)}</span
+                  >{/if}</span
+              >
+            </div>
 
             <h3 class="m-0 text-sm text-ink">By repository</h3>
             {#if t.by_repo.length === 0}
@@ -175,10 +187,10 @@
             <p class="m-0 text-sm text-ink-soft">No tickets to show.</p>
           {:else}
             <div class="overflow-x-auto">
-              <div class="min-w-[46rem]">
+              <div class="min-w-[52rem]">
                 <div aria-hidden="true" class="{COLS} border-b border-paper-edge px-2 pb-1 text-xs text-ink-mute">
                   <span>Ticket</span><span>Sprint</span><span>Status</span><span>Sessions (branch/prompt)</span>
-                  <span>Active AI time</span><span>Fresh tokens</span><span>Out tokens</span><span>Cost</span>
+                  <span>Active AI time</span><span>Cycle time</span><span>Fresh tokens</span><span>Out tokens</span><span>Cost</span>
                 </div>
                 <ul class="m-0 list-none p-0">
                   {#each screen.visibleTasks as t (t.key)}
@@ -198,6 +210,7 @@
                         <span class="truncate text-ink-mute"><span class="sr-only">status </span>{t.status ?? '—'}</span>
                         <span><span class="sr-only">sessions </span><span data-cell="sessions">{c.sessions}</span></span>
                         <span><span class="sr-only">active AI time </span><span data-cell="active">{c.active}</span></span>
+                        <span><span class="sr-only">cycle time </span><span data-cell="cycle">{c.cycle}</span></span>
                         <span><span class="sr-only">fresh tokens </span><span data-cell="fresh">{c.fresh}</span></span>
                         <span><span class="sr-only">out tokens </span><span data-cell="out">{c.out}</span></span>
                         <span><span class="sr-only">cost </span><span data-cell="cost">{c.cost}</span></span>
