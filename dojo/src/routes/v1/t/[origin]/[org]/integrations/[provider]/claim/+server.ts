@@ -5,11 +5,11 @@
 import { ACCESS } from '$lib/server/dojo-auth';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { forgeAdapter } from '$lib/server/forge-adapter';
-import { claimIntegrationUnit, integrationRequest, providerParam } from '$lib/server/integrations-data';
+import { claimIntegrationUnit, claimRequest, providerParam } from '$lib/server/integrations-data';
 import { tenantRoute } from '$lib/server/tenant-route';
 
 export const POST = tenantRoute(ACCESS.admin, async (_db, caller, { params, request }) => {
 	const adapter = forgeAdapter(providerParam(params.provider));
-	const { token, unitId } = await integrationRequest(request, 'claim');
+	const { token, unitId } = await claimRequest(request);
 	return Response.json(await claimIntegrationUnit(dojoDb(), caller.userId, token, adapter, unitId));
 });

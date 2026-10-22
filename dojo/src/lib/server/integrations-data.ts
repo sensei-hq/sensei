@@ -259,34 +259,41 @@ export function providerParam(p: string | undefined): ForgeProvider {
 	return p;
 }
 
-/** What an Integrations request carries. */
-export interface IntegrationRequest {
-	/** The person's forge token, for this request's reads only. */
-	token: string;
-	unitId: string;
-	target: MapTarget;
+/** An Integrations request body, or {} when it is not JSON. */
+async function bodyOf(request: Request): Promise<Record<string, unknown>> {
+	return ((await request.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;
 }
 
-/**
- * Read an Integrations body: always the token; the unit for a claim or a map;
- * the target for a map. A 400 names what is missing — and never the token.
- */
-export async function integrationRequest(request: Request, act: 'list'): Promise<Pick<IntegrationRequest, 'token'>>;
-export async function integrationRequest(request: Request, act: 'claim'): Promise<Omit<IntegrationRequest, 'target'>>;
-export async function integrationRequest(request: Request, act: 'map'): Promise<IntegrationRequest>;
-export async function integrationRequest(
-	request: Request,
-	act: 'list' | 'claim' | 'map'
-): Promise<Partial<IntegrationRequest> & { token: string }> {
-	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+/** The person's forge token, for this request's reads only — or a 400 that never
+ *  repeats it. */
+function tokenOf(body: Record<string, unknown>): string {
 	const token = typeof body.token === 'string' ? body.token.trim() : '';
 	if (!token) throw new AdminError(400, 'a token is required');
-	if (act === 'list') return { token };
+	return token;
+}
 
+function unitOf(body: Record<string, unknown>): string {
 	const unitId = typeof body.unit_id === 'string' ? body.unit_id.trim() : '';
 	if (!unitId) throw new AdminError(400, 'which organization? (unit_id)');
-	if (act === 'claim') return { token, unitId };
+	return unitId;
+}
 
+/** A list request: the token. */
+export async function listRequest(request: Request): Promise<{ token: string }> {
+	return { token: tokenOf(await bodyOf(request)) };
+}
+
+/** A claim request: the token and the unit. */
+export async function claimRequest(request: Request): Promise<{ token: string; unitId: string }> {
+	const body = await bodyOf(request);
+	return { token: tokenOf(body), unitId: unitOf(body) };
+}
+
+/** A map request: the token, the unit, and where it goes. */
+export async function mapRequest(request: Request): Promise<{ token: string; unitId: string; target: MapTarget }> {
+	const body = await bodyOf(request);
+	const token = tokenOf(body);
+	const unitId = unitOf(body);
 	if (body.as === 'dojo') return { token, unitId, target: { as: 'dojo' } };
 	if (body.as === 'workspace') {
 		const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined;

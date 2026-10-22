@@ -6,12 +6,12 @@
 import { ACCESS } from '$lib/server/dojo-auth';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { forgeAdapter } from '$lib/server/forge-adapter';
-import { integrationRequest, mapIntegrationUnit, providerParam } from '$lib/server/integrations-data';
+import { mapIntegrationUnit, mapRequest, providerParam } from '$lib/server/integrations-data';
 import { tenantRoute } from '$lib/server/tenant-route';
 
 export const POST = tenantRoute(ACCESS.admin, async (_db, caller, { params, request }) => {
 	const adapter = forgeAdapter(providerParam(params.provider));
-	const { token, unitId, target } = await integrationRequest(request, 'map');
+	const { token, unitId, target } = await mapRequest(request);
 	return Response.json(
 		await mapIntegrationUnit(dojoDb(), caller.userId, caller.tenantId, token, adapter, unitId, target)
 	);
