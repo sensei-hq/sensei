@@ -867,7 +867,7 @@ mod tests {
             paused_until: None,
             pause_reason: None,
             heartbeat_at: None,
-            project_slug: None,
+            workspace_slug: None,
             workspace: None,
         };
         c.publish_session_update(&update)
@@ -1031,7 +1031,7 @@ mod tests {
             paused_until: None,
             pause_reason: None,
             heartbeat_at: None,
-            project_slug: None,
+            workspace_slug: None,
             workspace: None,
         };
         c.publish_session_update(&update).await.expect("session publish ok");
@@ -1134,7 +1134,7 @@ mod tests {
             paused_until: None,
             pause_reason: None,
             heartbeat_at: Some("2026-07-24T10:05:00Z".into()),
-            project_slug: None,
+            workspace_slug: None,
             workspace: None,
         };
         let id = c

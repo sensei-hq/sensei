@@ -1,0 +1,151 @@
+// Settings · Workspaces — what the screen lists, and saving a repository's role (#271).
+//
+// A workspace's REPOSITORIES are its git checkouts and subtrees. `GET /api/workspaces`
+// returns the workspace's whole folder tree, and the screen used to list every
+// entry: a monorepo's workspace modules and plain folders read as "19 repos".
+//
+// A role chosen here is saved at once, through the daemon. It used to change
+// only local wizard state, which the Settings screen never commits, so it was
+// gone on reload. A failed save is rolled back and reported, not left on screen.
+//
+// A failed load is an error state. `api.listWorkspaces` turned any failure into
+// `[]`, which read as "no workspaces" — a fabricated empty.
+import { failureReason, type ApiResult } from '$lib/api.js';
+import type { DaemonWorkspace, DaemonWorkspaceFolder } from '$lib/setup/contracts.js';
+import { ROLES } from '$lib/setup/types.js';
+import type { GlyphMode } from '$lib/glyphs';
+
+/** Folder kinds that are a repository of their own. */
+const REPOSITORY_KINDS = new Set(['git', 'subtree']);
+
+/** Pure: a workspace's repositories — its git checkouts and subtrees. */
+export function repositoriesOf(p: DaemonWorkspace): DaemonWorkspaceFolder[] {
+  return p.folders.filter((f) => REPOSITORY_KINDS.has(f.kind));
+}
+
+const inside = (dir: string, path: string) => path.startsWith(`${dir}/`);
+
+/** Pure: the roles the scan inferred for the packages inside a repository,
+ *  distinct and in picker order. A package belongs to the nearest repository
+ *  that holds it, so a subtree's packages are not also its parent's. */
+export function derivedRoles(p: DaemonWorkspace, repoId: string): string[] {
+  const repos = repositoriesOf(p);
+  const repo = repos.find((r) => r.id === repoId);
+  if (!repo) return [];
+  const nearest = (f: DaemonWorkspaceFolder) =>
+    repos
+      .filter((r) => inside(r.abs_path, f.abs_path))
+      .reduce<DaemonWorkspaceFolder | null>(
+        (best, r) => (best && best.abs_path.length >= r.abs_path.length ? best : r),
+        null,
+      );
+  const found = new Set(
+    p.folders
+      .filter((f) => f.kind === 'module' && f.role && nearest(f)?.id === repo.id)
+      .map((f) => f.role as string),
+  );
+  return ROLES.map((r) => r.id).filter((id) => found.has(id));
+}
+
+/** Pure: workspaces with at least one repository on this machine, and those
+ *  without (their checkouts were removed, or never scanned here). */
+export function partitionWorkspaces(workspaces: DaemonWorkspace[]): {
+  placed: DaemonWorkspace[];
+  unplaced: DaemonWorkspace[];
+} {
+  const placed: DaemonWorkspace[] = [];
+  const unplaced: DaemonWorkspace[] = [];
+  for (const p of workspaces) (repositoriesOf(p).length > 0 ? placed : unplaced).push(p);
+  return { placed, unplaced };
+}
+
+/** Pure: does the workspace match the search — its name, or a repository's name
+ *  or path — ignoring case? A blank query matches everything. */
+export function matchesSearch(p: DaemonWorkspace, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q === '') return true;
+  if (p.name.toLowerCase().includes(q)) return true;
+  return repositoriesOf(p).some(
+    (r) => r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q),
+  );
+}
+
+/** The two calls the screen needs, injected so the state is testable. */
+export interface WorkspacesApi {
+  tryListWorkspaces: () => Promise<ApiResult<DaemonWorkspace[]>>;
+  tryUpdateFolder: (id: string, patch: { role?: string | null }) => Promise<ApiResult<void>>;
+  tryUpdateWorkspace: (id: string, patch: object) => Promise<ApiResult<void>>;
+}
+
+export class WorkspacesSectionState {
+  workspaces = $state<DaemonWorkspace[]>([]);
+  loading = $state(true);
+  error = $state<string | null>(null);
+  /** The last failed role save, shown until the next attempt. */
+  roleError = $state<string | null>(null);
+  /** The last failed rename, shown until the next attempt. */
+  renameError = $state<string | null>(null);
+  query = $state('');
+
+  readonly placed = $derived(
+    partitionWorkspaces(this.workspaces).placed.filter((p) => matchesSearch(p, this.query)),
+  );
+  readonly unplaced = $derived(
+    partitionWorkspaces(this.workspaces).unplaced.filter((p) => matchesSearch(p, this.query)),
+  );
+
+  async load(api: WorkspacesApi): Promise<void> {
+    this.loading = true;
+    const res = await api.tryListWorkspaces();
+    if (res.ok) {
+      this.workspaces = res.data.map((p) => ({ ...p, folders: p.folders ?? [] }));
+      this.error = null;
+    } else {
+      this.error = `Could not load workspaces: ${failureReason(res.error)}`;
+    }
+    this.loading = false;
+  }
+
+  /** Rename a workspace, saved at once; the old name comes back if the daemon
+   *  refuses it. A blank or unchanged name is not sent. */
+  async rename(api: WorkspacesApi, workspaceId: string, name: string): Promise<void> {
+    const target = this.workspaces.find((p) => p.id === workspaceId);
+    const next = name.trim();
+    if (!target || next === '' || next === target.name) return;
+    const previous = target.name;
+    target.name = next;
+    this.renameError = null;
+    const res = await api.tryUpdateWorkspace(workspaceId, { name: next });
+    if (!res.ok) {
+      target.name = previous;
+      this.renameError = `Could not rename ${previous}: ${failureReason(res.error)}`;
+    }
+  }
+
+  /** Save a repository's role. The screen shows the new role at once and puts
+   *  the old one back if the daemon refuses it. `''` clears the role. */
+  async setRole(api: WorkspacesApi, folderId: string, role: string): Promise<void> {
+    const target = this.workspaces.flatMap((p) => p.folders).find((f) => f.id === folderId);
+    if (!target) return;
+    const previous = target.role;
+    target.role = role === '' ? null : role;
+    this.roleError = null;
+    const res = await api.tryUpdateFolder(folderId, { role: target.role });
+    if (!res.ok) {
+      target.role = previous;
+      this.roleError = `Could not save the role for ${target.name}: ${failureReason(res.error)}`;
+    }
+  }
+}
+
+/** The role picker's items for a glyph mode (#133). */
+export function roleOptions(mode: GlyphMode): { label: string; value: string; icon?: string }[] {
+  return [
+    { label: 'Unassigned', value: '' },
+    ...ROLES.map((r) =>
+      mode === 'icon'
+        ? { label: r.label, value: r.id, icon: r.icon }
+        : { label: `${r.kanji} ${r.label}`, value: r.id },
+    ),
+  ];
+}

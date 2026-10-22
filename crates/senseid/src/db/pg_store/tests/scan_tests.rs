@@ -54,26 +54,26 @@ async fn prune_under_prefix_deletes_subtree_keeps_siblings() {
 }
 
 #[tokio::test]
-async fn prune_empty_projects_grace_protects_fresh() {
-    // A just-created empty `discovery` project must survive a grace>0 prune —
+async fn prune_empty_workspaces_grace_protects_fresh() {
+    // A just-created empty `discovery` workspace must survive a grace>0 prune —
     // its folder may still be attaching in a concurrent step. (The grace=0
     // path is deliberate/global and unsafe to exercise in the shared test DB,
     // so it's covered by the exclusion handler in production, not here.)
     let s = pg_store().await;
     let fresh = s
-        .create_project(&format!("_test:grace-{}", uuid::Uuid::new_v4()), None, None)
+        .create_workspace(&format!("_test:grace-{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
-    s.prune_empty_projects(60).await.unwrap();
+    s.prune_empty_workspaces(60).await.unwrap();
     let (alive,): (i64,) =
-        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.projects WHERE id=$1")
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.workspaces WHERE id=$1")
             .bind(fresh)
             .fetch_one(s.pool())
             .await
             .unwrap();
-    assert_eq!(alive, 1, "grace protects a fresh empty project");
+    assert_eq!(alive, 1, "grace protects a fresh empty workspace");
     // Direct cleanup (not a grace=0 global prune, which would hit sibling tests).
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id=$1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id=$1")
         .bind(fresh)
         .execute(s.pool())
         .await
@@ -416,9 +416,10 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     let root_id =
         s.add_watch_root(&root_path, "heal_nested_root", &serde_json::json!([])).await.unwrap();
 
-    // A git repo (like the sensei monorepo) with its own project.
+    // A git repo (like the sensei monorepo) with its own workspace.
     let repo_abs = format!("{root_path}/repo");
-    let repo_pid = s.create_project(&format!("_test:heal_repo_{uniq}"), None, None).await.unwrap();
+    let repo_pid =
+        s.create_workspace(&format!("_test:heal_repo_{uniq}"), None, None).await.unwrap();
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "repo", &repo_abs).await.unwrap();
     crate::tasks::test_support::give_folder_a_repository(
         &s,
@@ -427,13 +428,13 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     )
     .await
     .unwrap();
-    s.set_folder_project(&repo_fid, &repo_pid, "root", None).await.unwrap();
+    s.set_folder_workspace(&repo_fid, &repo_pid, "root", None).await.unwrap();
 
-    // A sub-crate INSIDE the repo, mis-scoped as its own standalone project
+    // A sub-crate INSIDE the repo, mis-scoped as its own standalone workspace
     // (the Bug 3 phantom). Give it a node so we can prove its nodes are dropped.
     let crate_abs = format!("{repo_abs}/crates/dojo-mind");
     let phantom_pid =
-        s.create_project(&format!("_test:heal_phantom_{uniq}"), None, None).await.unwrap();
+        s.create_workspace(&format!("_test:heal_phantom_{uniq}"), None, None).await.unwrap();
     let crate_fid =
         s.upsert_repo_kind(&root_id, "standalone", "dojo-mind", &crate_abs).await.unwrap();
     crate::tasks::test_support::give_folder_a_repository(
@@ -443,7 +444,7 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     )
     .await
     .unwrap();
-    s.set_folder_project(&crate_fid, &phantom_pid, "root", None).await.unwrap();
+    s.set_folder_workspace(&crate_fid, &phantom_pid, "root", None).await.unwrap();
     let node_id = s
         .seed_node(&crate_fid, "struct", "DojoStore", "src/store.rs", None, None, None, None)
         .await
@@ -460,17 +461,17 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     let healed = s.heal_nested_standalone_roots().await.unwrap();
     assert!(healed >= 1, "the nested standalone root should be re-absorbed");
 
-    // The nested root is now a folder of the repo's project, parented to the repo.
+    // The nested root is now a folder of the repo's workspace, parented to the repo.
     let (kind, pid, parent): (String, Option<uuid::Uuid>, Option<uuid::Uuid>) =
         sqlx_core::query_as::query_as(
-            "SELECT kind::text, sensei.sole_project_of(id), parent_id FROM sensei.folders WHERE id = $1",
+            "SELECT kind::text, sensei.sole_workspace_of(id), parent_id FROM sensei.folders WHERE id = $1",
         )
         .bind(crate_fid)
         .fetch_one(s.pool())
         .await
         .unwrap();
     assert_eq!(kind, "folder", "mis-scoped standalone should be re-classified as a folder");
-    assert_eq!(pid, Some(repo_pid), "should now belong to the enclosing repo's project");
+    assert_eq!(pid, Some(repo_pid), "should now belong to the enclosing repo's workspace");
     assert_eq!(parent, Some(repo_fid), "should be parented under the enclosing repo");
 
     // Its own nodes were dropped (the repo re-indexes the subtree).
@@ -494,14 +495,15 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
             .unwrap();
     assert_eq!(stale_rows, 0, "the mis-scoped root's `files` rows must go with its nodes");
 
-    // The phantom project (lived entirely inside the repo) is gone.
-    let (phantom_exists,): (bool,) =
-        sqlx_core::query_as::query_as("SELECT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)")
-            .bind(phantom_pid)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
-    assert!(!phantom_exists, "the phantom project should be merged away");
+    // The phantom workspace (lived entirely inside the repo) is gone.
+    let (phantom_exists,): (bool,) = sqlx_core::query_as::query_as(
+        "SELECT EXISTS(SELECT 1 FROM sensei.workspaces WHERE id = $1)",
+    )
+    .bind(phantom_pid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert!(!phantom_exists, "the phantom workspace should be merged away");
 
     // Idempotent for THIS test's rows: a second run leaves the phantom merged
     // away. The returned count is GLOBAL — db-gated tests share `sensei_test`
@@ -509,7 +511,7 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     // rows concurrently — so assert on our own row, not the global count.
     s.heal_nested_standalone_roots().await.unwrap();
     let (phantom_gone_after_rerun,): (bool,) = sqlx_core::query_as::query_as(
-        "SELECT NOT EXISTS(SELECT 1 FROM sensei.projects WHERE id = $1)",
+        "SELECT NOT EXISTS(SELECT 1 FROM sensei.workspaces WHERE id = $1)",
     )
     .bind(phantom_pid)
     .fetch_one(s.pool())
@@ -519,7 +521,7 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
 
     // cleanup
     s.delete_folder_tree(&repo_fid).await.ok();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(repo_pid)
         .execute(s.pool())
         .await

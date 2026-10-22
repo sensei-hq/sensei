@@ -67,21 +67,21 @@ impl PgStore {
 
     // ── Folders ──────────────────────────────────────────────────────
 
-    pub async fn get_project_extensions(
+    pub async fn get_workspace_extensions(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         kind_filter: Option<&[&str]>,
     ) -> Result<Vec<serde_json::Value>, String> {
         // Query the resolved view directly — it already joins extensions internally
         let rows: Vec<(uuid::Uuid, String, String, bool, serde_json::Value, String)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, kind::text, enabled, project_props, scope
-                 FROM sensei.project_extensions_resolved
-                 WHERE (scoped_project_id = $1 OR scoped_project_id IS NULL)
+                "SELECT id, name, kind::text, enabled, workspace_props, scope
+                 FROM sensei.workspace_extensions_resolved
+                 WHERE (scoped_workspace_id = $1 OR scoped_workspace_id IS NULL)
                    AND enabled = true
                  ORDER BY scope DESC, name",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -92,7 +92,7 @@ impl PgStore {
             .map(|(id, name, kind, enabled, props, scope)| {
                 serde_json::json!({
                     "id": id, "name": name, "kind": kind,
-                    "enabled": enabled, "project_props": props, "scope": scope,
+                    "enabled": enabled, "workspace_props": props, "scope": scope,
                 })
             })
             .collect())

@@ -4,7 +4,7 @@
   import { invalidateAll } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { PageHeader, Screen, EmptyState, ScreenState, UnreadProjectsNotice } from '$lib/components';
+  import { PageHeader, Screen, EmptyState, ScreenState, UnreadWorkspacesNotice } from '$lib/components';
   import { Button } from '@rokkit/ui';
   import type { DojoUpgrade } from '$lib/types.js';
   import { KIND_META, type Upgrade, type UpgradeKind } from './buckets.js';
@@ -124,17 +124,17 @@
   {@const meta = KIND_META[kind]}
   <a
     data-upgrade={up.id}
-    href={`/project/${up.projectId}/overview`}
+    href={`/workspace/${up.workspaceId}/overview`}
     class="block bg-paper-soft border border-paper-edge rounded-md py-3 px-4 mb-2 text-inherit hover:bg-paper-mute"
   >
-    <!-- typed descriptor + project mono -->
+    <!-- typed descriptor + workspace mono -->
     <div class="flex items-center gap-2 mb-1">
       <span class="inline-flex items-center gap-1 text-xs {toneClass(kind)}">
         <Kanji char={meta.kanji} size="inherit" tone="inherit" class="text-xs" />
         <span class="uppercase tracking-wide">{meta.title}</span>
       </span>
       <span class="flex-1"></span>
-      <span class="font-mono text-xs text-ink-mute">{up.projectName}</span>
+      <span class="font-mono text-xs text-ink-mute">{up.workspaceName}</span>
     </div>
 
     <!-- title -->
@@ -157,7 +157,7 @@
         class:text-ink-faint={up.urgency === 'low'}
       >{up.urgency}</span>
       <span class="text-ink-faint">Opens in</span>
-      <span class="font-mono text-ink-soft">{up.projectName}</span>
+      <span class="font-mono text-ink-soft">{up.workspaceName}</span>
     </div>
   </a>
 {/snippet}
@@ -239,19 +239,19 @@
           {/if}
         </div>
         <p class="text-xs text-ink-soft mb-4">
-          Candidate skills, agents, rules and lints your project's own patterns are asking for. Each
+          Candidate skills, agents, rules and lints your workspace's own patterns are asking for. Each
           links back to the recommendation that produced it.
         </p>
 
         {#if data.localError}
           <ScreenState status="error" error={data.localError} onretry={() => invalidateAll()} />
         {:else}
-        <UnreadProjectsNotice unread={data.unread} />
+        <UnreadWorkspacesNotice unread={data.unread} />
         {#if data.total === 0}
           <EmptyState
             kanji="贈"
             title="no upgrades waiting"
-            description="Recommended skills, agents, rules and lints will appear here once the analyzer has enough evidence — typically after 20+ sessions across a project."
+            description="Recommended skills, agents, rules and lints will appear here once the analyzer has enough evidence — typically after 20+ sessions across a workspace."
           />
         {:else}
           {#each orderedKinds as kind (kind)}

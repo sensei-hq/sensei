@@ -64,7 +64,7 @@ don't restate it.
 Navigate with the **sensei MCP tools first** (indexed graph, richer than grep); fall back to
 Grep/Glob only if a tool errors or returns empty, and say so.
 
-1. `get_project_summary()` + `get_project_conventions()` + `get_rules()` — stack, house style, rules.
+1. `get_workspace_summary()` + `get_workspace_conventions()` + `get_rules()` — stack, house style, rules.
 2. `search("@rokkit/ui")` / `search("List")` / `search("Select")` … to enumerate component usage
    sites; Read each. For every usage, classify the tier and whether it's the **lowest that works**.
 3. For each `itemContent`/`groupContent` snippet, ask the demotion question: does it render only

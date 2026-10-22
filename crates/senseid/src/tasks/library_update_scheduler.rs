@@ -1,6 +1,6 @@
 //! Library-update scheduler (workstream F, v0 — detect + notify). Mirrors
 //! [`crate::tasks::log_pruner`]. A daily tick resolves each referenced library's
-//! latest published version, compares it to every project's pinned `version_used`
+//! latest published version, compares it to every workspace's pinned `version_used`
 //! via the pure policy core, and on a real bump writes a `library_update`
 //! recommendation — the EXISTING Insights/Observatory surface (no new channel).
 //!
@@ -28,9 +28,9 @@ fn should_reindex(applied: Option<&str>, latest: &str) -> bool {
     applied != Some(latest)
 }
 
-/// One project × library update fact, shared by the notify writers.
+/// One workspace × library update fact, shared by the notify writers.
 struct PendingUpdate<'a> {
-    project_id: &'a uuid::Uuid,
+    workspace_id: &'a uuid::Uuid,
     lib_id: &'a uuid::Uuid,
     name: &'a str,
     ecosystem: &'a str,
@@ -43,7 +43,7 @@ struct PendingUpdate<'a> {
 
 /// Write a `library_update` recommendation for `pu` at the given `mode`
 /// (`notify` | `auto_applied` | `notify_no_source` | `security`), deduped per
-/// (project, library, to_version) at the `is_security` tier — so a prior
+/// (workspace, library, to_version) at the `is_security` tier — so a prior
 /// non-security notify never suppresses a security flag. The single writer onto
 /// the Insights surface — no new channel.
 async fn write_update_rec(
@@ -53,7 +53,7 @@ async fn write_update_rec(
     urgency: &str,
     is_security: bool,
 ) {
-    match pg.pending_library_update_exists(pu.project_id, pu.lib_id, pu.to, is_security).await {
+    match pg.pending_library_update_exists(pu.workspace_id, pu.lib_id, pu.to, is_security).await {
         Ok(true) => return, // already flagged this exact update at this tier
         Ok(false) => {}
         Err(e) => {
@@ -86,7 +86,7 @@ async fn write_update_rec(
     }});
     if let Err(e) = pg
         .create_recommendation_full(&RecommendationRow {
-            project_id: pu.project_id,
+            workspace_id: pu.workspace_id,
             title: &title,
             why: &why,
             impact: None,
@@ -103,7 +103,7 @@ async fn write_update_rec(
 }
 
 /// Enqueue an `IndexLibrary` re-index of the library's OWN docs/skills (never the
-/// consuming project's code) when it's stale — guarded by `should_reindex` (the
+/// consuming workspace's code) when it's stale — guarded by `should_reindex` (the
 /// props marker), a within-tick set, and a lib-id-keyed in-flight guard. Shared by
 /// the patch (v1a) and security (v2) apply paths.
 async fn maybe_enqueue_reindex(
@@ -168,7 +168,7 @@ pub(crate) async fn tick(
     let ttl = parse_ttl(pg.get_config("library.check_ttl_secs").await.ok().flatten());
     let now = chrono::Utc::now().timestamp();
 
-    let pins = match pg.list_library_project_pins().await {
+    let pins = match pg.list_library_workspace_pins().await {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = %e, "library_update_scheduler: list pins failed");
@@ -211,13 +211,14 @@ pub(crate) async fn tick(
         latest_by_lib.insert(*lib_id, latest);
     }
 
-    // Dispatch each project pin by the policy action. PATCH auto-applies (re-index
+    // Dispatch each workspace pin by the policy action. PATCH auto-applies (re-index
     // sensei's OWN docs/skills — never the user's code); a KNOWN high-severity
     // advisory fixed by the upgrade escalates ANY real bump to a security refresh +
     // high-urgency flag; other MINOR/MAJOR bumps notify.
     let mut enqueued: HashSet<uuid::Uuid> = HashSet::new();
     let mut adv_by_lib: HashMap<uuid::Uuid, Vec<Advisory>> = HashMap::new();
-    for (lib_id, name, ecosystem, local_path, project_id, version_used, base_url, _stype) in &pins {
+    for (lib_id, name, ecosystem, local_path, workspace_id, version_used, base_url, _stype) in &pins
+    {
         let Some(Some(latest)) = latest_by_lib.get(lib_id) else { continue };
         let bump = classify_bump(version_used, latest);
         if bump == Bump::None || bump == Bump::Unknown {
@@ -241,7 +242,7 @@ pub(crate) async fn tick(
             _ => "update",
         };
         let pu = PendingUpdate {
-            project_id,
+            workspace_id,
             lib_id,
             name,
             ecosystem,
@@ -253,7 +254,7 @@ pub(crate) async fn tick(
 
         // Security (v2): ALWAYS surface a high-urgency flag (even with no source —
         // the flag is the user-critical output), and best-effort refresh docs/skills.
-        // NEVER touches the consuming project's code/pins.
+        // NEVER touches the consuming workspace's code/pins.
         if is_security {
             write_update_rec(pg, &pu, "security", "high", true).await;
             if let Some(url) = base_url.clone().or_else(|| local_path.clone()) {
@@ -304,7 +305,7 @@ mod tests {
     /// to each other's rows: a `high: true` stub in one test writes a
     /// security-tier flag onto another test's library, and that test's
     /// "no security-tier flag" assertion fails. `seed_pin` already gives every
-    /// test unique project/library UUIDs — the sharing is in `tick`'s global
+    /// test unique workspace/library UUIDs — the sharing is in `tick`'s global
     /// sweep, which is the behaviour under test and cannot be scoped away.
     static TICK_LOCK: TestGate = TestGate::new();
 
@@ -346,19 +347,19 @@ mod tests {
 
     async fn seed_pin(s: &PgStore, version_used: &str) -> (uuid::Uuid, uuid::Uuid) {
         let u = uuid::Uuid::new_v4();
-        let pid = s.create_project(&format!("_fsched_{u}"), None, None).await.unwrap();
+        let pid = s.create_workspace(&format!("_fsched_{u}"), None, None).await.unwrap();
         let lib = format!("_flib_{u}");
         let lid = s.upsert_library(&lib, "npm", Some("1.0.0"), None, None, None).await.unwrap();
-        // A folder owned by the project, referencing the library at `version_used`.
+        // A folder owned by the workspace, referencing the library at `version_used`.
         s.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001','/_test','_test','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
         let fid = uuid::Uuid::new_v4();
         s.execute_raw(&format!(
             "INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path) VALUES('{fid}','00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'{lib}','{lib}','/_test/{u}')"
         )).await.unwrap();
-        // The folder belongs to the project through its REPOSITORY (#211).
+        // The folder belongs to the workspace through its REPOSITORY (#211).
         let rid = s.upsert_repository(&format!("test/{u}"), None).await.unwrap();
         s.link_folder_to_repository(&fid, &rid).await.unwrap();
-        s.link_project_repository(&pid, &rid).await.unwrap();
+        s.link_workspace_repository(&pid, &rid).await.unwrap();
         s.execute_raw(&format!(
             "INSERT INTO sensei.referenced_libraries(folder_id, library_id, version_used) VALUES('{fid}','{lid}','{version_used}') ON CONFLICT DO NOTHING"
         )).await.unwrap();
@@ -379,7 +380,7 @@ mod tests {
         // Second pass is idempotent — no duplicate rec for the same to_version.
         tick(&s, &q, &Stub(Some("1.2.0".into())), &no_vulns()).await;
         let n: (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*) FROM inference.recommendations WHERE project_id=$1 AND action_type='library_update' AND based_on->'library_update'->>'to_version'='1.2.0'")
+            "SELECT count(*) FROM inference.recommendations WHERE workspace_id=$1 AND action_type='library_update' AND based_on->'library_update'->>'to_version'='1.2.0'")
             .bind(pid).fetch_one(s.pool()).await.unwrap();
         assert_eq!(n.0, 1, "no duplicate on re-tick");
     }
@@ -426,7 +427,7 @@ mod tests {
         let based_on = serde_json::json!({ "library_update": {
             "library_id": lid.to_string(), "to_version": "2.0.0", "is_security": false } });
         s.create_recommendation_full(&RecommendationRow {
-            project_id: &pid,
+            workspace_id: &pid,
             title: "t",
             why: "w",
             impact: None,
@@ -456,7 +457,7 @@ mod tests {
         let (_pid, lid) = seed_pin(&s, "1.0.0").await;
         // Give the seeded library a resolvable source pointer.
         s.update_library_source(&lid, "llms.txt", Some("https://x/llms.txt")).await.unwrap();
-        let pins = s.list_library_project_pins().await.unwrap();
+        let pins = s.list_library_workspace_pins().await.unwrap();
         let row = pins.iter().find(|p| p.0 == lid).expect("seeded pin present");
         assert_eq!(row.6.as_deref(), Some("https://x/llms.txt"), "base_url in pins");
         assert_eq!(row.7.as_deref(), Some("llms.txt"), "source_type in pins");
@@ -479,7 +480,7 @@ mod tests {
     async fn rec_mode(s: &PgStore, pid: &uuid::Uuid, to: &str) -> Option<String> {
         let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
             "SELECT based_on->'library_update'->>'mode' FROM inference.recommendations \
-               WHERE project_id=$1 AND action_type='library_update' AND based_on->'library_update'->>'to_version'=$2 LIMIT 1")
+               WHERE workspace_id=$1 AND action_type='library_update' AND based_on->'library_update'->>'to_version'=$2 LIMIT 1")
             .bind(pid).bind(to).fetch_optional(s.pool()).await.unwrap();
         row.and_then(|(m,)| m)
     }
@@ -569,7 +570,7 @@ mod tests {
         );
         let urgency: (String,) = sqlx_core::query_as::query_as(
             "SELECT urgency::text FROM inference.recommendations \
-               WHERE project_id=$1 AND based_on->'library_update'->>'to_version'='1.5.0' LIMIT 1",
+               WHERE workspace_id=$1 AND based_on->'library_update'->>'to_version'='1.5.0' LIMIT 1",
         )
         .bind(pid)
         .fetch_one(s.pool())
@@ -580,7 +581,7 @@ mod tests {
             q.has_pending_kind_folder(TaskKind::IndexLibrary, &lid.to_string()).await,
             "security auto-apply refreshes docs/skills (same path as v1a)"
         );
-        // The consuming project's dependency pin is NEVER modified.
+        // The consuming workspace's dependency pin is NEVER modified.
         let vu: (String,) = sqlx_core::query_as::query_as(
             "SELECT version_used FROM sensei.referenced_libraries WHERE library_id=$1 LIMIT 1",
         )
@@ -602,7 +603,7 @@ mod tests {
         let based_on = serde_json::json!({ "library_update": {
             "library_id": lid.to_string(), "to_version": "1.5.0", "is_security": false } });
         s.create_recommendation_full(&RecommendationRow {
-            project_id: &pid,
+            workspace_id: &pid,
             title: "t",
             why: "w",
             impact: None,

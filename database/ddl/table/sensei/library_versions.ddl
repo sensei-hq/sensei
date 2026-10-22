@@ -3,7 +3,7 @@ set search_path to sensei, extensions;
 -- S7b / 02b S10. ONE FETCHED VERSION of a library's documentation.
 --
 -- Library CONTENT — pages, skills, agents — hangs off a VERSION, not off the
--- library, so docs can be version-specific. Without this level, a project
+-- library, so docs can be version-specific. Without this level, a workspace
 -- pinned at 1.2 is served whatever the library's single row happens to hold,
 -- which in practice is the LATEST docs: the higher-quality source of the wrong
 -- answer (02b S9).
@@ -14,7 +14,7 @@ set search_path to sensei, extensions;
 -- URL per tag. So `base_url` / `docs_url` / `source_type` / `local_path` /
 -- `page_count` are properties of a VERSION.
 --
--- `homepage_url` deliberately stays on `libraries`: it is the PROJECT's home,
+-- `homepage_url` deliberately stays on `libraries`: it is the WORKSPACE's home,
 -- and a repository URL does not change per release.
 --
 -- `library_packages` is deliberately NOT versioned. The node -> package ->
@@ -45,7 +45,7 @@ create unique index if not exists library_versions_one_latest
 
 comment on table library_versions is
 'One fetched version of a library''s documentation (S7b). Pages, skills and
-agents reference a VERSION so docs can be version-specific; a project pinned at
+agents reference a VERSION so docs can be version-specific; a workspace pinned at
 1.2 must not be served a website''s latest-only docs as though they matched.
 The fetch columns (source_type, base_url, docs_url, local_path, page_count)
 live here rather than on libraries because they are version-scoped — a docs URL

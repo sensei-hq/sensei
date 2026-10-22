@@ -24,7 +24,7 @@ const BACKOFF_CAP_SECS: u64 = 60;
 
 /// Whether a failed task of this kind is worth retrying — the graph write
 /// pipeline (D6c). Other kinds fail for permanent reasons (a missing URL, a bad
-/// project-id payload, a deleted root), so retrying them just burns cycles.
+/// workspace-id payload, a deleted root), so retrying them just burns cycles.
 pub fn is_retryable(kind: &TaskKind) -> bool {
     // The policy now lives on the kind descriptor, so adding a kind forces a
     // retry decision at the definition instead of defaulting to "no" by
@@ -128,7 +128,7 @@ mod tests {
             TaskKind::ScanRoot,     // bad/deleted root path is permanent
             TaskKind::ImportLib,    // missing URL is permanent
             TaskKind::BranchSwitch, // missing branch is permanent
-            TaskKind::ScanDocDrift, // bad project-id payload is permanent
+            TaskKind::ScanDocDrift, // bad workspace-id payload is permanent
         ] {
             assert!(!is_retryable(&k), "{k} fails for permanent reasons — not retried");
         }

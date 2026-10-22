@@ -6,7 +6,7 @@ use super::*;
 async fn pattern_upsert_and_list() {
     let s = pg_store().await;
     let suffix = format!("pat_upsert_{}", uuid::Uuid::new_v4());
-    let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let instances =
         serde_json::json!([{"file":"src/lib.rs","line":10},{"file":"src/main.rs","line":20}]);
     let pat_id = s
@@ -21,7 +21,7 @@ async fn pattern_upsert_and_list() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await
@@ -32,7 +32,7 @@ async fn pattern_upsert_and_list() {
 async fn pattern_promote() {
     let s = pg_store().await;
     let suffix = format!("pat_promote_{}", uuid::Uuid::new_v4());
-    let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let pat_id = s
         .upsert_pattern(&proj_id, Some(&fid), "_test:Factory", false, None, &serde_json::json!([]))
         .await
@@ -46,7 +46,7 @@ async fn pattern_promote() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await
@@ -57,7 +57,7 @@ async fn pattern_promote() {
 async fn pattern_upsert_updates_existing() {
     let s = pg_store().await;
     let suffix = format!("pat_dup_{}", uuid::Uuid::new_v4());
-    let (proj_id, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let id1 = s
         .upsert_pattern(
             &proj_id,
@@ -89,7 +89,7 @@ async fn pattern_upsert_updates_existing() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await
@@ -97,15 +97,15 @@ async fn pattern_upsert_updates_existing() {
 }
 
 #[tokio::test]
-async fn pattern_upsert_merges_across_folders_in_same_project() {
-    // #82: patterns are project-scoped. Two folders in the same project
+async fn pattern_upsert_merges_across_folders_in_same_workspace() {
+    // #82: patterns are workspace-scoped. Two folders in the same workspace
     // upserting the same pattern name collapse into a single row — the
     // second upsert updates the first row's instances/folder_id locus.
     let s = pg_store().await;
-    let suffix = format!("pat_project_scope_{}", uuid::Uuid::new_v4());
-    let (proj_id, fid_a) = create_test_project_and_folder(&s, &suffix).await;
+    let suffix = format!("pat_workspace_scope_{}", uuid::Uuid::new_v4());
+    let (proj_id, fid_a) = create_test_workspace_and_folder(&s, &suffix).await;
     let fid_b = create_test_folder(&s, &format!("{}_b", suffix)).await;
-    s.set_folder_project(&fid_b, &proj_id, "root", None).await.unwrap();
+    s.set_folder_workspace(&fid_b, &proj_id, "root", None).await.unwrap();
 
     let id_a = s
         .upsert_pattern(
@@ -129,7 +129,7 @@ async fn pattern_upsert_merges_across_folders_in_same_project() {
         )
         .await
         .unwrap();
-    assert_eq!(id_a, id_b, "same (project_id, name) must merge into one row");
+    assert_eq!(id_a, id_b, "same (workspace_id, name) must merge into one row");
 
     // The row's instances reflect the latest upsert; folder_id follows too.
     let (count, locus): (i32, uuid::Uuid) = sqlx_core::query_as::query_as(
@@ -148,7 +148,7 @@ async fn pattern_upsert_merges_across_folders_in_same_project() {
         .execute(s.pool())
         .await
         .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(proj_id)
         .execute(s.pool())
         .await
@@ -169,7 +169,7 @@ async fn correction_upsert_is_idempotent_by_signature() {
         text: "Use $state for reactive locals".into(),
         suggestion: Some("Reinforce the svelte5 memory".into()),
         count: 3,
-        project_ids: vec![p],
+        workspace_ids: vec![p],
         last_seen: chrono::Utc::now(),
         memory_id: None,
         instances: serde_json::json!([{"session_id": "s1", "ts": 1, "prompt": "use $state"}]),
@@ -191,11 +191,11 @@ async fn correction_upsert_is_idempotent_by_signature() {
     assert_eq!(found["count"], 4);
     assert_eq!(found["text"], "Use $state for reactive locals");
 
-    // the project-scoped read exercises the `$1 = ANY(project_ids)` filter.
-    let scoped = s.list_corrections_for_project(&p).await.unwrap();
+    // the workspace-scoped read exercises the `$1 = ANY(workspace_ids)` filter.
+    let scoped = s.list_corrections_for_workspace(&p).await.unwrap();
     assert!(
         scoped["corrections"].as_array().unwrap().iter().any(|c| c["id"] == id1.to_string()),
-        "per-project read returns a correction tagged with that project"
+        "per-workspace read returns a correction tagged with that workspace"
     );
 
     // prune keeping our signature → the row survives.

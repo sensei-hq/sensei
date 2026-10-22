@@ -26,7 +26,7 @@ async fn playbook_rules_load_and_run_roundtrip() {
     let guide = pg.list_intake_guide().await.unwrap();
     assert!(guide.iter().any(|g| g["kind"] == "frame"));
 
-    let (proj, _) = pg.get_or_create_project_by_name("_test:playbook_roundtrip").await.unwrap();
+    let (proj, _) = pg.get_or_create_workspace_by_name("_test:playbook_roundtrip").await.unwrap();
     let run_id = pg
         .insert_playbook_run(&PlaybookRunRow {
             session_id: None,
@@ -40,7 +40,7 @@ async fn playbook_rules_load_and_run_roundtrip() {
             confirmed: true,
             classified_by: Some("manual"),
             model_fallback: false,
-            project_id: proj,
+            workspace_id: proj,
         })
         .await
         .unwrap();
@@ -111,7 +111,7 @@ async fn session_confirmed_run_gate() {
     let sid = pg.create_session(&fid, "intake test", None).await.unwrap();
     assert!(!pg.session_has_confirmed_run(&sid).await.unwrap());
 
-    let (proj, _) = pg.get_or_create_project_by_name("_test:nudge_gate").await.unwrap();
+    let (proj, _) = pg.get_or_create_workspace_by_name("_test:nudge_gate").await.unwrap();
     pg.insert_playbook_run(&PlaybookRunRow {
         session_id: Some(sid),
         feature: None,
@@ -124,7 +124,7 @@ async fn session_confirmed_run_gate() {
         confirmed: true,
         classified_by: None,
         model_fallback: false,
-        project_id: proj,
+        workspace_id: proj,
     })
     .await
     .unwrap();
@@ -172,7 +172,7 @@ async fn attribution_and_stats_roundtrip() {
     ))
     .await
     .unwrap();
-    let (proj, _) = pg.get_or_create_project_by_name("_test:attrib").await.unwrap();
+    let (proj, _) = pg.get_or_create_workspace_by_name("_test:attrib").await.unwrap();
     pg.insert_playbook_run(&PlaybookRunRow {
         session_id: Some(sid),
         feature: None,
@@ -185,7 +185,7 @@ async fn attribution_and_stats_roundtrip() {
         confirmed: true,
         classified_by: Some("manual"),
         model_fallback: false,
-        project_id: proj,
+        workspace_id: proj,
     })
     .await
     .unwrap();
@@ -291,7 +291,7 @@ async fn find_duplicates_scoped_surfaces_same_folder_pairs() {
         return;
     };
     let u = uuid::Uuid::new_v4();
-    let _pid = pg.create_project(&format!("_dupproj_{u}"), None, None).await.unwrap();
+    let _pid = pg.create_workspace(&format!("_dupproj_{u}"), None, None).await.unwrap();
     pg.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000002','/_dup','_dup','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
     let fid = uuid::Uuid::new_v4();
     pg.execute_raw(&format!(
@@ -327,15 +327,15 @@ async fn patterns_for_symbol_matches_by_file_and_is_honest_empty() {
         return;
     };
     let u = uuid::Uuid::new_v4();
-    let pid = pg.create_project(&format!("_pfsproj_{u}"), None, None).await.unwrap();
+    let pid = pg.create_workspace(&format!("_pfsproj_{u}"), None, None).await.unwrap();
     pg.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000003','/_pfs','_pfs','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
     let fid = uuid::Uuid::new_v4();
     pg.execute_raw(&format!("INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path) VALUES('{fid}','00000000-0000-0000-0000-000000000003','git'::sensei.folder_kind,'_pfs_{u}','_pfs','/_pfs/{u}')")).await.unwrap();
-    // A node 'my_handler' at a repo-RELATIVE path; a project pattern whose instance is its ABSOLUTE form.
+    // A node 'my_handler' at a repo-RELATIVE path; a workspace pattern whose instance is its ABSOLUTE form.
     let file =
         pg.upsert_file_row(&fid, "src/routes/x.rs", 0, "src/routes/x.rs", None).await.unwrap();
     pg.execute_raw(&format!("INSERT INTO sensei.nodes(folder_id, kind, name, file_id, line_start, line_end) VALUES('{fid}','function'::sensei.node_kind,'my_handler','{file}',1,10)")).await.unwrap();
-    pg.execute_raw(&format!("INSERT INTO inference.detected_patterns(project_id, name, family, instance_count, instances) VALUES('{pid}','route-handler','route',1,'[{{\"file\":\"/_pfs/{u}/src/routes/x.rs\",\"line\":1}}]'::jsonb)")).await.unwrap();
+    pg.execute_raw(&format!("INSERT INTO inference.detected_patterns(workspace_id, name, family, instance_count, instances) VALUES('{pid}','route-handler','route',1,'[{{\"file\":\"/_pfs/{u}/src/routes/x.rs\",\"line\":1}}]'::jsonb)")).await.unwrap();
     // The symbol's file IS in the pattern's instances (abs↔rel reconciled) → match.
     let hit = pg.patterns_for_symbol(&pid, &[fid], "my_handler").await.unwrap();
     assert!(
@@ -348,28 +348,28 @@ async fn patterns_for_symbol_matches_by_file_and_is_honest_empty() {
 }
 
 #[tokio::test]
-async fn playbook_combo_trust_is_project_scoped() {
+async fn playbook_combo_trust_is_workspace_scoped() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;
     };
-    let (proj_a, _) = pg.get_or_create_project_by_name("_test:trust_a").await.unwrap();
-    let (proj_b, _) = pg.get_or_create_project_by_name("_test:trust_b").await.unwrap();
+    let (proj_a, _) = pg.get_or_create_workspace_by_name("_test:trust_a").await.unwrap();
+    let (proj_b, _) = pg.get_or_create_workspace_by_name("_test:trust_b").await.unwrap();
     pg.execute_raw("delete from sensei.playbook_run where feature = 'trust-test'").await.ok();
-    // project A: two confirmed+attributed runs for (stable,bug,low, debug_flow): one ftr, one not → n=2, ftr=0.5
+    // workspace A: two confirmed+attributed runs for (stable,bug,low, debug_flow): one ftr, one not → n=2, ftr=0.5
     for ftr in ["true", "false"] {
         pg.execute_raw(&format!(
-                "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, project_id) \
+                "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, workspace_id) \
                  values ('trust-test','stable','bug','low','debug_flow','t', true, {ftr}, '{proj_a}')")).await.unwrap();
     }
-    // project B: one confirmed run, ftr true — must NOT bleed into A's trust
+    // workspace B: one confirmed run, ftr true — must NOT bleed into A's trust
     pg.execute_raw(&format!(
-            "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, project_id) \
+            "insert into sensei.playbook_run (feature, lifecycle, intent, risk, playbook, rationale, confirmed, outcome_ftr, workspace_id) \
              values ('trust-test','stable','bug','low','debug_flow','t', true, true, '{proj_b}')")).await.unwrap();
 
-    // scoped to A: only A's 2 runs → n=2, ftr=0.5 (B's run excluded — trust is per-project, never global)
+    // scoped to A: only A's 2 runs → n=2, ftr=0.5 (B's run excluded — trust is per-workspace, never global)
     let (na, fa) =
         pg.playbook_combo_trust("stable", "bug", "low", "debug_flow", &proj_a).await.unwrap();
-    assert_eq!(na, 2, "trust must count only the in-scope project's runs");
+    assert_eq!(na, 2, "trust must count only the in-scope workspace's runs");
     assert!((fa - 0.5).abs() < 1e-9);
     // scoped to B: only B's run → n=1, ftr=1.0
     let (nb, fb) =

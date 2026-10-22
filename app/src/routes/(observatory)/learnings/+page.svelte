@@ -13,7 +13,7 @@
     let tab = $state<Tab>('triage');
 
     onMount(async () => {
-        await memoryState.load(appState.activeProjectId ?? undefined);
+        await memoryState.load(appState.activeWorkspaceId ?? undefined);
         if (memoryState.triageCount === 0) tab = 'active';
     });
 </script>
@@ -60,7 +60,7 @@
                 <ScreenState
                     status="error"
                     error={memoryState.listError}
-                    onretry={() => void memoryState.load(appState.activeProjectId ?? undefined)}
+                    onretry={() => void memoryState.load(appState.activeWorkspaceId ?? undefined)}
                 />
             {/if}
             {#if memoryState.listError && memoryState.triageCount + memoryState.activeCount + memoryState.archiveCount === 0}

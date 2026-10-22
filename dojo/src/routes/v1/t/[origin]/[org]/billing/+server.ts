@@ -1,6 +1,6 @@
 // GET/POST /v1/t/{origin}/{org}/billing — the tenant's per-seat billing.
 //   GET  → { account, usage } — the billing account snapshot plus LIVE seat
-//          usage (unique users on private projects, with the per-user breakdown
+//          usage (unique users on private workspaces, with the per-user breakdown
 //          that makes the count defensible). Read-only.
 //   POST → recompute the live count and persist it into billing_accounts
 //          (seats_used + seats_computed_at), returning { seats_used }.
@@ -8,7 +8,7 @@
 // are D-BILLING (schema + route only); no payment provider is wired.
 //
 // GET reads the seats and the account as the signed-in admin (their policies
-// decide); the seats' project names are a system lookup. POST is the system's:
+// decide); the seats' workspace names are a system lookup. POST is the system's:
 // seats_used is a money-facing cache derived from the seats, never a number a
 // session writes (#236, access matrix "What stays service_role").
 import type { RequestHandler } from './$types';

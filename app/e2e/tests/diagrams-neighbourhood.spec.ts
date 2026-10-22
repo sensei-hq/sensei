@@ -1,5 +1,5 @@
 /**
- * Project · Diagrams · Neighbourhood — functional e2e.
+ * Workspace · Diagrams · Neighbourhood — functional e2e.
  *
  * The state spec covers the view machine, the coverage wording, re-centring and
  * the stale-response guard against an injected API seam. This covers what it
@@ -9,7 +9,7 @@
  * The throwaway `sensei_e2e` DB is dropped before a run and nothing indexes into
  * it, so there is no symbol to centre on here. What CAN be asserted is the part
  * most likely to lie: the screen opens on a question rather than a default
- * symbol, a search with no answer says so, and a focus the project does not
+ * symbol, a search with no answer says so, and a focus the workspace does not
  * have is an error naming why — never a blank canvas.
  */
 
@@ -17,10 +17,10 @@ import { test, expect } from '../fixtures';
 import {
   navigateTo, navigateToScreen, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
-  seedProject,
+  seedWorkspace,
 } from '../helpers';
 
-const seedProjectId = (): Promise<string> => seedProject('e2e-neighbourhood', 'fixture for the Neighbourhood diagram spec');
+const seedWorkspaceId = (): Promise<string> => seedWorkspace('e2e-neighbourhood', 'fixture for the Neighbourhood diagram spec');
 
 
 function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
@@ -29,7 +29,7 @@ function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
   expect(errs.console, `${where}: console.error output`).toEqual([]);
 }
 
-test.describe('Project · Diagrams · Neighbourhood', () => {
+test.describe('Workspace · Diagrams · Neighbourhood', () => {
   test.beforeEach(async ({ tauriPage }) => {
     test.setTimeout(240_000);
     await seedSetupComplete(tauriPage);
@@ -38,10 +38,10 @@ test.describe('Project · Diagrams · Neighbourhood', () => {
   });
 
   test('opens on a question, not a default symbol', async ({ tauriPage }) => {
-    const id = await seedProjectId();
+    const id = await seedWorkspaceId();
     await navigateToScreen(
       tauriPage,
-      `/project/${id}/diagrams/neighbourhood`,
+      `/workspace/${id}/diagrams/neighbourhood`,
       '[data-testid="neighbourhood-screen"]',
     );
 
@@ -57,10 +57,10 @@ test.describe('Project · Diagrams · Neighbourhood', () => {
   });
 
   test('a search with no answer says so, and is not a failure', async ({ tauriPage }) => {
-    const id = await seedProjectId();
+    const id = await seedWorkspaceId();
     await navigateToScreen(
       tauriPage,
-      `/project/${id}/diagrams/neighbourhood`,
+      `/workspace/${id}/diagrams/neighbourhood`,
       '[data-testid="neighbourhood-screen"]',
     );
 
@@ -78,18 +78,18 @@ test.describe('Project · Diagrams · Neighbourhood', () => {
     expectNoRuntimeErrors(await readErrors(tauriPage), 'neighbourhood search');
   });
 
-  test('a focus this project does not have is an error that says why', async ({ tauriPage }) => {
-    const id = await seedProjectId();
+  test('a focus this workspace does not have is an error that says why', async ({ tauriPage }) => {
+    const id = await seedWorkspaceId();
     const stranger = '00000000-0000-4000-8000-000000000000';
     await navigateToScreen(
       tauriPage,
-      `/project/${id}/diagrams/neighbourhood?focus=${stranger}`,
+      `/workspace/${id}/diagrams/neighbourhood?focus=${stranger}`,
       '[data-testid="neighbourhood-screen"]',
     );
     await tauriPage.waitForSelector('[data-testid="neighbourhood-error"]', 60_000);
 
     const text = await tauriPage.textContent('[data-testid="neighbourhood-error"]');
-    expect(text).toContain('Not a symbol of this project');
+    expect(text).toContain('Not a symbol of this workspace');
     expect(await tauriPage.count('[data-testid="neighbourhood-diagram"]')).toBe(0);
   });
 });

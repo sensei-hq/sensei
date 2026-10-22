@@ -14,8 +14,8 @@
 //!   code graph rebuilds under the new binary.
 //! - **Re-analyze** — clear the analyzer scheduler's full-refresh watermark
 //!   (`analyzer.last_full_refresh`) so its next tick re-analyzes every active
-//!   project via the existing daily-refresh path, rather than duplicating the
-//!   per-project `AnalyzeProject` enqueue loop.
+//!   workspace via the existing daily-refresh path, rather than duplicating the
+//!   per-workspace `AnalyzeWorkspace` enqueue loop.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,7 +29,7 @@ use crate::tasks::{Task, TaskKind};
 pub const LAST_VERSION_KEY: &str = "daemon.last_version";
 
 /// Analyzer scheduler's full-refresh watermark. Clearing it makes the next
-/// scheduler tick treat every active project as due for a full re-analysis
+/// scheduler tick treat every active workspace as due for a full re-analysis
 /// (its documented daily-refresh path). Must match the key the scheduler owns.
 const ANALYZER_LAST_REFRESH_KEY: &str = "analyzer.last_full_refresh";
 
@@ -125,7 +125,7 @@ pub async fn maybe_rescan_on_version_change(
     }
 
     // Re-analyze: reset the scheduler's full-refresh watermark so its next tick
-    // re-analyzes every active project. delete is idempotent (absent ⇒ no-op).
+    // re-analyzes every active workspace. delete is idempotent (absent ⇒ no-op).
     // Safe to clear eagerly — re-clearing on a re-triggered boot is a no-op.
     if let Err(e) = pg.delete_config(ANALYZER_LAST_REFRESH_KEY).await {
         tracing::warn!(error = %e, "version rescan: clearing analyzer full-refresh watermark failed; re-analysis waits for the daily cadence");

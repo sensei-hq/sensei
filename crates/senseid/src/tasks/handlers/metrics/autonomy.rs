@@ -2,8 +2,8 @@
 //!
 //! Follows the `session_outcomes` / `churn` / `knowledge` template (read the rolling
 //! window, resolve `key → metric_id` via the active registry, write daily rows to
-//! `sensei.project_metrics` via [`PgStore::upsert_project_metric_repo`]) for ONE
-//! project. Every row is `grain = daily`, `scope = user`, `identity = NULL`,
+//! `sensei.workspace_metrics` via [`PgStore::upsert_workspace_metric_repo`]) for ONE
+//! workspace. Every row is `grain = daily`, `scope = user`, `identity = NULL`,
 //! `commit_sha = NULL`, `folder_id`/`session_id` NULL.
 //!
 //! ## Repo grain (I-A/I-B/I-C/I-D)
@@ -11,7 +11,7 @@
 //! commit_sha, computed_on, grain`) every production write carries a REAL
 //! `repository_id`; `folder_id`/`session_id` are no longer part of the identity (a
 //! `folder_id`-set or `grain = session` row would collide), and a null-repository row
-//! would collide across projects. Both autonomy metrics therefore resolve a
+//! would collide across workspaces. Both autonomy metrics therefore resolve a
 //! repository and write `scope = user` ONLY (no whole-tree `repo` twin — autonomy is
 //! not a churn/quality dual-derivation), `identity = NULL` (a single local user; NULL
 //! keeps the row unique per `(metric, repo, user, day)`), and `commit_sha = NULL`
@@ -24,7 +24,7 @@
 //!   SESSION's repository (see below).
 //! - `run_completion` (ratio, higher_better): `numerator` = # runs that reached
 //!   `done`, `denominator` = # runs started that day; `value` = num/den. Attributed to
-//!   the project's PRIMARY repository (see below).
+//!   the workspace's PRIMARY repository (see below).
 //!
 //! Every ratio row carries `props.low_n = true` when its `denominator < 10` (a
 //! display gate for statistically-thin days) — the row is still written.
@@ -46,18 +46,18 @@
 //! SKIPPED — its registry key simply yields no rows until the signal exists. This
 //! is honest-empty, not fabrication.
 //!
-//! ## Repository resolution (never leak another project's data, never fabricate one)
+//! ## Repository resolution (never leak another workspace's data, never fabricate one)
 //! - `interruption_rate`: one row per `(day, repository)` returned by
 //!   [`PgStore::autonomy_interruption_counts_by_day`], keyed to the SESSION's
 //!   repository. That read owns the attribution — and the exclusions, since an event
 //!   whose repository cannot be resolved is dropped there rather than attributed to a
 //!   fabricated one (I-E).
 //! - `run_completion`: [`PgStore::autonomy_run_completion_by_day`] returns per-day
-//!   counts that are project-wide, because `activity.runs` carries only a direct
-//!   `project_id` FK and NO repository. A project-wide value has no natural
+//!   counts that are workspace-wide, because `activity.runs` carries only a direct
+//!   `workspace_id` FK and NO repository. A workspace-wide value has no natural
 //!   per-repository grain, so it is attributed to
-//!   [`PgStore::primary_repository_for_project`] — the project's canonical
-//!   (shallowest-checkout) repository. A project with NO repository-linked folder
+//!   [`PgStore::primary_repository_for_workspace`] — the workspace's canonical
+//!   (shallowest-checkout) repository. A workspace with NO repository-linked folder
 //!   cannot be attributed to a repository, so `run_completion` writes NO row
 //!   (honest-empty — never fabricate a repository), even when runs exist.
 //!
@@ -71,10 +71,10 @@
 //! fabricated zero); a real denominator with 0 numerator writes a real `0.0`. A
 //! repository that cannot be resolved skips the row (never a made-up repository).
 //!
-//! [`PgStore::upsert_project_metric_repo`]: crate::db::pg_store::PgStore::upsert_project_metric_repo
+//! [`PgStore::upsert_workspace_metric_repo`]: crate::db::pg_store::PgStore::upsert_workspace_metric_repo
 //! [`PgStore::autonomy_interruption_counts_by_day`]: crate::db::pg_store::PgStore::autonomy_interruption_counts_by_day
 //! [`PgStore::autonomy_run_completion_by_day`]: crate::db::pg_store::PgStore::autonomy_run_completion_by_day
-//! [`PgStore::primary_repository_for_project`]: crate::db::pg_store::PgStore::primary_repository_for_project
+//! [`PgStore::primary_repository_for_workspace`]: crate::db::pg_store::PgStore::primary_repository_for_workspace
 
 use crate::db::pg_store::MetricRow;
 
@@ -87,7 +87,7 @@ const GRAIN_DAILY: &str = "daily";
 /// `sensei.metric_source` text value — autonomy is measured, not estimated.
 const SOURCE_MEASURED: &str = "measured";
 /// `sensei.metric_scope` text value — autonomy writes the local-user value only (the
-/// default-project read); it has no whole-tree `repo` twin (that dual derivation is
+/// default-workspace read); it has no whole-tree `repo` twin (that dual derivation is
 /// churn/quality only).
 const SCOPE_USER: &str = "user";
 
@@ -111,9 +111,9 @@ fn ratio_props(numerator: i64, denominator: i64) -> serde_json::Value {
     })
 }
 
-/// Compute the `autonomy` group for one project.
+/// Compute the `autonomy` group for one workspace.
 ///
-/// `project_raw` is the project uuid carried in `task.folder_path`. `as_of` selects
+/// `workspace_raw` is the workspace uuid carried in `task.folder_path`. `as_of` selects
 /// the day-set (same contract as `session_outcomes`):
 /// - `None` — the incremental run: every day in the rolling
 ///   [`metrics.window_days`] window (default 14), `computed_on` = the source day.
@@ -126,21 +126,21 @@ fn ratio_props(numerator: i64, denominator: i64) -> serde_json::Value {
 /// `created_at`, so a synthesized/back-dated row files on its historical day.
 ///
 /// Repo grain (I-A/I-C/I-D): every row carries a real `repository_id`
-/// (`interruption_rate` the session's repository, `run_completion` the project's
+/// (`interruption_rate` the session's repository, `run_completion` the workspace's
 /// primary repository), `scope = user`, `identity = NULL`, `commit_sha = NULL`, and
 /// no `folder_id`/`session_id`.
 ///
-/// Returns the number of `project_metrics` rows written (`0` = honest-empty: no
+/// Returns the number of `workspace_metrics` rows written (`0` = honest-empty: no
 /// events/runs on the selected day-set, no resolvable repository, or none of the
 /// group's computed metrics active). Idempotent — re-running backfills in place via
 /// the upsert identity. `false_crash_rate` is never written (see the module doc).
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<chrono::NaiveDate>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("autonomy: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("autonomy: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
     // Reuse the scheduler's window reader (config key + parser + default) — DRY.
@@ -161,7 +161,7 @@ pub(super) async fn compute(
     // ── interruption_rate: # Stop / # UserPromptSubmit, per (day, session-repository) ──
     if let Some(mid) = interruption_id {
         for (day, repository_id, stop_count, prompt_count) in
-            pg.autonomy_interruption_counts_by_day(&project_id, window_days, as_of).await?
+            pg.autonomy_interruption_counts_by_day(&workspace_id, window_days, as_of).await?
         {
             if prompt_count == 0 {
                 // No UserPromptSubmit that day → no denominator → NO row (a 0/0, e.g.
@@ -173,7 +173,7 @@ pub(super) async fn compute(
             // repository_id = the session's resolved repo (I-A); scope=user (I-B),
             // identity=NULL (single local user, I-C), commit_sha=NULL (day cadence,
             // I-D), folder_id/session_id=NULL (not in the identity).
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_USER,
@@ -192,13 +192,13 @@ pub(super) async fn compute(
 
     // ── run_completion: # runs done / # runs started, per day ──
     if let Some(mid) = run_completion_id {
-        // Runs carry only project_id (no repository) → attribute the project-wide
-        // per-day counts to the project's PRIMARY (canonical/root) repository. A
-        // project with no repository-linked folder cannot be attributed → NO row
+        // Runs carry only workspace_id (no repository) → attribute the workspace-wide
+        // per-day counts to the workspace's PRIMARY (canonical/root) repository. A
+        // workspace with no repository-linked folder cannot be attributed → NO row
         // (honest-empty; never fabricate a repository), even when runs exist.
-        if let Some(repository_id) = pg.primary_repository_for_project(&project_id).await? {
+        if let Some(repository_id) = pg.primary_repository_for_workspace(&workspace_id).await? {
             for (day, done_count, started_count) in
-                pg.autonomy_run_completion_by_day(&project_id, window_days, as_of).await?
+                pg.autonomy_run_completion_by_day(&workspace_id, window_days, as_of).await?
             {
                 if started_count == 0 {
                     // Defensive: GROUP BY only returns days with ≥1 run, so this never
@@ -207,7 +207,7 @@ pub(super) async fn compute(
                 }
                 let value = done_count as f64 / started_count as f64;
                 let props = ratio_props(done_count, started_count);
-                pg.upsert_project_metric_repo(&MetricRow {
+                pg.upsert_workspace_metric_repo(&MetricRow {
                     metric_id: &mid,
                     repository_id: &repository_id,
                     scope: SCOPE_USER,
@@ -233,9 +233,9 @@ mod tests {
     use super::*;
     use crate::db::pg_store::PgStore;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
+        cleanup_metrics_fixture, daily_workspace_metric_rows as daily_rows, make_ctx,
         purge_assistant_events, purge_runs, repository_for_folder, seed_assistant_event,
-        seed_assistant_event_ex, seed_metrics_client_session, seed_metrics_project_folder,
+        seed_assistant_event_ex, seed_metrics_client_session, seed_metrics_workspace_folder,
         seed_run,
     };
     use sqlx_core::query_as::query_as;
@@ -266,7 +266,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let csid = format!("_test:autonomy:{uniq}");
         // Idempotent pre-clean: neither table cascades on the fixture delete.
         purge_assistant_events(pg, &[&csid]).await;
@@ -329,12 +329,12 @@ mod tests {
 
         // Repo grain (I-A/I-C/I-D): BOTH rows are keyed to the fixture's repository
         // (interruption_rate via the session's repo_folder_id, run_completion via the
-        // project's primary repository — the same repo for this single-folder project),
+        // workspace's primary repository — the same repo for this single-folder workspace),
         // scope=user, identity/commit_sha NULL, grain daily.
         let repo = repository_for_folder(pg, &fid).await;
         let (repo_grain_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics \
-              WHERE project_id = $1 AND repository_id = $2 AND scope = 'user'::sensei.metric_scope \
+            "SELECT count(*) FROM sensei.workspace_metrics \
+              WHERE workspace_id = $1 AND repository_id = $2 AND scope = 'user'::sensei.metric_scope \
                 AND identity IS NULL AND commit_sha IS NULL \
                 AND grain = 'daily'::sensei.metric_grain",
         )
@@ -358,7 +358,7 @@ mod tests {
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 2, "re-run recomputes the same rows");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -372,48 +372,50 @@ mod tests {
 
     #[tokio::test]
     async fn autonomy_no_data_writes_zero_rows() {
-        // Never-fabricate: a project with no events / runs writes NO rows.
+        // Never-fabricate: a workspace with no events / runs writes NO rows.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
         let pid =
-            pg.create_project(&format!("_test:autonomy-empty:{uniq}"), None, None).await.unwrap();
+            pg.create_workspace(&format!("_test:autonomy-empty:{uniq}"), None, None).await.unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no events/runs in the window → zero rows written");
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
-        assert_eq!(total, 0, "no project_metrics rows for an empty project (never fabricated)");
+        assert_eq!(total, 0, "no workspace_metrics rows for an empty workspace (never fabricated)");
 
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
     }
 
     #[tokio::test]
     async fn autonomy_run_completion_no_repository_writes_no_row() {
-        // Repo-grain honest-empty (I-A/I-E): a project with REAL runs but NO
-        // repository-linked folder cannot attribute the project-wide run_completion
+        // Repo-grain honest-empty (I-A/I-E): a workspace with REAL runs but NO
+        // repository-linked folder cannot attribute the workspace-wide run_completion
         // counts to any repository, so the row is SKIPPED — never a fabricated
         // repository. (interruption_rate needs a session-repository too and likewise
         // writes nothing here.)
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let pid =
-            pg.create_project(&format!("_test:autonomy-norepo:{uniq}"), None, None).await.unwrap();
+        let pid = pg
+            .create_workspace(&format!("_test:autonomy-norepo:{uniq}"), None, None)
+            .await
+            .unwrap();
         purge_runs(pg, &[&pid]).await;
 
-        // Runs exist, but the project has no repository-linked folder.
+        // Runs exist, but the workspace has no repository-linked folder.
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         seed_run(pg, &pid, "done", ts).await;
         seed_run(pg, &pid, "crashed", ts).await;
         assert!(
-            pg.primary_repository_for_project(&pid).await.unwrap().is_none(),
-            "fixture precondition: project has no repository to attribute to",
+            pg.primary_repository_for_workspace(&pid).await.unwrap().is_none(),
+            "fixture precondition: workspace has no repository to attribute to",
         );
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
@@ -423,14 +425,14 @@ mod tests {
         );
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
         assert_eq!(
             total, 0,
-            "no rows when the project has no repository (never a fabricated repository)"
+            "no rows when the workspace has no repository (never a fabricated repository)"
         );
 
         purge_runs(pg, &[&pid]).await;
@@ -445,7 +447,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let csid = format!("_test:autonomy-zero:{uniq}");
         purge_assistant_events(pg, &[&csid]).await;
 
@@ -488,7 +490,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let csid = format!("_test:autonomy-stoponly:{uniq}");
         purge_assistant_events(pg, &[&csid]).await;
 
@@ -506,7 +508,7 @@ mod tests {
         );
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -524,14 +526,14 @@ mod tests {
         // kills a `< 10` → `<= 10` mutation in `ratio_props` (which would flip the
         // den-10 row to low_n) that every other test's off-boundary denominator (25,
         // 9, 5, 3, 2) misses. Driven through interruption_rate (denominator = #
-        // UserPromptSubmit), one exact-denominator project each.
+        // UserPromptSubmit), one exact-denominator workspace each.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
 
         // ── denominator == 10 → low_n = false (at the threshold, not below it) ──
         let uniq_10 = uuid::Uuid::new_v4();
-        let (pid_10, fid_10) = seed_metrics_project_folder(pg, &uniq_10).await;
+        let (pid_10, fid_10) = seed_metrics_workspace_folder(pg, &uniq_10).await;
         let csid_10 = format!("_test:autonomy-lown10:{uniq_10}");
         purge_assistant_events(pg, &[&csid_10]).await;
         seed_metrics_client_session(pg, &fid_10, &pid_10, &csid_10, ts).await;
@@ -558,7 +560,7 @@ mod tests {
 
         // ── denominator == 9 → low_n = true (one below the threshold) ──
         let uniq_9 = uuid::Uuid::new_v4();
-        let (pid_9, fid_9) = seed_metrics_project_folder(pg, &uniq_9).await;
+        let (pid_9, fid_9) = seed_metrics_workspace_folder(pg, &uniq_9).await;
         let csid_9 = format!("_test:autonomy-lown9:{uniq_9}");
         purge_assistant_events(pg, &[&csid_9]).await;
         seed_metrics_client_session(pg, &fid_9, &pid_9, &csid_9, ts).await;
@@ -589,23 +591,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn autonomy_excludes_other_projects_events_and_runs() {
-        // Cross-project isolation: a second real project's events + runs must NOT
-        // leak into the project under test. Mutation-proof denominators: if B leaked,
+    async fn autonomy_excludes_other_workspaces_events_and_runs() {
+        // Cross-workspace isolation: a second real workspace's events + runs must NOT
+        // leak into the workspace under test. Mutation-proof denominators: if B leaked,
         // interruption denominator would be 5+10=15 and run_completion 2+5=7.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq_a = uuid::Uuid::new_v4();
         let uniq_b = uuid::Uuid::new_v4();
-        let (pid_a, fid_a) = seed_metrics_project_folder(pg, &uniq_a).await;
-        let (pid_b, fid_b) = seed_metrics_project_folder(pg, &uniq_b).await; // a real SECOND project
+        let (pid_a, fid_a) = seed_metrics_workspace_folder(pg, &uniq_a).await;
+        let (pid_b, fid_b) = seed_metrics_workspace_folder(pg, &uniq_b).await; // a real SECOND workspace
         let csid_a = format!("_test:autonomy-a:{uniq_a}");
         let csid_b = format!("_test:autonomy-b:{uniq_b}");
         purge_assistant_events(pg, &[&csid_a, &csid_b]).await;
         purge_runs(pg, &[&pid_a, &pid_b]).await;
 
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
-        // Project A: 4 Stop / 5 UserPromptSubmit; 2 runs, 1 done.
+        // Workspace A: 4 Stop / 5 UserPromptSubmit; 2 runs, 1 done.
         seed_metrics_client_session(pg, &fid_a, &pid_a, &csid_a, ts).await;
         anchor_session_repo(pg, &csid_a, &fid_a).await;
         for _ in 0..4 {
@@ -616,7 +618,7 @@ mod tests {
         }
         seed_run(pg, &pid_a, "done", ts).await;
         seed_run(pg, &pid_a, "crashed", ts).await;
-        // Project B: 10 Stop / 10 UserPromptSubmit; 5 runs, all done — must NOT touch A.
+        // Workspace B: 10 Stop / 10 UserPromptSubmit; 5 runs, all done — must NOT touch A.
         seed_metrics_client_session(pg, &fid_b, &pid_b, &csid_b, ts).await;
         anchor_session_repo(pg, &csid_b, &fid_b).await;
         for _ in 0..10 {
@@ -655,10 +657,10 @@ mod tests {
         assert!((rc.1 - 0.5).abs() < 1e-9, "A run_completion = 1/2 = 0.5");
 
         // A's rows are attributed to A's OWN repository (not B's) — repo-grain
-        // attribution stays project-local.
+        // attribution stays workspace-local.
         let repo_a = repository_for_folder(pg, &fid_a).await;
         let (a_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1 AND repository_id = $2",
+            "SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1 AND repository_id = $2",
         )
         .bind(pid_a)
         .bind(repo_a)
@@ -683,7 +685,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let csid = format!("_test:autonomy-asof:{uniq}");
         purge_assistant_events(pg, &[&csid]).await;
         purge_runs(pg, &[&pid]).await;
@@ -719,8 +721,8 @@ mod tests {
         // Both daily rows are stamped `computed_on = day` (the true occurrence day,
         // 60 days ago) — proof the past-dated rows reach the daily roll-up.
         let (days,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.computed_on = $2 \
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND pm.grain = 'daily' AND pm.computed_on = $2 \
                 AND m.key IN ('interruption_rate', 'run_completion')",
         )
         .bind(pid)
@@ -747,7 +749,7 @@ mod tests {
         let again = compute(&ctx, &pid.to_string(), Some(day)).await.unwrap();
         assert_eq!(again, 2, "re-running the same day backfills in place");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -776,7 +778,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let csid = format!("_test:autonomy-tsanchor:{uniq}");
         purge_assistant_events(pg, &[&csid]).await;
 
@@ -803,8 +805,8 @@ mod tests {
 
         // The daily row is stamped `computed_on = the client-ts day`, NOT today.
         let (hist_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'interruption_rate' AND pm.grain = 'daily' \
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'interruption_rate' AND pm.grain = 'daily' \
                 AND pm.computed_on = $2",
         )
         .bind(pid)
@@ -819,8 +821,8 @@ mod tests {
 
         // Nothing filed on today (the created_at day) — the anchor is the ts, period.
         let (today_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'interruption_rate' AND pm.grain = 'daily' \
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'interruption_rate' AND pm.grain = 'daily' \
                 AND pm.computed_on = current_date",
         )
         .bind(pid)

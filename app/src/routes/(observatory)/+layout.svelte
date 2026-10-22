@@ -7,7 +7,7 @@
     import { CommandPalette } from '@rokkit/ui';
     import { appState } from '$lib/appstate.svelte.js';
     import { senseiApi, failureReason } from '$lib/api.js';
-    import { openProjectWindow } from '$lib/stores/windows.svelte.js';
+    import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
     import ObservatorySidebar from './ObservatorySidebar.svelte';
     import { glyphMode } from '$lib/glyphs';
     import { buildNavItems } from './observatory-nav.js';
@@ -40,33 +40,33 @@
             ...navCommands,
         ]);
 
-        // Per-project "jump to project" commands load asynchronously.
-        let unregisterProjects: (() => void) | undefined;
+        // Per-workspace "jump to workspace" commands load asynchronously.
+        let unregisterWorkspaces: (() => void) | undefined;
         void (async () => {
             await appState.load();
-            // Cache the project count once for the rail badge (projects rarely change).
-            await appState.loadProjectCount();
-            // A failed read registers no project commands and says why in the
+            // Cache the workspace count once for the rail badge (workspaces rarely change).
+            await appState.loadWorkspaceCount();
+            // A failed read registers no workspace commands and says why in the
             // log — the palette offers actions, it asserts nothing (#288).
-            const read = await senseiApi(appState.port).tryListProjects();
+            const read = await senseiApi(appState.port).tryListWorkspaces();
             if (!read.ok) {
-                console.error('[observatory] project command load failed', failureReason(read.error));
+                console.error('[observatory] workspace command load failed', failureReason(read.error));
                 return;
             }
-            unregisterProjects = commands.registerMany(
+            unregisterWorkspaces = commands.registerMany(
                 read.data.map((p) => ({
-                    id: `project.open:${p.id}`,
-                    label: `Open project · ${p.name}`,
-                    group: 'Projects',
+                    id: `workspace.open:${p.id}`,
+                    label: `Open workspace · ${p.name}`,
+                    group: 'Workspaces',
                     keywords: p.client ? [p.client] : undefined,
-                    run: () => { void openProjectWindow(p.id, p.name); },
+                    run: () => { void openWorkspaceWindow(p.id, p.name); },
                 })),
             );
         })();
 
         return () => {
             unregister();
-            unregisterProjects?.();
+            unregisterWorkspaces?.();
         };
     });
 </script>
@@ -78,7 +78,7 @@
         <ObservatorySidebar
             port={appState.port}
             pathname={page.url.pathname}
-            projectCount={appState.projectCount ?? undefined}
+            workspaceCount={appState.workspaceCount ?? undefined}
             glyphs={glyphMode(appState.config)}
         />
 

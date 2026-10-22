@@ -1,13 +1,13 @@
 //! `/api/instruments/mcp-servers*` — #84 T2 Slice A. Discovered MCP servers
 //! from ACP config files.
 //!
-//! - `GET  /api/instruments/mcp-servers?project_id=…?` — list; user-scope +
-//!   the given project's project-scope rows (or user-scope only when the
+//! - `GET  /api/instruments/mcp-servers?workspace_id=…?` — list; user-scope +
+//!   the given workspace's project-scope rows (or user-scope only when the
 //!   query is absent). Ordered by acp_family, then mcp_key.
 //! - `PUT  /api/instruments/mcp-servers/{id}/enabled` — toggle. Body:
 //!   `{ "enabled": <bool> }`.
 //! - `POST /api/instruments/mcp-servers/refresh` — trigger a discovery pass
-//!   against `$HOME` + every registered project's root. Returns the counts
+//!   against `$HOME` + every registered workspace's root. Returns the counts
 //!   `{ discovered, pruned }`.
 
 use axum::{
@@ -23,8 +23,8 @@ use crate::tasks::mcp_discovery;
 
 #[derive(Deserialize)]
 pub(crate) struct ListQuery {
-    /// Optional project UUID (as string). Absent → user-scope only.
-    pub project_id: Option<String>,
+    /// Optional workspace UUID (as string). Absent → user-scope only.
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -36,9 +36,10 @@ pub(crate) async fn list(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let pid = match q.project_id.as_deref() {
+    let pid = match q.workspace_id.as_deref() {
         Some(s) if !s.is_empty() => Some(
-            uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?,
+            uuid::Uuid::parse_str(s)
+                .map_err(|_| err(StatusCode::BAD_REQUEST, "bad workspace_id"))?,
         ),
         _ => None,
     };
@@ -66,7 +67,7 @@ pub(crate) async fn set_enabled(
 }
 
 /// Trigger a discovery pass. Reads `$HOME` (via `crate::paths::home()`) and
-/// every registered project's absolute path; scans each for known ACP
+/// every registered workspace's absolute path; scans each for known ACP
 /// configs; upserts + prunes stale.
 /// GET /api/instruments/mcp-servers/{id}/tools — Slice B. Return the cached
 /// tool manifest. If `?refresh=true` OR the cache is older than
@@ -177,33 +178,33 @@ pub(crate) async fn refresh(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let home = crate::paths::home();
 
-    // Registered projects — need (id, abs_path). Some projects are
-    // multi-folder; use the first git-kind folder as the "project root"
+    // Registered workspaces — need (id, abs_path). Some workspaces are
+    // multi-folder; use the first git-kind folder as the "workspace root"
     // for the ACP config scan, since that's where `.mcp.json`,
     // `.cursor/mcp.json`, and `.zed/settings.json` live.
-    let projects =
-        state.pg.list_projects().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    let mut project_roots: Vec<(uuid::Uuid, std::path::PathBuf)> = Vec::new();
-    for p in projects {
+    let workspaces =
+        state.pg.list_workspaces().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let mut workspace_roots: Vec<(uuid::Uuid, std::path::PathBuf)> = Vec::new();
+    for p in workspaces {
         let Some(pid) = p["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) else {
             continue;
         };
-        // Fail closed: a per-project repo read error must not silently drop that
-        // project from the ACP config scan (masking a failure as "no repos").
+        // Fail closed: a per-workspace repo read error must not silently drop that
+        // workspace from the ACP config scan (masking a failure as "no repos").
         let repos = state
             .pg
-            .get_project_repos(&pid)
+            .get_workspace_repos(&pid)
             .await
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-        // First repo's path is the project root.
+        // First repo's path is the workspace root.
         if let Some(first) = repos.first()
             && let Some(path) = first["path"].as_str()
         {
-            project_roots.push((pid, std::path::PathBuf::from(path)));
+            workspace_roots.push((pid, std::path::PathBuf::from(path)));
         }
     }
 
-    let (discovered, pruned) = mcp_discovery::run_once(&state.pg, &home, &project_roots)
+    let (discovered, pruned) = mcp_discovery::run_once(&state.pg, &home, &workspace_roots)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 

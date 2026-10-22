@@ -6,13 +6,13 @@ use axum::{
 };
 use serde::Deserialize;
 
-/// Resolve a repo/project name to its folder UUID, failing closed on a store error.
+/// Resolve a repo/workspace name to its folder UUID, failing closed on a store error.
 ///
 /// `Ok(Some(id))` = the name resolves to an indexed folder, `Ok(None)` = the name
 /// genuinely isn't indexed, `Err(500)` = the store read itself failed. A lookup
 /// failure is never masked as a miss (see the #109 fail-closed audit and the
 /// CLAUDE.md "never fabricate on a failure path" rule). This is name-exact via
-/// `get_repo_by_name`; for project-scope (all folders) resolution use
+/// `get_repo_by_name`; for workspace-scope (all folders) resolution use
 /// `query::resolve_folder_id`/`resolve_scope_ids`.
 async fn repo_folder_id(state: &AppState, name: &str) -> Result<Option<uuid::Uuid>, StatusCode> {
     let folder = state.pg.get_repo_by_name(name).await.map_err(|e| {
@@ -327,7 +327,7 @@ pub(crate) async fn community_counts(
             "assignments": num,
         })));
     }
-    Ok(Json(serde_json::json!({"ok": false, "error": "project not found"})))
+    Ok(Json(serde_json::json!({"ok": false, "error": "workspace not found"})))
 }
 
 pub(crate) async fn community_info(
@@ -335,10 +335,10 @@ pub(crate) async fn community_info(
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // 7.3: drive the overview from LIVE per-node membership (nodes.community_id),
-    // scoped to ALL the project's folders — not a single folder's stale
+    // scoped to ALL the workspace's folders — not a single folder's stale
     // communities.node_count. Communities are usually owned by the repo root, so
     // a single-folder lookup (repo_folder_id) missed them (#G5a); scope_folder_ids
-    // captures every folder in the project.
+    // captures every folder in the workspace.
     let repo_id = q.repo_id.unwrap_or_default();
     let ids = state.pg.scope_folder_ids(&repo_id).await.map_err(|e| {
         tracing::warn!(error = %e, repo_id = %repo_id, "community_info: scope_folder_ids failed");
@@ -355,7 +355,7 @@ pub(crate) async fn community_info(
 /// GET /api/graph/{repoId}/tree (7.2) — the hierarchy: folder tree (by
 /// `folders.parent_id`, annotated with `kind`/`role`) → each folder's root-level
 /// nodes → the node `parent_id` chain (file → class → method; doc → section →
-/// subsection). Scoped across all the project's folders.
+/// subsection). Scoped across all the workspace's folders.
 pub(crate) async fn graph_tree(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
@@ -504,26 +504,26 @@ pub(crate) fn build_tree_pub(
 
 pub(crate) async fn detect_patterns(
     State(state): State<AppState>,
-    Path(project): Path<String>,
+    Path(workspace): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Look up folder UUID and query patterns from PgStore
-    if let Some(folder_id) = repo_folder_id(&state, &project).await? {
+    if let Some(folder_id) = repo_folder_id(&state, &workspace).await? {
         let patterns = state.pg.list_patterns_by_folder(&folder_id).await
-            .map_err(|e| { tracing::warn!(error = %e, project = %project, "detect_patterns: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "detect_patterns: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         return Ok(Json(
             serde_json::json!({"ok": true, "patterns": patterns, "count": patterns.len()}),
         ));
     }
-    Ok(Json(serde_json::json!({"ok": false, "error": "project not found"})))
+    Ok(Json(serde_json::json!({"ok": false, "error": "workspace not found"})))
 }
 
 pub(crate) async fn list_patterns(
     State(state): State<AppState>,
-    Path(project): Path<String>,
+    Path(workspace): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(folder_id) = repo_folder_id(&state, &project).await? {
+    if let Some(folder_id) = repo_folder_id(&state, &workspace).await? {
         let patterns = state.pg.list_patterns_by_folder(&folder_id).await
-            .map_err(|e| { tracing::warn!(error = %e, project = %project, "list_patterns: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "list_patterns: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         return Ok(Json(serde_json::json!({"patterns": patterns, "count": patterns.len()})));
     }
     Ok(Json(serde_json::json!({"patterns": [], "count": 0})))
@@ -536,14 +536,14 @@ pub(crate) struct MatchQuery {
 
 pub(crate) async fn match_pattern_handler(
     State(state): State<AppState>,
-    Path(project): Path<String>,
+    Path(workspace): Path<String>,
     Query(q): Query<MatchQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let desc = q.description.unwrap_or_default();
     // Search patterns by folder using BM25 ranking
-    if let Some(folder_id) = repo_folder_id(&state, &project).await? {
+    if let Some(folder_id) = repo_folder_id(&state, &workspace).await? {
         let ranked = state.pg.rank_bm25(&folder_id, &desc).await
-            .map_err(|e| { tracing::warn!(error = %e, project = %project, "match_pattern_handler: rank_bm25 failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "match_pattern_handler: rank_bm25 failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         let matches: Vec<serde_json::Value> = ranked
             .into_iter()
             .map(|(name, score)| serde_json::json!({"name": name, "score": score}))
@@ -555,20 +555,20 @@ pub(crate) async fn match_pattern_handler(
 
 pub(crate) async fn pattern_for_symbol(
     State(state): State<AppState>,
-    Path((project, symbol)): Path<(String, String)>,
+    Path((workspace, symbol)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // File-level membership: the pattern(s) whose file instances include the
-    // symbol's file. Scoped to the project (patterns are project-attributed) with
-    // node lookup across all the project's folders. Genuinely empty when the
+    // symbol's file. Scoped to the workspace (patterns are workspace-attributed) with
+    // node lookup across all the workspace's folders. Genuinely empty when the
     // symbol's file is in no detected pattern — NOT the old always-null mask.
-    let scope = state.pg.scope_folder_ids(&project).await
-        .map_err(|e| { tracing::warn!(error = %e, project = %project, "pattern_for_symbol: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    let project_id = crate::api::util::resolve_project_uuid(&state, &project)
+    let scope = state.pg.scope_folder_ids(&workspace).await
+        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "pattern_for_symbol: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let workspace_id = crate::api::util::resolve_workspace_uuid(&state, &workspace)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let patterns = match project_id {
+    let patterns = match workspace_id {
         Some(pid) if !scope.is_empty() => state.pg.patterns_for_symbol(&pid, &scope, &symbol).await
-            .map_err(|e| { tracing::warn!(error = %e, project = %project, "pattern_for_symbol: patterns_for_symbol failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
+            .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "pattern_for_symbol: patterns_for_symbol failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
         _ => Vec::new(),
     };
     Ok(Json(serde_json::json!({ "symbol": symbol, "count": patterns.len(), "patterns": patterns })))
@@ -580,48 +580,48 @@ pub(crate) struct DuplicatesQuery {
     pub limit: Option<i64>,
 }
 
-/// GET /api/patterns/{project}/duplicates — near-duplicate functions found by
+/// GET /api/patterns/{workspace}/duplicates — near-duplicate functions found by
 /// cosine similarity on code embeddings. `min_similarity` (default 0.92) and
 /// `limit` (default 50) are query params.
 ///
-/// #54 — Scope is the WHOLE project, not just one folder: when the caller
-/// passes a project name we resolve every folder that belongs to it and
+/// #54 — Scope is the WHOLE workspace, not just one folder: when the caller
+/// passes a workspace name we resolve every folder that belongs to it and
 /// run the cosine-similarity self-join across all of them, so a
-/// duplicate that spans two crates in the same project surfaces. If the
+/// duplicate that spans two crates in the same workspace surfaces. If the
 /// caller passes a bare repo name that resolves to a folder without a
-/// project, we fall back to the single-folder variant.
+/// workspace, we fall back to the single-folder variant.
 pub(crate) async fn find_duplicates_handler(
     State(state): State<AppState>,
-    Path(project): Path<String>,
+    Path(workspace): Path<String>,
     Query(q): Query<DuplicatesQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let min_similarity = q.min_similarity.unwrap_or(0.92).clamp(0.0, 1.0);
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
 
-    // Project scope first — every folder that belongs to the named project.
-    let scope = state.pg.scope_folder_ids(&project).await
-        .map_err(|e| { tracing::warn!(error = %e, project = %project, "find_duplicates_handler: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    // Workspace scope first — every folder that belongs to the named workspace.
+    let scope = state.pg.scope_folder_ids(&workspace).await
+        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     if !scope.is_empty() {
         let dups = state.pg.find_duplicates_scoped(&scope, min_similarity, limit).await
-            .map_err(|e| { tracing::warn!(error = %e, project = %project, "find_duplicates_handler: find_duplicates_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: find_duplicates_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         return Ok(Json(serde_json::json!({
             "count": dups.len(),
             "min_similarity": min_similarity,
-            "scope": "project",
+            "scope": "workspace",
             "folder_count": scope.len(),
             "duplicates": dups,
         })));
     }
 
     // Fall back to a single-folder lookup when the caller passed a repo
-    // name (or the project resolution returned nothing).
-    let Some(folder_id) = repo_folder_id(&state, &project).await? else {
+    // name (or the workspace resolution returned nothing).
+    let Some(folder_id) = repo_folder_id(&state, &workspace).await? else {
         return Ok(Json(
-            serde_json::json!({ "duplicates": [], "count": 0, "message": "project not indexed" }),
+            serde_json::json!({ "duplicates": [], "count": 0, "message": "workspace not indexed" }),
         ));
     };
     let dups = state.pg.find_duplicates(&folder_id, min_similarity, limit).await
-        .map_err(|e| { tracing::warn!(error = %e, project = %project, "find_duplicates_handler: find_duplicates failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: find_duplicates failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({
         "count": dups.len(),
         "min_similarity": min_similarity,
@@ -821,12 +821,12 @@ fn derive_conventions(
     })
 }
 
-pub(crate) async fn project_conventions_handler(
+pub(crate) async fn workspace_conventions_handler(
     State(state): State<AppState>,
-    Path(project): Path<String>,
+    Path(workspace): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let ids = state.pg.scope_folder_ids(&project).await
-        .map_err(|e| { tracing::warn!(error = %e, project = %project, "project_conventions_handler: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let ids = state.pg.scope_folder_ids(&workspace).await
+        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "workspace_conventions_handler: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     if ids.is_empty() {
         return Ok(Json(serde_json::json!({
             "naming": [],
@@ -835,12 +835,12 @@ pub(crate) async fn project_conventions_handler(
         })));
     }
     let nodes = state.pg.get_nodes_scoped(&ids).await
-        .map_err(|e| { tracing::warn!(error = %e, project = %project, "project_conventions_handler: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "workspace_conventions_handler: get_nodes_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     // Patterns are still per-folder; aggregate across all folders in scope.
     let mut patterns = Vec::new();
     for fid in &ids {
         let mut fp = state.pg.list_patterns_by_folder(fid).await
-            .map_err(|e| { tracing::warn!(error = %e, project = %project, "project_conventions_handler: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+            .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "workspace_conventions_handler: list_patterns_by_folder failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         patterns.append(&mut fp);
     }
     Ok(Json(derive_conventions(&nodes, &patterns)))
@@ -1047,7 +1047,7 @@ mod tests {
 
     #[test]
     fn derive_conventions_caps_directories_and_reports_total() {
-        // A project with far more than MAX_CONVENTION_ROWS directories must not
+        // A workspace with far more than MAX_CONVENTION_ROWS directories must not
         // dump every one (that's the ~60K bloat) — cap the list but surface the
         // true total so the trim is visible, not silent. Highest-file-count dirs
         // survive the cap.

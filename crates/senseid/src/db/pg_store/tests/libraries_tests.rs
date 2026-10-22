@@ -67,35 +67,35 @@ async fn upsert_folder_dependency_is_idempotent_and_stores_all_columns() {
 
 #[tokio::test]
 async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
-    // 1a Step 7-8: two folders in the same project pin the same library
+    // 1a Step 7-8: two folders in the same workspace pin the same library
     // at DIFFERENT versions → surfaces as a conflict. A third row tagged
     // local_source (as if declared via link:) with a different version
     // must NOT contribute to the conflict.
     let s = pg_store().await;
     let suffix = uuid::Uuid::new_v4();
-    let pid = s.ensure_test_project(&format!("vc-{suffix}")).await.unwrap();
+    let pid = s.ensure_test_workspace(&format!("vc-{suffix}")).await.unwrap();
     let lib = s
         .upsert_library(&format!("_test:vc-lib-{suffix}"), "npm", Some("1.0"), None, None, None)
         .await
         .unwrap();
 
-    // Two folders in the same project, different versions.
+    // Two folders in the same workspace, different versions.
     let fid_a = create_test_folder(&s, &format!("vc-a-{suffix}")).await;
     let fid_b = create_test_folder(&s, &format!("vc-b-{suffix}")).await;
-    // Attach folders to the project THROUGH THE PRODUCTION API, so membership
-    // reaches `repositories_in_projects`. The view resolves via `folder_projects`,
-    // which reads only the junction — a raw `UPDATE … SET project_id` leaves it
+    // Attach folders to the workspace THROUGH THE PRODUCTION API, so membership
+    // reaches `repositories_in_workspaces`. The view resolves via `folder_workspaces`,
+    // which reads only the junction — a raw `UPDATE … SET workspace_id` leaves it
     // with nothing to find and the assertion below would be measuring an empty
     // set rather than the exclusion rule it names.
-    s.set_folder_project(&fid_a, &pid, "root", None).await.unwrap();
-    s.set_folder_project(&fid_b, &pid, "root", None).await.unwrap();
+    s.set_folder_workspace(&fid_a, &pid, "root", None).await.unwrap();
+    s.set_folder_workspace(&fid_b, &pid, "root", None).await.unwrap();
 
     s.upsert_referenced_library(&fid_a, &lib, Some("1.2.0"), None).await.unwrap();
     s.upsert_referenced_library(&fid_b, &lib, Some("1.3.0"), None).await.unwrap();
 
     // Third folder pins a local-source variant. This must be excluded.
     let fid_local = create_test_folder(&s, &format!("vc-local-{suffix}")).await;
-    s.set_folder_project(&fid_local, &pid, "root", None).await.unwrap();
+    s.set_folder_workspace(&fid_local, &pid, "root", None).await.unwrap();
     s.upsert_referenced_library(
         &fid_local,
         &lib,
@@ -105,7 +105,7 @@ async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
     .await
     .unwrap();
 
-    let rows = s.list_project_library_version_conflicts(&pid).await.unwrap();
+    let rows = s.list_workspace_library_version_conflicts(&pid).await.unwrap();
     assert_eq!(rows.len(), 1, "one lib with two registry-version pins → one row");
     let r = &rows[0];
     assert_eq!(r["library_id"].as_str().unwrap(), lib.to_string());
@@ -118,34 +118,34 @@ async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
     );
 
     // Cleanup — library FK cascades referenced_libraries; then delete
-    // project (folders cascade because project_id set null).
+    // workspace (folders cascade because workspace_id set null).
     s.delete_library(&lib).await.unwrap();
-    s.delete_project(&pid).await.ok();
+    s.delete_workspace(&pid).await.ok();
 }
 
 #[tokio::test]
-async fn list_project_dependencies_joins_target_name_and_folder() {
-    // D11: the stored edge is folder -> folder; the project-level answer is
-    // DERIVED by joining both folders to their projects. This test proves the
-    // derivation, which is why both folders must be wired to a project.
+async fn list_workspace_dependencies_joins_target_name_and_folder() {
+    // D11: the stored edge is folder -> folder; the workspace-level answer is
+    // DERIVED by joining both folders to their workspaces. This test proves the
+    // derivation, which is why both folders must be wired to a workspace.
     let s = pg_store().await;
     let suffix = uuid::Uuid::new_v4();
     let (from_pid, from_fid) =
-        create_test_project_and_folder(&s, &format!("lpd-from-{suffix}")).await;
-    let (to_pid, to_fid) = create_test_project_and_folder(&s, &format!("lpd-to-{suffix}")).await;
+        create_test_workspace_and_folder(&s, &format!("lpd-from-{suffix}")).await;
+    let (to_pid, to_fid) = create_test_workspace_and_folder(&s, &format!("lpd-to-{suffix}")).await;
 
     s.upsert_folder_dependency(&from_fid, &to_fid, "link", "package.json", Some("../actions"))
         .await
         .unwrap();
 
-    let deps = s.list_project_dependencies(&from_pid).await.unwrap();
+    let deps = s.list_workspace_dependencies(&from_pid).await.unwrap();
 
     assert_eq!(deps.len(), 1);
     let d = &deps[0];
-    assert_eq!(d["to_project_id"].as_str().unwrap(), to_pid.to_string());
+    assert_eq!(d["to_workspace_id"].as_str().unwrap(), to_pid.to_string());
     assert!(
-        d["to_project_name"].as_str().unwrap().starts_with("_test:lpd-to-"),
-        "target project name must be joined in"
+        d["to_workspace_name"].as_str().unwrap().starts_with("_test:lpd-to-"),
+        "target workspace name must be joined in"
     );
     assert!(
         d["from_folder"].as_str().unwrap().starts_with("lpd-from-"),
@@ -156,45 +156,45 @@ async fn list_project_dependencies_joins_target_name_and_folder() {
     assert_eq!(d["resolved_target"], "../actions");
 
     // Reverse direction returns empty
-    let none = s.list_project_dependencies(&to_pid).await.unwrap();
-    assert!(none.is_empty(), "target project has no outgoing edges");
+    let none = s.list_workspace_dependencies(&to_pid).await.unwrap();
+    assert!(none.is_empty(), "target workspace has no outgoing edges");
 
     sqlx_core::query::query("DELETE FROM sensei.folder_dependencies WHERE from_folder_id = $1")
         .bind(from_fid)
         .execute(s.pool())
         .await
         .unwrap();
-    s.delete_project(&from_pid).await.ok();
-    s.delete_project(&to_pid).await.ok();
+    s.delete_workspace(&from_pid).await.ok();
+    s.delete_workspace(&to_pid).await.ok();
 }
 
 #[tokio::test]
-async fn folder_dependency_records_an_intra_project_edge() {
-    // THE REGRAIN'S REASON (D11). The old project-grained writer skipped an
-    // edge whenever both folders sat in ONE project, which silently dropped
+async fn folder_dependency_records_an_intra_workspace_edge() {
+    // THE REGRAIN'S REASON (D11). The old workspace-grained writer skipped an
+    // edge whenever both folders sat in ONE workspace, which silently dropped
     // every monorepo workspace dependency — measured, all 384 folders of this
-    // repo share one project, so the table held 0 rows while the feature was
+    // repo share one workspace, so the table held 0 rows while the feature was
     // live and tested. Folder-graining must record it.
     let s = pg_store().await;
     let suffix = uuid::Uuid::new_v4();
-    let (pid, from_fid) = create_test_project_and_folder(&s, &format!("intra-a-{suffix}")).await;
+    let (pid, from_fid) = create_test_workspace_and_folder(&s, &format!("intra-a-{suffix}")).await;
     let to_fid = create_test_folder(&s, &format!("intra-b-{suffix}")).await;
-    s.set_folder_project(&to_fid, &pid, "root", None).await.unwrap();
+    s.set_folder_workspace(&to_fid, &pid, "root", None).await.unwrap();
 
     s.upsert_folder_dependency(&from_fid, &to_fid, "path", "Cargo.toml", Some("../b"))
         .await
         .unwrap();
 
-    let deps = s.list_project_dependencies(&pid).await.unwrap();
-    assert_eq!(deps.len(), 1, "an intra-project folder edge MUST be recorded, not skipped");
-    assert_eq!(deps[0]["to_project_id"].as_str().unwrap(), pid.to_string());
+    let deps = s.list_workspace_dependencies(&pid).await.unwrap();
+    assert_eq!(deps.len(), 1, "an intra-workspace folder edge MUST be recorded, not skipped");
+    assert_eq!(deps[0]["to_workspace_id"].as_str().unwrap(), pid.to_string());
 
     sqlx_core::query::query("DELETE FROM sensei.folder_dependencies WHERE from_folder_id = $1")
         .bind(from_fid)
         .execute(s.pool())
         .await
         .unwrap();
-    s.delete_project(&pid).await.ok();
+    s.delete_workspace(&pid).await.ok();
 }
 
 #[tokio::test]
@@ -261,17 +261,17 @@ async fn upsert_referenced_library_merges_props() {
 }
 
 #[tokio::test]
-async fn project_library_promotion_shows_in_resolved_and_is_idempotent() {
+async fn workspace_library_promotion_shows_in_resolved_and_is_idempotent() {
     // #30: referenced_libraries (folder-grained) must roll up to
     // library_enablement so detected libs — incl. scoped @rokkit/* — show in
-    // project_libraries_resolved (the Projects screen). Was never populated.
+    // workspace_libraries_resolved (the Workspaces screen). Was never populated.
     let s = pg_store().await;
-    let pid = s.ensure_test_project("proj-lib-promo").await.unwrap();
+    let pid = s.ensure_test_workspace("proj-lib-promo").await.unwrap();
     let lib =
         s.upsert_library("_test:@rokkit/core", "npm", Some("1.2"), None, None, None).await.unwrap();
     // Promote twice — must be idempotent (no error, no duplicate row).
-    s.upsert_project_library(&lib, &pid).await.unwrap();
-    s.upsert_project_library(&lib, &pid).await.unwrap();
+    s.upsert_workspace_library(&lib, &pid).await.unwrap();
+    s.upsert_workspace_library(&lib, &pid).await.unwrap();
     let libs = s.get_library_enablement(&pid).await.unwrap();
     let hits = libs.iter().filter(|l| l["name"] == "_test:@rokkit/core").count();
     assert_eq!(
@@ -282,16 +282,16 @@ async fn project_library_promotion_shows_in_resolved_and_is_idempotent() {
 }
 
 #[tokio::test]
-async fn ensure_test_project_is_namespaced_and_idempotent() {
+async fn ensure_test_workspace_is_namespaced_and_idempotent() {
     // #34: test fixtures must not accrete a new row per run, nor look like
-    // real projects. Reuse one `_test:`-namespaced row per name.
+    // real workspaces. Reuse one `_test:`-namespaced row per name.
     let s = pg_store().await;
-    let a = s.ensure_test_project("dup-check").await.unwrap();
-    let b = s.ensure_test_project("dup-check").await.unwrap();
-    assert_eq!(a, b, "repeated ensure_test_project must reuse one row, not create a new one");
-    let proj = s.get_project(&a).await.unwrap().unwrap();
-    assert_eq!(proj["name"], "_test:dup-check", "test projects must be _test:-namespaced");
-    s.delete_project(&a).await.ok();
+    let a = s.ensure_test_workspace("dup-check").await.unwrap();
+    let b = s.ensure_test_workspace("dup-check").await.unwrap();
+    assert_eq!(a, b, "repeated ensure_test_workspace must reuse one row, not create a new one");
+    let proj = s.get_workspace(&a).await.unwrap().unwrap();
+    assert_eq!(proj["name"], "_test:dup-check", "test workspaces must be _test:-namespaced");
+    s.delete_workspace(&a).await.ok();
 }
 
 #[tokio::test]
@@ -357,8 +357,8 @@ pub(super) async fn clear_test_session(s: &PgStore, sid: &str) {
 ///
 /// Any new test that calls a global repair belongs here too. Gating only the
 /// transcript pair left the two `repair_orphaned_sessions` tests racing, and
-/// leaving `heal_duplicate_name_projects` ungated left its two tests racing
-/// against every other test's setup — a project is a folderless duplicate for
+/// leaving `heal_duplicate_name_workspaces` ungated left its two tests racing
+/// against every other test's setup — a workspace is a folderless duplicate for
 /// the instant between being created and having its folder attached, which is
 /// exactly the state the sweep is entitled to prune.
 ///

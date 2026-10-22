@@ -1,6 +1,6 @@
 //! The reads an ORM derivation needs beyond decoded symbols and call sites
 //! (spec 20 §7c, #251): which type owns which member, what each type names as
-//! its base, and which provider packages a project references.
+//! its base, and which provider packages a workspace references.
 
 use super::*;
 

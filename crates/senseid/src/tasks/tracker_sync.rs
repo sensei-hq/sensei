@@ -86,7 +86,7 @@ mod tests {
 
     async fn connected(pg: &PgStore, rt: &TrackerRuntime, site: &str) -> uuid::Uuid {
         let p = pg
-            .create_project(&format!("_test:tracker-tick:{}", uuid::Uuid::new_v4()), None, None)
+            .create_workspace(&format!("_test:tracker-tick:{}", uuid::Uuid::new_v4()), None, None)
             .await
             .unwrap();
         let params = ConnectParams {
@@ -167,14 +167,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_a_project_lets_the_next_tick_delete_its_secret() {
+    async fn deleting_a_workspace_lets_the_next_tick_delete_its_secret() {
         let Ok(pg) = PgStore::connect_test().await else { return };
         let (rt, store, _factory) = fake_runtime();
         let id = connected(&pg, &rt, &site()).await;
         let row = pg.tracker_by_id(id).await.unwrap().unwrap();
         assert!(store.has(&row.secret_service));
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
-            .bind(row.project_id)
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(row.workspace_id)
             .execute(pg.pool())
             .await
             .unwrap();

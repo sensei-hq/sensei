@@ -5,7 +5,7 @@ set search_path to sensei, extensions;
 -- Every shareable entity had invented its own answer to this, and none of them
 -- agreed. Measured before this type existed:
 --
---   memories.scope         global | project     ← a visibility, but its own vocabulary
+--   memories.scope         global | workspace   ← a visibility, but its own vocabulary
 --   consolidated_rulesets.scope  global         ← same word, unrelated text column
 --   rule_packs.source      'OWASP · sensei'     ← a CITATION wearing the name
 --   playbooks.source       builtin              ← provenance
@@ -24,8 +24,8 @@ set search_path to sensei, extensions;
 create type entity_scope as enum (
   -- This install only. Never leaves the machine.
     'local'
-  -- Scoped to one project; shared with whoever shares that project.
-  , 'project'
+  -- Scoped to one workspace; shared with whoever shares that workspace.
+  , 'workspace'
   -- Shared across a tenant (organisation).
   , 'tenant'
   -- Published to the marketplace. `marketplace/catalog.json` is already a real

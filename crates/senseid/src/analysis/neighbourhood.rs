@@ -5,7 +5,7 @@
 //! callees. `@rokkit/graph`'s `Neighborhood` assigns the rings itself from the
 //! edges it is handed; what it cannot do is fetch them. This module decides WHICH
 //! edges to fetch, one ring at a time, so the daemon reads a bounded subgraph
-//! rather than the project's call graph.
+//! rather than the workspace's call graph.
 //!
 //! ## Two directed walks, not one undirected one
 //!
@@ -25,9 +25,9 @@
 //! true picture; a column of forty with nothing beneath it reads as the whole
 //! set.
 //!
-//! ## A node outside the project is reached but never walked through
+//! ## A node outside the workspace is reached but never walked through
 //!
-//! A call into a library, or into another project's code, is a real edge and
+//! A call into a library, or into another workspace's code, is a real edge and
 //! its far end is drawn. Expanding through it would pull in every caller of
 //! `serde_json::to_string` on the machine, so it is a leaf: it never seeds the
 //! next ring.
@@ -53,7 +53,7 @@ pub struct Call {
     /// How many call sites the edge rows between this pair record.
     pub occurrences: i64,
     /// Whether the end AWAY from the frontier may seed the next ring — false for
-    /// a library node or a symbol outside the project.
+    /// a library node or a symbol outside the workspace.
     pub far_walkable: bool,
 }
 
@@ -240,7 +240,7 @@ mod tests {
 
     /// Mutation that must break this: make `frontier` equal `reached`.
     #[test]
-    fn a_node_outside_the_project_is_drawn_but_never_walked_through() {
+    fn a_node_outside_the_workspace_is_drawn_but_never_walked_through() {
         let lib = Call { far_walkable: false, ..call(0, 2, 1) };
         let calls = [call(0, 1, 1), lib];
         let mut claimed = set(&[0]);

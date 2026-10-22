@@ -20,7 +20,7 @@ const company: KitWorkspace = {
 describe('createWorkspacePreview — reactive drill-in state', () => {
 	it('opens on the workspace rung in the by-layer view', () => {
 		const p = createWorkspacePreview(company, ladder, conflicts);
-		expect(p.active).toBe('project');
+		expect(p.active).toBe('workspace');
 		expect(p.view).toBe('layer');
 	});
 

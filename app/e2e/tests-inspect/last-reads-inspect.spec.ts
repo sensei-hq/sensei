@@ -18,8 +18,8 @@ test('the last converted reads land', async ({ tauriPage }) => {
   }
   const sources = (await json('/api/knowledge/sources')).sources.length;
   const guide = await json('/api/playbook/guide');
-  const projects: { id: string; name: string }[] = await json('/api/projects');
-  const sensei = projects.find((p) => p.name === 'sensei')!;
+  const workspaces: { id: string; name: string }[] = await json('/api/workspaces');
+  const sensei = workspaces.find((p) => p.name === 'sensei')!;
 
   await navigateTo(tauriPage, '/learnings');
   await expect
@@ -33,7 +33,7 @@ test('the last converted reads land', async ({ tauriPage }) => {
   const cards = (await tauriPage.evaluate(`document.querySelectorAll('[data-testid="source-card"]').length`)) as number;
   const know = (await tauriPage.evaluate(`document.querySelectorAll('.text-error').length`)) as number;
 
-  await navigateTo(tauriPage, `/project/${sensei.id}/intake`);
+  await navigateTo(tauriPage, `/workspace/${sensei.id}/intake`);
   await expect.poll(() => tauriPage.evaluate(`!!document.querySelector('[data-testid="intake-input"]')`), { timeout: 30_000 }).toBe(true);
   const frame = (await tauriPage.evaluate(`document.querySelector('[data-testid="intake"]')?.textContent?.includes(${JSON.stringify(guide.frame.slice(0, 40))}) ?? false`)) as boolean;
   const intake = (await tauriPage.evaluate(errors)) as number;

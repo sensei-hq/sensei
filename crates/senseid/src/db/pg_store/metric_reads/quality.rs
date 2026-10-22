@@ -6,8 +6,8 @@ impl PgStore {
     /// Whether `day` already has a `scope = repo` daily row for EVERY id in
     /// `metric_ids` ON `repository_id`.
     ///
-    /// Keyed on the REPOSITORY rather than the project (D2 — a repository is
-    /// global, shared by every project that spans it), and restricted to `scope
+    /// Keyed on the REPOSITORY rather than the workspace (D2 — a repository is
+    /// global, shared by every workspace that spans it), and restricted to `scope
     /// = 'repo'` + `grain = 'daily'`. The whole-tree twin is always written on a
     /// successful scan, so it is the authoritative coverage signal: a `scope =
     /// user` row can legitimately be absent when git resolves no local author,
@@ -28,7 +28,7 @@ impl PgStore {
         }
         let (present,): (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(DISTINCT metric_id)
-           FROM sensei.project_metrics
+           FROM sensei.workspace_metrics
           WHERE repository_id = $1
             AND metric_id = ANY($2)
             AND scope = 'repo'

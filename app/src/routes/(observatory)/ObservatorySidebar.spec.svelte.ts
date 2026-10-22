@@ -25,7 +25,7 @@ describe("ObservatorySidebar", () => {
     const t = container.textContent ?? "";
     for (const label of [
       "Today",
-      "Projects",
+      "Workspaces",
       "Insights",
       "Memories",
       "Impact",
@@ -44,16 +44,16 @@ describe("ObservatorySidebar", () => {
   });
 
   it('marks the active route with aria-current="page"', () => {
-    const { container } = mount("/projects");
+    const { container } = mount("/workspaces");
     const active = container.querySelector('[aria-current="page"]');
-    expect(active?.getAttribute("href")).toBe("/projects");
+    expect(active?.getAttribute("href")).toBe("/workspaces");
   });
 
   it("highlights the parent entry for a nested route", () => {
-    const { container } = mount("/projects/abc-123");
+    const { container } = mount("/workspaces/abc-123");
     expect(
       container.querySelector('[aria-current="page"]')?.getAttribute("href"),
-    ).toBe("/projects");
+    ).toBe("/workspaces");
   });
 
   it("has no All|Focus control, and always shows the whole rail", () => {
@@ -70,30 +70,30 @@ describe("ObservatorySidebar", () => {
     expect(container.querySelectorAll("[data-toggle-option]")).toHaveLength(0);
 
     const t = container.textContent ?? "";
-    for (const label of ["Review", "Settings", "Sessions", "Insights", "Projects"]) {
+    for (const label of ["Review", "Settings", "Sessions", "Insights", "Workspaces"]) {
       expect(t, label).toContain(label);
     }
   });
 
-  it("shows the project count badge when provided", () => {
+  it("shows the workspace count badge when provided", () => {
     const m = mountComponent(ObservatorySidebar, {
       port: 7744,
       pathname: "/",
-      projectCount: 12,
+      workspaceCount: 12,
     });
     cleanup.push(m.destroy);
     flushSync();
-    const projectsLink = m.container.querySelector('a[href="/projects"]');
-    expect(projectsLink?.textContent).toContain("12");
+    const workspacesLink = m.container.querySelector('a[href="/workspaces"]');
+    expect(workspacesLink?.textContent).toContain("12");
   });
 
-  it("omits the project badge when the count is not yet loaded", () => {
+  it("omits the workspace badge when the count is not yet loaded", () => {
     const m = mountComponent(ObservatorySidebar, { port: 7744, pathname: "/" });
     cleanup.push(m.destroy);
     flushSync();
-    const projectsLink = m.container.querySelector('a[href="/projects"]');
-    // No digits in the Projects row before the count loads.
-    expect(projectsLink?.textContent).not.toMatch(/\d/);
+    const workspacesLink = m.container.querySelector('a[href="/workspaces"]');
+    // No digits in the Workspaces row before the count loads.
+    expect(workspacesLink?.textContent).not.toMatch(/\d/);
   });
 
   it("shows the daemon footer with the live port", () => {

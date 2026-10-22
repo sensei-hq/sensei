@@ -7,8 +7,8 @@ set search_path to sensei, extensions;
 -- nothing would notice.
 create type sync_entity as enum (
     'repository'
-  , 'project'
-  , 'project_repository'
+  , 'workspace'
+  , 'workspace_repository'
   , 'repository_metric'
   , 'metric_catalogue'
     -- One whole dōjō sync cycle for one persona, keyed on the persona's KEYCHAIN SLOT

@@ -72,7 +72,7 @@ decomposition remains the human-tracked mode of the same command.
 
 - `init` is **dropped** — constitution/rule injection is already automatic (D-INJECT SessionStart
   + PreCompact re-push; `materialize_global_rules` at startup). Any real gap (proactively *calling*
-  `get_project_summary`/`get_patterns`/`context_pack` rather than instructing the agent to) folds
+  `get_workspace_summary`/`get_patterns`/`context_pack` rather than instructing the agent to) folds
   into `/sensei:intake` or the session-start hook — not a fourth initializer beside `sensei init`
   (CLI) and `sensei scaffold`.
 - **Boundary vs `/sensei:build`:** `build` implements **one** feature (TDD + review). `execute`
@@ -217,7 +217,7 @@ dereferenced server-side, never sent to Dōjō as a body.
 Deep analysis that precedes planning:
 
 1. **Grill for depth** — targeted questions grounded in graph lookup (`search`, `get_callers`,
-   `get_callees`, `get_patterns`, `get_project_summary`), one theme at a time, until the objective
+   `get_callees`, `get_patterns`, `get_workspace_summary`), one theme at a time, until the objective
    is fully specified.
 2. **Write/extend docs** under `docs/` per conventions (design → `docs/design/`).
 3. **Depth + clarity self-pass** — no TBDs, observable criteria, ambiguities resolved.

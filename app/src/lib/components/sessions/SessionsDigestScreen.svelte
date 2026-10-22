@@ -1,10 +1,10 @@
 <script lang="ts">
-  // Sessions — the digest (Slot 6), Observatory-wide or one project's window:
+  // Sessions — the digest (Slot 6), Observatory-wide or one workspace's window:
   // a retro hero, one quiet chart the user flips between four treatments, then
   // the captured sessions. The page owns the scope (its loader and fetcher); this
   // is the one screen both render, and `copy` is all that differs.
   //
-  // Spec:   docs/spec/screen/observatory-sessions.md, docs/spec/screen/project-sessions.md
+  // Spec:   docs/spec/screen/observatory-sessions.md, docs/spec/screen/workspace-sessions.md
   // Mockup: docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
   import { goto } from '$app/navigation';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -160,7 +160,7 @@
     <div class="flex items-baseline flex-wrap gap-x-4 gap-y-1 pt-4 pb-3 px-6 border-b border-paper-edge">
       <span class="text-sm text-ink">
         <span class="display text-lg" style='font-feature-settings: "tnum";'>{totals.count}</span>
-        session{totals.count === 1 ? '' : 's'}{copy.acrossProjects ? ` across ${totals.projects} project${totals.projects === 1 ? '' : 's'}` : ''}
+        session{totals.count === 1 ? '' : 's'}{copy.acrossWorkspaces ? ` across ${totals.workspaces} workspace${totals.workspaces === 1 ? '' : 's'}` : ''}
         · median {median}
       </span>
       <span class="flex-1"></span>

@@ -34,13 +34,13 @@ describe('previewRungs — the ladder for a workspace', () => {
 	it('renames the workspace rung to the workspace name', () => {
 		const withWorkspace: KitLadderRung[] = [
 			{ id: 'general', kanji: '全', scope: 'General', name: 'General', caption: '', rules: [] },
-			{ id: 'project', kanji: '件', scope: 'Workspace', name: 'placeholder', caption: '', rules: [] }
+			{ id: 'workspace', kanji: '件', scope: 'Workspace', name: 'placeholder', caption: '', rules: [] }
 		];
 		const rungs = previewRungs(personal, withWorkspace);
-		const workspace = rungs.find((r) => r.id === 'project');
+		const workspace = rungs.find((r) => r.id === 'workspace');
 		expect(workspace?.name).toBe('personal-site');
 		// A composed workspace rung is reused (relabelled), never duplicated by a synth anchor.
-		expect(rungs.filter((r) => r.id === 'project').length).toBe(1);
+		expect(rungs.filter((r) => r.id === 'workspace').length).toBe(1);
 	});
 
 	it('renders EVERY scope the daemon composed — never drops one the old scaffold omitted', () => {
@@ -52,17 +52,17 @@ describe('previewRungs — the ladder for a workspace', () => {
 				{ kanji: '守', text: 'g1', hard: true }, { kanji: '守', text: 'g2', hard: false }] },
 			{ id: 'organization', kanji: '社', scope: 'Company', name: 'Acme', caption: '', rules: [
 				{ kanji: '守', text: 'o1', hard: false }] },
-			{ id: 'project', kanji: '件', scope: 'Workspace', name: 'x', caption: '', rules: [
+			{ id: 'workspace', kanji: '件', scope: 'Workspace', name: 'x', caption: '', rules: [
 				{ kanji: '守', text: 'p1', hard: false }] }
 		];
 		const ids = previewRungs(personal, composed).map((r) => r.id);
-		expect(ids).toEqual(['general', 'organization', 'project']);
+		expect(ids).toEqual(['general', 'organization', 'workspace']);
 	});
 
 	it('synthesizes an empty workspace anchor when the daemon composed no workspace rung', () => {
 		// the kit fixture ladder is company / client / personal / stack — no workspace.
 		const rungs = previewRungs(client, ladder);
-		expect(rungs.map((r) => r.id)).toEqual(['company', 'client', 'personal', 'stack', 'project']);
+		expect(rungs.map((r) => r.id)).toEqual(['company', 'client', 'personal', 'stack', 'workspace']);
 		expect(rungs.at(-1)?.rules).toEqual([]); // the anchor is honest-empty
 	});
 });

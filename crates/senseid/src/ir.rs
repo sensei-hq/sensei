@@ -284,14 +284,14 @@ mod tests {
     fn ir_doc_without_frontmatter() {
         let doc = IRDoc {
             base: IRBase { name: "README".into(), file: "README.md".into(), ..Default::default() },
-            title: Some("Project Readme".into()),
+            title: Some("Workspace Readme".into()),
             ..Default::default()
         };
 
         assert!(doc.frontmatter.is_empty());
         assert!(doc.status.is_none());
         assert!(doc.origin.is_none());
-        assert_eq!(doc.title, Some("Project Readme".into()));
+        assert_eq!(doc.title, Some("Workspace Readme".into()));
     }
 
     #[test]

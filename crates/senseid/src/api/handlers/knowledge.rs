@@ -18,7 +18,7 @@ async fn resolve_target_namespace(
     namespace_id: Option<&str>,
     gov_scope: Option<&str>,
     folder: Option<&str>,
-    project: Option<&str>,
+    workspace: Option<&str>,
 ) -> Result<Option<uuid::Uuid>, (StatusCode, Json<serde_json::Value>)> {
     if let Some(ns) = namespace_id.filter(|s| !s.is_empty()) {
         return Ok(Some(
@@ -36,15 +36,15 @@ async fn resolve_target_namespace(
     }
     // No target at all → preserve the historical NULL resolution (the caller gave
     // a scope but nothing to resolve it against).
-    if folder.filter(|s| !s.is_empty()).is_none() && project.filter(|s| !s.is_empty()).is_none() {
+    if folder.filter(|s| !s.is_empty()).is_none() && workspace.filter(|s| !s.is_empty()).is_none() {
         return Ok(None);
     }
-    // Resolve the target repo from folder OR project (#109: the MCP forwards a cwd
-    // `folder` that mis-resolves to the container; an explicit `project` resolves
+    // Resolve the target repo from folder OR workspace (#109: the MCP forwards a cwd
+    // `folder` that mis-resolves to the container; an explicit `workspace` resolves
     // server-side via resolve_folder). FAIL CLOSED: a *specific* gov_scope whose
     // namespace can't be resolved errors rather than falling back to the always-on
-    // `general` rung (which would govern every project at the caller's enforcement).
-    let (_path, fid) = resolve_folder(state, folder, project).await?;
+    // `general` rung (which would govern every workspace at the caller's enforcement).
+    let (_path, fid) = resolve_folder(state, folder, workspace).await?;
     match state
         .pg
         .namespace_for_folder_scope(&fid, scope)
@@ -62,14 +62,14 @@ async fn resolve_target_namespace(
 }
 
 // ============================================================================
-// GET /api/knowledge/memories?status=&scope=&project_id=&limit=
+// GET /api/knowledge/memories?status=&scope=&workspace_id=&limit=
 // ============================================================================
 
 #[derive(Deserialize)]
 pub(crate) struct ListQuery {
     pub status: Option<String>,
     pub scope: Option<String>,
-    pub project_id: Option<String>,
+    pub workspace_id: Option<String>,
     pub limit: Option<i64>,
 }
 
@@ -77,10 +77,10 @@ pub(crate) async fn list_memories(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let pid = match q.project_id {
+    let pid = match q.workspace_id {
         Some(s) => Some(
             uuid::Uuid::parse_str(&s)
-                .map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?,
+                .map_err(|_| err(StatusCode::BAD_REQUEST, "bad workspace_id"))?,
         ),
         None => None,
     };
@@ -114,17 +114,17 @@ pub(crate) async fn get_memory(
 }
 
 // ============================================================================
-// GET /api/knowledge/context?project_id=&limit=&tags=csv&slot=&feature=
+// GET /api/knowledge/context?workspace_id=&limit=&tags=csv&slot=&feature=
 // ============================================================================
 
 #[derive(Deserialize)]
 pub(crate) struct ContextQuery {
-    /// Project UUID (the historical contract).
-    pub project_id: Option<String>,
-    /// Project name OR UUID — the shape the sensei MCP proxy sends, since
-    /// `resolve_project` yields a name. Resolved daemon-side to the UUID via the
-    /// shared `resolve_project_uuid`, mirroring `get_folder_commands`.
-    pub project: Option<String>,
+    /// Workspace UUID (the historical contract).
+    pub workspace_id: Option<String>,
+    /// Workspace name OR UUID — the shape the sensei MCP proxy sends, since
+    /// `resolve_workspace` yields a name. Resolved daemon-side to the UUID via the
+    /// shared `resolve_workspace_uuid`, mirroring `get_folder_commands`.
+    pub workspace: Option<String>,
     pub limit: Option<i64>,
     pub tags: Option<String>,
     /// Optional spine slot hint (`sensei.spine_slot`) — when present, memories
@@ -141,25 +141,25 @@ pub(crate) async fn get_context(
     State(state): State<AppState>,
     Query(q): Query<ContextQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    // Accept EITHER `project_id` (uuid) OR `project` (name or uuid). Both go
+    // Accept EITHER `workspace_id` (uuid) OR `workspace` (name or uuid). Both go
     // through the shared resolver so a name resolves to the real UUID and a raw
     // UUID passes straight through — additive, the uuid contract is unchanged.
     let ident = q
-        .project_id
+        .workspace_id
         .as_deref()
-        .or(q.project.as_deref())
+        .or(q.workspace.as_deref())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "project_id or project required"))?;
-    let pid = crate::api::util::resolve_project_uuid(&state, ident)
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "workspace_id or workspace required"))?;
+    let pid = crate::api::util::resolve_workspace_uuid(&state, ident)
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
-        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "bad project_id"))?;
+        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "workspace lookup failed"))?
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "bad workspace_id"))?;
     let tags: Option<Vec<String>> = q.tags.map(|s| {
         s.split(',').filter(|t| !t.trim().is_empty()).map(|t| t.trim().to_string()).collect()
     });
     let stack_ids = state
         .pg
-        .get_project_stack_ids(&pid)
+        .get_workspace_stack_ids(&pid)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     let slot = q
@@ -183,11 +183,11 @@ pub(crate) async fn get_context(
 pub(crate) struct RulesQuery {
     /// Absolute path of the repo whose governing rules to resolve.
     pub folder: Option<String>,
-    /// Project name OR UUID — the shape the sensei MCP proxy knows (it resolves
-    /// the caller to a project, not to the repo's abs_path). Resolved daemon-side
-    /// to the project's root repo abs_path, so a caller that knows the project
+    /// Workspace name OR UUID — the shape the sensei MCP proxy knows (it resolves
+    /// the caller to a workspace, not to the repo's abs_path). Resolved daemon-side
+    /// to the workspace's root repo abs_path, so a caller that knows the workspace
     /// but not the folder still gets the right ruleset.
-    pub project: Option<String>,
+    pub workspace: Option<String>,
     /// `md` → return rendered Markdown (`markdown` field) instead of the raw
     /// `rules` array — the shape the SessionStart/PreCompact hooks inject
     /// directly (D-INJECT). Any other value / omitted → the JSON rules array.
@@ -202,14 +202,14 @@ pub(crate) struct RulesQuery {
 /// deduped, with the mandatory (non-overridable) ones flagged.
 ///
 /// Accepts EITHER `folder=<abs_path>` (the historical contract) OR
-/// `project=<name|uuid>` → resolved to the project's root repo abs_path.
+/// `workspace=<name|uuid>` → resolved to the workspace's root repo abs_path.
 pub(crate) async fn get_rules(
     State(state): State<AppState>,
     Query(q): Query<RulesQuery>,
 ) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
     use axum::response::IntoResponse;
     let (folder_path, folder_id) =
-        resolve_folder(&state, q.folder.as_deref(), q.project.as_deref()).await?;
+        resolve_folder(&state, q.folder.as_deref(), q.workspace.as_deref()).await?;
     let ruleset = resolve_repo_ruleset(&state, &folder_id)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
@@ -380,7 +380,7 @@ pub(crate) fn upsert_pointer_in_claude_md(
 
 #[derive(Deserialize)]
 pub(crate) struct MemoryBody {
-    pub project_id: Option<String>,
+    pub workspace_id: Option<String>,
     pub scope: String,
     pub scope_filter: Option<String>,
     #[serde(rename = "type")]
@@ -398,7 +398,7 @@ pub(crate) struct MemoryBody {
     /// Explicit namespace this rule applies to (wins over gov_scope/folder).
     pub namespace_id: Option<String>,
     /// Governance scope key (general/user/organization/client/technology/team/
-    /// project/repository); resolved against `folder`'s namespace memberships.
+    /// workspace/repository); resolved against `folder`'s namespace memberships.
     pub gov_scope: Option<String>,
     /// Repo abs_path used to resolve `gov_scope` to a namespace.
     pub folder: Option<String>,
@@ -409,7 +409,7 @@ pub(crate) struct MemoryBody {
     /// against `feature` via `memory_slot::validate_scope`.
     pub spine_slot: Option<String>,
     /// Feature name for feature-scoped slots (brief/plan/tests); must be
-    /// absent for project-only slots (vision/personas/journeys/roadmap/mockups).
+    /// absent for workspace-only slots (vision/personas/journeys/roadmap/mockups).
     pub feature: Option<String>,
 }
 
@@ -447,7 +447,7 @@ async fn insert_with_status(
         return Err(err(StatusCode::BAD_REQUEST, "triage_signal required for proposals"));
     }
     // Spine anchoring: an explicit slot must be a known `sensei.spine_slot`
-    // value, and (slot, feature) must satisfy the project-vs-feature scope
+    // value, and (slot, feature) must satisfy the workspace-vs-feature scope
     // rule (crate::memory_slot::validate_scope) before it reaches the DB.
     let spine_slot = body.spine_slot.as_deref().filter(|s| !s.is_empty());
     if let Some(slot_str) = spine_slot {
@@ -457,9 +457,10 @@ async fn insert_with_status(
         crate::memory_slot::validate_scope(slot, body.feature.as_deref())
             .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
     }
-    let pid = match &body.project_id {
+    let pid = match &body.workspace_id {
         Some(s) => Some(
-            uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?,
+            uuid::Uuid::parse_str(s)
+                .map_err(|_| err(StatusCode::BAD_REQUEST, "bad workspace_id"))?,
         ),
         None => None,
     };
@@ -470,13 +471,13 @@ async fn insert_with_status(
         body.namespace_id.as_deref(),
         body.gov_scope.as_deref(),
         body.folder.as_deref(),
-        body.project_id.as_deref(),
+        body.workspace_id.as_deref(),
     )
     .await?;
     let id = state
         .pg
         .insert_memory(&InsertMemory {
-            project_id: pid,
+            workspace_id: pid,
             scope: body.scope,
             scope_filter: body.scope_filter,
             mtype: body.mtype,
@@ -529,9 +530,9 @@ pub(crate) struct PromoteBody {
     pub namespace_id: Option<String>,
     pub gov_scope: Option<String>,
     pub folder: Option<String>,
-    /// #109: resolve the gov_scope's repo from a project when the MCP can't send a
+    /// #109: resolve the gov_scope's repo from a workspace when the MCP can't send a
     /// valid folder (its cwd mis-resolves to the container).
-    pub project: Option<String>,
+    pub workspace: Option<String>,
     pub enforcement: Option<String>,
 }
 
@@ -550,7 +551,7 @@ pub(crate) async fn promote_memory(
         body.namespace_id.as_deref(),
         body.gov_scope.as_deref(),
         body.folder.as_deref(),
-        body.project.as_deref(),
+        body.workspace.as_deref(),
     )
     .await?;
     let new_id = state
@@ -704,17 +705,17 @@ pub(crate) async fn merge_memory(
 }
 
 // ============================================================================
-// POST /api/knowledge/memories/{id}/generalise  — rewrite project-agnostic
+// POST /api/knowledge/memories/{id}/generalise  — rewrite workspace-agnostic
 // ============================================================================
 
-/// Stage-1 preamble for the generalise rewrite: turn a project-specific memory
+/// Stage-1 preamble for the generalise rewrite: turn a workspace-specific memory
 /// into a portable rule. Mirrors `corrections_llm::SYSTEM` — a strict
 /// JSON-only instruction the `reasoning` chain can honour deterministically.
 /// Composed with [`GENERALISE_REPLY_CONTRACT`] via [`generalise_system_prompt`];
 /// it deliberately stops before the reply format.
-pub(crate) const GENERALISE_PREAMBLE: &str = "You rewrite a developer's project-specific memory into a portable, project-agnostic rule. \
-Strip every project-specific identifier — project names, repository names, file paths, service names, person names, ticket ids — \
-and restate the learning as a general principle that would apply across projects. \
+pub(crate) const GENERALISE_PREAMBLE: &str = "You rewrite a developer's workspace-specific memory into a portable, workspace-agnostic rule. \
+Strip every workspace-specific identifier — workspace names, repository names, file paths, service names, person names, ticket ids — \
+and restate the learning as a general principle that would apply across workspaces. \
 Stay faithful: do not invent scope, do not add advice the original did not contain, do not reproduce the identifiers you removed.";
 
 /// The reply contract shared by BOTH generalisation stages: the stage-1 rewrite
@@ -722,7 +723,7 @@ Stay faithful: do not invent scope, do not add advice the original did not conta
 /// already-dereferenced text (`collective::anonymize::GLOBAL_ANONYMISE_PREAMBLE`).
 ///
 /// Shared rather than copy-pasted, and the two are NOT interchangeable elsewhere:
-/// the stages differ in what they are GIVEN (a raw project memory vs. text whose
+/// the stages differ in what they are GIVEN (a raw workspace memory vs. text whose
 /// identifiers are already placeholders), which is why each keeps its own
 /// preamble. But both replies are read by one function
 /// ([`parse_generalise_response`]), so the JSON shape and the definition of a
@@ -800,12 +801,12 @@ const GENERALISE_MAX_CONTENT: usize = 4000;
 const GENERALISE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Build the user message: the memory's title + (bounded) content, asking the
-/// model to restate it project-agnostic. Pure — mirrors
+/// model to restate it workspace-agnostic. Pure — mirrors
 /// `corrections_llm::build_user_message`.
 pub(crate) fn build_generalise_message(title: &str, content: &str) -> String {
     let body: String = content.chars().take(GENERALISE_MAX_CONTENT).collect();
     format!(
-        "Memory title: {}\n\nMemory content:\n{}\n\nRewrite this as a project-agnostic rule.",
+        "Memory title: {}\n\nMemory content:\n{}\n\nRewrite this as a workspace-agnostic rule.",
         title.replace('\n', " "),
         body,
     )
@@ -819,7 +820,7 @@ pub(crate) fn build_generalise_message(title: &str, content: &str) -> String {
 /// yields `None` — never a minted stand-in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Generalisation {
-    /// The project-agnostic rule. Always non-empty (a reply without it is not a
+    /// The workspace-agnostic rule. Always non-empty (a reply without it is not a
     /// generalisation at all).
     pub generalised: String,
     /// An invented example illustrating the rule — shaped like the original
@@ -853,7 +854,7 @@ pub(crate) fn parse_generalise_response(content: &str) -> Option<Generalisation>
     Some(Generalisation { generalised: usable("generalised")?, example: usable("example") })
 }
 
-/// Rewrite a project-scoped memory into a project-agnostic rule that is ready to
+/// Rewrite a workspace-scoped memory into a workspace-agnostic rule that is ready to
 /// widen up the scope ladder (see [[pipeline/memory]]). User-triggered (the UI
 /// shows a loading state), so this is a request-time gateway call bounded by
 /// `GENERALISE_TIMEOUT`. Graceful and honest: if the model is unavailable,
@@ -1274,7 +1275,7 @@ fn pack_rule_to_raw(w: crate::dojo::client::PackRuleWire) -> crate::governance::
 }
 
 /// Resolve the rules of packs adopted at a folder's namespaces, via the folder's
-/// project → bound Dōjō membership → the Worker `rules/resolved` leg. Best-effort:
+/// workspace → bound Dōjō membership → the Worker `rules/resolved` leg. Best-effort:
 /// no binding / membership / namespaces, or any call fault → `[]` (logged, never
 /// silent). The daemon can't query the Dōjō DB directly (Fork 1).
 async fn resolve_adopted_pack_raws(
@@ -1282,8 +1283,8 @@ async fn resolve_adopted_pack_raws(
     folder_id: &uuid::Uuid,
 ) -> Vec<crate::governance::RawRule> {
     let resolved = async {
-        let project_id = state.pg.folder_project_id(folder_id).await.ok()??;
-        let membership_id = state.pg.project_bound_membership(&project_id).await.ok()??;
+        let workspace_id = state.pg.folder_workspace_id(folder_id).await.ok()??;
+        let membership_id = state.pg.workspace_bound_membership(&workspace_id).await.ok()??;
         let membership = state.pg.get_dojo_membership(&membership_id).await.ok()??;
         let pairs = state.pg.folder_namespace_pairs(folder_id).await.ok()?;
         if pairs.is_empty() {
@@ -1302,33 +1303,33 @@ async fn resolve_adopted_pack_raws(
     resolved.unwrap_or_default()
 }
 
-/// Resolve `folder=<abs_path>` OR `project=<name|uuid>` → `(folder_path,
+/// Resolve `folder=<abs_path>` OR `workspace=<name|uuid>` → `(folder_path,
 /// folder_id)`. Shared by the rules + constitution endpoints.
 pub(crate) async fn resolve_folder(
     state: &AppState,
     folder: Option<&str>,
-    project: Option<&str>,
+    workspace: Option<&str>,
 ) -> Result<(String, uuid::Uuid), (StatusCode, Json<serde_json::Value>)> {
     let folder_path = match folder.filter(|s| !s.is_empty()) {
         Some(f) => f.to_string(),
         None => {
-            let project = project
+            let workspace = workspace
                 .filter(|s| !s.is_empty())
-                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "folder or project required"))?;
-            let pid = crate::api::util::resolve_project_uuid(state, project)
+                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "folder or workspace required"))?;
+            let pid = crate::api::util::resolve_workspace_uuid(state, workspace)
                 .await
-                .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "project lookup failed"))?
-                .ok_or_else(|| err(StatusCode::NOT_FOUND, "unknown project"))?;
+                .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "workspace lookup failed"))?
+                .ok_or_else(|| err(StatusCode::NOT_FOUND, "unknown workspace"))?;
             let repos = state
                 .pg
-                .get_project_repos(&pid)
+                .get_workspace_repos(&pid)
                 .await
                 .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
             repos
                 .first()
                 .and_then(|r| r["path"].as_str())
                 .map(str::to_string)
-                .ok_or_else(|| err(StatusCode::NOT_FOUND, "project has no indexed repo"))?
+                .ok_or_else(|| err(StatusCode::NOT_FOUND, "workspace has no indexed repo"))?
         }
     };
     let folder = state
@@ -1395,7 +1396,7 @@ fn group_into_ladder(
         .collect()
 }
 
-/// GET /api/knowledge/constitution?folder=X|project=Y → the repo's resolved
+/// GET /api/knowledge/constitution?folder=X|workspace=Y → the repo's resolved
 /// ruleset grouped into the constitution ladder (one rung per scope, general →
 /// specific). What the console renders as "the rules in force here."
 pub(crate) async fn get_constitution(
@@ -1403,7 +1404,7 @@ pub(crate) async fn get_constitution(
     Query(q): Query<RulesQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let (folder_path, folder_id) =
-        resolve_folder(&state, q.folder.as_deref(), q.project.as_deref()).await?;
+        resolve_folder(&state, q.folder.as_deref(), q.workspace.as_deref()).await?;
     let ruleset = resolve_repo_ruleset(&state, &folder_id)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
@@ -1434,26 +1435,26 @@ mod tests {
             namespace: None,
             mandatory: enf == "mandatory",
         };
-        // strongest-first input across two scopes (org level 20, project level 60)
+        // strongest-first input across two scopes (org level 20, workspace level 60)
         let set = ResolvedRuleset {
             rules: vec![
                 mk("no secrets", "organization", "mandatory"),
-                mk("idempotency key", "project", "mandatory"),
-                mk("small commits", "project", "advisory"),
+                mk("idempotency key", "workspace", "mandatory"),
+                mk("small commits", "workspace", "advisory"),
             ],
             total: 3,
             mandatory_count: 2,
         };
         let scopes = vec![
             ("organization".into(), "Organization".into(), 20),
-            ("project".into(), "Project".into(), 60),
+            ("workspace".into(), "Workspace".into(), 60),
         ];
         let rungs = group_into_ladder(&set, &scopes);
         assert_eq!(rungs.len(), 2);
         // most-general first
         assert_eq!(rungs[0]["scope_key"], "organization");
         assert_eq!(rungs[0]["level"], 20);
-        assert_eq!(rungs[1]["scope_key"], "project");
+        assert_eq!(rungs[1]["scope_key"], "workspace");
         assert_eq!(rungs[1]["mandatory_count"], 1);
         assert_eq!(rungs[1]["rules"].as_array().unwrap().len(), 2);
     }
@@ -1497,14 +1498,14 @@ mod tests {
         assert_eq!(r.scope, "general", "empty wire scope_key → general fallback");
     }
 
-    // ── generalise (project-agnostic rewrite) pure helpers ──────────────────
+    // ── generalise (workspace-agnostic rewrite) pure helpers ──────────────────
 
     #[test]
     fn build_generalise_message_includes_title_and_bounds_content() {
         let long = "z".repeat(GENERALISE_MAX_CONTENT + 500);
         let msg = build_generalise_message("Use dbd for migrations", &long);
         assert!(msg.contains("Memory title: Use dbd for migrations"), "title carried");
-        assert!(msg.contains("project-agnostic rule"), "instruction carried");
+        assert!(msg.contains("workspace-agnostic rule"), "instruction carried");
         // Content bounded to GENERALISE_MAX_CONTENT chars (title has no 'z').
         assert_eq!(msg.matches('z').count(), GENERALISE_MAX_CONTENT, "content bounded");
     }
@@ -1614,8 +1615,8 @@ mod tests {
         assert!(initial.contains(GENERALISE_REPLY_CONTRACT), "stage 1 sends the contract");
         assert!(polish.contains(GENERALISE_REPLY_CONTRACT), "stage 2 sends the same contract");
         // ...while each keeps the framing its own stage needs.
-        assert!(initial.contains("project-specific memory"), "stage 1 keeps its preamble");
-        assert!(polish.contains("ALREADY had every project name"), "stage 2 keeps its preamble");
+        assert!(initial.contains("workspace-specific memory"), "stage 1 keeps its preamble");
+        assert!(polish.contains("ALREADY had every workspace name"), "stage 2 keeps its preamble");
         assert_ne!(initial, polish, "the preambles are stage-specific");
     }
 

@@ -2,7 +2,7 @@ set search_path to sensei, extensions;
 
 -- #83 T1 commands surface. Discoverable commands per folder — populated
 -- from each folder's manifest via `ManifestAdapter::parse_commands`, read
--- by the project window's action buttons + the `get_commands` MCP tool +
+-- by the workspace window's action buttons + the `get_commands` MCP tool +
 -- AI-assistant "how do I run tests here?" queries.
 --
 -- One row per (folder_id, raw_name) so re-running the scan replaces the

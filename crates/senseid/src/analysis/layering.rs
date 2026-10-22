@@ -28,7 +28,7 @@
 //! ## The node universe is GIVEN, never inferred from the edges
 //!
 //! [`analyse`] takes `units` separately. Deriving them from the dependency list
-//! loses every unit that has no cross-unit dependency — measured on project
+//! loses every unit that has no cross-unit dependency — measured on workspace
 //! `sensei`, 9 modules appear only as a dependency on THEMSELVES and would have
 //! vanished from the report entirely, carrying no layer and appearing in no
 //! class, with nothing saying they were dropped.
@@ -46,7 +46,7 @@
 //! flow. Because a cycle has no internal depth its members share a rank, so
 //! layer arithmetic calls every such edge `level` — true, and useless, because
 //! `ViolationsControl` filters on `up`. A graph whose only violations were its
-//! cycles therefore showed none at all: measured on project `sensei` at module
+//! cycles therefore showed none at all: measured on workspace `sensei` at module
 //! grain, 88 `level` edges, every one inside the single 22-module component.
 //!
 //! [`feedback_order`] fixes that by ordering each component's members so as few
@@ -155,7 +155,7 @@ pub struct Cycle {
     /// acyclic: a 22-member component holds many cycles, and only removing the
     /// whole feedback set (the [`Conformance::Up`] edges) is guaranteed to.
     ///
-    /// Measured on project `sensei` the two coincide — the cheapest inner edge
+    /// Measured on workspace `sensei` the two coincide — the cheapest inner edge
     /// IS the cheapest back edge, `senseid/adapters → senseid/tasks ×2` — but
     /// that is an observation, not a property. The rule stays the mockup's
     /// (`…v8.dc.html:2468`) because changing it needs a case where it is wrong,
@@ -181,7 +181,7 @@ pub struct Layering {
     /// Dependencies naming a unit the universe does not contain.
     ///
     /// REPORTED RATHER THAN ABSORBED, and this is not a theoretical case:
-    /// measured 2026-10-05 on project `sensei`, 32 of 234 module dependencies
+    /// measured 2026-10-05 on workspace `sensei`, 32 of 234 module dependencies
     /// (13.7%) name an endpoint that owns no file. The cause is upstream — an
     /// fqn's third segment is the module for most adapters but a SYMBOL for
     /// some (`c·senseid·ACCEPT_INPUT·item`), so a top-level symbol mints a
@@ -669,7 +669,7 @@ mod tests {
     ///
     /// THE NODE-UNIVERSE DEFECT, pinned. Deriving the universe from the edge
     /// list loses it silently, carrying no layer and appearing in no class —
-    /// measured on project `sensei`, 9 modules are in exactly this state.
+    /// measured on workspace `sensei`, 9 modules are in exactly this state.
     ///
     /// Mutation that must break this test: build `ids` from `deps` instead of
     /// from `units`.
@@ -914,7 +914,7 @@ mod tests {
     /// node and shows up as an extra edge rather than panicking out of bounds —
     /// the test has to distinguish "dropped" from "crashed".
     ///
-    /// The second half is the one that matters in production: on project
+    /// The second half is the one that matters in production: on workspace
     /// `sensei` this population is 13.7% of module dependencies, so a diagram
     /// that omits it without saying so is 13.7% wrong and looks complete.
     #[test]

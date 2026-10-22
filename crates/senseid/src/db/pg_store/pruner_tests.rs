@@ -18,7 +18,7 @@ struct Corpus {
     shared_there: uuid::Uuid,
     a_repo: uuid::Uuid,
     shared_repo: uuid::Uuid,
-    a_project: uuid::Uuid,
+    a_workspace: uuid::Uuid,
 }
 
 async fn seed(pg: &PgStore) -> Corpus {
@@ -65,9 +65,10 @@ async fn seed(pg: &PgStore) -> Corpus {
     let shared_repo = repo_of(shared_here).await;
     pg.link_folder_to_repository(&shared_there, &shared_repo).await.unwrap();
 
-    // `a` is a project's only repository, so pruning it empties the project.
-    let a_project = pg.create_project(&format!("_test:prune:a:{tag}"), None, None).await.unwrap();
-    pg.link_project_repository(&a_project, &a_repo).await.unwrap();
+    // `a` is a workspace's only repository, so pruning it empties the workspace.
+    let a_workspace =
+        pg.create_workspace(&format!("_test:prune:a:{tag}"), None, None).await.unwrap();
+    pg.link_workspace_repository(&a_workspace, &a_repo).await.unwrap();
 
     // Nodes in BOTH `a` and its nested folder, plus an edge between them — the
     // RESTRICT path only fires when a node's file is deleted in the cascade.
@@ -124,7 +125,7 @@ async fn seed(pg: &PgStore) -> Corpus {
         shared_there,
         a_repo,
         shared_repo,
-        a_project,
+        a_workspace,
     }
 }
 
@@ -159,11 +160,11 @@ async fn cleanup(pg: &PgStore, c: &Corpus) {
             .await
             .ok();
     }
-    pg.delete_project(&c.a_project).await.ok();
+    pg.delete_workspace(&c.a_workspace).await.ok();
 }
 
 /// Mutations that must break this: drop the repository delete, drop the
-/// project prune, or match `starts_with(abs_path, $1)` without the slash.
+/// workspace prune, or match `starts_with(abs_path, $1)` without the slash.
 #[tokio::test]
 async fn pruning_a_repository_root_removes_everything_it_owned_and_nothing_beside_it() {
     let Ok(pg) = PgStore::connect_test().await else {
@@ -181,10 +182,10 @@ async fn pruning_a_repository_root_removes_everything_it_owned_and_nothing_besid
     );
     assert_eq!(report.repositories, 1);
     assert!(!repository(&pg, c.a_repo).await, "nothing else points at `a`'s repository");
-    assert!(report.projects >= 1, "{report:?}");
+    assert!(report.workspaces >= 1, "{report:?}");
     assert!(
-        pg.get_project(&c.a_project).await.unwrap().is_none(),
-        "`a` was the project's only repository, so the project is empty"
+        pg.get_workspace(&c.a_workspace).await.unwrap().is_none(),
+        "`a` was the workspace's only repository, so the workspace is empty"
     );
 
     // `ab` shares a PREFIX with `a`, not a path.
@@ -290,25 +291,25 @@ async fn a_paused_root_is_not_a_root_to_sync() {
         .ok();
 }
 
-/// A prune removes the projects IT emptied, and no other. Calling the global
-/// `prune_empty_projects(0)` deleted every empty discovery project in the
-/// database — a project the user created a moment ago and has not yet given a
+/// A prune removes the workspaces IT emptied, and no other. Calling the global
+/// `prune_empty_workspaces(0)` deleted every empty discovery workspace in the
+/// database — a workspace the user created a moment ago and has not yet given a
 /// repository included.
 ///
-/// Mutation that must break this: prune projects without the id scope.
+/// Mutation that must break this: prune workspaces without the id scope.
 #[tokio::test]
-async fn a_prune_leaves_an_unrelated_empty_project_alone() {
+async fn a_prune_leaves_an_unrelated_empty_workspace_alone() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;
     };
     let c = seed(&pg).await;
     let bystander = pg
-        .create_project(&format!("_test:prune:bystander:{}", uuid::Uuid::new_v4()), None, None)
+        .create_workspace(&format!("_test:prune:bystander:{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
     // Old enough that no grace window protects it — only the scope can.
     sqlx_core::query::query(
-        "UPDATE sensei.projects SET modified_at = now() - interval '1 day' WHERE id = $1",
+        "UPDATE sensei.workspaces SET modified_at = now() - interval '1 day' WHERE id = $1",
     )
     .bind(bystander)
     .execute(pg.pool())
@@ -317,9 +318,9 @@ async fn a_prune_leaves_an_unrelated_empty_project_alone() {
 
     pg.prune_repository_root(&format!("{}/a", c.root)).await.unwrap();
 
-    assert!(pg.get_project(&bystander).await.unwrap().is_some(), "not this prune's project");
-    assert!(pg.get_project(&c.a_project).await.unwrap().is_none(), "but `a`'s project is");
+    assert!(pg.get_workspace(&bystander).await.unwrap().is_some(), "not this prune's workspace");
+    assert!(pg.get_workspace(&c.a_workspace).await.unwrap().is_none(), "but `a`'s workspace is");
 
-    pg.delete_project(&bystander).await.ok();
+    pg.delete_workspace(&bystander).await.ok();
     cleanup(&pg, &c).await;
 }

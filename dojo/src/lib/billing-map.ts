@@ -24,7 +24,7 @@ function planLabel(plan: string): string {
 
 /** Overlay the LIVE billing figures onto the illustrative fixture. `seatsActive`
  *  (the one number the billing plane computes: unique active users on private
- *  projects) is always taken from live usage; the plan + renewal come from the
+ *  workspaces) is always taken from live usage; the plan + renewal come from the
  *  account when one exists. Everything else stays fixture. Pure. */
 export function toKitBilling(fixture: KitBilling, res: BillingResponse): KitBilling {
 	const seatsActive = res.usage?.seats_used ?? fixture.seatsActive;

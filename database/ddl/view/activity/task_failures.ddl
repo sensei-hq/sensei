@@ -36,45 +36,45 @@ set search_path to activity, sensei, extensions;
 --   select error_signature, count(*) as jobs, sum(attempts) as failures
 --     from activity.task_failures group by 1 order by 3 desc;
 --
--- ## Project is an ARRAY, because one row per job outranks one project per row
+-- ## Workspace is an ARRAY, because one row per job outranks one workspace per row
 --
--- Project membership is no longer a column on `folders`. It lives in
--- `sensei.repositories_in_projects` and resolves through `sensei.folder_projects`,
+-- Workspace membership is no longer a column on `folders`. It lives in
+-- `sensei.repositories_in_workspaces` and resolves through `sensei.folder_workspaces`,
 -- which is MULTI-VALUED BY DESIGN: a repository is keyed on its remote, so two
 -- checkouts collapse to one repository row and that row can serve more than one
--- project. Measured 2026-10-01: 8 repositories carry two project links each
+-- workspace. Measured 2026-10-01: 8 repositories carry two workspace links each
 -- (`bridge` in `bridge` + `sparsh`, `kavach` in `kavach` + `vite-multi-adapter`,
 -- `documentation` in `documentation` + `client-q`, and five more), which fans
--- 13,722 folders out to 17,851 `folder_projects` rows — 4,129 folders return two.
+-- 13,722 folders out to 17,851 `folder_workspaces` rows — 4,129 folders return two.
 --
 -- A plain join to that view would therefore emit the SAME broken job twice, and
 -- this is a restart list: a duplicated row is a job re-enqueued twice. The fan-out
 -- is live here, not theoretical — measured 2026-10-01: 24 of the 297 folder paths
--- carrying a failed execution sit on a two-project repository, and 2 of this
+-- carrying a failed execution sit on a two-workspace repository, and 2 of this
 -- view's 622 rows land on one, so a plain join would have returned 624.
 --
--- So the projects are collapsed per folder BEFORE the join — `folder_project_sets`
+-- So the workspaces are collapsed per folder BEFORE the join — `folder_workspace_sets`
 -- groups by `folder_id`, which makes it unique by construction, and the join to it
--- cannot change the row count. `projects` / `project_ids` are arrays; a folder
+-- cannot change the row count. `workspaces` / `workspace_ids` are arrays; a folder
 -- under no tracked repository gets NULL, which means "no tracked repository", not
 -- "lookup failed" (same shape as the NULL `repository` beside it).
 --
 -- The swap did not move attribution. Measured 2026-10-01 over the same 622 rows,
--- the old `folders.project_id` path and the new one attributed the SAME 447 rows:
--- 0 lost, 0 gained, 0 disagreeing. The other 175 carry no project because 39 are
+-- the old `folders.workspace_id` path and the new one attributed the SAME 447 rows:
+-- 0 lost, 0 gained, 0 disagreeing. The other 175 carry no workspace because 39 are
 -- group-scoped (no folder at all) and 136 name a path with no `folders` row —
 -- every folder that DOES exist here has a tracked repository.
 --
--- `LIMIT 1` on an ordered pick was rejected. It would have kept a scalar `project`
+-- `LIMIT 1` on an ordered pick was rejected. It would have kept a scalar `workspace`
 -- column, and it is precisely the defect this migration exists to remove: an
 -- arbitrary choice between two true answers, rendered in a column name that reads
--- as authoritative. Callers that need one project must name which:
+-- as authoritative. Callers that need one workspace must name which:
 --
---   -- what to restart for one project
+--   -- what to restart for one workspace
 --   select task_kind, folder_path, path
---     from activity.task_failures where 'sensei' = any(projects);
+--     from activity.task_failures where 'sensei' = any(workspaces);
 --
--- Dropped before create: `project_id`/`project` become `project_ids`/`projects` —
+-- Dropped before create: `workspace_id`/`workspace` become `workspace_ids`/`workspaces` —
 -- a rename AND a type change, and `create or replace view` can do neither. Nothing
 -- depends on this view (checked 2026-10-01 via pg_depend: zero dependents), so
 -- there is no cascade. ACLs do not survive a drop; the grant at the foot restores
@@ -109,13 +109,13 @@ history as (
     from task_executions
    group by 1, 2, 3
 ),
-folder_project_sets as (
+folder_workspace_sets as (
   -- One row per folder — `group by folder_id` is what keeps the join below from
-  -- multiplying the restart list by a folder's project count.
+  -- multiplying the restart list by a folder's workspace count.
   select fp.folder_id
-       , array_agg(fp.project_id order by fp.project, fp.project_id) as project_ids
-       , array_agg(fp.project    order by fp.project, fp.project_id) as projects
-    from sensei.folder_projects fp
+       , array_agg(fp.workspace_id order by fp.workspace, fp.workspace_id) as workspace_ids
+       , array_agg(fp.workspace  order by fp.workspace, fp.workspace_id) as workspaces
+    from sensei.folder_workspaces fp
    group by fp.folder_id
 )
 select l.task_kind::text                       as task_kind
@@ -125,8 +125,8 @@ select l.task_kind::text                       as task_kind
      , f.name                                  as folder
      , f.repository_id
      , r.name                                  as repository
-     , fps.project_ids
-     , fps.projects
+     , fps.workspace_ids
+     , fps.workspaces
      , l.path
      , l.error_message
      , sensei.error_signature(l.error_message) as error_signature
@@ -148,7 +148,7 @@ select l.task_kind::text                       as task_kind
    and f.abs_path = l.folder_path
   left join sensei.repositories r
     on r.id = f.repository_id
-  left join folder_project_sets fps
+  left join folder_workspace_sets fps
     on fps.folder_id = f.id
  where l.rn = 1
    and l.status = 'failed';
@@ -164,10 +164,10 @@ attempts (failed executions accumulated) next to max_retry (the runner''s counte
 is the poison-pill signal — high attempts with a low max_retry means the job is
 being rediscovered and re-failed each pass, not retried.
 
-projects is an ARRAY and not a scalar. Membership resolves through
-sensei.folder_projects, which is multi-valued by design — a repository keyed on
-its remote can serve more than one project — and one row per job matters more
-here than one project per row, because a duplicated row is a job restarted twice.
+workspaces is an ARRAY and not a scalar. Membership resolves through
+sensei.folder_workspaces, which is multi-valued by design — a repository keyed on
+its remote can serve more than one workspace — and one row per job matters more
+here than one workspace per row, because a duplicated row is a job restarted twice.
 
 Common queries:
   -- triage: which causes, biggest first
@@ -182,13 +182,13 @@ Common queries:
   SELECT task_kind, folder_path, path
     FROM activity.task_failures WHERE repository = ''sensei'';
 
-  -- what to restart for one project
+  -- what to restart for one workspace
   SELECT task_kind, folder_path, path
-    FROM activity.task_failures WHERE ''sensei'' = any(projects);';
+    FROM activity.task_failures WHERE ''sensei'' = any(workspaces);';
 
 comment on column task_failures.attempts is 'Failed executions accumulated for this job in the retained window. Compare against max_retry: attempts >> max_retry means re-discovery each pass, not retry — the shape that produced 17.5M rows over 43,312 paths on 2026-09-23.';
-comment on column task_failures.is_folder_scoped is 'Whether folder_path is a path (true) or a group UUID (false). A false row has no repository and no projects BY CONSTRUCTION, not through a failed lookup.';
-comment on column task_failures.projects is 'EVERY project this job''s folder belongs to, ordered by name — an array because sensei.folder_projects is multi-valued (a repository keyed on its remote can serve two projects). Collapsed per folder before the join so the restart list keeps one row per job; test membership with ''name'' = any(projects). NULL means the folder is under no tracked repository, not that a lookup failed.';
-comment on column task_failures.project_ids is 'Project UUIDs matching projects element-for-element (same ORDER BY). From sensei.repositories_in_projects, never from folders.project_id — a folder does not carry its own project.';
+comment on column task_failures.is_folder_scoped is 'Whether folder_path is a path (true) or a group UUID (false). A false row has no repository and no workspaces BY CONSTRUCTION, not through a failed lookup.';
+comment on column task_failures.workspaces is 'EVERY workspace this job''s folder belongs to, ordered by name — an array because sensei.folder_workspaces is multi-valued (a repository keyed on its remote can serve two workspaces). Collapsed per folder before the join so the restart list keeps one row per job; test membership with ''name'' = any(workspaces). NULL means the folder is under no tracked repository, not that a lookup failed.';
+comment on column task_failures.workspace_ids is 'Workspace UUIDs matching workspaces element-for-element (same ORDER BY). From sensei.repositories_in_workspaces, never from folders.workspace_id — a folder does not carry its own workspace.';
 
 grant select on task_failures to authenticated, service_role;

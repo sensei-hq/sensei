@@ -9,7 +9,7 @@ set search_path to sensei, extensions;
 -- package.json and produces one `libraries` row per PACKAGE — measured
 -- 2026-09-01: 11 `@rokkit/*` rows and 7 `@devuser/dbd-*` rows. The library's
 -- own `sensei.library.json` calls itself `rokkit`, and its skills and agents hang
--- off THAT row. So a project that depends on `@rokkit/ui` could not reach the four
+-- off THAT row. So a workspace that depends on `@rokkit/ui` could not reach the four
 -- curated rokkit skills: nothing connected the name it knows to the name the
 -- capabilities live under.
 --
@@ -42,7 +42,7 @@ create index if not exists library_packages_library_id_idx
 
 comment on table library_packages is
 'Packages a library publishes under other names (rokkit → @rokkit/ui, …), declared
-in its sensei.library.json `packages` array. Lets a project that depends on
+in its sensei.library.json `packages` array. Lets a workspace that depends on
 @rokkit/ui resolve to the library whose skills/agents hang off the `rokkit` row —
 the two identities dependency detection and the manifest produce. Declared, never
 prefix-inferred: a guess would claim packages in a shared scope that belong to

@@ -1,6 +1,6 @@
 ---
 organization: Sensei HQ
-project: sensei
+workspace: sensei
 role: homebrew
 tagline: Homebrew tap for sensei
 summary: Homebrew tap for installing the sensei daemon, CLI, and MCP server.

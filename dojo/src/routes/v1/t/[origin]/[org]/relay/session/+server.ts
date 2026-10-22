@@ -8,7 +8,7 @@ import { asOwner } from '$lib/server/relay-owner';
 import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantCaller, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
-import { resolveProjectNamespaceId, openOrRefreshSeat } from '$lib/server/billing-data';
+import { resolveWorkspaceNamespaceId, openOrRefreshSeat } from '$lib/server/billing-data';
 import { attachRunToWorkspace, fileRunUnderWorkspace } from '$lib/server/workspaces-data';
 
 const COLS =
@@ -85,15 +85,15 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 			}
 		}
 
-		// P4 attribution — when the daemon includes the run's project namespace
+		// P4 attribution — when the daemon includes the run's workspace namespace
 		// slug, open/refresh this user's seat: proof they are ACTIVELY using sensei
-		// on that project (only such users are billed). Best-effort + fail-open —
+		// on that workspace (only such users are billed). Best-effort + fail-open —
 		// billing must never break relay federation, and is throttle-free at relay
 		// heartbeat volumes (an idempotent read+touch).
-		const projectSlug = str(body.project_slug);
-		if (projectSlug) {
+		const workspaceSlug = str(body.workspace_slug);
+		if (workspaceSlug) {
 			const seatWork = (async () => {
-				const nsId = await resolveProjectNamespaceId(dojoDb(), projectSlug);
+				const nsId = await resolveWorkspaceNamespaceId(dojoDb(), workspaceSlug);
 				if (nsId) {
 					await openOrRefreshSeat(dojoDb(), {
 						tenantId: caller.tenantId,

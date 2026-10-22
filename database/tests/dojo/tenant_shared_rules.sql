@@ -2,7 +2,7 @@
 -- (GET rules, #236 step 4).
 --
 -- The pull carries every rule's namespace (scope_key, slug, name). No session
--- reads sensei.namespaces — a namespace names private projects and other
+-- reads sensei.namespaces — a namespace names private workspaces and other
 -- tenants — so the pull goes through dojo.tenant_shared_rules: members only,
 -- this tenant's rules only, deltas after the cursor, tombstones included so a
 -- puller learns of a retraction.
@@ -24,7 +24,7 @@ insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via,
   ('b0000000-0000-4000-8000-00000000019c', 'a0000000-0000-4000-8000-000000000191', 'contributor', 'employer', 'github_oauth', now());
 insert into sensei.namespaces (id, scope_key, slug, name) values
   ('e0000000-0000-4000-8000-000000000191', 'organization', 'ztest-tsr', 'Org rules'),
-  ('e0000000-0000-4000-8000-000000000192', 'project', 'ztest-tsr-secret', 'Other tenant project');
+  ('e0000000-0000-4000-8000-000000000192', 'workspace', 'ztest-tsr-secret', 'Other tenant workspace');
 insert into dojo.shared_rules (id, seq, tenant_id, namespace_id, content_hash, rule_type, title, content,
                                enforcement, status, published_by, published_at) values
   ('f0000000-0000-4000-8000-000000000191', 900001, 'b0000000-0000-4000-8000-00000000019a',

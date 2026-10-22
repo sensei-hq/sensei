@@ -9,7 +9,7 @@ import type { LayoutLoad } from './$types.js';
 // not need daemon config, and forcing a load() at the root made every
 // navigation issue a /api/config round-trip — including before the daemon
 // was even up. Each route group that needs config loads it in its own
-// +layout.ts (see `(observatory)/+layout.ts`, `(project)/+layout.ts`,
+// +layout.ts (see `(observatory)/+layout.ts`, `(workspace)/+layout.ts`,
 // `(config)/+layout.ts`).
 export const ssr = false;
 export const prerender = false;

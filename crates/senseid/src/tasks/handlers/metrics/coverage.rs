@@ -1,17 +1,17 @@
 //! `coverage` metric group computer.
 //!
-//! Test coverage, sourced by INGESTING an lcov report the project's own test run /
-//! CI already produced — the daemon NEVER runs the project's tests (that decision is
+//! Test coverage, sourced by INGESTING an lcov report the workspace's own test run /
+//! CI already produced — the daemon NEVER runs the workspace's tests (that decision is
 //! Dev's, 2026-08-19). A whole-suite property (never per-author), so — following the
 //! `knowledge` convention for a non-author metric — it writes `scope = user` with
-//! `identity = NULL`: `scope = user` is the value the DEFAULT project read surfaces
-//! (the pooled `project_metric_daily` view filters `scope = 'user'`), and a NULL
+//! `identity = NULL`: `scope = user` is the value the DEFAULT workspace read surfaces
+//! (the pooled `workspace_metric_daily` view filters `scope = 'user'`), and a NULL
 //! identity keeps it a single value, not an author split. One row PER repository the
-//! project spans, so the pooled project view sums `Σ hit / Σ found` across them.
+//! workspace spans, so the pooled workspace view sums `Σ hit / Σ found` across them.
 //!
 //! ## Forward-only snapshot (the default, cheap path)
-//! Coverage is a SNAPSHOT of the CURRENT checkout: for each repository the project
-//! spans ([`PgStore::repository_roots_for_project`]) it reads an lcov report at a
+//! Coverage is a SNAPSHOT of the CURRENT checkout: for each repository the workspace
+//! spans ([`PgStore::repository_roots_for_workspace`]) it reads an lcov report at a
 //! known/config path under that checkout, sums `LH` (lines hit) / `LF` (lines found)
 //! across all records, and writes ONE `coverage` row per repository
 //! (`ratio = LH/LF`, `computed_on = today`, `commit_sha`/`identity`/`folder_id`/
@@ -54,7 +54,7 @@ const GRAIN_DAILY: &str = "daily";
 const SOURCE_MEASURED: &str = "measured";
 /// `sensei.metric_scope` text value — coverage is a whole-suite property with NO
 /// author dimension, so (like `knowledge`) it writes only the `scope = user` value
-/// (identity NULL) that the DEFAULT pooled project read surfaces; there is no separate
+/// (identity NULL) that the DEFAULT pooled workspace read surfaces; there is no separate
 /// author-filtered twin.
 const SCOPE_USER: &str = "user";
 
@@ -67,7 +67,7 @@ const LCOV_PATH_KEY: &str = "metrics.coverage_lcov";
 
 /// Common lcov report locations across ecosystems, tried in order under each checkout
 /// root. The FIRST that exists wins (a single merged report, not a glob-merge). A
-/// project whose tool writes elsewhere points at it via [`LCOV_PATH_KEY`].
+/// workspace whose tool writes elsewhere points at it via [`LCOV_PATH_KEY`].
 const DEFAULT_LCOV_CANDIDATES: &[&str] = &[
     "lcov.info",
     "coverage/lcov.info",
@@ -158,21 +158,21 @@ fn read_coverage(root: &str, candidates: &[String]) -> Option<(i64, i64)> {
     }
 }
 
-/// Compute the `coverage` group for one project as a snapshot as of today: ingest each
+/// Compute the `coverage` group for one workspace as a snapshot as of today: ingest each
 /// repository's current lcov report and write one `scope = repo` row per repository that
-/// has one. `project_raw` is the project uuid carried in `task.folder_path`. Returns the
-/// number of `project_metrics` rows written (`0` = honest-empty: no repository has a
+/// has one. `workspace_raw` is the workspace uuid carried in `task.folder_path`. Returns the
+/// number of `workspace_metrics` rows written (`0` = honest-empty: no repository has a
 /// readable report with instrumented lines, or the metric is inactive). Idempotent —
 /// re-running upserts each row in place. FORWARD-ONLY (Phase 3): a historical `as_of`
 /// (`Some(D)`, `D != today`) writes NO row here — historical coverage is the opt-in
 /// [`backfill`], not this snapshot path.
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<chrono::NaiveDate>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("coverage: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("coverage: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
     // Forward-only: an old checkout's report is not the CURRENT tree's coverage, so a
@@ -192,9 +192,9 @@ pub(super) async fn compute(
     let day = super::today(pg).await?;
     let mut written = 0u32;
 
-    // One row per repository the project spans that has a readable report with real
+    // One row per repository the workspace spans that has a readable report with real
     // instrumented lines. scope=user (identity NULL) so it pools into the default read.
-    for (repository_id, abs_path) in pg.repository_roots_for_project(&project_id).await? {
+    for (repository_id, abs_path) in pg.repository_roots_for_workspace(&workspace_id).await? {
         let Some((hit, found)) = read_coverage(&abs_path, &candidates) else {
             continue; // no report for this checkout → honest-empty
         };
@@ -205,7 +205,7 @@ pub(super) async fn compute(
         // nothing is covered), never suppressed.
         let value = hit as f64 / found as f64;
         let props = serde_json::json!({ "numerator": hit, "denominator": found });
-        pg.upsert_project_metric_repo(&MetricRow {
+        pg.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mid,
             repository_id: &repository_id,
             scope: SCOPE_USER,
@@ -255,7 +255,7 @@ fn run_coverage_command(wt: &Path, command: &str) -> Result<(), String> {
 /// `(repository, sampled commit)` stamped `computed_on = commit-day`, `commit_sha =
 /// sha` (a commit-cadence historical point distinct from the forward snapshot's
 /// `commit_sha = NULL` row). DISABLED (`Ok(0)`, logged) unless the command is
-/// configured — because it RUNS the project's test suite. `weeks` bounds how many of
+/// configured — because it RUNS the workspace's test suite. `weeks` bounds how many of
 /// the most-recent sampled ISO-week anchors to walk (`None` = all). Returns the number
 /// of rows written. Never fabricates: a commit that predates the repo, a failed
 /// command, or an unproduced/empty lcov writes NO row for that commit.
@@ -263,7 +263,7 @@ fn run_coverage_command(wt: &Path, command: &str) -> Result<(), String> {
 ///
 /// The task kind exists to SCHEDULE the work, not to define it: the definition
 /// stays in `backfill` so the queue and any call surface run the same code.
-/// `task.path` = project id, `task.folder_path` = the week bound ("" = all
+/// `task.path` = workspace id, `task.folder_path` = the week bound ("" = all
 /// history), which is how the queue carries the request's `weeks` parameter.
 pub(crate) async fn run_backfill(
     ctx: &crate::tasks::executor::TaskContext,
@@ -275,11 +275,11 @@ pub(crate) async fn run_backfill(
 
 pub(crate) async fn backfill(
     pg: &PgStore,
-    project_raw: &str,
+    workspace_raw: &str,
     weeks: Option<u32>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("coverage: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("coverage: bad workspace id {workspace_raw:?}: {e}"))?;
 
     let command = pg.get_config(COVERAGE_COMMAND_KEY).await?.unwrap_or_default().trim().to_string();
     if command.is_empty() {
@@ -296,7 +296,7 @@ pub(crate) async fn backfill(
     let candidates = lcov_candidates(pg).await;
     let mut written = 0u32;
 
-    for (repository_id, abs_path) in pg.repository_roots_for_project(&project_id).await? {
+    for (repository_id, abs_path) in pg.repository_roots_for_workspace(&workspace_id).await? {
         // The SAME weekly anchors quality samples, bounded to the most recent `weeks`.
         let mut sampled =
             super::quality::sample_commit_days(&super::churn::git_commit_days(&abs_path));
@@ -326,7 +326,7 @@ pub(crate) async fn backfill(
             }
             let value = hit as f64 / found as f64;
             let props = serde_json::json!({ "numerator": hit, "denominator": found });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_USER,
@@ -344,7 +344,7 @@ pub(crate) async fn backfill(
         }
     }
 
-    tracing::info!(project = %project_raw, rows = written, "coverage: backfill complete");
+    tracing::info!(workspace = %workspace_raw, rows = written, "coverage: backfill complete");
     Ok(written)
 }
 
@@ -356,8 +356,8 @@ pub(crate) async fn backfill(
 mod tests {
     use super::*;
     use crate::tasks::test_support::{
-        TestGate, cleanup_metrics_fixture, daily_project_metric_rows as daily_rows,
-        git_commit_on_day, make_ctx, repository_for_folder, seed_git_project_folder,
+        TestGate, cleanup_metrics_fixture, daily_workspace_metric_rows as daily_rows,
+        git_commit_on_day, make_ctx, repository_for_folder, seed_git_workspace_folder,
     };
 
     /// Coverage resolves its lcov path through the GLOBAL `metrics.coverage_lcov`
@@ -431,11 +431,11 @@ end_of_record
         let _guard = COVERAGE_CONFIG_LOCK.enter();
         // A repo with an lcov report (LH 15 / LF 20) → ONE scope=user coverage row
         // (identity NULL), value 0.75, props numerator/denominator = 15/20, keyed on the
-        // repository, and surfaced in the DEFAULT scope=user project read (like knowledge).
+        // repository, and surfaced in the DEFAULT scope=user workspace read (like knowledge).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let rid = repository_for_folder(pg, &fid).await;
         write_lcov(repo.path(), "lcov.info", "SF:src/a.rs\nLH:15\nLF:20\nend_of_record\n");
 
@@ -450,8 +450,8 @@ end_of_record
             Option<String>,
         ) = query_as(
             "SELECT pm.value::float8, pm.props, pm.scope::text, pm.repository_id, pm.identity \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'coverage'",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'coverage'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -466,7 +466,7 @@ end_of_record
         );
         assert_eq!(repo_id, Some(rid), "keyed on the resolved repository_id");
         assert_eq!(identity, None, "identity NULL — coverage is not author-attributed");
-        // It surfaces in the default scope=user project read (the pooled view path).
+        // It surfaces in the default scope=user workspace read (the pooled view path).
         let daily = daily_rows(pg, &pid).await;
         let cov =
             daily.iter().find(|r| r.0 == "coverage").expect("coverage in the scope=user read");
@@ -476,7 +476,7 @@ end_of_record
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 1, "re-run recomputes the same row");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -494,15 +494,15 @@ end_of_record
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         write_lcov(repo.path(), "lcov.info", "SF:src/a.rs\nLH:0\nLF:12\nend_of_record\n");
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 1, "a real 0.0 over a real denominator is written");
         let (value, den): (f64, i64) = query_as(
             "SELECT pm.value::float8, (pm.props->>'denominator')::int8 \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'coverage'",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'coverage'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -521,12 +521,12 @@ end_of_record
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, _repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, _repo) = seed_git_workspace_folder(pg, &uniq).await;
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no report → no coverage row (never a fabricated 0)");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -549,14 +549,14 @@ end_of_record
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         write_lcov(repo.path(), "lcov.info", "SF:src/a.rs\nLH:5\nLF:5\nend_of_record\n");
 
         let past = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
         let written = compute(&ctx, &pid.to_string(), Some(past)).await.unwrap();
         assert_eq!(written, 0, "historical as_of → forward-only skip → no row");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -573,7 +573,7 @@ end_of_record
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         write_lcov(
             repo.path(),
             "build/cov/report.lcov",
@@ -583,9 +583,9 @@ end_of_record
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         let den: Option<i64> = query_as(
-            "SELECT (pm.props->>'denominator')::int8 FROM sensei.project_metrics pm \
+            "SELECT (pm.props->>'denominator')::int8 FROM sensei.workspace_metrics pm \
                JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'coverage'",
+              WHERE pm.workspace_id = $1 AND m.key = 'coverage'",
         )
         .bind(pid)
         .fetch_optional(pg.pool())
@@ -614,7 +614,7 @@ end_of_record
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         // Three commits in three distinct ISO weeks → three sampled anchors.
         for (d, f) in [("2025-05-05", "a.rs"), ("2025-05-12", "b.rs"), ("2025-05-19", "c.rs")] {
             git_commit_on_day(repo.path(), d, &[(f, "x\n")]);
@@ -632,8 +632,8 @@ end_of_record
         #[allow(clippy::type_complexity)]
         let rows: Vec<(chrono::NaiveDate, Option<String>, f64)> = query_as(
             "SELECT pm.computed_on, pm.commit_sha, pm.value::float8 \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'coverage' ORDER BY pm.computed_on",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'coverage' ORDER BY pm.computed_on",
         )
         .bind(pid)
         .fetch_all(pg.pool())
@@ -662,12 +662,12 @@ end_of_record
         let _guard = COVERAGE_CONFIG_LOCK.enter();
         // The `weeks` bound survives the trip through the queue. It rides in
         // `folder_path` as a string, so a wrapper that dropped or misparsed it
-        // would silently run the project's test suite over the WHOLE history
+        // would silently run the workspace's test suite over the WHOLE history
         // instead of the one week that was asked for.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         for (d, f) in [("2025-05-05", "a.rs"), ("2025-05-12", "b.rs"), ("2025-05-19", "c.rs")] {
             git_commit_on_day(repo.path(), d, &[(f, "x\n")]);
         }
@@ -710,11 +710,11 @@ end_of_record
     async fn backfill_disabled_without_a_configured_command() {
         let _guard = COVERAGE_CONFIG_LOCK.enter();
         // No metrics.coverage_command → backfill is a no-op (the daemon never runs the
-        // project's tests unless explicitly configured).
+        // workspace's tests unless explicitly configured).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         git_commit_on_day(repo.path(), "2025-05-05", &[("a.rs", "x\n")]);
         pg.set_config(COVERAGE_COMMAND_KEY, "").await.unwrap(); // ensure unset
 

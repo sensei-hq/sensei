@@ -10,7 +10,7 @@ const solar = new Set(
 
 // #133: every Instruments mark carries a kanji AND a Solar Bold Duotone icon,
 // except the assistants' own marks, which are identities with no Solar logo
-// and stay kanji in both modes (as projects do).
+// and stay kanji in both modes (as workspaces do).
 describe('instrument marks', () => {
   it('gives every tab and kind chip a kanji and a Solar icon', () => {
     expect(INSTRUMENT_TABS.map((t) => t.id)).toEqual(['playground', 'replay', 'insights']);

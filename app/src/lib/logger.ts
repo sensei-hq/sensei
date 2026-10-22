@@ -1,7 +1,7 @@
 /**
  * Module-scoped session logger.
  *
- * Each module (bootstrap, wizard, projects…) gets one active session at a time.
+ * Each module (bootstrap, wizard, workspaces…) gets one active session at a time.
  * Log entries are forwarded to the Tauri sidecar via invoke — the sidecar is the
  * sole writer to disk.
  *

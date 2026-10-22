@@ -55,16 +55,16 @@ impl PgStore {
     /// List all sessions across all folders.
     /// List recent sessions, newest first. `range_days` (when `Some`) filters to
     /// sessions started within the last N days — powers the Observatory · Sessions
-    /// digest range chips (7d/30d/90d); `None` = no time filter. `project` (when
-    /// `Some`) scopes to one project. `agent` (the acp harness, e.g. "claude" /
+    /// digest range chips (7d/30d/90d); `None` = no time filter. `workspace` (when
+    /// `Some`) scopes to one workspace. `agent` (the acp harness, e.g. "claude" /
     /// "zed") lets the digest label each row's assistant.
     pub async fn list_all_sessions(
         &self,
         limit: i64,
         range_days: Option<i64>,
-        project: Option<&uuid::Uuid>,
+        workspace: Option<&uuid::Uuid>,
     ) -> Result<Vec<serde_json::Value>, String> {
-        // Join the project name so each session can be labelled, and return the
+        // Join the workspace name so each session can be labelled, and return the
         // timestamps in the camelCase shape the SessionData wire type and the
         // observatory components actually read (startedAt / completedAt). `corrections`
         // powers the "Corrections" column (first-try / N× rework) per the mockup.
@@ -94,17 +94,17 @@ impl PgStore {
                     s.started_at, s.completed_at, s.acp_id,
                     s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
              FROM activity.sessions s
-             LEFT JOIN sensei.projects p ON p.id = s.project_id
+             LEFT JOIN sensei.workspaces p ON p.id = s.workspace_id
              WHERE ($2::int IS NULL OR s.started_at >= now() - make_interval(days => $2::int))
-               AND ($3::uuid IS NULL OR s.project_id = $3)
+               AND ($3::uuid IS NULL OR s.workspace_id = $3)
              ORDER BY s.started_at DESC LIMIT $1"
-        ).bind(limit).bind(range_days).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(limit).bind(range_days).bind(workspace).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
             .map(
                 |(
                     id,
-                    project,
+                    workspace,
                     task,
                     summary,
                     outcome,
@@ -122,7 +122,7 @@ impl PgStore {
                 )| {
                     serde_json::json!({
                         "id": id,
-                        "project": project,
+                        "workspace": workspace,
                         "task": task,
                         "summary": summary,
                         "outcome": outcome,
@@ -223,14 +223,14 @@ impl PgStore {
     }
 
     /// Find-or-create the `activity.sessions` row for an assistant
-    /// `client_session_id`, attributing it to `folder_id`/`project_id`. Marks it
+    /// `client_session_id`, attributing it to `folder_id`/`workspace_id`. Marks it
     /// completed when `is_end` (Stop / SessionEnd). Idempotent per
     /// client_session_id so every hook event of a session folds into one row (#31).
     pub async fn record_session_event(
         &self,
         client_session_id: &str,
         folder_id: &uuid::Uuid,
-        project_id: Option<&uuid::Uuid>,
+        workspace_id: Option<&uuid::Uuid>,
         family: &str,
         is_end: bool,
     ) -> Result<uuid::Uuid, String> {
@@ -243,7 +243,7 @@ impl PgStore {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "WITH anchor AS (
                  SELECT a.repo_folder_id,
-                        a.project_id AS anchor_project,
+                        a.workspace_id AS anchor_workspace,
                         COALESCE(rf.remote_urls->0->>'url', a.repo_abs_path) AS repo_key
                    FROM sensei.folders f
                    JOIN LATERAL sensei.repo_anchor_for(f.abs_path) a ON true
@@ -251,20 +251,20 @@ impl PgStore {
                   WHERE f.id = $2
              )
              INSERT INTO activity.sessions
-                 (client_session_id, folder_id, project_id, acp_id, completed_at, repo_folder_id, repo_key)
+                 (client_session_id, folder_id, workspace_id, acp_id, completed_at, repo_folder_id, repo_key)
              SELECT $1, $2,
-                    COALESCE((SELECT anchor_project FROM anchor), $3), $4,
+                    COALESCE((SELECT anchor_workspace FROM anchor), $3), $4,
                     CASE WHEN $5 THEN now() ELSE NULL END,
                     (SELECT repo_folder_id FROM anchor),
                     (SELECT repo_key FROM anchor)
              ON CONFLICT (client_session_id) WHERE client_session_id IS NOT NULL
              DO UPDATE SET
                  completed_at   = CASE WHEN $5 THEN now() ELSE activity.sessions.completed_at END,
-                 project_id     = COALESCE(activity.sessions.project_id, EXCLUDED.project_id),
+                 workspace_id   = COALESCE(activity.sessions.workspace_id, EXCLUDED.workspace_id),
                  repo_folder_id = COALESCE(activity.sessions.repo_folder_id, EXCLUDED.repo_folder_id),
                  repo_key       = COALESCE(activity.sessions.repo_key, EXCLUDED.repo_key)
              RETURNING id"
-        ).bind(client_session_id).bind(folder_id).bind(project_id).bind(family).bind(is_end)
+        ).bind(client_session_id).bind(folder_id).bind(workspace_id).bind(family).bind(is_end)
          .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -533,36 +533,36 @@ impl PgStore {
         .map_err(|e| e.to_string())
     }
 
-    /// Mark a project's captured sessions for RE-enrichment (a backfill request) —
-    /// clears `analyzed_at` so the next `AnalyzeProject` re-derives every session
+    /// Mark a workspace's captured sessions for RE-enrichment (a backfill request) —
+    /// clears `analyzed_at` so the next `AnalyzeWorkspace` re-derives every session
     /// from scratch with the current logic (used while metrics are being refined).
     /// Only sessions with a `client_session_id` (hook/transcript-captured) are
-    /// reset, selected by `project_id` as `get_project_sessions_needing_enrichment`
+    /// reset, selected by `workspace_id` as `get_workspace_sessions_needing_enrichment`
     /// selects them — most sessions carry no folder. Returns the number marked.
-    pub async fn reset_project_sessions_for_reenrichment(
+    pub async fn reset_workspace_sessions_for_reenrichment(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE activity.sessions SET analyzed_at = NULL
-              WHERE project_id = $1 AND client_session_id IS NOT NULL",
+              WHERE workspace_id = $1 AND client_session_id IS NOT NULL",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
-    /// Per-tool usage breakdown for a project (Pass 2c) — the tools the ACPs
+    /// Per-tool usage breakdown for a workspace (Pass 2c) — the tools the ACPs
     /// actually invoked, summed from `sessions.props.tool_usage`
-    /// (`{tool: {pre, post, failed}}`) across the project's sessions. This is the
+    /// (`{tool: {pre, post, failed}}`) across the workspace's sessions. This is the
     /// "which tools were used" view behind the tool-usage bubble + evidence — a
     /// RAW-invocation count, distinct from the `unused_tools` metric's
     /// verdict-based `used_tools`. Ordered by calls desc; capped by `limit`.
-    pub async fn get_project_tool_breakdown(
+    pub async fn get_workspace_tool_breakdown(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         limit: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, i64, i64, i64)> = sqlx_core::query_as::query_as(
@@ -571,16 +571,16 @@ impl PgStore {
                     coalesce(sum((e.v->>'failed')::int), 0)::int8 AS failed,
                     count(*)::int8                                AS sessions
                FROM activity.sessions s
-               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id,
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = s.folder_id,
                     jsonb_each(s.props->'tool_usage') AS e(tool, v)
-              WHERE fp.project_id = $1
+              WHERE fp.workspace_id = $1
                 AND s.props ? 'tool_usage'
                 AND jsonb_typeof(s.props->'tool_usage') = 'object'
               GROUP BY e.tool
               ORDER BY calls DESC, e.tool
               LIMIT $2",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(limit)
         .fetch_all(&self.pool)
         .await
@@ -965,35 +965,35 @@ impl PgStore {
         }))
     }
 
-    /// `(session uuid, client_session_id)` for a project's sessions that NEED
+    /// `(session uuid, client_session_id)` for a workspace's sessions that NEED
     /// (re)enrichment — never analyzed (`analyzed_at IS NULL`), or with
     /// assistant_events newer than the last analysis. Lets the scheduler skip
     /// unchanged sessions so enrichment cost scales with NEW activity, not total
     /// history (#67 incremental).
-    pub async fn get_project_sessions_needing_enrichment(
+    pub async fn get_workspace_sessions_needing_enrichment(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<(uuid::Uuid, String, Option<uuid::Uuid>)>, String> {
         // coalesce to the repo anchor so a session whose raw folder was pruned (folder_id
         // SET NULL) still reports a folder to scope pattern derivation to; Option-decoded
         // in case both are null (a fully unattached session).
         let rows: Vec<(uuid::Uuid, String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
             "SELECT s.id, s.client_session_id, coalesce(s.folder_id, s.repo_folder_id) FROM activity.sessions s
-             WHERE s.project_id = $1 AND s.client_session_id IS NOT NULL
+             WHERE s.workspace_id = $1 AND s.client_session_id IS NOT NULL
                AND (s.analyzed_at IS NULL
                     OR EXISTS (SELECT 1 FROM activity.assistant_events e
                                WHERE e.session_id = s.client_session_id
                                  AND to_timestamp(e.ts / 1000.0) > s.analyzed_at))"
-        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        ).bind(workspace_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
-    /// The MEASURABLE sessions that ran on `day` for a project — the data behind a
-    /// daily metric datapoint (the datapoint→sessions drill-down). Project scope is
-    /// the folder-join (`sensei.folders.project_id`), matching how the daily metrics
+    /// The MEASURABLE sessions that ran on `day` for a workspace — the data behind a
+    /// daily metric datapoint (the datapoint→sessions drill-down). Workspace scope is
+    /// the folder-join (`sensei.folders.workspace_id`), matching how the daily metrics
     /// are computed (`session_outcomes`), so the set here is exactly the base a daily
     /// point was measured over — the fix for the old un-scoped digest that returned a
-    /// fixed, project-agnostic three. `outcome IS NOT NULL` restricts to measurable
+    /// fixed, workspace-agnostic three. `outcome IS NOT NULL` restricts to measurable
     /// (analyzed) sessions; `date_trunc('day', started_at)::date = day` pins the
     /// calendar day. Each row carries the structural fields the client renders a
     /// one-liner from (`outcome` + `ftr` + `turns` + `corrections`) plus the
@@ -1001,9 +1001,9 @@ impl PgStore {
     /// `summary` column (may be empty for backfilled sessions — the LLM per-session
     /// summary is a separate workstream). Newest-first. Empty when no measurable
     /// session ran that day (honest-empty, not a failure); propagates the read error.
-    pub async fn get_project_sessions_for_day(
+    pub async fn get_workspace_sessions_for_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         day: chrono::NaiveDate,
     ) -> Result<Vec<serde_json::Value>, String> {
         type Row = (
@@ -1030,14 +1030,14 @@ impl PgStore {
                     s.evidence, (s.props->>'resumed')::bool AS resumed, s.props->'trouble' AS trouble,
                     s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
                FROM activity.sessions s
-               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id
-              WHERE fp.project_id = $1
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = s.folder_id
+              WHERE fp.workspace_id = $1
                 AND s.outcome   IS NOT NULL
                 AND s.outcome   <> 'empty'::sensei.session_outcome
                 AND date_trunc('day', s.started_at)::date = $2
               ORDER BY s.started_at DESC",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(day)
         .fetch_all(&self.pool)
         .await
@@ -1086,15 +1086,15 @@ impl PgStore {
             .collect())
     }
 
-    /// `(project_id, latest_session_activity)` for every project with attributed
+    /// `(workspace_id, latest_session_activity)` for every workspace with attributed
     /// sessions — drives the analyzer scheduler's "what changed since last run"
     /// check (#67).
-    pub async fn get_projects_with_session_activity(
+    pub async fn get_workspaces_with_session_activity(
         &self,
     ) -> Result<Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)>, String> {
         let rows: Vec<(uuid::Uuid, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
-            "SELECT project_id, max(GREATEST(started_at, COALESCE(completed_at, started_at)))
-             FROM activity.sessions WHERE project_id IS NOT NULL GROUP BY project_id",
+            "SELECT workspace_id, max(GREATEST(started_at, COALESCE(completed_at, started_at)))
+             FROM activity.sessions WHERE workspace_id IS NOT NULL GROUP BY workspace_id",
         )
         .fetch_all(&self.pool)
         .await
@@ -1102,37 +1102,37 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// Per-(folder, file) re-edit churn across a project's sessions — the
+    /// Per-(folder, file) re-edit churn across a workspace's sessions — the
     /// SignalDeriver's rework anti-pattern source (#68, L1). Tool failures aren't
     /// captured, so churn (the same file edited many times in ONE session) is the
     /// "result needed follow-ups" signal. Returns `(folder_id, file,
     /// max_session_edits, total_edits)` only for files whose busiest single
     /// session reaches `min_session_edits`.
     ///
-    /// Whole project, always (#287). A file is placed by its own path: under the
-    /// innermost repository root of the project that contains it, reported
-    /// relative to that root — most sessions carry a project but no folder, so
+    /// Whole workspace, always (#287). A file is placed by its own path: under the
+    /// innermost repository root of the workspace that contains it, reported
+    /// relative to that root — most sessions carry a workspace but no folder, so
     /// the session cannot place it. A path under none (`~/.claude/…`) is not the
-    /// project's. A relative path stays with its session's folder, when it has
+    /// workspace's. A relative path stays with its session's folder, when it has
     /// one. Each edit event counts once, so duplicated events (#289) don't.
     pub async fn get_file_churn_stats(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         min_session_edits: i64,
     ) -> Result<Vec<(uuid::Uuid, String, i64, i64)>, String> {
         let rows: Vec<(uuid::Uuid, String, i64, i64)> = sqlx_core::query_as::query_as(
             "WITH roots AS (
                  SELECT DISTINCT ON (f.repository_id) f.id AS folder_id, f.abs_path
                    FROM sensei.folders f
-                   JOIN sensei.folder_projects fp ON fp.folder_id = f.id
-                  WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL
+                   JOIN sensei.folder_workspaces fp ON fp.folder_id = f.id
+                  WHERE fp.workspace_id = $1 AND f.repository_id IS NOT NULL
                   ORDER BY f.repository_id, length(f.abs_path) ASC
              ), edits AS (
                  SELECT DISTINCT s.folder_id AS session_folder, ae.session_id, ae.ts,
                         ae.payload->'tool_input'->>'file_path' AS path
                    FROM activity.assistant_events ae
                    JOIN activity.sessions s ON s.client_session_id = ae.session_id
-                  WHERE s.project_id = $1
+                  WHERE s.workspace_id = $1
                     AND ae.event_type = 'PostToolUse'
                     AND ae.tool_name IN ('Edit', 'Write', 'MultiEdit')
                     AND ae.payload->'tool_input'->>'file_path' IS NOT NULL
@@ -1159,7 +1159,7 @@ impl PgStore {
              GROUP BY folder_id, file
              HAVING max(edits) >= $2",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(min_session_edits)
         .fetch_all(&self.pool)
         .await
@@ -1167,27 +1167,27 @@ impl PgStore {
         Ok(rows)
     }
 
-    /// User-prompt text across a project's sessions — the SignalDeriver's
+    /// User-prompt text across a workspace's sessions — the SignalDeriver's
     /// correction / rule-candidate source (#68, L1). Returns `(folder_id,
     /// session_id, prompt)` for every UserPromptSubmit carrying prompt text.
     /// `folders = Some(ids)` scopes to those folders (incremental re-derive);
-    /// `None` = whole project.
-    pub async fn get_project_prompts(
+    /// `None` = whole workspace.
+    pub async fn get_workspace_prompts(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         folders: Option<&[uuid::Uuid]>,
     ) -> Result<Vec<(uuid::Uuid, String, String)>, String> {
         let rows: Vec<(uuid::Uuid, String, String)> = sqlx_core::query_as::query_as(
             "SELECT s.folder_id, ae.session_id, ae.payload->>'prompt'
              FROM activity.assistant_events ae
              JOIN activity.sessions s ON s.client_session_id = ae.session_id
-             WHERE s.project_id = $1
+             WHERE s.workspace_id = $1
                AND ($2::uuid[] IS NULL OR s.folder_id = ANY($2))
                AND ae.event_type = 'UserPromptSubmit'
                AND ae.payload->>'prompt' IS NOT NULL
              ORDER BY ae.ts",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(folders.map(<[uuid::Uuid]>::to_vec))
         .fetch_all(&self.pool)
         .await
@@ -1202,7 +1202,7 @@ impl PgStore {
     /// repo delete/rename, but the events — session-id-keyed, no FK — survived). For
     /// each, recreate the session row, resolving `folder_id` from the session's cwd
     /// via [`find_folder_for_path`] (alias-aware, so a renamed repo's history
-    /// re-attaches to the current folder + project). Sessions whose cwd still doesn't
+    /// re-attaches to the current folder + workspace). Sessions whose cwd still doesn't
     /// resolve (no folder, no alias) are left orphaned. Idempotent — a session that
     /// already has a row isn't reprocessed. Returns the number repaired.
     pub async fn repair_orphaned_sessions(&self) -> Result<u32, String> {
@@ -1238,11 +1238,11 @@ impl PgStore {
                     break;
                 }
             }
-            let Some((folder_id, project_id)) = resolved else {
+            let Some((folder_id, workspace_id)) = resolved else {
                 continue; // no cwd resolves (no folder, no alias) — leave orphaned
             };
             if self
-                .record_session_event(&session_id, &folder_id, project_id.as_ref(), &family, true)
+                .record_session_event(&session_id, &folder_id, workspace_id.as_ref(), &family, true)
                 .await
                 .is_ok()
             {
@@ -1321,11 +1321,11 @@ impl PgStore {
                     break;
                 }
             }
-            let Some((folder_id, project_id)) = resolved else {
+            let Some((folder_id, workspace_id)) = resolved else {
                 continue; // unresolvable — leave it rather than misattribute
             };
             if self
-                .record_session_event(&session_id, &folder_id, project_id.as_ref(), &family, true)
+                .record_session_event(&session_id, &folder_id, workspace_id.as_ref(), &family, true)
                 .await
                 .is_ok()
             {
@@ -1617,30 +1617,30 @@ impl PgStore {
 
     // ── Process-quality analyzer (spec 2026-08-20) ──────────────────────
 
-    /// Measurable sessions for a project that still need the LLM process-quality
+    /// Measurable sessions for a workspace that still need the LLM process-quality
     /// pass — `process_analyzed_at IS NULL` (never scored, or cleared by a
     /// re-ingest). Returns `(session_uuid, client_session_id)`; a session with no
     /// `client_session_id` can't join its transcript turns, so it's excluded (the
     /// judgment has nothing to ground in — honest skip, not a fabricated score).
     /// `outcome IS NOT NULL AND <> 'empty'` restricts to the same measurable base
     /// the other session metrics use. Newest-first, capped at `limit` (the per-tick
-    /// batch cap so one project can't dominate the queue).
+    /// batch cap so one workspace can't dominate the queue).
     pub async fn sessions_needing_process_analysis(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         limit: i64,
     ) -> Result<Vec<(uuid::Uuid, String)>, String> {
         sqlx_core::query_as::query_as(
             "SELECT id, client_session_id
                FROM activity.sessions
-              WHERE project_id = $1
+              WHERE workspace_id = $1
                 AND process_analyzed_at IS NULL
                 AND client_session_id IS NOT NULL
                 AND outcome IS NOT NULL AND outcome <> 'empty'::sensei.session_outcome
               ORDER BY started_at DESC
               LIMIT $2",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(limit)
         .fetch_all(&self.pool)
         .await
@@ -1732,15 +1732,15 @@ impl PgStore {
         Ok(())
     }
 
-    // ── Projects ──────────────────────────────────────────────────────
+    // ── Workspaces ──────────────────────────────────────────────────────
 
-    /// Recent sessions for a project with the folder role they ran in (the
+    /// Recent sessions for a workspace with the folder role they ran in (the
     /// multi-repo membership chip). Newest first, capped at `limit`. Duration
     /// and relative time are formatted client-side from the ISO timestamps, the
     /// same as the shared RecentSessions component.
-    pub async fn list_recent_project_sessions_with_role(
+    pub async fn list_recent_workspace_sessions_with_role(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         limit: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         #[allow(clippy::type_complexity)]
@@ -1756,15 +1756,15 @@ impl PgStore {
             "SELECT s.id, s.task, s.ftr, s.corrections, s.started_at, s.completed_at, f.role::text
                  FROM activity.sessions s
                  LEFT JOIN sensei.folders f ON f.id = s.folder_id
-                 WHERE s.project_id = $1
+                 WHERE s.workspace_id = $1
                  ORDER BY s.started_at DESC LIMIT $2",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(limit)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, "list_recent_project_sessions_with_role failed");
+            tracing::error!(error = %e, "list_recent_workspace_sessions_with_role failed");
             e.to_string()
         })?;
         Ok(rows
@@ -1867,9 +1867,9 @@ impl PgStore {
             .collect())
     }
 
-    pub async fn list_sessions_by_project(
+    pub async fn list_sessions_by_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         limit: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         // Extended shape (T3 Slice 1.4): the Sessions screen needs model,
@@ -1893,10 +1893,10 @@ impl PgStore {
         )> = sqlx_core::query_as::query_as(
             "SELECT id, task, ftr, outcome::text, started_at, completed_at,
                         turns, corrections, provider, model
-                 FROM activity.sessions WHERE project_id = $1
+                 FROM activity.sessions WHERE workspace_id = $1
                  ORDER BY started_at DESC LIMIT $2",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .bind(limit)
         .fetch_all(&self.pool)
         .await

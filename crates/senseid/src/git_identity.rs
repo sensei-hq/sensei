@@ -3,7 +3,7 @@
 //! Returns the `user.name` / `user.email` that git itself would stamp on a
 //! commit made in a directory, applying git's own **local → global** precedence
 //! (a repo `.git/config` override wins; otherwise the user's global
-//! `~/.gitconfig`). Surfaced by `GET /api/user` (MCP `get_user_for_project`) so
+//! `~/.gitconfig`). Surfaced by `GET /api/user` (MCP `get_user_for_workspace`) so
 //! a run/plan is registered under the same identity as the commit author —
 //! which is the identity a contributor signs in to the Dōjō with (GitHub
 //! OAuth). That makes attribution automatic instead of a hand-paired token.

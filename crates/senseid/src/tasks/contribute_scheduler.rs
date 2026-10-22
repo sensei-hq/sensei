@@ -123,7 +123,7 @@ pub async fn maybe_prepare_contribution_batch<G: Generalizer>(
 
     // 3. Eligible-insight selection: the oldest approved batch still owing a Dōjō.
     let batch_id = match pg.next_unsent_approved_batch().await {
-        Ok(Some((id, _project, _decided))) => id,
+        Ok(Some((id, _workspace, _decided))) => id,
         Ok(None) => return PrepareOutcome::NothingEligible,
         Err(e) => {
             tracing::warn!(error = %e, "contribute_scheduler: next_unsent_approved_batch failed — skipping tick");
@@ -246,9 +246,9 @@ mod tests {
         // stages: `staged` is 1, the row lands on the earlier run's membership,
         // and the count against THIS one reads 0. Deleting first makes the test
         // independent of how many times it has run before.
-        let (project, tenant) = ("_test:dojo:contribute_sched", "github/acme-corp");
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE name = $1")
-            .bind(project)
+        let (workspace, tenant) = ("_test:dojo:contribute_sched", "github/acme-corp");
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE name = $1")
+            .bind(workspace)
             .execute(pg.pool())
             .await
             .unwrap();
@@ -259,13 +259,13 @@ mod tests {
             .await
             .unwrap();
 
-        // A project + memory + APPROVED batch, a destination membership, and the
-        // project bound to it so routing yields exactly one target.
-        let proj = pg.create_project(project, None, None).await.unwrap();
+        // A workspace + memory + APPROVED batch, a destination membership, and the
+        // workspace bound to it so routing yields exactly one target.
+        let proj = pg.create_workspace(workspace, None, None).await.unwrap();
         let mem = pg
             .insert_memory(&InsertMemory {
-                project_id: Some(proj),
-                scope: "project".into(),
+                workspace_id: Some(proj),
+                scope: "workspace".into(),
                 scope_filter: None,
                 mtype: "convention".into(),
                 title: "gate on green ci".into(),
@@ -313,7 +313,7 @@ mod tests {
         })
         .await
         .unwrap();
-        pg.bind_project_to_dojo(&proj, Some(&mid)).await.unwrap();
+        pg.bind_workspace_to_dojo(&proj, Some(&mid)).await.unwrap();
 
         // Clean slate for the watermark this test drives.
         pg.delete_config(LAST_PREPARED_KEY).await.unwrap();
@@ -367,9 +367,9 @@ mod tests {
         assert!(matches!(again, PrepareOutcome::Prepared(_)));
         assert_eq!(count_pending(&pg, mid).await, 1, "re-staging is idempotent — no duplicate row");
 
-        // Cleanup: membership delete cascades its outbox rows; then batch/memory/project.
+        // Cleanup: membership delete cascades its outbox rows; then batch/memory/workspace.
         assert!(pg.delete_dojo_membership(&mid).await.unwrap());
-        pg.delete_project(&proj).await.unwrap();
+        pg.delete_workspace(&proj).await.unwrap();
         sqlx_core::query::query("DELETE FROM sensei.collective_preferences")
             .execute(pg.pool())
             .await

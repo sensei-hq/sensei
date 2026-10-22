@@ -8,24 +8,24 @@ const item = (id: string, status: string) => ({ id, status, detail: id }) as unk
 const drift = (items: DriftItem[]) => ok({ items, total: items.length, drifted: items.length, broken: 0, indexedDocs: 2 });
 
 const api = (over: Partial<DriftApi> = {}): DriftApi => ({
-  tryListProjects: async () => ok([{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }]),
-  tryGetProjectDrift: async (id) => drift([item(`${id}-1`, 'drifted')]),
+  tryListWorkspaces: async () => ok([{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }]),
+  tryGetWorkspaceDrift: async (id) => drift([item(`${id}-1`, 'drifted')]),
   ...over,
 });
 
-// #288: drift across projects, or why it could not be read — a project whose
+// #288: drift across workspaces, or why it could not be read — a workspace whose
 // read failed is named, never counted as clean.
 describe('loadDriftAcross', () => {
-  it('groups every project\'s drift', async () => {
+  it('groups every workspace\'s drift', async () => {
     const d = await loadDriftAcross(api());
-    expect([d.error, d.rollup?.total, d.groups?.map((g) => g.projectName), d.unread, d.indexedDocs]).toEqual([null, 2, ['alpha', 'beta'], [], 4]);
+    expect([d.error, d.rollup?.total, d.groups?.map((g) => g.workspaceName), d.unread, d.indexedDocs]).toEqual([null, 2, ['alpha', 'beta'], [], 4]);
   });
   it('a failed list read is the page\'s error', async () => {
-    const d = await loadDriftAcross(api({ tryListProjects: async () => down }));
+    const d = await loadDriftAcross(api({ tryListWorkspaces: async () => down }));
     expect([d.error, d.groups, d.rollup]).toEqual(['Service Unavailable', null, null]);
   });
-  it('names a project it could not read', async () => {
-    const d = await loadDriftAcross(api({ tryGetProjectDrift: async (id) => (id === 'b' ? down : drift([item('a-1', 'drifted')])) }));
+  it('names a workspace it could not read', async () => {
+    const d = await loadDriftAcross(api({ tryGetWorkspaceDrift: async (id) => (id === 'b' ? down : drift([item('a-1', 'drifted')])) }));
     expect([d.rollup?.total, d.unread]).toEqual([1, [{ name: 'beta', reason: 'Service Unavailable' }]]);
   });
 });

@@ -220,7 +220,7 @@ pub struct Attribution {
 }
 
 /// Scope tag deciding who receives an artifact downstream — the
-/// `dojo.artifacts.scope` jsonb (`{company | team | project | stack}`). A
+/// `dojo.artifacts.scope` jsonb (`{company | team | workspace | stack}`). A
 /// consumer receives an artifact when its membership scope matches these tags.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ArtifactScope {
@@ -229,7 +229,7 @@ pub struct ArtifactScope {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
+    pub workspace: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack: Option<String>,
 }
@@ -551,6 +551,17 @@ mod tests {
             contributed_by: Some("dev".into()),
             published_at: Some("2026-07-08T00:00:00Z".into()),
         }
+    }
+
+    // ---- the scope tag says workspace (#307 R3b, D16) -------------------
+
+    #[test]
+    fn artifact_scope_tags_a_workspace_under_workspace_never_project() {
+        let scope = ArtifactScope { workspace: Some("ledger".into()), ..Default::default() };
+        let v = serde_json::to_value(&scope).unwrap();
+        assert_eq!(v, json!({ "workspace": "ledger" }));
+        let back: ArtifactScope = serde_json::from_value(json!({ "workspace": "ledger" })).unwrap();
+        assert_eq!(back, scope);
     }
 
     // ---- kind <-> DB enum string mapping -------------------------------

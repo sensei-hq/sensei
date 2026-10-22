@@ -253,12 +253,12 @@ axes as (
              --     already answered above by the subscription terms.
              --   * `dojo.seats.namespace_id` points at `sensei.namespaces`, which
              --     is the GOVERNANCE LADDER (general·user·organization·client·
-             --     technology·team·project·repository) — the structure that
+             --     technology·team·workspace·repository) — the structure that
              --     decides WHICH RULES APPLY to a repo. Three of its four
              --     referents are rule packs, adoptions and shared rules; seats is
              --     the odd one out, billing against a rule scope.
-             --   * A `(project, …)` namespace is NOT `dojo.workspaces`. Live: 311
-             --     project namespaces against 146 workspaces (#307 D12).
+             --   * A `(workspace, …)` namespace is NOT `dojo.workspaces`. Live: 311
+             --     workspace-rung namespaces against 146 workspaces (#307 D12).
              --
              -- So this was never a grain to reconcile; the seat model keys on the
              -- wrong concept. Re-keying it is its own slice — see docs/backlog.md.

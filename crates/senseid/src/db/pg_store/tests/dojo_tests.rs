@@ -1,6 +1,6 @@
 use super::*;
 
-// ── Dōjō confidentiality: project identifiers (C5) ─────────────────
+// ── Dōjō confidentiality: workspace identifiers (C5) ─────────────────
 
 #[test]
 fn repo_tokens_from_remote_parses_ssh_and_https() {
@@ -39,11 +39,11 @@ async fn suggest_binding_infers_from_git_owner_then_stops_once_bound() {
         return;
     };
     let suffix = format!("suggestbind_{}", uuid::Uuid::new_v4());
-    let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     // An owner no other test uses: the database is shared, and a test that
     // connects an "acme" membership concurrently made "no membership yet" false.
     let owner = format!("acme{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
-    // The project's repo is owned by it, in mixed case in the remote.
+    // The workspace's repo is owned by it, in mixed case in the remote.
     sqlx_core::query::query("UPDATE sensei.folders SET remote_urls = $2 WHERE id = $1")
         .bind(fid)
         .bind(serde_json::json!([{
@@ -54,7 +54,7 @@ async fn suggest_binding_infers_from_git_owner_then_stops_once_bound() {
         .await
         .unwrap();
     assert_eq!(
-        s.project_org_owners(&pid).await.unwrap(),
+        s.workspace_org_owners(&pid).await.unwrap(),
         vec![owner.clone()],
         "owner parsed + lowercased"
     );
@@ -87,21 +87,21 @@ async fn suggest_binding_infers_from_git_owner_then_stops_once_bound() {
     assert_eq!(sug.matched_slug, owner);
     assert_eq!(sug.tenant_key, format!("github/{owner}"));
 
-    // Once the project is bound, the chip no longer applies.
-    assert!(s.bind_project_to_dojo(&pid, Some(&mid)).await.unwrap());
+    // Once the workspace is bound, the chip no longer applies.
+    assert!(s.bind_workspace_to_dojo(&pid, Some(&mid)).await.unwrap());
     assert!(crate::dojo::memberships::suggest_binding(&s, &pid).await.unwrap().is_none());
 
-    s.bind_project_to_dojo(&pid, None).await.unwrap();
+    s.bind_workspace_to_dojo(&pid, None).await.unwrap();
     s.delete_dojo_membership(&mid).await.unwrap();
 }
 
 #[tokio::test]
-async fn project_identifiers_gathers_names_paths_repos_and_sessions() {
+async fn workspace_identifiers_gathers_names_paths_repos_and_sessions() {
     let s = pg_store().await;
     let suffix = format!("projident_{}", uuid::Uuid::new_v4());
-    let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
+    let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     // Set the client + a git remote so the parser has something to chew on.
-    sqlx_core::query::query("UPDATE sensei.projects SET client = $2 WHERE id = $1")
+    sqlx_core::query::query("UPDATE sensei.workspaces SET client = $2 WHERE id = $1")
         .bind(pid)
         .bind("Acme Corp")
         .execute(s.pool())
@@ -113,12 +113,12 @@ async fn project_identifiers_gathers_names_paths_repos_and_sessions() {
         .execute(s.pool())
         .await
         .unwrap();
-    // A session for the project, with a client_session_id.
+    // A session for the workspace, with a client_session_id.
     let csid = format!("cs-{suffix}");
     s.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
-    let ids = s.project_identifiers(&pid).await.unwrap();
-    assert_eq!(ids.project_name.as_deref(), Some(format!("_test:{suffix}").as_str()));
+    let ids = s.workspace_identifiers(&pid).await.unwrap();
+    assert_eq!(ids.workspace_name.as_deref(), Some(format!("_test:{suffix}").as_str()));
     assert_eq!(ids.client_name.as_deref(), Some("Acme Corp"));
     assert!(
         ids.repo_names.iter().any(|r| r == "acme-api"),
@@ -143,18 +143,18 @@ async fn project_identifiers_gathers_names_paths_repos_and_sessions() {
     // The observatory session UUID is also present.
     assert!(ids.session_ids.len() >= 2, "expected uuid + client_session_id: {:?}", ids.session_ids);
 
-    // Cleanup (project delete cascades folders/sessions via FKs).
-    s.delete_project(&pid).await.ok();
+    // Cleanup (workspace delete cascades folders/sessions via FKs).
+    s.delete_workspace(&pid).await.ok();
 }
 
 // ── Dōjō connections tests ────────────────────────────────────────
 
 #[tokio::test]
-async fn dojo_membership_crud_and_project_binding_roundtrip() {
+async fn dojo_membership_crud_and_workspace_binding_roundtrip() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;
     };
-    // Service-assigned membership id (the local PK; projects.dojo_id → this).
+    // Service-assigned membership id (the local PK; workspaces.dojo_id → this).
     let mid = uuid::Uuid::new_v4();
     pg.create_dojo_membership(&NewDojoMembership {
         id: mid,
@@ -195,16 +195,16 @@ async fn dojo_membership_crud_and_project_binding_roundtrip() {
     assert!(pg.set_dojo_sync_status(&mid, "healthy").await.unwrap());
     assert_eq!(pg.get_dojo_membership(&mid).await.unwrap().unwrap().sync_status, "healthy");
 
-    // Bind a project → projects.dojo_id → appears in the bound-projects strip.
-    let proj = pg.create_project("_test:dojo:bind", None, None).await.unwrap();
-    assert!(pg.bind_project_to_dojo(&proj, Some(&mid)).await.unwrap());
-    let bound = pg.projects_bound_to_dojo(&mid).await.unwrap();
-    assert!(bound.iter().any(|(id, _)| *id == proj), "bound project surfaces");
+    // Bind a workspace → workspaces.dojo_id → appears in the bound-workspaces strip.
+    let proj = pg.create_workspace("_test:dojo:bind", None, None).await.unwrap();
+    assert!(pg.bind_workspace_to_dojo(&proj, Some(&mid)).await.unwrap());
+    let bound = pg.workspaces_bound_to_dojo(&mid).await.unwrap();
+    assert!(bound.iter().any(|(id, _)| *id == proj), "bound workspace surfaces");
 
     // Unbind + cleanup.
-    assert!(pg.bind_project_to_dojo(&proj, None).await.unwrap());
-    assert!(pg.projects_bound_to_dojo(&mid).await.unwrap().is_empty());
-    pg.delete_project(&proj).await.unwrap();
+    assert!(pg.bind_workspace_to_dojo(&proj, None).await.unwrap());
+    assert!(pg.workspaces_bound_to_dojo(&mid).await.unwrap().is_empty());
+    pg.delete_workspace(&proj).await.unwrap();
 
     assert!(pg.delete_dojo_membership(&mid).await.unwrap());
     assert!(pg.get_dojo_membership(&mid).await.unwrap().is_none());
@@ -312,9 +312,9 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
 
     // 3. Scoped row: seed a throwaway namespace, upsert against it (composite
     //    conflict target), read it back, then re-upsert to prove update. The
-    //    `project` scope may be absent in an unseeded test DB — seed it idempotently.
+    //    `workspace` scope may be absent in an unseeded test DB — seed it idempotently.
     sqlx_core::query::query(
-        "INSERT INTO sensei.scopes (key, name, level) VALUES ('project', 'Project', 60)
+        "INSERT INTO sensei.scopes (key, name, level) VALUES ('workspace', 'Workspace', 60)
              ON CONFLICT (key) DO NOTHING",
     )
     .execute(pg.pool())
@@ -323,7 +323,7 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
     let ns = uuid::Uuid::new_v4();
     sqlx_core::query::query(
         "INSERT INTO sensei.namespaces (id, scope_key, name, slug, level)
-             VALUES ($1, 'project', 'stance-test', $2, 60)",
+             VALUES ($1, 'workspace', 'stance-test', $2, 60)",
     )
     .bind(ns)
     .bind(format!("stance-test-{ns}"))
@@ -383,12 +383,12 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
         return;
     };
 
-    // A project + a memory to share + an APPROVED batch containing it.
-    let proj = pg.create_project("_test:dojo:outbox", None, None).await.unwrap();
+    // A workspace + a memory to share + an APPROVED batch containing it.
+    let proj = pg.create_workspace("_test:dojo:outbox", None, None).await.unwrap();
     let mem = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(proj),
-            scope: "project".into(),
+            workspace_id: Some(proj),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "prefer migration tools".into(),
@@ -430,8 +430,8 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
     );
     assert_eq!(items[0].memory_type, "convention");
 
-    // An unbound project → no routing anchor.
-    assert!(pg.project_bound_membership(&proj).await.unwrap().is_none());
+    // An unbound workspace → no routing anchor.
+    assert!(pg.workspace_bound_membership(&proj).await.unwrap().is_none());
 
     // While the member has no `sent` outbox row, an unsent approved batch exists.
     assert!(pg.next_unsent_approved_batch().await.unwrap().is_some());
@@ -468,9 +468,9 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
     pg.outbox_mark_state(&mid, Some(&batch), Some(&mem), "sig-3", "held").await.unwrap();
     assert!(!pg.outbox_already_sent(&mid, "sig-3").await.unwrap());
 
-    // Cleanup: membership delete cascades its outbox rows; then batch/memory/project.
+    // Cleanup: membership delete cascades its outbox rows; then batch/memory/workspace.
     assert!(pg.delete_dojo_membership(&mid).await.unwrap());
-    pg.delete_project(&proj).await.unwrap();
+    pg.delete_workspace(&proj).await.unwrap();
 }
 
 #[tokio::test]
@@ -479,11 +479,11 @@ async fn generalisation_persists_the_example_and_the_share_path_carries_it() {
         return;
     };
 
-    let proj = pg.create_project("_test:memories:example", None, None).await.unwrap();
+    let proj = pg.create_workspace("_test:memories:example", None, None).await.unwrap();
     let mem = pg
         .insert_memory(&InsertMemory {
-            project_id: Some(proj),
-            scope: "project".into(),
+            workspace_id: Some(proj),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "convention".into(),
             title: "green ci before merge".into(),
@@ -537,7 +537,7 @@ async fn generalisation_persists_the_example_and_the_share_path_carries_it() {
     assert_eq!(items[0].body, "Do not merge on red.");
     assert_eq!(items[0].example, None, "an example never outlives the rewrite it illustrates");
 
-    pg.delete_project(&proj).await.unwrap();
+    pg.delete_workspace(&proj).await.unwrap();
 }
 
 #[tokio::test]
@@ -601,11 +601,11 @@ async fn dojo_inbox_upsert_apply_and_state_roundtrip() {
     assert_eq!(item1.state, "pending");
     assert_eq!(item1.attribution.anonymous_id.as_deref(), Some("anon-1"));
 
-    // resolve_project_by_name — the scope-match lookup.
-    let proj = pg.create_project("_test:dojo:inbox", None, None).await.unwrap();
-    assert_eq!(pg.resolve_project_by_name("_test:dojo:inbox".into()).await.unwrap(), Some(proj));
+    // resolve_workspace_by_name — the scope-match lookup.
+    let proj = pg.create_workspace("_test:dojo:inbox", None, None).await.unwrap();
+    assert_eq!(pg.resolve_workspace_by_name("_test:dojo:inbox".into()).await.unwrap(), Some(proj));
     assert!(
-        pg.resolve_project_by_name(format!("nope-{}", uuid::Uuid::new_v4()))
+        pg.resolve_workspace_by_name(format!("nope-{}", uuid::Uuid::new_v4()))
             .await
             .unwrap()
             .is_none()
@@ -613,7 +613,7 @@ async fn dojo_inbox_upsert_apply_and_state_roundtrip() {
 
     // Land item1 as a global origin='dojo' memory; the row flips to applied.
     let mem_input = InsertMemory {
-        project_id: None,
+        workspace_id: None,
         scope: "global".into(),
         scope_filter: None,
         mtype: "convention".into(),
@@ -663,14 +663,14 @@ async fn dojo_inbox_upsert_apply_and_state_roundtrip() {
     pg.set_dojo_pull_cursor(mid, 42).await.unwrap();
     assert_eq!(pg.get_dojo_membership(&mid).await.unwrap().unwrap().last_seq, 42);
 
-    // Cleanup: membership delete cascades inbox rows; then memory + project.
+    // Cleanup: membership delete cascades inbox rows; then memory + workspace.
     assert!(pg.delete_dojo_membership(&mid).await.unwrap());
     sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1")
         .bind(memory_id)
         .execute(pg.pool())
         .await
         .unwrap();
-    pg.delete_project(&proj).await.unwrap();
+    pg.delete_workspace(&proj).await.unwrap();
 }
 
 // ── Sync bookkeeping (Phase 7) ──────────────────────────────────────────
@@ -687,7 +687,7 @@ pub(super) async fn seed_sync_fixture_at(
     uniq: &uuid::Uuid,
     visibility: &str,
 ) -> (uuid::Uuid, uuid::Uuid) {
-    let pid = s.create_project(&format!("_test:sync:{uniq}"), None, None).await.unwrap();
+    let pid = s.create_workspace(&format!("_test:sync:{uniq}"), None, None).await.unwrap();
     let rid = crate::tasks::test_support::seed_bare_repository(s, &pid, uniq).await;
     sqlx_core::query::query(
         "UPDATE sensei.repositories SET visibility = $2::sensei.repo_visibility WHERE id = $1",
@@ -698,7 +698,7 @@ pub(super) async fn seed_sync_fixture_at(
     .await
     .unwrap();
     let mid = seed_metric(s, &format!("_test:sync:{uniq}:ftr"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(&MetricRow {
+    s.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &mid,
         repository_id: &rid,
         scope: "user",
@@ -1077,7 +1077,7 @@ async fn every_cloned_repository_is_offered_even_when_the_user_has_not_elected_i
     // can reach.
     let s = pg_store().await;
     let uniq = uuid::Uuid::new_v4();
-    let pid = s.create_project(&format!("_test:offer:{uniq}"), None, None).await.unwrap();
+    let pid = s.create_workspace(&format!("_test:offer:{uniq}"), None, None).await.unwrap();
 
     // elected locally
     let elected = crate::tasks::test_support::seed_bare_repository(&s, &pid, &uniq).await;
@@ -1120,7 +1120,7 @@ async fn every_cloned_repository_is_offered_even_when_the_user_has_not_elected_i
         .execute(s.pool())
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
         .await
@@ -1213,7 +1213,7 @@ async fn shared_repositories_returns_only_opted_in_repos_with_a_remote() {
     // `every_cloned_repository_is_offered_even_when_the_user_has_not_elected_it`.
     let s = pg_store().await;
     let uniq = uuid::Uuid::new_v4();
-    let pid = s.create_project(&format!("_test:shared:{uniq}"), None, None).await.unwrap();
+    let pid = s.create_workspace(&format!("_test:shared:{uniq}"), None, None).await.unwrap();
 
     // opted in, has a remote → in the elected set
     let shared = crate::tasks::test_support::seed_bare_repository(&s, &pid, &uniq).await;

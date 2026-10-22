@@ -138,9 +138,9 @@ impl RunEventKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Run {
     pub id: Uuid,
-    /// `sensei.projects(id)` the run belongs to; `NULL` after the project is
+    /// `sensei.workspaces(id)` the run belongs to; `NULL` after the workspace is
     /// deleted (`on delete set null`).
-    pub project_id: Option<Uuid>,
+    pub workspace_id: Option<Uuid>,
     /// Path/ref of the committed plan doc the run executes. NOT NULL, defaults
     /// to `''` in the DDL.
     pub plan_ref: String,
@@ -173,12 +173,12 @@ pub struct Run {
 /// `Option` here: `None` lets the DDL default (`''` / `1`) apply.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NewRun {
-    pub project_id: Option<Uuid>,
+    pub workspace_id: Option<Uuid>,
     pub plan_ref: Option<String>,
     pub goal: Option<String>,
     pub dojo_session_id: Option<Uuid>,
     pub max_concurrency: Option<i32>,
-    /// Git author for the run's project (resolved at the create-run handler from
+    /// Git author for the run's workspace (resolved at the create-run handler from
     /// [`crate::git_identity::read_git_user`]); `None` leaves the columns NULL.
     pub author_name: Option<String>,
     pub author_email: Option<String>,
@@ -346,7 +346,7 @@ mod tests {
     fn run_round_trips_json() {
         let run = Run {
             id: Uuid::nil(),
-            project_id: Some(Uuid::nil()),
+            workspace_id: Some(Uuid::nil()),
             plan_ref: "docs/plan/P3.md".into(),
             goal: Some("ship the relay engine".into()),
             status: RelayRunStatus::Running,

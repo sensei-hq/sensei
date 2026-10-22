@@ -62,7 +62,7 @@ describe('gateTarget', () => {
     it('redirects to /setup/welcome when setup is incomplete', () => {
       setSetupComplete(false);
       expect(target('http://localhost/')).toBe('/setup/welcome');
-      expect(target('http://localhost/projects')).toBe('/setup/welcome');
+      expect(target('http://localhost/workspaces')).toBe('/setup/welcome');
       expect(target('http://localhost/settings')).toBe('/setup/welcome');
     });
 
@@ -70,7 +70,7 @@ describe('gateTarget', () => {
       setSetupComplete(false);
       expect(target('http://localhost/setup/welcome')).toBeUndefined();
       expect(target('http://localhost/setup/scan')).toBeUndefined();
-      expect(target('http://localhost/setup/projects')).toBeUndefined();
+      expect(target('http://localhost/setup/workspaces')).toBeUndefined();
     });
 
     it('allows /health, /logs, /upgrade through even when incomplete', () => {
@@ -83,37 +83,37 @@ describe('gateTarget', () => {
     it('does not redirect when setup is complete — any path is allowed', () => {
       setSetupComplete(true);
       expect(target('http://localhost/')).toBeUndefined();
-      expect(target('http://localhost/projects')).toBeUndefined();
+      expect(target('http://localhost/workspaces')).toBeUndefined();
       expect(target('http://localhost/setup/welcome')).toBeUndefined();
     });
   });
 
-  // A project window is opened deliberately from an already-healthy main
+  // A workspace window is opened deliberately from an already-healthy main
   // window, but it boots with its own fresh JS heap where healthState starts
   // 'checking' (isOk=false). Without a bypass, the gate bounces the fresh
-  // window to /health and the project never renders — the "project window
-  // won't open" bug. Project-window routes (`/project/{id}/...`) must pass the
+  // window to /health and the workspace never renders — the "workspace window
+  // won't open" bug. Workspace-window routes (`/workspace/{id}/...`) must pass the
   // gates unconditionally.
-  describe('project window (fresh heap, gates not yet satisfied)', () => {
-    it('lets /project/{id}/* through while health is still checking', () => {
+  describe('workspace window (fresh heap, gates not yet satisfied)', () => {
+    it('lets /workspace/{id}/* through while health is still checking', () => {
       setHealth('checking');
-      expect(target('http://localhost/project/abc-123/overview')).toBeUndefined();
+      expect(target('http://localhost/workspace/abc-123/overview')).toBeUndefined();
     });
 
-    it('lets /project/{id}/* through while health needs action', () => {
+    it('lets /workspace/{id}/* through while health needs action', () => {
       setHealth('needs-action');
-      expect(target('http://localhost/project/abc-123/sessions')).toBeUndefined();
+      expect(target('http://localhost/workspace/abc-123/sessions')).toBeUndefined();
     });
 
-    it('lets /project/{id}/* through even when setup is incomplete', () => {
+    it('lets /workspace/{id}/* through even when setup is incomplete', () => {
       setHealth('ok');
       setSetupComplete(false);
-      expect(target('http://localhost/project/abc-123/about')).toBeUndefined();
+      expect(target('http://localhost/workspace/abc-123/about')).toBeUndefined();
     });
 
-    it('still gates the observatory /projects list (plural) when not ok', () => {
+    it('still gates the observatory /workspaces list (plural) when not ok', () => {
       setHealth('needs-action');
-      expect(target('http://localhost/projects')).toBe('/health');
+      expect(target('http://localhost/workspaces')).toBe('/health');
     });
   });
 });

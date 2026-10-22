@@ -68,7 +68,7 @@ async fn repositories_view() {
 #[tokio::test]
 async fn reasoning_trace_insert_and_get() {
     let s = pg_store().await;
-    let pid = s.create_project("_test:rt_proj", None, None).await.unwrap();
+    let pid = s.create_workspace("_test:rt_proj", None, None).await.unwrap();
     let tid = s
         .insert_reasoning_trace(
             Some(&pid),
@@ -80,7 +80,7 @@ async fn reasoning_trace_insert_and_get() {
         )
         .await
         .unwrap();
-    let traces = s.get_reasoning_traces_by_project(&pid).await.unwrap();
+    let traces = s.get_reasoning_traces_by_workspace(&pid).await.unwrap();
     assert_eq!(traces.len(), 1);
     assert_eq!(traces[0]["consensus"]["confidence"], 0.9);
     assert_eq!(traces[0]["trigger_event"], "pattern_emerging");
@@ -89,7 +89,7 @@ async fn reasoning_trace_insert_and_get() {
         .execute(s.pool())
         .await
         .unwrap();
-    s.delete_project(&pid).await.unwrap();
+    s.delete_workspace(&pid).await.unwrap();
 }
 
 // ── Services tests ───────────────────────────────────────────────

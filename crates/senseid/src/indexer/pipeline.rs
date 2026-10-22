@@ -202,19 +202,19 @@ async fn write_one_repo(
     let mut out = RepoResult { abs_path: abs.clone(), ..Default::default() };
     let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
 
-    // A repo gets a PROJECT, 1:1. Without it the chain that answers "which
-    // projects use this library" — and everything keyed on it, including the
+    // A repo gets a WORKSPACE, 1:1. Without it the chain that answers "which
+    // workspaces use this library" — and everything keyed on it, including the
     // update scheduler and therefore the registry-URL extraction — had no input
-    // at all. Matched by name, so the 147 projects predating this scan are
+    // at all. Matched by name, so the 147 workspaces predating this scan are
     // reused rather than duplicated.
     //
-    // The project is recorded BELOW, against the repository, once the folder
+    // The workspace is recorded BELOW, against the repository, once the folder
     // and its repository both exist. It is deliberately not an argument to the
-    // folder upsert: since #211 there is no `folders.project_id` to put it in.
-    let project_id = match pg.get_or_create_project_by_name(&name).await {
+    // folder upsert: since #211 there is no `folders.workspace_id` to put it in.
+    let workspace_id = match pg.get_or_create_workspace_by_name(&name).await {
         Ok((id, _created)) => Some(id),
         Err(e) => {
-            out.errors.push(format!("get_or_create_project_by_name({name}): {e}"));
+            out.errors.push(format!("get_or_create_workspace_by_name({name}): {e}"));
             None
         }
     };
@@ -245,23 +245,23 @@ async fn write_one_repo(
     }
 
     // AND THE MEMBERSHIP ITSELF, which is a different fact from either link
-    // above. `repositories_in_projects` says which projects a REPOSITORY belongs
-    // to, and since #210 that junction is the only thing `folder_projects` —
-    // and so every view resolving a project — actually reads. #211 then
-    // dropped `folders.project_id`, so it is not merely the thing read first;
+    // above. `repositories_in_workspaces` says which workspaces a REPOSITORY belongs
+    // to, and since #210 that junction is the only thing `folder_workspaces` —
+    // and so every view resolving a workspace — actually reads. #211 then
+    // dropped `folders.workspace_id`, so it is not merely the thing read first;
     // it is the only place the answer exists.
     //
     // This write was missing. The scan had both ids in hand right here and
-    // wrote neither into the junction, whose sole writer (`set_folder_project`)
+    // wrote neither into the junction, whose sole writer (`set_folder_workspace`)
     // has no production caller at all — every call site is inside `mod tests`.
     // So the junction held exactly what the one-time 2026-09-30 backfill put
-    // there, and a repository scanned after it resolved to NO project: the inner
+    // there, and a repository scanned after it resolved to NO workspace: the inner
     // join found nothing and the repo's rows vanished from every migrated view,
     // as an empty result indistinguishable from a genuinely empty one.
-    if let (Some(rid), Some(pid)) = (out.repository_id, project_id)
-        && let Err(e) = pg.link_project_repository(&pid, &rid).await
+    if let (Some(rid), Some(pid)) = (out.repository_id, workspace_id)
+        && let Err(e) = pg.link_workspace_repository(&pid, &rid).await
     {
-        out.errors.push(format!("link_project_repository: {e}"));
+        out.errors.push(format!("link_workspace_repository: {e}"));
     }
 
     // ── Stage 2 ──────────────────────────────────────────────────────────
@@ -323,7 +323,7 @@ const LOCAL_PROTOCOLS: &[&str] = &["link:", "workspace:", "file:", "path:", "por
 /// Write each manifest's dependency edges: folder -> library for externals,
 /// folder -> folder for local siblings (02 S8, 02b S11).
 ///
-/// THE MISSING WRITER. `referenced_libraries` is how "which projects use this
+/// THE MISSING WRITER. `referenced_libraries` is how "which workspaces use this
 /// library" and every version-drift question are answered, and nothing here
 /// wrote it — `extract_deps` does, but only as a separate task handler that
 /// this scan never invokes. Without it there are no folder -> library edges
@@ -397,7 +397,7 @@ pub(crate) async fn apply_manifest(pg: &PgStore, job: ManifestJob<'_>) -> Manife
     out.package = crate::indexer::placement::package_named_by(job.manifest, &content);
 
     // The named commands this ecosystem exposes for THIS manifest — the
-    // project window's action buttons and the `get_commands` MCP tool read
+    // workspace window's action buttons and the `get_commands` MCP tool read
     // them out of `sensei.folder_commands`.
     //
     // Per MANIFEST, which is the fix: `extract_deps` asks only for manifests at
@@ -747,7 +747,7 @@ async fn write_structure(
                 &rel.to_string_lossy(),
                 &f.abs_path.to_string_lossy(),
                 Some(&parent),
-                // No project argument: a module belongs to its repo's project
+                // No workspace argument: a module belongs to its repo's workspace
                 // because it inherits the repo's REPOSITORY, which the upsert
                 // resolves from the anchor. The membership itself is written
                 // once, against the repository, by `scan_root`.
@@ -1773,18 +1773,18 @@ mod corpus {
     /// reason stage 2's corpus check is ignored. Run it deliberately:
     ///
     /// ```text
-    /// A SCANNED REPOSITORY REACHES THE JUNCTION, not just `folders.project_id`.
+    /// A SCANNED REPOSITORY REACHES THE JUNCTION, not just `folders.workspace_id`.
     ///
-    /// `sensei.repositories_in_projects` is where membership now lives (#210), and
-    /// every view migrated onto `folder_projects` reads it and nothing else. The
+    /// `sensei.repositories_in_workspaces` is where membership now lives (#210), and
+    /// every view migrated onto `folder_workspaces` reads it and nothing else. The
     /// scan path had both ids in hand — `upsert_repository` returns the
-    /// repository, `get_or_create_project_by_name` the project — and wrote
-    /// neither into the junction: the only writer, `set_folder_project`, has no
+    /// repository, `get_or_create_workspace_by_name` the workspace — and wrote
+    /// neither into the junction: the only writer, `set_folder_workspace`, has no
     /// production caller at all, every call site being inside `mod tests`.
     ///
     /// So the junction held only what the one-time 2026-09-30 backfill put
-    /// there. A repository scanned after it resolved to NO project, and because
-    /// `folder_projects` inner-joins the junction, that repository's rows simply
+    /// there. A repository scanned after it resolved to NO workspace, and because
+    /// `folder_workspaces` inner-joins the junction, that repository's rows simply
     /// ceased to exist in every migrated view — an empty result indistinguishable
     /// from a genuinely empty one, which is the exact failure the no-fabrication
     /// rule exists to prevent, in its silent-absence direction.
@@ -1792,16 +1792,16 @@ mod corpus {
     /// Asserted on a repository this test creates, so it cannot pass on the
     /// backfill's residue.
     ///
-    /// Mutation that must break this test: drop the `link_project_repository`
+    /// Mutation that must break this test: drop the `link_workspace_repository`
     /// call from `write_one_repo`.
     #[tokio::test]
-    async fn a_scanned_repository_records_its_project_in_the_junction() {
+    async fn a_scanned_repository_records_its_workspace_in_the_junction() {
         let Ok(pg) = PgStore::connect_test().await else {
             return;
         };
         let tmp = tempfile::tempdir().unwrap();
         // A name unique to this run: a shared `sensei_test` carries other runs'
-        // projects, and a fixed name would let a previous run's junction row
+        // workspaces, and a fixed name would let a previous run's junction row
         // satisfy the assertion.
         let name = format!("junction{}", uuid::Uuid::new_v4().simple());
         let repo = tmp.path().join(&name);
@@ -1816,8 +1816,8 @@ mod corpus {
         let repository_id = written.repository_id.expect("repository row");
 
         let linked: Vec<String> = sqlx_core::query_scalar::query_scalar(
-            "SELECT p.name FROM sensei.repositories_in_projects pr
-               JOIN sensei.projects p ON p.id = pr.project_id
+            "SELECT p.name FROM sensei.repositories_in_workspaces pr
+               JOIN sensei.workspaces p ON p.id = pr.workspace_id
               WHERE pr.repository_id = $1",
         )
         .bind(repository_id)
@@ -1828,20 +1828,20 @@ mod corpus {
         assert_eq!(
             linked,
             vec![name.clone()],
-            "a freshly scanned repository is absent from `repositories_in_projects`, so every view \
-             resolving through `folder_projects` silently drops it"
+            "a freshly scanned repository is absent from `repositories_in_workspaces`, so every view \
+             resolving through `folder_workspaces` silently drops it"
         );
 
         // And the resolution the views actually perform must agree, or the
         // junction row is present but unreachable.
         let resolved: Vec<String> = sqlx_core::query_scalar::query_scalar(
-            "SELECT DISTINCT project FROM sensei.folder_projects WHERE folder_id = $1",
+            "SELECT DISTINCT workspace FROM sensei.folder_workspaces WHERE folder_id = $1",
         )
         .bind(written.folder_id.expect("folder row"))
         .fetch_all(pg.pool())
         .await
-        .expect("read folder_projects");
-        assert_eq!(resolved, vec![name], "`folder_projects` cannot resolve the scanned repo");
+        .expect("read folder_workspaces");
+        assert_eq!(resolved, vec![name], "`folder_workspaces` cannot resolve the scanned repo");
     }
 
     /// cargo test -p senseid --lib indexer::pipeline::corpus -- --ignored --nocapture

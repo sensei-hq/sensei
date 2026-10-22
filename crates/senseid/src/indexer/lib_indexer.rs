@@ -76,7 +76,7 @@ pub(crate) fn npm_local_source(version: &str) -> Option<String> {
 /// Cargo local deps use `{ path = "../sibling" }`. The `path` key alone is
 /// enough — `version` may be present alongside `path` (for publishing a
 /// hybrid dep) but the resolution still goes local first, so we treat it as
-/// local for the folder→project rollup.
+/// local for the folder→workspace rollup.
 ///
 /// Returns `Some(path_string)` when a `path` key is present, `None` otherwise.
 pub(crate) fn cargo_local_source(dep_value: &toml::Value) -> Option<String> {

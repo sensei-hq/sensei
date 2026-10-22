@@ -253,7 +253,7 @@ Then a test pins the matrix, which makes two things impossible:
   `fqn_output()`'s `None` default and produce no FQN nodes at all, with nothing
   anywhere recording whether that is a decision or an omission.
 
-The matrix is also worth surfacing (an MCP tool or `get_project_summary` field),
+The matrix is also worth surfacing (an MCP tool or `get_workspace_summary` field),
 so a caller can see "this repo is 38% Kotlin and Kotlin has no FQN support"
 rather than inferring it from a disappointing result.
 

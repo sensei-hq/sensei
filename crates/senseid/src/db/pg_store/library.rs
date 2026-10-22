@@ -129,7 +129,7 @@ impl PgStore {
     ///
     /// `get_library_pages` serves whatever is marked latest. That is fine when
     /// the caller has no version in play and WRONG the moment they do: a
-    /// project on 1.2 handed 3.0's docs gets a confident answer about an API it
+    /// workspace on 1.2 handed 3.0's docs gets a confident answer about an API it
     /// does not have. This resolves the pin from `referenced_libraries`, lets
     /// [`choose_docs`](crate::libraries::docs_source::choose_docs) pick the
     /// source that can actually serve it, and returns the label when it cannot.
@@ -860,34 +860,34 @@ impl PgStore {
         self.list_library_capabilities(library, "agent").await
     }
 
-    /// The library skills/agents to SUGGEST for a project, from the libraries it
-    /// depends on — REUSES `project_libraries_resolved` (the same view
+    /// The library skills/agents to SUGGEST for a workspace, from the libraries it
+    /// depends on — REUSES `workspace_libraries_resolved` (the same view
     /// [`Self::get_library_enablement`] reads) joined to the capability tables. Backs
     /// the recommender enrichment. Returns `{suggested_skills, suggested_agents}`.
-    pub async fn list_project_library_capabilities(
+    pub async fn list_workspace_library_capabilities(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<serde_json::Value, String> {
         // One statement per kind, both now reaching content through the
         // VERSION level. `lv.is_latest` picks the release to suggest from —
         // without it a library with three fetched versions would suggest each
         // skill three times.
         const BY_KIND: &str = "SELECT pl.name, c.name, c.focus
-               FROM sensei.project_libraries_resolved pl
+               FROM sensei.workspace_libraries_resolved pl
                JOIN sensei.library_versions lv ON lv.library_id = pl.id AND lv.is_latest
                JOIN sensei.library_content c ON c.library_version_id = lv.id
-              WHERE (pl.scoped_project_id = $1 OR pl.scoped_project_id IS NULL)
+              WHERE (pl.scoped_workspace_id = $1 OR pl.scoped_workspace_id IS NULL)
                 AND pl.enabled = true
                 AND c.kind = $2::sensei.library_content_kind
               ORDER BY pl.name, c.focus, c.name";
         let skills: Vec<(String, String, Option<String>)> = sqlx_core::query_as::query_as(BY_KIND)
-            .bind(project_id)
+            .bind(workspace_id)
             .bind("skill")
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
         let agents: Vec<(String, String, Option<String>)> = sqlx_core::query_as::query_as(BY_KIND)
-            .bind(project_id)
+            .bind(workspace_id)
             .bind("agent")
             .fetch_all(&self.pool)
             .await
@@ -900,12 +900,12 @@ impl PgStore {
 
     // ── Library update detection (workstream F, v0) ────────────────────────────
 
-    /// Library pins per project, for the update scheduler: joins referenced_libraries
-    /// (the folder's pinned `version_used`) → folders (project) → libraries. Returns
-    /// `(library_id, name, ecosystem, local_path, project_id, version_used, base_url,
-    /// source_type)`; only rows with a project and a non-empty pin. `base_url` +
+    /// Library pins per workspace, for the update scheduler: joins referenced_libraries
+    /// (the folder's pinned `version_used`) → folders (workspace) → libraries. Returns
+    /// `(library_id, name, ecosystem, local_path, workspace_id, version_used, base_url,
+    /// source_type)`; only rows with a workspace and a non-empty pin. `base_url` +
     /// `source_type` let the apply arm rebuild the re-index `task.url` fail-closed.
-    pub async fn list_library_project_pins(
+    pub async fn list_library_workspace_pins(
         &self,
     ) -> Result<
         Vec<(
@@ -927,7 +927,7 @@ impl PgStore {
             // and it is still a real pin the scheduler must see. An INNER join
             // would silently drop exactly the libraries with no docs yet.
             "SELECT l.id, l.name, l.ecosystem::text, lv.local_path,
-                    sensei.sole_project_of(f.id),
+                    sensei.sole_workspace_of(f.id),
                     rl.version_used, lv.base_url, lv.source_type::text
                FROM sensei.referenced_libraries rl
                JOIN sensei.libraries l ON l.id = rl.library_id
@@ -939,7 +939,7 @@ impl PgStore {
                      ORDER BY v.is_latest DESC, v.modified_at DESC
                      LIMIT 1
                ) lv ON true
-              WHERE EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.folder_id = f.id)
+              WHERE EXISTS (SELECT 1 FROM sensei.folder_workspaces fp WHERE fp.folder_id = f.id)
                 AND rl.version_used IS NOT NULL AND rl.version_used <> ''",
         )
         .fetch_all(&self.pool)
@@ -1021,14 +1021,14 @@ impl PgStore {
         Ok(row.and_then(|(v,)| v))
     }
 
-    /// True if a recommendation already flags this project's update of `library_id`
+    /// True if a recommendation already flags this workspace's update of `library_id`
     /// to `to_version` at the given security tier. `is_security` discriminates the
     /// tier so a prior/dismissed non-security notify can't suppress a later security
     /// flag (and vice-versa). Mirrors [`Self::recommendation_exists_for_pattern`],
     /// keyed on the library payload in `based_on`.
     pub async fn pending_library_update_exists(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         library_id: &uuid::Uuid,
         to_version: &str,
         is_security: bool,
@@ -1040,11 +1040,11 @@ impl PgStore {
         let row: (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS(
                SELECT 1 FROM inference.recommendations
-                WHERE project_id = $1 AND action_type = 'library_update'
+                WHERE workspace_id = $1 AND action_type = 'library_update'
                   AND based_on->'library_update' @> jsonb_build_object('library_id', $2::text, 'to_version', $3::text)
                   AND COALESCE((based_on->'library_update'->>'is_security')::boolean, false) = $4)",
         )
-        .bind(project_id).bind(library_id.to_string()).bind(to_version).bind(is_security)
+        .bind(workspace_id).bind(library_id.to_string()).bind(to_version).bind(is_security)
         .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -1093,7 +1093,7 @@ impl PgStore {
     pub async fn list_libraries_with_usage(
         &self,
         scope_folder_name: Option<&str>,
-        scope_project_id: Option<&uuid::Uuid>,
+        scope_workspace_id: Option<&uuid::Uuid>,
         min_repos: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         // Aggregate by library, joining via referenced_libraries to count and
@@ -1123,14 +1123,14 @@ impl PgStore {
                   WHERE l.kind = 'detected'::sensei.library_kind
                     AND ($1::text     IS NULL OR f.name = $1)
                     AND ($2::uuid     IS NULL
-                         OR EXISTS (SELECT 1 FROM sensei.folder_projects fp
-                                     WHERE fp.folder_id = f.id AND fp.project_id = $2))
+                         OR EXISTS (SELECT 1 FROM sensei.folder_workspaces fp
+                                     WHERE fp.folder_id = f.id AND fp.workspace_id = $2))
                   GROUP BY l.id, l.name, l.ecosystem, lv.version, l.description, lv.page_count
                  HAVING COUNT(DISTINCT rl.folder_id) >= $3
                   ORDER BY repo_count DESC, l.name"
             )
             .bind(scope_folder_name)
-            .bind(scope_project_id)
+            .bind(scope_workspace_id)
             .bind(min_repos)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
@@ -1387,14 +1387,14 @@ impl PgStore {
     /// `path=` dep resolves to a sibling folder. Idempotent on the composite PK
     /// `(from_folder_id, to_folder_id, source_manifest)`.
     ///
-    /// REGRAINED from a project → project edge, and that fixed a real gap: the
+    /// REGRAINED from a workspace → workspace edge, and that fixed a real gap: the
     /// old writer only recorded an edge when the two folders belonged to
-    /// DIFFERENT projects, so a monorepo's crates depending on each other were
+    /// DIFFERENT workspaces, so a monorepo's crates depending on each other were
     /// silently dropped. Measured on this repo — all 384 folders share one
-    /// project, so every `path=` dep between the 8 workspace members was
+    /// workspace, so every `path=` dep between the 8 workspace members was
     /// discarded and the table held 0 rows while the feature was live and
-    /// tested. A project-level answer is now a VIEW over this, derivable via
-    /// `folders.project_id`.
+    /// tested. A workspace-level answer is now a VIEW over this, derivable via
+    /// `folders.workspace_id`.
     pub async fn upsert_folder_dependency(
         &self,
         from_folder_id: &uuid::Uuid,
@@ -1423,24 +1423,24 @@ impl PgStore {
         Ok(())
     }
 
-    /// Roll a folder-level library reference up to a project-level association
-    /// (sensei.library_enablement), scoped to `project_id`. `referenced_libraries`
-    /// is folder-grained; `library_enablement` is the project↔library M2M the
-    /// indexer owns and which `project_libraries_resolved` (the Projects screen)
+    /// Roll a folder-level library reference up to a workspace-level association
+    /// (sensei.library_enablement), scoped to `workspace_id`. `referenced_libraries`
+    /// is folder-grained; `library_enablement` is the workspace↔library M2M the
+    /// indexer owns and which `workspace_libraries_resolved` (the Workspaces screen)
     /// reads. Idempotent and non-destructive: `ON CONFLICT DO NOTHING` preserves
     /// any user edits to `enabled`/`props` on re-scan.
-    pub async fn upsert_project_library(
+    pub async fn upsert_workspace_library(
         &self,
         library_id: &uuid::Uuid,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.library_enablement(library_id, project_id)
+            "INSERT INTO sensei.library_enablement(library_id, workspace_id)
              VALUES($1, $2)
-             ON CONFLICT (library_id, project_id) WHERE project_id IS NOT NULL DO NOTHING",
+             ON CONFLICT (library_id, workspace_id) WHERE workspace_id IS NOT NULL DO NOTHING",
         )
         .bind(library_id)
-        .bind(project_id)
+        .bind(workspace_id)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1455,7 +1455,7 @@ impl PgStore {
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, String, Option<uuid::Uuid>, Option<String>, i64)> =
             sqlx_core::query_as::query_as(
-                "SELECT library_name, folder, project_id, version_used, unresolved_import_count
+                "SELECT library_name, folder, workspace_id, version_used, unresolved_import_count
              FROM sensei.library_usage WHERE library_id = $1 ORDER BY folder",
             )
             .bind(library_id)
@@ -1465,7 +1465,7 @@ impl PgStore {
         Ok(rows
             .into_iter()
             .map(|(name, folder, pid, ver, imports)| {
-                serde_json::json!({ "library_name": name, "folder": folder, "project_id": pid,
+                serde_json::json!({ "library_name": name, "folder": folder, "workspace_id": pid,
                                 "version_used": ver, "import_count": imports })
             })
             .collect())
@@ -1473,7 +1473,7 @@ impl PgStore {
 
     pub async fn get_library_enablement(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         // Query the resolved view directly — it already joins libraries internally.
         // Extended for T3 Slice 1.5: pull `page_count` (indexed docs marker) and
@@ -1496,11 +1496,11 @@ impl PgStore {
             // view is `libraries.*` plus enablement — so they come from the
             // current release rather than from the view. LEFT JOIN: an enabled
             // library with nothing fetched yet is still enabled, and an INNER
-            // join would drop it from the Projects screen entirely.
+            // join would drop it from the Workspaces screen entirely.
             "SELECT pl.id, pl.name, pl.ecosystem::text, pl.description, pl.enabled,
-                        pl.project_props, pl.scope,
+                        pl.workspace_props, pl.scope,
                         COALESCE(lv.page_count, 0), lv.local_path
-                 FROM sensei.project_libraries_resolved pl
+                 FROM sensei.workspace_libraries_resolved pl
                  LEFT JOIN LATERAL (
                       SELECT page_count, local_path
                         FROM sensei.library_versions v
@@ -1508,11 +1508,11 @@ impl PgStore {
                        ORDER BY v.is_latest DESC, v.modified_at DESC
                        LIMIT 1
                  ) lv ON true
-                 WHERE (pl.scoped_project_id = $1 OR pl.scoped_project_id IS NULL)
+                 WHERE (pl.scoped_workspace_id = $1 OR pl.scoped_workspace_id IS NULL)
                    AND pl.enabled = true
                  ORDER BY pl.scope DESC, pl.name",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1526,7 +1526,7 @@ impl PgStore {
                     "ecosystem":     ecosystem,
                     "description":   desc,
                     "enabled":       enabled,
-                    "project_props": props,
+                    "workspace_props": props,
                     "scope":         scope,
                     "hasDocs":       page_count > 0,
                     "pageCount":     page_count,
@@ -1536,24 +1536,24 @@ impl PgStore {
             .collect())
     }
 
-    /// List libraries pinned to different versions across folders of a project.
+    /// List libraries pinned to different versions across folders of a workspace.
     ///
-    /// Reads `sensei.project_library_version_conflicts` — excludes local-
+    /// Reads `sensei.workspace_library_version_conflicts` — excludes local-
     /// protocol deps so only registry-version drift surfaces. Returns one row
-    /// per conflicting (project, library) pair with the distinct versions and
+    /// per conflicting (workspace, library) pair with the distinct versions and
     /// the folders where each version was seen.
-    pub async fn list_project_library_version_conflicts(
+    pub async fn list_workspace_library_version_conflicts(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Vec<String>, Vec<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT library_id, library_name, ecosystem, versions, folders
-                   FROM sensei.project_library_version_conflicts
-                  WHERE project_id = $1
+                   FROM sensei.workspace_library_version_conflicts
+                  WHERE workspace_id = $1
                   ORDER BY library_name",
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -1572,20 +1572,20 @@ impl PgStore {
             .collect())
     }
 
-    /// List outgoing dependency edges for a project, DERIVED from the
+    /// List outgoing dependency edges for a workspace, DERIVED from the
     /// folder-grained `folder_dependencies` (D11).
     ///
-    /// The stored fact is folder → folder; a project-level answer is this
+    /// The stored fact is folder → folder; a workspace-level answer is this
     /// join, never a stored aggregate — a stored one can disagree with the
-    /// manifest it came from. `to_project_id` may therefore be NULL (a target
-    /// folder belonging to no project is still a real dependency), and an edge
-    /// whose two folders sit in the SAME project is now included, having been
+    /// manifest it came from. `to_workspace_id` may therefore be NULL (a target
+    /// folder belonging to no workspace is still a real dependency), and an edge
+    /// whose two folders sit in the SAME workspace is now included, having been
     /// silently dropped before the regrain.
     ///
     /// Returns one row per edge. Sorted for stable UI ordering.
-    pub async fn list_project_dependencies(
+    pub async fn list_workspace_dependencies(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(
             Option<uuid::Uuid>,
@@ -1601,12 +1601,12 @@ impl PgStore {
                    FROM sensei.folder_dependencies fd
                    JOIN sensei.folders  from_f ON from_f.id = fd.from_folder_id
                    JOIN sensei.folders  to_f   ON to_f.id   = fd.to_folder_id
-              LEFT JOIN sensei.projects to_p   ON to_p.id   = sensei.sole_project_of(to_f.id)
-                  WHERE EXISTS (SELECT 1 FROM sensei.folder_projects fp
-                                 WHERE fp.folder_id = from_f.id AND fp.project_id = $1)
+              LEFT JOIN sensei.workspaces to_p   ON to_p.id   = sensei.sole_workspace_of(to_f.id)
+                  WHERE EXISTS (SELECT 1 FROM sensei.folder_workspaces fp
+                                 WHERE fp.folder_id = from_f.id AND fp.workspace_id = $1)
                   ORDER BY to_p.name NULLS LAST, from_f.name, fd.source_manifest",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -1616,8 +1616,8 @@ impl PgStore {
             .map(
                 |(to_id, to_name, from_folder_id, protocol, manifest, target, from_folder_name)| {
                     serde_json::json!({
-                        "to_project_id": to_id,
-                        "to_project_name": to_name,
+                        "to_workspace_id": to_id,
+                        "to_workspace_name": to_name,
                         "from_folder_id": from_folder_id,
                         "from_folder": from_folder_name,
                         "source_protocol": protocol,

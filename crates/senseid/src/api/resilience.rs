@@ -399,7 +399,7 @@ mod tests {
     ///
     /// The connect error cannot answer this: it arrives as a formatted String,
     /// so deciding on its text would be a Display-format dependency. The
-    /// project already owns the real question —
+    /// workspace already owns the real question —
     /// `sensei_bootstrap::database::database_exists` — and this is the pure
     /// half, so the decision is testable without psql.
     ///

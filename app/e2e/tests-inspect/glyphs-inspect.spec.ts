@@ -67,11 +67,11 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
     expect(unpainted).toEqual([]);
     expect((await tauriPage.evaluate(RAIL_KANJI)) as string[]).toEqual([]);
 
-    // Slice 2: the derived-role chips on Settings → Projects. (Project glyphs:
-    // every live project carries an inferred kanji or a logo, which stay as
+    // Slice 2: the derived-role chips on Settings → Workspaces. (Workspace glyphs:
+    // every live workspace carries an inferred kanji or a logo, which stay as
     // they are in icon mode — see #133.)
     for (const [route, ready, sel] of [
-      ['/settings/projects', '[data-derived-roles] [data-component="glyph-icon"]', '[data-derived-roles] [data-component="glyph-icon"]'],
+      ['/settings/workspaces', '[data-derived-roles] [data-component="glyph-icon"]', '[data-derived-roles] [data-component="glyph-icon"]'],
       // Slice 3: the Instruments tabs, hero, groups and kind marks.
       ['/instruments', '[data-component="glyph-icon"]', '[data-component="glyph-icon"]'],
     ] as const) {
@@ -99,7 +99,7 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
     // Slice 4b: screens whose marks were bare kanji spans now paint icons in
     // their main content (outside the header and rails).
     const MAIN = '[data-component="observatory-main"] [data-component="glyph-icon"]';
-    for (const route of ['/impact', '/activity-logs', '/consolidation', '/projects']) {
+    for (const route of ['/impact', '/activity-logs', '/consolidation', '/workspaces']) {
       await navigateToScreen(tauriPage, route, MAIN, 20_000);
       const marks = (await tauriPage.evaluate(painted(MAIN))) as { cls: string; painted: boolean }[];
       const bad = marks.filter((m) => !m.painted).map((m) => m.cls);
@@ -109,19 +109,19 @@ test('the rails follow the glyph preference', async ({ tauriPage }) => {
     }
 
     // Slice 4: a mark with no icon of its own takes the vocabulary's (録 on
-    // /sessions); a project's own mark stays kanji on its overview.
+    // /sessions); a workspace's own mark stays kanji on its overview.
     await navigateToScreen(tauriPage, '/sessions', '[data-component="glyph-icon"]', 20_000);
     const sessionMarks = (await tauriPage.evaluate(painted('[data-component="glyph-icon"]'))) as { cls: string; painted: boolean }[];
     console.log(`[inspect] /sessions: ${sessionMarks.map((m) => m.cls.split(' ')[0]).join(' ')}`);
     expect(sessionMarks.some((m) => m.cls.includes('i-solar-history-bold-duotone') && m.painted)).toBe(true);
 
-    const projects: { id: string; icon?: { kind?: string; value?: string } }[] = await (await fetch(`${DAEMON_URL}/api/projects`)).json();
-    const kanjiProject = projects.find((p) => p.icon?.kind === 'kanji' && p.icon.value);
-    if (kanjiProject) {
-      await navigateToScreen(tauriPage, `/project/${kanjiProject.id}/overview`, '[data-component="kanji"]', 20_000);
+    const workspaces: { id: string; icon?: { kind?: string; value?: string } }[] = await (await fetch(`${DAEMON_URL}/api/workspaces`)).json();
+    const kanjiWorkspace = workspaces.find((p) => p.icon?.kind === 'kanji' && p.icon.value);
+    if (kanjiWorkspace) {
+      await navigateToScreen(tauriPage, `/workspace/${kanjiWorkspace.id}/overview`, '[data-component="kanji"]', 20_000);
       const marks = (await tauriPage.evaluate(`Array.from(document.querySelectorAll('[data-component="kanji"]')).map((e) => e.textContent)`)) as string[];
-      console.log(`[inspect] project ${kanjiProject.icon!.value} overview kanji: ${marks.join(' ')}`);
-      expect(marks).toContain(kanjiProject.icon!.value);
+      console.log(`[inspect] workspace ${kanjiWorkspace.icon!.value} overview kanji: ${marks.join(' ')}`);
+      expect(marks).toContain(kanjiWorkspace.icon!.value);
     }
 
     await navigateToScreen(tauriPage, '/settings/general', '[data-testid="pref-glyphs"]', 20_000);

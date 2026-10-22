@@ -3,12 +3,12 @@
 //!
 //! Scans (per platform):
 //!
-//! - **Claude Code** — `~/.claude/mcp.json` (user), each project's
-//!   `.mcp.json` (project).
+//! - **Claude Code** — `~/.claude/mcp.json` (user), each workspace's
+//!   `.mcp.json` (Claude Code's project scope).
 //! - **Zed** — `~/.config/zed/settings.json` (user) — the `context_servers`
 //!   block. Project-scope Zed config lives in `.zed/settings.json`.
-//! - **Cursor** — `~/.cursor/mcp.json` (user), `<project>/.cursor/mcp.json`
-//!   (project).
+//! - **Cursor** — `~/.cursor/mcp.json` (user), `<workspace>/.cursor/mcp.json`
+//!   (Cursor's project scope).
 //! - **Codex / OpenCode** — path convention varies; probed when the ACP is
 //!   detected. Skipped on machines that don't have the ACP installed.
 //!
@@ -57,7 +57,7 @@ impl AcpFamily {
 pub struct DiscoveredMcp {
     pub acp_family: AcpFamily,
     pub mcp_key: String,
-    pub project_id: Option<uuid::Uuid>,
+    pub workspace_id: Option<uuid::Uuid>,
     pub config_source: PathBuf,
     pub command: String,
     pub args: Value,
@@ -73,7 +73,7 @@ pub fn parse_mcp_section(
     doc: &Value,
     wrapper_key: &str,
     acp_family: AcpFamily,
-    project_id: Option<uuid::Uuid>,
+    workspace_id: Option<uuid::Uuid>,
     config_source: &Path,
 ) -> Vec<DiscoveredMcp> {
     let Some(map) = doc.get(wrapper_key).and_then(|v| v.as_object()) else {
@@ -87,7 +87,7 @@ pub fn parse_mcp_section(
             DiscoveredMcp {
                 acp_family,
                 mcp_key: key.clone(),
-                project_id,
+                workspace_id,
                 config_source: config_source.to_path_buf(),
                 command,
                 args,
@@ -136,44 +136,47 @@ pub fn discover_user_scope(home_dir: &Path) -> Vec<DiscoveredMcp> {
     out
 }
 
-/// Scan a project's root directory for project-scope ACP config files.
-/// `project_root` is the project's absolute path; `project_id` is the
-/// sensei projects.id UUID.
-pub fn discover_project_scope(project_root: &Path, project_id: uuid::Uuid) -> Vec<DiscoveredMcp> {
+/// Scan a workspace's root directory for the assistants' project-scope config files.
+/// `workspace_root` is the workspace's absolute path; `workspace_id` is the
+/// sensei workspaces.id UUID.
+pub fn discover_project_scope(
+    workspace_root: &Path,
+    workspace_id: uuid::Uuid,
+) -> Vec<DiscoveredMcp> {
     let mut out = Vec::new();
 
-    // Claude Code project-scope: <project>/.mcp.json wrapping "mcpServers".
-    let claude_project = project_root.join(".mcp.json");
+    // Claude Code project-scope: <workspace>/.mcp.json wrapping "mcpServers".
+    let claude_project = workspace_root.join(".mcp.json");
     if let Some(doc) = read_jsonc(&claude_project) {
         out.extend(parse_mcp_section(
             &doc,
             "mcpServers",
             AcpFamily::Claude,
-            Some(project_id),
+            Some(workspace_id),
             &claude_project,
         ));
     }
 
-    // Cursor project-scope: <project>/.cursor/mcp.json.
-    let cursor_project = project_root.join(".cursor").join("mcp.json");
+    // Cursor project-scope: <workspace>/.cursor/mcp.json.
+    let cursor_project = workspace_root.join(".cursor").join("mcp.json");
     if let Some(doc) = read_jsonc(&cursor_project) {
         out.extend(parse_mcp_section(
             &doc,
             "mcpServers",
             AcpFamily::Cursor,
-            Some(project_id),
+            Some(workspace_id),
             &cursor_project,
         ));
     }
 
-    // Zed project-scope: <project>/.zed/settings.json.
-    let zed_project = project_root.join(".zed").join("settings.json");
+    // Zed project-scope: <workspace>/.zed/settings.json.
+    let zed_project = workspace_root.join(".zed").join("settings.json");
     if let Some(doc) = read_jsonc(&zed_project) {
         out.extend(parse_mcp_section(
             &doc,
             "context_servers",
             AcpFamily::Zed,
-            Some(project_id),
+            Some(workspace_id),
             &zed_project,
         ));
     }
@@ -181,13 +184,13 @@ pub fn discover_project_scope(project_root: &Path, project_id: uuid::Uuid) -> Ve
     out
 }
 
-/// Run one discovery pass — scan user + project configs, upsert, prune stale.
-/// Returns `(discovered, pruned)` counts. `home_dir` and `project_roots`
+/// Run one discovery pass — scan user + project-scope configs, upsert, prune stale.
+/// Returns `(discovered, pruned)` counts. `home_dir` and `workspace_roots`
 /// are injected so tests can point at temp dirs.
 pub async fn run_once(
     pg: &PgStore,
     home_dir: &Path,
-    project_roots: &[(uuid::Uuid, PathBuf)],
+    workspace_roots: &[(uuid::Uuid, PathBuf)],
 ) -> Result<(usize, u64), String> {
     // Grab a scan-start timestamp so we can prune anything that isn't
     // refreshed by this pass (with a small safety margin so an in-flight
@@ -195,8 +198,8 @@ pub async fn run_once(
     let scan_start = chrono::Utc::now() - chrono::Duration::seconds(1);
 
     let mut entries = discover_user_scope(home_dir);
-    for (project_id, root) in project_roots {
-        entries.extend(discover_project_scope(root, *project_id));
+    for (workspace_id, root) in workspace_roots {
+        entries.extend(discover_project_scope(root, *workspace_id));
     }
 
     let discovered = entries.len();
@@ -204,7 +207,7 @@ pub async fn run_once(
         pg.upsert_mcp_server(
             e.acp_family.as_str(),
             &e.mcp_key,
-            e.project_id,
+            e.workspace_id,
             &e.config_source.to_string_lossy(),
             &e.command,
             &e.args,
@@ -319,18 +322,18 @@ mod tests {
 
     #[test]
     fn discover_project_scope_finds_dot_mcp_json() {
-        let project_root = tempdir().unwrap();
+        let workspace_root = tempdir().unwrap();
         std::fs::write(
-            project_root.path().join(".mcp.json"),
+            workspace_root.path().join(".mcp.json"),
             r#"{"mcpServers":{"local-tool":{"command":"./bin/tool"}}}"#,
         )
         .unwrap();
 
         let pid = uuid::Uuid::new_v4();
-        let discovered = discover_project_scope(project_root.path(), pid);
+        let discovered = discover_project_scope(workspace_root.path(), pid);
         assert_eq!(discovered.len(), 1);
         assert_eq!(discovered[0].mcp_key, "local-tool");
-        assert_eq!(discovered[0].project_id, Some(pid));
+        assert_eq!(discovered[0].workspace_id, Some(pid));
         assert_eq!(discovered[0].acp_family, AcpFamily::Claude);
     }
 

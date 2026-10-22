@@ -5,12 +5,12 @@
 // mapping, per-day aggregation, and the row display strings are unit-testable
 // without mounting anything or standing up the daemon.
 //
-// Shared by the Observatory Sessions screen and the project-scoped Sessions
+// Shared by the Observatory Sessions screen and the workspace-scoped Sessions
 // screen — promoted out of (observatory)/sessions/ once a second consumer
 // appeared (frontend-svelte-guidelines §DRY).
 //
 // Screens: docs/spec/screen/observatory-sessions.md
-//          docs/spec/screen/project-sessions.md
+//          docs/spec/screen/workspace-sessions.md
 // Mockup:  docs/mockups/Sensei/lib/sessions-zen.jsx → SessionsDigestZen
 import type { SessionRow } from '$lib/types.js';
 
@@ -169,7 +169,7 @@ export function shortDayLabel(key: string, now: Date = new Date()): string {
 /** A wire row plus every derived field the digest renders. */
 export interface EnrichedSession {
   id: string;
-  project: string;
+  workspace: string;
   title: string;
   agent: string | null;
   outcome: string;
@@ -184,9 +184,9 @@ export interface EnrichedSession {
   when: string;
   time: string;
   duration: string;
-  /** Folder role for multi-repo projects (`web` / `backend` / `docs`); null
-   *  when the endpoint doesn't carry it (single-folder projects, or the
-   *  observatory multi-project view). Drives the row's folder-role chip. */
+  /** Folder role for multi-repo workspaces (`web` / `backend` / `docs`); null
+   *  when the endpoint doesn't carry it (single-folder workspaces, or the
+   *  observatory multi-workspace view). Drives the row's folder-role chip. */
   folderRole: string | null;
   /** Transcript-captured token usage (null when the source carried none — never
    *  a fabricated 0). `tokens` is the in+out sum used by the row + charts. */
@@ -215,7 +215,7 @@ export function enrich(rows: SessionRow[], now: Date = new Date()): EnrichedSess
     const activeMins = activeMinutes(s.durationSecs);
     return {
       id: s.id,
-      project: (s.project ?? '').trim(),
+      workspace: (s.workspace ?? '').trim(),
       title: sessionTitle(s),
       agent: s.agent,
       outcome: s.outcome,
@@ -331,7 +331,7 @@ export function median(xs: number[]): number {
 /** The header stat strip + quality tally over the whole visible slice. */
 export interface DigestTotals {
   count: number;
-  projects: number;
+  workspaces: number;
   good: number;
   bad: number;
   ugly: number;
@@ -347,12 +347,12 @@ export interface DigestTotals {
 
 export function computeTotals(sessions: EnrichedSession[]): DigestTotals {
   const tone = (t: QualityTone) => sessions.filter((s) => s.quality === t).length;
-  const projects = new Set(sessions.map((s) => s.project).filter(Boolean)).size;
+  const workspaces = new Set(sessions.map((s) => s.workspace).filter(Boolean)).size;
   const durations = sessions.map((s) => s.mins).filter((m): m is number => m != null);
   const tokenVals = sessions.map((s) => s.tokens).filter((t): t is number => t != null);
   return {
     count: sessions.length,
-    projects,
+    workspaces,
     good: tone('good'),
     bad: tone('bad'),
     ugly: tone('ugly'),
@@ -369,20 +369,20 @@ export function replayHref(sessionId: string): string {
   return `/instruments?tab=replay&session=${encodeURIComponent(sessionId)}`;
 }
 
-/** The words of the Sessions screen — Observatory-wide (`project` null) or one
- *  project's window. Everything else about the two is the same screen. */
+/** The words of the Sessions screen — Observatory-wide (`workspace` null) or one
+ *  workspace's window. Everything else about the two is the same screen. */
 export interface SessionsCopy {
   kanji: string;
   eyebrow: string;
   title: string;
   sub: string;
   emptyDescription: string;
-  /** The totals line names how many projects the sessions span. */
-  acrossProjects: boolean;
+  /** The totals line names how many workspaces the sessions span. */
+  acrossWorkspaces: boolean;
 }
 
-export function sessionsCopy(project: string | null): SessionsCopy {
-  if (project == null) {
+export function sessionsCopy(workspace: string | null): SessionsCopy {
+  if (workspace == null) {
     return {
       kanji: '録',
       eyebrow: 'Observatory · Sessions',
@@ -390,16 +390,16 @@ export function sessionsCopy(project: string | null): SessionsCopy {
       sub: 'A retrospective. Then one quiet chart — drawn the way you want to read it.',
       emptyDescription:
         'Start a session with your assistant, or widen the range. Each session becomes a moment of learning.',
-      acrossProjects: true,
+      acrossWorkspaces: true,
     };
   }
   return {
     kanji: '刻',
-    eyebrow: `${project} · sessions`,
-    title: 'The shape of this project.',
-    sub: 'A retrospective — this project only. Then one quiet chart, drawn the way you read it.',
+    eyebrow: `${workspace} · sessions`,
+    title: 'The shape of this workspace.',
+    sub: 'A retrospective — this workspace only. Then one quiet chart, drawn the way you read it.',
     emptyDescription:
-      'Start a session with your assistant on this project, or widen the range. Each session becomes a moment of learning.',
-    acrossProjects: false,
+      'Start a session with your assistant on this workspace, or widen the range. Each session becomes a moment of learning.',
+    acrossWorkspaces: false,
   };
 }

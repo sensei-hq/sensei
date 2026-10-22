@@ -1,6 +1,6 @@
 ---
 organization: Sensei HQ
-project: sensei
+workspace: sensei
 role: monorepo
 tagline: Development intelligence for AI-assisted coding
 summary: Sensei watches coding sessions, learns your team's patterns and conventions, and feeds that knowledge back to the AI assistant so it gets things right the first time.
@@ -45,7 +45,7 @@ The indexer places call edges with each language's own compiler:
 - **Rust** — rust-analyzer plus the standard library's sources
   (`rustup component add rust-analyzer rust-src`).
 - **TypeScript / JavaScript / Svelte** — `node`, loading `typescript`,
-  `svelte2tsx`, `svelte` and `@jridgewell/trace-mapping` from the project, or
+  `svelte2tsx`, `svelte` and `@jridgewell/trace-mapping` from the repository, or
   else from `~/.sensei/engines` (versions pinned in
   `crates/senseid/ts-driver/package.json`).
 

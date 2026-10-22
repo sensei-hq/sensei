@@ -2,15 +2,15 @@
 //!
 //! `analysis::neighbourhood` owns the walk and tests it without a database.
 //! What only Postgres can show is that each hop reads the right rows: callers
-//! from THIS project, a library callee marked as a leaf, a call's weight as its
+//! from THIS workspace, a library callee marked as a leaf, a call's weight as its
 //! call sites rather than its edge rows, and the two unplaced counts kept apart.
 use super::graph_seed::SeedGraph;
 use super::*;
 use crate::analysis::neighbourhood::{Call, Side};
 
 struct Corpus {
-    project: uuid::Uuid,
-    other_project: uuid::Uuid,
+    workspace: uuid::Uuid,
+    other_workspace: uuid::Uuid,
     folders: Vec<uuid::Uuid>,
     focus: uuid::Uuid,
     busy_caller: uuid::Uuid,
@@ -43,21 +43,21 @@ async fn seed(pg: &PgStore) -> Corpus {
         async move {
             let root_id = pg.add_watch_root(&root, name, &serde_json::json!([])).await.unwrap();
             let folder = pg.upsert_repo(&root_id, &format!("{name}-{tag}"), &root).await.unwrap();
-            let project =
-                pg.create_project(&format!("_test:hood:{name}:{tag}"), None, None).await.unwrap();
-            crate::tasks::test_support::place_folder_in_project(
+            let workspace =
+                pg.create_workspace(&format!("_test:hood:{name}:{tag}"), None, None).await.unwrap();
+            crate::tasks::test_support::place_folder_in_workspace(
                 pg,
                 &folder,
-                &project,
+                &workspace,
                 &format!("{name}-{tag}"),
             )
             .await
             .unwrap();
-            (folder, project)
+            (folder, workspace)
         }
     };
-    let (mine, project) = place("mine").await;
-    let (theirs, other_project) = place("theirs").await;
+    let (mine, workspace) = place("mine").await;
+    let (theirs, other_workspace) = place("theirs").await;
     folders.push(mine);
     folders.push(theirs);
 
@@ -98,7 +98,7 @@ async fn seed(pg: &PgStore) -> Corpus {
     call(mine, quiet_caller, Some(focus), None, 1).await;
     call(mine, focus, Some(callee), None, 2).await;
     call(mine, focus, Some(library), None, 1).await;
-    // Another project's code calling the focus. Real, but not THIS project's
+    // Another workspace's code calling the focus. Real, but not THIS workspace's
     // neighbourhood — the callers column is scoped like every sibling screen.
     call(theirs, foreign_caller, Some(focus), None, 1).await;
     // Unplaced: one the focus makes, and one that NAMES the focus. Plus a
@@ -115,8 +115,8 @@ async fn seed(pg: &PgStore) -> Corpus {
     miss(busy_caller, "focus", "plumbing").await;
 
     Corpus {
-        project,
-        other_project,
+        workspace,
+        other_workspace,
         folders,
         focus,
         busy_caller,
@@ -138,8 +138,8 @@ async fn cleanup(pg: &PgStore, c: &Corpus) {
         .await
         .ok();
     }
-    pg.delete_project(&c.project).await.ok();
-    pg.delete_project(&c.other_project).await.ok();
+    pg.delete_workspace(&c.workspace).await.ok();
+    pg.delete_workspace(&c.other_workspace).await.ok();
 }
 
 fn by_far(calls: &[Call], side: Side) -> Vec<(uuid::Uuid, i64, bool)> {
@@ -154,19 +154,19 @@ fn by_far(calls: &[Call], side: Side) -> Vec<(uuid::Uuid, i64, bool)> {
     v
 }
 
-/// Mutations that must break this: drop the project scope on the `In` hop, or
+/// Mutations that must break this: drop the workspace scope on the `In` hop, or
 /// weight by `count(*)` of edge rows instead of call sites.
 #[tokio::test]
-async fn the_callers_hop_stays_in_the_project_and_weighs_call_sites() {
+async fn the_callers_hop_stays_in_the_workspace_and_weighs_call_sites() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;
     };
     let c = seed(&pg).await;
 
-    let calls = pg.neighbourhood_hop(&c.project, &[c.focus], Side::In).await.unwrap();
+    let calls = pg.neighbourhood_hop(&c.workspace, &[c.focus], Side::In).await.unwrap();
     let mut want = vec![(c.busy_caller, 4, true), (c.quiet_caller, 1, true)];
     want.sort();
-    assert_eq!(by_far(&calls, Side::In), want, "foreign_caller is another project's");
+    assert_eq!(by_far(&calls, Side::In), want, "foreign_caller is another workspace's");
     assert!(calls.iter().all(|k| k.source != c.foreign_caller));
 
     cleanup(&pg, &c).await;
@@ -181,7 +181,7 @@ async fn the_callees_hop_reaches_a_library_but_marks_it_a_leaf() {
     };
     let c = seed(&pg).await;
 
-    let calls = pg.neighbourhood_hop(&c.project, &[c.focus], Side::Out).await.unwrap();
+    let calls = pg.neighbourhood_hop(&c.workspace, &[c.focus], Side::Out).await.unwrap();
     let mut want = vec![(c.callee, 2, true), (c.library, 1, false)];
     want.sort();
     assert_eq!(by_far(&calls, Side::Out), want);
@@ -189,22 +189,22 @@ async fn the_callees_hop_reaches_a_library_but_marks_it_a_leaf() {
     cleanup(&pg, &c).await;
 }
 
-/// The focus is looked up IN the project: a node of another project is a miss,
+/// The focus is looked up IN the workspace: a node of another workspace is a miss,
 /// not a neighbourhood drawn somewhere the reader is not standing.
 ///
-/// Mutation that must break this: drop the `project_ids` test from the focus read.
+/// Mutation that must break this: drop the `workspace_ids` test from the focus read.
 #[tokio::test]
-async fn a_focus_from_another_project_is_a_miss() {
+async fn a_focus_from_another_workspace_is_a_miss() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;
     };
     let c = seed(&pg).await;
 
-    let found = pg.neighbourhood_focus(&c.project, &c.focus).await.unwrap();
-    let found = found.expect("the focus is this project's");
+    let found = pg.neighbourhood_focus(&c.workspace, &c.focus).await.unwrap();
+    let found = found.expect("the focus is this workspace's");
     assert_eq!(found.name, "focus");
     assert_eq!(found.file_path.as_deref(), Some("a.rs"));
-    assert!(pg.neighbourhood_focus(&c.project, &c.foreign_caller).await.unwrap().is_none());
+    assert!(pg.neighbourhood_focus(&c.workspace, &c.foreign_caller).await.unwrap().is_none());
 
     let nodes = pg.neighbourhood_nodes(&[c.focus, c.library]).await.unwrap();
     let lib = nodes.iter().find(|n| n.id == c.library).expect("library node");
@@ -214,7 +214,7 @@ async fn a_focus_from_another_project_is_a_miss() {
 }
 
 /// Two different facts, never summed: calls the focus makes that the graph could
-/// not place, and unplaced calls elsewhere in the project that NAME it.
+/// not place, and unplaced calls elsewhere in the workspace that NAME it.
 ///
 /// `plumbing` and `external_boundary` are excluded through
 /// `Reason::casts_doubt`, the one owner of that partition: they are the ladder
@@ -228,7 +228,7 @@ async fn the_unplaced_counts_are_kept_apart() {
     };
     let c = seed(&pg).await;
 
-    let u = pg.neighbourhood_unplaced(&c.project, &c.focus, "focus").await.unwrap();
+    let u = pg.neighbourhood_unplaced(&c.workspace, &c.focus, "focus").await.unwrap();
     assert_eq!(u.callees, 2, "`mystery` and `elsewhere` are gaps; `clone` is plumbing");
     assert_eq!(u.named, 1, "one doubtful unplaced call names `focus`; the plumbing one is not");
 

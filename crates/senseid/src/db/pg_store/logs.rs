@@ -137,7 +137,7 @@ impl PgStore {
     ///   never derived is kept even if it is old (would lose signal).
     /// - AND (capture-before-reclaim, invariant I20) the session's day must
     ///   EITHER already be captured in the durable metric store — an `EXISTS`
-    ///   daily `scope = 'user'` `sensei.project_metrics` row for the session's
+    ///   daily `scope = 'user'` `sensei.workspace_metrics` row for the session's
     ///   repository (via `folders.repository_id` on the session's
     ///   `repo_folder_id`) with `computed_on = date_trunc('day',
     ///   s.started_at)::date` AND whose metric has `capture_source = 'session'`
@@ -176,7 +176,7 @@ impl PgStore {
         //     so we don't re-scan the guard SQL four times. Capture-before-
         //     reclaim (invariant I20): a session is eligible only when its day is
         //     already captured by a CAPTURE-AUTHORIZING metric in
-        //     sensei.project_metrics (daily grain, scope = 'user', on the
+        //     sensei.workspace_metrics (daily grain, scope = 'user', on the
         //     session's OWN repository via the `repo_folder_id` -> folders
         //     -> repository_id join, and `metrics.capture_source = 'session'`)
         //     OR it is older than
@@ -187,7 +187,7 @@ impl PgStore {
         //     let a session be reclaimed before its delivery metric ever computed
         //     (the 164GB data-loss class). Keying the EXISTS on the session's OWN
         //     repository (via `repo_folder_id` -> `folders.repository_id`), not
-        //     just its project, keeps the guard honest at repo grain: a session
+        //     just its workspace, keeps the guard honest at repo grain: a session
         //     is reclaimed only once a session-derived snapshot exists FOR THAT
         //     REPOSITORY. The authorization now lives in the
         //     `metrics.capture_source` column (retiring the planner's
@@ -199,7 +199,7 @@ impl PgStore {
               WHERE s.analyzed_at IS NOT NULL
                 AND s.started_at < now() - (interval '1 day' * $1)
                 AND (EXISTS (SELECT 1
-                               FROM sensei.project_metrics pm
+                               FROM sensei.workspace_metrics pm
                                JOIN sensei.metrics m ON m.id = pm.metric_id
                                JOIN sensei.folders rf ON rf.id = s.repo_folder_id
                               WHERE pm.repository_id = rf.repository_id

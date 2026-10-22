@@ -50,13 +50,13 @@ impl PgStore {
         Ok(commands.len())
     }
 
-    /// All commands for a project — union across its folders. `category`
+    /// All commands for a workspace — union across its folders. `category`
     /// filter is applied server-side so callers can ask for just `test` or
     /// `build` without pulling everything. Ordered by category (nulls last)
     /// then raw_name for stable UI display.
     pub async fn get_folder_commands(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         category: Option<&str>,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(
@@ -74,19 +74,19 @@ impl PgStore {
                     "SELECT c.id, c.folder_id, f.name, c.raw_name, c.command_line, c.category, c.ecosystem, c.source_file, c.discovered_at
                        FROM sensei.folder_commands c
                        JOIN sensei.folders f ON f.id = c.folder_id
-                       JOIN sensei.folder_projects fp ON fp.folder_id = c.folder_id
-                      WHERE fp.project_id = $1 AND c.category = $2
+                       JOIN sensei.folder_workspaces fp ON fp.folder_id = c.folder_id
+                      WHERE fp.workspace_id = $1 AND c.category = $2
                       ORDER BY c.category NULLS LAST, c.raw_name"
-                ).bind(project_id).bind(cat).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
+                ).bind(workspace_id).bind(cat).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
         } else {
             sqlx_core::query_as::query_as(
                     "SELECT c.id, c.folder_id, f.name, c.raw_name, c.command_line, c.category, c.ecosystem, c.source_file, c.discovered_at
                        FROM sensei.folder_commands c
                        JOIN sensei.folders f ON f.id = c.folder_id
-                       JOIN sensei.folder_projects fp ON fp.folder_id = c.folder_id
-                      WHERE fp.project_id = $1
+                       JOIN sensei.folder_workspaces fp ON fp.folder_id = c.folder_id
+                      WHERE fp.workspace_id = $1
                       ORDER BY c.category NULLS LAST, c.raw_name"
-                ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
+                ).bind(workspace_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
         };
 
         // G10 command bias: mark the user's preferred tool per capability.
@@ -197,7 +197,7 @@ impl PgStore {
     /// | `build` | …), from the manifest-discovered `folder_commands`. `None`
     /// when the repo has no command in that category. Used to map a checker rule's
     /// `checker_ref` to a runnable command.
-    pub async fn project_command_for(
+    pub async fn workspace_command_for(
         &self,
         folder_id: &uuid::Uuid,
         category: &str,

@@ -42,8 +42,8 @@ export interface DaemonAssistantFamily {
   parts: DaemonAssistantPart[];
 }
 
-/** A project with its folders. */
-export interface DaemonProject {
+/** A workspace with its folders. */
+export interface DaemonWorkspace {
   id: string;
   name: string;
   description: string | null;
@@ -51,10 +51,10 @@ export interface DaemonProject {
   goal: string | null;
   stack: { languages: string[]; frameworks: string[]; runtimes: string[]; services: string[] };
   icon: { kind: string; value: string };
-  folders: DaemonProjectFolder[];
+  folders: DaemonWorkspaceFolder[];
 }
 
-export interface DaemonProjectFolder {
+export interface DaemonWorkspaceFolder {
   id: string;
   name: string;
   path: string;
@@ -94,7 +94,7 @@ export interface DaemonMcpEntry {
   installed: boolean;
   recommended: boolean;
   selected: boolean;
-  project_count: number;
+  workspace_count: number;
 }
 
 /** A gateway router — endpoint that may front multiple providers. */
@@ -177,7 +177,7 @@ export interface WizardLoadData {
   preferences: PreferencesData;
   assistantFamilies: DaemonAssistantFamily[];
   roots: DaemonWatchRoot[];
-  projects: DaemonProject[];
+  workspaces: DaemonWorkspace[];
   libraries: { total: number; libs: DaemonLibEntry[] };
   mcps: DaemonMcpEntry[];
   /** `null` when the read failed — never an invented empty list (#286). */
@@ -192,13 +192,13 @@ export type MemoryStatus =
     | 'proposed' | 'active' | 'reinforced' | 'challenged'
     | 'battle_tested' | 'archived' | 'rejected';
 
-export type MemoryScope = 'global' | 'project' | 'stack' | 'task_type' | 'module';
+export type MemoryScope = 'global' | 'workspace' | 'stack' | 'task_type' | 'module';
 
 export type OutcomeKind = 'applied' | 'consulted' | 'violated' | 'ignored';
 
 export interface Memory {
     id:               string;
-    project_id:       string | null;
+    workspace_id:       string | null;
     scope:            MemoryScope;
     scope_filter:     string | null;
     type:             string;
@@ -256,7 +256,7 @@ export interface ContextResponse {
 }
 
 export interface ProposalCreateBody {
-    project_id?:   string;
+    workspace_id?:   string;
     scope:         MemoryScope;
     scope_filter?: string;
     type:          string;
@@ -268,7 +268,7 @@ export interface ProposalCreateBody {
 }
 
 export interface MemoryCreateBody {
-    project_id?:   string;
+    workspace_id?:   string;
     scope:         MemoryScope;
     scope_filter?: string;
     type:          string;

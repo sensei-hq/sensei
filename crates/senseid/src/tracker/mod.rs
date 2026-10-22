@@ -520,11 +520,11 @@ pub mod test_support {
         }
     }
 
-    /// A repository folder that belongs to project `p` (a fresh repository each call).
+    /// A repository folder that belongs to workspace `p` (a fresh repository each call).
     pub async fn repo_in(pg: &crate::db::pg_store::PgStore, p: uuid::Uuid) -> uuid::Uuid {
         let suffix = format!("trk-{}", uuid::Uuid::new_v4().simple());
         let folder = crate::db::pg_store::tests::create_test_folder(pg, &suffix).await;
-        pg.set_folder_project(&folder, &p, "root", None).await.unwrap();
+        pg.set_folder_workspace(&folder, &p, "root", None).await.unwrap();
         folder
     }
 

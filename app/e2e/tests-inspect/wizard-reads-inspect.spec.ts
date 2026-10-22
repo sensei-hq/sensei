@@ -13,8 +13,8 @@ const errors = `document.querySelectorAll('[data-testid="libraries-error"], [dat
 
 test('wizard-owned reads land', async ({ tauriPage }) => {
   const { mcps } = await json('/api/instruments');
-  const projects: { folders?: { name: string }[] }[] = await json('/api/projects');
-  const scanned = new Set(projects.flatMap((p) => (p.folders ?? []).map((f) => f.name)));
+  const workspaces: { folders?: { name: string }[] }[] = await json('/api/workspaces');
+  const scanned = new Set(workspaces.flatMap((p) => (p.folders ?? []).map((f) => f.name)));
   const { libs } = await json('/api/libs?');
   const expectedLibs = libs.filter((l: { repos?: string[] }) => (l.repos ?? []).some((r) => scanned.has(r))).length;
 

@@ -2,7 +2,7 @@
  * Observatory · Insights (Learnings triage) — state.
  *
  * Owns the whole triage screen's runtime: the server board, the active
- * project-filter chip, optimistic card removals, and the Apply / Dismiss
+ * workspace-filter chip, optimistic card removals, and the Apply / Dismiss
  * actions. Components downstream are pure templates — every derivation and
  * every mutation lives here.
  *
@@ -20,7 +20,7 @@ import { failureReason, type SenseiApi } from '$lib/api.js';
 import type {
   InsightsBoard,
   InsightColumn,
-  InsightProjectRef,
+  InsightWorkspaceRef,
   InsightRecommendation,
   InsightMemory,
   InsightPattern,
@@ -37,7 +37,7 @@ export const RECOMMENDED_VERB = 'Apply' as const;
 /** The all-quiet board — the api fallback and the initial value. */
 export const EMPTY_INSIGHTS_BOARD: InsightsBoard = {
   counts: { now: 0, soon: 0, settled: 0 },
-  projects: [],
+  workspaces: [],
   recommendations: [],
   memories: [],
   patterns: [],
@@ -49,9 +49,9 @@ export const EMPTY_INSIGHTS_BOARD: InsightsBoard = {
 
 export interface RecCardVm {
   id: string;
-  projectId: string;
-  projectName: string;
-  projectKanji: string;
+  workspaceId: string;
+  workspaceName: string;
+  workspaceKanji: string;
   title: string;
   why: string;
   /** Plain-language impact sentence; '' when the wire sent none. */
@@ -61,7 +61,7 @@ export interface RecCardVm {
 
 export interface ViolationCardVm {
   id: string;
-  projectId: string;
+  workspaceId: string;
   title: string;
   content: string;
   violatedCount: number;
@@ -113,17 +113,17 @@ export interface SettledColumn {
 
 // ── Pure mappers ────────────────────────────────────────────────────────────
 
-/** Kanji for a rec's project, joined from the board's project list. */
-function kanjiFor(projects: InsightProjectRef[], projectId: string): string {
-  return projects.find((p) => p.id === projectId)?.kanji ?? '場';
+/** Kanji for a rec's workspace, joined from the board's workspace list. */
+function kanjiFor(workspaces: InsightWorkspaceRef[], workspaceId: string): string {
+  return workspaces.find((p) => p.id === workspaceId)?.kanji ?? '場';
 }
 
-export function toRecVm(r: InsightRecommendation, projects: InsightProjectRef[]): RecCardVm {
+export function toRecVm(r: InsightRecommendation, workspaces: InsightWorkspaceRef[]): RecCardVm {
   return {
     id: r.id,
-    projectId: r.project_id,
-    projectName: r.name,
-    projectKanji: kanjiFor(projects, r.project_id),
+    workspaceId: r.workspace_id,
+    workspaceName: r.name,
+    workspaceKanji: kanjiFor(workspaces, r.workspace_id),
     title: r.title,
     why: r.why ?? '',
     impact: r.impact ?? '',
@@ -134,7 +134,7 @@ export function toRecVm(r: InsightRecommendation, projects: InsightProjectRef[])
 export function toViolationVm(m: InsightMemory): ViolationCardVm {
   return {
     id: m.id,
-    projectId: m.project_id,
+    workspaceId: m.workspace_id,
     title: m.title,
     content: m.content,
     violatedCount: m.violated_count,
@@ -171,14 +171,14 @@ export function toCorrectionVm(c: InsightCorrection): CorrectionCardVm {
 
 export class InsightsBoardState {
   board = $state<InsightsBoard>(EMPTY_INSIGHTS_BOARD);
-  /** Active project-filter chip. null = all projects (the default). */
-  selectedProjectId = $state<string | null>(null);
+  /** Active workspace-filter chip. null = all workspaces (the default). */
+  selectedWorkspaceId = $state<string | null>(null);
   /** Ids optimistically removed after Apply / Dismiss, before the round-trip.
    *  A SvelteSet so in-place add/delete/clear stay reactive. */
   removedIds = new SvelteSet<string>();
   /** Set when an action round-trip fails; the card is restored alongside. */
   actionError = $state<string | null>(null);
-  /** True while a project-scope refetch is in flight. */
+  /** True while a workspace-scope refetch is in flight. */
   loading = $state(false);
   /** Why the board could not be read, or null (#288). The page then shows the
    *  error — an unread board is not the all-quiet one. */
@@ -196,15 +196,15 @@ export class InsightsBoardState {
   #visibleRecs(column: InsightColumn): RecCardVm[] {
     return this.board.recommendations
       .filter((r) => r.column === column && !this.removedIds.has(r.id))
-      .map((r) => toRecVm(r, this.board.projects));
+      .map((r) => toRecVm(r, this.board.workspaces));
   }
 
   #memories(column: InsightColumn): InsightMemory[] {
     return this.board.memories.filter((m) => m.column === column);
   }
 
-  get projects(): InsightProjectRef[] {
-    return this.board.projects;
+  get workspaces(): InsightWorkspaceRef[] {
+    return this.board.workspaces;
   }
 
   get now(): NowColumn {
@@ -255,13 +255,13 @@ export class InsightsBoardState {
   }
 
   /**
-   * Re-scope every column to one project (or all). Refetches so the server
-   * counts stay honest rather than filtering the cross-project board client-
+   * Re-scope every column to one workspace (or all). Refetches so the server
+   * counts stay honest rather than filtering the cross-workspace board client-
    * side. Optimistic removals reset — the fresh board is the truth.
    */
-  async selectProject(api: SenseiApi, projectId: string | null): Promise<void> {
-    if (projectId === this.selectedProjectId) return;
-    this.selectedProjectId = projectId;
+  async selectWorkspace(api: SenseiApi, workspaceId: string | null): Promise<void> {
+    if (workspaceId === this.selectedWorkspaceId) return;
+    this.selectedWorkspaceId = workspaceId;
     await this.retry(api);
   }
 
@@ -272,7 +272,7 @@ export class InsightsBoardState {
     this.removedIds.clear();
     this.actionError = null;
     this.loading = true;
-    const read = await api.tryGetInsights(this.selectedProjectId ?? undefined);
+    const read = await api.tryGetInsights(this.selectedWorkspaceId ?? undefined);
     // A failed read drops the previous scope's board, so it cannot pass as this one's.
     this.board = read.ok ? read.data : EMPTY_INSIGHTS_BOARD;
     this.loadError = read.ok ? null : failureReason(read.error);
@@ -288,7 +288,7 @@ export class InsightsBoardState {
   async apply(api: SenseiApi, rec: RecCardVm): Promise<void> {
     this.actionError = null;
     this.#remove(rec.id);
-    const res = await api.tryAcceptProjectRecommendation(rec.projectId, rec.id);
+    const res = await api.tryAcceptWorkspaceRecommendation(rec.workspaceId, rec.id);
     if (!res.ok) {
       this.#restore(rec.id);
       this.actionError = `Couldn't apply "${rec.title}": ${failureReason(res.error)}`;
@@ -299,7 +299,7 @@ export class InsightsBoardState {
   async dismiss(api: SenseiApi, rec: RecCardVm): Promise<void> {
     this.actionError = null;
     this.#remove(rec.id);
-    const res = await api.tryRejectProjectRecommendation(rec.projectId, rec.id);
+    const res = await api.tryRejectWorkspaceRecommendation(rec.workspaceId, rec.id);
     if (!res.ok) {
       this.#restore(rec.id);
       this.actionError = `Couldn't dismiss "${rec.title}": ${failureReason(res.error)}`;

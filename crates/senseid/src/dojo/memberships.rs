@@ -102,7 +102,7 @@ pub fn dojo_run_url(registry_url: &str, run_id: &uuid::Uuid) -> String {
 #[derive(Debug)]
 pub struct NewConnection {
     /// The service membership id (`dojo.memberships.id`) — becomes the local PK
-    /// and the value `sensei.projects.dojo_id` points at.
+    /// and the value `sensei.workspaces.dojo_id` points at.
     pub membership_id: uuid::Uuid,
     pub registry_url: String,
     pub tenant_key: String,
@@ -180,16 +180,16 @@ pub async fn register(pg: &PgStore, conn: NewConnection) -> Result<uuid::Uuid, S
     pg.create_dojo_membership(&row).await
 }
 
-/// Bind a local project to a Dōjō membership (sets `sensei.projects.dojo_id`).
-/// A project binds to exactly one membership. Returns `false` if the project is
+/// Bind a local workspace to a Dōjō membership (sets `sensei.workspaces.dojo_id`).
+/// A workspace binds to exactly one membership. Returns `false` if the workspace is
 /// unknown. Client-membership bindings take precedence at routing time (see
 /// [`crate::dojo::routing`]).
-pub async fn bind_project(
+pub async fn bind_workspace(
     pg: &PgStore,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     membership_id: &uuid::Uuid,
 ) -> Result<bool, String> {
-    pg.bind_project_to_dojo(project_id, Some(membership_id)).await
+    pg.bind_workspace_to_dojo(workspace_id, Some(membership_id)).await
 }
 
 /// Replace the git-remote owner slugs a membership covers (the org-tagging
@@ -218,7 +218,7 @@ pub async fn set_sync_status(
     pg.set_dojo_sync_status(membership_id, status).await
 }
 
-/// A SUGGESTED project→Dōjō binding for the About-panel confirm chip (the
+/// A SUGGESTED workspace→Dōjō binding for the About-panel confirm chip (the
 /// enriched form of [`crate::dojo::routing::InferredBinding`] with the display
 /// fields the chip needs). Confirm-inferred: surfaced for the user to accept;
 /// binding is only written when they confirm (`POST …/dojo-binding`).
@@ -227,29 +227,29 @@ pub struct BindingSuggestion {
     pub membership_id: uuid::Uuid,
     /// employer | client | community | personal.
     pub kind: String,
-    /// The project's git-remote owner slug that matched the membership.
+    /// The workspace's git-remote owner slug that matched the membership.
     pub matched_slug: String,
     pub tenant_key: String,
     pub dojo_url: String,
 }
 
-/// Infer a project→Dōjō binding from the project's git-remote owner(s), for the
-/// About-panel confirm chip. Returns `None` when the project is already bound
+/// Infer a workspace→Dōjō binding from the workspace's git-remote owner(s), for the
+/// About-panel confirm chip. Returns `None` when the workspace is already bound
 /// (no suggestion needed), has no git owner, or no connected membership covers
 /// its owner. Pure inference lives in [`crate::dojo::routing::infer_binding`];
 /// this only gathers the inputs and enriches the result for display — it never
-/// writes the binding (that is the user-confirmed [`bind_project`]).
+/// writes the binding (that is the user-confirmed [`bind_workspace`]).
 pub async fn suggest_binding(
     pg: &PgStore,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
 ) -> Result<Option<BindingSuggestion>, String> {
     use crate::dojo::routing::{BindCandidate, infer_binding};
 
     // Already bound → the chip doesn't apply.
-    if pg.project_bound_membership(project_id).await?.is_some() {
+    if pg.workspace_bound_membership(workspace_id).await?.is_some() {
         return Ok(None);
     }
-    let owners = pg.project_org_owners(project_id).await?;
+    let owners = pg.workspace_org_owners(workspace_id).await?;
     if owners.is_empty() {
         return Ok(None);
     }
@@ -278,10 +278,10 @@ pub async fn suggest_binding(
     }))
 }
 
-/// A local project bound to a membership — for the connections pane's
-/// "bound projects" strip.
+/// A local workspace bound to a membership — for the connections pane's
+/// "bound workspaces" strip.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct BoundProject {
+pub struct BoundWorkspace {
     pub id: uuid::Uuid,
     pub name: String,
 }
@@ -304,11 +304,11 @@ pub struct ConnectionView {
     pub last_seq: i64,
     pub last_heartbeat_at: Option<String>,
     pub enabled: bool,
-    pub bound_projects: Vec<BoundProject>,
+    pub bound_workspaces: Vec<BoundWorkspace>,
 }
 
 impl ConnectionView {
-    fn from_row(row: DojoMembership, bound_projects: Vec<BoundProject>) -> Self {
+    fn from_row(row: DojoMembership, bound_workspaces: Vec<BoundWorkspace>) -> Self {
         Self {
             id: row.id,
             registry_url: row.registry_url,
@@ -323,22 +323,22 @@ impl ConnectionView {
             last_seq: row.last_seq,
             last_heartbeat_at: row.last_heartbeat_at,
             enabled: row.enabled,
-            bound_projects,
+            bound_workspaces,
         }
     }
 }
 
-/// List every Dōjō connection with its bound projects — the
+/// List every Dōjō connection with its bound workspaces — the
 /// `GET /api/dojo/memberships` payload.
 pub async fn list(pg: &PgStore) -> Result<Vec<ConnectionView>, String> {
     let rows = pg.list_dojo_memberships().await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let bound = pg
-            .projects_bound_to_dojo(&row.id)
+            .workspaces_bound_to_dojo(&row.id)
             .await?
             .into_iter()
-            .map(|(id, name)| BoundProject { id, name })
+            .map(|(id, name)| BoundWorkspace { id, name })
             .collect();
         out.push(ConnectionView::from_row(row, bound));
     }

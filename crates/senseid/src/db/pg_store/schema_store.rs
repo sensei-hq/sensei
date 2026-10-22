@@ -208,20 +208,20 @@ impl PgStore {
         self.schema_detail_in(std::slice::from_ref(folder_id)).await
     }
 
-    /// The folders whose schema a project's diagram shows: the ones placed in
-    /// it (`sensei.folder_projects`), in a stable order.
-    pub async fn schema_folders_of_project(
+    /// The folders whose schema a workspace's diagram shows: the ones placed in
+    /// it (`sensei.folder_workspaces`), in a stable order.
+    pub async fn schema_folders_of_workspace(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<uuid::Uuid>, String> {
         let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "SELECT DISTINCT folder_id FROM sensei.folder_projects
-              WHERE project_id = $1 ORDER BY folder_id",
+            "SELECT DISTINCT folder_id FROM sensei.folder_workspaces
+              WHERE workspace_id = $1 ORDER BY folder_id",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("schema store: folders of project {project_id}: {e}"))?;
+        .map_err(|e| format!("schema store: folders of workspace {workspace_id}: {e}"))?;
         Ok(rows.into_iter().map(|(f,)| f).collect())
     }
 

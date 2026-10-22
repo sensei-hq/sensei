@@ -22,7 +22,7 @@ impl PgStore {
     /// so the computer can write both and the reading stays transparent.
     pub(crate) async fn usage_cache_reuse_by_day(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
         window_days: u32,
         as_of: Option<chrono::NaiveDate>,
     ) -> Result<Vec<CacheReuseDay>, String> {
@@ -35,7 +35,7 @@ impl PgStore {
                    FROM activity.transcript_turns tt \
                    JOIN activity.sessions s  ON s.client_session_id = tt.session_id \
                    JOIN sensei.folders    rf ON rf.id = s.repo_folder_id \
-                  WHERE s.project_id = $1 \
+                  WHERE s.workspace_id = $1 \
                     AND rf.repository_id IS NOT NULL \
                     AND tt.tokens_in IS NOT NULL \
                     AND {} \
@@ -49,7 +49,7 @@ impl PgStore {
                FROM per_session GROUP BY 1, 2 ORDER BY 1, 2",
             day_filter("s.started_at", as_of),
         );
-        let q = sqlx_core::query_as::query_as::<_, CacheReuseDay>(&sql).bind(project_id);
+        let q = sqlx_core::query_as::query_as::<_, CacheReuseDay>(&sql).bind(workspace_id);
         bind_day(q, window_days, as_of).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 }

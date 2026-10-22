@@ -83,7 +83,7 @@ describe('outcomeColor', () => {
 
 describe('anonymize', () => {
     it('replaces /Users/name/ with ~/', () => {
-        expect(anonymize('/Users/dev/projects/foo')).toBe('~/projects/foo');
+        expect(anonymize('/Users/dev/workspaces/foo')).toBe('~/workspaces/foo');
     });
     it('replaces any username', () => {
         expect(anonymize('/Users/alice/dev/bar')).toBe('~/dev/bar');
@@ -133,7 +133,7 @@ describe('timeOfDay', () => {
 describe('moduleLabel', () => {
     it('bootstrap → Bootstrap',    () => expect(moduleLabel('bootstrap')).toBe('Bootstrap'));
     it('wizard → Setup wizard',    () => expect(moduleLabel('wizard')).toBe('Setup wizard'));
-    it('projects → Projects',      () => expect(moduleLabel('projects')).toBe('Projects'));
+    it('workspaces → Workspaces',      () => expect(moduleLabel('workspaces')).toBe('Workspaces'));
     it('unknown → falls back',     () => expect(moduleLabel('other')).toBe('other'));
 });
 

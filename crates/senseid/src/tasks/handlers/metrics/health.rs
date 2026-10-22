@@ -1,18 +1,18 @@
-//! `project_health` derived-score computer (Phase 6).
+//! `workspace_health` derived-score computer (Phase 6).
 //!
-//! The `ComputeHealth` barrier's real body: it rolls the project's base metrics up
-//! into ONE 0–100 composite score and writes a single project-scope daily row for
-//! the `project_health` registry metric (`type = score`, `family = composite`,
+//! The `ComputeHealth` barrier's real body: it rolls the workspace's base metrics up
+//! into ONE 0–100 composite score and writes a single workspace-scope daily row for
+//! the `workspace_health` registry metric (`type = score`, `family = composite`,
 //! `higher_better`). It runs AFTER the base `ComputeGroupMetrics` tasks land for a
-//! project (the scheduler wires it `blocked_by` those ids), so the latest daily
-//! component values are already in `sensei.project_metrics` when it reads them.
+//! workspace (the scheduler wires it `blocked_by` those ids), so the latest daily
+//! component values are already in `sensei.workspace_metrics` when it reads them.
 //!
 //! ## The score
 //! `value = round(100 × weighted mean of each active component metric's latest
 //! daily value NORMALIZED to [0,1])`, weighted by `sensei.metrics.weight`.
 //!
-//! For each ACTIVE component metric, take its LATEST daily project-scope value
-//! (grain `daily`, `folder_id` NULL — via [`PgStore::get_project_metrics`]) and
+//! For each ACTIVE component metric, take its LATEST daily workspace-scope value
+//! (grain `daily`, `folder_id` NULL — via [`PgStore::get_workspace_metrics`]) and
 //! normalize to [0,1] by its `direction`/`type` (see [`normalize`]):
 //! - **ratio/pct, higher_better**: `norm = clamp(value, 0, 1)`.
 //! - **ratio/pct, lower_better**:  `norm = clamp(1 - value, 0, 1)`.
@@ -26,7 +26,7 @@
 //! - its `direction` is `neutral` (read only with its companion, never scored);
 //! - it is a `count`/`duration`/`currency` metric with `target IS NULL` (no bound
 //!   to normalize against);
-//! - it is the `project_health` metric itself (`type = score` / `family =
+//! - it is the `workspace_health` metric itself (`type = score` / `family =
 //!   composite`) — never recurse into the score;
 //! - it has NO latest daily value (no data — honest-absent, NOT a zero).
 //!
@@ -36,21 +36,21 @@
 //!
 //! ## Never-fabricate (the load-bearing property)
 //! - No included components ⇒ write NO health row (never a fabricated 100 or 0). An
-//!   empty project, or one where every metric is excluded/absent, gets no row.
+//!   empty workspace, or one where every metric is excluded/absent, gets no row.
 //! - Every DB read propagates its `Err` (`.await?`); no `.unwrap_or_default()` /
-//!   `.ok()` masking, no fabricated ids. Strict project scoping — a component value
-//!   is only ever read for THIS project (`get_project_metrics` is project-scoped).
+//!   `.ok()` masking, no fabricated ids. Strict workspace scoping — a component value
+//!   is only ever read for THIS workspace (`get_workspace_metrics` is workspace-scoped).
 
 use crate::db::pg_store::MetricRow;
 use crate::tasks::executor::TaskContext;
 
-/// `sensei.metric_grain` text value (health writes one daily project row).
+/// `sensei.metric_grain` text value (health writes one daily workspace row).
 const GRAIN_DAILY: &str = "daily";
 /// `sensei.metric_source` text value — the score is derived from measured values.
 const SOURCE_MEASURED: &str = "measured";
 /// The composite metric's registry `key` (its `task_name` is
 /// [`super::HEALTH_TASK_NAME`]). Resolved to an id via the active registry.
-const KEY_PROJECT_HEALTH: &str = "project_health";
+const KEY_WORKSPACE_HEALTH: &str = "workspace_health";
 
 /// Normalize one component metric's latest daily `value` to `[0, 1]` by its
 /// `metric_type` and `direction`, returning `None` when the component is EXCLUDED
@@ -70,20 +70,20 @@ fn normalize(metric_type: &str, direction: &str, value: f64, target: Option<f64>
         ("count" | "duration" | "currency", "lower_better") => {
             target.map(|t| if value <= t { 1.0 } else { (t / value).clamp(0.0, 1.0) })
         }
-        // neutral direction, or a score/value type (incl. project_health itself):
+        // neutral direction, or a score/value type (incl. workspace_health itself):
         // no defined normalization ⇒ excluded from the score.
         _ => None,
     }
 }
 
-/// Compute the derived `project_health` score for one project and write its single
-/// project-scope daily row. `project_raw` is the project uuid carried in
+/// Compute the derived `workspace_health` score for one workspace and write its single
+/// workspace-scope daily row. `workspace_raw` is the workspace uuid carried in
 /// `task.folder_path`. Returns the number of rows written: `1` when at least one
 /// component is included, else `0`.
 ///
 /// This resolves the composite metric's id via the ACTIVE registry (task_name
 /// "health"), then delegates the roll-up to [`roll_up`]. **The metric's RETIREMENT
-/// acts through this resolve step:** `project_health` carries a past `effective_until`
+/// acts through this resolve step:** `workspace_health` carries a past `effective_until`
 /// in `sensei.metrics` (retired 2026-08-12; seeded from the catalog via
 /// `import_metrics`), so it drops out of [`PgStore::active_metric_ids`] and this
 /// returns `Ok(0)` — writing NO row (honest-absent, never a fabricated score). The
@@ -94,26 +94,26 @@ fn normalize(metric_type: &str, direction: &str, value: f64, target: Option<f64>
 /// [`PgStore::active_metric_ids`]: crate::db::pg_store::PgStore::active_metric_ids
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<chrono::NaiveDate>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("health: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("health: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
     // Resolve the composite metric's id via the active registry (task_name "health").
     // RETIRED / not-yet-effective / unseeded ⇒ absent from the active map ⇒ nothing
     // to write (honest-absent, never fabricated). This is the retirement seam.
     let health_ids = pg.active_metric_ids(super::HEALTH_TASK_NAME).await?;
-    let Some(&health_id) = health_ids.get(KEY_PROJECT_HEALTH) else {
+    let Some(&health_id) = health_ids.get(KEY_WORKSPACE_HEALTH) else {
         return Ok(0);
     };
 
-    roll_up(ctx, &project_id, health_id, as_of).await
+    roll_up(ctx, &workspace_id, health_id, as_of).await
 }
 
-/// Roll the project's latest daily component values into the composite score and
-/// write its single project-scope daily row under the already-resolved composite
+/// Roll the workspace's latest daily component values into the composite score and
+/// write its single workspace-scope daily row under the already-resolved composite
 /// metric id `health_id`. Returns the number of rows written: `1` when at least one
 /// component is included, else `0` (never-fabricate: no components ⇒ NO row, not a
 /// phantom 100/0). Idempotent — re-running backfills the row in place. This is a
@@ -124,10 +124,10 @@ pub(super) async fn compute(
 ///
 /// Split out from [`compute`] so the roll-up math is exercised against a caller-
 /// supplied ACTIVE composite metric, independent of whether the shipped
-/// `project_health` registry row is active (it is retired — see [`compute`]).
+/// `workspace_health` registry row is active (it is retired — see [`compute`]).
 async fn roll_up(
     ctx: &TaskContext,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     health_id: uuid::Uuid,
     as_of: Option<chrono::NaiveDate>,
 ) -> Result<u32, String> {
@@ -141,12 +141,12 @@ async fn roll_up(
     }
 
     // Every active component metric carries the weight/target/direction/type the
-    // roll-up needs; the project's latest daily project-scope value per metric key
+    // roll-up needs; the workspace's latest daily workspace-scope value per metric key
     // supplies the value. A metric with no latest value is simply absent from the map
     // (honest-absent) and skipped below.
     let active = pg.active_metrics().await?;
     let latest: std::collections::HashMap<String, f64> = pg
-        .get_project_metrics(project_id)
+        .get_workspace_metrics(workspace_id)
         .await?
         .into_iter()
         .map(|r| (r.metric, r.value))
@@ -181,17 +181,17 @@ async fn roll_up(
         return Ok(0);
     }
 
-    // Attribute the composite to the project's canonical (primary) repository under
-    // the repo-grain identity — the same choice the project-level day groups
-    // (knowledge/tool) make. A repo-less project cannot carry a repo-grain row, so it
+    // Attribute the composite to the workspace's canonical (primary) repository under
+    // the repo-grain identity — the same choice the workspace-level day groups
+    // (knowledge/tool) make. A repo-less workspace cannot carry a repo-grain row, so it
     // is honest-empty (never a fabricated attribution).
-    let Some(repository_id) = pg.primary_repository_for_project(project_id).await? else {
+    let Some(repository_id) = pg.primary_repository_for_workspace(workspace_id).await? else {
         return Ok(0);
     };
     let score = (100.0 * (sum_weighted / sum_weight)).round();
     let props = serde_json::json!({ "components": serde_json::Value::Object(components) });
     let day = super::today(pg).await?;
-    pg.upsert_project_metric_repo(&MetricRow {
+    pg.upsert_workspace_metric_repo(&MetricRow {
         metric_id: &health_id,
         repository_id: &repository_id,
         scope: "user",
@@ -212,13 +212,13 @@ mod tests {
     use super::*;
     use crate::db::pg_store::PgStore;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, make_ctx, seed_metrics_project_folder,
+        cleanup_metrics_fixture, make_ctx, seed_metrics_workspace_folder,
     };
     use sqlx_core::query_as::query_as;
 
     /// Seed a dedicated `sensei.metrics` component row (unique `key` ⇒ parallel-safe:
-    /// its per-project VALUES are what a health computation reads, and no other
-    /// project has a value for this key). Active from `current_date`, never retired.
+    /// its per-workspace VALUES are what a health computation reads, and no other
+    /// workspace has a value for this key). Active from `current_date`, never retired.
     /// The real registry's weights are all `1`, so tests seed their own to exercise
     /// weighting/normalization. Returns the metric id. Cleared via [`purge_metrics`].
     async fn seed_health_metric(
@@ -249,19 +249,18 @@ mod tests {
         id
     }
 
-    /// Upsert one latest daily project-scope value for a component metric.
+    /// Upsert one latest daily workspace-scope value for a component metric.
     async fn seed_value(pg: &PgStore, mid: &uuid::Uuid, pid: &uuid::Uuid, value: f64) {
         let day = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
-        // Repo-grain: attribute to the project's primary repository so the row is
-        // unique per project under `_v2` (a NULL-repository wrapper row collides across
-        // projects seeding the same component key). Carry numerator/denominator so the
-        // pooled `project_metric_daily` view re-derives ratio/pct `value` back to
+        // Repo-grain: attribute to the workspace's primary repository so the row is
+        // unique per workspace under `_v2` (a NULL-repository wrapper row collides across
+        // workspaces seeding the same component key). Carry numerator/denominator so the
+        // pooled `workspace_metric_daily` view re-derives ratio/pct `value` back to
         // `value` (count/duration read the stored value directly, ignoring parts).
-        let repository_id =
-            pg.primary_repository_for_project(pid).await.unwrap().expect(
-                "health test project has a repository (seed_metrics_project_folder links one)",
-            );
-        pg.upsert_project_metric_repo(&MetricRow {
+        let repository_id = pg.primary_repository_for_workspace(pid).await.unwrap().expect(
+            "health test workspace has a repository (seed_metrics_workspace_folder links one)",
+        );
+        pg.upsert_workspace_metric_repo(&MetricRow {
             metric_id: mid,
             repository_id: &repository_id,
             scope: "user",
@@ -279,7 +278,7 @@ mod tests {
 
     /// Seed a dedicated ACTIVE composite metric (`type = score`, unique key/task_name)
     /// and return its id — the `health_id` the roll-up writes under. This decouples
-    /// the roll-up math tests from the shipped `project_health` registry row, which is
+    /// the roll-up math tests from the shipped `workspace_health` registry row, which is
     /// RETIRED (inactive) and so is never resolved by [`compute`]; a per-test composite
     /// with a unique key keeps them parallel-safe. `score`/`composite` is what the real
     /// metric is, and a `score`-type row never self-contributes (see [`normalize`]).
@@ -292,8 +291,8 @@ mod tests {
         format!("_test:health:{uniq}:composite")
     }
 
-    /// The stored composite daily score for a project written under composite metric
-    /// `mid` (project scope), or `None` when no row was written.
+    /// The stored composite daily score for a workspace written under composite metric
+    /// `mid` (workspace scope), or `None` when no row was written.
     async fn health_row(
         pg: &PgStore,
         pid: &uuid::Uuid,
@@ -301,8 +300,8 @@ mod tests {
     ) -> Option<(f64, serde_json::Value)> {
         query_as(
             "SELECT pm.value::float8, pm.props \
-               FROM sensei.project_metrics pm \
-              WHERE pm.project_id = $1 AND pm.metric_id = $2 \
+               FROM sensei.workspace_metrics pm \
+              WHERE pm.workspace_id = $1 AND pm.metric_id = $2 \
                 AND pm.grain = 'daily'",
         )
         .bind(pid)
@@ -312,7 +311,7 @@ mod tests {
         .unwrap()
     }
 
-    /// Delete dedicated component metrics (cascades their `project_metrics`).
+    /// Delete dedicated component metrics (cascades their `workspace_metrics`).
     async fn purge_metrics(pg: &PgStore, keys: &[&str]) {
         let keys: Vec<String> = keys.iter().map(|s| s.to_string()).collect();
         sqlx_core::query::query("DELETE FROM sensei.metrics WHERE key = ANY($1)")
@@ -362,14 +361,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_health_normalizes_by_direction_and_weight() {
+    async fn workspace_health_normalizes_by_direction_and_weight() {
         // ftr-like: pct, higher_better, weight 2, value 0.8 → norm 0.8.
         // rework-like: ratio, lower_better, weight 1, value 0.3 → norm 1-0.3 = 0.7.
         // score = round(100 × (2·0.8 + 1·0.7)/3) = round(76.67) = 77.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ftr_key = format!("_test:health:{uniq}:ftr");
         let rework_key = format!("_test:health:{uniq}:rework");
         let m_ftr = seed_health_metric(pg, &ftr_key, "pct", "higher_better", 2.0, None).await;
@@ -378,8 +377,8 @@ mod tests {
         seed_value(pg, &m_ftr, &pid, 0.8).await;
         seed_value(pg, &m_rework, &pid, 0.3).await;
         // Drive the roll-up against a per-test ACTIVE composite (the shipped
-        // `project_health` metric is retired, so `compute` no-ops — see
-        // `project_health_retired_compute_writes_no_row`).
+        // `workspace_health` metric is retired, so `compute` no-ops — see
+        // `workspace_health_retired_compute_writes_no_row`).
         let composite = seed_composite(pg, &uniq).await;
 
         let written = roll_up(&ctx, &pid, composite, None).await.unwrap();
@@ -405,14 +404,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_health_absent_when_no_components() {
-        // Never-fabricate: a project with no component daily values gets NO health
+    async fn workspace_health_absent_when_no_components() {
+        // Never-fabricate: a workspace with no component daily values gets NO health
         // row — never a phantom 100 or 0.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
         let pid =
-            pg.create_project(&format!("_test:health-empty:{uniq}"), None, None).await.unwrap();
+            pg.create_workspace(&format!("_test:health-empty:{uniq}"), None, None).await.unwrap();
         let composite = seed_composite(pg, &uniq).await;
 
         let written = roll_up(&ctx, &pid, composite, None).await.unwrap();
@@ -423,19 +422,19 @@ mod tests {
         );
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
-        assert_eq!(total, 0, "no project_metrics rows at all for an empty project");
+        assert_eq!(total, 0, "no workspace_metrics rows at all for an empty workspace");
 
         purge_metrics(pg, &[&composite_key(&uniq)]).await;
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
     }
 
     #[tokio::test]
-    async fn project_health_count_normalization_and_target_null_excluded() {
+    async fn workspace_health_count_normalization_and_target_null_excluded() {
         // throughput-like: count higher_better, target 5, value 10 → 10/5 clamps to 1.0.
         // churn-like:      count lower_better,  target 3, value 6  → 3/6 = 0.5.
         // target-null count: value 99 → EXCLUDED (no bound to normalize against).
@@ -443,7 +442,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let tp_key = format!("_test:health:{uniq}:tp");
         let cr_key = format!("_test:health:{uniq}:cr");
         let null_key = format!("_test:health:{uniq}:null");
@@ -481,14 +480,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_health_neutral_direction_excluded() {
+    async fn workspace_health_neutral_direction_excluded() {
         // A neutral-direction metric present with a value must NOT affect the score.
         // contributor: pct higher_better value 0.6 → norm 0.6 → score 60.
         // If neutral leaked in (mis-scored as higher_better), (0.6+0.9)/2 → 75.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let a_key = format!("_test:health:{uniq}:a");
         let neutral_key = format!("_test:health:{uniq}:neutral");
         let m_a = seed_health_metric(pg, &a_key, "pct", "higher_better", 1.0, None).await;
@@ -514,14 +513,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_health_absent_component_excluded() {
+    async fn workspace_health_absent_component_excluded() {
         // A component that is ACTIVE but has NO daily value is skipped — it must not
         // drag the score toward 0. contributor value 0.5 → score 50; if the absent
         // one were counted as 0, (0.5+0)/2 → 25.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let a_key = format!("_test:health:{uniq}:a");
         let absent_key = format!("_test:health:{uniq}:absent");
         let m_a = seed_health_metric(pg, &a_key, "pct", "higher_better", 1.0, None).await;
@@ -547,22 +546,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_health_isolates_across_projects() {
-        // Cross-project isolation: the same metric key holds value 0.9 for A and 0.1
+    async fn workspace_health_isolates_across_workspaces() {
+        // Cross-workspace isolation: the same metric key holds value 0.9 for A and 0.1
         // for B. A's score reflects ONLY A's value (90); if B's value leaked into A's
         // roll-up, the mean would collapse to 0.5 → 50.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq_a = uuid::Uuid::new_v4();
         let uniq_b = uuid::Uuid::new_v4();
-        let (pid_a, fid_a) = seed_metrics_project_folder(pg, &uniq_a).await;
-        let (pid_b, fid_b) = seed_metrics_project_folder(pg, &uniq_b).await;
+        let (pid_a, fid_a) = seed_metrics_workspace_folder(pg, &uniq_a).await;
+        let (pid_b, fid_b) = seed_metrics_workspace_folder(pg, &uniq_b).await;
         let shared_key = format!("_test:health:{uniq_a}:shared");
         let m = seed_health_metric(pg, &shared_key, "pct", "higher_better", 1.0, None).await;
         seed_value(pg, &m, &pid_a, 0.9).await;
         seed_value(pg, &m, &pid_b, 0.1).await;
-        // One composite metric written under for both projects (distinct rows keyed by
-        // project_id) — proves per-project isolation, not a shared composite row.
+        // One composite metric written under for both workspaces (distinct rows keyed by
+        // workspace_id) — proves per-workspace isolation, not a shared composite row.
         let composite = seed_composite(pg, &uniq_a).await;
 
         roll_up(&ctx, &pid_a, composite, None).await.unwrap();
@@ -582,12 +581,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_health_zero_weight_components() {
+    async fn workspace_health_zero_weight_components() {
         // `metrics.weight` has no CHECK (weight > 0) in the DDL, so a weight-0 component
         // is a production-reachable input. It must be INCLUDED (normalized, shown in
         // props) yet contribute NOTHING to the weighted mean — and when EVERY included
         // component has weight 0, the `sum_weight <= 0` guard must fire (NO row, never a
-        // divide-by-zero or fabricated score). Two projects pin both paths.
+        // divide-by-zero or fabricated score). Two workspaces pin both paths.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
 
@@ -595,7 +594,7 @@ mod tests {
         // score = round(100 × (1·0.6 + 0·0.9)/(1+0)) = 60. If the zero weight were
         // treated as 1, the mean would be (0.6+0.9)/2 → 75.
         let uniq_a = uuid::Uuid::new_v4();
-        let (pid_a, fid_a) = seed_metrics_project_folder(pg, &uniq_a).await;
+        let (pid_a, fid_a) = seed_metrics_workspace_folder(pg, &uniq_a).await;
         let contrib_key = format!("_test:health:{uniq_a}:contrib");
         let zero_key = format!("_test:health:{uniq_a}:zero");
         let m_contrib =
@@ -622,7 +621,7 @@ mod tests {
 
         // ── B: EVERY included component has weight 0 → guard fires, NO row ──
         let uniq_b = uuid::Uuid::new_v4();
-        let (pid_b, fid_b) = seed_metrics_project_folder(pg, &uniq_b).await;
+        let (pid_b, fid_b) = seed_metrics_workspace_folder(pg, &uniq_b).await;
         let z1_key = format!("_test:health:{uniq_b}:z1");
         let z2_key = format!("_test:health:{uniq_b}:z2");
         let m_z1 = seed_health_metric(pg, &z1_key, "pct", "higher_better", 0.0, None).await;
@@ -658,7 +657,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_health_rounds_half_away_from_zero() {
+    async fn workspace_health_rounds_half_away_from_zero() {
         // Pin the rounding tie-break at an EXACT x.5. One count component with target 8
         // and value 1 normalizes to 1/8 = 0.125 (exactly representable), so the weighted
         // mean is 0.125 and 100 × 0.125 = 12.5 EXACTLY. round-half-away-from-zero → 13;
@@ -667,7 +666,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let key = format!("_test:health:{uniq}:half");
         let m = seed_health_metric(pg, &key, "count", "higher_better", 1.0, Some(8.0)).await;
         seed_value(pg, &m, &pid, 1.0).await; // 1/8 = 0.125 → 100×0.125 = 12.5 exactly
@@ -690,19 +689,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_health_historical_as_of_skips() {
+    async fn workspace_health_historical_as_of_skips() {
         // Forward-only guard (Phase 3): the health score rolls up each component's
         // LATEST daily value — a snapshot of current state that cannot be
         // reconstructed for a past day, so a historical `as_of` (Some(D), D != today)
         // writes NO composite row (never a fabricated historical score). The SAME
         // fixture writes a score with `as_of = None` (see
-        // `project_health_normalizes_by_direction_and_weight`), so the absence here is
+        // `workspace_health_normalizes_by_direction_and_weight`), so the absence here is
         // the forward-only guard, not missing components. Driven via `roll_up` against a
-        // per-test active composite (the shipped `project_health` metric is retired).
+        // per-test active composite (the shipped `workspace_health` metric is retired).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let key = format!("_test:health:{uniq}:fwd");
         let m = seed_health_metric(pg, &key, "pct", "higher_better", 1.0, None).await;
         seed_value(pg, &m, &pid, 0.8).await;
@@ -720,30 +719,30 @@ mod tests {
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
-    /// RETIREMENT (the point of this change): `project_health` carries a past
+    /// RETIREMENT (the point of this change): `workspace_health` carries a past
     /// `effective_until` in `sensei.metrics` (seeded from the catalog via
     /// `import_metrics`), so it is INACTIVE and drops out of
     /// `active_metric_ids("health")`. `compute` therefore resolves no composite id and
-    /// writes NO row — honest-empty, never a fabricated score — even for a project that
+    /// writes NO row — honest-empty, never a fabricated score — even for a workspace that
     /// HAS a fresh component value. This pins the retirement guard (the roll-up math is
     /// covered against a per-test ACTIVE composite via `roll_up`). If the precondition
     /// fails, this DB's seed predates the retirement — re-import it (`dbd import`).
     #[tokio::test]
-    async fn project_health_retired_compute_writes_no_row() {
+    async fn workspace_health_retired_compute_writes_no_row() {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
 
-        // Precondition: the seeded registry has retired project_health (effective_until
+        // Precondition: the seeded registry has retired workspace_health (effective_until
         // ≤ today), so the composite is absent from the active `health` task.
         let health_ids = pg.active_metric_ids(super::super::HEALTH_TASK_NAME).await.unwrap();
         assert!(
-            !health_ids.contains_key(KEY_PROJECT_HEALTH),
-            "project_health must be RETIRED (absent from active_metric_ids(\"health\")); \
+            !health_ids.contains_key(KEY_WORKSPACE_HEALTH),
+            "workspace_health must be RETIRED (absent from active_metric_ids(\"health\")); \
              re-import the seed (dbd import) if this fails — got {health_ids:?}",
         );
 
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         // A live component value present — so a 0-row result is the retirement taking
         // effect, NOT missing data.
         let key = format!("_test:health:{uniq}:ftr");
@@ -756,16 +755,16 @@ mod tests {
             "retired composite → compute writes 0 rows (never a fabricated score)"
         );
 
-        // No project_health row exists for this project (honest-empty).
+        // No workspace_health row exists for this workspace (honest-empty).
         let (ph_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'project_health'",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'workspace_health'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(ph_rows, 0, "no project_health row written (retired → honest-empty)");
+        assert_eq!(ph_rows, 0, "no workspace_health row written (retired → honest-empty)");
 
         purge_metrics(pg, &[&key]).await;
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;

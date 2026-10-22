@@ -1,6 +1,6 @@
 //! Compute-time per-datapoint explainer enrichment.
 //!
-//! After a metric GROUP writes its project-scope DAILY rows for a day, this
+//! After a metric GROUP writes its workspace-scope DAILY rows for a day, this
 //! generates (or refreshes) each datapoint's one-line explainer and MERGES it
 //! into that row's `props.explainer`. It runs INLINE in the metrics
 //! [`compute()`](super::compute) dispatcher — the explainer is produced WITH the
@@ -21,18 +21,18 @@
 use crate::analysis::metric_day_explainer::{MetricDayFacts, explain};
 use crate::tasks::executor::TaskContext;
 
-/// Enrich every project-scope DAILY datapoint a `task_name` group holds for `day`
+/// Enrich every workspace-scope DAILY datapoint a `task_name` group holds for `day`
 /// with its one-line explainer (merged into `props.explainer`). Returns the number
-/// of rows enriched (`0` = honest no-op: the group wrote no project-scope daily row
+/// of rows enriched (`0` = honest no-op: the group wrote no workspace-scope daily row
 /// that day). Never errors — per-row failures are logged and skipped.
 pub(super) async fn enrich_day(
     ctx: &TaskContext,
-    project_id: &uuid::Uuid,
+    workspace_id: &uuid::Uuid,
     task_name: &str,
     day: chrono::NaiveDate,
 ) -> u32 {
     let pg = ctx.pg();
-    let rows = match pg.get_group_daily_metrics_for_day(project_id, task_name, day).await {
+    let rows = match pg.get_group_daily_metrics_for_day(workspace_id, task_name, day).await {
         Ok(rows) => rows,
         Err(e) => {
             tracing::warn!(error = %e, task_name, %day, "metric explainer: group-rows read failed — skipped");
@@ -45,7 +45,7 @@ pub(super) async fn enrich_day(
     // The day's session-outcome context is identical for every metric in the group
     // on this day — read it ONCE, not per row.
     let (sessions_total, sessions_completed, first_try) = match pg
-        .get_day_session_outcome_counts(project_id, day)
+        .get_day_session_outcome_counts(workspace_id, day)
         .await
     {
         Ok(counts) => counts,
@@ -68,7 +68,7 @@ pub(super) async fn enrich_day(
             .flatten()
             .map(|m| m.how_to_read)
             .unwrap_or_default();
-        let prev_value = match pg.get_prev_daily_metric_value(project_id, &key, day).await {
+        let prev_value = match pg.get_prev_daily_metric_value(workspace_id, &key, day).await {
             Ok(prev) => prev,
             Err(e) => {
                 tracing::warn!(error = %e, key = %key, %day, "metric explainer: prev-value read failed — row skipped");
@@ -105,12 +105,12 @@ mod tests {
     use crate::analysis::metric_day_explainer::MetricDayFacts;
     use crate::analysis::narration_cache::{InsightKind, facts_hash};
     use crate::db::pg_store::MetricRow;
-    use crate::tasks::test_support::{make_ctx, seed_metrics_project_folder};
+    use crate::tasks::test_support::{make_ctx, seed_metrics_workspace_folder};
     use crate::tasks::{Task, TaskKind};
     use serde_json::json;
     use sqlx_core::query_as::query_as;
 
-    /// The `props->>'explainer'` (and a preserved `numerator`) for the project's
+    /// The `props->>'explainer'` (and a preserved `numerator`) for the workspace's
     /// single seeded daily row.
     async fn read_props(
         pg: &crate::db::pg_store::PgStore,
@@ -118,8 +118,8 @@ mod tests {
     ) -> (Option<String>, Option<String>) {
         query_as(
             "SELECT props->>'explainer', props->>'numerator'
-               FROM sensei.project_metrics
-              WHERE project_id = $1 AND grain = 'daily'",
+               FROM sensei.workspace_metrics
+              WHERE workspace_id = $1 AND grain = 'daily'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -164,7 +164,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let day = (chrono::Utc::now() - chrono::Duration::days(4)).date_naive();
 
         // A session_outcomes daily ftr datapoint at 0.75 with real parts in props.
@@ -175,7 +175,7 @@ mod tests {
             .get("ftr")
             .expect("ftr metric");
         let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
-        pg.upsert_project_metric_repo(&MetricRow {
+        pg.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mid,
             repository_id: &rid,
             scope: "user",
@@ -214,7 +214,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let day = (chrono::Utc::now() - chrono::Duration::days(6)).date_naive();
 
         let mid = *pg
@@ -224,7 +224,7 @@ mod tests {
             .get("ftr")
             .expect("ftr metric");
         let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
-        pg.upsert_project_metric_repo(&MetricRow {
+        pg.upsert_workspace_metric_repo(&MetricRow {
             metric_id: &mid,
             repository_id: &rid,
             scope: "user",
@@ -256,12 +256,12 @@ mod tests {
 
     #[tokio::test]
     async fn enrich_day_is_honest_noop_when_group_has_no_daily_row() {
-        // No project_metrics row for the day → nothing to explain → 0 (honest-empty),
+        // No workspace_metrics row for the day → nothing to explain → 0 (honest-empty),
         // never a fabricated datapoint.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let day = (chrono::Utc::now() - chrono::Duration::days(9)).date_naive();
 
         let n = enrich_day(&ctx, &pid, "session_outcomes", day).await;

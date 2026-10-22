@@ -35,7 +35,7 @@ interface ScanRoot {
   status?: string;
 }
 
-interface Project {
+interface Workspace {
   id: string;
   name: string;
 }
@@ -209,12 +209,12 @@ test.describe('Wizard stage verification — real DB state after each commit', (
     const { mkdirSync, writeFileSync, existsSync } = await import('fs');
 
     const corpus = `/tmp/sensei-e2e-scan-${RUN}`;
-    const project = `${corpus}/verify-project`;
+    const workspace = `${corpus}/verify-workspace`;
 
-    if (!existsSync(`${project}/.git`)) {
-      mkdirSync(`${project}/src`, { recursive: true });
-      writeFileSync(`${project}/index.ts`, 'export const x = 1;\n');
-      const opts = { cwd: project, stdio: 'ignore' as const };
+    if (!existsSync(`${workspace}/.git`)) {
+      mkdirSync(`${workspace}/src`, { recursive: true });
+      writeFileSync(`${workspace}/index.ts`, 'export const x = 1;\n');
+      const opts = { cwd: workspace, stdio: 'ignore' as const };
       execFileSync('git', ['init'],                                        opts);
       execFileSync('git', ['config', 'user.email', 'test@sensei.test'],   opts);
       execFileSync('git', ['config', 'user.name',  'E2E Test'],           opts);
@@ -247,46 +247,46 @@ test.describe('Wizard stage verification — real DB state after each commit', (
     interface Repo { id: string; name: string }
     const repos = await daemonGet<Repo[]>('/api/repos');
     expect(Array.isArray(repos)).toBe(true);
-    const found = repos.find(r => r.name === 'verify-project' || r.name?.includes('verify'));
-    expect(found, 'verify-project should be indexed after scan').toBeTruthy();
+    const found = repos.find(r => r.name === 'verify-workspace' || r.name?.includes('verify'));
+    expect(found, 'verify-workspace should be indexed after scan').toBeTruthy();
 
     // Cleanup
     await fetch(`${DAEMON_URL}/api/scan/roots/${rootId}?repositories=remove`, { method: 'DELETE' });
   });
 
-  // ── Projects ──────────────────────────────────────────────────────────────
+  // ── Workspaces ──────────────────────────────────────────────────────────────
 
-  test('projects: GET /api/projects returns valid array', async () => {
-    const projects = await daemonGet<Project[]>('/api/projects');
-    expect(Array.isArray(projects), 'projects must be an array').toBe(true);
-    for (const p of projects) {
+  test('workspaces: GET /api/workspaces returns valid array', async () => {
+    const workspaces = await daemonGet<Workspace[]>('/api/workspaces');
+    expect(Array.isArray(workspaces), 'workspaces must be an array').toBe(true);
+    for (const p of workspaces) {
       expect(typeof p.id).not.toBe('undefined');
       expect(typeof p.name).toBe('string');
     }
   });
 
-  test('projects: POST creates a project (201), GET retrieves it, DELETE removes it', async () => {
-    const name = `E2E Project ${RUN}`;
+  test('workspaces: POST creates a workspace (201), GET retrieves it, DELETE removes it', async () => {
+    const name = `E2E Workspace ${RUN}`;
 
     // POST returns 201 CREATED
-    const createResp = await fetch(`${DAEMON_URL}/api/projects`, {
+    const createResp = await fetch(`${DAEMON_URL}/api/workspaces`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, description: 'created by e2e test' }),
     });
-    expect(createResp.status, 'POST /api/projects should return 201').toBe(201);
+    expect(createResp.status, 'POST /api/workspaces should return 201').toBe(201);
     const created = await createResp.json() as { ok: boolean; id: string };
     expect(created.ok).toBe(true);
     expect(created.id).toBeTruthy();
 
-    // Verify it appears in GET /api/projects
-    const list = await daemonGet<Project[]>('/api/projects');
+    // Verify it appears in GET /api/workspaces
+    const list = await daemonGet<Workspace[]>('/api/workspaces');
     expect(list.find(p => String(p.id) === String(created.id))).toBeTruthy();
 
     // DELETE and confirm gone
-    const del = await fetch(`${DAEMON_URL}/api/projects/${created.id}`, { method: 'DELETE' });
+    const del = await fetch(`${DAEMON_URL}/api/workspaces/${created.id}`, { method: 'DELETE' });
     expect(del.status).toBe(200);
 
-    const after = await daemonGet<Project[]>('/api/projects');
+    const after = await daemonGet<Workspace[]>('/api/workspaces');
     expect(after.find(p => String(p.id) === String(created.id))).toBeFalsy();
   });
 });

@@ -136,7 +136,7 @@ test.describe('Settings · Metrics', () => {
           'Fresh e2e database has 0 repositories, so the rail/reason/toggle tests ' +
           'below skip. They bite on a populated install; seeding a metric fixture ' +
           'for e2e needs a sensei.repositories row, which no daemon endpoint ' +
-          'creates (POST /api/repos makes a PROJECT). Tracked with the metrics backlog.',
+          'creates (POST /api/repos makes a WORKSPACE). Tracked with the metrics backlog.',
       });
       return;
     }

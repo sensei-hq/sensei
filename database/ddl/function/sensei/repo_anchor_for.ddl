@@ -1,6 +1,6 @@
 set search_path to sensei, extensions;
 
--- The single, canonical repo-anchor resolver (spec docs/spec/2026-08-18-project-repo-session-model).
+-- The single, canonical repo-anchor resolver (spec docs/spec/2026-08-18-workspace-repo-session-model).
 -- Maps ANY absolute path (a hook cwd, a transcript cwd, a watched file) to the REPO it
 -- belongs to — the nearest ancestor folder that is a repo anchor — so sessions and
 -- transcripts attach to a durable repo, never a transient subfolder. This is the ONE
@@ -10,7 +10,7 @@ set search_path to sensei, extensions;
 -- get_folder_ids_by_path — that disagreed on kind, alias-awareness, and ancestor-walk).
 --
 -- Repo-anchor kinds (D1/D6): git + subtree (real repos), plus a standalone dir that is a
--- tracked project root (project_id set). module / folder are NOT anchors —
+-- tracked workspace root (workspace_id set). module / folder are NOT anchors —
 -- a monorepo package rolls up to its enclosing git root, a plain folder to its repo.
 -- Alias-aware (move/rename): a path recorded before a move resolves via folder_path_aliases
 -- to the current repo, so history is never lost. Resolution: the DEEPEST matching anchor
@@ -22,7 +22,7 @@ drop function if exists repo_anchor_for(text) cascade;
 create or replace function repo_anchor_for(p_path text)
 returns table (
   repo_folder_id uuid,
-  project_id     uuid,
+  workspace_id   uuid,
   repo_abs_path  text,
   matched_via    text
 )
@@ -30,25 +30,25 @@ language sql
 stable
 set search_path = sensei, extensions
 as $$
-  -- `project_id` is the SOLE member of the folder's resolved set, or NULL when
-  -- its repository serves more than one project (#211 removed the column this
+  -- `workspace_id` is the SOLE member of the folder's resolved set, or NULL when
+  -- its repository serves more than one workspace (#211 removed the column this
   -- used to read). A `standalone` folder qualifies as an anchor when it has any
-  -- membership at all — that is what `project_id is not null` used to mean here.
+  -- membership at all — that is what `workspace_id is not null` used to mean here.
   with anchors as (
-    select f.id, sensei.sole_project_of(f.id) as project_id, f.abs_path as p, 1 as live
+    select f.id, sensei.sole_workspace_of(f.id) as workspace_id, f.abs_path as p, 1 as live
       from sensei.folders f
      where f.kind in ('git', 'subtree')
         or (f.kind = 'standalone'
-            and exists (select 1 from sensei.folder_projects fp where fp.folder_id = f.id))
+            and exists (select 1 from sensei.folder_workspaces fp where fp.folder_id = f.id))
     union all
-    select f.id, sensei.sole_project_of(f.id) as project_id, a.alias_abs_path as p, 0 as live
+    select f.id, sensei.sole_workspace_of(f.id) as workspace_id, a.alias_abs_path as p, 0 as live
       from sensei.folder_path_aliases a
       join sensei.folders f on f.id = a.folder_id
      where f.kind in ('git', 'subtree')
         or (f.kind = 'standalone'
-            and exists (select 1 from sensei.folder_projects fp where fp.folder_id = f.id))
+            and exists (select 1 from sensei.folder_workspaces fp where fp.folder_id = f.id))
   )
-  select c.id, c.project_id, c.p, case when c.live = 1 then 'live' else 'alias' end
+  select c.id, c.workspace_id, c.p, case when c.live = 1 then 'live' else 'alias' end
     from anchors c
    where p_path = c.p
       or left(p_path, length(c.p) + 1) = c.p || '/'
@@ -58,8 +58,8 @@ $$;
 
 comment on function repo_anchor_for is
 'Canonical repo-anchor resolver (spec 2026-08-18): abs path -> owning repo
-(repo_folder_id, project_id, repo_abs_path, matched_via live|alias). Nearest repo-kind
-ancestor (git/subtree/standalone-project-root; monorepo members roll up to the git root),
+(repo_folder_id, workspace_id, repo_abs_path, matched_via live|alias). Nearest repo-kind
+ancestor (git/subtree/standalone-workspace-root; monorepo members roll up to the git root),
 alias-aware for move/rename, deepest+live wins, left()= prefix (underscore-safe). The ONE
 mapper — Rust resolve_repo_anchor wraps it; all attribution/import/synthesis/repair/
 reconcile call it.';

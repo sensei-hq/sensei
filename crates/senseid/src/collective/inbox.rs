@@ -13,7 +13,7 @@
 //!    - `principle | pattern` → a [`crate::db::pg_store::InsertMemory`] row with
 //!      `origin='dojo'` (the artifact → memory mapping is [`build_memory`]); the
 //!      inbox row flips to `applied` with `applied_memory_id` set. Scope is
-//!      honoured — a project-scoped artifact whose project is not present here is
+//!      honoured — a workspace-scoped artifact whose workspace is not present here is
 //!      NOT landed ([`ApplyOutcome::ScopeMismatch`]).
 //!    - `skill | agent | prompt | guard` → NOT auto-installed. Installing into the
 //!      assistant-plugin / lint surface is a consent-sensitive step, deferred to a
@@ -130,9 +130,9 @@ pub trait Inbox {
     fn get(&self, inbox_id: Uuid)
     -> impl Future<Output = Result<Option<InboxItem>, String>> + Send;
 
-    /// Resolve a local project by name → its id (scope-match for a
-    /// project-scoped artifact). `None` = no such project on this install.
-    fn resolve_project(
+    /// Resolve a local workspace by name → its id (scope-match for a
+    /// workspace-scoped artifact). `None` = no such workspace on this install.
+    fn resolve_workspace(
         &self,
         name: &str,
     ) -> impl Future<Output = Result<Option<Uuid>, String>> + Send;
@@ -190,8 +190,8 @@ pub enum ApplyOutcome {
     /// surface is a consent-sensitive step, deferred. Nothing written; item stays
     /// pending with a note.
     Deferred { kind: ArtifactKind },
-    /// The artifact's scope does not apply to this install (e.g. a project-scoped
-    /// artifact whose project is absent). Nothing landed; item stays pending.
+    /// The artifact's scope does not apply to this install (e.g. a workspace-scoped
+    /// artifact whose workspace is absent). Nothing landed; item stays pending.
     ScopeMismatch { reason: String },
     /// Unknown inbox id.
     NotFound,
@@ -244,21 +244,21 @@ where
 // ── Apply ────────────────────────────────────────────────────────────────────
 
 /// Where an artifact's scope lands as a memory. Company/team/no-scope → a global
-/// memory (org-wide practice applies to every project); a `stack` scope → a
-/// stack-scoped memory; a `project` scope → that project (resolved by name).
+/// memory (org-wide practice applies to every workspace); a `stack` scope → a
+/// stack-scoped memory; a `workspace` scope → that workspace (resolved by name).
 enum ScopeTarget {
     Global,
     Stack(String),
-    Project { name: String },
+    Workspace { name: String },
 }
 
-/// Map an [`ArtifactScope`] to where it should land. Project scope is the most
+/// Map an [`ArtifactScope`] to where it should land. Workspace scope is the most
 /// specific, then stack; company/team/none fall back to global (an org- or
-/// team-wide principle applies across the user's projects — the memory records
+/// team-wide principle applies across the user's workspaces — the memory records
 /// it globally rather than dropping the tag on the floor).
 fn scope_target(scope: &ArtifactScope) -> ScopeTarget {
-    if let Some(p) = scope.project.as_ref().filter(|s| !s.trim().is_empty()) {
-        ScopeTarget::Project { name: p.clone() }
+    if let Some(p) = scope.workspace.as_ref().filter(|s| !s.trim().is_empty()) {
+        ScopeTarget::Workspace { name: p.clone() }
     } else if let Some(s) = scope.stack.as_ref().filter(|s| !s.trim().is_empty()) {
         ScopeTarget::Stack(s.clone())
     } else {
@@ -284,12 +284,12 @@ fn memory_type_for(kind: ArtifactKind) -> &'static str {
 fn build_memory(
     item: &InboxItem,
     kind: ArtifactKind,
-    project_id: Option<Uuid>,
+    workspace_id: Option<Uuid>,
     scope: &str,
     scope_filter: Option<String>,
 ) -> InsertMemory {
     InsertMemory {
-        project_id,
+        workspace_id,
         scope: scope.to_string(),
         scope_filter,
         mtype: memory_type_for(kind).to_string(),
@@ -321,7 +321,7 @@ fn deferred_note(kind: ArtifactKind) -> String {
 
 fn scope_mismatch_reason(name: &str) -> String {
     format!(
-        "scope mismatch: artifact is scoped to project '{name}', which is not present on this install — not landed"
+        "scope mismatch: artifact is scoped to workspace '{name}', which is not present on this install — not landed"
     )
 }
 
@@ -347,11 +347,11 @@ pub async fn apply_inbox_item<I: Inbox>(inbox: &I, inbox_id: Uuid) -> Result<App
             Ok(ApplyOutcome::Deferred { kind })
         }
         ArtifactKind::Principle | ArtifactKind::Pattern => {
-            let (project_id, scope, scope_filter) = match scope_target(&item.scope) {
+            let (workspace_id, scope, scope_filter) = match scope_target(&item.scope) {
                 ScopeTarget::Global => (None, "global", None),
                 ScopeTarget::Stack(s) => (None, "stack", Some(s)),
-                ScopeTarget::Project { name } => match inbox.resolve_project(&name).await? {
-                    Some(pid) => (Some(pid), "project", None),
+                ScopeTarget::Workspace { name } => match inbox.resolve_workspace(&name).await? {
+                    Some(pid) => (Some(pid), "workspace", None),
                     None => {
                         let reason = scope_mismatch_reason(&name);
                         inbox.set_note(inbox_id, &reason).await?;
@@ -359,7 +359,7 @@ pub async fn apply_inbox_item<I: Inbox>(inbox: &I, inbox_id: Uuid) -> Result<App
                     }
                 },
             };
-            let mem = build_memory(&item, kind, project_id, scope, scope_filter);
+            let mem = build_memory(&item, kind, workspace_id, scope, scope_filter);
             let memory_id = inbox.land_and_apply(inbox_id, &mem).await?;
             Ok(ApplyOutcome::Landed { memory_id })
         }
@@ -426,11 +426,11 @@ impl Inbox for PgInbox<'_> {
     ) -> impl Future<Output = Result<Option<InboxItem>, String>> + Send {
         self.0.get_dojo_inbox(inbox_id)
     }
-    fn resolve_project(
+    fn resolve_workspace(
         &self,
         name: &str,
     ) -> impl Future<Output = Result<Option<Uuid>, String>> + Send {
-        self.0.resolve_project_by_name(name.to_string())
+        self.0.resolve_workspace_by_name(name.to_string())
     }
     fn land_and_apply(
         &self,
@@ -605,7 +605,7 @@ mod tests {
         rows: Mutex<Vec<InboxItem>>,
         cursors: Mutex<std::collections::HashMap<Uuid, i64>>,
         landed: Mutex<Vec<InsertMemory>>,
-        projects: std::collections::HashMap<String, Uuid>,
+        workspaces: std::collections::HashMap<String, Uuid>,
     }
 
     impl MemInbox {
@@ -665,11 +665,11 @@ mod tests {
             let hit = self.rows.lock().unwrap().iter().find(|r| r.id == inbox_id).cloned();
             async move { Ok(hit) }
         }
-        fn resolve_project(
+        fn resolve_workspace(
             &self,
             name: &str,
         ) -> impl Future<Output = Result<Option<Uuid>, String>> + Send {
-            let hit = self.projects.get(name).copied();
+            let hit = self.workspaces.get(name).copied();
             async move { Ok(hit) }
         }
         fn land_and_apply(
@@ -910,9 +910,10 @@ mod tests {
     // ── apply: scope mismatch returns a reason, lands nothing ─────────────────
 
     #[tokio::test]
-    async fn apply_project_scope_mismatch_returns_reason_and_lands_nothing() {
+    async fn apply_workspace_scope_mismatch_returns_reason_and_lands_nothing() {
         let m = membership();
-        let scope = ArtifactScope { project: Some("Ghost Project".into()), ..Default::default() };
+        let scope =
+            ArtifactScope { workspace: Some("Ghost Workspace".into()), ..Default::default() };
         let page = ArtifactPullResponse {
             artifacts: vec![pulled(
                 1,
@@ -921,13 +922,13 @@ mod tests {
             )],
             cursor: 1,
         };
-        let inbox = MemInbox::default(); // no projects registered
+        let inbox = MemInbox::default(); // no workspaces registered
         pull_membership_inbox(&MockPuller { page }, &inbox, &m).await.unwrap();
         let id = first_id(&inbox);
 
         let out = apply_inbox_item(&inbox, id).await.unwrap();
         match out {
-            ApplyOutcome::ScopeMismatch { reason } => assert!(reason.contains("Ghost Project")),
+            ApplyOutcome::ScopeMismatch { reason } => assert!(reason.contains("Ghost Workspace")),
             other => panic!("expected ScopeMismatch, got {other:?}"),
         }
         assert!(inbox.landed().is_empty(), "a scope mismatch must land nothing");
@@ -937,9 +938,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_project_scope_lands_when_project_is_present() {
+    async fn apply_workspace_scope_lands_when_workspace_is_present() {
         let m = membership();
-        let scope = ArtifactScope { project: Some("Known".into()), ..Default::default() };
+        let scope = ArtifactScope { workspace: Some("Known".into()), ..Default::default() };
         let page = ArtifactPullResponse {
             artifacts: vec![pulled(
                 1,
@@ -950,14 +951,14 @@ mod tests {
         };
         let pid = Uuid::new_v4();
         let mut inbox = MemInbox::default();
-        inbox.projects.insert("Known".into(), pid);
+        inbox.workspaces.insert("Known".into(), pid);
         pull_membership_inbox(&MockPuller { page }, &inbox, &m).await.unwrap();
         let id = first_id(&inbox);
 
         assert!(matches!(apply_inbox_item(&inbox, id).await.unwrap(), ApplyOutcome::Landed { .. }));
         let landed = inbox.landed();
-        assert_eq!(landed[0].scope, "project");
-        assert_eq!(landed[0].project_id, Some(pid));
+        assert_eq!(landed[0].scope, "workspace");
+        assert_eq!(landed[0].workspace_id, Some(pid));
     }
 
     #[tokio::test]
@@ -1067,17 +1068,17 @@ mod tests {
     }
 
     #[test]
-    fn scope_target_prefers_project_then_stack_then_global() {
+    fn scope_target_prefers_workspace_then_stack_then_global() {
         assert!(matches!(scope_target(&ArtifactScope::default()), ScopeTarget::Global));
         assert!(matches!(
             scope_target(&ArtifactScope { stack: Some("rust".into()), ..Default::default() }),
             ScopeTarget::Stack(s) if s == "rust"
         ));
         assert!(matches!(
-            scope_target(&ArtifactScope { project: Some("P".into()), stack: Some("rust".into()), ..Default::default() }),
-            ScopeTarget::Project { name } if name == "P"
+            scope_target(&ArtifactScope { workspace: Some("P".into()), stack: Some("rust".into()), ..Default::default() }),
+            ScopeTarget::Workspace { name } if name == "P"
         ));
-        // company/team without project/stack → global (org-wide practice).
+        // company/team without workspace/stack → global (org-wide practice).
         assert!(matches!(
             scope_target(&ArtifactScope {
                 company: Some("acme".into()),

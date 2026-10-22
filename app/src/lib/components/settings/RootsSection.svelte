@@ -63,7 +63,7 @@
 
     // ── Exclusions ────────────────────────────────────────────────────────────
     // The store, the endpoint and the watcher check all existed; nothing reached
-    // them. MEASURED: one project carried 1,230 folders, 1,211 under an unpacked
+    // them. MEASURED: one workspace carried 1,230 folders, 1,211 under an unpacked
     // Node source tarball — no `node_modules`, so EXCLUDE_DIRS does not apply, and
     // no `.gitignore` in a non-git folder to bound it either.
     //

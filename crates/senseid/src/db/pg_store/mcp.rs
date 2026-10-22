@@ -2,14 +2,14 @@ use super::*;
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
-    /// List every installed service, joined with the given project's per-scope
+    /// List every installed service, joined with the given workspace's per-scope
     /// override so the UI can render enabled/disabled state without a second
-    /// round-trip. `enabled_for_project` reads from the scoped override when
+    /// round-trip. `enabled_for_workspace` reads from the scoped override when
     /// present, otherwise falls back to the global row's `enabled`, otherwise
     /// defaults to `true` (installed services are on by default).
-    pub async fn list_services_with_project_scope(
+    pub async fn list_services_with_workspace_scope(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         #[allow(clippy::type_complexity)]
         let rows: Vec<(
@@ -29,15 +29,15 @@ impl PgStore {
             "SELECT s.id, s.name, s.display_name, s.publisher,
                     s.protocol::text, s.kind::text, s.summary, s.tools_count,
                     s.verified, s.installed,
-                    (SELECT enabled FROM sensei.service_projects sp
-                      WHERE sp.service_id = s.id AND sp.project_id = $1) AS scoped_enabled,
-                    (SELECT enabled FROM sensei.service_projects sp
-                      WHERE sp.service_id = s.id AND sp.project_id IS NULL) AS global_enabled
+                    (SELECT enabled FROM sensei.service_workspaces sp
+                      WHERE sp.service_id = s.id AND sp.workspace_id = $1) AS scoped_enabled,
+                    (SELECT enabled FROM sensei.service_workspaces sp
+                      WHERE sp.service_id = s.id AND sp.workspace_id IS NULL) AS global_enabled
                FROM sensei.services s
               WHERE s.installed = true
               ORDER BY s.display_name",
         )
-        .bind(project_id)
+        .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -60,7 +60,7 @@ impl PgStore {
                     global_enabled,
                 )| {
                     // Effective enable: scoped override wins, then global row, then default true.
-                    let enabled_for_project = scoped_enabled.or(global_enabled).unwrap_or(true);
+                    let enabled_for_workspace = scoped_enabled.or(global_enabled).unwrap_or(true);
                     serde_json::json!({
                         "id":                 id,
                         "name":               name,
@@ -72,7 +72,7 @@ impl PgStore {
                         "toolsCount":         tools_count,
                         "verified":           verified,
                         "installed":          installed,
-                        "enabledForProject":  enabled_for_project,
+                        "enabledForWorkspace":  enabled_for_workspace,
                         "scopedEnabled":      scoped_enabled,
                         "globalEnabled":      global_enabled,
                     })
@@ -81,25 +81,25 @@ impl PgStore {
             .collect())
     }
 
-    /// Upsert the per-project scope row for a service. `project_id = None`
+    /// Upsert the per-workspace scope row for a service. `workspace_id = None`
     /// writes the global scope. Idempotent — repeat calls flip the enabled
     /// flag and bump `modified_at`.
-    pub async fn set_service_project_scope(
+    pub async fn set_service_workspace_scope(
         &self,
         service_id: &uuid::Uuid,
-        project_id: Option<&uuid::Uuid>,
+        workspace_id: Option<&uuid::Uuid>,
         enabled: bool,
     ) -> Result<(), String> {
-        // Partial-unique indexes on (service_id) WHERE project_id IS NULL and
-        // (service_id, project_id) WHERE project_id IS NOT NULL guarantee at
+        // Partial-unique indexes on (service_id) WHERE workspace_id IS NULL and
+        // (service_id, workspace_id) WHERE workspace_id IS NOT NULL guarantee at
         // most one row per scope, so an UPDATE-first fallback is enough
         // without needing INSERT ... ON CONFLICT (which can't target a
         // partial unique index without extra hints in Postgres).
-        let updated = if let Some(pid) = project_id {
+        let updated = if let Some(pid) = workspace_id {
             sqlx_core::query::query(
-                "UPDATE sensei.service_projects
+                "UPDATE sensei.service_workspaces
                     SET enabled = $1, modified_at = now()
-                  WHERE service_id = $2 AND project_id = $3",
+                  WHERE service_id = $2 AND workspace_id = $3",
             )
             .bind(enabled)
             .bind(service_id)
@@ -109,9 +109,9 @@ impl PgStore {
             .map_err(|e| e.to_string())?
         } else {
             sqlx_core::query::query(
-                "UPDATE sensei.service_projects
+                "UPDATE sensei.service_workspaces
                     SET enabled = $1, modified_at = now()
-                  WHERE service_id = $2 AND project_id IS NULL",
+                  WHERE service_id = $2 AND workspace_id IS NULL",
             )
             .bind(enabled)
             .bind(service_id)
@@ -122,11 +122,11 @@ impl PgStore {
 
         if updated.rows_affected() == 0 {
             sqlx_core::query::query(
-                "INSERT INTO sensei.service_projects (service_id, project_id, enabled)
+                "INSERT INTO sensei.service_workspaces (service_id, workspace_id, enabled)
                  VALUES ($1, $2, $3)",
             )
             .bind(service_id)
-            .bind(project_id)
+            .bind(workspace_id)
             .bind(enabled)
             .execute(&self.pool)
             .await
@@ -135,14 +135,14 @@ impl PgStore {
         Ok(())
     }
 
-    /// Per-tool aggregation for a project's Instruments screen.
+    /// Per-tool aggregation for a workspace's Instruments screen.
     /// Joins `session_tool_calls` back to `activity.sessions` on
-    /// `client_session_id`, filters by `session.project_id`, and computes
+    /// `client_session_id`, filters by `session.workspace_id`, and computes
     /// call count, error count, avg duration, and FTR (fraction of sessions
     /// that used the tool AND completed FTR).
-    pub async fn get_project_mcp_tool_stats(
+    pub async fn get_workspace_mcp_tool_stats(
         &self,
-        project_id: &uuid::Uuid,
+        workspace_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, i64, i64, Option<f64>, Option<f64>, Option<chrono::DateTime<chrono::Utc>>)> =
             sqlx_core::query_as::query_as(
@@ -155,7 +155,7 @@ impl PgStore {
                        FROM sensei.session_tool_calls stc
                        JOIN activity.sessions s
                          ON s.client_session_id = stc.session_id
-                      WHERE s.project_id = $1
+                      WHERE s.workspace_id = $1
                  )
                  SELECT tool_name,
                         count(*)::bigint                                                          AS calls,
@@ -168,7 +168,7 @@ impl PgStore {
                   GROUP BY tool_name
                   ORDER BY calls DESC, tool_name ASC"
             )
-            .bind(project_id)
+            .bind(workspace_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -332,7 +332,7 @@ impl PgStore {
     ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, String, String, serde_json::Value, serde_json::Value, bool, String)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, acp_family, mcp_key, scope, project_id, config_source, command, args, env, enabled, connection_state
+                "SELECT id, acp_family, mcp_key, scope, workspace_id, config_source, command, args, env, enabled, connection_state
                    FROM sensei.mcp_servers WHERE id = $1"
             )
             .bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
@@ -340,7 +340,7 @@ impl PgStore {
         Ok(row.map(|(id, family, key, scope, pid, source, cmd, args, env, enabled, state)| {
             serde_json::json!({
                 "id": id, "acp_family": family, "mcp_key": key, "scope": scope,
-                "project_id": pid, "config_source": source, "command": cmd,
+                "workspace_id": pid, "config_source": source, "command": cmd,
                 "args": args, "env": env, "enabled": enabled, "connection_state": state,
             })
         }))
@@ -349,14 +349,14 @@ impl PgStore {
     // ── #84 Track 2 Slice D — Health tab per-tool verdict split ───────────
 
     /// Upsert a discovered MCP server row (#84). The uniqueness key is
-    /// `(acp_family, mcp_key, scope, project_id)`; existing rows have
+    /// `(acp_family, mcp_key, scope, workspace_id)`; existing rows have
     /// `command`/`args`/`env`/`config_source`/`last_seen_at` refreshed, but
     /// `enabled` is preserved (a user's manual toggle survives a re-scan).
     ///
     /// Args:
     /// - `acp_family`  — 'claude' | 'zed' | 'cursor' | 'codex' | 'opencode' | 'other'
     /// - `mcp_key`     — key in the ACP config, e.g. 'sensei', 'postgres'
-    /// - `project_id`  — Some(uuid) for project-scope, None for user-scope
+    /// - `workspace_id`  — Some(uuid) for the assistant's project scope, None for user scope
     /// - `config_source` — absolute path where discovered
     /// - `command`     — the mcp entry's `command`
     /// - `args`        — JSON array of args (from the config)
@@ -366,25 +366,25 @@ impl PgStore {
         &self,
         acp_family: &str,
         mcp_key: &str,
-        project_id: Option<uuid::Uuid>,
+        workspace_id: Option<uuid::Uuid>,
         config_source: &str,
         command: &str,
         args: &serde_json::Value,
         env: &serde_json::Value,
     ) -> Result<uuid::Uuid, String> {
-        let scope = if project_id.is_some() { "project" } else { "user" };
+        let scope = if workspace_id.is_some() { "project" } else { "user" };
         // Partial unique indexes mean the ON CONFLICT target differs for
-        // user vs project scope; the cleanest cross-cutting pattern is
+        // user vs project scope (Claude Code's mcp scope); the cleanest cross-cutting pattern is
         // "try INSERT, on failure UPDATE by lookup". Use a plain lookup +
         // conditional insert inside a transaction so a concurrent scan
         // can't race us into a duplicate.
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
-        let existing: Option<(uuid::Uuid,)> = if let Some(pid) = project_id {
+        let existing: Option<(uuid::Uuid,)> = if let Some(pid) = workspace_id {
             sqlx_core::query_as::query_as(
                 "SELECT id FROM sensei.mcp_servers
                   WHERE acp_family = $1 AND mcp_key = $2
-                    AND scope = 'project' AND project_id = $3",
+                    AND scope = 'project' AND workspace_id = $3",
             )
             .bind(acp_family)
             .bind(mcp_key)
@@ -427,14 +427,14 @@ impl PgStore {
         } else {
             let (new_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
                 "INSERT INTO sensei.mcp_servers
-                    (acp_family, mcp_key, scope, project_id, config_source, command, args, env)
+                    (acp_family, mcp_key, scope, workspace_id, config_source, command, args, env)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  RETURNING id",
             )
             .bind(acp_family)
             .bind(mcp_key)
             .bind(scope)
-            .bind(project_id)
+            .bind(workspace_id)
             .bind(config_source)
             .bind(command)
             .bind(args)
@@ -449,13 +449,13 @@ impl PgStore {
         Ok(id)
     }
 
-    /// List MCP servers. `project_id = None` returns user-scope rows; a
-    /// concrete project returns the union of user-scope + that project's
+    /// List MCP servers. `workspace_id = None` returns user-scope rows; a
+    /// concrete workspace returns the union of user-scope + that workspace's
     /// project-scope rows (the Instruments Playground shows both). Ordered
     /// by family, then key.
     pub async fn list_mcp_servers(
         &self,
-        project_id: Option<uuid::Uuid>,
+        workspace_id: Option<uuid::Uuid>,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(
             uuid::Uuid,
@@ -472,16 +472,16 @@ impl PgStore {
             Option<String>,
             chrono::DateTime<chrono::Utc>,
             chrono::DateTime<chrono::Utc>,
-        )> = if let Some(pid) = project_id {
+        )> = if let Some(pid) = workspace_id {
             sqlx_core::query_as::query_as(
-                    "SELECT id, acp_family, mcp_key, scope, project_id, config_source, command, args, env, enabled, connection_state, last_error, last_seen_at, discovered_at
+                    "SELECT id, acp_family, mcp_key, scope, workspace_id, config_source, command, args, env, enabled, connection_state, last_error, last_seen_at, discovered_at
                        FROM sensei.mcp_servers
-                      WHERE scope = 'user' OR project_id = $1
+                      WHERE scope = 'user' OR workspace_id = $1
                       ORDER BY acp_family, mcp_key"
                 ).bind(pid).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
         } else {
             sqlx_core::query_as::query_as(
-                    "SELECT id, acp_family, mcp_key, scope, project_id, config_source, command, args, env, enabled, connection_state, last_error, last_seen_at, discovered_at
+                    "SELECT id, acp_family, mcp_key, scope, workspace_id, config_source, command, args, env, enabled, connection_state, last_error, last_seen_at, discovered_at
                        FROM sensei.mcp_servers
                       WHERE scope = 'user'
                       ORDER BY acp_family, mcp_key"
@@ -493,7 +493,7 @@ impl PgStore {
             .map(|r| {
                 serde_json::json!({
                     "id": r.0, "acp_family": r.1, "mcp_key": r.2, "scope": r.3,
-                    "project_id": r.4, "config_source": r.5, "command": r.6,
+                    "workspace_id": r.4, "config_source": r.5, "command": r.6,
                     "args": r.7, "env": r.8, "enabled": r.9,
                     "connection_state": r.10, "last_error": r.11,
                     "last_seen_at": r.12.to_rfc3339(),

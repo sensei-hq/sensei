@@ -11,8 +11,8 @@ use std::path::Path;
 
 // ── Reconcile identity ─────────────────────────────────────────────────────
 
-/// Reconcile a project root's identity FROM its README frontmatter — folder
-/// props (incl. the frontmatter snapshot), icons, project identity, role, and
+/// Reconcile a workspace root's identity FROM its README frontmatter — folder
+/// props (incl. the frontmatter snapshot), icons, workspace identity, role, and
 /// repository_namespaces. Filesystem-READ-ONLY (it never writes the README, so it
 /// can't trigger a file-change loop), idempotent, and additive. Shared by the
 /// scan pipeline (process_git_folder) and the watcher's ReconcileRepoMetadata task.
@@ -26,8 +26,8 @@ pub async fn reconcile_repo_identity(
     let Some(folder) = ctx.pg().get_repo_by_path(repo_abs_path).await.ok().flatten() else {
         return Ok(0); // not a registered folder
     };
-    // Only project roots carry identity. A README inside a subfolder
-    // (kind='folder') must not reconcile project/namespace/icon state.
+    // Only workspace roots carry identity. A README inside a subfolder
+    // (kind='folder') must not reconcile workspace/namespace/icon state.
     if !matches!(folder["kind"].as_str(), Some("git" | "standalone" | "subtree")) {
         return Ok(0);
     }
@@ -69,16 +69,16 @@ pub async fn reconcile_repo_identity(
         }
     }
 
-    // Project identity + role + namespaces (only when linked to a project).
-    if let Some(pid) = folder["project_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
-        // Authoritative project name (matches what the scan created) for the
-        // `project` namespace; fall back to frontmatter / folder name. Fetched
+    // Workspace identity + role + namespaces (only when linked to a workspace).
+    if let Some(pid) = folder["workspace_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+        // Authoritative workspace name (matches what the scan created) for the
+        // `workspace`-rung namespace; fall back to frontmatter / folder name. Fetched
         // once and reused below for icon inference (name + current icon).
-        let project = ctx.pg().get_project(&pid).await.ok().flatten();
-        let project_name = project
+        let workspace = ctx.pg().get_workspace(&pid).await.ok().flatten();
+        let workspace_name = workspace
             .as_ref()
             .and_then(|p| p["name"].as_str().map(String::from))
-            .or_else(|| fm.project.clone())
+            .or_else(|| fm.workspace.clone())
             .or_else(|| folder["name"].as_str().map(String::from))
             .unwrap_or_default();
 
@@ -86,7 +86,7 @@ pub async fn reconcile_repo_identity(
             if fm.stack.is_empty() { stack.clone() } else { fm.stack.clone() };
         let mut tags: Vec<String> = Vec::new();
         if let Some(role) = fm.role.as_deref() {
-            // Keep the raw role as a project tag (lossless).
+            // Keep the raw role as a workspace tag (lossless).
             tags.push(format!("role:{role}"));
         }
         // folder.role enum: explicit README frontmatter wins; otherwise infer it
@@ -108,7 +108,7 @@ pub async fn reconcile_repo_identity(
         }
         if let Err(e) = ctx
             .pg()
-            .set_project_identity(
+            .set_workspace_identity(
                 &pid,
                 fm.summary.as_deref(),
                 fm.client.as_deref(),
@@ -117,43 +117,43 @@ pub async fn reconcile_repo_identity(
             )
             .await
         {
-            tracing::warn!(project_id = %pid, error = %e, "set_project_identity (reconcile) failed");
+            tracing::warn!(workspace_id = %pid, error = %e, "set_workspace_identity (reconcile) failed");
         }
 
-        // Deterministic project-icon inference — fills the generic 場 fallback
-        // so the project card shows something recognisable (repo logo /
+        // Deterministic workspace-icon inference — fills the generic 場 fallback
+        // so the workspace card shows something recognisable (repo logo /
         // kanji-from-stack / letter initial). Never overrides an author choice;
-        // only upgrades a prior machine icon; non-fatal. [[pipeline/project-icon]].
+        // only upgrades a prior machine icon; non-fatal. [[pipeline/workspace-icon]].
         //
         // The logo tier is LIVE: the scanned repo-relative asset path
         // (`icon.path`, from `scan_icons` above) is passed through so a detected
         // logo wins as `{kind:"image", value:<rel path>}`. The daemon serves the
-        // bytes at `GET /api/projects/{id}/icon` (path-safety in
-        // `analysis::project_icon::read_icon_bytes`), and the app renders it with
+        // bytes at `GET /api/workspaces/{id}/icon` (path-safety in
+        // `analysis::workspace_icon::read_icon_bytes`), and the app renders it with
         // a kanji fallback on image error.
-        use crate::analysis::project_icon::{IconDecision, infer_icon};
+        use crate::analysis::workspace_icon::{IconDecision, infer_icon};
         let logo_paths: Vec<String> = icon.path.iter().cloned().collect();
         let existing_icon =
-            project.as_ref().map(|p| p["icon"].clone()).unwrap_or(serde_json::Value::Null);
+            workspace.as_ref().map(|p| p["icon"].clone()).unwrap_or(serde_json::Value::Null);
         if let IconDecision::Set(inferred) =
-            infer_icon(&project_name, &id_stack, &existing_icon, &logo_paths)
+            infer_icon(&workspace_name, &id_stack, &existing_icon, &logo_paths)
             && let Err(e) = ctx
                 .pg()
-                .set_project_icon(
+                .set_workspace_icon(
                     &pid,
                     &serde_json::to_value(&inferred).unwrap_or(serde_json::Value::Null),
                 )
                 .await
         {
-            tracing::warn!(project_id = %pid, error = %e, "set_project_icon (reconcile) failed");
+            tracing::warn!(workspace_id = %pid, error = %e, "set_workspace_icon (reconcile) failed");
         }
 
         let mut ns: Vec<(&str, String)> = Vec::new();
         if let Some(org) = fm.organization.as_deref() {
             ns.push(("organization", org.to_string()));
         }
-        if !project_name.is_empty() {
-            ns.push(("project", project_name.clone()));
+        if !workspace_name.is_empty() {
+            ns.push(("workspace", workspace_name.clone()));
         }
         if let Some(team) = fm.team.as_deref() {
             ns.push(("team", team.to_string()));
@@ -161,17 +161,17 @@ pub async fn reconcile_repo_identity(
         for lang in &id_stack {
             ns.push(("technology", lang.clone()));
         }
-        // The namespace ROWS are all created — the `project` one included,
-        // because it is the project's governance identity and the dōjō reads
+        // The namespace ROWS are all created — the `workspace` one included,
+        // because it is the workspace's governance identity and the dōjō reads
         // its slug. What differs is what gets BOUND.
         //
         // Only repository facts are bound, and they are bound to the
-        // REPOSITORY. A `project`-scope namespace is deliberately NOT bound:
-        // membership is `repositories_in_projects`, and binding it here would be a
+        // REPOSITORY. A `workspace`-scope namespace is deliberately NOT bound:
+        // membership is `repositories_in_workspaces`, and binding it here would be a
         // second writer for the same fact — which is how eight folders came to
-        // claim a project their repository does not belong to.
-        // `namespaces_for_folder` reaches the project namespace through the
-        // project instead, so nothing downstream loses it.
+        // claim a workspace their repository does not belong to.
+        // `namespaces_for_folder` reaches the workspace namespace through the
+        // workspace instead, so nothing downstream loses it.
         let repository_id = ctx.pg().repository_id_for_folder(&folder_id).await.ok().flatten();
         for (scope, name) in &ns {
             let slug = metadata::slugify(name);
@@ -181,7 +181,7 @@ pub async fn reconcile_repo_identity(
             let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await else {
                 continue;
             };
-            if *scope == "project" {
+            if *scope == "workspace" {
                 continue;
             }
             let Some(rid) = repository_id else {
@@ -201,7 +201,7 @@ pub async fn reconcile_repo_identity(
     // members and standalone sub-apps like a `site/`) so a monorepo's packages,
     // crates and apps are individually typed (library / tool / website). Only
     // runs for monorepo roots — a single-package repo has nothing nested to
-    // find. Role assignment is independent of project membership.
+    // find. Role assignment is independent of workspace membership.
     if super::scan_logic::is_monorepo(repo_path)
         && let Some(root_id) = crate::api::util::json_uuid(&folder["root_id"])
     {
@@ -233,11 +233,11 @@ pub async fn reconcile_repo_identity(
     Ok(1)
 }
 
-/// Watcher-triggered re-reconcile: re-apply identity when a project-root README
+/// Watcher-triggered re-reconcile: re-apply identity when a workspace-root README
 /// changes — but only if its frontmatter actually differs from the snapshot we
 /// last stored. The change-detection makes a frontmatter write-back (#22) or a
 /// body-only README edit a no-op, so a UI-driven change → README write → watcher
-/// event neither loops nor churns the DB. `task.path` is the project-root abs
+/// event neither loops nor churns the DB. `task.path` is the workspace-root abs
 /// path (set by the watcher).
 pub async fn reconcile_repo_metadata(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     use crate::tasks::processors::metadata;
@@ -1593,7 +1593,7 @@ mod tests {
         let folder_name = "test-repo";
         let repo_path = tmp.path().to_string_lossy().to_string();
 
-        // Register the project so process_folder can look up its path
+        // Register the workspace so process_folder can look up its path
         {
             let root_id =
                 ctx.pg().add_watch_root(&repo_path, "test", &serde_json::json!([])).await.unwrap();
@@ -3564,7 +3564,7 @@ mod tests {
         let ctx = make_ctx().await;
         let folder_name = "test-repo";
 
-        // Register a project
+        // Register a workspace
         {
             let root_id =
                 ctx.pg().add_watch_root("/tmp/test", "test", &serde_json::json!([])).await.unwrap();
@@ -3589,7 +3589,7 @@ mod tests {
         let folder_name = "test-repo";
         let repo_path = "/tmp/myrepo";
 
-        // Register project
+        // Register workspace
         {
             let root_id =
                 ctx.pg().add_watch_root(repo_path, "test", &serde_json::json!([])).await.unwrap();

@@ -6,9 +6,9 @@
   import { PageHeader, Screen, ScreenState } from '$lib/components';
   import { senseiApi } from '$lib/api.js';
   import { appState } from '$lib/appstate.svelte.js';
-  import { openProjectWindow } from '$lib/stores/windows.svelte.js';
+  import { openWorkspaceWindow } from '$lib/stores/windows.svelte.js';
   import { InsightsBoardState, type RecCardVm } from './insights-board.svelte.js';
-  import ProjectFilterStrip from './ProjectFilterStrip.svelte';
+  import WorkspaceFilterStrip from './WorkspaceFilterStrip.svelte';
   import RecCard from './RecCard.svelte';
   import ViolationCard from './ViolationCard.svelte';
   import CorrectionMini from './CorrectionMini.svelte';
@@ -22,8 +22,8 @@
   // and optimistic update thereafter. untrack makes the one-time read explicit.
   const board = new InsightsBoardState(untrack(() => data.board), untrack(() => data.error));
 
-  function selectProject(id: string | null): void {
-    void board.selectProject(api, id);
+  function selectWorkspace(id: string | null): void {
+    void board.selectWorkspace(api, id);
   }
   function apply(rec: RecCardVm): void {
     void board.apply(api, rec);
@@ -31,10 +31,10 @@
   function dismiss(rec: RecCardVm): void {
     void board.dismiss(api, rec);
   }
-  // Review — navigate to where the recommendation lives (the project window).
+  // Review — navigate to where the recommendation lives (the workspace window).
   // No write call.
   function review(rec: RecCardVm): void {
-    openProjectWindow(rec.projectId, rec.projectName).catch((e) => console.error(e));
+    openWorkspaceWindow(rec.workspaceId, rec.workspaceName).catch((e) => console.error(e));
   }
 </script>
 
@@ -173,10 +173,10 @@
     </PageHeader>
 
     <div class="py-3 px-6 border-b border-paper-edge shrink-0">
-      <ProjectFilterStrip
-        projects={board.projects}
-        selectedId={board.selectedProjectId}
-        onSelect={selectProject}
+      <WorkspaceFilterStrip
+        workspaces={board.workspaces}
+        selectedId={board.selectedWorkspaceId}
+        onSelect={selectWorkspace}
       />
     </div>
 

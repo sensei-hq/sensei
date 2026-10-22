@@ -22,12 +22,12 @@
     }
   });
 
-  // Derive the detected stack from the projects slice — every confirmed
-  // project contributes its languages/frameworks/runtimes/services. The
+  // Derive the detected stack from the workspaces slice — every confirmed
+  // workspace contributes its languages/frameworks/runtimes/services. The
   // chips are de-duplicated.
   const stackChips = $derived.by(() => {
     const seen = new Set<string>();
-    for (const p of wizardState.projects.projects) {
+    for (const p of wizardState.workspaces.workspaces) {
       for (const tag of [
         ...(p.stack?.languages ?? []),
         ...(p.stack?.frameworks ?? []),

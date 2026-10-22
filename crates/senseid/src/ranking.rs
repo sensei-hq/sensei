@@ -6,7 +6,7 @@
 //! the table) sort identically to the high-leverage `revise_rule` /
 //! `write_skill` / `promote_pattern` ones and drown them out. This module
 //! computes a transparent 0–100 **score** per recommendation and marks the
-//! single highest-scoring pending rec per project as the **focal** "do first"
+//! single highest-scoring pending rec per workspace as the **focal** "do first"
 //! pick (the Observatory's "today's koan").
 //!
 //! The score is a weighted sum of four signals that already exist in the data:
@@ -42,7 +42,7 @@ pub fn action_weight(action_type: &str) -> f64 {
         "promote_pattern" => 0.85,
         "create_agent" => 0.8,
         "enrich_memory" => 0.6,
-        "cross_project" => 0.6,
+        "cross_workspace" => 0.6,
         "archive_memory" => 0.4,
         "library_update" => 0.55,
         "audit_stale" => 0.25,
@@ -89,7 +89,7 @@ pub fn score(f: &ScoreFactors) -> f64 {
     (raw * 1000.0).round() / 10.0
 }
 
-/// A ranked recommendation: its score and whether it's the project's focal pick.
+/// A ranked recommendation: its score and whether it's the workspace's focal pick.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ranked {
     pub id: uuid::Uuid,
@@ -97,7 +97,7 @@ pub struct Ranked {
     pub focal: bool,
 }
 
-/// Order a project's scored recs and mark the top one focal. Deterministic:
+/// Order a workspace's scored recs and mark the top one focal. Deterministic:
 /// score desc → recurrence desc → id asc (recs have no created_at). The first
 /// element after sorting is the single focal "do first" pick; an empty input
 /// yields no focal.

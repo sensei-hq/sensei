@@ -1,13 +1,13 @@
 /**
- * Project · Atlas (/project/<id>/atlas) — functional e2e.
+ * Workspace · Atlas (/workspace/<id>/atlas) — functional e2e.
  *
- * The atlas is a per-project screen now (all graphs are at project level). The
+ * The atlas is a per-workspace screen now (all graphs are at workspace level). The
  * unit tests + svelte-check cover the pure graph shaping. This spec covers what
  * they can't: the loader firing the real graph reads against the e2e daemon
- * SCOPED to a project's repo, the screen MOUNTING without a runtime throw, the
+ * SCOPED to a workspace's repo, the screen MOUNTING without a runtime throw, the
  * d3-force canvas NOT crashing, and the granularity toggle switching modes.
  *
- * Whether the throwaway `sensei_e2e` DB has an indexed graph for the project's
+ * Whether the throwaway `sensei_e2e` DB has an indexed graph for the workspace's
  * scope depends on prior runs, so the test waits for EITHER the d3-force canvas
  * OR the honest empty-state affordance (exactly one always renders). Both paths
  * assert NO uncaught error / rejection / console.error.
@@ -16,20 +16,20 @@
 import { test, expect } from '../fixtures';
 import {
   navigateTo, navigateToScreen, waitForDom, daemonGet, DAEMON_URL,
-  installErrorTrap, readErrors, type ErrBuf, seedSetupComplete, seedProject,
+  installErrorTrap, readErrors, type ErrBuf, seedSetupComplete, seedWorkspace,
 } from '../helpers';
 
-/** A project + the repo name its atlas scopes to (the project's primary git root,
- *  else the project name). Intake/atlas are project-scoped, so we need a real id. */
-async function projectScope(): Promise<{ id: string; repo: string }> {
-  const projects = await daemonGet<Array<{ id: string; name: string; folders?: Array<{ kind: string; name: string }> }>>('/api/projects');
-  for (const p of projects) {
+/** A workspace + the repo name its atlas scopes to (the workspace's primary git root,
+ *  else the workspace name). Intake/atlas are workspace-scoped, so we need a real id. */
+async function workspaceScope(): Promise<{ id: string; repo: string }> {
+  const workspaces = await daemonGet<Array<{ id: string; name: string; folders?: Array<{ kind: string; name: string }> }>>('/api/workspaces');
+  for (const p of workspaces) {
     const git = (p.folders ?? []).find((f) => f.kind === 'git');
     if (git) return { id: p.id, repo: git.name };
   }
-  if (projects.length) return { id: projects[0].id, repo: projects[0].name };
-  // A reset e2e DB has no projects: seed one rather than fail before testing.
-  const id = await seedProject('e2e-atlas', 'fixture for the Atlas spec');
+  if (workspaces.length) return { id: workspaces[0].id, repo: workspaces[0].name };
+  // A reset e2e DB has no workspaces: seed one rather than fail before testing.
+  const id = await seedWorkspace('e2e-atlas', 'fixture for the Atlas spec');
   return { id, repo: 'e2e-atlas' };
 }
 
@@ -41,7 +41,7 @@ function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
   expect(errs.console, `${where}: console.error output`).toEqual([]);
 }
 
-test.describe('Project · Atlas', () => {
+test.describe('Workspace · Atlas', () => {
   test.beforeEach(async ({ tauriPage }) => {
     // Headroom for the retry-navigate budget: cold health-bootstrap + setup
     // reconcile for the FIRST gated screen can take ~50s on a loaded box.
@@ -52,12 +52,12 @@ test.describe('Project · Atlas', () => {
   });
 
   test('mounts and renders chrome + graph/empty affordance without a runtime throw', async ({ tauriPage }) => {
-    const { id, repo } = await projectScope();
-    await navigateToScreen(tauriPage, `/project/${id}/atlas`, '[data-screen="atlas"]');
+    const { id, repo } = await workspaceScope();
+    await navigateToScreen(tauriPage, `/workspace/${id}/atlas`, '[data-screen="atlas"]');
 
     // Screen mounted — the loader completed the graph reads (incl. the
     // detectCommunities POST) against the real daemon without throwing, scoped to
-    // THIS project's repo (proves the payload assembled with the project scope).
+    // THIS workspace's repo (proves the payload assembled with the workspace scope).
     expect(await tauriPage.getAttribute('[data-screen="atlas"]', 'data-atlas-repo')).toBe(repo);
 
     // Chrome that renders in both states: the scope select + the granularity
@@ -82,8 +82,8 @@ test.describe('Project · Atlas', () => {
   });
 
   test('toggling granularity (communities ↔ symbols) does not throw', async ({ tauriPage }) => {
-    const { id } = await projectScope();
-    await navigateToScreen(tauriPage, `/project/${id}/atlas`, '[data-screen="atlas"]');
+    const { id } = await workspaceScope();
+    await navigateToScreen(tauriPage, `/workspace/${id}/atlas`, '[data-screen="atlas"]');
 
     // Opening state: communities is the default for an unindexed / large scope.
     const opensOn = await tauriPage.getAttribute('[data-atlas-level="communities"]', 'aria-pressed');

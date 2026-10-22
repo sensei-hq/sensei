@@ -33,19 +33,19 @@ export function heroCopy(tab: InstrumentsTab): { tagline: string; sub: string } 
 
 /**
  * Prefill a sensei tool's inputs so execute works on first click. `repoId`
- * takes the active project (a wrong one returns an empty answer), then the
+ * takes the active workspace (a wrong one returns an empty answer), then the
  * manifest's placeholder; other inputs take their default, then their
  * placeholder, which for sensei's own tools is a known-good example. A tool
  * without a manifest (a discovered server's) gets nothing.
  */
 export function pickToolDefaults(
   manifest: McpToolManifest | null,
-  activeProjectId: string | null,
+  activeWorkspaceId: string | null,
 ): Record<string, string> {
   const params: Record<string, string> = {};
   for (const input of manifest?.inputs ?? []) {
     if (input.key === 'repoId') {
-      params[input.key] = activeProjectId || input.placeholder || input.default || 'sensei';
+      params[input.key] = activeWorkspaceId || input.placeholder || input.default || 'sensei';
     } else if (input.default != null) {
       params[input.key] = String(input.default);
     } else if (input.placeholder) {

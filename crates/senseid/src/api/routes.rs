@@ -31,7 +31,6 @@ use crate::api::handlers::observatory;
 use crate::api::handlers::planner;
 use crate::api::handlers::playbook;
 use crate::api::handlers::preferences;
-use crate::api::handlers::project_detail;
 use crate::api::handlers::query;
 use crate::api::handlers::review;
 use crate::api::handlers::runs;
@@ -42,21 +41,22 @@ use crate::api::handlers::stance;
 use crate::api::handlers::upgrades;
 use crate::api::handlers::verdicts;
 use crate::api::handlers::workspace;
+use crate::api::handlers::workspace_detail;
 
 /// Tracker connection routes, guarded as one group.
 fn tracker_routes() -> Router<AppState> {
     use crate::api::handlers::trackers;
     Router::new()
         .route(
-            "/api/projects/{id}/trackers",
+            "/api/workspaces/{id}/trackers",
             get(trackers::list_trackers).delete(trackers::disconnect_tracker),
         )
-        .route("/api/projects/{id}/trackers/sync", post(trackers::sync_tracker))
-        .route("/api/projects/{id}/trackers/{kind}/connect", post(trackers::connect_tracker))
-        .route("/api/projects/{id}/sprints", get(trackers::list_sprints))
-        .route("/api/projects/{id}/tracker-tasks", get(trackers::list_tracker_tasks))
-        .route("/api/projects/{id}/tracker-tasks/{key}", get(trackers::get_tracker_task))
-        .route("/api/projects/{id}/sessions/unlinked", get(trackers::list_unlinked_sessions))
+        .route("/api/workspaces/{id}/trackers/sync", post(trackers::sync_tracker))
+        .route("/api/workspaces/{id}/trackers/{kind}/connect", post(trackers::connect_tracker))
+        .route("/api/workspaces/{id}/sprints", get(trackers::list_sprints))
+        .route("/api/workspaces/{id}/tracker-tasks", get(trackers::list_tracker_tasks))
+        .route("/api/workspaces/{id}/tracker-tasks/{key}", get(trackers::get_tracker_task))
+        .route("/api/workspaces/{id}/sessions/unlinked", get(trackers::list_unlinked_sessions))
         .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
 }
 
@@ -104,128 +104,135 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/gateway/models/provision/status", get(model_provisioning::provision_status))
         .route("/api/gateway/models/{id}/provision", post(model_provisioning::provision_model))
         // Repos (individual git repos)
-        .route("/api/repos", get(workspace::list_projects).post(workspace::create_project))
+        .route("/api/repos", get(workspace::list_repos).post(workspace::create_repo))
         .route("/api/repos/sync-frontmatter", post(workspace::sync_readme_frontmatter))
-        .route(
-            "/api/repos/{repo_id}",
-            put(workspace::update_project).delete(workspace::delete_project),
-        )
-        .route("/api/repos/{repo_id}/tags", post(workspace::add_project_tag))
-        .route("/api/repos/{repo_id}/tags/{tag}", delete(workspace::remove_project_tag))
-        .route("/api/repos/{repo_id}/summary", get(observatory::project_summary))
-        .route("/api/repos/{repo_id}/exclude", post(workspace::exclude_project))
+        .route("/api/repos/{repo_id}", put(workspace::update_repo).delete(workspace::delete_repo))
+        .route("/api/repos/{repo_id}/tags", post(workspace::add_repo_tag))
+        .route("/api/repos/{repo_id}/tags/{tag}", delete(workspace::remove_repo_tag))
+        .route("/api/repos/{repo_id}/summary", get(observatory::workspace_summary))
+        .route("/api/repos/{repo_id}/exclude", post(workspace::exclude_repo))
         // Exclusions live per watch root in `folders_to_watch.excluded` — set them
         // via PUT /api/scan/roots/{id} { excluded:[...] } (prunes added subtrees,
         // re-scans removed ones). No standalone /api/exclusions endpoint.
-        // Projects (groups of 1+ repos)
-        .route("/api/projects", get(observatory::list_solutions).post(observatory::create_solution))
-        .route("/api/projects/merge", post(observatory::merge_projects))
+        // Workspaces (groups of 1+ repos)
         .route(
-            "/api/projects/{id}",
+            "/api/workspaces",
+            get(observatory::list_solutions).post(observatory::create_solution),
+        )
+        .route("/api/workspaces/merge", post(observatory::merge_workspaces))
+        .route(
+            "/api/workspaces/{id}",
             put(observatory::update_solution).delete(observatory::delete_solution),
         )
         .route(
-            "/api/projects/{id}/repos",
-            get(project_detail::get_project_repos).post(observatory::add_solution_repo),
+            "/api/workspaces/{id}/repos",
+            get(workspace_detail::get_workspace_repos).post(observatory::add_solution_repo),
         )
-        .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
-        .route("/api/projects/{id}/diagrams/structure", get(diagrams::structure))
-        .route("/api/projects/{id}/diagrams/layering", get(diagrams::layering))
-        .route("/api/projects/{id}/diagrams/zones", get(diagrams::zones))
-        .route("/api/projects/{id}/diagrams/world", get(diagrams::world))
-        .route("/api/projects/{id}/diagrams/neighbourhood", get(diagrams::neighbourhood))
-        .route("/api/projects/{id}/diagrams/schema", get(diagrams::schema))
-        .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
-        .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
-        // Git author identity for a folder + its owning project (MCP
-        // get_user_for_project) — who is doing the work, resolved local→global.
+        .route("/api/workspaces/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
+        .route("/api/workspaces/{id}/diagrams/structure", get(diagrams::structure))
+        .route("/api/workspaces/{id}/diagrams/layering", get(diagrams::layering))
+        .route("/api/workspaces/{id}/diagrams/zones", get(diagrams::zones))
+        .route("/api/workspaces/{id}/diagrams/world", get(diagrams::world))
+        .route("/api/workspaces/{id}/diagrams/neighbourhood", get(diagrams::neighbourhood))
+        .route("/api/workspaces/{id}/diagrams/schema", get(diagrams::schema))
+        .route("/api/workspaces/{id}/tags", post(observatory::add_solution_tag))
+        .route("/api/workspaces/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
+        // Git author identity for a folder + its owning workspace (MCP
+        // get_user_for_workspace) — who is doing the work, resolved local→global.
         .route("/api/user", get(identity::get_user))
         // Effective behavioural stance for a folder (autonomy · sharing · review)
         // — HOW a run behaves, resolved on the sensei.scopes ladder for the git
         // user. Complements /api/knowledge/rules (WHAT a run may do).
         .route("/api/stance", get(stance::get_stance).post(stance::set_stance))
-        // Project detail endpoints (multi-window)
-        .route("/api/projects/{id}/ftr", get(project_detail::get_project_ftr))
-        .route("/api/projects/{id}/icon", get(project_detail::get_project_icon))
-        .route("/api/projects/{id}/overview", get(project_detail::get_project_overview))
-        .route("/api/projects/{id}/drift", get(project_detail::get_project_drift))
-        .route("/api/projects/{id}/drift/scan", post(project_detail::scan_project_doc_drift))
-        .route("/api/projects/{id}/coverage/backfill", post(project_detail::coverage_backfill))
-        .route("/api/projects/{id}/health", get(project_detail::get_project_health))
-        .route("/api/projects/{id}/correlations", get(project_detail::get_metric_correlations))
-        .route("/api/metrics/correlations", get(project_detail::get_portfolio_correlations))
-        .route("/api/projects/{id}/patterns", get(project_detail::get_project_patterns))
-        .route("/api/projects/{id}/libraries", get(project_detail::get_library_enablement))
-        .route("/api/projects/{id}/instruments", get(project_detail::get_project_instruments))
-        .route("/api/projects/{id}/mcp-tool-stats", get(project_detail::get_project_mcp_tool_stats))
-        .route("/api/projects/{id}/services", get(project_detail::list_project_services))
+        // Workspace detail endpoints (multi-window)
+        .route("/api/workspaces/{id}/ftr", get(workspace_detail::get_workspace_ftr))
+        .route("/api/workspaces/{id}/icon", get(workspace_detail::get_workspace_icon))
+        .route("/api/workspaces/{id}/overview", get(workspace_detail::get_workspace_overview))
+        .route("/api/workspaces/{id}/drift", get(workspace_detail::get_workspace_drift))
+        .route("/api/workspaces/{id}/drift/scan", post(workspace_detail::scan_workspace_doc_drift))
+        .route("/api/workspaces/{id}/coverage/backfill", post(workspace_detail::coverage_backfill))
+        .route("/api/workspaces/{id}/health", get(workspace_detail::get_workspace_health))
+        .route("/api/workspaces/{id}/correlations", get(workspace_detail::get_metric_correlations))
+        .route("/api/metrics/correlations", get(workspace_detail::get_portfolio_correlations))
+        .route("/api/workspaces/{id}/patterns", get(workspace_detail::get_workspace_patterns))
+        .route("/api/workspaces/{id}/libraries", get(workspace_detail::get_library_enablement))
+        .route("/api/workspaces/{id}/instruments", get(workspace_detail::get_workspace_instruments))
         .route(
-            "/api/projects/{id}/services/{service_id}/scope",
-            put(project_detail::set_project_service_scope),
+            "/api/workspaces/{id}/mcp-tool-stats",
+            get(workspace_detail::get_workspace_mcp_tool_stats),
         )
-        .route("/api/projects/{id}/memories", get(project_detail::get_project_memories))
+        .route("/api/workspaces/{id}/services", get(workspace_detail::list_workspace_services))
         .route(
-            "/api/projects/{id}/memory-batches",
-            get(project_detail::list_memory_share_batches)
-                .post(project_detail::create_memory_share_batch),
+            "/api/workspaces/{id}/services/{service_id}/scope",
+            put(workspace_detail::set_workspace_service_scope),
         )
+        .route("/api/workspaces/{id}/memories", get(workspace_detail::get_workspace_memories))
         .route(
-            "/api/projects/{id}/memory-batches/{batch_id}",
-            put(project_detail::decide_memory_share_batch),
-        )
-        .route(
-            "/api/projects/{id}/recommendations",
-            get(project_detail::get_project_recommendations),
+            "/api/workspaces/{id}/memory-batches",
+            get(workspace_detail::list_memory_share_batches)
+                .post(workspace_detail::create_memory_share_batch),
         )
         .route(
-            "/api/projects/{id}/recommendations/{rec_id}/accept",
-            post(project_detail::accept_project_recommendation),
+            "/api/workspaces/{id}/memory-batches/{batch_id}",
+            put(workspace_detail::decide_memory_share_batch),
         )
         .route(
-            "/api/projects/{id}/recommendations/{rec_id}/reject",
-            post(project_detail::reject_project_recommendation),
+            "/api/workspaces/{id}/recommendations",
+            get(workspace_detail::get_workspace_recommendations),
+        )
+        .route(
+            "/api/workspaces/{id}/recommendations/{rec_id}/accept",
+            post(workspace_detail::accept_workspace_recommendation),
+        )
+        .route(
+            "/api/workspaces/{id}/recommendations/{rec_id}/reject",
+            post(workspace_detail::reject_workspace_recommendation),
         )
         // P-A: rule-class accept that MATERIALIZES a governance rule (+ preview).
         .route(
-            "/api/projects/{id}/recommendations/{rec_id}/preview",
-            get(project_detail::preview_recommendation_materialization),
+            "/api/workspaces/{id}/recommendations/{rec_id}/preview",
+            get(workspace_detail::preview_recommendation_materialization),
         )
         .route(
-            "/api/projects/{id}/recommendations/{rec_id}/materialize",
-            post(project_detail::materialize_recommendation),
+            "/api/workspaces/{id}/recommendations/{rec_id}/materialize",
+            post(workspace_detail::materialize_recommendation),
         )
-        .route("/api/projects/{id}/impact", get(project_detail::get_project_impact))
+        .route("/api/workspaces/{id}/impact", get(workspace_detail::get_workspace_impact))
         .route(
-            "/api/projects/{id}/impact-verdicts",
-            get(project_detail::list_impact_verdicts).post(project_detail::create_impact_verdict),
+            "/api/workspaces/{id}/impact-verdicts",
+            get(workspace_detail::list_impact_verdicts)
+                .post(workspace_detail::create_impact_verdict),
         )
         .route(
-            "/api/projects/{id}/impact-verdicts/{verdict_id}",
-            put(project_detail::decide_impact_verdict),
+            "/api/workspaces/{id}/impact-verdicts/{verdict_id}",
+            put(workspace_detail::decide_impact_verdict),
         )
-        .route("/api/projects/{id}/sessions", get(project_detail::get_project_sessions))
-        .route("/api/projects/{id}/project-deps", get(project_detail::get_project_project_deps))
-        .route("/api/projects/{id}/commands", get(project_detail::get_folder_commands))
-        // Metrics (Phase 7): latest-per-metric + trend + health for a project, and
+        .route("/api/workspaces/{id}/sessions", get(workspace_detail::get_workspace_sessions))
+        .route(
+            "/api/workspaces/{id}/workspace-deps",
+            get(workspace_detail::get_workspace_workspace_deps),
+        )
+        .route("/api/workspaces/{id}/commands", get(workspace_detail::get_folder_commands))
+        // Metrics (Phase 7): latest-per-metric + trend + health for a workspace, and
         // one metric's series at a grain (?grain=daily|weekly|monthly|quarterly).
-        .route("/api/projects/{id}/metrics", get(metrics::get_project_metrics))
-        .route("/api/projects/{id}/metrics/{key}", get(metrics::get_project_metric_series))
+        .route("/api/workspaces/{id}/metrics", get(metrics::get_workspace_metrics))
+        .route("/api/workspaces/{id}/metrics/{key}", get(metrics::get_workspace_metric_series))
         // Datapoint→sessions drill-down: the measurable sessions behind one daily
         // metric point (?day=YYYY-MM-DD).
         .route(
-            "/api/projects/{id}/metrics/{key}/sessions",
-            get(metrics::get_project_metric_day_sessions),
+            "/api/workspaces/{id}/metrics/{key}/sessions",
+            get(metrics::get_workspace_metric_day_sessions),
         )
-        .route("/api/projects/{id}/tools", get(metrics::get_project_tools))
+        .route("/api/workspaces/{id}/tools", get(metrics::get_workspace_tools))
         // G10: user-scope capability→preferred-tool bias for get_commands.
         .route(
             "/api/preferences/commands",
-            get(project_detail::get_command_preferences)
-                .put(project_detail::set_command_preference),
+            get(workspace_detail::get_command_preferences)
+                .put(workspace_detail::set_command_preference),
         )
         .route(
-            "/api/projects/{id}/library-version-conflicts",
-            get(project_detail::get_project_library_version_conflicts),
+            "/api/workspaces/{id}/library-version-conflicts",
+            get(workspace_detail::get_workspace_library_version_conflicts),
         )
         // Observatory chart data
         .route("/api/observatory/ftr-daily", get(observatory::holistic_ftr_daily))
@@ -236,16 +243,16 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/observatory/today", get(observatory::observatory_today))
         .route("/api/observatory/ftr", get(observatory::observatory_ftr))
         .route("/api/insights", get(observatory::get_insights))
-        .route("/api/projects/{id}/ftr-daily", get(observatory::project_ftr_daily))
-        .route("/api/projects/{id}/hotspots", get(observatory::project_hotspots))
-        .route("/api/projects/{id}/quality-signals", get(observatory::project_quality_signals))
-        .route("/api/projects/{id}/maturity", get(observatory::project_maturity))
+        .route("/api/workspaces/{id}/ftr-daily", get(observatory::workspace_ftr_daily))
+        .route("/api/workspaces/{id}/hotspots", get(observatory::workspace_hotspots))
+        .route("/api/workspaces/{id}/quality-signals", get(observatory::workspace_quality_signals))
+        .route("/api/workspaces/{id}/maturity", get(observatory::workspace_maturity))
         .route("/api/corrections", get(corrections::list_corrections))
-        .route("/api/projects/{id}/corrections", get(corrections::project_corrections))
-        .route("/api/projects/{id}/teachings", get(observatory::project_teachings))
+        .route("/api/workspaces/{id}/corrections", get(corrections::workspace_corrections))
+        .route("/api/workspaces/{id}/teachings", get(observatory::workspace_teachings))
         .route("/api/libs/{id}/usage", get(observatory::library_usage))
         // Indexing
-        .route("/api/index", post(workspace::index_project))
+        .route("/api/index", post(workspace::index_repo))
         .route("/api/index/status", get(workspace::task_status))
         .route("/api/index/doctor", get(workspace::index_doctor))
         // Same stream as /api/tasks/progress, under the older name the app still
@@ -309,18 +316,18 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/graph/{repoId}/tree", get(codebase::graph_tree))
         .route("/api/graph/doc-drift", get(codebase::doc_drift))
         .route("/api/graph/call-flow", get(codebase::call_flow))
-        // Project analysis
-        .route("/api/projects/{id}/analyze", post(observatory::analyze_solution))
-        .route("/api/projects/{id}/process/analyze", post(observatory::analyze_process))
-        .route("/api/projects/{id}/backfill", post(observatory::backfill_project_sessions))
+        // Workspace analysis
+        .route("/api/workspaces/{id}/analyze", post(observatory::analyze_solution))
+        .route("/api/workspaces/{id}/process/analyze", post(observatory::analyze_process))
+        .route("/api/workspaces/{id}/backfill", post(observatory::backfill_workspace_sessions))
         .route("/api/transcripts/backfill", post(observatory::ingest_captures))
         // #218: reading an assistant's history is its own consent, per source.
         .route("/api/transcripts/consent", get(observatory::transcript_consent))
         .route("/api/transcripts/consent/{source}", put(observatory::set_transcript_consent))
         .route("/api/metrics/backfill", post(observatory::backfill_metrics))
-        .route("/api/projects/{id}/graph", get(observatory::solution_graph))
-        .route("/api/projects/{id}/roles", get(observatory::solution_roles))
-        // Folder mutations (setup wizard — Projects stage)
+        .route("/api/workspaces/{id}/graph", get(observatory::solution_graph))
+        .route("/api/workspaces/{id}/roles", get(observatory::solution_roles))
+        // Folder mutations (setup wizard — Workspaces stage)
         .route("/api/folders/{id}", put(workspace::update_folder))
         // Manual rename repair — `sensei folder remap <old> <new>`
         .route("/api/folders/remap", post(workspace::remap_folder_endpoint))
@@ -408,12 +415,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/playbook/rule/{id}/accept", post(playbook::accept_rule))
         .route("/api/playbook/model-stats", get(playbook::model_stats))
         // Patterns
-        .route("/api/patterns/{project}/detect", post(codebase::detect_patterns))
-        .route("/api/patterns/{project}", get(codebase::list_patterns))
-        .route("/api/patterns/{project}/match", get(codebase::match_pattern_handler))
-        .route("/api/patterns/{project}/for/{symbol}", get(codebase::pattern_for_symbol))
-        .route("/api/patterns/{project}/duplicates", get(codebase::find_duplicates_handler))
-        .route("/api/patterns/{project}/conventions", get(codebase::project_conventions_handler))
+        .route("/api/patterns/{workspace}/detect", post(codebase::detect_patterns))
+        .route("/api/patterns/{workspace}", get(codebase::list_patterns))
+        .route("/api/patterns/{workspace}/match", get(codebase::match_pattern_handler))
+        .route("/api/patterns/{workspace}/for/{symbol}", get(codebase::pattern_for_symbol))
+        .route("/api/patterns/{workspace}/duplicates", get(codebase::find_duplicates_handler))
+        .route(
+            "/api/patterns/{workspace}/conventions",
+            get(codebase::workspace_conventions_handler),
+        )
         // Hook event ingestion (from sensei-hook.ts)
         .route("/hook/event", post(sessions::ingest_hook_event))
         // Hook gate (relay-engine feature B): a PreToolUse hook asks whether a
@@ -429,7 +439,7 @@ pub fn create_router(state: AppState) -> Router {
         // Observatory · Logs screen.
         .route("/api/logs", post(logs::ingest_log).get(logs::get_logs))
         // Metrics
-        // Phase 7 registry catalog — static `registry` wins over the `{project}`
+        // Phase 7 registry catalog — static `registry` wins over the `{workspace}`
         // param below (matchit precedence, same as /api/runs/plan vs /{id}).
         .route("/api/metrics/registry", get(metrics::get_metrics_registry))
         // Per-(repository × metric) computation state + the reason vocabulary that
@@ -437,10 +447,10 @@ pub fn create_router(state: AppState) -> Router {
         // the whole estate is unbounded; `/summary` is the aggregated shape.
         .route("/api/metrics/status", get(metrics::get_metric_status))
         .route("/api/metrics/status/summary", get(metrics::get_metric_status_summary))
-        .route("/api/metrics/{project}", get(observatory::get_metrics))
+        .route("/api/metrics/{workspace}", get(observatory::get_metrics))
         // Workflow state
         .route(
-            "/api/state/{project}",
+            "/api/state/{workspace}",
             get(sessions::get_workflow_state).put(sessions::update_workflow_state),
         )
         // Scan
@@ -507,8 +517,8 @@ pub fn create_router(state: AppState) -> Router {
         // has not. `sensei.sync_state` had three writers and no reader.
         .route("/api/dojo/sync-state", get(dojo::sync_state))
         // R3 infer-at-detect auto-bind: suggestion (read-only) + confirm-bind
-        .route("/api/projects/{id}/dojo-suggestion", get(dojo::project_binding_suggestion))
-        .route("/api/projects/{id}/dojo-binding", post(dojo::bind_project_to_membership))
+        .route("/api/workspaces/{id}/dojo-suggestion", get(dojo::workspace_binding_suggestion))
+        .route("/api/workspaces/{id}/dojo-binding", post(dojo::bind_workspace_to_membership))
         // Dōjō upstream share review (C6)
         .route("/api/share-review/next-batch", get(share_review::next_batch))
         .route("/api/share-review/{batch}/publish", post(share_review::publish_batch))
@@ -1060,7 +1070,7 @@ mod tests {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) =
-            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
         let rid = crate::tasks::test_support::seed_bare_repository(&state.pg, &pid, &uniq).await;
         let repo_key = format!("test/bare-{uniq}");
         let key = format!("_test:status:{}", uuid::Uuid::new_v4());
@@ -1185,7 +1195,7 @@ mod tests {
             .unwrap();
         state
             .pg
-            .upsert_project_metric_repo(&MetricRow {
+            .upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &rid,
                 scope: "repo",
@@ -1299,7 +1309,7 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
-        // Drops the project, its folders, and the repositories seeded onto them —
+        // Drops the workspace, its folders, and the repositories seeded onto them —
         // including `rid`, so there is no separate repository delete here.
         crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &pid, Some(&fid), &[]).await;
     }
@@ -1328,7 +1338,7 @@ mod tests {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) =
-            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
         let rid = crate::tasks::test_support::seed_bare_repository(&state.pg, &pid, &uniq).await;
         let repo_key = format!("test/bare-{uniq}");
 
@@ -1429,7 +1439,7 @@ mod tests {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) =
-            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
 
         // One of each shape, so the breakdown has something known to report.
         let src = state
@@ -1596,18 +1606,19 @@ mod tests {
             .unwrap();
     }
 
-    /// 7.2 `GET /api/projects/{id}/metrics`: latest-per-metric + facets + trend +
+    /// 7.2 `GET /api/workspaces/{id}/metrics`: latest-per-metric + facets + trend +
     /// retired-metric exclusion (a retired metric's durable rows must NOT render).
-    /// Also pins the never-fabricate cases — a project with no rows is honest-empty
-    /// (200 []), an unknown project is a 404.
+    /// Also pins the never-fabricate cases — a workspace with no rows is honest-empty
+    /// (200 []), an unknown workspace is a 404.
     #[tokio::test]
-    async fn get_project_metrics_endpoint() {
+    async fn get_workspace_metrics_endpoint() {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4();
-        let pid = state.pg.create_project(&format!("_test:pme:{uniq}"), None, None).await.unwrap();
-        // Repo-grain (_v2): `project_health` is a SHARED registry metric — a
+        let pid =
+            state.pg.create_workspace(&format!("_test:pme:{uniq}"), None, None).await.unwrap();
+        // Repo-grain (_v2): `workspace_health` is a SHARED registry metric — a
         // NULL-repository write is unique only per (metric,day,grain), so concurrent
-        // test projects collide on the fixed `w2` day. Pin its durable row to a
+        // test workspaces collide on the fixed `w2` day. Pin its durable row to a
         // per-test repository so the retirement-exclusion assertion can't be poisoned
         // by another run's write.
         let (rid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
@@ -1617,10 +1628,11 @@ mod tests {
         .fetch_one(state.pg.pool())
         .await
         .unwrap();
-        // The repository must reach the project through a folder: project_metrics
-        // derives project_id from that link, so an unlinked repo's rows exist but
-        // are invisible to every project-filtered read.
-        crate::tasks::test_support::link_repository_to_project(&state.pg, &rid, &pid, "pme").await;
+        // The repository must reach the workspace through a folder: workspace_metrics
+        // derives workspace_id from that link, so an unlinked repo's rows exist but
+        // are invisible to every workspace-filtered read.
+        crate::tasks::test_support::link_repository_to_workspace(&state.pg, &rid, &pid, "pme")
+            .await;
 
         // Base metric A (ratio) across TWO ISO weeks → weekly trend has prior/delta.
         let key_a = format!("_test:pme:{uniq}:cov");
@@ -1629,7 +1641,7 @@ mod tests {
         let w2 = chrono::NaiveDate::from_ymd_opt(2020, 1, 13).unwrap(); // next Monday
         state
             .pg
-            .upsert_project_metric_repo(&MetricRow {
+            .upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid_a,
                 repository_id: &rid,
                 scope: "user",
@@ -1645,7 +1657,7 @@ mod tests {
             .unwrap();
         state
             .pg
-            .upsert_project_metric_repo(&MetricRow {
+            .upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid_a,
                 repository_id: &rid,
                 scope: "user",
@@ -1665,7 +1677,7 @@ mod tests {
         let mid_b = seed_metric(&state.pg, &key_b, "ratio", "lower_better").await;
         state
             .pg
-            .upsert_project_metric_repo(&MetricRow {
+            .upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid_b,
                 repository_id: &rid,
                 scope: "user",
@@ -1680,18 +1692,18 @@ mod tests {
             .await
             .unwrap();
 
-        // A RETIRED metric with a durable daily row: project_health carries a past
+        // A RETIRED metric with a durable daily row: workspace_health carries a past
         // effective_until in the registry (retirement is in-place, never hand-delete a
         // row), so its stored value must NOT render as an active card — asserted below.
         let (health_mid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "SELECT id FROM sensei.metrics WHERE key = 'project_health'",
+            "SELECT id FROM sensei.metrics WHERE key = 'workspace_health'",
         )
         .fetch_one(state.pg.pool())
         .await
-        .expect("project_health seeded in registry");
+        .expect("workspace_health seeded in registry");
         state
             .pg
-            .upsert_project_metric_repo(&MetricRow {
+            .upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &health_mid,
                 repository_id: &rid,
                 scope: "user",
@@ -1707,7 +1719,7 @@ mod tests {
             .unwrap();
 
         let (st, body) =
-            req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
+            req(app.clone(), "GET", &format!("/api/workspaces/{pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let metrics = body["metrics"].as_array().expect("metrics array");
 
@@ -1732,19 +1744,22 @@ mod tests {
         assert!(b["prior"].is_null(), "B has no prior week — null, not a fabricated 0");
         assert!(b["delta"].is_null());
 
-        // Retired-metric exclusion: project_health is past its effective_until, so
+        // Retired-metric exclusion: workspace_health is past its effective_until, so
         // even with a durable daily row the endpoint filters it out of the active
-        // dashboard (get_project_metrics' ACTIVE_METRIC_PREDICATE) — never a stale card.
+        // dashboard (get_workspace_metrics' ACTIVE_METRIC_PREDICATE) — never a stale card.
         assert!(
-            metrics.iter().all(|m| m["metric"].as_str() != Some("project_health")),
-            "retired project_health is excluded from the active metrics, not rendered as a stale card"
+            metrics.iter().all(|m| m["metric"].as_str() != Some("workspace_health")),
+            "retired workspace_health is excluded from the active metrics, not rendered as a stale card"
         );
 
-        // Honest-empty: a project with NO metric rows → 200 with an empty list.
-        let empty_pid =
-            state.pg.create_project(&format!("_test:pme-empty:{uniq}"), None, None).await.unwrap();
+        // Honest-empty: a workspace with NO metric rows → 200 with an empty list.
+        let empty_pid = state
+            .pg
+            .create_workspace(&format!("_test:pme-empty:{uniq}"), None, None)
+            .await
+            .unwrap();
         let (st, body) =
-            req(app.clone(), "GET", &format!("/api/projects/{empty_pid}/metrics"), None).await;
+            req(app.clone(), "GET", &format!("/api/workspaces/{empty_pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK);
         assert_eq!(
             body["metrics"].as_array().map(|a| a.len()),
@@ -1752,19 +1767,20 @@ mod tests {
             "no rows → honest-empty list, not a fabricated row"
         );
 
-        // Unknown project id → 404 (matches GET /api/projects/{id}/ftr), never a 200-empty.
+        // Unknown workspace id → 404 (matches GET /api/workspaces/{id}/ftr), never a 200-empty.
         let (st, _) =
-            req(app, "GET", &format!("/api/projects/{}/metrics", uuid::Uuid::new_v4()), None).await;
-        assert_eq!(st, StatusCode::NOT_FOUND, "unknown project → 404, never a fabricated empty");
+            req(app, "GET", &format!("/api/workspaces/{}/metrics", uuid::Uuid::new_v4()), None)
+                .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "unknown workspace → 404, never a fabricated empty");
 
-        // cleanup — project_metrics cascade from the metric + project; the shared
-        // project_health registry row is left intact (its test row cascades w/ pid).
+        // cleanup — workspace_metrics cascade from the metric + workspace; the shared
+        // workspace_health registry row is left intact (its test row cascades w/ pid).
         sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = ANY($1)")
             .bind(vec![mid_a, mid_b])
             .execute(state.pg.pool())
             .await
             .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = ANY($1)")
             .bind(vec![pid, empty_pid])
             .execute(state.pg.pool())
             .await
@@ -1778,10 +1794,10 @@ mod tests {
             .unwrap();
     }
 
-    /// 8.2: the legacy FTR surfaces — the HTTP route `GET /api/metrics/{project}`
+    /// 8.2: the legacy FTR surfaces — the HTTP route `GET /api/metrics/{workspace}`
     /// and the MCP `get_metrics` tool — are store-backed and NEVER fabricate a `0`
-    /// FTR on a miss. A project WITH `ftr` rows reports the store number (the same
-    /// Σnum/Σden `/projects/{id}/ftr` serves); a project WITHOUT any is honest
+    /// FTR on a miss. A workspace WITH `ftr` rows reports the store number (the same
+    /// Σnum/Σden `/workspaces/{id}/ftr` serves); a workspace WITHOUT any is honest
     /// `null`, not `0.0`. Both surfaces are pinned.
     #[tokio::test]
     async fn no_fabricated_zero_ftr_in_metrics_surfaces() {
@@ -1793,19 +1809,19 @@ mod tests {
                 .expect("ftr metric seeded in registry");
         let today = chrono::Utc::now().date_naive();
 
-        // Project WITH ftr data — folder name is what both surfaces resolve on.
+        // Workspace WITH ftr data — folder name is what both surfaces resolve on.
         let uniq_has = uuid::Uuid::new_v4();
         let (pid_has, fid_has) =
-            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq_has).await;
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq_has).await;
         let name_has = format!("metrics-{uniq_has}");
         // Repo-grain (_v2): `ftr` is a SHARED registry metric — a NULL-repository write
-        // is unique only per (metric,day,grain), so concurrent test projects writing
-        // `today` collide and steal each other's project_id. Pin it to the fixture's
-        // repository (scope=user) so this project's row is its own.
+        // is unique only per (metric,day,grain), so concurrent test workspaces writing
+        // `today` collide and steal each other's workspace_id. Pin it to the fixture's
+        // repository (scope=user) so this workspace's row is its own.
         let rid_has = crate::tasks::test_support::repository_for_folder(&state.pg, &fid_has).await;
         state
             .pg
-            .upsert_project_metric_repo(&MetricRow {
+            .upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &ftr_mid,
                 repository_id: &rid_has,
                 scope: "user",
@@ -1820,14 +1836,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Project WITHOUT any ftr data.
+        // Workspace WITHOUT any ftr data.
         let uniq_no = uuid::Uuid::new_v4();
         let (pid_no, fid_no) =
-            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq_no).await;
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq_no).await;
         let name_no = format!("metrics-{uniq_no}");
         let rid_no = crate::tasks::test_support::repository_for_folder(&state.pg, &fid_no).await;
 
-        // ── HTTP surface: GET /api/metrics/{project} ──────────────────────
+        // ── HTTP surface: GET /api/metrics/{workspace} ──────────────────────
         let (st, body) = req(app.clone(), "GET", &format!("/api/metrics/{name_has}"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert!(
@@ -1862,19 +1878,19 @@ mod tests {
             body["ftr"]
         );
 
-        // cleanup — sessions (none) + folders + projects; project_metrics cascade.
+        // cleanup — sessions (none) + folders + workspaces; workspace_metrics cascade.
         sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = ANY($1)")
             .bind(vec![fid_has, fid_no])
             .execute(state.pg.pool())
             .await
             .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = ANY($1)")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = ANY($1)")
             .bind(vec![pid_has, pid_no])
             .execute(state.pg.pool())
             .await
             .unwrap();
         // Repo-grain: drop the per-fixture repositories (folders.repository_id is
-        // ON DELETE SET NULL, and the ftr row already cascaded with its project).
+        // ON DELETE SET NULL, and the ftr row already cascaded with its workspace).
         sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
             .bind(vec![rid_has, rid_no])
             .execute(state.pg.pool())
@@ -1882,14 +1898,15 @@ mod tests {
             .unwrap();
     }
 
-    /// 7.3 `GET /api/projects/{id}/metrics/{key}?grain=weekly`: the weekly series
+    /// 7.3 `GET /api/workspaces/{id}/metrics/{key}?grain=weekly`: the weekly series
     /// matches the view's re-derived Σnum/Σden (never the mean of daily ratios).
     /// Also pins: an invalid grain is a 400; an unknown key is honest-empty (200 []).
     #[tokio::test]
-    async fn get_project_metric_series_endpoint() {
+    async fn get_workspace_metric_series_endpoint() {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4().simple().to_string();
-        let pid = state.pg.create_project(&format!("_test_pms_{uniq}"), None, None).await.unwrap();
+        let pid =
+            state.pg.create_workspace(&format!("_test_pms_{uniq}"), None, None).await.unwrap();
         let rid = crate::tasks::test_support::seed_bare_repository(
             &state.pg,
             &pid,
@@ -1912,7 +1929,7 @@ mod tests {
         for (d, num, den) in days {
             state
                 .pg
-                .upsert_project_metric_repo(&MetricRow {
+                .upsert_workspace_metric_repo(&MetricRow {
                     metric_id: &mid,
                     repository_id: &rid,
                     scope: "user",
@@ -1938,7 +1955,7 @@ mod tests {
         let (st, body) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{pid}/metrics/{key}?grain=weekly"),
+            &format!("/api/workspaces/{pid}/metrics/{key}?grain=weekly"),
             None,
         )
         .await;
@@ -1969,7 +1986,7 @@ mod tests {
         let (st, _) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{pid}/metrics/{key}?grain=yearly"),
+            &format!("/api/workspaces/{pid}/metrics/{key}?grain=yearly"),
             None,
         )
         .await;
@@ -1980,7 +1997,7 @@ mod tests {
         let (st, body) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{pid}/metrics/{key}_nope?grain=weekly"),
+            &format!("/api/workspaces/{pid}/metrics/{key}_nope?grain=weekly"),
             None,
         )
         .await;
@@ -2000,23 +2017,23 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(state.pg.pool())
             .await
             .unwrap();
     }
 
-    /// `GET /api/projects/{id}/metrics/{key}/sessions?day=YYYY-MM-DD`: the
+    /// `GET /api/workspaces/{id}/metrics/{key}/sessions?day=YYYY-MM-DD`: the
     /// datapoint→sessions drill-down returns that day's measurable sessions
     /// (folder-join scope) with the structural one-liner fields; an absent or
     /// malformed `day` is a 400; a day with none is honest-empty (200 []).
     #[tokio::test]
-    async fn get_project_metric_day_sessions_endpoint() {
+    async fn get_workspace_metric_day_sessions_endpoint() {
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) =
-            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
         let key = format!("_test_pmds_{}", uniq.simple()); // URL-safe (no colons) — it goes in the path
 
         let utc = |ts: &str| {
@@ -2032,7 +2049,7 @@ mod tests {
         ] {
             sqlx_core::query::query(
                 "INSERT INTO activity.sessions
-                    (folder_id, project_id, client_session_id, task, outcome, ftr, turns, corrections, started_at)
+                    (folder_id, workspace_id, client_session_id, task, outcome, ftr, turns, corrections, started_at)
                  VALUES ($1, $2, $3, $4, $5::sensei.session_outcome, $6, $7, $8, $9)")
                 .bind(fid).bind(pid).bind(cs).bind(task).bind(outcome).bind(ftr)
                 .bind(turns).bind(corr).bind(utc(at))
@@ -2044,7 +2061,7 @@ mod tests {
         let (st, body) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2020-06-15"),
+            &format!("/api/workspaces/{pid}/metrics/{key}/sessions?day=2020-06-15"),
             None,
         )
         .await;
@@ -2070,14 +2087,14 @@ mod tests {
 
         // Absent day → 400 (no datapoint to scope to).
         let (st, _) =
-            req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics/{key}/sessions"), None)
+            req(app.clone(), "GET", &format!("/api/workspaces/{pid}/metrics/{key}/sessions"), None)
                 .await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "absent day → 400");
         // Malformed day → 400 (never a silent default).
         let (st, _) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=nope"),
+            &format!("/api/workspaces/{pid}/metrics/{key}/sessions?day=nope"),
             None,
         )
         .await;
@@ -2086,7 +2103,7 @@ mod tests {
         let (st, body) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2019-01-01"),
+            &format!("/api/workspaces/{pid}/metrics/{key}/sessions?day=2019-01-01"),
             None,
         )
         .await;
@@ -2098,7 +2115,7 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(state.pg.pool())
             .await
@@ -2112,14 +2129,14 @@ mod tests {
     /// fabricated. Seeds one `narration_cache` row for one session's exact
     /// `facts_hash` and leaves a second session uncached to pin both paths.
     #[tokio::test]
-    async fn get_project_metric_day_sessions_attaches_observation() {
+    async fn get_workspace_metric_day_sessions_attaches_observation() {
         use crate::analysis::narration_cache::{InsightKind, facts_hash};
         use crate::analysis::session_metric_note::SessionMetricFacts;
 
         let (app, state) = test_app().await;
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) =
-            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
         // URL-safe key (goes in the path). seed_metric sets name = key and
         // how_to_read = 'test how', so label = key and meaning = "test how".
         let key = format!("_test_smo_{}", uniq.simple());
@@ -2154,7 +2171,7 @@ mod tests {
         ] {
             sqlx_core::query::query(
                 "INSERT INTO activity.sessions
-                    (folder_id, project_id, client_session_id, task, summary, outcome, ftr, turns, corrections, started_at)
+                    (folder_id, workspace_id, client_session_id, task, summary, outcome, ftr, turns, corrections, started_at)
                  VALUES ($1, $2, $3, $4, $5, $6::sensei.session_outcome, $7, $8, $9, $10)")
                 .bind(fid).bind(pid).bind(cs).bind(task).bind(summary).bind(outcome).bind(ftr)
                 .bind(turns).bind(corr).bind(utc(at))
@@ -2185,7 +2202,7 @@ mod tests {
         let (st, body) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{pid}/metrics/{key}/sessions?day=2020-06-15"),
+            &format!("/api/workspaces/{pid}/metrics/{key}/sessions?day=2020-06-15"),
             None,
         )
         .await;
@@ -2234,7 +2251,7 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
             .bind(pid)
             .execute(state.pg.pool())
             .await
@@ -2465,14 +2482,14 @@ mod tests {
         let (app, state) = test_app().await;
         let pid = state
             .pg
-            .create_project(&format!("_test:struct:{}", uuid::Uuid::new_v4()), None, None)
+            .create_workspace(&format!("_test:struct:{}", uuid::Uuid::new_v4()), None, None)
             .await
             .unwrap();
 
         let (bad_level, _) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{pid}/diagrams/structure?level=symbol"),
+            &format!("/api/workspaces/{pid}/diagrams/structure?level=symbol"),
             None,
         )
         .await;
@@ -2481,34 +2498,38 @@ mod tests {
         let (bad_kind, _) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{pid}/diagrams/structure?kinds=calls,teleports"),
+            &format!("/api/workspaces/{pid}/diagrams/structure?kinds=calls,teleports"),
             None,
         )
         .await;
         assert_eq!(bad_kind, StatusCode::BAD_REQUEST, "an unknown edge kind is refused");
 
-        // And a project that does not exist is a 404, not a 500 and not an
+        // And a workspace that does not exist is a 404, not a 500 and not an
         // empty graph.
         let (missing, _) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{}/diagrams/structure", uuid::Uuid::new_v4()),
+            &format!("/api/workspaces/{}/diagrams/structure", uuid::Uuid::new_v4()),
             None,
         )
         .await;
-        assert_eq!(missing, StatusCode::NOT_FOUND, "an unknown project is 404");
+        assert_eq!(missing, StatusCode::NOT_FOUND, "an unknown workspace is 404");
 
-        // A real but EMPTY project answers 200 with empty arrays and a coverage
+        // A real but EMPTY workspace answers 200 with empty arrays and a coverage
         // block — honest-empty, because it genuinely is empty.
-        let (ok, body) =
-            req(app, "GET", &format!("/api/projects/{pid}/diagrams/structure?level=module"), None)
-                .await;
+        let (ok, body) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/structure?level=module"),
+            None,
+        )
+        .await;
         assert_eq!(ok, StatusCode::OK);
         assert_eq!(body["nodes"].as_array().map(|a| a.len()), Some(0));
         assert_eq!(body["level"], "module", "the level is echoed, so a client can tell");
         assert!(body["coverage"]["unplaced"].is_number(), "coverage is always present");
 
-        state.pg.delete_project(&pid).await.ok();
+        state.pg.delete_workspace(&pid).await.ok();
     }
 
     /// #222 — the layering endpoint ranks a real seeded graph, end to end.
@@ -2534,13 +2555,18 @@ mod tests {
         let (app, state) = test_app().await;
         let pg = &state.pg;
         let tag = uuid::Uuid::new_v4();
-        let pid = pg.create_project(&format!("_test:layering:{tag}"), None, None).await.unwrap();
+        let pid = pg.create_workspace(&format!("_test:layering:{tag}"), None, None).await.unwrap();
         let root = format!("/_test/layering/{tag}");
         let root_id = pg.add_watch_root(&root, "lay-wt", &serde_json::json!([])).await.unwrap();
         let fid = pg.upsert_repo(&root_id, "lay", &root).await.unwrap();
-        crate::tasks::test_support::place_folder_in_project(pg, &fid, &pid, &format!("lay-{tag}"))
-            .await
-            .unwrap();
+        crate::tasks::test_support::place_folder_in_workspace(
+            pg,
+            &fid,
+            &pid,
+            &format!("lay-{tag}"),
+        )
+        .await
+        .unwrap();
 
         // `rust·<package>·<module>·<symbol>` — segment 2 is the package and
         // segment 3 the module, which is the decomposition every structure view
@@ -2580,7 +2606,7 @@ mod tests {
         }
 
         let (status, body) =
-            req(app, "GET", &format!("/api/projects/{pid}/diagrams/layering?level=module"), None)
+            req(app, "GET", &format!("/api/workspaces/{pid}/diagrams/layering?level=module"), None)
                 .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["layerSource"], "derived", "the screen must know which layering this is");
@@ -2636,13 +2662,13 @@ mod tests {
         let (bad, _) = req(
             app_clone(&state),
             "GET",
-            &format!("/api/projects/{pid}/diagrams/layering?level=package"),
+            &format!("/api/workspaces/{pid}/diagrams/layering?level=package"),
             None,
         )
         .await;
         assert_eq!(bad, StatusCode::BAD_REQUEST, "package is not a layering grain");
 
-        pg.delete_project(&pid).await.ok();
+        pg.delete_workspace(&pid).await.ok();
     }
 
     /// A second router over the same state, for a test that needs two requests.
@@ -2696,11 +2722,11 @@ mod tests {
         let (app, state) = test_app().await;
         let pg = &state.pg;
         let tag = uuid::Uuid::new_v4();
-        let pid = pg.create_project(&format!("_test:zones:{tag}"), None, None).await.unwrap();
+        let pid = pg.create_workspace(&format!("_test:zones:{tag}"), None, None).await.unwrap();
         let root = format!("/_test/zones/{tag}");
         let root_id = pg.add_watch_root(&root, "zone-wt", &serde_json::json!([])).await.unwrap();
         let fid = pg.upsert_repo(&root_id, "zone", &root).await.unwrap();
-        crate::tasks::test_support::place_folder_in_project(pg, &fid, &pid, &format!("zn-{tag}"))
+        crate::tasks::test_support::place_folder_in_workspace(pg, &fid, &pid, &format!("zn-{tag}"))
             .await
             .unwrap();
 
@@ -2767,7 +2793,7 @@ mod tests {
         pg.insert_edge(&fid, &fn1, Some(&fn2), None, None, "references").await.unwrap();
 
         let (status, body) =
-            req(app, "GET", &format!("/api/projects/{pid}/diagrams/zones"), None).await;
+            req(app, "GET", &format!("/api/workspaces/{pid}/diagrams/zones"), None).await;
         assert_eq!(status, StatusCode::OK);
 
         let point = |m: &str| {
@@ -2834,7 +2860,7 @@ mod tests {
 
         // The node universe is the one every other diagram draws: a module is
         // one `structure_graph` names. Without that, #231's symbol-shaped names
-        // become points — on project `sensei` that is 391 "modules" against a
+        // become points — on workspace `sensei` that is 391 "modules" against a
         // real 151, with the worst-distance list led by a C struct.
         assert!(
             !body["points"].as_array().unwrap().iter().any(|p| p["component"] == "p/Widget"),
@@ -2849,7 +2875,7 @@ mod tests {
         // The mean is over the PLACEABLE points only: (1/6 + 3/4 + 1/2) / 3.
         close(&body["meanDistance"], (1.0 / 6.0 + 0.75 + 0.5) / 3.0, "mean distance");
 
-        pg.delete_project(&pid).await.ok();
+        pg.delete_workspace(&pid).await.ok();
     }
 
     /// **THE DIAGRAM CACHE IS READ, AND IT IS KEYED ON THE GRAPH VERSION (#233).**
@@ -2865,7 +2891,7 @@ mod tests {
     /// one merely being WRITTEN. Timing would be flaky and `cache.len()` would
     /// pass on a cache nothing ever consults.
     ///
-    /// It is worth the 1.5-74 s this guards: measured 2026-10-06 on project
+    /// It is worth the 1.5-74 s this guards: measured 2026-10-06 on workspace
     /// `sensei` at module grain, one layering request is 37 s, and Layers and
     /// Cycles read the SAME payload — so visiting both paid it twice before.
     ///
@@ -2877,14 +2903,14 @@ mod tests {
         let (app, state) = test_app().await;
         let pg = &state.pg;
         let tag = uuid::Uuid::new_v4();
-        let pid = pg.create_project(&format!("_test:cache:{tag}"), None, None).await.unwrap();
+        let pid = pg.create_workspace(&format!("_test:cache:{tag}"), None, None).await.unwrap();
         let root = format!("/_test/cache/{tag}");
         let root_id = pg.add_watch_root(&root, "cache-wt", &serde_json::json!([])).await.unwrap();
         let fid = pg.upsert_repo(&root_id, "cache", &root).await.unwrap();
-        crate::tasks::test_support::place_folder_in_project(pg, &fid, &pid, &format!("ca-{tag}"))
+        crate::tasks::test_support::place_folder_in_workspace(pg, &fid, &pid, &format!("ca-{tag}"))
             .await
             .unwrap();
-        // A `files` row is what gives the project a version at all — with none,
+        // A `files` row is what gives the workspace a version at all — with none,
         // every request would share the single `None` version and the test
         // could not tell a hit from a miss.
         //
@@ -2917,7 +2943,7 @@ mod tests {
         let c = node("rust·p·gamma::util·three", "three", "c.rs").await;
         pg.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
 
-        let url = format!("/api/projects/{pid}/diagrams/layering?level=module&kinds=calls");
+        let url = format!("/api/workspaces/{pid}/diagrams/layering?level=module&kinds=calls");
         let (status, first) = req(app.clone(), "GET", &url, None).await;
         assert_eq!(status, StatusCode::OK);
         let edges_at_first = first["edges"].as_array().expect("edges").len();
@@ -2949,7 +2975,7 @@ mod tests {
             "a moved version is a miss, and the recomputed answer carries the new dependency"
         );
 
-        pg.delete_project(&pid).await.ok();
+        pg.delete_workspace(&pid).await.ok();
     }
 
     /// **THE WORLD ENDPOINT NESTS A SEEDED CORPUS, AND REFUSES A GROUPING IT
@@ -2957,24 +2983,24 @@ mod tests {
     ///
     /// `analysis::world` owns the nesting invariants and tests them in
     /// isolation. What only the endpoint can show is the seam: that the two
-    /// reads line up into cells the nester accepts, that the project in the path
+    /// reads line up into cells the nester accepts, that the workspace in the path
     /// NAMES the view without scoping it, and that an unknown grouping is a 400
     /// rather than a silent fall back to the default — which is how a control
     /// comes to look like it works while answering a different question.
     ///
     /// Mutation that must break this test: make `GroupFirst::from_label`
-    /// return `Some(Project)` for an unknown label, or filter `world_cells` by
-    /// project.
+    /// return `Some(Workspace)` for an unknown label, or filter `world_cells` by
+    /// workspace.
     #[tokio::test]
-    async fn the_world_endpoint_nests_every_project_and_refuses_an_unknown_grouping() {
+    async fn the_world_endpoint_nests_every_workspace_and_refuses_an_unknown_grouping() {
         let (app, state) = test_app().await;
         let pg = &state.pg;
         let tag = uuid::Uuid::new_v4();
-        let mine = pg.create_project(&format!("_test:world:{tag}"), None, None).await.unwrap();
+        let mine = pg.create_workspace(&format!("_test:world:{tag}"), None, None).await.unwrap();
         let root = format!("/_test/world/{tag}");
         let root_id = pg.add_watch_root(&root, "world-wt", &serde_json::json!([])).await.unwrap();
         let fid = pg.upsert_repo(&root_id, &format!("w-{tag}"), &root).await.unwrap();
-        crate::tasks::test_support::place_folder_in_project(pg, &fid, &mine, &format!("w-{tag}"))
+        crate::tasks::test_support::place_folder_in_workspace(pg, &fid, &mine, &format!("w-{tag}"))
             .await
             .unwrap();
         pg.upsert_file_row(&fid, "a.rs", 1, "seed", None).await.unwrap();
@@ -2990,14 +3016,14 @@ mod tests {
             .await
             .unwrap();
 
-        let url = format!("/api/projects/{mine}/diagrams/world?groupBy=project");
+        let url = format!("/api/workspaces/{mine}/diagrams/world?groupBy=workspace");
         let (status, body) = req(app.clone(), "GET", &url, None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["groupBy"], "project");
+        assert_eq!(body["groupBy"], "workspace");
 
-        // The path's project NAMES the view and does not scope it. The corpus
-        // this runs against holds other projects, and the picture is "all
-        // indexed code" — a payload holding only one project's circle would mean
+        // The path's workspace NAMES the view and does not scope it. The corpus
+        // this runs against holds other workspaces, and the picture is "all
+        // indexed code" — a payload holding only one workspace's circle would mean
         // the outermost ring had been filtered away.
         let name = format!("_test:world:{tag}");
         assert_eq!(body["viewing"], name, "the payload says which circle you are standing in");
@@ -3009,7 +3035,7 @@ mod tests {
             .filter(|u| u["path"].as_array().unwrap().len() == 1)
             .filter_map(|u| u["label"].as_str())
             .collect();
-        assert!(roots.contains(&name.as_str()), "the seeded project is a circle: {roots:?}");
+        assert!(roots.contains(&name.as_str()), "the seeded workspace is a circle: {roots:?}");
 
         // Every unit carries the three things the layout and the shade control
         // read. A missing `path` nests nothing; a missing `measures` leaves the
@@ -3022,11 +3048,11 @@ mod tests {
 
         // A grouping that does not exist is a refusal, not a default.
         let (status, _) =
-            req(app, "GET", &format!("/api/projects/{mine}/diagrams/world?groupBy=docs"), None)
+            req(app, "GET", &format!("/api/workspaces/{mine}/diagrams/world?groupBy=docs"), None)
                 .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "there is no docs grouping");
 
-        pg.delete_project(&mine).await.ok();
+        pg.delete_workspace(&mine).await.ok();
     }
 
     /// **THE NEIGHBOURHOOD ENDPOINT WALKS RINGS BY DEPTH, AND REFUSES WHAT IT
@@ -3046,11 +3072,11 @@ mod tests {
         let (app, state) = test_app().await;
         let pg = &state.pg;
         let tag = uuid::Uuid::new_v4();
-        let mine = pg.create_project(&format!("_test:hood:{tag}"), None, None).await.unwrap();
+        let mine = pg.create_workspace(&format!("_test:hood:{tag}"), None, None).await.unwrap();
         let root = format!("/_test/hood-route/{tag}");
         let root_id = pg.add_watch_root(&root, "hood-wt", &serde_json::json!([])).await.unwrap();
         let fid = pg.upsert_repo(&root_id, &format!("h-{tag}"), &root).await.unwrap();
-        crate::tasks::test_support::place_folder_in_project(pg, &fid, &mine, &format!("h-{tag}"))
+        crate::tasks::test_support::place_folder_in_workspace(pg, &fid, &mine, &format!("h-{tag}"))
             .await
             .unwrap();
         let node = |fqn: String, name: &'static str| {
@@ -3080,7 +3106,7 @@ mod tests {
         // Something the library "calls" — only reachable by walking THROUGH it.
         pg.insert_edge(&fid, &library, Some(&beyond), None, None, "calls").await.unwrap();
 
-        let url = |q: &str| format!("/api/projects/{mine}/diagrams/neighbourhood?{q}");
+        let url = |q: &str| format!("/api/workspaces/{mine}/diagrams/neighbourhood?{q}");
         let ids = |body: &serde_json::Value| -> Vec<String> {
             body["nodes"]
                 .as_array()
@@ -3127,7 +3153,7 @@ mod tests {
             (
                 format!("focus={}", uuid::Uuid::new_v4()),
                 StatusCode::NOT_FOUND,
-                "not this project's",
+                "not this workspace's",
             ),
         ] {
             let (status, _) = req(app.clone(), "GET", &url(&q), None).await;
@@ -3139,7 +3165,7 @@ mod tests {
             .execute(pg.pool())
             .await
             .ok();
-        pg.delete_project(&mine).await.ok();
+        pg.delete_workspace(&mine).await.ok();
     }
 
     /// **READING TRANSCRIPTS IS ITS OWN CONSENT, PER ASSISTANT, OFF UNTIL SAID
@@ -3202,7 +3228,7 @@ mod tests {
         assert!(json["orphan_files"].is_number());
         assert!(json["ghost_folders"].is_number());
         assert!(json["nested_standalone"].is_number());
-        assert!(json["duplicate_name_projects"].is_number());
+        assert!(json["duplicate_name_workspaces"].is_number());
         assert!(json["samples"].is_object());
     }
 
@@ -3309,7 +3335,7 @@ mod tests {
         // Token built at runtime (split parts) so no secret-format literal is in the source.
         let token = format!("ghp_{}", "b".repeat(38));
         let body = format!(
-            r#"{{"scope":"project","type":"convention","title":"note","content":"the token is {token}"}}"#
+            r#"{{"scope":"workspace","type":"convention","title":"note","content":"the token is {token}"}}"#
         );
         let resp = app
             .oneshot(
@@ -3510,7 +3536,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_project_returns_ok() {
+    async fn delete_workspace_returns_ok() {
         let (app, state) = test_app().await;
         // Register a repo via PgStore
         let root_id = state
@@ -3543,7 +3569,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/projects")
+                    .uri("/api/workspaces")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"name":"Acme","repos":[]}"#))
                     .unwrap(),
@@ -3556,16 +3582,36 @@ mod tests {
         assert!(json["id"].is_string());
 
         let resp = app
-            .oneshot(Request::builder().uri("/api/projects").body(Body::empty()).unwrap())
+            .oneshot(Request::builder().uri("/api/workspaces").body(Body::empty()).unwrap())
             .await
             .unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let solutions: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
-        assert!(solutions.iter().any(|s| s["name"] == "Acme"), "Acme project should be in list");
+        assert!(solutions.iter().any(|s| s["name"] == "Acme"), "Acme workspace should be in list");
+    }
+
+    /// #307 R3b: sensei says workspace on its API too. The old `/api/projects`
+    /// routes are gone — no alias, no redirect (pre-v1) — so a client still on
+    /// them hears a 404 instead of a silently-kept second name.
+    #[tokio::test]
+    async fn the_workspace_routes_answer_and_the_project_routes_are_gone() {
+        let (app, _) = test_app().await;
+        let status = |uri: &'static str| {
+            let app = app.clone();
+            async move {
+                app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap()
+                    .status()
+            }
+        };
+        assert_eq!(status("/api/workspaces").await, StatusCode::OK);
+        assert_eq!(status("/api/projects").await, StatusCode::NOT_FOUND);
+        assert_eq!(status("/api/projects/x/overview").await, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn index_project_via_api() {
+    async fn index_repo_via_api() {
         let (app, _) = test_app().await;
 
         // Create a temp repo with a Python file
@@ -3610,22 +3656,22 @@ mod tests {
         assert!(json["queue"].is_object());
     }
 
-    /// #60 Part A — handler-level scoping: index a 2-folder project (root + child
+    /// #60 Part A — handler-level scoping: index a 2-folder workspace (root + child
     /// with a function in the child) and assert that search_functions and
-    /// project_summary scoped to the PROJECT NAME include the child-folder data.
+    /// workspace_summary scoped to the WORKSPACE NAME include the child-folder data.
     #[tokio::test]
     async fn scoped_search_includes_child_folders() {
         let (app, state) = test_app().await;
 
         // Use a unique suffix to avoid conflicts with parallel test runs on the shared DB.
         let uniq = uuid::Uuid::new_v4().simple().to_string();
-        let proj_name = format!("ScopeTestProject-{}", &uniq[..8]);
+        let proj_name = format!("ScopeTestWorkspace-{}", &uniq[..8]);
         let root_path = format!("/_test/scope_{}", &uniq[..8]);
         let root_name = format!("scope-root-{}", &uniq[..8]);
         let child_name = format!("scope-child-{}", &uniq[..8]);
         let fn_name = format!("scope_child_fn_{}", &uniq[..8]);
 
-        // Setup: root + child folders registered under a project.
+        // Setup: root + child folders registered under a workspace.
         let root_id =
             state.pg.add_watch_root(&root_path, "test", &serde_json::json!([])).await.unwrap();
         let root_fid = crate::tasks::test_support::seed_repo_folder(
@@ -3648,9 +3694,9 @@ mod tests {
             .await
             .unwrap();
 
-        let proj_id = state.pg.create_project(&proj_name, None, None).await.unwrap();
-        state.pg.set_folder_project(&root_fid, &proj_id, "backend", None).await.unwrap();
-        state.pg.set_folder_project(&child_fid, &proj_id, "backend", None).await.unwrap();
+        let proj_id = state.pg.create_workspace(&proj_name, None, None).await.unwrap();
+        state.pg.set_folder_workspace(&root_fid, &proj_id, "backend", None).await.unwrap();
+        state.pg.set_folder_workspace(&child_fid, &proj_id, "backend", None).await.unwrap();
 
         // Insert a function only in the child folder.
         state
@@ -3684,7 +3730,7 @@ mod tests {
         let results: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert!(
             results.iter().any(|r| r["name"] == fn_name),
-            "child-folder function must appear when searching by project name; got: {:?}",
+            "child-folder function must appear when searching by workspace name; got: {:?}",
             results
         );
 
@@ -3699,7 +3745,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK, "project_summary should succeed");
+        assert_eq!(resp.status(), StatusCode::OK, "workspace_summary should succeed");
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let fn_count = summary["functions"].as_i64().unwrap_or(0);
@@ -3798,7 +3844,7 @@ mod tests {
 
         // Create a temp dir with a "repo" (has .git)
         let root = tempfile::TempDir::new().unwrap();
-        let repo = root.path().join("my-project");
+        let repo = root.path().join("my-workspace");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         std::fs::write(
             repo.join("package.json"),
@@ -3834,7 +3880,7 @@ mod tests {
         state
             .pg
             .create_memory(&MemoryRow {
-                project_id: None,
+                workspace_id: None,
                 scope: "global",
                 scope_filter: None,
                 mem_type: "decision",
@@ -4098,24 +4144,24 @@ mod tests {
         // is present, and the endpoint's prior behavior (no slot) must stay
         // unchanged when the hint is absent.
         let (app, state) = test_app().await;
-        let pid = state.pg.ensure_test_project("route-slot-context").await.unwrap();
+        let pid = state.pg.ensure_test_workspace("route-slot-context").await.unwrap();
 
         // Both fixtures carry a run-unique tag and both queries below are scoped
-        // to it. `assemble_context` blends project + stack + global scopes and
+        // to it. `assemble_context` blends workspace + stack + global scopes and
         // keeps the top N by strength, so the shared test DB's accumulated global
         // memories eventually crowd freshly-seeded fixtures out of the window and
         // this fails only in a full run. Scoping does not weaken what is asserted
         // here — slot-led ORDERING is still compared within the returned bundle.
         // Both fixtures carry a run-unique tag and both queries below are scoped
-        // to it. `assemble_context` blends project + stack + global scopes and
+        // to it. `assemble_context` blends workspace + stack + global scopes and
         // keeps the top N by strength, so the shared test DB's accumulated global
         // memories eventually crowd freshly-seeded fixtures out of the window and
         // this fails only in a full run. Scoping does not weaken what is asserted
         // here — slot-led ORDERING is still compared within the returned bundle.
         let tag = format!("route-slot-{}", uuid::Uuid::new_v4());
         let fixture = |title: &str, slot: Option<&str>| crate::db::pg_store::InsertMemory {
-            project_id: Some(pid),
-            scope: "project".into(),
+            workspace_id: Some(pid),
+            scope: "workspace".into(),
             scope_filter: None,
             mtype: "decision".into(),
             title: title.into(),
@@ -4142,7 +4188,7 @@ mod tests {
         // With ?slot=design: the slot-anchored memory leads.
         let (status, blob) = get_json(
             &app,
-            &format!("/api/knowledge/context?project_id={pid}&slot=design&tags={tag}"),
+            &format!("/api/knowledge/context?workspace_id={pid}&slot=design&tags={tag}"),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -4161,7 +4207,7 @@ mod tests {
 
         // Without ?slot=: unchanged general blend (order not slot-led).
         let (status_plain, blob_plain) =
-            get_json(&app, &format!("/api/knowledge/context?project_id={pid}&tags={tag}")).await;
+            get_json(&app, &format!("/api/knowledge/context?workspace_id={pid}&tags={tag}")).await;
         assert_eq!(status_plain, StatusCode::OK);
         let plain_ids: Vec<String> = blob_plain["memories"]
             .as_array()
@@ -4184,15 +4230,15 @@ mod tests {
 
     // ── MCP-proxy ↔ daemon seam ──────────────────────────────────────────
     //
-    // The sensei MCP proxy (crates/mcp) resolves a caller's project to its
-    // *name* (see `resolve_project`) and drives these two knowledge endpoints
+    // The sensei MCP proxy (crates/mcp) resolves a caller's workspace to its
+    // *name* (see `resolve_workspace`) and drives these two knowledge endpoints
     // with it. This test crosses that seam by issuing the EXACT query shapes
-    // the (fixed) proxy sends — `?project=<name>` — and asserting a genuine,
+    // the (fixed) proxy sends — `?workspace=<name>` — and asserting a genuine,
     // correctly-resolved, non-empty result.
     //
     // It goes RED on the original bug: the proxy sent a name but the context
-    // handler required `project_id=<uuid>` and the rules handler required
-    // `folder=<abs_path>`, so `?project=<name>` → HTTP 400 and every sensei
+    // handler required `workspace_id=<uuid>` and the rules handler required
+    // `folder=<abs_path>`, so `?workspace=<name>` → HTTP 400 and every sensei
     // MCP knowledge lookup came back empty. Unit tests on each side stayed
     // green in isolation because nothing exercised the crossing.
     async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json::Value) {
@@ -4208,13 +4254,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mcp_proxy_knowledge_context_and_rules_resolve_by_project_name() {
+    async fn mcp_proxy_knowledge_context_and_rules_resolve_by_workspace_name() {
         let (app, state) = test_app().await;
 
-        // Seed: a project + a git repo folder linked to it (so name→abs_path
-        // resolves) + a project-scoped memory + a general-scoped rule.
-        let pid = state.pg.ensure_test_project("mcp-seam").await.unwrap();
-        let name = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
+        // Seed: a workspace + a git repo folder linked to it (so name→abs_path
+        // resolves) + a workspace-scoped memory + a general-scoped rule.
+        let pid = state.pg.ensure_test_workspace("mcp-seam").await.unwrap();
+        let name = state.pg.get_workspace(&pid).await.unwrap().unwrap()["name"]
             .as_str()
             .unwrap()
             .to_string(); // "_test:mcp-seam"
@@ -4226,25 +4272,25 @@ mod tests {
             .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, None)
             .await
             .unwrap();
-        crate::tasks::test_support::place_folder_in_project(&state.pg, &folder_id, &pid, "repo")
+        crate::tasks::test_support::place_folder_in_workspace(&state.pg, &folder_id, &pid, "repo")
             .await
             .unwrap();
 
         // Tagged, and both context queries below are scoped to that tag, for the
-        // same reason as `mcp_proxy_knowledge_and_project_tools_contract`:
-        // `assemble_context` blends project + stack + global scopes and keeps the
+        // same reason as `mcp_proxy_knowledge_and_workspace_tools_contract`:
+        // `assemble_context` blends workspace + stack + global scopes and keeps the
         // top N by strength, so the shared test DB's accumulated global memories
         // eventually crowd a freshly-seeded fixture out of the window. The
         // name↔uuid equivalence this test proves is unaffected — both queries are
-        // scoped identically, so a resolver that landed on the wrong project
+        // scoped identically, so a resolver that landed on the wrong workspace
         // still fails.
         let mem_tag = format!("seam-fixture-{}", uuid::Uuid::new_v4());
         let mem_title = format!("_test:mcp-seam-memory-{mem_tag}");
         state
             .pg
             .insert_memory(&crate::db::pg_store::InsertMemory {
-                project_id: Some(pid),
-                scope: "project".into(),
+                workspace_id: Some(pid),
+                scope: "workspace".into(),
                 scope_filter: None,
                 mtype: "convention".into(),
                 title: mem_title.clone(),
@@ -4267,7 +4313,7 @@ mod tests {
         state
             .pg
             .create_memory(&MemoryRow {
-                project_id: None,
+                workspace_id: None,
                 scope: "global",
                 scope_filter: None,
                 mem_type: "convention",
@@ -4281,13 +4327,14 @@ mod tests {
             .await
             .unwrap();
 
-        // ── get_layered_context: proxy sends ?project=<name> ──
+        // ── get_layered_context: proxy sends ?workspace=<name> ──
         let (st_name, ctx_by_name) =
-            get_json(&app, &format!("/api/knowledge/context?project={name}&tags={mem_tag}")).await;
+            get_json(&app, &format!("/api/knowledge/context?workspace={name}&tags={mem_tag}"))
+                .await;
         assert_eq!(
             st_name,
             StatusCode::OK,
-            "context by project NAME must resolve — this was HTTP 400 on the original bug"
+            "context by workspace NAME must resolve — this was HTTP 400 on the original bug"
         );
         let has_title = |ctx: &serde_json::Value| {
             ctx["memories"]
@@ -4298,34 +4345,34 @@ mod tests {
         };
         assert!(
             has_title(&ctx_by_name),
-            "context resolved by name must contain the project-scoped memory (proves name→correct project uuid)"
+            "context resolved by name must contain the workspace-scoped memory (proves name→correct workspace uuid)"
         );
 
-        // Old contract still works AND resolves to the SAME project's memories.
+        // Old contract still works AND resolves to the SAME workspace's memories.
         let (st_uuid, ctx_by_uuid) =
-            get_json(&app, &format!("/api/knowledge/context?project_id={pid}&tags={mem_tag}"))
+            get_json(&app, &format!("/api/knowledge/context?workspace_id={pid}&tags={mem_tag}"))
                 .await;
-        assert_eq!(st_uuid, StatusCode::OK, "explicit project_id=<uuid> must keep working");
+        assert_eq!(st_uuid, StatusCode::OK, "explicit workspace_id=<uuid> must keep working");
         assert!(
             has_title(&ctx_by_uuid),
-            "name and uuid must resolve to the same project → same project memory present"
+            "name and uuid must resolve to the same workspace → same workspace memory present"
         );
 
-        // ── get_rules: proxy sends ?project=<name> ──
+        // ── get_rules: proxy sends ?workspace=<name> ──
         let (st_rules, rules_by_name) =
-            get_json(&app, &format!("/api/knowledge/rules?project={name}")).await;
+            get_json(&app, &format!("/api/knowledge/rules?workspace={name}")).await;
         assert_eq!(
             st_rules,
             StatusCode::OK,
-            "rules by project NAME must resolve the folder — this was HTTP 400 on the original bug"
+            "rules by workspace NAME must resolve the folder — this was HTTP 400 on the original bug"
         );
         assert_eq!(
             rules_by_name["folder"], abs_path,
-            "rules-by-name must resolve to the project's repo abs_path"
+            "rules-by-name must resolve to the workspace's repo abs_path"
         );
         assert!(
             rules_by_name["total"].as_i64().unwrap_or(0) >= 1,
-            "the general-scoped rule must resolve for the project"
+            "the general-scoped rule must resolve for the workspace"
         );
 
         // Old contract still works: ?folder=<abs_path>.
@@ -4338,13 +4385,13 @@ mod tests {
     // ── MCP↔daemon CONTRACT (anti-drift, table-driven) ───────────────────
     //
     // Generalizes the single seam test above into a table over the knowledge /
-    // project MCP tools. For EACH tool we:
+    // workspace MCP tools. For EACH tool we:
     //   1. shape the request with the REAL proxy code — `sensei_mcp::
-    //      daemon_request_for(tool, args, cwd, Some(<seeded project name>))` —
+    //      daemon_request_for(tool, args, cwd, Some(<seeded workspace name>))` —
     //      exactly what the sensei MCP binary sends;
     //   2. issue that shaped request against the in-process daemon router;
-    //   3. assert HTTP 200 (never 400/404) AND that the SEEDED project's data
-    //      genuinely comes back (name → the right project uuid / folders).
+    //   3. assert HTTP 200 (never 400/404) AND that the SEEDED workspace's data
+    //      genuinely comes back (name → the right workspace uuid / folders).
     //
     // This fails the suite on ANY future drift: a renamed daemon path, a changed
     // query key, a dropped tool, or a proxy that stops matching the daemon. The
@@ -4404,7 +4451,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mcp_proxy_knowledge_and_project_tools_contract() {
+    async fn mcp_proxy_knowledge_and_workspace_tools_contract() {
         use sensei_mcp::daemon_request_for;
         let (app, state) = test_app().await;
 
@@ -4412,12 +4459,12 @@ mod tests {
         let uniq = uuid::Uuid::new_v4().simple().to_string();
         let short = uniq[..8].to_string();
 
-        // Seed: a project + ONE git-repo folder whose NAME equals the project
-        // name (so both the project-scoped resolvers AND the folder-name
-        // resolvers — get_file_tags — land on it) + a project memory + a global
+        // Seed: a workspace + ONE git-repo folder whose NAME equals the workspace
+        // name (so both the workspace-scoped resolvers AND the folder-name
+        // resolvers — get_file_tags — land on it) + a workspace memory + a global
         // rule + code nodes + a tagged file + a discoverable command.
-        let pid = state.pg.ensure_test_project(&format!("contract-{short}")).await.unwrap();
-        let name = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
+        let pid = state.pg.ensure_test_workspace(&format!("contract-{short}")).await.unwrap();
+        let name = state.pg.get_workspace(&pid).await.unwrap().unwrap()["name"]
             .as_str()
             .unwrap()
             .to_string(); // "_test:contract-XXXX"
@@ -4427,35 +4474,35 @@ mod tests {
             .add_watch_root(&abs_path, &format!("contract-{short}"), &serde_json::json!([]))
             .await
             .unwrap();
-        // Folder name == project name: get_file_tags looks up folders.name.
+        // Folder name == workspace name: get_file_tags looks up folders.name.
         let folder_id = state
             .pg
             .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, None)
             .await
             .unwrap();
-        crate::tasks::test_support::place_folder_in_project(&state.pg, &folder_id, &pid, &name)
+        crate::tasks::test_support::place_folder_in_workspace(&state.pg, &folder_id, &pid, &name)
             .await
             .unwrap();
 
         let mem_title = format!("_test:contract-mem-{short}");
         // Tagged, and every context query below is scoped to that tag.
         //
-        // `assemble_context` matches `project_id = $2 OR scope='stack' OR
+        // `assemble_context` matches `workspace_id = $2 OR scope='stack' OR
         // scope='global'` and then takes the top N by strength. The shared test
         // DB accumulates hundreds of global memories from other suites, so a
-        // freshly-seeded project memory at default strength eventually falls
+        // freshly-seeded workspace memory at default strength eventually falls
         // outside the window and this test fails — but only in a full run, and
         // only once the DB has grown enough. That is the same crowding-out
         // documented in `knowledge_tests::assemble_context_blends_three_scopes`,
         // and the same fix: the tags filter is part of the real contract, so
-        // the project↔uuid equivalence this test exists to prove is still
+        // the workspace↔uuid equivalence this test exists to prove is still
         // exercised.
         let mem_tag = format!("contract-fixture-{short}");
         state
             .pg
             .insert_memory(&crate::db::pg_store::InsertMemory {
-                project_id: Some(pid),
-                scope: "project".into(),
+                workspace_id: Some(pid),
+                scope: "workspace".into(),
                 scope_filter: None,
                 mtype: "convention".into(),
                 title: mem_title.clone(),
@@ -4477,7 +4524,7 @@ mod tests {
         state
             .pg
             .create_memory(&MemoryRow {
-                project_id: None,
+                workspace_id: None,
                 scope: "global",
                 scope_filter: None,
                 mem_type: "convention",
@@ -4549,34 +4596,34 @@ mod tests {
             .await
             .unwrap();
 
-        // cwd is only consulted by the rules FALLBACK (no project) + governance;
-        // here a project always resolves, so its value is inert.
+        // cwd is only consulted by the rules FALLBACK (no workspace) + governance;
+        // here a workspace always resolves, so its value is inert.
         let cwd = "/tmp/contract-cwd";
 
         // ── Direct Chunk-A guards: the request SHAPE the proxy produces ──────
-        // These go RED on the exact original bug (name sent as project_id /
+        // These go RED on the exact original bug (name sent as workspace_id /
         // cwd sent as folder) regardless of daemon tolerance.
         let ctx_req =
             daemon_request_for("get_layered_context", &serde_json::json!({}), cwd, Some(&name))
                 .unwrap();
         assert!(
-            ctx_req.query.iter().any(|(k, v)| k == "project" && v == &name),
-            "context proxy must send ?project=<name>"
+            ctx_req.query.iter().any(|(k, v)| k == "workspace" && v == &name),
+            "context proxy must send ?workspace=<name>"
         );
         assert!(
-            !ctx_req.query.iter().any(|(k, _)| k == "project_id"),
-            "context proxy must NOT send the name as project_id (the Chunk-A bug shape)"
+            !ctx_req.query.iter().any(|(k, _)| k == "workspace_id"),
+            "context proxy must NOT send the name as workspace_id (the Chunk-A bug shape)"
         );
         let rules_req =
             daemon_request_for("get_rules", &serde_json::json!({}), cwd, Some(&name)).unwrap();
         assert!(
-            rules_req.query.iter().any(|(k, v)| k == "project" && v == &name),
-            "rules proxy must send ?project=<name>, not folder=<cwd> (the Chunk-A bug shape)"
+            rules_req.query.iter().any(|(k, v)| k == "workspace" && v == &name),
+            "rules proxy must send ?workspace=<name>, not folder=<cwd> (the Chunk-A bug shape)"
         );
 
         // ── The contract table ──────────────────────────────────────────────
         // Each entry: (tool, caller args, discriminating check on the daemon
-        // body proving the SEEDED project resolved). The check returns Err with
+        // body proving the SEEDED workspace resolved). The check returns Err with
         // a reason so a failure names the offending tool.
         type Check = Box<dyn Fn(&serde_json::Value) -> Result<(), String>>;
         let arr_has = |v: &serde_json::Value, key: &str, field: &str, want: &str| -> bool {
@@ -4595,7 +4642,7 @@ mod tests {
                         if arr_has(b, "memories", "title", &t) {
                             Ok(())
                         } else {
-                            Err(format!("seeded project memory '{t}' absent from context"))
+                            Err(format!("seeded workspace memory '{t}' absent from context"))
                         }
                     }
                 }),
@@ -4634,26 +4681,46 @@ mod tests {
                 }),
             ),
             (
-                "get_project_summary",
+                "list_workspaces",
                 serde_json::json!({}),
                 Box::new({
                     let n = name.clone();
                     move |b| {
-                        if b["project"]["name"].as_str() == Some(&n)
+                        // A workspace row (it counts its repositories), not a
+                        // folder row that happens to share the name.
+                        let row = b["workspaces"]
+                            .as_array()
+                            .and_then(|ws| ws.iter().find(|w| w["name"].as_str() == Some(&n)));
+                        match row {
+                            Some(w) if w["repos_count"].as_i64().unwrap_or(0) >= 1 => Ok(()),
+                            other => Err(format!(
+                                "list_workspaces must list the seeded workspace with its repos; got {other:?}"
+                            )),
+                        }
+                    }
+                }),
+            ),
+            (
+                "get_workspace_summary",
+                serde_json::json!({}),
+                Box::new({
+                    let n = name.clone();
+                    move |b| {
+                        if b["workspace"]["name"].as_str() == Some(&n)
                             && b["functions"].as_i64().unwrap_or(0) >= 1
                         {
                             Ok(())
                         } else {
                             Err(format!(
-                                "summary project={:?} functions={:?}",
-                                b["project"]["name"], b["functions"]
+                                "summary workspace={:?} functions={:?}",
+                                b["workspace"]["name"], b["functions"]
                             ))
                         }
                     }
                 }),
             ),
             (
-                "get_project_conventions",
+                "get_workspace_conventions",
                 serde_json::json!({}),
                 Box::new(move |b| {
                     if arr_has(b, "naming", "kind", "function") {
@@ -4682,17 +4749,17 @@ mod tests {
                 serde_json::json!({}),
                 Box::new(move |b| {
                     // No code embeddings are seeded in-process, so the cosine
-                    // self-join yields 0 rows — but the seam MUST resolve PROJECT
+                    // self-join yields 0 rows — but the seam MUST resolve WORKSPACE
                     // scope (name → folders), which is what drift would break.
                     // NOTE (gap): actual duplicate detection needs embeddings and is
                     // exercised by the daemon's own embedding tests, not here.
-                    if b["scope"].as_str() == Some("project")
+                    if b["scope"].as_str() == Some("workspace")
                         && b["folder_count"].as_i64().unwrap_or(0) >= 1
                     {
                         Ok(())
                     } else {
                         Err(format!(
-                            "duplicates scope={:?} folder_count={:?} (want project scope over >=1 folder)",
+                            "duplicates scope={:?} folder_count={:?} (want workspace scope over >=1 folder)",
                             b["scope"], b["folder_count"]
                         ))
                     }
@@ -4716,7 +4783,7 @@ mod tests {
 
         for (tool, args, check) in &cases {
             let req = daemon_request_for(tool, args, cwd, Some(&name))
-                .unwrap_or_else(|| panic!("daemon_request_for returned None for '{tool}' (project resolved) — the proxy stopped shaping a daemon request"));
+                .unwrap_or_else(|| panic!("daemon_request_for returned None for '{tool}' (workspace resolved) — the proxy stopped shaping a daemon request"));
             let (status, body) = send_shaped(&app, &req).await;
             assert_eq!(
                 status,
@@ -4739,22 +4806,22 @@ mod tests {
                     body["error"]
                 );
             }
-            check(&body).unwrap_or_else(|e| panic!("{tool}: request crossed the seam but did NOT genuinely resolve the seeded project: {e}"));
+            check(&body).unwrap_or_else(|e| panic!("{tool}: request crossed the seam but did NOT genuinely resolve the seeded workspace: {e}"));
         }
 
-        // ── Chunk-A bug class, at the DATA level: project=name ≡ project_id=uuid ──
+        // ── Chunk-A bug class, at the DATA level: workspace=name ≡ workspace_id=uuid ──
         // Resolve context by the explicit UUID and assert it lands on the SAME
-        // project → the same seeded memory. Proves name and uuid are interchangeable.
+        // workspace → the same seeded memory. Proves name and uuid are interchangeable.
         let by_uuid = daemon_request_for(
             "get_layered_context",
-            &serde_json::json!({ "project_id": pid.to_string(), "tags": mem_tag.clone() }),
+            &serde_json::json!({ "workspace_id": pid.to_string(), "tags": mem_tag.clone() }),
             cwd,
             Some(&name),
         )
         .unwrap();
         assert!(
-            by_uuid.query.iter().any(|(k, v)| k == "project_id" && v == &pid.to_string()),
-            "explicit uuid must ride on ?project_id="
+            by_uuid.query.iter().any(|(k, v)| k == "workspace_id" && v == &pid.to_string()),
+            "explicit uuid must ride on ?workspace_id="
         );
         let (st_uuid, body_uuid) = send_shaped(&app, &by_uuid).await;
         assert_eq!(st_uuid, StatusCode::OK, "context by explicit uuid must keep working");
@@ -4764,19 +4831,19 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|m| m["title"].as_str() == Some(mem_title.as_str())),
-            "project=name and project_id=uuid must resolve to the SAME project → same seeded memory"
+            "workspace=name and workspace_id=uuid must resolve to the SAME workspace → same seeded memory"
         );
     }
 
-    // ── find_projects: folder-scoped project discovery crosses the seam ──────
+    // ── find_workspaces: folder-scoped workspace discovery crosses the seam ──────
     //
-    // The MCP `find_projects` tool shapes `GET /api/projects?under=<path>`. This
+    // The MCP `find_workspaces` tool shapes `GET /api/workspaces?under=<path>`. This
     // proves the shape reaches the daemon (never 404/400) AND that the daemon's
-    // path-boundary filter genuinely scopes: a project with a folder under the
-    // path is present; the same project is absent for a sibling path that only
+    // path-boundary filter genuinely scopes: a workspace with a folder under the
+    // path is present; the same workspace is absent for a sibling path that only
     // shares the textual prefix. Goes RED on any drift in the route/query key.
     #[tokio::test]
-    async fn mcp_proxy_find_projects_scopes_by_under() {
+    async fn mcp_proxy_find_workspaces_scopes_by_under() {
         use sensei_mcp::daemon_request_for;
         let (app, state) = test_app().await;
 
@@ -4784,9 +4851,9 @@ mod tests {
         let base = format!("/_test/fp-{short}");
         let under = format!("{base}/repo");
 
-        // Seed: a project with ONE folder under `base`.
-        let pid = state.pg.ensure_test_project(&format!("fp-{short}")).await.unwrap();
-        let name = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
+        // Seed: a workspace with ONE folder under `base`.
+        let pid = state.pg.ensure_test_workspace(&format!("fp-{short}")).await.unwrap();
+        let name = state.pg.get_workspace(&pid).await.unwrap().unwrap()["name"]
             .as_str()
             .unwrap()
             .to_string();
@@ -4797,17 +4864,17 @@ mod tests {
             .unwrap();
         let fid =
             state.pg.upsert_folder(&root, "git", &name, "repo", &under, None, None).await.unwrap();
-        crate::tasks::test_support::place_folder_in_project(&state.pg, &fid, &pid, &name)
+        crate::tasks::test_support::place_folder_in_workspace(&state.pg, &fid, &pid, &name)
             .await
             .unwrap();
 
         // Shape guard: no `under` arg → default to the call cwd.
         let dflt =
-            daemon_request_for("find_projects", &serde_json::json!({}), &base, None).unwrap();
-        assert_eq!(dflt.path, "/api/projects");
+            daemon_request_for("find_workspaces", &serde_json::json!({}), &base, None).unwrap();
+        assert_eq!(dflt.path, "/api/workspaces");
         assert!(
             dflt.query.iter().any(|(k, v)| k == "under" && v == &base),
-            "find_projects with no `under` arg must default to the call cwd"
+            "find_workspaces with no `under` arg must default to the call cwd"
         );
 
         let names = |b: &serde_json::Value| -> Vec<String> {
@@ -4816,9 +4883,9 @@ mod tests {
                 .unwrap_or_default()
         };
 
-        // Under `base` → the seeded project appears.
+        // Under `base` → the seeded workspace appears.
         let req = daemon_request_for(
-            "find_projects",
+            "find_workspaces",
             &serde_json::json!({ "under": base.clone() }),
             "/irrelevant/cwd",
             None,
@@ -4828,16 +4895,16 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::OK,
-            "find_projects must reach GET /api/projects?under=<path>; body={body}"
+            "find_workspaces must reach GET /api/workspaces?under=<path>; body={body}"
         );
         assert!(
             names(&body).contains(&name),
-            "a project with a folder under `{base}` must be in the scoped list"
+            "a workspace with a folder under `{base}` must be in the scoped list"
         );
 
-        // Under a sibling that only shares the textual prefix → project is gone.
+        // Under a sibling that only shares the textual prefix → workspace is gone.
         let sib = daemon_request_for(
-            "find_projects",
+            "find_workspaces",
             &serde_json::json!({ "under": format!("{base}-other") }),
             "/x",
             None,
@@ -4847,16 +4914,16 @@ mod tests {
         assert_eq!(st_sib, StatusCode::OK);
         assert!(
             !names(&body_sib).contains(&name),
-            "sibling `{base}-other` must NOT include the project (path boundary)"
+            "sibling `{base}-other` must NOT include the workspace (path boundary)"
         );
 
-        state.pg.delete_project(&pid).await.unwrap();
+        state.pg.delete_workspace(&pid).await.unwrap();
     }
 
-    // ── find_projects returns COMPACT folders (no `kind:'folder'` bloat) ─────
+    // ── find_workspaces returns COMPACT folders (no `kind:'folder'` bloat) ─────
     //
-    // The `?under=` call is the MCP find_projects discovery path. Its response
-    // carried each project's FULL nested folder tree (hundreds of
+    // The `?under=` call is the MCP find_workspaces discovery path. Its response
+    // carried each workspace's FULL nested folder tree (hundreds of
     // `kind:'folder'` descendants) → ~72K chars for sensei, over the MCP client
     // token cap. The scoped call must now return ONLY repo-root folders
     // (git/standalone) while keeping the scalar summary fields; the un-`under`
@@ -4917,15 +4984,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_projects_under_returns_compact_folders() {
+    async fn find_workspaces_under_returns_compact_folders() {
         use sensei_mcp::daemon_request_for;
         let (app, state) = test_app().await;
 
         let short = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
         let base = format!("/_test/fpc-{short}");
         let name = format!("fpc-{short}");
-        let pid = state.pg.ensure_test_project(&name).await.unwrap();
-        let pname = state.pg.get_project(&pid).await.unwrap().unwrap()["name"]
+        let pid = state.pg.ensure_test_workspace(&name).await.unwrap();
+        let pname = state.pg.get_workspace(&pid).await.unwrap().unwrap()["name"]
             .as_str()
             .unwrap()
             .to_string();
@@ -4934,13 +5001,13 @@ mod tests {
         // One git repo root + many nested `kind:'folder'` descendants.
         // The ANCHOR is placed first. The 40 descendants below need no
         // membership of their own — `upsert_folder` resolves their repository
-        // from the anchor, which is where the project now lives.
+        // from the anchor, which is where the workspace now lives.
         let anchor = state
             .pg
             .upsert_folder(&root, "git", &pname, "repo", &format!("{base}/repo"), None, None)
             .await
             .unwrap();
-        crate::tasks::test_support::place_folder_in_project(&state.pg, &anchor, &pid, &pname)
+        crate::tasks::test_support::place_folder_in_workspace(&state.pg, &anchor, &pid, &pname)
             .await
             .unwrap();
         for i in 0..40 {
@@ -4959,9 +5026,9 @@ mod tests {
                 .unwrap();
         }
 
-        // Scoped (find_projects) → compact folders.
+        // Scoped (find_workspaces) → compact folders.
         let req = daemon_request_for(
-            "find_projects",
+            "find_workspaces",
             &serde_json::json!({ "under": base.clone() }),
             "/x",
             None,
@@ -4974,7 +5041,7 @@ mod tests {
             .unwrap()
             .iter()
             .find(|p| p["name"].as_str() == Some(&pname))
-            .expect("seeded project must be in the scoped list");
+            .expect("seeded workspace must be in the scoped list");
 
         let folders = proj["folders"].as_array().unwrap();
         assert_eq!(
@@ -4990,16 +5057,16 @@ mod tests {
         for k in ["id", "name", "maturity", "repos_count", "libs_count", "sessions7d"] {
             assert!(!proj[k].is_null(), "compact row must still carry `{k}`");
         }
-        // Rough size guard: even a many-folder project's compact row stays small.
+        // Rough size guard: even a many-folder workspace's compact row stays small.
         let row_bytes = serde_json::to_vec(proj).unwrap().len();
-        assert!(row_bytes < 4096, "compact project row should be small; was {row_bytes} bytes");
+        assert!(row_bytes < 4096, "compact workspace row should be small; was {row_bytes} bytes");
 
-        // Un-`under` (the app path: GET /api/projects, no query) → full tree
+        // Un-`under` (the app path: GET /api/workspaces, no query) → full tree
         // unchanged. Exercise the real handler branch and assert the seeded
-        // project still carries all 41 folders including `kind:'folder'` rows.
+        // workspace still carries all 41 folders including `kind:'folder'` rows.
         let resp = app
             .clone()
-            .oneshot(Request::builder().uri("/api/projects").body(Body::empty()).unwrap())
+            .oneshot(Request::builder().uri("/api/workspaces").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -5010,7 +5077,7 @@ mod tests {
             .unwrap()
             .iter()
             .find(|p| p["name"].as_str() == Some(&pname))
-            .expect("un-scoped list must include the seeded project");
+            .expect("un-scoped list must include the seeded workspace");
         let app_folders = app_proj["folders"].as_array().unwrap();
         assert_eq!(app_folders.len(), 41, "un-scoped (app) folder set keeps roots + descendants");
         assert!(
@@ -5018,11 +5085,11 @@ mod tests {
             "app path must still expose the nested `kind:'folder'` descendants",
         );
 
-        state.pg.delete_project(&pid).await.unwrap();
+        state.pg.delete_workspace(&pid).await.unwrap();
     }
 
     /// PRE-DEPLOY GATE (P0–P8) — ONE end-to-end pass of the WHOLE metrics pipeline
-    /// on a single seeded project in `sensei_test`, exercised together in sequence:
+    /// on a single seeded workspace in `sensei_test`, exercised together in sequence:
     ///
     ///   scheduler enqueue contract → real `TaskQueue` → real `spawn_workers`
     ///   executor dispatch (`ComputeGroupMetrics`→compute, `ComputeHealth`→compute_health)
@@ -5037,10 +5104,10 @@ mod tests {
     /// let real `spawn_workers` drain the graph through the actual executor dispatch.
     /// This proves the health barrier only releases after its base metrics land.
     ///
-    /// RETIRED composite: `project_health` carries a past `effective_until` in the
+    /// RETIRED composite: `workspace_health` carries a past `effective_until` in the
     /// registry (seeded from the catalog via `import_metrics`), so it is inactive. The
     /// `ComputeHealth` barrier is still enqueued + blocked + released, but
-    /// `compute_health` resolves no active composite id and writes NO `project_health`
+    /// `compute_health` resolves no active composite id and writes NO `workspace_health`
     /// row — the barrier lands as a harmless no-op (honest-empty, never fabricated).
     /// So exactly the 11 base rows are stored, and the registry/values endpoints do NOT
     /// carry a composite. The `quality` group (`duplication_ratio`/`module_quality`) is
@@ -5063,7 +5130,7 @@ mod tests {
         use crate::tasks::test_support::{
             cleanup_metrics_fixture, git_commit_on_day, make_ctx, purge_assistant_events,
             purge_corrections, purge_runs, seed_assistant_event, seed_correction,
-            seed_detected_pattern, seed_file_node, seed_git_project_folder, seed_memory,
+            seed_detected_pattern, seed_file_node, seed_git_workspace_folder, seed_memory,
             seed_metrics_client_session, seed_metrics_session, seed_metrics_turn,
             seed_pattern_with_instances, seed_run,
         };
@@ -5077,9 +5144,9 @@ mod tests {
         let pg = &state.pg;
         let uniq = uuid::Uuid::new_v4();
         // The folder's abs_path is a REAL on-disk git repo so the git-sourced churn
-        // computer (via project_root_path) has a repo to read. KEEP `repo` bound —
+        // computer (via workspace_root_path) has a repo to read. KEEP `repo` bound —
         // dropping the TempDir would delete the repo mid-test.
-        let (pid, fid, repo) = seed_git_project_folder(pg, &uniq).await;
+        let (pid, fid, repo) = seed_git_workspace_folder(pg, &uniq).await;
         let folder_abs = repo.path().to_string_lossy().to_string();
         let pid_str = pid.to_string();
 
@@ -5181,10 +5248,10 @@ mod tests {
                 "base group `{g}` is active in the registry: {base_names:?}"
             );
         }
-        // Enqueue the per-project PARENT only: ComputeProjectMetrics freezes one
+        // Enqueue the per-workspace PARENT only: ComputeWorkspaceMetrics freezes one
         // frozen as_of, fans out one ComputeGroupMetrics per active base group, and
         // enqueues the ComputeHealth barrier blocked on them — the whole engine graph.
-        ctx.queue.enqueue(Task::new(TaskKind::ComputeProjectMetrics, &pid_str, "")).await;
+        ctx.queue.enqueue(Task::new(TaskKind::ComputeWorkspaceMetrics, &pid_str, "")).await;
         // parent (1) + one child per REQUIRED base group + the health barrier (1).
         //
         // Counted from the fixed list, NOT from `base_names.len()`. Filtering
@@ -5201,7 +5268,7 @@ mod tests {
         // Only the parent is runnable up front; the group children + the health
         // barrier are enqueued when the parent runs.
         let pre = ctx.queue.status().await;
-        assert_eq!(pre.pending, 1, "just the ComputeProjectMetrics parent is pending up front");
+        assert_eq!(pre.pending, 1, "just the ComputeWorkspaceMetrics parent is pending up front");
 
         spawn_workers(ctx.clone(), 2);
 
@@ -5253,8 +5320,8 @@ mod tests {
             fs.pending, fs.blocked, fs.running, fs.completed,
         );
 
-        // ── STORE: every seeded group produced ≥1 project-scope daily row ──
-        let rows = pg.get_project_metrics(&pid).await.unwrap();
+        // ── STORE: every seeded group produced ≥1 workspace-scope daily row ──
+        let rows = pg.get_workspace_metrics(&pid).await.unwrap();
         let mut val: HashMap<String, f64> = HashMap::new();
         let mut props: HashMap<String, serde_json::Value> = HashMap::new();
         let mut mtype: HashMap<String, String> = HashMap::new();
@@ -5265,7 +5332,7 @@ mod tests {
         }
         let get = |k: &str| {
             *val.get(k).unwrap_or_else(|| {
-                panic!("BLOCKER: group produced NO project daily row for metric `{k}`")
+                panic!("BLOCKER: group produced NO workspace daily row for metric `{k}`")
             })
         };
 
@@ -5327,7 +5394,7 @@ mod tests {
         // churn's three (churn_rate, churn_concentration, rework_density), autonomy's two
         // (interruption_rate, run_completion; false_crash_rate is declared-but-uncomputed),
         // and memory_promotion. unused_tools is RETIRED (→ tool_usage_by_repository view)
-        // and coverage is honest-empty here (no lcov in the seed repo). project_health is
+        // and coverage is honest-empty here (no lcov in the seed repo). workspace_health is
         // RETIRED, so the health barrier wrote no composite row.
         //
         // The quality group (duplication_ratio/module_quality) is now CONFIG-PINNED
@@ -5372,26 +5439,26 @@ mod tests {
         }
 
         // ── RETIRED HEALTH: the barrier ran (drained above) but wrote NO composite ──
-        // project_health carries a past effective_until in the registry, so it is
+        // workspace_health carries a past effective_until in the registry, so it is
         // inactive: absent from the active `health` task, and `compute_health` no-ops.
         let active = pg.active_metrics().await.unwrap();
         assert!(
-            !active.iter().any(|m| m.key == "project_health"),
-            "project_health is retired → absent from the active registry",
+            !active.iter().any(|m| m.key == "workspace_health"),
+            "workspace_health is retired → absent from the active registry",
         );
         assert!(
-            !val.contains_key("project_health"),
-            "no project_health value row: the retired composite is never computed (honest-empty, not a fabricated score)"
+            !val.contains_key("workspace_health"),
+            "no workspace_health value row: the retired composite is never computed (honest-empty, not a fabricated score)"
         );
         let (ph_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'project_health'",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'workspace_health'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
         .await
         .unwrap();
-        assert_eq!(ph_rows, 0, "retired project_health wrote no project_metrics row");
+        assert_eq!(ph_rows, 0, "retired workspace_health wrote no workspace_metrics row");
 
         // ── NEVER-FABRICATE: every ratio/pct row carries numerator + denominator ──
         for r in &rows {
@@ -5413,8 +5480,8 @@ mod tests {
         // Honest-absence spot-check: a metric in a seeded group that is deliberately
         // NOT computed (autonomy's false_crash_rate — NEEDS_CONTEXT) writes NO row.
         let (fcr_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'false_crash_rate'",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'false_crash_rate'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -5462,28 +5529,28 @@ mod tests {
         // The retired composite + the retired unused_tools are served by NEITHER the
         // registry (active-only) …
         assert!(
-            !reg.iter().any(|m| m["key"].as_str() == Some("project_health")),
-            "registry endpoint does NOT serve the retired project_health"
+            !reg.iter().any(|m| m["key"].as_str() == Some("workspace_health")),
+            "registry endpoint does NOT serve the retired workspace_health"
         );
         assert!(
             !reg.iter().any(|m| m["key"].as_str() == Some("unused_tools")),
             "registry endpoint does NOT serve the retired unused_tools (→ tool_usage_by_repository view)"
         );
 
-        // ── ENDPOINT 2: GET /api/projects/{id}/metrics returns the seeded data ──
+        // ── ENDPOINT 2: GET /api/workspaces/{id}/metrics returns the seeded data ──
         let (st, body) =
-            req(app.clone(), "GET", &format!("/api/projects/{pid}/metrics"), None).await;
+            req(app.clone(), "GET", &format!("/api/workspaces/{pid}/metrics"), None).await;
         assert_eq!(st, StatusCode::OK, "{body}");
-        let ms = body["metrics"].as_array().expect("project metrics array");
+        let ms = body["metrics"].as_array().expect("workspace metrics array");
         assert_eq!(
             ms.len(),
             if qlty_present { base_rows + 2 } else { base_rows },
             "endpoint returns the latest-per-metric rows (base + config-pinned quality when qlty present; no retired composite)"
         );
-        // … nor the values endpoint: the retired project_health has no row to serve.
+        // … nor the values endpoint: the retired workspace_health has no row to serve.
         assert!(
-            !ms.iter().any(|m| m["metric"].as_str() == Some("project_health")),
-            "values endpoint does NOT carry the retired project_health"
+            !ms.iter().any(|m| m["metric"].as_str() == Some("workspace_health")),
+            "values endpoint does NOT carry the retired workspace_health"
         );
         let e_ftr = ms
             .iter()
@@ -5520,11 +5587,11 @@ mod tests {
             }
         }
 
-        // ── ENDPOINT 3: GET /api/projects/{id}/metrics/{key}?grain=weekly re-derives Σnum/Σden ──
+        // ── ENDPOINT 3: GET /api/workspaces/{id}/metrics/{key}?grain=weekly re-derives Σnum/Σden ──
         let (st, body) = req(
             app.clone(),
             "GET",
-            &format!("/api/projects/{pid}/metrics/rework_ratio?grain=weekly"),
+            &format!("/api/workspaces/{pid}/metrics/rework_ratio?grain=weekly"),
             None,
         )
         .await;
@@ -5546,8 +5613,8 @@ mod tests {
         let (direct_rate, direct_count): (f64, i64) = query_as(
             "SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8, count(*)::int8 \
                FROM activity.sessions s \
-               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id \
-              WHERE fp.project_id = $1 AND s.outcome IS NOT NULL",
+               JOIN sensei.folder_workspaces fp ON fp.folder_id = s.folder_id \
+              WHERE fp.workspace_id = $1 AND s.outcome IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -5563,7 +5630,7 @@ mod tests {
         );
 
         let ftr_daily = pg.get_ftr_daily(Some(&pid), 14).await.unwrap();
-        assert_eq!(ftr_daily.len(), 1, "one daily ftr row for the project");
+        assert_eq!(ftr_daily.len(), 1, "one daily ftr row for the workspace");
         assert!(
             close(ftr_daily[0]["ftr_rate"].as_f64().unwrap(), 0.75),
             "get_ftr_daily ftr_rate = 0.75"
@@ -5578,24 +5645,24 @@ mod tests {
             "get_ftr_daily (store-backed) == the store daily ftr value"
         );
 
-        let headline = pg.get_project_ftr(&pid).await.unwrap();
+        let headline = pg.get_workspace_ftr(&pid).await.unwrap();
         assert!(
             close(headline["ftr14d"].as_f64().unwrap(), 0.75),
-            "get_project_ftr ftr14d == Σnum/Σden = 3/4 = 0.75"
+            "get_workspace_ftr ftr14d == Σnum/Σden = 3/4 = 0.75"
         );
         assert_eq!(
             headline["sessions7d"].as_i64(),
             Some(4),
-            "get_project_ftr sessions7d == Σdenominator = 4"
+            "get_workspace_ftr sessions7d == Σdenominator = 4"
         );
         let rate = pg
-            .get_project_ftr_rate(&pid)
+            .get_workspace_ftr_rate(&pid)
             .await
             .unwrap()
-            .expect("ftr rate present for a project with ftr rows");
-        assert!(close(rate, 0.75), "get_project_ftr_rate == 0.75 headline");
+            .expect("ftr rate present for a workspace with ftr rows");
+        assert!(close(rate, 0.75), "get_workspace_ftr_rate == 0.75 headline");
 
-        // ── CLEANUP: purge the no-FK tables, then the project + folder (cascades) ──
+        // ── CLEANUP: purge the no-FK tables, then the workspace + folder (cascades) ──
         purge_runs(pg, &[&pid]).await;
         purge_assistant_events(pg, &[&csid_auto]).await;
         purge_corrections(pg, &[&sig_a, &sig_b]).await;

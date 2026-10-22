@@ -61,7 +61,7 @@ Navigate with the **sensei MCP tools first** — they use the indexed code graph
 richer results than blind grep. Fall back to Grep/Glob only if a tool errors or returns empty,
 and say so.
 
-1. `get_project_summary()` + `get_project_conventions()` + `get_rules()`.
+1. `get_workspace_summary()` + `get_workspace_conventions()` + `get_rules()`.
    `get_lib_docs('kavach')` if available.
 2. Read `kavach.config.js` — enumerate `rules[]` and `routes`. Build the list of app routes
    (`src/routes/**`) and cross-check each against a rule. Note every sensitive route with no

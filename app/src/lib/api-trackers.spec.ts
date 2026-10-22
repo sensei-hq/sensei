@@ -3,7 +3,7 @@ import { senseiApi } from './api.js';
 
 /**
  * The tracker routes answer failures with a fixed code and, for some codes, the
- * values the UI must name (`board_already_connected` → the owning project;
+ * values the UI must name (`board_already_connected` → the owning workspace;
  * `board_not_found` → the normalised site and board). Collapsing those into a
  * status text would strip exactly what the Integrations screen shows, so the
  * wrappers keep the code as the message and the parsed body beside it.
@@ -37,7 +37,7 @@ describe('tracker wrappers', () => {
   it('list reads GET …/trackers', async () => {
     const fetch = stub(200, []);
     expect(await api().tryListTrackers(P)).toEqual({ ok: true, data: [] });
-    expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:7744/api/projects/${P}/trackers`);
+    expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers`);
   });
 
   it('connect POSTs the adapter body to …/trackers/{kind}/connect', async () => {
@@ -46,7 +46,7 @@ describe('tracker wrappers', () => {
     const res = await api().tryConnectTracker(P, 'jira', body);
     expect(res.ok).toBe(true);
     const [url, init] = fetch.mock.calls[0];
-    expect(url).toBe(`http://127.0.0.1:7744/api/projects/${P}/trackers/jira/connect`);
+    expect(url).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers/jira/connect`);
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body)).toEqual(body);
   });
@@ -54,7 +54,7 @@ describe('tracker wrappers', () => {
   it('sync POSTs …/trackers/sync and disconnect DELETEs …/trackers (204, no body)', async () => {
     const fetch = stub(200, { counts: { sprints: 1 } });
     expect((await api().trySyncTracker(P)).ok).toBe(true);
-    expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:7744/api/projects/${P}/trackers/sync`);
+    expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers/sync`);
     expect(fetch.mock.calls[0][1].method).toBe('POST');
 
     const del = stub(204);
@@ -69,7 +69,7 @@ describe('tracker wrappers', () => {
     await api().tryListTrackerTasks(P);
     await api().tryGetTrackerTask(P, 'AUTH 1/2');
     await api().tryListUnlinkedSessions(P, 'sprint-1');
-    const base = `http://127.0.0.1:7744/api/projects/${P}`;
+    const base = `http://127.0.0.1:7744/api/workspaces/${P}`;
     expect(fetch.mock.calls.map((c) => c[0])).toEqual([
       `${base}/sprints`,
       `${base}/tracker-tasks?sprint=sprint-1`,
@@ -81,7 +81,7 @@ describe('tracker wrappers', () => {
   });
 
   it('a refusal carries the code as the message and the body beside it', async () => {
-    const owner = { error: 'board_already_connected', project: { id: 'p2', name: 'other' } };
+    const owner = { error: 'board_already_connected', workspace: { id: 'p2', name: 'other' } };
     stub(409, owner);
     const res = await api().tryConnectTracker(P, 'jira', {});
     expect(res).toEqual({

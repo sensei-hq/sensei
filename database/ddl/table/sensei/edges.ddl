@@ -29,11 +29,11 @@ create index if not exists edges_target_id_idx
 create index if not exists edges_kind_idx
     on edges(kind);
 
--- The diagram access path: a project's folders, then THEIR edges.
+-- The diagram access path: a workspace's folders, then THEIR edges.
 --
 -- Covering, so the four columns `structure_edges` needs from this table come
 -- out of the index and the 3.9 GB heap is never visited. Measured 2026-10-02
--- on the `calls` edges of one project, forced serial: the seq-scan plan reads
+-- on the `calls` edges of one workspace, forced serial: the seq-scan plan reads
 -- 610,830 buffers, folder-driven without this index 124,196, and folder-driven
 -- with it 60,432 — 10x. Heap Fetches were still 68,717 because the visibility
 -- map was cold; a vacuumed table makes it a true index-only scan.

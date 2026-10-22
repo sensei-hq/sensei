@@ -27,10 +27,10 @@ use crate::tasks::ticker;
 
 /// Prune daily by default.
 /// Keep raw activity for 90 days by default (raw sessions/events/turns; the
-/// distilled metric snapshots in `sensei.project_metrics` are the long-term store).
+/// distilled metric snapshots in `sensei.workspace_metrics` are the long-term store).
 const DEFAULT_RETENTION_DAYS: i32 = 90;
 /// Hard backstop floor: never let a session linger longer than this even when
-/// its day never got captured into `sensei.project_metrics`.
+/// its day never got captured into `sensei.workspace_metrics`.
 const BACKSTOP_FLOOR_DAYS: i32 = 90;
 
 /// Keep raw task-execution rows for two weeks, then roll them into

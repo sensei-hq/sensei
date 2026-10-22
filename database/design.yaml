@@ -33,7 +33,7 @@ scopes:
     # closure can't reach them — include each explicitly (enforcement on shared_rules;
     # namespace_visibility on sensei.namespaces, read by dojo.seats billing). dojo.* lives
     # in the Dōjō service's own Postgres — a separate logical DB from the daemon's `sensei`
-    # DB. The only sensei-side link is sensei.projects.dojo_id, a plain uuid (no cross-DB FK).
+    # DB. The only sensei-side link is sensei.workspaces.dojo_id, a plain uuid (no cross-DB FK).
     #
     # Rule packs (D-LOCAL-PACKS) live in the `sensei` schema and deploy to BOTH planes:
     # the local daemon DB gets them free (default scope, sensei not excluded); Supabase
@@ -141,6 +141,10 @@ apply:
     # Renames dojo.projects & co. to workspaces in place (#307 D12), keeping
     # their rows; dbd would otherwise recreate them empty. No-op afterwards.
     - apply/before/dojo_workspaces_renamed.sql
+    # Renames sensei.projects & co. to workspaces in place (#307 D30), keeping
+    # their rows, and converts the enum labels that say project (D16). No-op
+    # afterwards.
+    - apply/before/sensei_workspaces_renamed.sql
     # Deletes pending invites that hold a plain token (#311), only while the
     # `token` column still exists. No-op afterwards.
     - apply/before/dojo_invites_token_hashed.sql

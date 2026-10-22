@@ -252,7 +252,7 @@ pub async fn run_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tracker::connect::tests::{connected_tracker, project};
+    use crate::tracker::connect::tests::{connected_tracker, workspace};
     use crate::tracker::jira::JiraAdapter;
     use crate::tracker::sync::{SYNC_DEADLINE, sync_tracker};
     use crate::tracker::test_support::{FakeBoard, repo_in, session_with};
@@ -322,7 +322,7 @@ mod tests {
     }
 
     /// A connected tracker, fully synced to the standard board (AUTH-1..3), with
-    /// one repo in its project.
+    /// one repo in its workspace.
     async fn synced(pg: &PgStore) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid) {
         let (t, p) = connected_tracker(pg).await;
         sync_tracker(
@@ -571,8 +571,8 @@ mod tests {
                 .await
         );
 
-        // A session outside every tracker's project queues nothing.
-        let elsewhere = repo_in(&pg, project(&pg).await).await;
+        // A session outside every tracker's workspace queues nothing.
+        let elsewhere = repo_in(&pg, workspace(&pg).await).await;
         let o = session_with(&pg, Some(elsewhere), &["AUTH-900"], &[]).await;
         let other: (Option<String>,) = sqlx_core::query_as::query_as(
             "SELECT client_session_id FROM activity.sessions WHERE id = $1",

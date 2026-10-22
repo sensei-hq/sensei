@@ -1,0 +1,179 @@
+/**
+ * Workspace window — Metrics pane.
+ *
+ * Verifies the dedicated /workspace/{id}/metrics screen: the sidebar exposes a
+ * Metrics nav item, the pane mounts (cards / empty / error state — never blank),
+ * and for a workspace with computed metrics every card shows a real, non-empty
+ * value. Runs against the (isolated) e2e daemon like the other workspace-window
+ * flows; skips when no workspace / no metrics exist.
+ */
+import { test, expect } from '../fixtures';
+import { navigateToScreen, DAEMON_URL } from '../helpers';
+
+type Workspace = { id: string; name: string };
+
+async function safeJson<T>(url: string, fallback: T): Promise<T> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return fallback;
+    const text = await res.text();
+    return text ? (JSON.parse(text) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function pickTestWorkspace(): Promise<Workspace | null> {
+  const body = await safeJson<Workspace[] | { workspaces: Workspace[] }>(`${DAEMON_URL}/api/workspaces`, []);
+  const list: Workspace[] = Array.isArray(body) ? body : (body.workspaces ?? []);
+  for (const name of ['sensei', 'rokkit']) {
+    const p = list.find((x) => x.name === name);
+    if (p) return p;
+  }
+  return list[0] ?? null;
+}
+
+test.describe('Workspace window — Metrics', () => {
+  test('sidebar exposes a Metrics nav item and the pane mounts', async ({ tauriPage }) => {
+    const workspace = await pickTestWorkspace();
+    if (!workspace) {
+      test.skip(true, 'no workspaces registered');
+      return;
+    }
+
+    await navigateToScreen(
+      tauriPage,
+      `/workspace/${workspace.id}/overview`,
+      '[data-component="workspace-sidebar"]',
+    );
+
+    const hasMetrics = await tauriPage.evaluate(
+      `Array.from(document.querySelectorAll('[data-component="workspace-sidebar"] .proj-nav-item'))
+        .some(a => a.textContent && a.textContent.includes('Metrics'))`,
+    );
+    expect(hasMetrics).toBe(true);
+
+    // The pane must mount in one of its three states — never a blank screen.
+    await navigateToScreen(
+      tauriPage,
+      `/workspace/${workspace.id}/metrics`,
+      '[data-component="workspace-shell"]',
+    );
+    const state = await tauriPage.evaluate(
+      `document.querySelector('[data-component="metric-card"]') ? 'cards'
+        : document.querySelector('[data-component="metrics-empty"]') ? 'empty'
+        : document.querySelector('[data-component="metrics-error"]') ? 'error'
+        : 'none'`,
+    );
+    expect(state).not.toBe('none');
+  });
+
+  test('metrics cards render real, non-empty values for a workspace with data', async ({ tauriPage }) => {
+    const workspace = await pickTestWorkspace();
+    if (!workspace) {
+      test.skip(true, 'no workspaces registered');
+      return;
+    }
+
+    const data = await safeJson<{ metrics: unknown[] }>(
+      `${DAEMON_URL}/api/workspaces/${workspace.id}/metrics`,
+      { metrics: [] },
+    );
+    if (!data.metrics.length) {
+      test.skip(true, 'no metrics computed for the test workspace');
+      return;
+    }
+
+    await navigateToScreen(
+      tauriPage,
+      `/workspace/${workspace.id}/metrics`,
+      '[data-component="metric-card"]',
+    );
+
+    const values = (await tauriPage.evaluate(
+      `Array.from(document.querySelectorAll('[data-component="metric-value"]'))
+        .map(el => el.textContent && el.textContent.trim())`,
+    )) as string[];
+    expect(values.length).toBeGreaterThan(0);
+    expect(values.every((v) => typeof v === 'string' && v.length > 0)).toBe(true);
+  });
+
+  test('the overview titles the signal count and keeps the narrative in its card', async ({
+    tauriPage,
+  }) => {
+    const workspace = await pickTestWorkspace();
+    if (!workspace) {
+      test.skip(true, 'no workspaces registered');
+      return;
+    }
+
+    const data = await safeJson<{ metrics: unknown[] }>(
+      `${DAEMON_URL}/api/workspaces/${workspace.id}/metrics`,
+      { metrics: [] },
+    );
+    if (!data.metrics.length) {
+      test.skip(true, 'no metrics computed for the test workspace');
+      return;
+    }
+
+    await navigateToScreen(
+      tauriPage,
+      `/workspace/${workspace.id}/metrics`,
+      '[data-component="metrics-header"]',
+    );
+
+    // The h1 is the count, not the narrative sentence — the narrative used to be
+    // promoted to the title, leaving the screen unnamed.
+    const title = (await tauriPage.evaluate(
+      `(document.querySelector('[data-component="metrics-header"] h1')?.textContent ?? '').trim()`,
+    )) as string;
+    expect(title).toMatch(/^\d+ signals?$/);
+
+    // ...and the narrative still renders, inside its own card next to the health
+    // readout rather than as the heading.
+    const narrative = (await tauriPage.evaluate(
+      `(() => {
+        const card = document.querySelector('[data-component="metrics-narrative"]');
+        if (!card) return null;
+        return {
+          headline: card.querySelector('[data-component="metrics-headline"]')?.textContent?.trim() ?? '',
+          hasHealth: !!card.querySelector('[data-component="health-hero"]'),
+        };
+      })()`,
+    )) as { headline: string; hasHealth: boolean } | null;
+    expect(narrative).not.toBeNull();
+    expect(narrative!.headline.length).toBeGreaterThan(0);
+  });
+
+  test('a signal detail names where you are: metrics · family · signal', async ({ tauriPage }) => {
+    const workspace = await pickTestWorkspace();
+    if (!workspace) {
+      test.skip(true, 'no workspaces registered');
+      return;
+    }
+
+    const data = await safeJson<{ metrics: Array<{ metric?: string }> }>(
+      `${DAEMON_URL}/api/workspaces/${workspace.id}/metrics`,
+      { metrics: [] },
+    );
+    const key = data.metrics.find((m) => m.metric)?.metric;
+    if (!key) {
+      test.skip(true, 'no metrics computed for the test workspace');
+      return;
+    }
+
+    await navigateToScreen(
+      tauriPage,
+      `/workspace/${workspace.id}/metrics/${key}`,
+      '[data-component="signal-detail"]',
+    );
+
+    // Three segments, and the last one is a real signal name — not an empty
+    // trail rendered because the lookup missed.
+    const crumb = (await tauriPage.evaluate(
+      `(document.querySelector('[data-component="signal-breadcrumb"]')?.textContent ?? '').trim()`,
+    )) as string;
+    expect(crumb.startsWith('metrics ·')).toBe(true);
+    expect(crumb.split('·').map((s) => s.trim()).filter(Boolean).length).toBe(3);
+  });
+});

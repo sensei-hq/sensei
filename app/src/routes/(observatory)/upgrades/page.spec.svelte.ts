@@ -30,8 +30,8 @@ describe('Upgrades /+page — a failed read', () => {
     expect(lane?.textContent).not.toContain('no upgrades waiting');
   });
 
-  it('names the projects it could not read', () => {
+  it('names the workspaces it could not read', () => {
     const m = mount({ dojoUpgrades: [], dojoUnread: 0, dojoError: null, buckets: empty, total: 0, unread: [{ name: 'beta', reason: 'x' }], localError: null });
-    expect(m.container.querySelector('[data-lane="local"] [data-unread-projects]')?.textContent).toContain('beta (x)');
+    expect(m.container.querySelector('[data-lane="local"] [data-unread-workspaces]')?.textContent).toContain('beta (x)');
   });
 });

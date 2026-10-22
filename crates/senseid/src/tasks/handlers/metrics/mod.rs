@@ -1,17 +1,17 @@
 //! Metrics compute handlers — the watermark engine dispatch.
 //!
-//! Three task kinds drive the per-project metric compute:
-//! - [`ComputeProjectMetrics`](crate::tasks::TaskKind::ComputeProjectMetrics) — the
-//!   per-project PARENT. [`compute_project`] freezes one `as_of` for the wave and
+//! Three task kinds drive the per-workspace metric compute:
+//! - [`ComputeWorkspaceMetrics`](crate::tasks::TaskKind::ComputeWorkspaceMetrics) — the
+//!   per-workspace PARENT. [`compute_workspace`] freezes one `as_of` for the wave and
 //!   enqueues one [`ComputeGroupMetrics`](crate::tasks::TaskKind::ComputeGroupMetrics)
 //!   child per active base group plus the
 //!   [`ComputeHealth`](crate::tasks::TaskKind::ComputeHealth) barrier.
-//! - `ComputeGroupMetrics` — the per-(project, group) CHILD. The specific group (the
+//! - `ComputeGroupMetrics` — the per-(workspace, group) CHILD. The specific group (the
 //!   registry `task_name`, e.g. `"session_outcomes"`) travels in `task.path`, the
-//!   project id in `task.folder_path`, and the frozen `as_of` in `task.as_of`.
+//!   workspace id in `task.folder_path`, and the frozen `as_of` in `task.as_of`.
 //!   [`compute_group`] partitions the group by cadence, runs its computer for each
 //!   planned day, enriches each computed day, and advances the per-repo watermark.
-//! - `ComputeHealth` — the SEPARATE barrier kind that runs AFTER a project's base
+//! - `ComputeHealth` — the SEPARATE barrier kind that runs AFTER a workspace's base
 //!   metrics land (the scheduler wires it `blocked_by` the `ComputeGroupMetrics`
 //!   children). Its own registry `task_name` is [`HEALTH_TASK_NAME`], which is
 //!   therefore NOT a base group.
@@ -98,9 +98,9 @@ pub(super) async fn is_historical(
 }
 
 /// Test-only routing probe: records WHICH handler last ran on the current thread,
-/// so the executor's dispatch test can assert `ComputeProjectMetrics → compute_project`,
+/// so the executor's dispatch test can assert `ComputeWorkspaceMetrics → compute_workspace`,
 /// `ComputeGroupMetrics → compute_group`, and `ComputeHealth → compute_health` by
-/// IDENTITY (the day-keyed/honest-empty paths return `Ok(0)` for an empty project, so a
+/// IDENTITY (the day-keyed/honest-empty paths return `Ok(0)` for an empty workspace, so a
 /// swapped match arm would otherwise stay green). Thread-local so it's isolated per
 /// `#[tokio::test]` (each runs on its own current-thread runtime); guarded by
 /// `#[cfg(test)]` so it compiles out of production entirely.
@@ -128,7 +128,7 @@ pub(crate) mod probe {
 
 /// The registry `task_name` of the health barrier. It is computed by the separate
 /// [`ComputeHealth`](crate::tasks::TaskKind::ComputeHealth) kind, NOT dispatched
-/// as a base `ComputeGroupMetrics` group, so `compute_project` filters it out of
+/// as a base `ComputeGroupMetrics` group, so `compute_workspace` filters it out of
 /// the base-group enumeration. Shared with `metrics_scheduler` so the two
 /// can't drift.
 pub(crate) const HEALTH_TASK_NAME: &str = "health";
@@ -145,7 +145,7 @@ pub(crate) enum MetricGroup {
     Quality,
     Autonomy,
     Knowledge,
-    /// Test coverage, INGESTED from an lcov report the project's test run produced
+    /// Test coverage, INGESTED from an lcov report the workspace's test run produced
     /// (the daemon never runs tests). Forward-only snapshot.
     Coverage,
     /// LLM process-quality judgments (spec 2026-08-20): day-keyed metrics derived
@@ -200,9 +200,9 @@ impl MetricGroup {
     }
 }
 
-/// `ComputeGroupMetrics` handler: the per-(project, group) CHILD. The metric group
-/// rides in `task.path`, the project id in `task.folder_path`, and the frozen
-/// `as_of` (shared by every child of one `ComputeProjectMetrics` wave) in
+/// `ComputeGroupMetrics` handler: the per-(workspace, group) CHILD. The metric group
+/// rides in `task.path`, the workspace id in `task.folder_path`, and the frozen
+/// `as_of` (shared by every child of one `ComputeWorkspaceMetrics` wave) in
 /// `task.as_of`. Delegates to [`planner::compute_group`], which partitions the group
 /// by cadence — SNAPSHOT (`knowledge`/`tool`) → one today-only rolling compute (no
 /// watermark); DAY-KEYED (`session_outcomes`/`autonomy`/`churn`/`quality`) →
@@ -212,54 +212,54 @@ impl MetricGroup {
 /// `as_of - 1` (today is never sealed). A failed group propagates `Err` and holds its
 /// watermark, so it retries next run (fail-closed — never a silent skipped day). An
 /// UNKNOWN `task_name` is a logged no-op that returns `Ok(0)`. Returns the number of
-/// `sensei.project_metrics` rows the group wrote.
+/// `sensei.workspace_metrics` rows the group wrote.
 pub async fn compute_group(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     #[cfg(test)]
     probe::record("compute_group");
     tracing::info!(
         group = %task.path,
-        project = %task.folder_path,
+        workspace = %task.folder_path,
         "compute_group: computing metric group",
     );
     planner::compute_group(ctx, task).await
 }
 
-/// `ComputeHealth` handler (Phase 6): the per-project barrier that runs after the
+/// `ComputeHealth` handler (Phase 6): the per-workspace barrier that runs after the
 /// base `ComputeGroupMetrics` tasks land (wired via `blocked_by` in the scheduler). It
-/// rolls the project's latest daily component values into the derived
-/// `project_health` score — see [`health::compute`] for the normalization and the
-/// never-fabricate rules. The project id rides in `task.folder_path`. Returns the
-/// number of `project_metrics` rows written (`1` when ≥1 component is included, else
+/// rolls the workspace's latest daily component values into the derived
+/// `workspace_health` score — see [`health::compute`] for the normalization and the
+/// never-fabricate rules. The workspace id rides in `task.folder_path`. Returns the
+/// number of `workspace_metrics` rows written (`1` when ≥1 component is included, else
 /// `0` — no components ⇒ NO row, never a fabricated score).
 pub async fn compute_health(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     #[cfg(test)]
     probe::record("compute_health");
     tracing::info!(
-        project = %task.folder_path,
-        "compute_health: computing project_health",
+        workspace = %task.folder_path,
+        "compute_health: computing workspace_health",
     );
     // Thread the target day through the barrier too (accepted now, per-day wiring
     // in a later phase); `None` keeps the current snapshot-on-today behavior.
     health::compute(ctx, &task.folder_path, task.as_of).await
 }
 
-/// `ComputeProjectMetrics` handler: the per-project PARENT that schedules the compute
-/// wave. The project id rides in `task.folder_path`. Delegates to
-/// [`planner::compute_project`], which freezes a single `as_of` for the whole wave
+/// `ComputeWorkspaceMetrics` handler: the per-workspace PARENT that schedules the compute
+/// wave. The workspace id rides in `task.folder_path`. Delegates to
+/// [`planner::compute_workspace`], which freezes a single `as_of` for the whole wave
 /// (so every child sees the same day), enqueues ONE `ComputeGroupMetrics` child per
 /// active base group (each carrying the frozen `as_of`), and — when any child was
-/// enqueued — enqueues the per-project `ComputeHealth` barrier `blocked_by` those
+/// enqueued — enqueues the per-workspace `ComputeHealth` barrier `blocked_by` those
 /// children. Returns the number of tasks enqueued (`0` = honest-empty: no active base
 /// groups → no children and no barrier). Never fabricates: a group with no source
 /// data still enqueues a child that honestly writes no row and advances no watermark.
-pub async fn compute_project(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+pub async fn compute_workspace(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     #[cfg(test)]
-    probe::record("compute_project");
+    probe::record("compute_workspace");
     tracing::info!(
-        project = %task.folder_path,
-        "compute_project: scheduling per-project metric compute wave",
+        workspace = %task.folder_path,
+        "compute_workspace: scheduling per-workspace metric compute wave",
     );
-    planner::compute_project(ctx, task).await
+    planner::compute_workspace(ctx, task).await
 }
 
 #[cfg(test)]
@@ -304,14 +304,14 @@ mod tests {
         let pid = uuid::Uuid::new_v4().to_string();
 
         // A known task_name routes to its computer and returns Ok. `pid` is a
-        // random (nonexistent) project with no repositories, so the day-keyed engine
+        // random (nonexistent) workspace with no repositories, so the day-keyed engine
         // finds no repos and honestly writes 0 rows — the routing is what's under
         // test here.
         let known = Task::new(TaskKind::ComputeGroupMetrics, &pid, "session_outcomes");
         assert_eq!(
             compute_group(&ctx, &known).await.unwrap(),
             0,
-            "a known group routes to its computer and returns Ok (0 rows for an empty project)",
+            "a known group routes to its computer and returns Ok (0 rows for an empty workspace)",
         );
 
         // An UNKNOWN task_name is a logged no-op — Ok, never a panic, never a
@@ -326,23 +326,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compute_project_schedules_the_wave() {
-        // The per-project PARENT delegates to the engine, which enqueues one
+    async fn compute_workspace_schedules_the_wave() {
+        // The per-workspace PARENT delegates to the engine, which enqueues one
         // ComputeGroupMetrics child per active base group plus (when any child was
-        // enqueued) the ComputeHealth barrier. `pid` is a random project, so the
+        // enqueued) the ComputeHealth barrier. `pid` is a random workspace, so the
         // wave is driven purely by the active registry. The returned count must equal
         // the tasks actually enqueued onto the queue — routing + delegation under test
         // (the watermark/day-scheduling behavior is covered by the engine tests in
         // `planner`).
         let ctx = make_ctx().await;
         let pid = uuid::Uuid::new_v4().to_string();
-        let task = Task::new(TaskKind::ComputeProjectMetrics, &pid, "");
-        let enqueued = compute_project(&ctx, &task).await.unwrap();
+        let task = Task::new(TaskKind::ComputeWorkspaceMetrics, &pid, "");
+        let enqueued = compute_workspace(&ctx, &task).await.unwrap();
         let status = ctx.queue.status().await;
         assert_eq!(
             enqueued as usize,
             status.pending + status.blocked,
-            "compute_project returns the count of tasks it enqueued (children pending + barrier blocked)",
+            "compute_workspace returns the count of tasks it enqueued (children pending + barrier blocked)",
         );
     }
 

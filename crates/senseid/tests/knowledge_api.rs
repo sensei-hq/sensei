@@ -1,6 +1,6 @@
 //! End-to-end: HTTP request → daemon → DB → response.
 //! Requires SENSEI_API_URL pointing at a running daemon (e.g. http://127.0.0.1:7745)
-//! and SENSEI_TEST_PROJECT_ID for a real project_id in the live dev DB.
+//! and SENSEI_TEST_WORKSPACE_ID for a real workspace_id in the live dev DB.
 //! Self-skips when either env var is absent.
 
 use reqwest::Client;
@@ -15,7 +15,7 @@ async fn full_lifecycle_proposal_accept_outcome() {
     let Some(url) = base_url() else {
         return;
     };
-    let Some(pid) = std::env::var("SENSEI_TEST_PROJECT_ID").ok() else {
+    let Some(pid) = std::env::var("SENSEI_TEST_WORKSPACE_ID").ok() else {
         return;
     };
     let c = Client::new();
@@ -24,8 +24,8 @@ async fn full_lifecycle_proposal_accept_outcome() {
     let propose = c
         .post(format!("{url}/api/knowledge/proposals"))
         .json(&json!({
-            "project_id":    pid,
-            "scope":         "project",
+            "workspace_id":    pid,
+            "scope":         "workspace",
             "type":          "convention",
             "title":         "lifecycle-test",
             "content":       "do the thing",
@@ -41,7 +41,7 @@ async fn full_lifecycle_proposal_accept_outcome() {
 
     // 2. It appears in status=proposed
     let listing = c
-        .get(format!("{url}/api/knowledge/memories?status=proposed&project_id={pid}"))
+        .get(format!("{url}/api/knowledge/memories?status=proposed&workspace_id={pid}"))
         .send()
         .await
         .unwrap()
@@ -67,7 +67,7 @@ async fn full_lifecycle_proposal_accept_outcome() {
 
     // 4. Context now contains it
     let ctx = c
-        .get(format!("{url}/api/knowledge/context?project_id={pid}"))
+        .get(format!("{url}/api/knowledge/context?workspace_id={pid}"))
         .send()
         .await
         .unwrap()

@@ -53,11 +53,11 @@ describe("settings buildNavItems", () => {
     ]);
   });
 
-  it("groups Sources → Roots + Projects + Libraries", () => {
+  it("groups Sources → Roots + Workspaces + Libraries", () => {
     const sources = groups(buildNavItems()).find((g) => g.text === "Sources")!;
     expect(sources.children.map((c) => c.href)).toEqual([
       "/settings/roots",
-      "/settings/projects",
+      "/settings/workspaces",
       "/settings/libraries",
     ]);
   });
@@ -125,9 +125,9 @@ describe("settings resolveActiveHref", () => {
   });
 
   it("matches a nested sub-route to its parent nav entry", () => {
-    // Anticipates future nested pages like /settings/projects/abc-123.
-    expect(resolveActiveHref("/settings/projects/abc-123")).toBe(
-      "/settings/projects",
+    // Anticipates future nested pages like /settings/workspaces/abc-123.
+    expect(resolveActiveHref("/settings/workspaces/abc-123")).toBe(
+      "/settings/workspaces",
     );
   });
 

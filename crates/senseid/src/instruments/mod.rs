@@ -81,7 +81,7 @@ pub const REGISTRY: &[McpEntry] = &[
         summary: "Read repos, file PRs, browse issues without leaving the chat.",
         tools: 28,
         verified: true,
-        // Recommended for any project that lives in git — almost everyone.
+        // Recommended for any workspace that lives in git — almost everyone.
         stack_keywords: &[
             "github",
             "git",
@@ -123,7 +123,7 @@ pub const REGISTRY: &[McpEntry] = &[
         summary: "Read & write files inside an allow-listed working directory.",
         tools: 8,
         verified: true,
-        // No stack affinity — useful for any project, but shouldn't auto-recommend.
+        // No stack affinity — useful for any workspace, but shouldn't auto-recommend.
         stack_keywords: &[],
         config_names: &["filesystem", "fs"],
     },
@@ -166,7 +166,7 @@ pub fn list_for_stack(
                 "recommended": recommended,
                 "installed": installed,
                 "selected": recommended || installed,
-                "project_count": 0,
+                "workspace_count": 0,
             })
         })
         .collect()

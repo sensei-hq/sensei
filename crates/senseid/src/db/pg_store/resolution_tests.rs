@@ -6,24 +6,24 @@
 //! Two properties make it work, and both are easy to lose in a rewrite.
 use super::*;
 
-/// Seed a folder in its own project, with a `files` row ready for nodes.
+/// Seed a folder in its own workspace, with a `files` row ready for nodes.
 async fn fixture(pg: &PgStore, tag: &uuid::Uuid) -> (uuid::Uuid, uuid::Uuid) {
     let root = format!("/_test/resolution/{tag}");
     let root_id = pg.add_watch_root(&root, "res-wt", &serde_json::json!([])).await.unwrap();
     let folder_id = pg.upsert_repo(&root_id, "res", &root).await.unwrap();
-    let project_id =
-        pg.create_project(&format!("_test:resolution:{tag}"), None, None).await.unwrap();
-    crate::tasks::test_support::place_folder_in_project(
+    let workspace_id =
+        pg.create_workspace(&format!("_test:resolution:{tag}"), None, None).await.unwrap();
+    crate::tasks::test_support::place_folder_in_workspace(
         pg,
         &folder_id,
-        &project_id,
+        &workspace_id,
         &format!("res-{tag}"),
     )
     .await
     .unwrap();
     pg.upsert_file_row(&folder_id, "a.rs", 1, "seed", None).await.unwrap();
     pg.upsert_file_row(&folder_id, "b.ts", 1, "seed", None).await.unwrap();
-    (project_id, folder_id)
+    (workspace_id, folder_id)
 }
 
 /// Stamp an edge's verdict the way the resolver would.
@@ -56,7 +56,7 @@ async fn an_edge_nobody_asked_about_is_not_reported_as_a_miss() {
         return;
     };
     let tag = uuid::Uuid::new_v4();
-    let (project_id, folder_id) = fixture(&pg, &tag).await;
+    let (workspace_id, folder_id) = fixture(&pg, &tag).await;
 
     let def = |p: &'static str| FqnDef {
         file_path: p,
@@ -102,7 +102,7 @@ async fn an_edge_nobody_asked_about_is_not_reported_as_a_miss() {
     let rows: Vec<(String, String, String, i64)> = sqlx_core::query_as::query_as(
         "SELECT language, edge_kind, outcome, edges FROM sensei.resolution_quality($1)",
     )
-    .bind(project_id)
+    .bind(workspace_id)
     .fetch_all(pg.pool())
     .await
     .unwrap();
@@ -119,7 +119,7 @@ async fn an_edge_nobody_asked_about_is_not_reported_as_a_miss() {
     );
     assert_eq!(find("imports", "missed"), None, "and it is NOT counted as one");
 
-    cleanup(&pg, &project_id, &folder_id).await;
+    cleanup(&pg, &workspace_id, &folder_id).await;
 }
 
 /// **THE PACKAGE AXIS — the crate or the app an edge was written in.** A
@@ -136,7 +136,7 @@ async fn placement_is_decomposed_by_the_package_the_edge_was_written_in() {
         return;
     };
     let tag = uuid::Uuid::new_v4();
-    let (project_id, folder_id) = fixture(&pg, &tag).await;
+    let (workspace_id, folder_id) = fixture(&pg, &tag).await;
     let def = |p: &'static str| FqnDef {
         file_path: p,
         signature: None,
@@ -173,7 +173,7 @@ async fn placement_is_decomposed_by_the_package_the_edge_was_written_in() {
         "SELECT package, outcome, edges, pct_of_package_kind::float8 FROM sensei.resolution_quality($1)
           WHERE edge_kind = 'calls' ORDER BY package, outcome",
     )
-    .bind(project_id)
+    .bind(workspace_id)
     .fetch_all(pg.pool())
     .await
     .unwrap();
@@ -187,7 +187,7 @@ async fn placement_is_decomposed_by_the_package_the_edge_was_written_in() {
             ("beta".to_string(), "placed".to_string(), 1, "100".to_string()),
         ]
     );
-    cleanup(&pg, &project_id, &folder_id).await;
+    cleanup(&pg, &workspace_id, &folder_id).await;
 }
 
 /// Language is the SOURCE node's, and an edge with no language is reported
@@ -207,7 +207,7 @@ async fn language_follows_the_source_and_an_unattributable_edge_still_appears() 
         return;
     };
     let tag = uuid::Uuid::new_v4();
-    let (project_id, folder_id) = fixture(&pg, &tag).await;
+    let (workspace_id, folder_id) = fixture(&pg, &tag).await;
     let def = |p: &'static str| FqnDef {
         file_path: p,
         signature: None,
@@ -255,7 +255,7 @@ async fn language_follows_the_source_and_an_unattributable_edge_still_appears() 
     let rows: Vec<(String, String, i64)> = sqlx_core::query_as::query_as(
         "SELECT language, outcome, edges FROM sensei.resolution_quality($1) WHERE edge_kind = 'calls'",
     )
-    .bind(project_id)
+    .bind(workspace_id)
     .fetch_all(pg.pool())
     .await
     .unwrap();
@@ -269,9 +269,10 @@ async fn language_follows_the_source_and_an_unattributable_edge_still_appears() 
         "an edge that cannot be attributed is reported, not dropped: {rows:?}"
     );
 
-    cleanup(&pg, &project_id, &folder_id).await;
+    cleanup(&pg, &workspace_id, &folder_id).await;
 }
 
-async fn cleanup(pg: &PgStore, project_id: &uuid::Uuid, folder_id: &uuid::Uuid) {
-    crate::tasks::test_support::cleanup_metrics_fixture(pg, project_id, Some(folder_id), &[]).await;
+async fn cleanup(pg: &PgStore, workspace_id: &uuid::Uuid, folder_id: &uuid::Uuid) {
+    crate::tasks::test_support::cleanup_metrics_fixture(pg, workspace_id, Some(folder_id), &[])
+        .await;
 }

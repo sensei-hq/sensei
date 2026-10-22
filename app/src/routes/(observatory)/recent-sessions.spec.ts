@@ -6,7 +6,7 @@ type Wire = SessionData['sessions'][number];
 
 const wire = (over: Partial<Wire> = {}): Wire => ({
   id: 's1',
-  project: 'lumen',
+  workspace: 'lumen',
   task: 'Fix auth',
   summary: '',
   outcome: 'completed',
@@ -29,7 +29,7 @@ describe('toRecentSessions', () => {
   it('passes a well-formed session through with its real fields', () => {
     const [s] = toRecentSessions([wire()], 4);
     expect(s).toMatchObject({
-      id: 's1', project: 'lumen', task: 'Fix auth',
+      id: 's1', workspace: 'lumen', task: 'Fix auth',
       startedAt: '2026-06-20T10:00:00Z', completedAt: '2026-06-20T10:30:00Z', ftr: 1,
     });
   });
@@ -39,17 +39,17 @@ describe('toRecentSessions', () => {
     expect(s.task).toBe('rotate tokens');
   });
 
-  it('drops contentless ghost rows (no project, no task, no summary)', () => {
+  it('drops contentless ghost rows (no workspace, no task, no summary)', () => {
     const rows = toRecentSessions(
-      [wire({ id: 'ghost', project: null, task: '', summary: '', outcome: '' }), wire({ id: 'real' })],
+      [wire({ id: 'ghost', workspace: null, task: '', summary: '', outcome: '' }), wire({ id: 'real' })],
       4,
     );
     expect(rows.map((r) => r.id)).toEqual(['real']);
   });
 
-  it('keeps a session that has a project even when it has no task label of its own', () => {
-    const [s] = toRecentSessions([wire({ task: '', summary: '', outcome: '', project: 'canvas' })], 4);
-    expect(s.project).toBe('canvas');
+  it('keeps a session that has a workspace even when it has no task label of its own', () => {
+    const [s] = toRecentSessions([wire({ task: '', summary: '', outcome: '', workspace: 'canvas' })], 4);
+    expect(s.workspace).toBe('canvas');
     expect(s.task).toBe('session');
   });
 

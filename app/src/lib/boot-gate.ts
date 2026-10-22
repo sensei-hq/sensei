@@ -10,14 +10,14 @@
 
 const ALWAYS_REACHABLE = new Set(['/health', '/logs', '/upgrade']);
 
-// A project window loads `/project/{id}/...` in its own fresh webview heap,
+// A workspace window loads `/workspace/{id}/...` in its own fresh webview heap,
 // where healthState starts 'checking' (isOk=false) and setup state is
 // unhydrated. It is only ever opened from an already-healthy main window, so it
 // must bypass the boot gates — otherwise the gate bounces the fresh window to
-// /health and the project never renders. This matches the singular `/project/`
-// window routes, not the observatory's plural `/projects` list (still gated).
+// /health and the workspace never renders. This matches the singular `/workspace/`
+// window routes, not the observatory's plural `/workspaces` list (still gated).
 function isReachable(path: string): boolean {
-  return ALWAYS_REACHABLE.has(path) || path.startsWith('/project/');
+  return ALWAYS_REACHABLE.has(path) || path.startsWith('/workspace/');
 }
 
 export function gateTarget(

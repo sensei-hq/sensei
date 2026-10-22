@@ -9,14 +9,14 @@ import { expect, test } from '../fixtures';
 import { DAEMON_URL, navigateTo } from '../helpers';
 
 test('patterns fold rework into hotspots', async ({ tauriPage }) => {
-  const projects: { id: string; name: string }[] = await (await fetch(`${DAEMON_URL}/api/projects`)).json();
-  const sensei = projects.find((p) => p.name === 'sensei');
-  test.skip(!sensei, 'no sensei project on this daemon');
-  const { antiPatterns } = await (await fetch(`${DAEMON_URL}/api/projects/${sensei!.id}/patterns`)).json();
+  const workspaces: { id: string; name: string }[] = await (await fetch(`${DAEMON_URL}/api/workspaces`)).json();
+  const sensei = workspaces.find((p) => p.name === 'sensei');
+  test.skip(!sensei, 'no sensei workspace on this daemon');
+  const { antiPatterns } = await (await fetch(`${DAEMON_URL}/api/workspaces/${sensei!.id}/patterns`)).json();
   const hot = antiPatterns.find((p: { id: string }) => p.id === 'rework-hotspots');
   const dirs = hot.groups.map((g: { directory: string }) => `pattern-group-${g.directory}`);
 
-  await navigateTo(tauriPage, `/project/${sensei!.id}/patterns`);
+  await navigateTo(tauriPage, `/workspace/${sensei!.id}/patterns`);
   await expect
     .poll(() => tauriPage.evaluate(`!!document.querySelector('[data-testid="pattern-toggle-rework-hotspots"]')`), { timeout: 30_000 })
     .toBe(true);

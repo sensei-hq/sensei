@@ -9,16 +9,16 @@ const rec = (id: string, action_type: string) =>
 
 const api = (over: Partial<UpgradesApi> = {}): UpgradesApi => ({
   tryGetUpgrades: async () => ok({ artifacts: [], unread_count: 2 }),
-  tryListProjects: async () => ok([{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }]),
-  tryGetProjectRecommendations: async (id) => ok([rec(`${id}-skill`, 'write_skill'), rec(`${id}-other`, 'not_installable')]),
+  tryListWorkspaces: async () => ok([{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }]),
+  tryGetWorkspaceRecommendations: async (id) => ok([rec(`${id}-skill`, 'write_skill'), rec(`${id}-other`, 'not_installable')]),
   ...over,
 });
 
 // #288: each lane is the daemon's read or why it failed — a dōjō that could
-// not be read is not "no upgrades yet", a project that could not be read is not
-// a project with nothing waiting.
+// not be read is not "no upgrades yet", a workspace that could not be read is not
+// a workspace with nothing waiting.
 describe('loadUpgrades', () => {
-  it('keeps the installable recs of every project, and the dōjō inbox', async () => {
+  it('keeps the installable recs of every workspace, and the dōjō inbox', async () => {
     const d = await loadUpgrades(api());
     expect([d.localError, d.total, d.unread, d.dojoError, d.dojoUnread]).toEqual([null, 2, [], null, 2]);
   });
@@ -29,12 +29,12 @@ describe('loadUpgrades', () => {
   });
 
   it('a failed list read is the local lane\'s error', async () => {
-    const d = await loadUpgrades(api({ tryListProjects: async () => down }));
+    const d = await loadUpgrades(api({ tryListWorkspaces: async () => down }));
     expect([d.localError, d.buckets]).toEqual(['Service Unavailable', null]);
   });
 
-  it('names a project whose recommendations could not be read', async () => {
-    const d = await loadUpgrades(api({ tryGetProjectRecommendations: async (id) => (id === 'b' ? down : ok([rec('a-skill', 'write_skill')])) }));
+  it('names a workspace whose recommendations could not be read', async () => {
+    const d = await loadUpgrades(api({ tryGetWorkspaceRecommendations: async (id) => (id === 'b' ? down : ok([rec('a-skill', 'write_skill')])) }));
     expect([d.total, d.unread]).toEqual([1, [{ name: 'beta', reason: 'Service Unavailable' }]]);
   });
 });

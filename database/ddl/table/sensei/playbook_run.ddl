@@ -14,11 +14,11 @@ create table if not exists playbook_run (
 , classified_by   text
 , model_fallback  boolean     not null default false
 , outcome_ftr boolean
-, project_id  uuid            not null references projects(id) on delete cascade
+, workspace_id  uuid            not null references workspaces(id) on delete cascade
 , created_at  timestamptz     not null default now()
 );
 create index if not exists playbook_run_session_idx on playbook_run(session_id);
-create index if not exists playbook_run_project_idx on playbook_run(project_id);
+create index if not exists playbook_run_workspace_idx on playbook_run(workspace_id);
 -- Covering indexes for the playbook (→ playbooks.name) and rule_id FKs. rule_id is
 -- nullable (on delete set null), so a partial index on the referencing rows.
 create index if not exists playbook_run_playbook_idx on playbook_run(playbook);

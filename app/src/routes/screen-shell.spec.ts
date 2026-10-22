@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 
-// #293: every observatory and project screen lays out through `Screen` — one
+// #293: every observatory and workspace screen lays out through `Screen` — one
 // header that stays in place over one scroll body — instead of improvising its
 // own header and scroll. The window layouts then own no scroll of their own.
 const ROOT = 'src/routes';
-const GROUPS = ['(observatory)', '(project)'];
+const GROUPS = ['(observatory)', '(workspace)'];
 
 function pages(dir: string): string[] {
 	return readdirSync(dir).flatMap((name) => {
@@ -41,7 +41,7 @@ describe('screens use the shared Screen layout (#293)', () => {
 	});
 
 	it('the window layouts do not scroll — each screen body is the one scroller', () => {
-		const windows = ['(observatory)/+layout.svelte', '(project)/project/[id]/+layout.svelte'];
+		const windows = ['(observatory)/+layout.svelte', '(workspace)/workspace/[id]/+layout.svelte'];
 		const scrolling = windows.filter((layout) => {
 			const markup = source(layout).replace(/<script[\s\S]*?<\/script>/, '');
 			const main = markup.match(/<main\b[^>]*>/)?.[0];

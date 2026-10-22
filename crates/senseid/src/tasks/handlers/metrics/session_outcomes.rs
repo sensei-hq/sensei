@@ -3,11 +3,11 @@
 //! The FIRST real base-metric computer and the TEMPLATE the other five groups
 //! follow. It reads the configured rolling window ([`metrics.window_days`],
 //! default 14) and writes REPOSITORY-grain, `scope = 'user'`, daily rows to
-//! `sensei.project_metrics` (via [`PgStore::upsert_project_metric_repo`]) for ONE
-//! project.
+//! `sensei.workspace_metrics` (via [`PgStore::upsert_workspace_metric_repo`]) for ONE
+//! workspace.
 //!
-//! Repo grain: ONE project-day yields ONE row per repository the day's sessions
-//! touched (a project is a GROUP of repositories; the project value is the
+//! Repo grain: ONE workspace-day yields ONE row per repository the day's sessions
+//! touched (a workspace is a GROUP of repositories; the workspace value is the
 //! pooling view over them, not a row this computer writes). How a session is
 //! keyed to a repository — and which sessions that EXCLUDES — belongs to the
 //! reads: `db/pg_store/metric_reads/session_outcomes.rs`.
@@ -23,7 +23,7 @@
 //! - `context_pressure_rate` (pct): pressured / measurable sessions, per repository.
 //!
 //! Identity/scope contract (repo-grain identity `_v2`): these rows are
-//! `scope = 'user'` (the local user's default-project value), `identity = NULL`
+//! `scope = 'user'` (the local user's default-workspace value), `identity = NULL`
 //! (single local user — NULL keeps the identity unique per
 //! (metric, repository, day)), `commit_sha = NULL` (day cadence, not commit),
 //! `folder_id`/`session_id = NULL`, and `grain = 'daily'` ALWAYS. The former
@@ -32,17 +32,17 @@
 //! roll-up views were already the single FTR source of truth.
 //!
 //! FTR definition: the daily `ftr` is `ftr_count / session_count` over the
-//! measurable session base (`outcome is not null`, project scope via
-//! `activity.sessions.project_id`, `outcome <> 'empty'`) for that repository — and
+//! measurable session base (`outcome is not null`, workspace scope via
+//! `activity.sessions.workspace_id`, `outcome <> 'empty'`) for that repository — and
 //! stores the parts + counts the roll-up views re-aggregate from. These `ftr`
 //! rows are the single FTR source of truth (Phase 8 retired the legacy
-//! `sensei.ftr_daily` / `sensei.project_ftr_metrics` views).
+//! `sensei.ftr_daily` / `sensei.workspace_ftr_metrics` views).
 //!
 //! Never-fabricate: every DB call propagates `Err`; a repository-day/metric with
 //! no data writes NO row (a `0` value is written only when a real denominator
 //! exists).
 //!
-//! [`PgStore::upsert_project_metric_repo`]: crate::db::pg_store::PgStore::upsert_project_metric_repo
+//! [`PgStore::upsert_workspace_metric_repo`]: crate::db::pg_store::PgStore::upsert_workspace_metric_repo
 
 use crate::tasks::executor::TaskContext;
 
@@ -52,7 +52,7 @@ use crate::db::pg_store::MetricRow;
 /// `sensei.metric_grain` text value — every row this group writes is daily grain
 /// (the per-session grain is retired under the repo-grain identity).
 const GRAIN_DAILY: &str = "daily";
-/// `sensei.metric_scope` text value — the local user's default-project value.
+/// `sensei.metric_scope` text value — the local user's default-workspace value.
 const SCOPE_USER: &str = "user";
 /// `sensei.metric_source` text value — these are measured, not estimated.
 const SOURCE_MEASURED: &str = "measured";
@@ -72,9 +72,9 @@ const KEY_SESSION_DURATION: &str = "session_duration";
 const KEY_TOKENS_PER_RESULT: &str = "tokens_per_result";
 const KEY_INCOMPLETE_ANALYSIS: &str = "incomplete_analysis_rate";
 
-/// Compute the `session_outcomes` group for one project.
+/// Compute the `session_outcomes` group for one workspace.
 ///
-/// `project_raw` is the project uuid carried in `task.folder_path`. `as_of`
+/// `workspace_raw` is the workspace uuid carried in `task.folder_path`. `as_of`
 /// selects the day-set:
 /// - `None` — the incremental run: every measurable day in the rolling
 ///   [`metrics.window_days`] window (default 14), `computed_on` = the session's day.
@@ -86,17 +86,17 @@ const KEY_INCOMPLETE_ANALYSIS: &str = "incomplete_analysis_rate";
 /// Every row is written at REPOSITORY grain (`repository_id = Some(..)`,
 /// `scope = 'user'`, `identity = NULL`, `commit_sha = NULL`, `folder_id`/
 /// `session_id = NULL`, `grain = 'daily'`), one per repository the day's sessions
-/// touched. Returns the number of `project_metrics` rows written (`0` =
+/// touched. Returns the number of `workspace_metrics` rows written (`0` =
 /// honest-empty: no measurable sessions with a resolvable repository on the
 /// selected day-set, or none of the group's metrics active). Idempotent —
 /// re-running backfills in place via the upsert identity.
 pub(super) async fn compute(
     ctx: &TaskContext,
-    project_raw: &str,
+    workspace_raw: &str,
     as_of: Option<chrono::NaiveDate>,
 ) -> Result<u32, String> {
-    let project_id = uuid::Uuid::parse_str(project_raw)
-        .map_err(|e| format!("session_outcomes: bad project id {project_raw:?}: {e}"))?;
+    let workspace_id = uuid::Uuid::parse_str(workspace_raw)
+        .map_err(|e| format!("session_outcomes: bad workspace id {workspace_raw:?}: {e}"))?;
     let pg = ctx.pg();
 
     // Reuse the scheduler's window reader (config key + parser + default) — DRY.
@@ -128,7 +128,7 @@ pub(super) async fn compute(
     // Per-repository daily session-level metrics: ftr (pct) + throughput (count).
     if ftr_id.is_some() || throughput_id.is_some() {
         for (day, repository_id, session_count, ftr_count, correction_count) in
-            pg.session_outcomes_sessions_by_day(&project_id, window_days, as_of).await?
+            pg.session_outcomes_sessions_by_day(&workspace_id, window_days, as_of).await?
         {
             if let Some(mid) = ftr_id {
                 // denominator (session_count) is ≥ 1 for any returned (day, repo).
@@ -138,7 +138,7 @@ pub(super) async fn compute(
                     "denominator": session_count,
                     "correction_count": correction_count,
                 });
-                pg.upsert_project_metric_repo(&MetricRow {
+                pg.upsert_workspace_metric_repo(&MetricRow {
                     metric_id: &mid,
                     repository_id: &repository_id,
                     scope: SCOPE_USER,
@@ -156,7 +156,7 @@ pub(super) async fn compute(
             if let Some(mid) = throughput_id {
                 // count-type: value IS the count; no numerator/denominator needed.
                 let props = serde_json::json!({});
-                pg.upsert_project_metric_repo(&MetricRow {
+                pg.upsert_workspace_metric_repo(&MetricRow {
                     metric_id: &mid,
                     repository_id: &repository_id,
                     scope: SCOPE_USER,
@@ -177,7 +177,7 @@ pub(super) async fn compute(
     // Per-repository daily rework_ratio (ratio) — only if active.
     if let Some(mid) = rework_id {
         for (day, repository_id, corrected_tool_calls, total_tool_calls) in
-            pg.session_outcomes_rework_by_day(&project_id, window_days, as_of).await?
+            pg.session_outcomes_rework_by_day(&workspace_id, window_days, as_of).await?
         {
             if total_tool_calls == 0 {
                 // No tool-call data that day → no denominator → NO row (a 0/0 would
@@ -189,7 +189,7 @@ pub(super) async fn compute(
                 "numerator": corrected_tool_calls,
                 "denominator": total_tool_calls,
             });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_USER,
@@ -211,10 +211,10 @@ pub(super) async fn compute(
     // NO row (honest-empty).
     if let Some(mid) = ttur_id {
         for (day, repository_id, median_secs, n) in
-            pg.session_outcomes_time_to_useful_by_day(&project_id, window_days, as_of).await?
+            pg.session_outcomes_time_to_useful_by_day(&workspace_id, window_days, as_of).await?
         {
             let props = serde_json::json!({ "n": n });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_USER,
@@ -236,14 +236,14 @@ pub(super) async fn compute(
     // measurable session is skipped (honest-empty, never a fabricated 0/0).
     if let Some(mid) = context_id {
         for (day, repository_id, pressured, total) in
-            pg.session_outcomes_context_pressure_by_day(&project_id, window_days, as_of).await?
+            pg.session_outcomes_context_pressure_by_day(&workspace_id, window_days, as_of).await?
         {
             if total == 0 {
                 continue;
             }
             let value = pressured as f64 / total as f64;
             let props = serde_json::json!({ "numerator": pressured, "denominator": total });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_USER,
@@ -265,7 +265,7 @@ pub(super) async fn compute(
     // sum (the pooling view sums across repositories). Base = sessions carrying token
     // usage. A day whose sessions do not all carry `tokens_fresh` has no fresh row.
     if [tokens_day_id, tokens_in_id, tokens_out_id, tokens_fresh_id].iter().any(Option::is_some) {
-        for t in pg.session_outcomes_token_volume_by_day(&project_id, window_days, as_of).await? {
+        for t in pg.session_outcomes_token_volume_by_day(&workspace_id, window_days, as_of).await? {
             let props = serde_json::json!({
                 "sessions": t.sessions, "tokens_in": t.sum_in, "tokens_out": t.sum_out,
                 "tokens_fresh": t.sum_fresh,
@@ -278,7 +278,7 @@ pub(super) async fn compute(
             ];
             for (mid, value) in values {
                 let (Some(mid), Some(value)) = (mid, value) else { continue };
-                pg.upsert_project_metric_repo(&MetricRow {
+                pg.upsert_workspace_metric_repo(&MetricRow {
                     metric_id: &mid,
                     repository_id: &t.repository_id,
                     scope: SCOPE_USER,
@@ -300,10 +300,10 @@ pub(super) async fn compute(
     // pooling view averages across repositories. Base = sessions with a duration.
     if let Some(mid) = duration_id {
         for (day, repository_id, avg_secs, n) in
-            pg.session_outcomes_session_duration_by_day(&project_id, window_days, as_of).await?
+            pg.session_outcomes_session_duration_by_day(&workspace_id, window_days, as_of).await?
         {
             let props = serde_json::json!({ "n": n });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_USER,
@@ -325,14 +325,14 @@ pub(super) async fn compute(
     // session writes NO row (honest-empty, never a fabricated 0/0).
     if let Some(mid) = tokens_result_id {
         for (day, repository_id, sum_out, completed) in
-            pg.session_outcomes_tokens_per_result_by_day(&project_id, window_days, as_of).await?
+            pg.session_outcomes_tokens_per_result_by_day(&workspace_id, window_days, as_of).await?
         {
             if completed == 0 {
                 continue;
             }
             let value = sum_out as f64 / completed as f64;
             let props = serde_json::json!({ "numerator": sum_out, "denominator": completed });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_USER,
@@ -353,15 +353,16 @@ pub(super) async fn compute(
     // / sessions-with-edits) — a (day, repo) with no edit-bearing session has no
     // denominator → NO row (honest-empty, never a fabricated 0/0).
     if let Some(mid) = incomplete_id {
-        for (day, repository_id, flagged, measurable) in
-            pg.session_outcomes_incomplete_analysis_by_day(&project_id, window_days, as_of).await?
+        for (day, repository_id, flagged, measurable) in pg
+            .session_outcomes_incomplete_analysis_by_day(&workspace_id, window_days, as_of)
+            .await?
         {
             if measurable == 0 {
                 continue;
             }
             let value = flagged as f64 / measurable as f64;
             let props = serde_json::json!({ "numerator": flagged, "denominator": measurable });
-            pg.upsert_project_metric_repo(&MetricRow {
+            pg.upsert_workspace_metric_repo(&MetricRow {
                 metric_id: &mid,
                 repository_id: &repository_id,
                 scope: SCOPE_USER,
@@ -386,10 +387,10 @@ mod tests {
     use super::*;
     use crate::db::pg_store::PgStore;
     use crate::tasks::test_support::{
-        cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
+        cleanup_metrics_fixture, daily_workspace_metric_rows as daily_rows, make_ctx,
         repository_for_folder, seed_assistant_event_tool, seed_metrics_client_session,
-        seed_metrics_project_folder, seed_metrics_session, seed_metrics_turn, seed_metrics_turn_ex,
-        seed_second_repository,
+        seed_metrics_session, seed_metrics_turn, seed_metrics_turn_ex,
+        seed_metrics_workspace_folder, seed_second_repository,
     };
     use sqlx_core::query_as::query_as;
 
@@ -398,7 +399,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
 
         // Sessions on ONE day (fixed instant so inserts can't straddle midnight): 3
         // first-try (completed, 0 corrections, 2 tool-calls each) + 1 corrected
@@ -432,15 +433,15 @@ mod tests {
         let rid = repository_for_folder(pg, &fid).await;
         let (row_repo, row_scope, row_grain): (uuid::Uuid, String, String) = query_as(
             "SELECT pm.repository_id, pm.scope::text, pm.grain::text \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'ftr'",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'ftr'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
         .await
         .unwrap();
         assert_eq!(row_repo, rid, "the ftr daily row is keyed on the session's repository");
-        assert_eq!(row_scope, "user", "the local-user default-project value is scope=user");
+        assert_eq!(row_scope, "user", "the local-user default-workspace value is scope=user");
         assert_eq!(row_grain, "daily", "the row is daily grain (per-session grain retired)");
 
         // ── Daily rows ────────────────────────────────────────────────────
@@ -499,7 +500,7 @@ mod tests {
         let (fd_rate, fd_count): (f64, i64) = query_as(
             "SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8, count(*)::int8 \
                FROM activity.sessions s \
-              WHERE s.project_id = $1 AND s.outcome IS NOT NULL",
+              WHERE s.workspace_id = $1 AND s.outcome IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -517,7 +518,7 @@ mod tests {
 
         // ── Per-session grain is RETIRED — no grain='session' rows exist ──
         let (session_grain_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1 AND grain = 'session'",
+            "SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1 AND grain = 'session'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -532,7 +533,7 @@ mod tests {
         let again = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(again, 5, "re-run recomputes the same rows");
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
@@ -544,14 +545,14 @@ mod tests {
 
     #[tokio::test]
     async fn session_outcomes_writes_one_row_per_repository() {
-        // Repo grain: two checkouts (two distinct repositories) in ONE project each
-        // get their OWN daily rows keyed on repository_id — a project-day is never
-        // merged into a single row here (the pooling to a project value is the
+        // Repo grain: two checkouts (two distinct repositories) in ONE workspace each
+        // get their OWN daily rows keyed on repository_id — a workspace-day is never
+        // merged into a single row here (the pooling to a workspace value is the
         // view's job, over these per-repository rows).
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let (fid2, rid2) = seed_second_repository(pg, &pid, &uniq).await;
         let rid1 = repository_for_folder(pg, &fid).await;
         assert_ne!(rid1, rid2, "the two checkouts resolve to distinct repositories");
@@ -571,8 +572,8 @@ mod tests {
         // Two ftr rows, one per repository, each carrying ITS OWN value + denominator.
         let rows: Vec<(Option<uuid::Uuid>, f64, i64)> = query_as(
             "SELECT pm.repository_id, pm.value::float8, (pm.props->>'denominator')::int8 \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'ftr' AND pm.grain = 'daily' AND pm.scope = 'user' \
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'ftr' AND pm.grain = 'daily' AND pm.scope = 'user' \
               ORDER BY pm.repository_id",
         )
         .bind(pid)
@@ -599,8 +600,8 @@ mod tests {
     }
 
     /// Phase 8.4 parity proof, written as formula-equivalence so it survives the
-    /// `sensei.ftr_daily` / `sensei.project_ftr_metrics` drop: the store-derived
-    /// FTR (from `project_metrics`, read back through the getters) equals the
+    /// `sensei.ftr_daily` / `sensei.workspace_ftr_metrics` drop: the store-derived
+    /// FTR (from `workspace_metrics`, read back through the getters) equals the
     /// ARITHMETIC the retired views computed, expressed directly over the seeded
     /// sessions — NOT queried from any view object. Single repository, so the
     /// pooling view is a pass-through of the one per-repository row.
@@ -609,13 +610,13 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
 
         // Seed a measurable set on ONE day (all `outcome is not null`, so the old
         // per-session-average view formula and the store's Σnum/Σden coincide):
         // 3 first-try + 1 corrected. Direct arithmetic over these seeds:
         //   ftr_daily      : avg(case when ftr) = (1+1+1+0)/4 = 0.75; session_count = 4
-        //   project_ftr    : Σnumerator/Σdenominator = 3/4 = 0.75; sessions_7d = 4
+        //   workspace_ftr    : Σnumerator/Σdenominator = 3/4 = 0.75; sessions_7d = 4
         // Anchor to the START of TODAY's UTC day — NOT `now() - 2h`, which crosses the
         // UTC day boundary in the ~2h after midnight and lands the session on YESTERDAY
         // (then the `today` row assertion below misses). Start-of-day is always on
@@ -629,7 +630,7 @@ mod tests {
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert!(written > 0, "compute wrote store rows for the seeded sessions");
 
-        // Store-derived daily FTR (get_ftr_daily reads project_metric_daily) ==
+        // Store-derived daily FTR (get_ftr_daily reads workspace_metric_daily) ==
         // the old ftr_daily arithmetic over the seed.
         let daily = pg.get_ftr_daily(Some(&pid), 14).await.unwrap();
         let today = (chrono::Utc::now()).date_naive().to_string();
@@ -647,9 +648,9 @@ mod tests {
             "store session_count == count(*) over the measurable base = 4"
         );
 
-        // Store-derived 14d headline (get_project_ftr reads project_metric_daily)
-        // == the old project_ftr_metrics formula (Σnum/Σden over 14d) over the seed.
-        let ftr = pg.get_project_ftr(&pid).await.unwrap();
+        // Store-derived 14d headline (get_workspace_ftr reads workspace_metric_daily)
+        // == the old workspace_ftr_metrics formula (Σnum/Σden over 14d) over the seed.
+        let ftr = pg.get_workspace_ftr(&pid).await.unwrap();
         assert!(
             (ftr["ftr14d"].as_f64().unwrap() - 0.75).abs() < 1e-9,
             "store ftr14d == Σnumerator/Σdenominator over 14d = 3/4 = 0.75"
@@ -661,16 +662,16 @@ mod tests {
         );
 
         // And the shared rate helper the legacy surfaces call agrees.
-        let rate = pg.get_project_ftr_rate(&pid).await.unwrap();
+        let rate = pg.get_workspace_ftr_rate(&pid).await.unwrap();
         assert!(
-            (rate.expect("rate present for a project with ftr rows") - 0.75).abs() < 1e-9,
-            "get_project_ftr_rate == the same 14d headline number"
+            (rate.expect("rate present for a workspace with ftr rows") - 0.75).abs() < 1e-9,
+            "get_workspace_ftr_rate == the same 14d headline number"
         );
 
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
-    /// FIX 2: `get_project_ftr`'s inline trend must use the same analyzed base as
+    /// FIX 2: `get_workspace_ftr`'s inline trend must use the same analyzed base as
     /// the headline (`outcome is not null`), so the sparkline's last point agrees
     /// with `ftr14d` even when the day has in-flight sessions. Before the fix the
     /// unfiltered trend scored the in-flight session as 0 and dragged the point
@@ -681,7 +682,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         // 2 first-try + 1 corrected (measurable) + 1 in-flight (outcome NULL) today.
         for _ in 0..2 {
@@ -692,7 +693,7 @@ mod tests {
 
         compute(&ctx, &pid.to_string(), None).await.unwrap();
 
-        let ftr = pg.get_project_ftr(&pid).await.unwrap();
+        let ftr = pg.get_workspace_ftr(&pid).await.unwrap();
         let headline = ftr["ftr14d"].as_f64().expect("ftr14d present");
         assert!(
             (headline - 2.0 / 3.0).abs() < 1e-9,
@@ -722,7 +723,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         let a = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
         seed_metrics_turn(pg, &a, 2, ts).await;
@@ -751,23 +752,23 @@ mod tests {
 
     #[tokio::test]
     async fn session_outcomes_no_data_writes_zero_rows() {
-        // Never-fabricate: a project with zero sessions in the window writes NO rows
+        // Never-fabricate: a workspace with zero sessions in the window writes NO rows
         // (not a defaulted 0). Honest-empty is the correct output for no data.
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let pid = pg.create_project(&format!("_test:so-empty:{uniq}"), None, None).await.unwrap();
+        let pid = pg.create_workspace(&format!("_test:so-empty:{uniq}"), None, None).await.unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert_eq!(written, 0, "no sessions in the window → zero rows written");
 
         let (total,): (i64,) =
-            query_as("SELECT count(*) FROM sensei.project_metrics WHERE project_id = $1")
+            query_as("SELECT count(*) FROM sensei.workspace_metrics WHERE workspace_id = $1")
                 .bind(pid)
                 .fetch_one(pg.pool())
                 .await
                 .unwrap();
-        assert_eq!(total, 0, "no project_metrics rows for an empty project (never fabricated)");
+        assert_eq!(total, 0, "no workspace_metrics rows for an empty workspace (never fabricated)");
 
         cleanup_metrics_fixture(pg, &pid, None, &[]).await;
     }
@@ -783,12 +784,12 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
         // An unresolvable session: outcome measurable, but repo_folder_id NULL.
         let (orphan,): (uuid::Uuid,) = query_as(
-            "INSERT INTO activity.sessions (project_id, outcome, ftr, corrections, started_at) \
+            "INSERT INTO activity.sessions (workspace_id, outcome, ftr, corrections, started_at) \
              VALUES ($1, 'corrected'::sensei.session_outcome, false, 1, $2) RETURNING id",
         )
         .bind(pid)
@@ -802,8 +803,8 @@ mod tests {
 
         let rows: Vec<(f64, i64)> = query_as(
             "SELECT pm.value::float8, (pm.props->>'denominator')::int8 \
-               FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'ftr' AND pm.grain = 'daily' AND pm.scope = 'user'",
+               FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'ftr' AND pm.grain = 'daily' AND pm.scope = 'user'",
         )
         .bind(pid)
         .fetch_all(pg.pool())
@@ -832,7 +833,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         // 2 completed sessions, each with a turn but ZERO tool-calls → the day appears
         // in the rework aggregate with total_tool_calls = 0 (exercises the skip path).
@@ -845,8 +846,8 @@ mod tests {
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let (rework_rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'rework_ratio'",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'rework_ratio'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -871,7 +872,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         for _ in 0..2 {
             let sid =
@@ -915,7 +916,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
 
         let t = chrono::Utc::now() - chrono::Duration::hours(2);
         let at = |n: i64| t + chrono::Duration::seconds(n);
@@ -967,7 +968,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let t = chrono::Utc::now() - chrono::Duration::hours(2);
         for _ in 0..2 {
             let s =
@@ -978,8 +979,8 @@ mod tests {
         compute(&ctx, &pid.to_string(), None).await.unwrap();
 
         let (rows,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND m.key = 'time_to_useful_result'",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND m.key = 'time_to_useful_result'",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -1001,7 +1002,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         let with = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
         let without =
@@ -1032,7 +1033,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
         // Two completed sessions: (in=100 of which 10 fresh, out=20, 60s) +
         // (in=300 of which 30 fresh, out=80, 120s).
@@ -1091,7 +1092,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let t = chrono::Utc::now() - chrono::Duration::hours(2);
         let at = |n: i64| t + chrono::Duration::seconds(n);
 
@@ -1164,7 +1165,7 @@ mod tests {
         let ctx = make_ctx().await;
         let pg = ctx.pg();
         let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) = seed_metrics_project_folder(pg, &uniq).await;
+        let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
 
         // One measurable session 60 days ago — well outside the default 14-day
         // window. `date_naive()` is its true occurrence day.
@@ -1192,8 +1193,8 @@ mod tests {
         // day, 60 days ago) at repo grain — proof the past-dated row reaches the
         // daily roll-up.
         let (ftr_days,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.project_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
-              WHERE pm.project_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' AND m.key = 'ftr' AND pm.computed_on = $2",
+            "SELECT count(*) FROM sensei.workspace_metrics pm JOIN sensei.metrics m ON m.id = pm.metric_id \
+              WHERE pm.workspace_id = $1 AND pm.grain = 'daily' AND pm.scope = 'user' AND m.key = 'ftr' AND pm.computed_on = $2",
         )
         .bind(pid)
         .bind(day)

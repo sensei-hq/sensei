@@ -5,7 +5,7 @@
 // ScrOrgLadder). Side-effect-free so the mapping unit-tests without a DOM or a Worker.
 //
 // Scope vocabulary + precedence come from `sensei.scopes` (key · level 0→70, higher =
-// more specific): general·user·organization·client·technology·team·project·repository.
+// more specific): general·user·organization·client·technology·team·workspace·repository.
 // Ladder glyphs match the kit (社 Company · 客 Client · 己 Personal · 件 Workspace · 技
 // Stack) and section groups (社 Company · 組 Teams · 技 Stacks).
 
@@ -44,7 +44,7 @@ const SCOPE_META: Record<string, ScopeMeta> = {
 	client: { label: 'Client', kanji: '客', group: 'Company', level: 30 },
 	technology: { label: 'Stack', kanji: '技', group: 'Stacks', level: 40 },
 	team: { label: 'Team', kanji: '組', group: 'Teams', level: 50 },
-	project: { label: 'Workspace', kanji: '件', group: 'Stacks', level: 60 },
+	workspace: { label: 'Workspace', kanji: '件', group: 'Stacks', level: 60 },
 	repository: { label: 'Repository', kanji: '庫', group: 'Stacks', level: 70 }
 };
 

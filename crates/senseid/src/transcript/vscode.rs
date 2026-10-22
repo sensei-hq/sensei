@@ -1218,7 +1218,7 @@ mod tests {
         // The SHAPE from a shared transcript, with a synthetic user and project:
         // VS Code writes Windows folders as
         // file:///c%3A/... Leaving the escape in place produced "/c%3A/Users/..."
-        // which matches no directory, so every Windows session lost its project.
+        // which matches no directory, so every Windows session lost its workspace.
         assert_eq!(
             sensei_transcript_formats::paths::normalise_uri_path(
                 "/c%3A/Users/dev.user/Documents/workspace/sample-portal"

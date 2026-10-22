@@ -1,11 +1,11 @@
 //! `Resolution<T>` — the outcome of resolving an identity (folder→namespace,
-//! folder→owning-project, session→membership, …) where **"nothing matched"**
+//! folder→owning-workspace, session→membership, …) where **"nothing matched"**
 //! and **"more than one matched"** are first-class outcomes, DISTINCT from a
 //! confident hit.
 //!
 //! The point is to make the #109 failure mode unrepresentable: code that used
 //! to `unwrap_or(<a default>)` or `.first()`/`.next()` on a lookup — silently
-//! attributing work to the wrong project / scope / tenant when the real answer
+//! attributing work to the wrong workspace / scope / tenant when the real answer
 //! was "unknown" or "ambiguous" — must instead match every arm and **fail
 //! closed** (error, hold, or surface "unknown"), never substitute a broad
 //! default. `crate::git_identity` already does this by propagating `None` for

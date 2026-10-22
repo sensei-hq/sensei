@@ -1,4 +1,4 @@
-//! Project-metrics narrative — the headline + per-signal "what sensei noticed"
+//! Workspace-metrics narrative — the headline + per-signal "what sensei noticed"
 //! prose for the metrics screen. A thin producer over [`narration_cache`]: it turns
 //! the already-assembled per-metric JSON (the exact rows the metrics endpoint
 //! serves, with `prior`/`delta` merged in) into grounded `facts`, reads the
@@ -20,7 +20,7 @@ use super::narration_cache::{self, CopyLimits, InsightKind};
 use crate::db::pg_store::PgStore;
 
 /// The registry key of the composite health metric — it is the hero, not a mover.
-const KEY_HEALTH: &str = "project_health";
+const KEY_HEALTH: &str = "workspace_health";
 
 /// Classify a change as improving / worsening / steady, honouring the metric's
 /// own direction (a rising `lower_better` metric is worsening). Mirrors the
@@ -135,7 +135,7 @@ fn series_trend(values: &[f64], direction: &str) -> Option<SeriesTrend> {
     })
 }
 
-/// Whole-project facts for the headline: how many signals moved, the split, the
+/// Whole-workspace facts for the headline: how many signals moved, the split, the
 /// movers (name + direction), and the health score. Read from the metric rows.
 fn headline_facts(metrics: &[Value]) -> Value {
     let mut movers: Vec<Value> = Vec::new();
@@ -243,7 +243,7 @@ fn signal_facts(m: &Value, series: Option<&[f64]>) -> Value {
     Value::Object(f)
 }
 
-/// Build the `narrative` object for `GET /api/projects/{id}/metrics`:
+/// Build the `narrative` object for `GET /api/workspaces/{id}/metrics`:
 /// `{ headline?, subhead?, insights: { <metric_key>: sentence } }`. Only
 /// model-generated entries are included; a cold-cache entry is omitted (and its
 /// generation warmed) so the app renders its own deterministic copy in the gap.
@@ -332,11 +332,11 @@ mod tests {
     #[test]
     fn headline_facts_counts_movers_excluding_health_and_flat() {
         let metrics = vec![
-            metric("project_health", "Health", "higher_better", Some(-0.02)), // hero, not a mover
-            metric("ftr", "FTR", "higher_better", Some(0.1)),                 // improving
+            metric("workspace_health", "Health", "higher_better", Some(-0.02)), // hero, not a mover
+            metric("ftr", "FTR", "higher_better", Some(0.1)),                   // improving
             metric("time_to_useful_result", "TTUR", "lower_better", Some(0.2)), // worsening
-            metric("dup", "Duplication", "lower_better", Some(0.0)),          // flat → skipped
-            metric("noprior", "New", "higher_better", None),                  // no delta → skipped
+            metric("dup", "Duplication", "lower_better", Some(0.0)),            // flat → skipped
+            metric("noprior", "New", "higher_better", None), // no delta → skipped
         ];
         let f = headline_facts(&metrics);
         assert_eq!(f["moved_count"].as_u64(), Some(2));

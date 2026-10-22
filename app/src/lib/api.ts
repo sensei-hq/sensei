@@ -1,19 +1,19 @@
 import type {
-  ServerProject,
+  ServerWorkspace,
   GraphSymbolNode, GraphCallEdge,
-  ProjectGraphResponse, SolutionAnalysis,
+  WorkspaceGraphResponse, SolutionAnalysis,
   FunctionMatch, CommunityInfo,
   LibEntry, SessionData, SessionsDigest,
-  ProjectMemory, DriftItem, PatternEntry, Recommendation,
+  WorkspaceMemory, DriftItem, PatternEntry, Recommendation,
   CallFlowModule, CallFlowCall,
-  ProjectListItem,
+  WorkspaceListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   DojoMembership, DojoBindingSuggestion, DojoUpgradesResponse, CollectivePreferences,
   ShareReviewResponse, PublishBatchOutcome,
   McpToolManifest, MemoryShareBatch, ImpactVerdictEntry,
-  ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
+  WorkspaceMcpToolStat, ToolSignal, WorkspaceService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
-  ObservatoryToday, ObservatoryFtr, ProjectOverview,
+  ObservatoryToday, ObservatoryFtr, WorkspaceOverview,
   InsightsBoard, LogRow, ScheduledTask,
   MetricStatusResponse, MetricStatusSummary, MetricActivationOutcome,
   SyncStateResponse,
@@ -32,24 +32,24 @@ import type {
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
   ProposalCreateBody, MemoryCreateBody, OutcomeBody, OutcomesBatchResponse,
-  DaemonWatchRoot, DaemonProject,
+  DaemonWatchRoot, DaemonWorkspace,
 } from './setup/contracts.js';
 import type {
   ConsolidatedRuleset, ConsolidateResult,
 } from '../routes/(observatory)/consolidation/consolidation-view.js';
 import type {
-  ProjectMetricRow, RegistryMetric, MetricSeriesPoint, MetricsNarrative,
+  WorkspaceMetricRow, RegistryMetric, MetricSeriesPoint, MetricsNarrative,
   DaySessions, DrilldownSession, ToolUsage,
 } from './metrics/metric-view.js';
-import type { ProjectHealth } from './metrics/health-radar.js';
-import type { ProjectImpactWire } from './impact.js';
+import type { WorkspaceHealth } from './metrics/health-radar.js';
+import type { WorkspaceImpactWire } from './impact.js';
 
 export type { DaySessions, DrilldownSession, ToolUsage };
 
 import type { PersonaWire } from './personas.svelte.js';
 
 /** `body` is the daemon's parsed error body, when a caller needs more than the
- *  code in `message` (e.g. which project already owns a board). */
+ *  code in `message` (e.g. which workspace already owns a board). */
 export type ApiError =
   | { status: number; message: string; body?: Record<string, unknown> }
   | { status: 0; message: string };
@@ -82,7 +82,7 @@ export function readOutcome<T>(r: ApiResult<T>): { data: T | null; error: string
 
 /** The daemon's origin for a given port. The single source of truth for the
  *  loopback base URL, shared by `senseiApi` and any non-fetch consumer (e.g.
- *  an `<img src>` that streams bytes from the daemon, like a project icon). */
+ *  an `<img src>` that streams bytes from the daemon, like a workspace icon). */
 export const apiBase = (port: number): string => `http://127.0.0.1:${port}`;
 
 /** Create a typed API client for the sensei Rust daemon. */
@@ -275,7 +275,7 @@ export function senseiApi(port: number) {
     registerRepo: (repoId: string, name: string, path: string) =>
       post('/api/repos', { repoId, name, path }, { ok: false }),
 
-    updateRepo: (repoId: string, patch: Partial<ServerProject>) =>
+    updateRepo: (repoId: string, patch: Partial<ServerWorkspace>) =>
       put(`/api/repos/${enc(repoId)}`, patch),
 
     deleteRepo: (repoId: string) => del(`/api/repos/${enc(repoId)}`),
@@ -289,75 +289,75 @@ export function senseiApi(port: number) {
     removeRepoTag: (repoId: string, tag: string) =>
       del(`/api/repos/${enc(repoId)}/tags/${enc(tag)}`),
 
-    // ── Projects (groups of 1+ repos) ───────────────────────────────────
+    // ── Workspaces (groups of 1+ repos) ───────────────────────────────────
 
-    createProject: (project: object) =>
-      post<{ ok: boolean; id?: string }>('/api/projects', project, { ok: false }),
+    createWorkspace: (workspace: object) =>
+      post<{ ok: boolean; id?: string }>('/api/workspaces', workspace, { ok: false }),
 
-    updateProject: (id: string, patch: object) =>
-      put(`/api/projects/${enc(id)}`, patch),
+    updateWorkspace: (id: string, patch: object) =>
+      put(`/api/workspaces/${enc(id)}`, patch),
 
-    /** Error-propagating variant of updateProject — the About-tab metadata
+    /** Error-propagating variant of updateWorkspace — the About-tab metadata
      *  form drives a saveStatus (idle/saving/saved/error) lifecycle off the
      *  Result, mirroring trySetConfig on the settings form. The daemon's
-     *  PUT /api/projects/{id} does a partial (COALESCE) update of the editable
+     *  PUT /api/workspaces/{id} does a partial (COALESCE) update of the editable
      *  identity subset (name/description/client/goal/maturity/…). */
-    tryUpdateProject: (id: string, patch: object): Promise<ApiResult<void>> =>
-      tryPut(`/api/projects/${enc(id)}`, patch),
+    tryUpdateWorkspace: (id: string, patch: object): Promise<ApiResult<void>> =>
+      tryPut(`/api/workspaces/${enc(id)}`, patch),
 
-    deleteProject: (id: string) => del(`/api/projects/${enc(id)}`),
+    deleteWorkspace: (id: string) => del(`/api/workspaces/${enc(id)}`),
 
     /** Update a single folder. Currently only `role` is honored daemon-side. */
     updateFolder: (id: string, patch: { role?: string | null }) =>
       put(`/api/folders/${enc(id)}`, patch),
 
-    /** Error-propagating reads/writes for Settings · Projects (#271): a failed
+    /** Error-propagating reads/writes for Settings · Workspaces (#271): a failed
      *  load is an error state, never an empty list, and a role save that fails
      *  is rolled back and reported rather than silently kept on screen. */
     // One read of the list, typed as the wire carries it: the settings and
-    // setup view (`DaemonProject`) and the projects-index view (`ProjectListItem`).
-    tryListProjects: () => tryGet<Array<DaemonProject & ProjectListItem>>('/api/projects'),
+    // setup view (`DaemonWorkspace`) and the workspaces-index view (`WorkspaceListItem`).
+    tryListWorkspaces: () => tryGet<Array<DaemonWorkspace & WorkspaceListItem>>('/api/workspaces'),
     tryUpdateFolder: (id: string, patch: { role?: string | null }) =>
       tryPut(`/api/folders/${enc(id)}`, patch),
 
-    addProjectRepo: (projectId: string, repo: { repoId: string; role?: string }) =>
-      post(`/api/projects/${enc(projectId)}/repos`, repo, { ok: false }),
+    addWorkspaceRepo: (workspaceId: string, repo: { repoId: string; role?: string }) =>
+      post(`/api/workspaces/${enc(workspaceId)}/repos`, repo, { ok: false }),
 
-    removeProjectRepo: (projectId: string, repoId: string) =>
-      del(`/api/projects/${enc(projectId)}/repos/${enc(repoId)}`),
+    removeWorkspaceRepo: (workspaceId: string, repoId: string) =>
+      del(`/api/workspaces/${enc(workspaceId)}/repos/${enc(repoId)}`),
 
-    analyzeProject: (id: string) =>
-      post<SolutionAnalysis | null>(`/api/projects/${enc(id)}/analyze`, {}, null),
+    analyzeWorkspace: (id: string) =>
+      post<SolutionAnalysis | null>(`/api/workspaces/${enc(id)}/analyze`, {}, null),
 
-    // ── Project detail (new multi-window endpoints) ───────────────────
-    /** A project's FTR headline (14d / prior / trend / 7d). */
-    tryGetProjectFtr: (id: string) =>
+    // ── Workspace detail (new multi-window endpoints) ───────────────────
+    /** A workspace's FTR headline (14d / prior / trend / 7d). */
+    tryGetWorkspaceFtr: (id: string) =>
       tryGet<{ ftr14d: number | null; ftr14dPrev: number | null; ftrTrend: number[]; sessions7d: number }>(
-        `/api/projects/${enc(id)}/ftr`,
+        `/api/workspaces/${enc(id)}/ftr`,
       ),
 
-    // ── Project metrics (registry-driven) ─────────────────────────────
+    // ── Workspace metrics (registry-driven) ─────────────────────────────
     // Error-propagating (tryGet): a fetch failure must be distinguishable from a
-    // project with no computed metrics yet, so the screen shows an error state
+    // workspace with no computed metrics yet, so the screen shows an error state
     // rather than an empty grid that hides a broken daemon (no-fabrication).
-    getProjectMetrics: (id: string) =>
-      tryGet<{ metrics: ProjectMetricRow[]; count: number; narrative?: MetricsNarrative | null }>(
-        `/api/projects/${enc(id)}/metrics`,
+    getWorkspaceMetrics: (id: string) =>
+      tryGet<{ metrics: WorkspaceMetricRow[]; count: number; narrative?: MetricsNarrative | null }>(
+        `/api/workspaces/${enc(id)}/metrics`,
       ),
 
     // The catalog — the only surface that carries each metric's `family`, joined
-    // client-side to group the per-project values into sections.
+    // client-side to group the per-workspace values into sections.
     getMetricsRegistry: () =>
       tryGet<{ metrics: RegistryMetric[]; count: number }>(`/api/metrics/registry`),
 
     // Composite health + every included metric's 0-5 rating and weight — the
     // radar's spokes and the score, from one row so they always agree (spec I5).
-    // 404 when the daemon rated nothing for this project: honest-empty, and the
+    // 404 when the daemon rated nothing for this workspace: honest-empty, and the
     // Result lets the caller tell that apart from a fetch failure.
-    getProjectHealth: (id: string) => tryGet<ProjectHealth>(`/api/projects/${enc(id)}/health`),
-    /** Which metrics move together, across every project. Portfolio-wide on
-     *  purpose: per project the paired-day count rarely clears the daemon's n>=20
-     *  gate, so a project-scoped call is usually empty. */
+    getWorkspaceHealth: (id: string) => tryGet<WorkspaceHealth>(`/api/workspaces/${enc(id)}/health`),
+    /** Which metrics move together, across every workspace. Portfolio-wide on
+     *  purpose: per workspace the paired-day count rarely clears the daemon's n>=20
+     *  gate, so a workspace-scoped call is usually empty. */
     getMetricCorrelations: () =>
         tryGet<{
             cells: number;
@@ -367,7 +367,7 @@ export function senseiApi(port: number) {
         }>(`/api/metrics/correlations`),
 
     // Per-metric time series for the card sparklines / trend view.
-    getProjectMetricSeries: (
+    getWorkspaceMetricSeries: (
       id: string,
       key: string,
       grain: 'daily' | 'weekly' | 'monthly' | 'quarterly' = 'daily',
@@ -380,116 +380,116 @@ export function senseiApi(port: number) {
         formula: string | null;
         series: MetricSeriesPoint[];
         count: number;
-      }>(`/api/projects/${enc(id)}/metrics/${enc(key)}?grain=${grain}`),
+      }>(`/api/workspaces/${enc(id)}/metrics/${enc(key)}?grain=${grain}`),
 
     // The measurable sessions behind ONE daily datapoint (the datapoint→sessions
     // drill-down). Error-propagating (tryGet): a fetch failure — including a 404
     // on a daemon that predates the endpoint — surfaces as `{ ok: false, error }`
     // so the drill-down renders an explicit "not available"/error STATE, never a
     // fabricated session list. `day` is `YYYY-MM-DD`.
-    getProjectMetricDaySessions: (id: string, key: string, day: string) =>
+    getWorkspaceMetricDaySessions: (id: string, key: string, day: string) =>
       tryGet<DaySessions>(
-        `/api/projects/${enc(id)}/metrics/${enc(key)}/sessions?day=${enc(day)}`,
+        `/api/workspaces/${enc(id)}/metrics/${enc(key)}/sessions?day=${enc(day)}`,
       ),
 
     // Per-tool usage breakdown (which tools the ACPs invoked) — the tool-usage
     // bubble view. Honest-empty ({tools:[]}) on a fetch error, never fabricated.
-    /** Per-tool usage for a project (#288: a failure is an error, not "no tools"). */
-    tryGetProjectTools: (id: string) => tryGet<{ tools: ToolUsage[]; count: number }>(`/api/projects/${enc(id)}/tools`),
+    /** Per-tool usage for a workspace (#288: a failure is an error, not "no tools"). */
+    tryGetWorkspaceTools: (id: string) => tryGet<{ tools: ToolUsage[]; count: number }>(`/api/workspaces/${enc(id)}/tools`),
 
-    tryGetProjectRepos: (id: string) =>
+    tryGetWorkspaceRepos: (id: string) =>
       tryGet<{ repos: Array<{ id: string; name: string; path: string; kind: string; role?: string }> }>(
-        `/api/projects/${enc(id)}/repos`,
+        `/api/workspaces/${enc(id)}/repos`,
       ),
 
     // Error-propagating (mockup-drift-audit F8): a fetch failure must be
-    // distinguishable from a project that genuinely has no libraries. tryGet
+    // distinguishable from a workspace that genuinely has no libraries. tryGet
     // surfaces {ok:false,error} so the screen shows error-with-Retry instead of
     // an empty list that hides a broken daemon.
-    tryGetProjectLibraries: (id: string) =>
+    tryGetWorkspaceLibraries: (id: string) =>
       tryGet<{ libraries: Array<{
         id: string; name: string; ecosystem: string;
-        scope: 'global' | 'project'; enabled: boolean;
+        scope: 'global' | 'workspace'; enabled: boolean;
         description?: string | null;
         hasDocs?: boolean; pageCount?: number;
         localSource?: string | null;
       }> }>(
-        `/api/projects/${enc(id)}/libraries`,
+        `/api/workspaces/${enc(id)}/libraries`,
       ),
 
     // T1a version-conflict view — surfaces libraries pinned to multiple
-    // versions across the project's folders. One row per (project, library)
+    // versions across the workspace's folders. One row per (workspace, library)
     // pair with the distinct versions + folders where each was seen.
-    // Error-propagating (F8) — see tryGetProjectLibraries.
-    tryGetProjectLibraryVersionConflicts: (id: string) =>
+    // Error-propagating (F8) — see tryGetWorkspaceLibraries.
+    tryGetWorkspaceLibraryVersionConflicts: (id: string) =>
       tryGet<{ conflicts: Array<{ library_id: string; library_name: string; ecosystem: string; versions: string[]; folders: string[] }> }>(
-        `/api/projects/${enc(id)}/library-version-conflicts`,
+        `/api/workspaces/${enc(id)}/library-version-conflicts`,
       ),
 
-    tryGetProjectInstruments: (id: string) =>
-      tryGet<{ tools: Array<{ id: string; name: string; kind: string; scope: 'global' | 'project'; enabled: boolean }> }>(
-        `/api/projects/${enc(id)}/instruments`,
+    tryGetWorkspaceInstruments: (id: string) =>
+      tryGet<{ tools: Array<{ id: string; name: string; kind: string; scope: 'global' | 'workspace'; enabled: boolean }> }>(
+        `/api/workspaces/${enc(id)}/instruments`,
       ),
 
-    // Per-project MCP tool aggregation — calls / errors / avg duration / FTR
-    // scoped to the project. Returns EVERY manifest tool with usage overlaid
+    // Per-workspace MCP tool aggregation — calls / errors / avg duration / FTR
+    // scoped to the workspace. Returns EVERY manifest tool with usage overlaid
     // (zero-call rows included) so the UI can render the full catalogue.
-    tryGetProjectMcpToolStats: (id: string) =>
-      tryGet<{ tools: ProjectMcpToolStat[] }>(`/api/projects/${enc(id)}/mcp-tool-stats`),
+    tryGetWorkspaceMcpToolStats: (id: string) =>
+      tryGet<{ tools: WorkspaceMcpToolStat[] }>(`/api/workspaces/${enc(id)}/mcp-tool-stats`),
 
-    // Services (MCP servers, inference providers) with per-project scope
+    // Services (MCP servers, inference providers) with per-workspace scope
     // resolved (scoped > global > default true).
-    tryListProjectServices: (id: string) =>
-      tryGet<{ services: ProjectService[] }>(`/api/projects/${enc(id)}/services`),
+    tryListWorkspaceServices: (id: string) =>
+      tryGet<{ services: WorkspaceService[] }>(`/api/workspaces/${enc(id)}/services`),
 
-    setProjectServiceScope: (id: string, serviceId: string, enabled: boolean) =>
-      put(`/api/projects/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
+    setWorkspaceServiceScope: (id: string, serviceId: string, enabled: boolean) =>
+      put(`/api/workspaces/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
 
-    tryGetProjectMemories: (id: string) =>
-      tryGet<{ active: ProjectMemory[]; total: number }>(`/api/projects/${enc(id)}/memories`),
+    tryGetWorkspaceMemories: (id: string) =>
+      tryGet<{ active: WorkspaceMemory[]; total: number }>(`/api/workspaces/${enc(id)}/memories`),
 
     // Memory share batches — the proposal / review / verdict lifecycle for
     // grouping memories before federating them out to a hive-mind.
     tryListMemoryShareBatches: (id: string, status?: string) =>
       tryGet<{ batches: MemoryShareBatch[] }>(
-        `/api/projects/${enc(id)}/memory-batches${status ? `?status=${enc(status)}` : ''}`,
+        `/api/workspaces/${enc(id)}/memory-batches${status ? `?status=${enc(status)}` : ''}`,
       ),
 
     /** Propose a share batch — its id, or why it was not created. */
     tryCreateMemoryShareBatch: (id: string, memoryIds: string[], note?: string) =>
-      tryPost<{ id: string }>(`/api/projects/${enc(id)}/memory-batches`, { memory_ids: memoryIds, note }),
+      tryPost<{ id: string }>(`/api/workspaces/${enc(id)}/memory-batches`, { memory_ids: memoryIds, note }),
 
     /** Approve, reject or withdraw a share batch — or why the daemon refused. */
     tryDecideMemoryShareBatch: (id: string, batchId: string, status: 'approved' | 'rejected' | 'withdrawn', note?: string) =>
-      tryPut(`/api/projects/${enc(id)}/memory-batches/${enc(batchId)}`, { status, note }),
+      tryPut(`/api/workspaces/${enc(id)}/memory-batches/${enc(batchId)}`, { status, note }),
 
     // Impact verdicts (manual log) — user-logged retrospectives about
     // shipped changes. Independent of the automatic recommendation
-    // verdicts on /api/projects/{id}/impact.
+    // verdicts on /api/workspaces/{id}/impact.
     /** The user-logged impact log (T3 Slice 3), optionally one verdict. */
     tryListImpactVerdicts: (id: string, verdict?: string) =>
       tryGet<{ verdicts: ImpactVerdictEntry[] }>(
-        `/api/projects/${enc(id)}/impact-verdicts${verdict ? `?verdict=${enc(verdict)}` : ''}`,
+        `/api/workspaces/${enc(id)}/impact-verdicts${verdict ? `?verdict=${enc(verdict)}` : ''}`,
       ),
 
-    /** A project's measured recommendations (#288: a failure is an error, not []). */
-    tryGetProjectImpact: (id: string) => tryGet<ProjectImpactWire[]>(`/api/projects/${enc(id)}/impact`),
+    /** A workspace's measured recommendations (#288: a failure is an error, not []). */
+    tryGetWorkspaceImpact: (id: string) => tryGet<WorkspaceImpactWire[]>(`/api/workspaces/${enc(id)}/impact`),
 
     /** Run the doc-drift detector now; resolves to what the scan found. */
-    tryScanProjectDrift: (id: string) =>
-      tryPost<{ scannedDocs: number; newBroken: number; resolved: number }>(`/api/projects/${enc(id)}/drift/scan`, {}),
+    tryScanWorkspaceDrift: (id: string) =>
+      tryPost<{ scannedDocs: number; newBroken: number; resolved: number }>(`/api/workspaces/${enc(id)}/drift/scan`, {}),
 
-    /** A project's doc-drift items with their counts (#288: a failure is an error). */
-    tryGetProjectDrift: (id: string) =>
-      tryGet<{ items: DriftItem[]; total: number; drifted: number; broken: number; indexedDocs?: number }>(`/api/projects/${enc(id)}/drift`),
+    /** A workspace's doc-drift items with their counts (#288: a failure is an error). */
+    tryGetWorkspaceDrift: (id: string) =>
+      tryGet<{ items: DriftItem[]; total: number; drifted: number; broken: number; indexedDocs?: number }>(`/api/workspaces/${enc(id)}/drift`),
 
     /** Log an impact by hand — its id, or why it was not logged. */
     tryCreateImpactVerdict: (id: string, title: string, note?: string, sessionId?: string) =>
-      tryPost<{ id: string }>(`/api/projects/${enc(id)}/impact-verdicts`, { title, note, session_id: sessionId }),
+      tryPost<{ id: string }>(`/api/workspaces/${enc(id)}/impact-verdicts`, { title, note, session_id: sessionId }),
 
     /** Record a logged impact's outcome — or why the daemon refused. */
     tryDecideImpactVerdict: (id: string, verdictId: string, verdict: 'success' | 'mixed' | 'failure', note?: string) =>
-      tryPut(`/api/projects/${enc(id)}/impact-verdicts/${enc(verdictId)}`, { verdict, note }),
+      tryPut(`/api/workspaces/${enc(id)}/impact-verdicts/${enc(verdictId)}`, { verdict, note }),
 
     // Measured impact reports — the analyzer's before/after FTR + MOE-style
     // consensus for recommendations that carry a reasoning trace or a
@@ -500,97 +500,97 @@ export function senseiApi(port: number) {
      *  Result-based deliberately. This screen must tell "no edges here" apart
      *  from "the daemon failed", and the fallback-returning `get` collapses
      *  both into an empty graph — which is the one thing the spec names as a
-     *  wrong gate, being indistinguishable from an unindexed project. */
-    tryGetProjectStructure: (id: string, level: StructureLevel, kinds: string[]) =>
+     *  wrong gate, being indistinguishable from an unindexed workspace. */
+    tryGetWorkspaceStructure: (id: string, level: StructureLevel, kinds: string[]) =>
       tryGet<StructurePayload>(
-        `/api/projects/${enc(id)}/diagrams/structure?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
+        `/api/workspaces/${enc(id)}/diagrams/structure?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
       ),
 
     /** #232 — the Layers/Cycles payload, one request serving both screens.
      *
      *  ONE CALL, TWO SCREENS. The layering, the cycles and the coverage all
      *  come out of a single `analyse` over one read of `structure_edges`, and
-     *  that read is the whole cost (1.5 s to 74 s per project). Splitting it
+     *  that read is the whole cost (1.5 s to 74 s per workspace). Splitting it
      *  into a layering endpoint and a cycles endpoint would pay it twice for
      *  answers that have to agree.
      *
      *  Result-based for the reason the Structure one is: this screen must tell
      *  "no cycles here" apart from "the daemon failed", and an empty canvas
      *  reads as a clean architecture. */
-    tryGetProjectLayering: (id: string, level: LayeringLevel, kinds: string[]) =>
+    tryGetWorkspaceLayering: (id: string, level: LayeringLevel, kinds: string[]) =>
       tryGet<LayeringPayload>(
-        `/api/projects/${enc(id)}/diagrams/layering?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
+        `/api/workspaces/${enc(id)}/diagrams/layering?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
       ),
 
     /** #219 — the World payload: every indexed declaration, nested.
      *
-     *  CROSS-PROJECT. The project in the path names the view and does not scope
-     *  it — the picture is all indexed code, with project as its outermost ring.
+     *  CROSS-WORKSPACE. The workspace in the path names the view and does not scope
+     *  it — the picture is all indexed code, with workspace as its outermost ring.
      *
      *  Result-based like its siblings: this screen must tell "nothing indexed"
      *  apart from "the daemon failed", and on a picture whose whole subject is
      *  how much there is, an empty canvas is the worse lie. */
-    tryGetProjectWorld: (id: string, groupBy: WorldGroupBy) =>
+    tryGetWorkspaceWorld: (id: string, groupBy: WorldGroupBy) =>
       tryGet<WorldPayload>(
-        `/api/projects/${enc(id)}/diagrams/world?groupBy=${enc(groupBy)}`
+        `/api/workspaces/${enc(id)}/diagrams/world?groupBy=${enc(groupBy)}`
       ),
 
     /** #220 — one symbol, its callers and callees, `depth` rings out.
      *  `focus` is a node id; a missing one is a 400, never a default symbol. */
-    tryGetProjectNeighbourhood: (id: string, focus: string, depth: number) =>
+    tryGetWorkspaceNeighbourhood: (id: string, focus: string, depth: number) =>
       tryGet<NeighbourhoodPayload>(
-        `/api/projects/${enc(id)}/diagrams/neighbourhood?focus=${enc(focus)}&depth=${depth}`
+        `/api/workspaces/${enc(id)}/diagrams/neighbourhood?focus=${enc(focus)}&depth=${depth}`
       ),
 
-    /** #221 — the project's database structure: tables, keys, views and
+    /** #221 — the workspace's database structure: tables, keys, views and
      *  routines, and what depends on what (dbd `SchemaModel` v2's ER half).
      *
      *  Result-based like its siblings: "no database described here" and "the
      *  daemon failed" must stay apart, and an empty canvas reads as the first. */
-    tryGetProjectSchema: (id: string) =>
-      tryGet<SchemaPayload>(`/api/projects/${enc(id)}/diagrams/schema`),
+    tryGetWorkspaceSchema: (id: string) =>
+      tryGet<SchemaPayload>(`/api/workspaces/${enc(id)}/diagrams/schema`),
 
     /** A failed read is an error, never "no patterns" (#85). */
-    tryGetProjectPatterns: (id: string) =>
-      tryGet<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(`/api/projects/${enc(id)}/patterns`),
+    tryGetWorkspacePatterns: (id: string) =>
+      tryGet<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(`/api/workspaces/${enc(id)}/patterns`),
 
     // Result-based variant: a recommendations-only fetch failure (the /metrics
     // leg can succeed independently) must SURFACE, not collapse to [] — otherwise
     // a 500/timeout is indistinguishable from a genuinely-empty list on a
     // governance-facing screen.
-    tryGetProjectRecommendations: (id: string, status?: string) =>
+    tryGetWorkspaceRecommendations: (id: string, status?: string) =>
       tryGet<Recommendation[]>(
-        `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`,
+        `/api/workspaces/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`,
       ),
 
     // P-A: rule-class accept that MATERIALIZES a governance rule (spec 2026-08-20).
     // `preview` renders what would be written (no write); `materialize` accepts +
-    // writes the rule at the chosen scope/enforcement (defaults: project / recommended).
+    // writes the rule at the chosen scope/enforcement (defaults: workspace / recommended).
     tryPreviewRecommendation: (id: string, recId: string) =>
-      tryGet<RecommendationPreview>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/preview`),
+      tryGet<RecommendationPreview>(`/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/preview`),
     tryMaterializeRecommendation: (
       id: string, recId: string,
       opts: { gov_scope?: string; namespace_id?: string; enforcement?: string; title?: string; body?: string },
     ) =>
       tryPost<{ ok: boolean; materialized?: unknown }>(
-        `/api/projects/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts,
+        `/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/materialize`, opts,
       ),
     // The accept/reject flow that gives MeasureVerdicts work to measure. Each
     // resolves { ok } on success, or an error — 409 CONFLICT when the rec was
     // already decided.
-    tryAcceptProjectRecommendation: (id: string, recId: string) =>
-      tryPost<{ ok: boolean }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/accept`, {}),
-    tryRejectProjectRecommendation: (id: string, recId: string) =>
-      tryPost<{ ok: boolean }>(`/api/projects/${enc(id)}/recommendations/${enc(recId)}/reject`, {}),
+    tryAcceptWorkspaceRecommendation: (id: string, recId: string) =>
+      tryPost<{ ok: boolean }>(`/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/accept`, {}),
+    tryRejectWorkspaceRecommendation: (id: string, recId: string) =>
+      tryPost<{ ok: boolean }>(`/api/workspaces/${enc(id)}/recommendations/${enc(recId)}/reject`, {}),
     // ── Observatory · Insights (Slot 5) ─────────────────────────────────
     // Server-side triage aggregator: bundles recs, memories, patterns and
-    // corrections pre-bucketed into Now / Soon / Settled. `project` scopes
-    // all three columns to one project (name-or-uuid). Fallback is the empty
+    // corrections pre-bucketed into Now / Soon / Settled. `workspace` scopes
+    // all three columns to one workspace (name-or-uuid). Fallback is the empty
     // board so a daemon hiccup renders the quiet-state, never a broken screen.
-    /** The cross-project triage board, or one project's (#288: a failure is
+    /** The cross-workspace triage board, or one workspace's (#288: a failure is
      *  an error, never the all-quiet empty board). */
-    tryGetInsights: (project?: string) =>
-      tryGet<InsightsBoard>(`/api/insights${project ? `?project=${enc(project)}` : ''}`),
+    tryGetInsights: (workspace?: string) =>
+      tryGet<InsightsBoard>(`/api/insights${workspace ? `?workspace=${enc(workspace)}` : ''}`),
 
     // ── Front door · Intake ─────────────────────────────────────────────
     // The guide (frame + axis prompts + catalog) for the intake screen. A
@@ -603,12 +603,12 @@ export function senseiApi(port: number) {
     recommendPlaybook: (body: Record<string, unknown>) =>
       tryPost<PlaybookRecommendation>('/api/playbook/recommend', body),
 
-    // ── Project window · Overview (Slot 4) ──────────────────────────────
+    // ── Workspace window · Overview (Slot 4) ──────────────────────────────
     // Server-assembled landing pane: header + top rec + stats + recent
     // sessions in one call. A failed read is an error the page shows, never an
-    // all-quiet default that reads as a calm project (#85).
-    tryGetProjectOverview: (id: string) =>
-      tryGet<ProjectOverview>(`/api/projects/${enc(id)}/overview`),
+    // all-quiet default that reads as a calm workspace (#85).
+    tryGetWorkspaceOverview: (id: string) =>
+      tryGet<WorkspaceOverview>(`/api/workspaces/${enc(id)}/overview`),
 
     // ── Observatory · Today (home screen) ───────────────────────────────
     // The daemon assembles the whole screen — greeting, maturity gate, hero
@@ -623,14 +623,14 @@ export function senseiApi(port: number) {
     // ── Observatory chart data ──────────────────────────────────────────
 
     /** Where edits concentrated over the last `days` (#85). */
-    tryGetProjectHotspots: (id: string, days = 7) =>
+    tryGetWorkspaceHotspots: (id: string, days = 7) =>
       tryGet<{ hotspots: Array<{ folder: string; file_path: string; edit_count: number; correction_count: number }> }>(
-        `/api/projects/${enc(id)}/hotspots?days=${days}`,
+        `/api/workspaces/${enc(id)}/hotspots?days=${days}`,
       ),
 
-    tryGetProjectQualitySignals: (id: string) =>
+    tryGetWorkspaceQualitySignals: (id: string) =>
       tryGet<{ ftr_7d: number; pattern_compliance: number | null; open_drift_count: number; test_pass_rate: number | null }>(
-        `/api/projects/${enc(id)}/quality-signals`,
+        `/api/workspaces/${enc(id)}/quality-signals`,
       ),
 
     tryGetToolUsage: () =>
@@ -699,15 +699,15 @@ export function senseiApi(port: number) {
         `/api/graph/call-flow?repoId=${enc(repoId)}`,
       ),
 
-    /** The project's solution roll-up across its repos. */
-    tryGetProjectGraph: (id: string) => tryGet<ProjectGraphResponse>(`/api/projects/${enc(id)}/graph`),
+    /** The workspace's solution roll-up across its repos. */
+    tryGetWorkspaceGraph: (id: string) => tryGet<WorkspaceGraphResponse>(`/api/workspaces/${enc(id)}/graph`),
 
     // ── Libraries ────────────────────────────────────────────────────────
     /** Every detected library (#288: a failure is an error, not an empty index). */
-    tryGetLibs: (params?: { repoId?: string; projectId?: string; shared?: boolean }) => {
+    tryGetLibs: (params?: { repoId?: string; workspaceId?: string; shared?: boolean }) => {
       const qs = new URLSearchParams();
       if (params?.repoId) qs.set('repoId', params.repoId);
-      if (params?.projectId) qs.set('projectId', params.projectId);
+      if (params?.workspaceId) qs.set('workspaceId', params.workspaceId);
       if (params?.shared) qs.set('shared', 'true');
       return tryGet<{ total: number; libs: LibEntry[] }>(`/api/libs?${qs}`);
     },
@@ -716,21 +716,21 @@ export function senseiApi(port: number) {
       post('/api/libs/index', { libName, url, version }, { ok: false }),
 
     // ── Unified Query ────────────────────────────────────────────────────
-    query: (q: string, repoId?: string, projectId?: string) =>
-      post<Record<string, unknown>>('/api/query', { q, repoId, projectId }, {}),
+    query: (q: string, repoId?: string, workspaceId?: string) =>
+      post<Record<string, unknown>>('/api/query', { q, repoId, workspaceId }, {}),
 
     // ── Sessions ─────────────────────────────────────────────────────────
     /** Every captured session (#288: a failure is an error, not an empty list). */
     tryGetSessions: () => tryGet<SessionData>('/api/sessions'),
 
     // Observatory · Sessions digest (Slot 6). Same `/api/sessions` handler,
-    // now scoped by an optional `range` (7d|30d|90d) and/or `project`
+    // now scoped by an optional `range` (7d|30d|90d) and/or `workspace`
     // (name-or-uuid). Both are additive server-side. A failure is an error,
     // not the empty digest that read as a quiet week (#288).
-    tryGetSessionsDigest: (range?: string, project?: string) => {
+    tryGetSessionsDigest: (range?: string, workspace?: string) => {
       const p = new URLSearchParams();
       if (range) p.set('range', range);
-      if (project) p.set('project', project);
+      if (workspace) p.set('workspace', workspace);
       const qs = p.toString() ? `?${p.toString()}` : '';
       return tryGet<SessionsDigest>(`/api/sessions${qs}`);
     },
@@ -789,32 +789,32 @@ export function senseiApi(port: number) {
 
     // ── Issue trackers (spec R8) ─────────────────────────────────────────
     // Result-based with the error body kept: a refusal names its code and, for
-    // some, the values the screen shows (the owning project, the board asked for).
-    tryListTrackers: (projectId: string) =>
-      tryJson<TrackerConnection[]>('GET', `/api/projects/${enc(projectId)}/trackers`),
-    tryConnectTracker: (projectId: string, kind: string, body: Record<string, unknown>) =>
+    // some, the values the screen shows (the owning workspace, the board asked for).
+    tryListTrackers: (workspaceId: string) =>
+      tryJson<TrackerConnection[]>('GET', `/api/workspaces/${enc(workspaceId)}/trackers`),
+    tryConnectTracker: (workspaceId: string, kind: string, body: Record<string, unknown>) =>
       tryJson<{ tracker: TrackerConnection; first_sync: { pending: boolean } }>(
-        'POST', `/api/projects/${enc(projectId)}/trackers/${enc(kind)}/connect`, body,
+        'POST', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(kind)}/connect`, body,
       ),
-    trySyncTracker: (projectId: string) =>
-      tryJson<{ counts: TrackerSyncCounts }>('POST', `/api/projects/${enc(projectId)}/trackers/sync`),
-    tryDisconnectTracker: (projectId: string) =>
-      tryJson<void>('DELETE', `/api/projects/${enc(projectId)}/trackers`),
+    trySyncTracker: (workspaceId: string) =>
+      tryJson<{ counts: TrackerSyncCounts }>('POST', `/api/workspaces/${enc(workspaceId)}/trackers/sync`),
+    tryDisconnectTracker: (workspaceId: string) =>
+      tryJson<void>('DELETE', `/api/workspaces/${enc(workspaceId)}/trackers`),
     // Usage reads (spec R7/R8). Result-based: a failed read must never pass for
     // "no tracker" or an empty sprint.
-    tryListSprints: (projectId: string) =>
-      tryJson<SprintUsageRow[]>('GET', `/api/projects/${enc(projectId)}/sprints`),
-    tryListTrackerTasks: (projectId: string, sprintId?: string) =>
+    tryListSprints: (workspaceId: string) =>
+      tryJson<SprintUsageRow[]>('GET', `/api/workspaces/${enc(workspaceId)}/sprints`),
+    tryListTrackerTasks: (workspaceId: string, sprintId?: string) =>
       tryJson<TrackerTaskRow[]>(
         'GET',
-        `/api/projects/${enc(projectId)}/tracker-tasks${sprintId ? `?sprint=${enc(sprintId)}` : ''}`,
+        `/api/workspaces/${enc(workspaceId)}/tracker-tasks${sprintId ? `?sprint=${enc(sprintId)}` : ''}`,
       ),
-    tryGetTrackerTask: (projectId: string, key: string) =>
-      tryJson<TrackerTaskDetail>('GET', `/api/projects/${enc(projectId)}/tracker-tasks/${enc(key)}`),
-    tryListUnlinkedSessions: (projectId: string, sprintId: string) =>
+    tryGetTrackerTask: (workspaceId: string, key: string) =>
+      tryJson<TrackerTaskDetail>('GET', `/api/workspaces/${enc(workspaceId)}/tracker-tasks/${enc(key)}`),
+    tryListUnlinkedSessions: (workspaceId: string, sprintId: string) =>
       tryJson<UnlinkedSession[]>(
         'GET',
-        `/api/projects/${enc(projectId)}/sessions/unlinked?sprint=${enc(sprintId)}`,
+        `/api/workspaces/${enc(workspaceId)}/sessions/unlinked?sprint=${enc(sprintId)}`,
       ),
 
     /** What stops syncing if this root is removed. */
@@ -865,8 +865,8 @@ export function senseiApi(port: number) {
     // #84 T2 Slice A — discovered MCP servers (Claude / Cursor / Zed configs).
     // Error-propagating: an empty list is "nothing discovered", so a failed
     // read must not come back as one; nor a refused toggle as a done one.
-    getMcpServers: (projectId?: string) => {
-      const q = projectId ? `?project_id=${enc(projectId)}` : '';
+    getMcpServers: (workspaceId?: string) => {
+      const q = workspaceId ? `?workspace_id=${enc(workspaceId)}` : '';
       return tryGet<{ servers: McpServerRow[] }>(`/api/instruments/mcp-servers${q}`);
     },
     setMcpServerEnabled: (id: string, enabled: boolean) =>
@@ -963,7 +963,7 @@ export function senseiApi(port: number) {
       post<import('./types').RemoveResult>('/api/remove', { purge }, {
         assistants_removed: [], plugin_removed: false, commands_removed: 0,
         skills_removed: 0, agents_removed: 0, hooks_removed: false,
-        cache_cleared: false, projects_cleaned: [], errors: [],
+        cache_cleared: false, workspaces_cleaned: [], errors: [],
       }),
 
     // ── Gateway routers ──────────────────────────────────────────────────
@@ -1051,8 +1051,8 @@ export function senseiApi(port: number) {
       ),
 
     // ── Knowledge plane ──────────────────────────────────────────────────
-    /** Memories by status/scope/project (#288: a failure is an error, not an empty tab). */
-    tryListMemories: (q: { status?: string; scope?: string; project_id?: string; limit?: number } = {}) => {
+    /** Memories by status/scope/workspace (#288: a failure is an error, not an empty tab). */
+    tryListMemories: (q: { status?: string; scope?: string; workspace_id?: string; limit?: number } = {}) => {
       const p = new URLSearchParams();
       for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
       return tryGet<MemoryListResponse>(`/api/knowledge/memories?${p.toString()}`);
@@ -1067,8 +1067,8 @@ export function senseiApi(port: number) {
     saveMemory: (body: MemoryCreateBody) =>
       tryPost<{ id: string; status: 'active' }>('/api/knowledge/memories', body),
 
-    // Ready-to-share lane — rewrite a project-scoped memory into a portable,
-    // project-agnostic rule. `tryPost` so the 503 honest-degrade path (model
+    // Ready-to-share lane — rewrite a workspace-scoped memory into a portable,
+    // workspace-agnostic rule. `tryPost` so the 503 honest-degrade path (model
     // unavailable / returned nothing usable) surfaces as `{ ok: false, error }`
     // instead of a fabricated rewrite — the UI shows the error, keeps the
     // original. On success the daemon flips `generalised = true` and stores the
@@ -1081,7 +1081,7 @@ export function senseiApi(port: number) {
         `/api/knowledge/memories/${enc(id)}/generalise`, {},
       ),
 
-    // Widen a proven memory up the scope ladder (project → user → org →
+    // Widen a proven memory up the scope ladder (workspace → user → org →
     // collective). Reuses the EXISTING promote route — it creates a `proposed`
     // copy on the target namespace (origin=promoted); accepting it through the
     // normal proposal flow is the governance gate, so it never auto-applies.
@@ -1200,19 +1200,19 @@ export function senseiApi(port: number) {
     setMembershipOrgs: (membershipId: string, orgSlugs: string[]) =>
       tryPut(`/api/dojo/memberships/${enc(membershipId)}/orgs`, { org_slugs: orgSlugs }),
 
-    // R3 infer-at-detect: the inferred (confirm-inferred) project→Dōjō binding
+    // R3 infer-at-detect: the inferred (confirm-inferred) workspace→Dōjō binding
     // for the About-panel chip. `{ suggestion: null }` when already bound / no
     // git owner / no covering membership. Read-only — suggests, never binds.
-    tryGetDojoSuggestion: (projectId: string) =>
+    tryGetDojoSuggestion: (workspaceId: string) =>
       tryGet<{ suggestion: DojoBindingSuggestion | null }>(
-        `/api/projects/${enc(projectId)}/dojo-suggestion`,
+        `/api/workspaces/${enc(workspaceId)}/dojo-suggestion`,
       ),
 
-    // Confirm a project→Dōjō binding (the user accepting the inferred chip, or
+    // Confirm a workspace→Dōjō binding (the user accepting the inferred chip, or
     // an explicit bind). Fails closed server-side if the membership is unknown.
-    bindProjectDojo: (projectId: string, membershipId: string) =>
+    bindWorkspaceDojo: (workspaceId: string, membershipId: string) =>
       tryPost<{ ok: boolean; dojo_id: string }>(
-        `/api/projects/${enc(projectId)}/dojo-binding`,
+        `/api/workspaces/${enc(workspaceId)}/dojo-binding`,
         { membership_id: membershipId },
       ),
 
@@ -1322,25 +1322,25 @@ export function senseiApi(port: number) {
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),
 
-    // ── Deprecated aliases (migration: solution→project, project→repo) ──
+    // ── Deprecated aliases (migration: solution→workspace, workspace→repo) ──
     /** @deprecated Use registerRepo */
-    get registerProject() { return this.registerRepo; },
+    get registerWorkspace() { return this.registerRepo; },
     /** @deprecated Use addRepoTag */
-    get addProjectTag() { return this.addRepoTag; },
+    get addWorkspaceTag() { return this.addRepoTag; },
     /** @deprecated Use removeRepoTag */
-    get removeProjectTag() { return this.removeRepoTag; },
-    /** @deprecated Use createProject */
-    get createSolution() { return this.createProject; },
-    /** @deprecated Use updateProject */
-    get updateSolution() { return this.updateProject; },
-    /** @deprecated Use deleteProject */
-    get deleteSolution() { return this.deleteProject; },
-    /** @deprecated Use addProjectRepo */
-    get addSolutionRepo() { return this.addProjectRepo; },
-    /** @deprecated Use removeProjectRepo */
-    get removeSolutionRepo() { return this.removeProjectRepo; },
-    /** @deprecated Use analyzeProject */
-    get analyzeSolution() { return this.analyzeProject; },
+    get removeWorkspaceTag() { return this.removeRepoTag; },
+    /** @deprecated Use createWorkspace */
+    get createSolution() { return this.createWorkspace; },
+    /** @deprecated Use updateWorkspace */
+    get updateSolution() { return this.updateWorkspace; },
+    /** @deprecated Use deleteWorkspace */
+    get deleteSolution() { return this.deleteWorkspace; },
+    /** @deprecated Use addWorkspaceRepo */
+    get addSolutionRepo() { return this.addWorkspaceRepo; },
+    /** @deprecated Use removeWorkspaceRepo */
+    get removeSolutionRepo() { return this.removeWorkspaceRepo; },
+    /** @deprecated Use analyzeWorkspace */
+    get analyzeSolution() { return this.analyzeWorkspace; },
   };
 }
 
