@@ -20,7 +20,7 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** R5a (GitHub end to end: adapter, claim, import/mapping screen, repos file by mapping; spec docs/spec/dojo/git-integration-import.md) runs as an agent on `r5a-github-import` — on its report: review, re-run gates alone, merge. R5b (Azure, PAT in Vault) only after R5a is verified. The next release (R6 + R7 + SSRF) waits on the user's go. Open for the user: the `lead` role; the Cloudflare secrets.
+**Next command:** v0.18.0 (R6 + R7 + SSRF) is tagged from main via the new two-step flow (bump on develop 01819a11 → PR #326 → `make release` on main; `on-main` passed). Local daemon 0.18.0, live DB migrated exactly as rehearsed (ladder 5 rungs, technology 0, repository 87, 19 stack packs, 111 adoptions). Worker 0.18.0 (0912e5f). Waiting: the user approves `deploy-dojo`, then verify prod in sync and close #318 (R6) with evidence. R5a runs as an agent on `r5a-github-import`. Then R8 (lead sees team per-person metrics, D38).
 Wave 0b code done (335618b9: release-guard + `on-main` job; next release = PR → main → `make bump` ON main). Worker-on-tag waits on the user (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID secrets; remove the Worker's git triggers).
 Wave 0c done (SSRF fixed 9381ec2e, the rest triaged and dismissed with reasons; #1 closes with the next release).
 **v0.17.0 released 2026-10-22:** prod dōjō DB in sync (approved deploy-dojo), Worker 0.17.0 (6df9990, PR #324 merged
