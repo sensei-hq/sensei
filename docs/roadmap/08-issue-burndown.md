@@ -31,6 +31,19 @@ duplicate, leaving 89. The production-readiness items
 | `deploy-dojo` + live check of user-scoped metrics | #240 |
 | Write `dojo_memberships.sync_status` from the sync, or retire it; drop the 2026-08-29 held row | #184 |
 
+## Wave 0b — release from main tags (user, 2026-10-22)
+
+Every release bumps the version (patch or minor): one tag, one release run. A tagged release ships from
+**main**; develop is for scanning, coverage and tests. Mirrors rokkit/kavach.
+1. `make bump` refuses unless on a clean `main` equal to `origin/main`; bumps, tags, pushes main + tag, then
+   merges main back into develop.
+2. `release.yml` verifies the tag is on main (fail closed) before any publish, deploy or DB job.
+3. The dōjō Worker deploys from the tag in `release.yml` after the DB job — **user step:** repo secrets
+   `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, and remove the `dojo` Worker's Cloudflare git build triggers
+   (also clears the failing "Workers Builds: dojo" PR check).
+4. Scanning stays on develop, main and PRs.
+5. CLAUDE.md release section, the release skill and the dojo-worker-deploy memory follow.
+
 ## Wave 1 — Settings → Workspaces / Repositories (#271, #269, #144)
 
 **Status 2026-10-19: built and verified on live data.**
