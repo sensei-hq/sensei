@@ -20,7 +20,7 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** release (minor) — waits on the user's go (CI green on 12e07174 (the R3 hook read sensei.scopes before it existed: a fresh install failed CI; fixed, deploy_upgrade 5/5 locally). R6 (the ladder: retire team+client, technology → packs adopted per repository; D32, D33) runs as an agent on branch `r6-ladder` — merge after the release. R3 is merged to develop and green: Rust 4225/0,
+**Next command:** release (minor) — waits on the user's go (CI green on 12e07174 (the R3 hook read sensei.scopes before it existed: a fresh install failed CI; fixed, deploy_upgrade 5/5 locally). R6 (the ladder; D32, D33) built on branch `r6-ladder` (worktree .claude/worktrees/agent-a17a6c623a660b981), rehearsed — merge after the release, once my gate re-run is green. R3 is merged to develop and green: Rust 4225/0,
 clippy + fmt clean, app check 0 + 2334 tests, dōjō check 0 + 1839 tests, plugin 28/0, SQL 48/48. The release also
 carries the Viewers-tab fix (e6c58885), #312 (unattended gate), #313 (viewer audit). Its dōjō reconcile was rehearsed
 on the prod dump (in sync, counts held); the daemon upgrade on a copy of the live DB (counts held, twice). After the
