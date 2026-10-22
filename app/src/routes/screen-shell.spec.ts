@@ -17,8 +17,18 @@ function pages(dir: string): string[] {
 }
 
 const source = (page: string) => readFileSync(join(ROOT, page), 'utf8');
+// The markup outside a component's <script> blocks: every block, any case,
+// repeated until nothing is left to strip.
+const withoutScripts = (text: string) => {
+	let out = text;
+	for (let prev = ''; prev !== out; ) {
+		prev = out;
+		out = out.replace(/<script\b[\s\S]*?<\/script\s*>/gi, '');
+	}
+	return out;
+};
 // A page with no markup only redirects (its `+page.ts` throws); it is not a screen.
-const hasMarkup = (page: string) => source(page).replace(/<script[\s\S]*?<\/script>/, '').trim() !== '';
+const hasMarkup = (page: string) => withoutScripts(source(page)).trim() !== '';
 const all = GROUPS.flatMap((g) => pages(join(ROOT, g))).filter(hasMarkup).sort();
 // A page that renders a `…Screen.svelte` — co-located, or shared from
 // `$lib/components/<dir>` — lays out through whatever that component renders,
@@ -43,7 +53,7 @@ describe('screens use the shared Screen layout (#293)', () => {
 	it('the window layouts do not scroll — each screen body is the one scroller', () => {
 		const windows = ['(observatory)/+layout.svelte', '(workspace)/workspace/[id]/+layout.svelte'];
 		const scrolling = windows.filter((layout) => {
-			const markup = source(layout).replace(/<script[\s\S]*?<\/script>/, '');
+			const markup = withoutScripts(source(layout));
 			const main = markup.match(/<main\b[^>]*>/)?.[0];
 			expect(main, layout).toBeDefined();
 			return /overflow-(auto|scroll|y-auto|y-scroll)\b/.test(main!);
