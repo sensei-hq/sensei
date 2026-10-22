@@ -20,12 +20,12 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** release (minor) — waits on the user's go (CI green on 12e07174 (the R3 hook read sensei.scopes before it existed: a fresh install failed CI; fixed, deploy_upgrade 5/5 locally). R6 (the ladder; D32, D33) built on branch `r6-ladder` (worktree .claude/worktrees/agent-a17a6c623a660b981), rehearsed — merge after the release, once my gate re-run is green. R3 is merged to develop and green: Rust 4225/0,
-clippy + fmt clean, app check 0 + 2334 tests, dōjō check 0 + 1839 tests, plugin 28/0, SQL 48/48. The release also
-carries the Viewers-tab fix (e6c58885), #312 (unattended gate), #313 (viewer audit). Its dōjō reconcile was rehearsed
-on the prod dump (in sync, counts held); the daemon upgrade on a copy of the live DB (counts held, twice). After the
-release: the installed daemon migrates the live DB on first start (back up first: `make db-backup`); drop `ztest_r3a`
-and `~/sensei-r3a-dump` once it is healthy; the MCP tool names change for every session (list_workspaces, …).
+**Next command:** finish the v0.17.0 release — tag pushed (Release run 39789357663), PR #324 open. Local install done:
+the live daemon DB migrated in place (pre-upgrade backup 4.1G first; workspaces 133, repos 97, sessions 399,
+namespaces 355 / 334 on `workspace`, memories 14 — as rehearsed), daemon 0.17.0 serving /api/workspaces (old 404).
+The backup script needed a fix for the rename window (2ee237d4). Waiting: the user approves `deploy-dojo`, then merge
+#324, verify dōjō /version + prod dbd in sync, close #312/#313-live, drop ztest_r3a + ~/sensei-r3a-dump. Then merge
+`r6-ladder` (re-run its gates alone — the shared test DBs must be converged to its design first).
 **R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
 extension_projects; 19 `project_id`-style columns (activity, history, inference, sensei) + staging.memories.project_name;
 17 views (project_metric_*, project_*); fn sole_project_of; enums project_maturity + 'project' in entity_scope,
