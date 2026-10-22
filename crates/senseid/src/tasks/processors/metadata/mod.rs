@@ -13,8 +13,8 @@ mod summary;
 // `crate::tasks::processors::metadata::X` continue to work.
 pub use external_links::scan_external_links;
 pub use frontmatter::{
-    Frontmatter, folder_role_from_frontmatter, icon_is_url, merge_frontmatter, read_frontmatter,
-    slugify,
+    Frontmatter, find_readme, folder_role_from_frontmatter, icon_is_url, merge_frontmatter,
+    migrate_readme_workspace_key, read_frontmatter, slugify,
 };
 pub use icons::scan_icons;
 pub use summary::extract_summary;

@@ -78,7 +78,7 @@ pub async fn reconcile_repo_identity(
         let workspace_name = workspace
             .as_ref()
             .and_then(|p| p["name"].as_str().map(String::from))
-            .or_else(|| fm.project.clone())
+            .or_else(|| fm.workspace.clone())
             .or_else(|| folder["name"].as_str().map(String::from))
             .unwrap_or_default();
 

@@ -685,11 +685,15 @@ async fn write_file_rows(
 /// The workspace this repo belongs to, created if it does not exist yet.
 ///
 /// Every repository root is its own workspace, named after itself. Grouping several
-/// folders into one workspace is OPT-IN via README frontmatter `project:` — never
+/// folders into one workspace is OPT-IN via README frontmatter `workspace:` — never
 /// by parent directory, which once conflated every unrelated repo under a scan
 /// root into a single "Developer" workspace. A git SUBTREE (composite folder name
 /// `parent:sub`) inherits its parent repository's workspace unless its own README
-/// overrides. Scanning is read-only; frontmatter is never written back.
+/// overrides. Scanning never writes identity back; its one write is D31's
+/// one-time key migration, run BEFORE the read: a README still on `project:` is
+/// rewritten to `workspace:`, the only key the reader understands. A README that
+/// cannot be migrated fails this repo (retried next tick) rather than regrouping
+/// it under its folder name.
 ///
 /// FAILS rather than fabricating: minting a synthetic `p-<name>` id here once
 /// pushed a phantom workspace into the UI that matched no row and never
@@ -699,9 +703,10 @@ async fn resolve_workspace(
     repo_path: &Path,
     folder_name: &str,
 ) -> Result<(uuid::Uuid, bool), String> {
+    crate::tasks::processors::metadata::migrate_readme_workspace_key(repo_path)?;
     let fm = crate::tasks::processors::metadata::read_frontmatter(repo_path).unwrap_or_default();
     let name: String = match folder_name.split_once(':') {
-        Some((parent_repo, _)) if fm.project.is_none() => {
+        Some((parent_repo, _)) if fm.workspace.is_none() => {
             let parent_workspace = ctx
                 .pg()
                 .get_repo_by_name(parent_repo)
@@ -721,7 +726,7 @@ async fn resolve_workspace(
                 None => parent_repo.to_string(),
             }
         }
-        _ => fm.project.clone().unwrap_or_else(|| folder_name.to_string()),
+        _ => fm.workspace.clone().unwrap_or_else(|| folder_name.to_string()),
     };
     ctx.pg().get_or_create_workspace_by_name(&name).await
 }
@@ -1070,6 +1075,41 @@ mod scan_tests {
             1,
             "the folder must resolve to exactly one workspace; repository={rid}"
         );
+    }
+
+    /// D31: a README still on `project: X` is rewritten to `workspace: X` by the
+    /// scan, BEFORE it reads — so the repository stays grouped under X, and the
+    /// reader never has to understand the old key. A README already on
+    /// `workspace:` is read as it is: no write, byte-identical.
+    ///
+    /// Mutation that must break this test: drop the migration call from
+    /// `resolve_workspace` (the repo regroups under its folder name).
+    #[tokio::test]
+    async fn a_readme_on_project_is_migrated_by_the_scan_and_stays_grouped() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("d31-repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let name = format!("ztest-d31-{}", uuid::Uuid::new_v4().simple());
+        let readme = repo.join("README.md");
+        std::fs::write(&readme, format!("---\nproject: {name}\n---\n# r\n")).unwrap();
+
+        let (wid, _) = super::resolve_workspace(&ctx, &repo, "d31-repo").await.unwrap();
+        let ws = ctx.pg().get_workspace(&wid).await.unwrap().expect("the workspace exists");
+        assert_eq!(ws["name"], serde_json::json!(name), "grouped under the README's workspace");
+        let migrated = format!("---\nworkspace: {name}\n---\n# r\n");
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), migrated);
+
+        // The next scan: already on `workspace:` — same workspace, file untouched.
+        let (again, created) = super::resolve_workspace(&ctx, &repo, "d31-repo").await.unwrap();
+        assert_eq!((again, created), (wid, false));
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), migrated);
+
+        sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE id = $1")
+            .bind(wid)
+            .execute(ctx.pg().pool())
+            .await
+            .unwrap();
     }
 
     /// The whole pass over a real repository on disk: folder rows with parents,

@@ -319,7 +319,7 @@ pub(crate) async fn sync_readme_frontmatter(
     let fm = crate::tasks::processors::metadata::Frontmatter {
         organization: body.organization,
         client: body.client,
-        project: body.workspace,
+        workspace: body.workspace,
         team: body.team,
         role: body.role,
         stack: body.stack,
@@ -331,10 +331,7 @@ pub(crate) async fn sync_readme_frontmatter(
 
     // Merge into the existing README (or create README.md if none exists).
     let repo = std::path::Path::new(&body.folder);
-    let readme = ["README.md", "readme.md", "Readme.md", "README"]
-        .iter()
-        .map(|n| repo.join(n))
-        .find(|p| p.exists())
+    let readme = crate::tasks::processors::metadata::find_readme(repo)
         .unwrap_or_else(|| repo.join("README.md"));
     let existing = std::fs::read_to_string(&readme).unwrap_or_default();
     let merged = crate::tasks::processors::metadata::merge_frontmatter(&existing, &fm);
