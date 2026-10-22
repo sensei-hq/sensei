@@ -43,6 +43,9 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D32 | Is Client a governance level? | **No — retired** (user 2026-10-22). A client engagement is the dōjō it lives in plus workspace classification `client`; client-only standards are rules at that dōjō or workspace. 0 rows stored. |
 | D33 | Where does a converted stack pack apply? (Q-R6) | **At each repository where the stack is detected** (user 2026-10-22) — exactly today's reach; repository-rung namespaces are created as needed, and a new repository adopts by detection as today. |
 | D34 | Does a dōjō keep a Clients section (Engagements, Incidents, Client audit)? | **No** (user 2026-10-22). A client is just another dōjō, and there is no client rung (D32). A dōjō's work is its Epics, Sprints and Tasks, which come from its integrations. The engagement and incident model, and the confidentiality ledger built on it, are removed. |
+| D35 | How does a dōjō sign in to Azure DevOps? (R5 Q1) | **A personal access token an admin pastes** (user 2026-10-22), stored in Supabase Vault and never returned, logged or audited as a value. |
+| D36 | How does an Azure DevOps organization map? (R5 Q2) | **Organization → dōjō, project → workspace** (user 2026-10-22). |
+| D37 | What is R5's first slice? (R5 Q3) | **GitHub (refactored behind the adapter) + Azure DevOps**; GitLab and Bitbucket later (user 2026-10-22). |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -142,7 +145,7 @@ slice builds, passes and ships on its own.
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
   org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
-  the free tier; the plan is chosen in billing. *Needs its own design pass before code.*
+  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37).*
 - **R4 · The words.** PRD, specs, guides, `docs/llms`, both `SKILL.md` copies, agents, the website.
   Generic English ("the project's README", a Cargo project) stays.
 

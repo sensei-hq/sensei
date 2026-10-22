@@ -1,6 +1,6 @@
 # A dōjō comes from a git integration — design (#308, R5, D20)
 
-**Status:** design for review (2026-10-22). No code until the open questions below are answered.
+**Status:** decided 2026-10-22 (Q1–Q3 answered by the user: D35–D37). Ready to build.
 
 ## The decision this serves
 
@@ -56,15 +56,25 @@ mandatory: a partial read never ends a membership (#309's rule).
   cannot prove are marked and can only become workspaces of a dōjō they already administer.
 - **The personal dōjō** offers the same import for units the person owns.
 
-## Open questions (the user's)
+## Decisions (user, 2026-10-22)
 
-- **Q1 · Azure DevOps sign-in:** an Entra ID OAuth app (proper consent, refreshable, works for every org
-  the person can see — *recommended*) or a personal access token pasted by an admin (simplest, no app
-  registration, but long-lived secrets and per-org scope)?
-- **Q2 · Azure default mapping:** organization → dōjō and project → workspace (*recommended*), or each
-  project → its own dōjō?
-- **Q3 · First slice:** GitHub refactor + Azure DevOps only (*recommended*), with GitLab and Bitbucket
-  later — or all four at once?
+- **D35 · Azure DevOps sign-in is a personal access token** an admin pastes (no app registration).
+- **D36 · Azure maps organization → dōjō, project → workspace** by default.
+- **D37 · The first slice is GitHub (refactored behind the adapter) + Azure DevOps**; GitLab and Bitbucket later.
+
+## The PAT is a secret (D35's consequence)
+
+- Stored in **Supabase Vault** (`vault.secrets`, encrypted at rest); `tenant_connections` keeps only the
+  Vault secret's id. Reading it is a `SECURITY DEFINER` function executable by `service_role` only.
+- **Never** returned to a client, never logged, never in an error message, never in an audit row (the
+  audit row records "token set / replaced / removed" and who did it).
+- Validated at paste time: the token must list the organization and prove the admin (Project Collection
+  Administrators) before it is stored; a failing token is refused, not stored.
+- Scope it needs: read access to the organization, its projects, members and code. The screen lists what it
+  needs and warns when the token also carries write scopes.
+- Rotation: an admin replaces it; expiry is read from the API when available and shown; an expired or
+  revoked token marks the connection **needs a new token** and stops member reads (never ends a
+  membership on a failed read — #309's completeness rule).
 
 ## Done gate
 
