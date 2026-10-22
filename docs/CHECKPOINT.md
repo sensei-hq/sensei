@@ -20,12 +20,11 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** finish the v0.17.0 release — tag pushed (Release run 39789357663), PR #324 open. Local install done:
-the live daemon DB migrated in place (pre-upgrade backup 4.1G first; workspaces 133, repos 97, sessions 399,
-namespaces 355 / 334 on `workspace`, memories 14 — as rehearsed), daemon 0.17.0 serving /api/workspaces (old 404).
-The backup script needed a fix for the rename window (2ee237d4). Waiting: the user approves `deploy-dojo`, then merge
-#324, verify dōjō /version + prod dbd in sync, close #312/#313-live, drop ztest_r3a + ~/sensei-r3a-dump. Then merge
-`r6-ladder` (re-run its gates alone — the shared test DBs must be converged to its design first).
+**Next command:** wave 0c — CodeQL's open alerts on main, critical SSRF (`lib_indexer.rs:272`) first. Then
+wave 0b (release from main tags; the user adds CLOUDFLARE_API_TOKEN/ACCOUNT_ID and removes the Worker's git
+triggers), then merge `r6-ladder` (converge the shared test DBs to its design, re-run its gates alone).
+**v0.17.0 released 2026-10-22:** prod dōjō DB in sync (approved deploy-dojo), Worker 0.17.0 (6df9990, PR #324 merged
+on red CodeQL — all alerts pre-existing — user decision), the local daemon migrated as rehearsed. Rehearsal copies dropped.
 **R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
 extension_projects; 19 `project_id`-style columns (activity, history, inference, sensei) + staging.memories.project_name;
 17 views (project_metric_*, project_*); fn sole_project_of; enums project_maturity + 'project' in entity_scope,
