@@ -15,7 +15,7 @@
 - Derived-from-usage: `crates/senseid/src/patterns/derived/`
 - Persistence: `inference.detected_patterns`, `sensei.pattern_registries`, `sensei.pattern_choices`
 - MCP: `crates/mcp/src/tools/get_patterns.rs`, `match_pattern.rs`,
-  `get_pattern_options.rs`, `get_project_conventions.rs`
+  `get_pattern_options.rs`, `get_workspace_conventions.rs`
 
 **Companion design doc:** `docs/archive/ideas/17-pattern-knowledge.md` (2026-04-17)
 
@@ -174,7 +174,7 @@ Flow:
    propagated as a rule in [[pipeline/governance]] with source
    `chosen:option:{category}`.
 3. **Subsequent times**: assistant reads
-   `get_project_conventions()` first; sees the chosen option;
+   `get_workspace_conventions()` first; sees the chosen option;
    follows without asking again. If a task looks *different*
    (e.g., a throwaway mockup), the assistant surfaces the
    difference before proceeding.
@@ -193,7 +193,7 @@ indexer detects consistent patterns:
 | Tests use `describe/it/expect` with fixtures in `__fixtures__/` | Test structure pattern |
 
 Derived patterns become **implicit guardrails** — surfaced from
-`get_project_conventions()` and applied without the assistant
+`get_workspace_conventions()` and applied without the assistant
 having to be told.
 
 **Auto-promotion policy** (open decision — bias: yes with a
@@ -218,7 +218,7 @@ tools:
   tradeoffs. Central call for locate-step.
 - `get_pattern_options(category)` — for architectural choices,
   returns options with tradeoffs.
-- `get_project_conventions()` — returns derived patterns +
+- `get_workspace_conventions()` — returns derived patterns +
   chosen options for this project. This is what makes the
   assistant "know how you work here".
 
@@ -256,7 +256,7 @@ Same detection framework, three primary anti-pattern recognisers:
 | Signal | Consumer |
 |---|---|
 | `get_patterns(project)` full catalog | assistant context |
-| `get_project_conventions()` derived + chosen | assistant at session start |
+| `get_workspace_conventions()` derived + chosen | assistant at session start |
 | Anti-pattern detections | Insights Now column violation cards |
 | Optimization opportunities | Insights Soon column |
 | Pattern conformance verify at commit / tool call | [[pipeline/governance]] verifier gate |
@@ -273,7 +273,7 @@ Same detection framework, three primary anti-pattern recognisers:
 - At least one industry registry (patterns.dev) is ingestible;
   the resulting patterns appear via `match_pattern`.
 - Architectural option choices persist and propagate as rules;
-  the assistant reads them via `get_project_conventions()` on
+  the assistant reads them via `get_workspace_conventions()` on
   subsequent sessions.
 - Derived patterns surface after N consistent usages.
 - `get_patterns(project=sensei)` returns the assistant-adapter
@@ -298,7 +298,7 @@ Same detection framework, three primary anti-pattern recognisers:
   again next session.** `pattern_choices` not read at
   session start.
 - **Derived pattern promoted to rule but not visible in
-  `get_project_conventions()`.** Read-path bug.
+  `get_workspace_conventions()`.** Read-path bug.
 - **Detection re-runs on every tick even when nothing
   changed.** Incremental gate missing.
 - **Anti-pattern (duplication) blocking a legitimate refactor
@@ -321,7 +321,7 @@ Same detection framework, three primary anti-pattern recognisers:
   patterns (adapter architecture is the canonical example)
 - [[pipeline/mcp-surface]] — `get_patterns` / `get_pattern_for`
   / `match_pattern` / `get_pattern_options` /
-  `get_project_conventions` tools
+  `get_workspace_conventions` tools
 - [[screen/project-patterns]] — human review + promote surface
 - (memory: project_ingest_scan_bug_batch) (memory) — community detection
 - (memory: project_mcp_libdocs_rokkit) (memory) — library ingestion

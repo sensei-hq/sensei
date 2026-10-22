@@ -3527,7 +3527,7 @@ Table "sensei"."sprints" {
 
 Table "sensei"."stances" {
   "id" uuid [pk, not null, default: `gen_random_uuid()`]
-  "user_key" text [not null, note: 'The user this stance belongs to — the git identity (user.email, resolved like get_user_for_project). Stance follows the user, not a tenant.']
+  "user_key" text [not null, note: 'The user this stance belongs to — the git identity (user.email, resolved like get_user_for_workspace). Stance follows the user, not a tenant.']
   "namespace_id" uuid [note: 'The scope instance this stance applies at (organization/client/workspace/stack …); NULL = the user\'s default across scopes. Most-specific rung overrides.']
   "autonomy" sensei.stance_autonomy [not null, default: 'ask_on_guarded']
   "sharing" sensei.stance_sharing [not null, default: 'patterns']

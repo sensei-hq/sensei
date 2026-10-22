@@ -10,12 +10,12 @@ These flags came out of the gates; none block. All pre-existing or harmless.
   as `{ languages?: string[]; … }` (the DETAIL-endpoint shape used by 4 consumers:
   `projects/[id]`, `project/[id]/about`, InstrumentsSection, ProjectsSection). Harmless on the
   Projects screen — the refactored card/row dropped the stack stat, so `stack` is never read
-  here. Fix: either drop `stack` from `list_projects` (it's vestigial after the card refactor —
+  here. Fix: either drop `stack` from `list_workspaces` (it's vestigial after the card refactor —
   the spec's card no longer shows it), or make the type a union. Chose not to churn a build
   cycle for an unread field. `bun run check` passes (no consumer accesses list `stack`).
 
 ## Consistency
-- **Two repo-count queries use different kind filters.** `list_projects` uses
+- **Two repo-count queries use different kind filters.** `list_workspaces` uses
   `kind IN ('git','standalone')`; `get_project_repos` (Project › Overview) uses
   `kind <> 'folder'`. Equivalent today (only 3 kinds exist: folder/git/standalone) so values
   match, but they'd diverge silently if a new folder kind is introduced. Align both to one

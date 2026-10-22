@@ -1,6 +1,6 @@
 ---
 organization: Sensei HQ
-project: sensei
+workspace: sensei
 role: desktop
 tagline: Sensei desktop observatory
 summary: Desktop observatory for Sensei — visualize sessions, workspaces, patterns, and learnings.

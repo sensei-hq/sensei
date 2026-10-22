@@ -26,7 +26,7 @@ project has a vision, one row of three stats. No wasted vertical space.
     `stack.languages`, optional `icon: { kind, value }`,
     `repos_count`, `libs_count`, `sessions7d` (via join),
     `last_session_at` (ISO for dormant/archived).
-- **Daemon extension required before this screen builds.** `list_projects`
+- **Daemon extension required before this screen builds.** `list_workspaces`
   (`crates/senseid/src/db/pg_store.rs`) today SELECTs only
   `id, name, description, client, maturity, tags, modified_at`. Extend it to
   also return (all read-only query joins — no schema change):
@@ -173,7 +173,7 @@ exists today) so a return visit lands in the same view. No per-project override.
 - Dark-mode: all text remains readable; pill backgrounds shift with
   theme.
 
-Optional check (passes only after the `list_projects` daemon extension above):
+Optional check (passes only after the `list_workspaces` daemon extension above):
 ```
 curl -s http://localhost:7744/api/projects | jq '.[0] | {name, icon, vision, repos_count, libs_count, last_session_at}'
 # expected: icon is a { kind, value } union; vision may be null (sourced from goal)

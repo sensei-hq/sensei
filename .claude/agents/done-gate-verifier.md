@@ -4,7 +4,7 @@ description: |
   Execute the "Done gate" section of an spec doc against the running daemon + app and return an evidence-backed pass/fail per gate. Use proactively AFTER implementing a spec, before declaring the work complete.
 
   <example>
-  Context: Finished implementing the Projects screen.
+  Context: Finished implementing the Workspaces screen.
   user: "I'm done with docs/spec/screen/observatory-projects.md. Ship it?"
   assistant: "Before you ship, I'll launch the done-gate-verifier agent to run each done-gate check against the live daemon and report evidence."
   <commentary>
@@ -45,7 +45,7 @@ Before running any checks:
 1. `curl -s http://localhost:7744/api/health` returns 200. If not,
    ABORT with `not-verifiable: daemon not reachable`.
 2. If the doc's Done gate mentions the desktop app specifically (e.g.
-   "clicking a card opens the project window"), you cannot verify
+   "clicking a card opens the workspace window"), you cannot verify
    those without a live app session. Report those items as
    `not-verifiable-here: needs live app` and continue with the ones
    you can.
@@ -80,7 +80,7 @@ For each Done-gate item:
 
     ## Environment
     - daemon: reachable | not-reachable
-    - test data: sensei-project-present | sensei-project-missing
+    - test data: sensei-workspace-present | sensei-workspace-missing
     - {other preconditions specific to the spec}
 
     ## Gate 1 — {one-line claim from the spec}

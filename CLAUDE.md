@@ -64,7 +64,7 @@ DB. For iterating on DDL without publishing a release tag, set
 ## Rules
 
 - Always start with `docs/backlog.md`
-- **Code navigation** — prefer the sensei MCP tools (`search`, `get_callers`/`get_callees`, `get_patterns`, `get_rules`, `get_project_conventions`, `get_project_summary`) over `grep`/`glob` for finding symbols and understanding structure: they use the indexed code graph and return richer, ranked results. Fall back to grep/glob when a tool errors or returns empty, and say so.
+- **Code navigation** — prefer the sensei MCP tools (`search`, `get_callers`/`get_callees`, `get_patterns`, `get_rules`, `get_workspace_conventions`, `get_workspace_summary`) over `grep`/`glob` for finding symbols and understanding structure: they use the indexed code graph and return richer, ranked results. Fall back to grep/glob when a tool errors or returns empty, and say so.
   - **Reachability ("X has no callers", "nothing uses Y") is trusted from the graph only for a language whose calls resolve at Rust's bar** (100% graded by the compiler). Today that is Rust alone; TypeScript/JS/Svelte (52.9%), C# (8.9%), Java and Python answer such questions with ripgrep (`--no-ignore -g '!target'`), said aloud. A language joins as it reaches the bar (#275); decided in #141.
 - Create a todo list for complex tasks
 - TDD — always use zero-errors-policy before starting work
@@ -90,7 +90,7 @@ Extract shared logic into functions or crates. Prefer pure functions with clear 
 
 **Never fabricate data on a failure path. Return an error, not a plausible default.**
 When a fallible read/lookup/parse/RPC fails, the service MUST surface the failure — propagate the error (a 4xx/5xx, an `Err`, or an explicit error state the UI renders) — and MUST NOT substitute a fabricated, dummy, placeholder, or fixture value that a caller can't distinguish from a real result. Forbidden on a failure/miss path:
-- Minting a synthetic identity (a fake project/folder/session id like `format!("p-{name}")`, a made-up uuid, a placeholder record) when a lookup misses. A miss is `None`/404, never an invented row.
+- Minting a synthetic identity (a fake workspace/folder/session id like `format!("p-{name}")`, a made-up uuid, a placeholder record) when a lookup misses. A miss is `None`/404, never an invented row.
 - `.unwrap_or_default()` / `.unwrap_or(<value>)` / `.ok()` / `catch { return fixture }` on a fallible DB/network call in a **read handler or loader**, which turns a failure into an empty-or-zero "success" (200 with `[]`/`0`) — indistinguishable from a genuinely-empty result. The daemon idiom is `.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?`; frontends surface an error state.
 - Persisting a plausible-but-wrong value (a defaulted family/model/timestamp) when the real one is absent, instead of skipping or erroring.
 - Returning a fixture/mock from a shipped code path on error (esp. money-, identity-, or governance-facing screens).

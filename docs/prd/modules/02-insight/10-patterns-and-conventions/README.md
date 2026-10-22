@@ -27,7 +27,7 @@ knows how we do things here*.
 > **Also missing (2026-10-14):** `sensei.pattern_registries` and
 > `sensei.pattern_choices` are **not in the DDL**, and `get_pattern_options` is **not a
 > registered MCP tool** (the four real ones are `get_patterns`, `get_pattern_for`,
-> `match_pattern`, `get_project_conventions`). Storage is a prerequisite gap before the
+> `match_pattern`, `get_workspace_conventions`). Storage is a prerequisite gap before the
 > engine can land — see `G-PATTERN-STORE`.
 
 ## In scope / out of scope
@@ -35,7 +35,7 @@ knows how we do things here*.
 - In: the five-source detection/ingestion model; the three modes (design · anti ·
   opt); the detection runtime (`crates/senseid/src/patterns/` — to be built); the
   MCP surface (`get_patterns`, `get_pattern_for`, `match_pattern`,
-  `get_pattern_options`, `get_project_conventions`); architectural choices as
+  `get_pattern_options`, `get_workspace_conventions`); architectural choices as
   persisted `sensei.pattern_choices` that propagate as rules; derived-pattern
   auto-promotion (threshold); anti-pattern recognisers (duplication, spaghetti
   coupling, broken layering, god object, dead code); optimization opportunities
@@ -50,7 +50,7 @@ knows how we do things here*.
 - **MCP** — `get_patterns(project, source?)` (default order
   derived > codebase > library > registry > option), `get_pattern_for(name)`,
   `match_pattern(description)`, `get_pattern_options(category)`,
-  `get_project_conventions()` — the "know how you work here" call.
+  `get_workspace_conventions()` — the "know how you work here" call.
 - **API** — `/api/patterns/{project}/duplicates` (reused by duplication detection);
   `GET /api/graph/…` community clusters feed custom codebase patterns.
 - **Daemon** — pattern detection scheduled by the M7 analyzer tick (incremental gate
@@ -86,7 +86,7 @@ knows how we do things here*.
 
 | Element | Meaning | Worked example |
 |---|---|---|
-| `get_project_conventions()` | derived patterns + chosen options for this workspace | "SSR data-separation is the standard here" |
+| `get_workspace_conventions()` | derived patterns + chosen options for this workspace | "SSR data-separation is the standard here" |
 | `match_pattern(task)` | ranked matches with tradeoffs | adapter task → `custom.assistant_adapter_trait` + instances |
 | Codebase custom pattern | named community cluster with shared shape | `custom.assistant_adapter_trait` |
 | Anti-pattern violation | duplication / spaghetti / broken layering above threshold | Insights Now violation card |
@@ -101,7 +101,7 @@ knows how we do things here*.
   `add_library` runs; ≥1 industry registry is ingestible and reachable via
   `match_pattern`.
 - An architectural option chosen once persists in `pattern_choices` and is read back
-  by `get_project_conventions()` on the *next* session — never re-asked.
+  by `get_workspace_conventions()` on the *next* session — never re-asked.
 - Derived patterns surface after N consistent usages (default 5) and auto-promote
   with a threshold + user override.
 - `get_patterns(project=sensei)` returns the assistant-adapter trait pattern with all

@@ -62,8 +62,8 @@ Navigate with the **sensei MCP tools first** — they use the indexed code graph
 richer results than blind grep. Fall back to Grep/Glob only if a tool errors or returns empty,
 and say so.
 
-1. `get_project_summary()` + `get_project_conventions()` — establish stack and structure.
-   `get_rules()` — honor any project rules. `get_lib_docs('kavach')` if available.
+1. `get_workspace_summary()` + `get_workspace_conventions()` — establish stack and structure.
+   `get_rules()` — honor any repository rules. `get_lib_docs('kavach')` if available.
 2. Read `kavach.config.js`, `vite.config.js`, `src/hooks.server.*`, the root `+layout.svelte`
    and `+layout.server.*`, and the sign-in page. Confirm each against Q1–Q7.
 3. `search("createKavach")`, `search("signInWith")`, `search("supabase.auth")` /
