@@ -1081,11 +1081,11 @@ export function senseiApi(port: number) {
         `/api/knowledge/memories/${enc(id)}/generalise`, {},
       ),
 
-    // Widen a proven memory up the scope ladder (workspace → user → org →
+    // Widen a proven memory up the scope ladder (workspace → user → dōjō →
     // collective). Reuses the EXISTING promote route — it creates a `proposed`
     // copy on the target namespace (origin=promoted); accepting it through the
     // normal proposal flow is the governance gate, so it never auto-applies.
-    // `gov_scope` names the target scope ("user" | "org" | "global"); the other
+    // `gov_scope` names the target scope ("user" | "organization" | "global"); the other
     // fields stay optional for namespace/folder-resolved promotions.
     promoteMemory: (
       id: string,
