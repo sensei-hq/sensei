@@ -36,7 +36,9 @@ const SESSION = {
 	access_token: 'at',
 	refresh_token: 'rt',
 	provider_token: 'gh-provider',
-	user: { id: 'u1', email: 'j@example.com' }
+	// Straight from Supabase's PKCE exchange (server to Supabase), so its user —
+	// and the GitHub account linked to it — is Supabase's word.
+	user: { id: 'u1', email: 'j@example.com', identities: [{ provider: 'github', id: '4242' }] }
 };
 
 function upstream(status: number, body: unknown) {
@@ -74,7 +76,8 @@ describe('POST /v1/auth/cli/token', () => {
 		const [, principalId, token, fallback] = mocks.provisionWithToken.mock.calls[0];
 		expect(principalId).toBe('p1'); // …translated to the principal
 		expect(token).toBe('gh-provider');
-		expect(fallback).toEqual({ email: 'j@example.com' });
+		// Provisioning refuses a token of any other GitHub account (#308 R5a review).
+		expect(fallback).toEqual({ email: 'j@example.com', githubId: '4242' });
 	});
 
 	it('still returns the session when provisioning throws', async () => {

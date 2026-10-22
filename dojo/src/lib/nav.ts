@@ -82,6 +82,8 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 			{ id: 'members', icon: 'users-group-rounded', label: 'Members & Roles', kanji: '員' },
 			{ id: 'scopes', icon: 'shield-check', label: 'Scopes & policies', kanji: '守' },
 			{ id: 'identity', icon: 'key', label: 'Identity & SSO', kanji: '鍵' },
+			// A dōjō comes from a git integration (#308 R5a, D20).
+			{ id: 'integrations', icon: 'link-circle', label: 'Integrations', kanji: '繋' },
 			{ id: 'audit', icon: 'clipboard-list', label: 'Audit', kanji: '査' },
 			{ id: 'health', icon: 'pulse', label: 'Health / Monitor', kanji: '健' },
 			{ id: 'billing', icon: 'card', label: 'Plan & billing', kanji: '金' }

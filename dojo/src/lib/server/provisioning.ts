@@ -24,9 +24,10 @@
 //     would silently undo every override (Part I Scenario 5 keeps existing
 //     memberships unchanged).
 //
-// Claim (`claimed_at` / `claim_state`) is also phase 2 — those columns do not
-// exist yet, so every org tenant created here is implicitly unclaimed, which is
-// the correct default: none of them has proved ownership.
+// An org tenant is created UNCLAIMED; a forge admin signing in claims it
+// (`claimTenantIfOwner`, through `dojo.claim_forge_unit` — the same path the
+// Integrations screen's explicit claim takes, #308 R5a). An org an admin has
+// mapped as a WORKSPACE of another dōjō gets no dōjō of its own here.
 import { AdminError, slugify, type DojoClient } from './admin-data';
 import {
 	fetchGithubFacts,
@@ -40,6 +41,7 @@ import {
 	type ForgeUser
 } from './forge-github';
 import { forgeRefFromRepoKey } from './repo-mapping';
+import { assertGithubAccount } from './github-identity';
 
 /** One tenant this pass established the caller's place in. */
 export interface ProvisionedTenant {
@@ -97,10 +99,14 @@ export interface RoleMirrorResult {
 	error?: string;
 }
 
-/** What we know about the caller when there is no forge to ask. */
+/** What we know about the caller from their LOGIN (Supabase Auth). */
 export interface FallbackIdentity {
 	email?: string | null;
 	displayName?: string | null;
+	/** The GitHub account linked to the login (`githubIdentityId` of the validated
+	 *  Supabase user). A forge token is used only if GitHub says it is this
+	 *  account; with none linked, a token is refused (#308 R5a review). */
+	githubId?: string | null;
 }
 
 const DOJO_HOST = 'dojo.sensei-hq.org';
@@ -108,7 +114,7 @@ const DOJO_HOST = 'dojo.sensei-hq.org';
 /** `dojo.forge_provider` → `dojo.auth_method`. The auth_method enum has no
  *  generic `oauth` label yet (§V.1 puts it in phase 2), so only github has a
  *  valid value — which is why phase 1 provisions github alone. */
-function authMethodFor(provider: ForgeProvider): string {
+export function authMethodFor(provider: ForgeProvider): string {
 	if (provider === 'github') return 'github_oauth';
 	throw new AdminError(
 		501,
@@ -127,17 +133,18 @@ function authMethodFor(provider: ForgeProvider): string {
  * sign-in, so a forge admin signing in IS the proof. No endpoint, no prompt, and
  * re-verified against the forge on every sign-in rather than trusted once.
  *
- * FIRST CLAIM WINS. The `is('claimed_at', null)` on the update is the guard, not
- * the read before it: two admins signing in together would both see NULL, and
- * without it the later write would rewrite `claimed_by` to whoever logged in
- * most recently — destroying the record of who actually established the claim.
+ * One claim path (#308 R5a): `dojo.claim_forge_unit` re-proves the connection,
+ * claims the tenant if nobody has — FIRST CLAIM WINS, in the database, so two
+ * admins signing in together cannot rewrite who established it — and audits the
+ * claim. The Integrations screen's explicit claim calls the same function.
  *
  * Errors PROPAGATE. A silently-failed claim leaves the tenant unclaimed, which
  * now refuses every private repository — a denial caused by an error nobody saw.
  */
 export async function claimTenantIfOwner(
 	db: DojoClient,
-	tenantId: string,
+	provider: ForgeProvider,
+	externalId: string,
 	principalId: string,
 	role: string
 ): Promise<void> {
@@ -146,12 +153,30 @@ export async function claimTenantIfOwner(
 	// organisation that never agreed.
 	if (role !== 'admin') return;
 
-	const { error } = await db
-		.from('tenants')
-		.update({ claimed_at: new Date().toISOString(), claimed_by: principalId })
-		.eq('id', tenantId)
-		.is('claimed_at', null);
+	const { error } = await db.rpc('claim_forge_unit', {
+		p_principal: principalId,
+		p_provider: provider,
+		p_external_id: externalId
+	});
 	if (error) throw new AdminError(500, error.message);
+}
+
+/**
+ * Whether an admin has filed this org into another dōjō as a WORKSPACE
+ * (#308 R5a). Such an org gets no dōjō of its own from a sign-in: its
+ * repositories file into that workspace (`dojo.register_repository`). A read
+ * failure throws — creating a dōjō past an unreadable mapping would conjure the
+ * very boundary the admin chose not to have.
+ */
+async function mappedAsWorkspace(db: DojoClient, provider: ForgeProvider, externalId: string): Promise<boolean> {
+	const { data, error } = await db
+		.from('forge_unit_mappings')
+		.select('workspace_id')
+		.eq('provider', provider)
+		.eq('external_id', externalId)
+		.maybeSingle();
+	if (error) throw new AdminError(500, error.message);
+	return Boolean((data as { workspace_id: string | null } | null)?.workspace_id);
 }
 
 /** Forge standing → `dojo.member_role`. An org owner/admin administers the
@@ -541,14 +566,19 @@ async function ensurePersonalConnection(
  * Matched on `(provider, external_id)` — the forge's STABLE id. Matching on the
  * slug would fork the tenant when an org is renamed, and would let whoever
  * claims the freed name upstream inherit this tenant's governance (§II.2).
+ *
+ * Null when the org has no dōjō and an admin mapped it as a workspace elsewhere
+ * — unless `evenIfMapped`: an admin of the org claiming its dōjō, or making it
+ * its own dōjō again, gets one (#308 R5a).
  */
-async function ensureOrgTenant(
+export async function ensureOrgTenant(
 	db: DojoClient,
 	principalId: string,
 	provider: ForgeProvider,
 	org: ForgeOrg,
-	authenticatedVia: string
-): Promise<ProvisionedTenant> {
+	authenticatedVia: string,
+	opts: { evenIfMapped?: boolean } = {}
+): Promise<ProvisionedTenant | null> {
 	const conn = await db
 		.from('tenant_connections')
 		.select('tenant_id')
@@ -574,9 +604,14 @@ async function ensureOrgTenant(
 		// A tenant may have been created by a plain member long before an owner
 		// first signs in, so the claim is attempted on EVERY pass, not only at
 		// creation. `claimTenantIfOwner` is a no-op once claimed.
-		await claimTenantIfOwner(db, row.id, principalId, roleForOrg(org));
+		await claimTenantIfOwner(db, provider, org.id, principalId, roleForOrg(org));
 		return { id: row.id, key: row.key, origin: 'organization', role, created: false };
 	}
+
+	// An org an admin filed elsewhere as a workspace gets no dōjō of its own. One
+	// that already has a dōjō keeps it (above): mapping never removes, and the
+	// person's place there stays for #309's lifecycle to decide.
+	if (!opts.evenIfMapped && (await mappedAsWorkspace(db, provider, org.id))) return null;
 
 	const tenant = await insertTenantWithFreeSlug(
 		db,
@@ -631,7 +666,7 @@ async function ensureOrgTenant(
 	);
 	// The creator may themselves be the forge owner, in which case the tenant is
 	// claimed the moment it exists rather than waiting for a second sign-in.
-	await claimTenantIfOwner(db, tenant.id, principalId, roleForOrg(org));
+	await claimTenantIfOwner(db, provider, org.id, principalId, roleForOrg(org));
 	return { id: tenant.id, key: tenant.key, origin: 'organization', role, created: true };
 }
 
@@ -881,7 +916,8 @@ export async function ensureProvisioned(
 
 	const tenants: ProvisionedTenant[] = [];
 	for (const org of facts.orgs) {
-		tenants.push(await ensureOrgTenant(db, principalId, facts.provider, org, authenticatedVia));
+		const tenant = await ensureOrgTenant(db, principalId, facts.provider, org, authenticatedVia);
+		if (tenant) tenants.push(tenant);
 	}
 
 	// Leaving an org ends the membership provisioning made there, and with it any
@@ -954,6 +990,11 @@ export async function provisionWithToken(
 		const rejected = e instanceof ForgeReadError && e.forgeStatus === 401;
 		return { ...degraded, reason: rejected ? 'forge_token_rejected' : 'forge_unreachable' };
 	}
+	// The token must be the GitHub account linked to this login — or someone
+	// holding another account's token would provision themselves into its orgs.
+	// Checked against the read already made (facts.user is GET /user), before a
+	// single write.
+	assertGithubAccount(facts.user.id, fallback.githubId);
 	const result = await ensureProvisioned(db, principalId, facts, fallback);
 	// AFTER provisioning, deliberately: an org tenant this pass just created is a
 	// membership the refresh's scope must include, or the first sign-in of the

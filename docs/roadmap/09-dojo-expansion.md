@@ -47,6 +47,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D36 | How does an Azure DevOps organization map? (R5 Q2) | **Organization → dōjō, project → workspace** (user 2026-10-22). |
 | D37 | What is R5's first slice? (R5 Q3) | **One complete source first** (user 2026-10-22, revised): R5a finishes GitHub end to end (adapter, claim by an org admin, the import/mapping screen, repositories filing by the mapping); R5b adds Azure DevOps only after that. GitLab and Bitbucket later. |
 | D38 | What is the lead role for, now that Clients is gone (D34)? | **A team lead** (user 2026-10-22): a lead sees the metrics of every team member, per person, across all the workspaces the lead can access. Viewers stay aggregate-only (D6); a lead is a member, not a viewer. |
+| D39 | How does an admin give the Integrations screen a GitHub token? (R5a) | **Re-authorize with GitHub** (user 2026-10-22): a Connect GitHub button runs GitHub OAuth again (read:org); the fresh token serves that session's reads only. It is never stored, logged or echoed. No pasted-token path. |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -118,7 +119,7 @@ slice builds, passes and ships on its own.
   - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
     `get_workspace_summary`, …), the plugin's hooks and skills that call them, both `SKILL.md` copies, and
     `sensei` CLI words.
-- **R6 · The ladder is dōjō → workspace → repository (D25, D29, D32).** *Done 2026-10-22: merged to develop (fb47ee21), gates green alone; ships in the next release. Rehearsed: rule reach identical (234 repository-rule pairs, all 87 repositories); 111 stack adoptions = 111 bindings. Note: a stack pack applied at a repository ranks at repository precedence (70), above workspace (60) — reach unchanged, precedence per D29.* Today the
+- **R6 · The ladder is dōjō → workspace → repository (D25, D29, D32).** *Live in v0.18.0 (2026-10-22): the daemon DB migrated as rehearsed; production in sync. Rehearsed: rule reach identical (234 repository-rule pairs, all 87 repositories); 111 stack adoptions = 111 bindings. Note: a stack pack applied at a repository ranks at repository precedence (70), above workspace (60) — reach unchanged, precedence per D29.* Today the
   ladder still has `general · user · organization · client · technology · team · workspace · repository`.
   - **Retire `team` and `client`** (0 namespaces locally and in production): the seed, both databases (a guarded
     hook that FAILS, never deletes, if a namespace still sits on either), and every reader — the dōjō preview
@@ -150,7 +151,10 @@ slice builds, passes and ships on its own.
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
   org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
-  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37).*
+  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 (8a584e51); ships in the next release. R5b (Azure) next after R8.*
+  *R5a (GitHub) built 2026-10-22 on branch `r5a-github-import` (not merged): the adapter interface, claim through
+  `dojo.claim_forge_unit`, `dojo.forge_unit_mappings` + `map_forge_unit`, Admin → Integrations, and registration by
+  the mapping — see the spec's "R5a as built". Production's live check waits on the merge and deploy.*
 - **R4 · The words.** PRD, specs, guides, `docs/llms`, both `SKILL.md` copies, agents, the website.
   Generic English ("the project's README", a Cargo project) stays.
 

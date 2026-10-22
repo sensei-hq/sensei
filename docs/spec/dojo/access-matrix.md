@@ -149,6 +149,7 @@ there are no engagements, incidents or confidentiality ledger to read.
 | memberships of the tenant | — | R/W tenant (adding a person requires their acceptance — invites) |
 | identities | R own | **R tenant members' identities; never W.** An identity is the PERSON's and spans tenants. Binding a forge identity requires that forge's proof (provisioning). |
 | seats, billing account, invites, health | — | R/W tenant |
+| forge unit mappings (where a GitHub org's repositories file, #308 R5a) | — | R tenant (`forge_unit_mappings`); W through Integrations only (`map_forge_unit`, after the forge proved what the admin may do) |
 
 ## What stays `service_role`
 
@@ -159,6 +160,7 @@ writes an audit row where it changes tenant state.
 |---|---|
 | provisioning on sign-in / CLI token exchange (principals, forge-proven tenants, memberships, identities) | establishes the principal the session would need |
 | forge sync (repository visibility, org membership) | the forge is the authority; no member decides it |
+| Integrations: claim an org's dōjō, map an org (`claim_forge_unit`, `map_forge_unit`, #308 R5a) | the forge is the authority on who administers the org — the server reads it with the person's own token, then the function records what that proved; both audited |
 | billing webhooks, seat opening from relay activity | external caller / system bookkeeping |
 | invite acceptance | the joining principal has no membership yet; the invite token is the authority |
 | clustering after a publish (`promoteCluster`) | derived maintenance over many members' rows |

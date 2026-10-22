@@ -6,7 +6,7 @@
 // queue stub that replays canned answers would pass just as happily for an
 // implementation that inserted a duplicate tenant on every sign-in.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { fakeDojoDb, resetFakeIds, type FakeTable } from './fake-dojo-db';
+import { fakeDojoDb, resetFakeIds, provisioningTables, type FakeTable } from './fake-dojo-db';
 import {
 	ensureProvisioned,
 	provisionWithToken,
@@ -18,64 +18,7 @@ import type { ForgeFacts } from './forge-github';
 
 const PRINCIPAL = 'p-alice';
 
-/** The dōjō tables provisioning touches, with the constraints that actually
- *  exist in the DDL — those are what make the idempotence assertions real. */
-function tables(seed: Partial<Record<string, FakeTable>> = {}): Record<string, FakeTable> {
-	return {
-		identities: {
-			rows: [],
-			uniques: [{ columns: ['provider', 'subject'] }],
-			...seed.identities
-		},
-		tenants: {
-			rows: [],
-			uniques: [{ columns: ['key'] }],
-			...seed.tenants
-		},
-		tenant_connections: {
-			rows: [],
-			uniques: [
-				{ columns: ['provider', 'external_id'], where: (r) => r.external_id != null },
-				{
-					columns: ['provider', 'external_slug'],
-					lower: ['external_slug'],
-					where: (r) => r.external_id == null
-				}
-			],
-			...seed.tenant_connections
-		},
-		memberships: {
-			rows: [],
-			uniques: [{ columns: ['tenant_id', 'user_id'] }],
-			...seed.memberships
-		},
-		repositories: {
-			rows: [],
-			// The constraint the whole scoping argument rests on: the SAME repository
-			// legitimately exists under two tenants, so `repo_key` alone does not
-			// identify a row (§8a "the sign-in refresh must be scoped").
-			uniques: [{ columns: ['tenant_id', 'repo_key'] }],
-			...seed.repositories
-		},
-		repository_graph_branches: {
-			rows: [],
-			uniques: [{ columns: ['repository_id', 'branch'] }],
-			...seed.repository_graph_branches
-		},
-		// The per-person forge mirror (#307 A2c); its own rules are proven in
-		// database/tests/dojo/repository_roles_mirror_principal.sql.
-		'rpc:mirror_principal_repository_roles': {
-			rows: [],
-			...seed['rpc:mirror_principal_repository_roles']
-		},
-		// Leaving an org ends the membership provisioning made (#309); its own rules
-		// are proven in database/tests/dojo/membership_departure.sql.
-		'rpc:reconcile_org_memberships': {
-			rows: [],
-			...seed['rpc:reconcile_org_memberships']
-		}
-	};
-}
+const tables = provisioningTables;
 
 const FACTS: ForgeFacts = {
 	provider: 'github',
@@ -755,7 +698,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 			db as never,
 			PRINCIPAL,
 			'gh-token',
-			{},
+			{ githubId: '4242' },
 			forgeFetch(200, GH_USER, GH_ORGS)
 		);
 		expect(out.synced).toBe(true);
@@ -819,6 +762,31 @@ describe('provisionWithToken — the composition all three callers share', () =>
 			forgeFetch(403, GH_USER, GH_ORGS)
 		);
 		expect(out.reason).toBe('forge_unreachable');
+	});
+
+	it('REFUSES a token of another GitHub account than the login`s — and writes nothing (#308 R5a review)', async () => {
+		// Someone holding another account's token must not provision themselves
+		// into that account's organizations.
+		const db = fakeDojoDb(tables());
+		const err = await provisionWithToken(
+			db as never,
+			PRINCIPAL,
+			'someone-elses-token',
+			{ email: 'j@example.com', githubId: '111' },
+			forgeFetch(200, GH_USER, GH_ORGS)
+		).catch((e) => e);
+		expect(err.status).toBe(403);
+		expect(db.tables.tenants.rows).toEqual([]);
+		expect(db.tables.memberships.rows).toEqual([]);
+		expect(db.tables.identities.rows).toEqual([]);
+		expect(db.tables.tenant_connections.rows).toEqual([]);
+	});
+
+	it('REFUSES a token when the login has no GitHub account linked', async () => {
+		const db = fakeDojoDb(tables());
+		const err = await provisionWithToken(db as never, PRINCIPAL, 'gh-token', { email: 'j@example.com' }, forgeFetch(200, GH_USER, GH_ORGS)).catch((e) => e);
+		expect(err.status).toBe(403);
+		expect(db.tables.memberships.rows).toEqual([]);
 	});
 
 	it('reports no_forge_token when there is no token at all', async () => {
@@ -890,7 +858,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		// only server-side place `provider_token` is reachable.
 		const db = fakeDojoDb(withRegisteredRepo());
 		const forge = fullForgeFetch({ 'devuser/thing': false });
-		const out = await provisionWithToken(db as never, PRINCIPAL, 'gh-token', {}, forge.fn);
+		const out = await provisionWithToken(db as never, PRINCIPAL, 'gh-token', { githubId: '4242' }, forge.fn);
 
 		expect(out.synced).toBe(true);
 		expect(out.visibility).toMatchObject({ captured: 1 });
@@ -1058,72 +1026,92 @@ describe('adoptOwnPersonalTenant — tell "I raced myself" from "another human, 
 // refuses every org repository forever and reads as "nothing to sync".
 describe('claimTenantIfOwner — a forge owner signing in IS the claim', () => {
 	const ALICE = 'p-alice';
-	function tbl(over: Record<string, unknown> = {}): Record<string, FakeTable> {
-		return {
-			tenants: {
-				rows: [
-					{
-						id: 't-acme',
-						key: 'organization/acme',
-						origin: 'organization',
-						slug: 'acme',
-						claimed_at: null,
-						claimed_by: null,
-						...over
-					}
-				],
-				uniques: [{ columns: ['key'] }]
-			}
-		};
-	}
+	const claims = (db: ReturnType<typeof fakeDojoDb>) => db.rpcCalls.filter((c) => c.fn === 'claim_forge_unit');
 
-	it('claims an unclaimed tenant for a forge ADMIN', async () => {
-		const db = fakeDojoDb(tbl());
+	it('claims through dojo.claim_forge_unit for a forge ADMIN, by the org`s stable id', async () => {
+		// One claim path for sign-in and for the Integrations screen (#308 R5a):
+		// the function re-proves the connection, claims if unclaimed (first claim
+		// wins — database/tests/dojo/forge_unit_claim.sql) and audits it.
+		const db = fakeDojoDb(tables());
 		const { claimTenantIfOwner } = await import('./provisioning');
-		await claimTenantIfOwner(db as never, 't-acme', ALICE, 'admin');
-		const row = db.tables.tenants.rows[0];
-		expect(row.claimed_by).toBe(ALICE);
-		expect(row.claimed_at).toBeTruthy();
+		await claimTenantIfOwner(db as never, 'github', '11', ALICE, 'admin');
+		expect(claims(db)).toEqual([
+			{ fn: 'claim_forge_unit', args: { p_principal: ALICE, p_provider: 'github', p_external_id: '11' } }
+		]);
 	});
 
 	it('does NOT claim for a contributor — membership is not ownership', async () => {
 		// The whole point of the claim: being IN an org says nothing about owning
 		// it, and a tenant claimed by a plain member could subscribe on behalf of
 		// an organisation that never agreed.
-		const db = fakeDojoDb(tbl());
+		const db = fakeDojoDb(tables());
 		const { claimTenantIfOwner } = await import('./provisioning');
-		await claimTenantIfOwner(db as never, 't-acme', ALICE, 'contributor');
-		expect(db.tables.tenants.rows[0].claimed_at).toBeNull();
-	});
-
-	it('leaves an ALREADY-claimed tenant alone, including who claimed it', async () => {
-		// Re-stamping on every sign-in would rewrite `claimed_by` to whichever
-		// admin logged in most recently, destroying the record of who actually
-		// established the claim.
-		const db = fakeDojoDb(
-			tbl({ claimed_at: '2026-01-01T00:00:00.000Z', claimed_by: 'p-first-owner' })
-		);
-		const { claimTenantIfOwner } = await import('./provisioning');
-		await claimTenantIfOwner(db as never, 't-acme', ALICE, 'admin');
-		const row = db.tables.tenants.rows[0];
-		expect(row.claimed_by).toBe('p-first-owner');
-		expect(row.claimed_at).toBe('2026-01-01T00:00:00.000Z');
+		await claimTenantIfOwner(db as never, 'github', '11', ALICE, 'contributor');
+		expect(claims(db)).toEqual([]);
 	});
 
 	it('reports a write failure rather than swallowing it', async () => {
 		// A silently-failed claim leaves the tenant unclaimed, which now REFUSES
 		// every private repository — a denial caused by an error nobody saw.
-		const failing = {
-			from: () => failing,
-			select: () => failing,
-			eq: () => failing,
-			maybeSingle: async () => ({ data: { id: 't-acme', claimed_at: null }, error: null }),
-			update: () => ({
-				eq: () => ({ is: async () => ({ error: { message: 'write failed' } }) })
-			})
-		} as never;
+		const db = fakeDojoDb(tables({ 'rpc:claim_forge_unit': { rows: [], error: { message: 'write failed' } } }));
 		const { claimTenantIfOwner } = await import('./provisioning');
-		await expect(claimTenantIfOwner(failing, 't-acme', ALICE, 'admin')).rejects.toThrow();
+		await expect(claimTenantIfOwner(db as never, 'github', '11', ALICE, 'admin')).rejects.toThrow('write failed');
+	});
+
+	it('a sign-in pass claims the orgs the person administers, and only those', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(claims(db).map((c) => c.args.p_external_id)).toEqual(['11']);
+	});
+});
+
+describe('ensureProvisioned — an org an admin filed elsewhere as a workspace (#308 R5a)', () => {
+	const MAPPED_AS_WORKSPACE = {
+		id: 'fm-1',
+		provider: 'github',
+		external_id: '22',
+		external_slug: 'acme',
+		tenant_id: 't-elsewhere',
+		workspace_id: 'w-acme'
+	};
+
+	it('does not create a dōjō for it — its repositories file into that workspace', async () => {
+		const db = fakeDojoDb(tables({ forge_unit_mappings: { rows: [MAPPED_AS_WORKSPACE] } }));
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(out.tenants.map((t) => t.key)).toEqual(['organization/sensei-hq']);
+		expect(db.tables.tenants.rows.some((t) => t.key === 'organization/acme')).toBe(false);
+		expect(db.tables.tenant_connections.rows.some((c) => c.external_id === '22')).toBe(false);
+	});
+
+	it('still creates the dōjō of an org mapped as its OWN dōjō', async () => {
+		const db = fakeDojoDb(
+			tables({ forge_unit_mappings: { rows: [{ ...MAPPED_AS_WORKSPACE, workspace_id: null }] } })
+		);
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(out.tenants.map((t) => t.key)).toEqual(['organization/sensei-hq', 'organization/acme']);
+	});
+
+	it('keeps an org dōjō that ALREADY exists, and the person`s place in it (#309 unchanged)', async () => {
+		// Mapping an org elsewhere never removes the dōjō it already has, and the
+		// complete read still keeps the person's membership there.
+		const db = fakeDojoDb(
+			tables({
+				forge_unit_mappings: { rows: [MAPPED_AS_WORKSPACE] },
+				tenants: { rows: [{ id: 't-acme', key: 'organization/acme', origin: 'organization', slug: 'acme' }] },
+				tenant_connections: {
+					rows: [{ id: 'c-acme', tenant_id: 't-acme', provider: 'github', external_id: '22', external_slug: 'acme' }]
+				}
+			})
+		);
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		expect(out.tenants.map((t) => t.key)).toContain('organization/acme');
+		const kept = db.rpcCalls.find((c) => c.fn === 'reconcile_org_memberships')?.args.p_kept;
+		expect(kept).toContain('t-acme');
+	});
+
+	it('fails closed when the mapping cannot be read — never a dōjō conjured past an error', async () => {
+		const db = fakeDojoDb(tables({ forge_unit_mappings: { rows: [], error: { message: 'mappings down' } } }));
+		await expect(ensureProvisioned(db as never, PRINCIPAL, FACTS)).rejects.toThrow('mappings down');
 	});
 });
 
@@ -1179,11 +1167,11 @@ describe('mirrorRepositoryRoles — the per-person forge mirror', () => {
 				return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
 			}) as unknown as typeof fetch;
 
-		const ok = await provisionWithToken(fakeDojoDb(tables()) as never, PRINCIPAL, 'tok', {}, fetchAll(200));
+		const ok = await provisionWithToken(fakeDojoDb(tables()) as never, PRINCIPAL, 'tok', { githubId: '4242' }, fetchAll(200));
 		expect(ok.synced).toBe(true);
 		expect(ok.roles).toEqual({ tenants: 1, repositories: 2 });
 
-		const failed = await provisionWithToken(fakeDojoDb(tables()) as never, PRINCIPAL, 'tok', {}, fetchAll(502));
+		const failed = await provisionWithToken(fakeDojoDb(tables()) as never, PRINCIPAL, 'tok', { githubId: '4242' }, fetchAll(502));
 		expect(failed.synced).toBe(true);
 		expect(failed.roles?.error).toMatch(/502/);
 		expect(failed.roles?.tenants).toBeUndefined();

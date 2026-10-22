@@ -15,6 +15,35 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-10-22
+
+### Added
+
+- **A dōjō comes from GitHub, end to end** (#308 R5a, D20/D37/D39).
+  - **Claim:** an admin of a GitHub org claims the org's dōjō.
+  - **Integrations screen (Admin → Integrations):** maps each GitHub org to its
+    own dōjō or to a workspace inside a dōjō you administer. Repositories file by
+    that mapping; unmapped stays unmapped.
+  - **Connect GitHub:** re-authorization provides the screen's token. It lives
+    only in an encrypted, login-bound, HttpOnly cookie for up to an hour, and is
+    never stored or logged.
+- **The dōjō Worker deploys from the release tag, after its database**
+  (`release.yml` `deploy-worker`), and fails the release unless the live site
+  serves that commit.
+
+### Security
+
+- **A GitHub token is trusted only as the signed-in person's own GitHub
+  account.** GitHub's `/user` must match the GitHub identity linked to the
+  login before a token is sealed or used to provision. This closes a gap in
+  `/v1/you/provision`, where someone holding another person's token could join
+  that person's orgs.
+
+### Changed
+
+- **Releases are two steps:** `make bump` on develop, then `make release` on
+  main, because main is protected.
+
 ## [0.18.0] — 2026-10-22
 
 ### Changed

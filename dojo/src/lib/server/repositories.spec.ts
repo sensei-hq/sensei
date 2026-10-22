@@ -171,6 +171,20 @@ describe('registerRepositories', () => {
 		expect(out.mapped[0]).toMatchObject({ repo_key: 'github.com/acme/api', workspace_id: 'p-sensei' });
 	});
 
+	it('keeps the workspace its unit`s mapping filed it into — the daemon`s workspace does not move it (#308 R5a)', async () => {
+		// An admin mapped the org as a workspace of a dōjō; the database filed the
+		// repository there. Re-filing it under the daemon's sensei workspace would
+		// MOVE it (one workspace per repository per dōjō) and undo the mapping.
+		const { db, calls } = rpcDb((args) => ({
+			data: { ...filed(args).data, workspace_id: 'w-mapped' },
+			error: null
+		}));
+		const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api', workspace: WORKSPACE }]);
+		expect(calls.map((c) => c.fn)).toEqual(['register_repository']);
+		expect(out.mapped[0]).toMatchObject({ repo_key: 'github.com/acme/api', workspace_id: 'w-mapped' });
+		expect(out.mapped[0].workspace_error).toBeUndefined();
+	});
+
 	it('files nothing for a repository sent without a workspace', async () => {
 		const { db, calls } = rpcDb(filed);
 		const out = await registerRepositories(db, [{ repo_key: 'github.com/acme/api' }]);

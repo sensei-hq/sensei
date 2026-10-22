@@ -27,6 +27,8 @@ import type { DojoCallOpts } from './dojo-api';
 import type { DojoViewerWire } from './viewers-view';
 import type { TeamWire } from './teams-view';
 import type { BillableUserWire, BillingAccountWire, SeatUsageWire } from './billing-view';
+import type { ForgeProvider } from './forge-providers';
+import type { IntegrationUnitsView, MapTarget } from './integrations-view';
 
 // Re-export the shared error under the admin name so admin screens `instanceof`
 // against a local symbol without reaching into the shared module directly.
@@ -379,6 +381,42 @@ export async function getBilling(
 	opts: DojoCallOpts = {}
 ): Promise<BillingResponse> {
 	return getJson<BillingResponse>(adminUrl(tenantKey, '/billing'), opts);
+}
+
+// integrations (#308 R5a) ───────────────────────────────────────────────────────
+
+const integrationsPath = (provider: ForgeProvider) => `/integrations/${encodeURIComponent(provider)}`;
+
+/** `POST …/integrations/{provider}` — the units the person's connected GitHub
+ *  sees. The token is never sent from here: the server reads it from the sealed
+ *  cookie a "Connect GitHub" re-authorization set, and answers 428 without one. */
+export async function listIntegrationUnits(
+	tenantKey: string,
+	provider: ForgeProvider,
+	opts: DojoCallOpts = {}
+): Promise<IntegrationUnitsView> {
+	return sendJson<IntegrationUnitsView>(adminUrl(tenantKey, integrationsPath(provider)), 'POST', {}, opts);
+}
+
+/** `POST …/integrations/{provider}/claim` — claim a unit's dōjō. */
+export async function claimIntegrationUnit(
+	tenantKey: string,
+	provider: ForgeProvider,
+	unitId: string,
+	opts: DojoCallOpts = {}
+): Promise<{ dojo: { key: string } }> {
+	return sendJson(adminUrl(tenantKey, `${integrationsPath(provider)}/claim`), 'POST', { unit_id: unitId }, opts);
+}
+
+/** `POST …/integrations/{provider}/map` — its own dōjō, or a workspace here. */
+export async function mapIntegrationUnit(
+	tenantKey: string,
+	provider: ForgeProvider,
+	unitId: string,
+	target: MapTarget,
+	opts: DojoCallOpts = {}
+): Promise<{ tenantId: string; workspaceId: string | null }> {
+	return sendJson(adminUrl(tenantKey, `${integrationsPath(provider)}/map`), 'POST', { unit_id: unitId, ...target }, opts);
 }
 
 /** `GET …/audit` — the admin audit log, most recent first (read-only). */

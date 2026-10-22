@@ -9,10 +9,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
 	resolvePrincipalId: vi.fn(),
-	provisionWithToken: vi.fn()
+	provisionWithToken: vi.fn(),
+	getUser: vi.fn()
 }));
 
-vi.mock('./dojo-supabase', () => ({ dojoDb: () => ({}) }));
+vi.mock('./dojo-supabase', () => ({ dojoDb: () => ({ auth: { getUser: mocks.getUser } }) }));
 vi.mock('./principal-resolve', () => ({ resolvePrincipalId: mocks.resolvePrincipalId }));
 vi.mock('./provisioning', () => ({ provisionWithToken: mocks.provisionWithToken }));
 
@@ -25,7 +26,12 @@ const SESSION = {
 	user: { id: 'u1', email: 'j@example.com' }
 };
 
+// What Supabase Auth says the access token is — the login, and the GitHub
+// account linked to it. Never the session's own `user` claim.
+const VALIDATED = { id: 'u1', email: 'j@example.com', identities: [{ provider: 'github', id: '4242' }] };
+
 beforeEach(() => {
+	mocks.getUser.mockReset().mockResolvedValue({ data: { user: VALIDATED }, error: null });
 	mocks.resolvePrincipalId.mockClear().mockResolvedValue('p1');
 	mocks.provisionWithToken.mockClear().mockResolvedValue({ synced: true, personal: null, tenants: [] });
 });
@@ -39,7 +45,20 @@ describe('provisionOnSignIn', () => {
 		const [, principalId, token, fallback] = mocks.provisionWithToken.mock.calls[0];
 		expect(principalId).toBe('p1');
 		expect(token).toBe('gho_forge_token');
-		expect(fallback).toEqual({ email: 'j@example.com' });
+		expect(fallback).toEqual({ email: 'j@example.com', githubId: '4242' });
+		expect(mocks.getUser).toHaveBeenCalledWith('at');
+	});
+
+	it('keys on the login Supabase validated, not the one the session claims', async () => {
+		await provisionOnSignIn({ ...SESSION, user: { id: 'someone-else', email: 'x@example.com' } }, 'SIGNED_IN');
+		expect(mocks.resolvePrincipalId.mock.calls[0][1]).toBe('u1');
+		expect(mocks.provisionWithToken.mock.calls[0][3]).toEqual({ email: 'j@example.com', githubId: '4242' });
+	});
+
+	it('provisions nothing when Supabase will not vouch for the session', async () => {
+		mocks.getUser.mockResolvedValue({ data: { user: null }, error: { message: 'invalid JWT' } });
+		await expect(provisionOnSignIn(SESSION, 'SIGNED_IN')).rejects.toThrow();
+		expect(mocks.provisionWithToken).not.toHaveBeenCalled();
 	});
 
 	it('still runs without a provider token, so the personal dōjō is created', async () => {
@@ -50,7 +69,7 @@ describe('provisionOnSignIn', () => {
 		expect(mocks.provisionWithToken.mock.calls[0][2]).toBeNull();
 	});
 
-	it('does nothing when there is no user id to provision for', async () => {
+	it('does nothing when there is no session token to provision for', async () => {
 		await provisionOnSignIn({ user: null }, 'SIGNED_IN');
 		expect(mocks.resolvePrincipalId).not.toHaveBeenCalled();
 		expect(mocks.provisionWithToken).not.toHaveBeenCalled();

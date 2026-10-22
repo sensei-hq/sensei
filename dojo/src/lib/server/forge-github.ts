@@ -15,12 +15,14 @@
 // (§II.2 — a slug can be renamed and re-registered upstream, so keying on it
 // would let a squatter inherit a tenant's governance) and the caller's role.
 import { AdminError } from './admin-data';
+import type { ForgeAdapter, ForgeMember, ForgeMembersRead, ForgeUnitRef } from './forge-adapter';
 
 /** `dojo.forge_provider`. Phase 1 provisions `github` only — `dojo.auth_method`
  *  has no generic `oauth` label yet, so an identity on another forge has nothing
  *  valid to record (spec §VIII.6). The type is here because the model is
  *  forge-agnostic by design (D6) and the shape must not have to change later. */
-export type ForgeProvider = 'github' | 'gitlab' | 'bitbucket' | 'azure_devops';
+export { FORGE_PROVIDERS, isForgeProvider, type ForgeProvider } from '../forge-providers';
+import type { ForgeProvider } from '../forge-providers';
 
 /** The person, as the forge knows them. */
 export interface ForgeUser {
@@ -246,9 +248,88 @@ export async function fetchGithubFacts(
 ): Promise<ForgeFacts> {
 	const [user, read] = await Promise.all([
 		fetchGithubUser(token, fetchImpl),
-		fetchGithubOrgs(token, fetchImpl)
+		githubAdapter(fetchImpl).listUnits(token)
 	]);
-	return { provider: 'github', user, orgs: read.orgs, orgsComplete: read.complete };
+	return { provider: 'github', user, orgs: read.units, orgsComplete: read.complete };
+}
+
+/** At most this many pages of an org's members (100 each) are read; a larger
+ *  org is a read that THROWS rather than one that silently stops — a shorter
+ *  member list would end the memberships of everyone it left out (#309). */
+export const MAX_MEMBER_PAGES = 50;
+
+/**
+ * Whether the token's owner administers one GitHub org, read NOW with their own
+ * token (#308 R5a: proof of control at claim and import time).
+ *
+ * `/user/memberships/orgs/{org}` answers for the caller alone — their `state`
+ * and `role` in that org. True only for an ACTIVE `admin` membership of the org
+ * we know by its STABLE id: a name can be renamed and re-registered upstream,
+ * and administering the name's new holder proves nothing about ours.
+ *
+ * 404 is GitHub's answer for "not a member" — a positive `false`. Any other
+ * non-2xx THROWS (ForgeReadError, carrying the forge's status): a 403 from an
+ * org that restricts third-party access, a dead token or an outage is a read we
+ * could not make, and reporting it as "not an admin" would tell an admin they
+ * are not one.
+ */
+async function proveGithubAdmin(token: string, unit: ForgeUnitRef, fetchImpl: typeof fetch): Promise<boolean> {
+	const url = `${GITHUB_API}/user/memberships/orgs/${encodeURIComponent(unit.login)}`;
+	const res = await fetchImpl(url, { headers: headers(token) });
+	if (res.status === 404) return false;
+	if (!res.ok) throw new ForgeReadError(res.status, `GitHub read failed (${res.status}) for ${url}`);
+	const body = (await res.json()) as Record<string, unknown> | null;
+	const org = (body?.organization ?? {}) as Record<string, unknown>;
+	return nonEmpty(body?.state) === 'active' && nonEmpty(body?.role) === 'admin' && idText(org.id) === unit.id;
+}
+
+/**
+ * Every member of one GitHub org the token can see, every page of them.
+ *
+ * A member with no stable id or login is SKIPPED and the read marked incomplete;
+ * a failed page, an answer that is not a list, or more pages than
+ * MAX_MEMBER_PAGES THROW — never a truncated list (#309).
+ */
+async function listGithubMembers(
+	token: string,
+	unit: ForgeUnitRef,
+	fetchImpl: typeof fetch
+): Promise<ForgeMembersRead> {
+	const members: ForgeMember[] = [];
+	let complete = true;
+	for (let page = 1; page <= MAX_MEMBER_PAGES; page++) {
+		const body = await getJson(
+			`${GITHUB_API}/orgs/${encodeURIComponent(unit.login)}/members?per_page=100&page=${page}`,
+			token,
+			fetchImpl
+		);
+		if (!Array.isArray(body)) throw new AdminError(502, 'GitHub returned org members that are not a list');
+		for (const entry of body) {
+			const m = entry as Record<string, unknown>;
+			const id = idText(m.id);
+			const login = nonEmpty(m.login);
+			if (!id || !login) {
+				complete = false;
+				continue;
+			}
+			members.push({ id, login });
+		}
+		if (body.length < 100) return { members, complete };
+	}
+	throw new AdminError(502, `GitHub reports more than ${MAX_MEMBER_PAGES * 100} members of ${unit.login}; not reading a partial list`);
+}
+
+/** GitHub behind the one forge interface (#308 R5a). A unit is an org. */
+export function githubAdapter(fetchImpl: typeof fetch = fetch): ForgeAdapter {
+	return {
+		provider: 'github',
+		listUnits: async (token) => {
+			const read = await fetchGithubOrgs(token, fetchImpl);
+			return { units: read.orgs, complete: read.complete };
+		},
+		proveAdmin: (token, unit) => proveGithubAdmin(token, unit, fetchImpl),
+		listMembers: (token, unit) => listGithubMembers(token, unit, fetchImpl)
+	};
 }
 
 /** GitHub's per-repo permission, as `dojo.forge_permission_to_role` reads it. */

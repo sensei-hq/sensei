@@ -21,7 +21,10 @@ import {
 	deleteTeam,
 	addTeamMember,
 	removeTeamMember,
-	grantTeamWorkspaceView
+	grantTeamWorkspaceView,
+	listIntegrationUnits,
+	claimIntegrationUnit,
+	mapIntegrationUnit
 } from '$lib/admin-data';
 
 // A fake fetch that records the call and returns a canned JSON response. Mirrors
@@ -238,5 +241,29 @@ describe("the dōjō's teams (#307 D7)", () => {
 			['PUT', `${base}/t%2F1/workspaces/p%2F1`, null],
 			['DELETE', `${base}/t%2F1`, null]
 		]);
+	});
+});
+
+describe('the dōjō`s integrations (#308 R5a)', () => {
+	it('POSTs to list, claim and map — the bodies carry no token (the GitHub connection is server-side)', async () => {
+		const view = { provider: 'github', units: [], complete: true };
+		const { fn, calls } = fakeFetch(200, view);
+		expect(await listIntegrationUnits('organization/acme', 'github', { fetch: fn, accessToken: 'jwt' })).toEqual(view);
+		await claimIntegrationUnit('organization/acme', 'github', '22', { fetch: fn });
+		await mapIntegrationUnit('organization/acme', 'github', '22', { as: 'workspace', name: 'Acme' }, { fetch: fn });
+		const base = `${dojoApiUrl}/v1/t/organization/acme/integrations/github`;
+		expect(calls.map((c) => [c.init?.method, c.url, c.init?.body])).toEqual([
+			['POST', base, JSON.stringify({})],
+			['POST', `${base}/claim`, JSON.stringify({ unit_id: '22' })],
+			['POST', `${base}/map`, JSON.stringify({ unit_id: '22', as: 'workspace', name: 'Acme' })]
+		]);
+		expect(headersOf(calls[0].init).Authorization).toBe('Bearer jwt');
+	});
+
+	it('throws the API`s refusal, with its status, rather than an empty list', async () => {
+		const { fn } = fakeFetch(428, { error: 'Connect GitHub to read your organizations' });
+		const err = await listIntegrationUnits('organization/acme', 'github', { fetch: fn }).catch((e) => e);
+		expect(err).toBeInstanceOf(AdminApiError);
+		expect(err.status).toBe(428);
 	});
 });
