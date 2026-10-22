@@ -42,7 +42,10 @@ for everyone below. That half of the console is specified in
   - **Maintainer** — **manage governance at org level**: author rules/stance on
     the ladder, triage/approve findings, manage knowledge.
   - **Lead** — a rung between maintainer and admin, never derived from the forge.
-    Since D34 (no Clients section) it unlocks nothing a maintainer lacks.
+    Since D38 it is the **team lead**: the Lead → Teams view shows, per person, the
+    metrics of everyone on the teams the lead is on, on the repositories the lead
+    can read (#307 R8). A lead on no team sees only themselves. Viewers stay
+    aggregate-only (D6).
   - **Admin** — **change member roles + access policies**: members, identities/SSO,
     scopes & precedence, billing.
   - The **org context `/org/[slug]` exists** (`+page.svelte` + `/projects` +

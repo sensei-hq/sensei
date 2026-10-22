@@ -26,6 +26,7 @@ import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from '
 import type { DojoCallOpts } from './dojo-api';
 import type { DojoViewerWire } from './viewers-view';
 import type { TeamWire } from './teams-view';
+import type { TeamMetricsWire } from './team-metrics';
 import type { BillableUserWire, BillingAccountWire, SeatUsageWire } from './billing-view';
 import type { ForgeProvider } from './forge-providers';
 import type { IntegrationUnitsView, MapTarget } from './integrations-view';
@@ -210,6 +211,13 @@ export async function revokeWorkspaceView(
 	opts: DojoCallOpts = {}
 ): Promise<void> {
 	await sendJson(adminUrl(tenantKey, grantPath(principalId, workspaceId)), 'DELETE', undefined, opts);
+}
+
+// the lead's team view (#307 R8, D38) ─────────────────────────────────────────
+
+/** `GET …/team-metrics` — the teams the caller is on, each member's numbers (lead floor). */
+export async function getTeamMetrics(tenantKey: string, opts: DojoCallOpts = {}): Promise<TeamMetricsWire> {
+	return getJson<TeamMetricsWire>(adminUrl(tenantKey, '/team-metrics'), opts);
 }
 
 // teams (#307 D7) ──────────────────────────────────────────────────────────────

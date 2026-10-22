@@ -76,6 +76,12 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 		]
 	},
 	{
+		// A team lead reads their teammates' numbers, per person (#307 R8, D38).
+		group: 'Lead',
+		role: 'lead',
+		items: [{ id: 'teams', icon: 'users-group-rounded', label: 'Teams', kanji: '組' }]
+	},
+	{
 		group: 'Admin',
 		role: 'admin',
 		items: [

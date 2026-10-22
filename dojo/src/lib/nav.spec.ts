@@ -66,12 +66,21 @@ describe('navForOrg — additive role rank filtering', () => {
 		expect(navForOrg('maintainer').map((g) => g.group)).toEqual(['Overview', 'Govern']);
 	});
 
-	it('a lead sees what a maintainer sees — a dōjō has no Clients section (D34)', () => {
-		expect(navForOrg('lead').map((g) => g.group)).toEqual(['Overview', 'Govern']);
+	it('a lead adds Lead — their team, per person (#307 R8, D38)', () => {
+		const groups = navForOrg('lead');
+		expect(groups.map((g) => g.group)).toEqual(['Overview', 'Govern', 'Lead']);
+		expect(groups[2].items.map((i) => i.id)).toEqual(['teams']);
+	});
+
+	it('a maintainer and a contributor have no team view', () => {
+		for (const role of ['contributor', 'maintainer']) {
+			const ids = navForOrg(role).flatMap((g) => g.items.map((i) => i.id));
+			expect(ids).not.toContain('teams');
+		}
 	});
 
 	it('an admin sees every group', () => {
-		expect(navForOrg('admin').map((g) => g.group)).toEqual(['Overview', 'Govern', 'Admin']);
+		expect(navForOrg('admin').map((g) => g.group)).toEqual(['Overview', 'Govern', 'Lead', 'Admin']);
 	});
 
 	it('names no engagement, incident or client-audit section (D34)', () => {
