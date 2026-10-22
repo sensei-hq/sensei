@@ -109,7 +109,7 @@ const DOJO_HOST = 'dojo.sensei-hq.org';
 /** `dojo.forge_provider` → `dojo.auth_method`. The auth_method enum has no
  *  generic `oauth` label yet (§V.1 puts it in phase 2), so only github has a
  *  valid value — which is why phase 1 provisions github alone. */
-function authMethodFor(provider: ForgeProvider): string {
+export function authMethodFor(provider: ForgeProvider): string {
 	if (provider === 'github') return 'github_oauth';
 	throw new AdminError(
 		501,
@@ -562,14 +562,17 @@ async function ensurePersonalConnection(
  * slug would fork the tenant when an org is renamed, and would let whoever
  * claims the freed name upstream inherit this tenant's governance (§II.2).
  *
- * Null when the org has no dōjō and an admin mapped it as a workspace elsewhere.
+ * Null when the org has no dōjō and an admin mapped it as a workspace elsewhere
+ * — unless `evenIfMapped`: an admin of the org claiming its dōjō, or making it
+ * its own dōjō again, gets one (#308 R5a).
  */
 export async function ensureOrgTenant(
 	db: DojoClient,
 	principalId: string,
 	provider: ForgeProvider,
 	org: ForgeOrg,
-	authenticatedVia: string
+	authenticatedVia: string,
+	opts: { evenIfMapped?: boolean } = {}
 ): Promise<ProvisionedTenant | null> {
 	const conn = await db
 		.from('tenant_connections')
@@ -603,7 +606,7 @@ export async function ensureOrgTenant(
 	// An org an admin filed elsewhere as a workspace gets no dōjō of its own. One
 	// that already has a dōjō keeps it (above): mapping never removes, and the
 	// person's place there stays for #309's lifecycle to decide.
-	if (await mappedAsWorkspace(db, provider, org.id)) return null;
+	if (!opts.evenIfMapped && (await mappedAsWorkspace(db, provider, org.id))) return null;
 
 	const tenant = await insertTenantWithFreeSlug(
 		db,

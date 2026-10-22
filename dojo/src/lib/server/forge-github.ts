@@ -21,7 +21,13 @@ import type { ForgeAdapter, ForgeMember, ForgeMembersRead, ForgeUnitRef } from '
  *  has no generic `oauth` label yet, so an identity on another forge has nothing
  *  valid to record (spec §VIII.6). The type is here because the model is
  *  forge-agnostic by design (D6) and the shape must not have to change later. */
-export type ForgeProvider = 'github' | 'gitlab' | 'bitbucket' | 'azure_devops';
+export const FORGE_PROVIDERS = ['github', 'gitlab', 'bitbucket', 'azure_devops'] as const;
+export type ForgeProvider = (typeof FORGE_PROVIDERS)[number];
+
+/** Whether a string names a `dojo.forge_provider`. */
+export function isForgeProvider(v: unknown): v is ForgeProvider {
+	return typeof v === 'string' && (FORGE_PROVIDERS as readonly string[]).includes(v);
+}
 
 /** The person, as the forge knows them. */
 export interface ForgeUser {
