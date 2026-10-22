@@ -28,7 +28,7 @@ create policy artifacts_read on dojo.artifacts
 -- themselves, into triage. `status`, `approved_by`, `published_at` and the
 -- counters are not granted, so a submission lands at the column default
 -- ('submitted') and only promoteCluster or a maintainer moves it on.
-grant insert (tenant_id, engagement_id, kind, title, body, payload, scope, signature, attribution, contributed_by)
+grant insert (tenant_id, kind, title, body, payload, scope, signature, attribution, contributed_by)
    on dojo.artifacts to authenticated;
 -- `seq` defaults to nextval: the cursor the daemon's pull reads from.
 grant usage on sequence dojo.artifacts_seq to authenticated;

@@ -26,3 +26,8 @@ drop function if exists dojo.revoke_project_viewer(uuid, uuid);
 
 -- 2026-10-21 (#307 D30): sensei says workspace. The renamed function replaces this.
 drop function if exists sensei.sole_project_of(uuid);
+
+-- 2026-10-22 (#307 R7, D34): a dōjō has no Clients section. The confidentiality
+-- ledger's action filter and the incidents policy's owner check go with it.
+drop function if exists dojo.is_confidentiality_action(text);
+drop function if exists dojo.principal_is_member(uuid, uuid);

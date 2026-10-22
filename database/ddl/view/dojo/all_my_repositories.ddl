@@ -300,8 +300,7 @@ axes as (
          --
          -- ADMIN ONLY on org-private, not lead: what would be changed is the
          -- organisation's POLICY, and `dojo.member_role` assigns policy, identity
-         -- and provisioning to `admin` — a lead guards confidentiality on client
-         -- engagements. Every seeded remedy for an org-authority refusal reads "ask
+         -- and provisioning to `admin`, not to a lead. Every seeded remedy for an org-authority refusal reads "ask
          -- an admin"; letting a lead flip it would make that copy a lie.
          , case when mr.forge_visibility is null                          then false
                 when mr.origin = 'personal'

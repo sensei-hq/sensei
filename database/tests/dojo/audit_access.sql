@@ -1,20 +1,19 @@
 -- Who reads the audit trail (#236 step 3; docs/spec/dojo/access-matrix.md
--- "Client work and compliance").
+-- "Audit").
 --
--- | data                                   | lead (tenant role) | admin    |
--- |----------------------------------------|--------------------|----------|
--- | audit ledger (confidentiality actions) | R tenant           | R tenant |
--- | audit events (full)                    | —                  | R tenant |
+-- | data         | lead (tenant role) | admin    |
+-- |--------------|--------------------|----------|
+-- | audit events | —                  | R tenant |
+--
+-- A lead used to read a confidentiality ledger (publish / contained / held);
+-- a dōjō has no Clients section any more (#307 R7, D34), so a lead reads what a
+-- maintainer reads — none of the trail.
 --
 -- Nobody writes audit rows from their own session: the row is the system's
 -- record of what a person did (the matrix's service-role table).
 --
--- The confidentiality actions are named ONCE, by dojo.is_confidentiality_action;
--- the lead's read policy and the dojo.confidentiality_ledger view both use it.
---
--- WHAT BREAKS THIS TEST: a lead policy without the action filter; an admin
--- clause at lead; a policy without the tenant; a ledger view that does not
--- filter; any INSERT grant to authenticated.
+-- WHAT BREAKS THIS TEST: a read clause below admin; a policy without the
+-- tenant; any INSERT grant to authenticated.
 
 begin;
 
@@ -45,12 +44,12 @@ insert into dojo.audit_events (tenant_id, action, target) values
 
 set local role authenticated;
 
-create temp table expect (who text, sub text, events text, ledger text) on commit drop;
+create temp table expect (who text, sub text, events text) on commit drop;
 insert into expect values
-  ('lea', 'a1000000-0000-4000-8000-000000000081', '1,3',   '1,3'),
-  ('ada', 'a1000000-0000-4000-8000-000000000082', '1,2,3', '1,3'),
-  ('mia', 'a1000000-0000-4000-8000-000000000083', '',      ''),
-  ('uma', 'a1000000-0000-4000-8000-000000000084', '4',     '4');
+  ('lea', 'a1000000-0000-4000-8000-000000000081', ''),
+  ('ada', 'a1000000-0000-4000-8000-000000000082', '1,2,3'),
+  ('mia', 'a1000000-0000-4000-8000-000000000083', ''),
+  ('uma', 'a1000000-0000-4000-8000-000000000084', '4');
 
 do $$
 declare
@@ -63,11 +62,6 @@ begin
           from dojo.audit_events where target like 'ztest-_';
         if got is distinct from r.events then
             raise exception 'audit_events RLS: % should see [%], saw [%]', r.who, r.events, got;
-        end if;
-        select coalesce(string_agg(right(target, 1), ',' order by target), '') into got
-          from dojo.confidentiality_ledger where target like 'ztest-_';
-        if got is distinct from r.ledger then
-            raise exception 'confidentiality_ledger: % should see [%], saw [%]', r.who, r.ledger, got;
         end if;
     end loop;
 

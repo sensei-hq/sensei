@@ -38,9 +38,9 @@ begin
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000171"}', true);
 
     -- The route's insert, as PostgREST sends it, returning id + seq.
-    insert into dojo.artifacts (tenant_id, engagement_id, kind, title, body, payload, scope, signature,
+    insert into dojo.artifacts (tenant_id, kind, title, body, payload, scope, signature,
                                 attribution, contributed_by)
-    values (t, null, 'principle', 'Small changes', 'b', '{"kind":"principle"}', '{}', 'sig-1', '{}', ola)
+    values (t, 'principle', 'Small changes', 'b', '{"kind":"principle"}', '{}', 'sig-1', '{}', ola)
     returning id, seq, status::text as status into got;
     if got.id is null or got.seq is null or got.status <> 'submitted' then
         raise exception 'artifacts: ola''s contribution should come back submitted with an id and seq, got %', got;
