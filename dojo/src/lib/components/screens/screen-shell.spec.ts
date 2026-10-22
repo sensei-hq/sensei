@@ -40,7 +40,7 @@ describe('dōjō screens use the shared Screen layout (#293)', () => {
 		// The markup outside its <script> blocks: every block, any case, until none is left.
 		for (let prev = ''; prev !== shell; ) {
 			prev = shell;
-			shell = shell.replace(/<script\b[\s\S]*?<\/script\s*>/gi, '');
+			shell = shell.replace(/<script\b[\s\S]*?<\/script[^>]*>/gi, '');
 		}
 		const column = shell.match(/<div[^>]*data-component="app-main"[^>]*>/)?.[0];
 		expect(column).toBeDefined();

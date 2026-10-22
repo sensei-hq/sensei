@@ -23,7 +23,7 @@ const withoutScripts = (text: string) => {
 	let out = text;
 	for (let prev = ''; prev !== out; ) {
 		prev = out;
-		out = out.replace(/<script\b[\s\S]*?<\/script\s*>/gi, '');
+		out = out.replace(/<script\b[\s\S]*?<\/script[^>]*>/gi, '');
 	}
 	return out;
 };
