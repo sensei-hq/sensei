@@ -20,6 +20,8 @@ export const FORGE_TOKEN_COOKIE = 'dojo_forge_github';
 /** How long a connected token is honoured. */
 export const FORGE_TOKEN_TTL_SECONDS = 3600;
 
+import { githubIdentityId, requireGithubTokenOwner } from './github-identity';
+
 const COOKIE_PATH = '/v1/t';
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -107,7 +109,9 @@ const CONNECT_EVENTS = new Set(['SIGNED_IN', 'INITIAL_SESSION', 'USER_UPDATED'])
 
 /**
  * Wrap kavach's /auth/session answer: after a GitHub sign-in, add the sealed
- * provider token as its own cookie; after a sign-out, clear it. Bound to the
+ * provider token as its own cookie — only once GitHub's `GET /user` says the
+ * token is the GitHub account linked to the synced login; after a sign-out,
+ * clear it. Bound to the
  * login the session SYNCED as (the answer's session, which kavach validated),
  * never to anything the request claims. Anything else passes through untouched.
  *
@@ -118,7 +122,8 @@ export async function captureForgeToken(
 	request: Request,
 	response: Response,
 	secret: string,
-	now = Date.now()
+	now = Date.now(),
+	fetchImpl: typeof fetch = fetch
 ): Promise<Response> {
 	const secure = new URL(request.url).protocol === 'https:';
 	const sent = (await request.json().catch(() => ({}))) as {
@@ -135,20 +140,22 @@ export async function captureForgeToken(
 		typeof sent.session.provider_token === 'string' &&
 		sent.session.provider_token
 	) {
-		// Judged from what kavach VALIDATED, not from what the request claims: the
-		// synced login, and whether Supabase has GitHub linked to it.
+		// Judged from what kavach VALIDATED, never from what the request claims: the
+		// synced login, and the GitHub account Supabase linked to it. The posted
+		// token is sealed only if GitHub says it IS that account (github-identity.ts)
+		// — otherwise a person holding someone else's token could make it theirs.
 		const synced = (await response
 			.clone()
 			.json()
-			.catch(() => null)) as {
-			session?: { user?: { id?: unknown; app_metadata?: { provider?: unknown; providers?: unknown } } } | null;
-		} | null;
+			.catch(() => null)) as { session?: { user?: { id?: unknown } } | null } | null;
 		const user = synced?.session?.user;
-		const meta = user?.app_metadata;
-		const linked =
-			meta?.provider === 'github' || (Array.isArray(meta?.providers) && meta.providers.includes('github'));
-		if (linked && typeof user?.id === 'string' && user.id) {
-			cookie = forgeTokenCookie(await sealForgeToken(sent.session.provider_token, user.id, secret, now), secure);
+		if (typeof user?.id === 'string' && user.id) {
+			const owned = await requireGithubTokenOwner(sent.session.provider_token, githubIdentityId(user), fetchImpl)
+				.then(() => true)
+				.catch(() => false);
+			if (owned) {
+				cookie = forgeTokenCookie(await sealForgeToken(sent.session.provider_token, user.id, secret, now), secure);
+			}
 		}
 	}
 	if (!cookie) return response;

@@ -21,6 +21,7 @@ import { apiError } from '$lib/server/dojo-auth';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolvePrincipalId } from '$lib/server/principal-resolve';
 import { provisionWithToken } from '$lib/server/provisioning';
+import { githubIdentityId } from '$lib/server/github-identity';
 
 /**
  * Provision on the way through — the daemon caller of §II.7.
@@ -55,8 +56,12 @@ async function provisionFromSession(sessionJson: string): Promise<void> {
 		typeof session.provider_token === 'string' ? session.provider_token : null;
 	const db = dojoDb();
 	const principalId = await resolvePrincipalId(db, authUserId);
+	// The session came straight from Supabase's exchange, so its user — and the
+	// GitHub account linked to it — is Supabase's word; provisioning refuses a
+	// token of any other account (#308 R5a review).
 	await provisionWithToken(db, principalId, providerToken, {
-		email: typeof user?.email === 'string' ? user.email : null
+		email: typeof user?.email === 'string' ? user.email : null,
+		githubId: githubIdentityId(user)
 	});
 }
 

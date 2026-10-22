@@ -145,7 +145,7 @@ describe('resolveCaller — user-wide JWT identity (no tenant, no role floor)', 
 		stub = makeDb(AUTH_OK, PRINCIPAL_OK);
 		const caller = await resolveCaller(bearerReq(), locals);
 		expect(caller).not.toHaveProperty('db');
-		expect(Object.keys(caller).sort()).toEqual(['accessToken', 'authUserId', 'email', 'userId']);
+		expect(Object.keys(caller).sort()).toEqual(['accessToken', 'authUserId', 'email', 'githubId', 'userId']);
 	});
 
 	it('throws 500 rather than falling back to the login id when the principal lookup fails', async () => {

@@ -113,15 +113,24 @@ workspace of it, and its repositories file there.
   and returns to the screen. How the token travels:
   1. GitHub → Supabase → the browser (the existing OAuth redirect); the browser's kavach instance POSTs the session,
      `provider_token` included, to `/auth/session` — exactly as every sign-in already does.
-  2. `hooks.server.ts` wraps kavach's answer to that POST (`captureForgeToken`): for a GitHub session it adds a
-     cookie `dojo_forge_github` holding the token **sealed** — AES-GCM under a key HKDF-derived from the server's
+  2. `hooks.server.ts` wraps kavach's answer to that POST (`captureForgeToken`). It reads GitHub's `GET /user` with
+     the posted token and continues only if the id equals the GitHub account Supabase Auth linked to the synced
+     login (`user.identities[provider=github].id`, `github-identity.ts`) — a token of any other account, or one
+     GitHub will not identify, is never sealed (security review: otherwise a person holding someone else's token
+     could claim that account's orgs as theirs). Then it adds a cookie `dojo_forge_github` holding the token **sealed** — AES-GCM under a key HKDF-derived from the server's
      secret key, bound to the Supabase login the session synced as and to an expiry — `HttpOnly; SameSite=Lax;
      Path=/v1/t; Max-Age=3600`. The database never holds it; signing out clears it.
   3. Each Integrations request (`POST /v1/t/{tenant}/integrations/github`, `…/claim`, `…/map`; admin floor) opens
      the cookie for the caller's own login (`integrations-route.ts`) and uses the token for that request's reads
      only. No cookie, one that does not open (another login, expired, tampered) or a token GitHub answers 401 to:
      **428** "Connect GitHub" (and the dead cookie is cleared) — there is no other source of the token.
-  The request bodies carry no token. Lifetime: at most one hour, or until sign-out. Supabase must allow the return
+  The request bodies carry no token. The ownership check runs once, at seal time: the cookie is authenticated
+  encryption under the server's key and bound to the login, so a cookie can only exist for a token already proven
+  to be that login's GitHub account; re-reading `GET /user` on every request would add a GitHub round trip and
+  prove nothing new. The same check guards provisioning (`provisionWithToken`, used by the sign-in hook, the CLI
+  token exchange and `POST /v1/you/provision`): the `GET /user` it already makes must be the login's linked GitHub
+  account, or it refuses with 403 before any write; the sign-in hook now also takes the login from Supabase's
+  validation of the access token, not from the session's own `user` claim. Lifetime: at most one hour, or until sign-out. Supabase must allow the return
   URL (`<origin>/org/**` in the redirect allow-list — added to `supabase/config.toml` for local; production's is a
   dashboard setting); without it Supabase returns to the site URL, the cookie is still set, and the screen works
   once reopened. Caveat: re-authorizing a magic-link session with GitHub signs in as the GitHub-linked Supabase

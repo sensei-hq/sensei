@@ -41,6 +41,7 @@ import {
 	type ForgeUser
 } from './forge-github';
 import { forgeRefFromRepoKey } from './repo-mapping';
+import { assertGithubAccount } from './github-identity';
 
 /** One tenant this pass established the caller's place in. */
 export interface ProvisionedTenant {
@@ -98,10 +99,14 @@ export interface RoleMirrorResult {
 	error?: string;
 }
 
-/** What we know about the caller when there is no forge to ask. */
+/** What we know about the caller from their LOGIN (Supabase Auth). */
 export interface FallbackIdentity {
 	email?: string | null;
 	displayName?: string | null;
+	/** The GitHub account linked to the login (`githubIdentityId` of the validated
+	 *  Supabase user). A forge token is used only if GitHub says it is this
+	 *  account; with none linked, a token is refused (#308 R5a review). */
+	githubId?: string | null;
 }
 
 const DOJO_HOST = 'dojo.sensei-hq.org';
@@ -985,6 +990,11 @@ export async function provisionWithToken(
 		const rejected = e instanceof ForgeReadError && e.forgeStatus === 401;
 		return { ...degraded, reason: rejected ? 'forge_token_rejected' : 'forge_unreachable' };
 	}
+	// The token must be the GitHub account linked to this login — or someone
+	// holding another account's token would provision themselves into its orgs.
+	// Checked against the read already made (facts.user is GET /user), before a
+	// single write.
+	assertGithubAccount(facts.user.id, fallback.githubId);
 	const result = await ensureProvisioned(db, principalId, facts, fallback);
 	// AFTER provisioning, deliberately: an org tenant this pass just created is a
 	// membership the refresh's scope must include, or the first sign-in of the

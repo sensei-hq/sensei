@@ -15,6 +15,7 @@ import {
 	clearForgeTokenCookie,
 	captureForgeToken
 } from './forge-token-cookie';
+import { fakeFetch } from './fake-forge-fetch';
 
 const SECRET = 'server-secret-for-tests';
 const ALICE = 'auth-alice';
@@ -62,12 +63,23 @@ describe('captureForgeToken — the /auth/session response', () => {
 		provider_token: 'gho_abc',
 		user: { id: ALICE, app_metadata: { provider: 'github' } }
 	};
-	// What kavach validated: the login, and the providers Supabase has linked to it
-	// (a magic-link account that connected GitHub keeps provider 'email').
-	const SYNCED = { access_token: 'jwt', user: { id: ALICE, app_metadata: { provider: 'email', providers: ['email', 'github'] } } };
+	// What kavach validated: the login, and the GitHub account Supabase linked to
+	// it (identities[].id is GitHub's user id) — 111 here.
+	const SYNCED = {
+		access_token: 'jwt',
+		user: {
+			id: ALICE,
+			app_metadata: { provider: 'email', providers: ['email', 'github'] },
+			identities: [{ provider: 'github', id: '111' }]
+		}
+	};
+	/** GitHub's GET /user for the posted token. */
+	const githubSays = (id: number, status = 200) => fakeFetch({ '/user': { status, body: { id, login: 'whoever' } } });
 
 	it('seals a GitHub sign-in`s provider token into the cookie, bound to the synced login — GitHub judged from the synced login, not the request', async () => {
-		const res = await captureForgeToken(sync({ event: 'SIGNED_IN', session: GITHUB_SESSION }), answered(SYNCED), SECRET, NOW);
+		const gh = githubSays(111);
+		const res = await captureForgeToken(sync({ event: 'SIGNED_IN', session: GITHUB_SESSION }), answered(SYNCED), SECRET, NOW, gh.fn);
+		expect(gh.calls.map((c) => c.url)).toEqual(['https://api.github.com/user']);
 		const cookies = res.headers.getSetCookie();
 		expect(cookies[0]).toBe('session=x; Path=/');
 		const mine = cookies.find((c) => c.startsWith(`${FORGE_TOKEN_COOKIE}=`))!;
@@ -77,18 +89,31 @@ describe('captureForgeToken — the /auth/session response', () => {
 	});
 
 	it('clears it on sign-out, and leaves every other answer alone', async () => {
-		const out = await captureForgeToken(sync({ event: 'SIGNED_OUT', session: null }), answered(null), SECRET, NOW);
+		const out = await captureForgeToken(sync({ event: 'SIGNED_OUT', session: null }), answered(null), SECRET, NOW, githubSays(111).fn);
 		expect(out.headers.getSetCookie()).toContain(clearForgeTokenCookie(false));
 
 		for (const [body, res] of [
 			[{ event: 'SIGNED_IN', session: { ...GITHUB_SESSION, provider_token: undefined } }, answered(SYNCED)],
 			// The REQUEST claims GitHub; the validated login has no GitHub linked.
-			[{ event: 'SIGNED_IN', session: GITHUB_SESSION }, answered({ ...SYNCED, user: { id: ALICE, app_metadata: { provider: 'email', providers: ['email'] } } })],
+			[{ event: 'SIGNED_IN', session: GITHUB_SESSION }, answered({ ...SYNCED, user: { id: ALICE, app_metadata: { provider: 'email', providers: ['email'] }, identities: [] } })],
 			[{ event: 'TOKEN_REFRESHED', session: GITHUB_SESSION }, answered(SYNCED)],
 			[{ event: 'SIGNED_IN', session: GITHUB_SESSION }, answered(null, 500)]
 		] as const) {
-			const r = await captureForgeToken(sync(body), res, SECRET, NOW);
+			const r = await captureForgeToken(sync(body), res, SECRET, NOW, githubSays(111).fn);
 			expect(r.headers.getSetCookie().some((c) => c.startsWith(`${FORGE_TOKEN_COOKIE}=`))).toBe(false);
 		}
+	});
+
+	it('does not seal another GitHub account`s token: the login is linked to 111, the token is 222`s', async () => {
+		const res = await captureForgeToken(sync({ event: 'SIGNED_IN', session: GITHUB_SESSION }), answered(SYNCED), SECRET, NOW, githubSays(222).fn);
+		expect(res.headers.getSetCookie().some((c) => c.startsWith(`${FORGE_TOKEN_COOKIE}=`))).toBe(false);
+		// …and the sign-in itself still answers as kavach did.
+		expect(res.status).toBe(200);
+		expect(res.headers.getSetCookie()).toContain('session=x; Path=/');
+	});
+
+	it('does not seal a token GitHub would not identify', async () => {
+		const res = await captureForgeToken(sync({ event: 'SIGNED_IN', session: GITHUB_SESSION }), answered(SYNCED), SECRET, NOW, githubSays(111, 401).fn);
+		expect(res.headers.getSetCookie().some((c) => c.startsWith(`${FORGE_TOKEN_COOKIE}=`))).toBe(false);
 	});
 });

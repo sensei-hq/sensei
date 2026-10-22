@@ -3,7 +3,9 @@
 // taken ONLY from the sealed cookie a "Connect GitHub" re-authorization set
 // (forge-token-cookie.ts), bound to this login. No cookie, a cookie that does not
 // open, or a token GitHub answers 401 to: 428 "connect GitHub" (and the dead
-// cookie is cleared). There is no other source of the token.
+// cookie is cleared). There is no other source of the token. The cookie exists
+// only for a token GitHub already confirmed is this login's linked account (the
+// check runs when it is sealed — captureForgeToken), so it is not re-checked here.
 import type { RequestEvent } from '@sveltejs/kit';
 import { AdminError, type DojoClient } from './admin-data';
 import { ACCESS, apiError, type Caller } from './dojo-auth';

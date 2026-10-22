@@ -8,6 +8,7 @@
 // (#236 step 4). SSO identity-mapping is a follow-up.
 
 import { dojoDb, roleToAccess, accessLabel, ACCESS, type AccessLevel } from './dojo-supabase';
+import { githubIdentityId } from './github-identity';
 import { resolvePrincipalId } from './principal-resolve';
 import { AdminError } from './admin-data';
 
@@ -91,6 +92,8 @@ export async function resolveCaller(
 	authUserId: string;
 	email: string | null;
 	accessToken: string;
+	/** The GitHub account linked to this login, or null (github-identity.ts). */
+	githubId: string | null;
 }> {
 	const token = tokenFrom(request, locals);
 	if (!token) throw apiError(401, 'unauthenticated');
@@ -115,7 +118,13 @@ export async function resolveCaller(
 
 	// No database client: a caller is an identity. A session reads as itself
 	// through callerDb; system work names dojoDb() (#236).
-	return { userId, authUserId, email: userData.user.email ?? null, accessToken: token };
+	return {
+		userId,
+		authUserId,
+		email: userData.user.email ?? null,
+		accessToken: token,
+		githubId: githubIdentityId(userData.user)
+	};
 }
 
 /** A best-effort human name off the Supabase user, for a principal created on
