@@ -22,7 +22,26 @@ fn fakes(dir: &Path) -> PathBuf {
         std::fs::write(&p, body).unwrap();
         Command::new("chmod").arg("+x").arg(&p).status().unwrap();
     };
-    write("psql", "#!/bin/sh\nexit 0\n");
+    // `psql` answers `to_regclass` for the tables named in `$PRESENT` (space-
+    // separated; default: the design's names), and writes `{}` for a `\copy … to '<file>'`.
+    write(
+        "psql",
+        r#"#!/bin/sh
+args="$*"
+present="${PRESENT-sensei.workspaces}"
+case "$args" in
+  *"\copy"*)
+    f=$(printf '%s' "$args" | sed -n "s/.* to '\([^']*\)'.*/\1/p")
+    mkdir -p "$(dirname "$f")" && echo '{}' > "$f"; exit 0;;
+  *to_regclass*)
+    for t in $present; do
+      case "$args" in *"'$t'"*) echo t; exit 0;; esac
+    done
+    echo f; exit 0;;
+esac
+exit 0
+"#,
+    );
     write(
         "dbd",
         r#"#!/bin/sh
@@ -45,7 +64,8 @@ fn run(dir: &Path, extra: &[(&str, &str)]) -> std::process::Output {
         .env("BACKUP_DIR", dir.join("essential"))
         .env("BACKUP_KEEP", "2")
         .env_remove("SKIP_DB_BACKUP")
-        .env_remove("FAIL_TABLE");
+        .env_remove("FAIL_TABLE")
+        .env_remove("PRESENT");
     for (k, v) in extra {
         c.env(k, v);
     }
@@ -93,4 +113,28 @@ fn skip_db_backup_writes_nothing() {
     assert!(o.status.success());
     assert!(snapshots(t.path()).is_empty());
     assert!(String::from_utf8_lossy(&o.stdout).contains("SKIP_DB_BACKUP"), "says it skipped");
+}
+
+/// The backup runs BEFORE an upgrade, with the new release's design but against
+/// the database as it still is. When a release renames a table (#307 R3:
+/// `sensei.projects` → `sensei.workspaces`) the design no longer knows the old
+/// name and the database does not have the new one yet: it is saved under the
+/// name it has, so the pre-upgrade snapshot is the database as it was.
+#[test]
+fn a_table_the_upgrade_renames_is_backed_up_under_the_name_the_database_still_has() {
+    let t = tempfile::tempdir().unwrap();
+    // The design no longer knows `sensei.projects`: dbd refuses it, as the real one does.
+    let o = run(t.path(), &[("PRESENT", "sensei.projects"), ("FAIL_TABLE", "sensei.projects")]);
+
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let snap = t.path().join("essential").join(&snapshots(t.path())[0]);
+    assert!(snap.join("sensei/projects.jsonl").exists(), "the old table is in the snapshot");
+}
+
+#[test]
+fn a_workspace_table_under_neither_name_fails_the_backup() {
+    let t = tempfile::tempdir().unwrap();
+    let o = run(t.path(), &[("PRESENT", "")]);
+    assert!(!o.status.success(), "a backup missing the workspaces must not report success");
+    assert!(String::from_utf8_lossy(&o.stderr).contains("sensei.workspaces"));
 }

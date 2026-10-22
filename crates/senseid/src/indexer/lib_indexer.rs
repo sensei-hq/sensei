@@ -236,14 +236,113 @@ pub fn looks_like_html(content_type: Option<&str>, body: &str) -> bool {
     head.starts_with("<!doctype html") || head.starts_with("<html")
 }
 
+// ── Library URLs reach only the public internet (CodeQL #1, SSRF) ──────────
+//
+// A library's docs URL comes from the API and the MCP `add_library` tool, so an
+// agent could aim the daemon at `http://169.254.169.254/` or a service on
+// localhost and read the answer back as "docs". Every hop — the first request
+// and each redirect — is http(s) to a host whose every address is public, and
+// the connection is pinned to the address that was checked, so a second DNS
+// answer cannot swap it.
+
+/// Whether `ip` is on the public internet: not loopback, private, link-local,
+/// shared (CGNAT), unique-local, multicast, broadcast, documentation or unspecified.
+fn is_public_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b)))
+        }
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => is_public_ip(IpAddr::V4(v4)),
+            None => {
+                let first = v6.segments()[0];
+                !(v6.is_loopback()
+                    || v6.is_unspecified()
+                    || v6.is_multicast()
+                    || (first & 0xfe00) == 0xfc00
+                    || (first & 0xffc0) == 0xfe80)
+            }
+        },
+    }
+}
+
+/// The URL and the checked address to connect to, or why it is refused.
+async fn public_target(url: &str) -> Result<(reqwest::Url, std::net::SocketAddr), String> {
+    let url = reqwest::Url::parse(url).map_err(|e| format!("{url}: not a URL ({e})"))?;
+    checked(url).await
+}
+
+/// A redirect's `Location`, resolved against the URL it came from, checked like the first hop.
+async fn redirect_target(
+    base: &reqwest::Url,
+    location: &str,
+) -> Result<(reqwest::Url, std::net::SocketAddr), String> {
+    let url =
+        base.join(location).map_err(|e| format!("redirect to {location}: not a URL ({e})"))?;
+    checked(url).await
+}
+
+async fn checked(url: reqwest::Url) -> Result<(reqwest::Url, std::net::SocketAddr), String> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("{url}: only http(s) library URLs are fetched"));
+    }
+    let host = url.host_str().ok_or_else(|| format!("{url}: no host"))?.to_string();
+    let port = url.port_or_known_default().ok_or_else(|| format!("{url}: no port"))?;
+    let addrs: Vec<std::net::SocketAddr> =
+        tokio::net::lookup_host((host.trim_matches(['[', ']']), port))
+            .await
+            .map_err(|e| format!("{url}: cannot resolve {host} ({e})"))?
+            .collect();
+    match addrs.iter().find(|a| !is_public_ip(a.ip())) {
+        Some(bad) => {
+            Err(format!("{url}: {host} resolves to {}, which is not a public address", bad.ip()))
+        }
+        None => {
+            addrs.first().copied().map(|a| (url, a)).ok_or_else(|| format!("{host}: no address"))
+        }
+    }
+}
+
+/// GET a library URL: every hop checked, redirects followed by hand (at most 5).
+async fn guarded_get(url: &str, timeout_secs: u64) -> Result<reqwest::Response, String> {
+    let (mut target, mut addr) = public_target(url).await?;
+    for _ in 0..=5 {
+        let host = target.host_str().unwrap_or_default().trim_matches(['[', ']']).to_string();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve(&host, addr)
+            .build()
+            .map_err(|e| format!("HTTP client error: {}", e))?;
+        let resp =
+            client.get(target.clone()).send().await.map_err(|e| format!("Fetch failed: {}", e))?;
+        if !resp.status().is_redirection() {
+            return Ok(resp);
+        }
+        let location = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| format!("{target}: redirect without a Location"))?
+            .to_string();
+        (target, addr) = redirect_target(&target, &location).await?;
+    }
+    Err(format!("{url}: more than 5 redirects"))
+}
+
 /// Fetch a URL. Public so MCP handler can use it.
 pub async fn fetch_lib_url_with_timeout(url: &str, timeout_secs: u64) -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout_secs))
-        .build()
-        .map_err(|e| format!("HTTP client error: {}", e))?;
-
-    let resp = client.get(url).send().await.map_err(|e| format!("Fetch failed: {}", e))?;
+    let resp = guarded_get(url, timeout_secs).await?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
@@ -264,12 +363,7 @@ pub async fn fetch_lib_url_with_timeout(url: &str, timeout_secs: u64) -> Result<
 }
 
 async fn fetch_url(url: &str) -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("HTTP client error: {}", e))?;
-
-    let resp = client.get(url).send().await.map_err(|e| format!("Fetch failed: {}", e))?;
+    let resp = guarded_get(url, 15).await?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
@@ -1060,6 +1154,62 @@ fn parse_pep508(spec: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── CodeQL #1: a library URL may only reach the public internet ─────────
+
+    #[test]
+    fn only_public_addresses_are_public() {
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.5",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::1",
+            "::",
+            "fe80::1",
+            "fd00::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+        ] {
+            assert!(!is_public_ip(ip.parse().unwrap()), "{ip} must not count as public");
+        }
+        for ip in ["93.184.216.34", "1.1.1.1", "2606:4700:4700::1111"] {
+            assert!(is_public_ip(ip.parse().unwrap()), "{ip} is public");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_library_url_must_be_http_to_a_public_address() {
+        for url in [
+            "file:///etc/passwd",
+            "ftp://93.184.216.34/x",
+            "http://127.0.0.1:7744/api",
+            "http://[::1]/",
+            "http://169.254.169.254/latest/meta-data",
+            "http://10.0.0.5/",
+            "http://localhost/",
+            "not a url",
+        ] {
+            assert!(public_target(url).await.is_err(), "{url} must be refused");
+        }
+        let ok = public_target("http://93.184.216.34/llms.txt").await.expect("a public literal");
+        assert_eq!(ok.1.ip().to_string(), "93.184.216.34");
+    }
+
+    #[tokio::test]
+    async fn a_redirect_to_an_internal_address_is_refused() {
+        let base = reqwest::Url::parse("https://93.184.216.34/docs/").unwrap();
+        assert!(redirect_target(&base, "http://127.0.0.1/secret").await.is_err());
+        assert!(redirect_target(&base, "http://169.254.169.254/").await.is_err());
+        let next =
+            redirect_target(&base, "llms.txt").await.expect("a relative hop on a public host");
+        assert_eq!(next.0.as_str(), "https://93.184.216.34/docs/llms.txt");
+    }
 
     #[test]
     fn parse_llms_txt_sections() {

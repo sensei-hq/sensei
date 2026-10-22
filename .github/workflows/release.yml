@@ -16,7 +16,27 @@ env:
 
 jobs:
   # ── Daemon binaries (4 platforms) ──────────────────────────────────────────
+  # A release ships only from main (wave 0b, user 2026-10-22): the tagged commit
+  # must be on main, or nothing below runs — no build, release, tap, database
+  # or Worker deploy. `make bump` refuses off main too; this is the server-side
+  # half, so a tag pushed by hand onto develop publishes nothing.
+  on-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: The tag is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main — a release is cut from main."
+            exit 1
+          fi
+
   build-daemon:
+    needs: on-main
     strategy:
       # NOT fail-fast. `release` needs every leg of this matrix, so a single
       # broken target blocks the release either way — but with fail-fast the
@@ -115,6 +135,7 @@ jobs:
 
   # ── Desktop app (macOS universal) ──────────────────────────────────────────
   build-app:
+    needs: on-main
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5

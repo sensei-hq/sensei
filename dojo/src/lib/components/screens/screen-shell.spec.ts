@@ -36,7 +36,12 @@ describe('dōjō screens use the shared Screen layout (#293)', () => {
 	});
 
 	it('the AppShell main column does not scroll — each screen body is the one scroller', () => {
-		const shell = readFileSync('src/lib/components/kit/AppShell.svelte', 'utf8').replace(/<script[\s\S]*?<\/script>/, '');
+		let shell = readFileSync('src/lib/components/kit/AppShell.svelte', 'utf8');
+		// The markup outside its <script> blocks: every block, any case, until none is left.
+		for (let prev = ''; prev !== shell; ) {
+			prev = shell;
+			shell = shell.replace(/<script\b[\s\S]*?<\/script[^>]*>/gi, '');
+		}
 		const column = shell.match(/<div[^>]*data-component="app-main"[^>]*>/)?.[0];
 		expect(column).toBeDefined();
 		expect(column).not.toMatch(/overflow-(auto|scroll|y-auto|y-scroll)\b/);
