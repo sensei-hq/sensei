@@ -84,7 +84,7 @@ slice builds, passes and ships on its own.
 - **R2 · The dōjō says workspace.** *R2a done (65eede4d): schema (renamed in place), server, `/v1` wire, the daemon's dōjō client. R2b done (f080e38a, e6c58885): page URLs, screens, nav and words; fixed the Viewers tab's R2a drift. D17's self-hosting removal done in #318 (5da293d5).* Also removes self-hosting from the dōjō (D17: `tenants.self_hosted`, the self-hosted badge). `dojo.projects` → `dojo.workspaces` with its links, viewer grants,
   team links (reporting only, D13), predicates, policies and tests; the `/v1` paths and payloads; the
   dōjō UI. The daemon's dōjō client and relay payload change in the same release (they share the wire).
-- **R3 · Sensei says workspace.** Includes the stored values (D16): the ladder's `project` level, pack namespaces and artifact scopes, converted. `sensei.projects` and its tables, views and functions; the daemon's
+- **R3 · Sensei says workspace.** *Done 2026-10-22 (merged to develop): R3a schema in place, R3b daemon + `/api/workspaces` + app + ladder rung in both DBs + D31 README key, R3c MCP tools, CLI, plugin, skills, dōjō billing. Ships in the next release.* Includes the stored values (D16): the ladder's `project` level, pack namespaces and artifact scopes, converted. `sensei.projects` and its tables, views and functions; the daemon's
   routes and pipeline; the MCP tools (`list_projects`, `use_project`, `get_project_summary`, …) and the
   plugin, skills and hooks that call them; the desktop app.
   *Sized 2026-10-21: ~13,700 occurrences — database 1.9k, daemon 7.8k, app 3.1k, MCP 0.5k, plugin 0.2k, CLI 0.2k.*

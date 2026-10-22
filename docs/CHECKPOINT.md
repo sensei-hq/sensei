@@ -20,13 +20,12 @@
 - #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
 - Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
 
-**Next command:** R3 continues on branch **`r3-workspace-r3b`** (worktree .claude/worktrees/agent-a8cdfaacfada2a58c;
-the old `r3-workspace` diverged after a rebase and is NOT force-pushed — leave it). Done there: R3a (5417d32f,
-3326862b), R3b part 1 (50318fe8), part 2 (7d6853ae ladder rung in both DBs + relay `workspace_slug`; d21d796e D31
-README key). Rehearsed on the daemon copy (namespaces 355 → 355, 334 moved to the `workspace` rung, 0 orphans) and on
-the production dōjō dump (in sync, counts held). Next: confirm my gate re-run, then R3c (MCP tool names/args, CLI,
-skills, plugin; and the dōjō billing response's leftover `project_name`/`projects` fields), then merge R3 to develop and release.
-Checked 2026-10-21: R2a's dōjō rename DOES run in place on the release path (probe row in a prod-dump copy survived as a workspace).
+**Next command:** release (minor) — waits on the user's go. R3 is merged to develop and green: Rust 4225/0,
+clippy + fmt clean, app check 0 + 2334 tests, dōjō check 0 + 1839 tests, plugin 28/0, SQL 48/48. The release also
+carries the Viewers-tab fix (e6c58885), #312 (unattended gate), #313 (viewer audit). Its dōjō reconcile was rehearsed
+on the prod dump (in sync, counts held); the daemon upgrade on a copy of the live DB (counts held, twice). After the
+release: the installed daemon migrates the live DB on first start (back up first: `make db-backup`); drop `ztest_r3a`
+and `~/sensei-r3a-dump` once it is healthy; the MCP tool names change for every session (list_workspaces, …).
 **R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
 extension_projects; 19 `project_id`-style columns (activity, history, inference, sensei) + staging.memories.project_name;
 17 views (project_metric_*, project_*); fn sole_project_of; enums project_maturity + 'project' in entity_scope,
