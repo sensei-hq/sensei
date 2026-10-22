@@ -47,6 +47,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D36 | How does an Azure DevOps organization map? (R5 Q2) | **Organization → dōjō, project → workspace** (user 2026-10-22). |
 | D37 | What is R5's first slice? (R5 Q3) | **One complete source first** (user 2026-10-22, revised): R5a finishes GitHub end to end (adapter, claim by an org admin, the import/mapping screen, repositories filing by the mapping); R5b adds Azure DevOps only after that. GitLab and Bitbucket later. |
 | D38 | What is the lead role for, now that Clients is gone (D34)? | **A team lead** (user 2026-10-22): a lead sees the metrics of every team member, per person, across all the workspaces the lead can access. Viewers stay aggregate-only (D6); a lead is a member, not a viewer. |
+| D39 | How does an admin give the Integrations screen a GitHub token? (R5a) | **Re-authorize with GitHub** (user 2026-10-22): a Connect GitHub button runs GitHub OAuth again (read:org); the fresh token serves that session's reads only. It is never stored, logged or echoed. No pasted-token path. |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
