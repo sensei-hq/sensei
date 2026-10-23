@@ -53,6 +53,7 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D42 | Azure DevOps connects through Microsoft Entra OAuth (R5b; revisits D35) | A personal access token cannot list its owner's organizations, read its own scopes or report its expiry: Microsoft gates those APIs behind an Entra token. So the admin **connects with Microsoft Entra** (a delegated, authorization-code connect flow run by the dōjō server, separate from dōjō sign-in), using **one multi-tenant app registration** for sensei. The **refresh token** is kept in Supabase Vault (R5b's Vault design); access tokens are never stored. With an Entra token, the organizations list, the token's scopes (the write-scope warning) and the token's validity can be read. Organizations whose users are personal Microsoft accounts (MSA) cannot connect through Entra (Microsoft limitation), and the screen says so (user 2026-10-23). |
 | D43 | Azure members match by stable id only (R5b) | A member read adds or ends only people who carry the Azure identity, matched on its stable id, never on email: an Azure principal name is not a verified email (user 2026-10-23). |
 | D44 | The Azure member read runs on a schedule (R5b) | Besides import and Sync, a scheduled job reads each connected Azure organization's members and applies #309's rule (a complete read ends departed provisioned members; a partial read ends nobody) (user 2026-10-23). |
+| D45 | Sign in with Microsoft (R5c, after R5b) | The login page offers **Microsoft** beside GitHub, through kavach's existing `azure` provider and Supabase Auth's Azure provider, with sign-in scopes only (`openid email profile`). A sign-in records the person's Entra object id as their Azure identity, so the member read (D43, D44) can provision and end every member of an Entra-backed Azure DevOps organization by stable id, as GitHub sign-in does for GitHub orgs. **One** multi-tenant app registration serves both sign-in and R5b's connect flow; the user creates it (user 2026-10-23). |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -181,6 +182,12 @@ slice builds, passes and ships on its own.
   *R5a (GitHub) built 2026-10-22 on branch `r5a-github-import` (not merged): the adapter interface, claim through
   `dojo.claim_forge_unit`, `dojo.forge_unit_mappings` + `map_forge_unit`, Admin → Integrations, and registration by
   the mapping — see the spec's "R5a as built". Production's live check waits on the merge and deploy.*
+- **R5c · Sign in with Microsoft (D45).** *Queued 2026-10-23, after R5b.* Add `azure` to the dōjō's kavach providers
+  and the login page (sign-in scopes only); local `supabase/config.toml` `[auth.external.azure]` and production's Azure
+  provider take the app registration's client id and secret. A Microsoft sign-in records the Entra object id as an
+  `azure_devops` identity, and provisioning follows the person's Azure DevOps organizations the way GitHub sign-in follows
+  GitHub orgs (#309's rules). Live check: a member of a connected Entra-backed org signs in with Microsoft and lands in
+  that org's dōjō; a later complete member read without them ends their membership.
 - **R4 · The words.** PRD, specs, guides, `docs/llms`, both `SKILL.md` copies, agents, the website.
   Generic English ("the project's README", a Cargo project) stays.
 
