@@ -16,16 +16,15 @@ import { toKitContributions, toKitDownstreams } from '$lib/contributions-map';
 import { toKitRulePacks } from '$lib/rulepacks-map';
 import { microsoftNotice as noticeFor } from '$lib/azure-view';
 import type { KitWorkspace, KitContribution, KitDownstream, KitRulePack } from '$lib/components/kit/types';
-import { stance, personalLadder } from '$lib/components/kit/fixtures';
 
 // The personal-zone section loader — the non-inbox destinations (workspaces ·
 // rules · packs · dojos · contributions). `dojos` binds REAL memberships (from
 // the layout); `workspaces` binds the REAL user-wide `dojo.workspaces` read (F1,
 // GET /v1/you/workspaces) — honest-empty on a genuine empty, an error STATE on a
 // read failure (never []-as-success masking a failure). Contributions still has
-// no backing route → honest empty (not a fabricated "helped 612"). Your own
-// governance (stance · constitution · rule packs) stays fixture-backed pending
-// its own route. An unknown/retired section redirects to the Inbox landing.
+// no backing route → honest empty (not a fabricated "helped 612"). Your stance
+// and personal rules are not the dōjō's: sensei keeps them on your machine (D25),
+// so the rules section loads none and says so (#106). An unknown/retired section redirects to the Inbox landing.
 export const load: PageLoad = async ({ params, parent, fetch }) => {
 	if (!YOU_SECTIONS.includes(params.section)) redirect(307, '/you');
 	const { memberships, accessToken } = await parent();
@@ -102,9 +101,6 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		repos,
 		reposError,
 		title: labelForSection(section, 'you'),
-		// Your own governance — stance/constitution still fixture-backed pending their routes.
-		stance,
-		ladder: personalLadder,
 		// Rule packs — real global library read (browse); honest-empty on failure.
 		rulePacks,
 		// Memberships — real, from the layout's `listUserOrgs`, mapped to KitDojo.
