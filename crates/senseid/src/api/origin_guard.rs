@@ -1,23 +1,17 @@
-//! Request guards for routes a web page must not reach.
+//! Request guards: who may call the daemon at all, and who may change it.
 //!
-//! The daemon serves `CorsLayer::allow_origin(Any)` (the desktop app is itself
-//! cross-origin), so any page the user visits can call it. Routes that mutate
-//! state or return private data opt into these checks.
+//! Any page the user visits can `fetch` `http://127.0.0.1:7744`. CORS only keeps
+//! a foreign page from READING the answer; a simple POST still arrives and runs
+//! (#334: a page on `127.0.0.1:5180` added a watch root). So every request goes
+//! through [`caller_guard`], and CORS answers only the app's own origins.
 
 use axum::extract::Request;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-/// Origins allowed to flip the sharing gate from a browser.
-///
-/// The daemon serves `CorsLayer::allow_origin(Any)` — deliberately, because the
-/// desktop app is itself cross-origin and Safari rejects wildcard method/header
-/// lists. That is tolerable for reads. It is NOT tolerable for this route, whose
-/// effect is to start sending a repository's metrics off the machine: any page the
-/// user visits could `fetch(...)` it, flip the gate, and read the reply — which
-/// doubles as an inventory oracle over their local repositories. Verified live
-/// against the running daemon before this guard existed.
+/// The browser origins that are the app: the only ones CORS answers and the
+/// only ones whose writes are accepted.
 pub(crate) const ALLOWED_ORIGINS: &[&str] = &[
     // Bundled desktop app (Tauri).
     "tauri://localhost",
@@ -68,6 +62,31 @@ pub(crate) fn host_is_loopback(headers: &HeaderMap) -> bool {
         }
     };
     matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1")
+}
+
+/// Whether CORS answers this origin: the app's, and no other.
+pub(crate) fn cors_allows(origin: &HeaderValue) -> bool {
+    origin.to_str().is_ok_and(|o| ALLOWED_ORIGINS.contains(&o))
+}
+
+/// Middleware for the whole daemon: 403 for a non-loopback `Host` (DNS
+/// rebinding), and for a write whose `Origin` is not the app's. A read from a
+/// foreign page is let through; CORS keeps that page from seeing the answer.
+pub(crate) async fn caller_guard(req: Request, next: Next) -> Response {
+    let headers = req.headers();
+    let reads = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
+    if !host_is_loopback(headers) || !(reads || origin_may_mutate(headers)) {
+        tracing::warn!(
+            method = %req.method(),
+            path = req.uri().path(),
+            origin = ?headers.get(axum::http::header::ORIGIN),
+            host = ?headers.get(axum::http::header::HOST),
+            "refused a request from outside the app (#334)"
+        );
+        return crate::api::handlers::err(StatusCode::FORBIDDEN, "forbidden_caller")
+            .into_response();
+    }
+    next.run(req).await
 }
 
 /// Middleware for the tracker routes: 403 for a foreign `Origin` or a
@@ -158,5 +177,69 @@ mod tests {
         );
         assert_eq!(through_guard(&[("host", "evil.example:7744")]).await, StatusCode::FORBIDDEN);
         assert_eq!(through_guard(&[]).await, StatusCode::FORBIDDEN);
+    }
+
+    // #334: the daemon-wide guard. Every request must be addressed to loopback;
+    // every WRITE from a browser must come from the app.
+    async fn through_caller_guard(method: &str, headers: &[(&str, &str)]) -> StatusCode {
+        use tower::ServiceExt;
+        let app = axum::Router::new()
+            .route("/x", axum::routing::get(|| async { "ok" }).post(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(caller_guard));
+        let mut req = axum::http::Request::builder().method(method).uri("/x");
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        app.oneshot(req.body(axum::body::Body::empty()).unwrap()).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn a_write_from_a_foreign_page_is_refused_and_from_the_app_or_the_cli_is_not() {
+        let local = ("host", "127.0.0.1:7744");
+        for foreign in ["https://evil.example", "http://127.0.0.1:5180", "null"] {
+            assert_eq!(
+                through_caller_guard("POST", &[local, ("origin", foreign)]).await,
+                StatusCode::FORBIDDEN,
+                "{foreign}"
+            );
+        }
+        assert_eq!(
+            through_caller_guard("POST", &[local]).await,
+            StatusCode::OK,
+            "the CLI and hooks"
+        );
+        assert_eq!(
+            through_caller_guard("POST", &[local, ("origin", "tauri://localhost")]).await,
+            StatusCode::OK,
+            "the desktop app"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_needs_a_loopback_host_whatever_its_origin() {
+        assert_eq!(
+            through_caller_guard(
+                "GET",
+                &[("host", "127.0.0.1:7744"), ("origin", "https://evil.example")]
+            )
+            .await,
+            StatusCode::OK,
+            "CORS keeps a foreign page from reading the answer"
+        );
+        assert_eq!(
+            through_caller_guard("GET", &[("host", "evil.example:7744")]).await,
+            StatusCode::FORBIDDEN,
+            "DNS rebinding"
+        );
+    }
+
+    #[test]
+    fn only_the_app_s_origins_get_cors() {
+        for o in ALLOWED_ORIGINS {
+            assert!(cors_allows(&axum::http::HeaderValue::from_static(o)), "{o}");
+        }
+        for o in ["https://evil.example", "http://127.0.0.1:5180", "null"] {
+            assert!(!cors_allows(&axum::http::HeaderValue::from_static(o)), "{o}");
+        }
     }
 }

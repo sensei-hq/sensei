@@ -4,7 +4,7 @@ use crate::tasks::executor::{TaskContext, spawn_workers};
 use crate::tasks::queue::TaskQueue;
 use axum::http::Method;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 /// How long shutdown waits for the connection pool to drain before giving up.
 ///
@@ -27,6 +27,37 @@ fn write_startup_error(msg: &str) {
 /// workspace's managed objects — a data-loss command one copy-paste away from a
 /// daemon that has usually just lost a cold-boot race and will self-heal on its
 /// own. The safe path is idempotent, so it is the only one worth naming.
+/// CORS for the app's own origins only (#334): a foreign page's preflight is
+/// not granted, so its browser never sends the write.
+///
+/// WKWebView (Safari) does NOT honour `Access-Control-Allow-Methods: *` — it
+/// requires an explicit method list, otherwise the preflight for any non-simple
+/// request (PUT/DELETE/PATCH, or POST with JSON Content-Type) is treated as
+/// blocked and the in-app fetch throws "Load failed" with no server hit. List the
+/// methods we actually serve; same for headers.
+pub(crate) fn with_cors(router: axum::Router) -> axum::Router {
+    router.layer(
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::predicate(|origin, _| {
+                crate::api::origin_guard::cors_allows(origin)
+            }))
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+                Method::OPTIONS,
+                Method::HEAD,
+            ])
+            .allow_headers([
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::ACCEPT,
+                axum::http::header::AUTHORIZATION,
+            ]),
+    )
+}
+
 fn degraded_startup_message(database_url: &str, error: &str) -> String {
     format!(
         "[senseid] Database connection failed after startup retries — daemon staying alive in degraded mode; it will self-heal automatically when the DB becomes reachable.\n  URL: {database_url}\n  Error: {error}\n  Hint: if it does not recover, run `sensei bootstrap` to provision the database."
@@ -136,30 +167,6 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
 
     let cfg = sensei_bootstrap::SenseiConfig::from_env();
     let database_url = cfg.db_url.clone();
-    // CORS: WKWebView (Safari) does NOT honour `Access-Control-Allow-Methods: *`
-    // — it requires an explicit method list, otherwise the preflight for any
-    // non-simple request (PUT/DELETE/PATCH, or POST with JSON Content-Type)
-    // is treated as blocked and the in-app fetch throws "Load failed" with no
-    // server hit. Curl and Chrome accept the wildcard, which is why this only
-    // bit in the Tauri app. List the methods we actually serve; same fix for
-    // headers since Safari has the same wildcard-rejection there.
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::PATCH,
-            Method::DELETE,
-            Method::OPTIONS,
-            Method::HEAD,
-        ])
-        .allow_headers([
-            axum::http::header::CONTENT_TYPE,
-            axum::http::header::ACCEPT,
-            axum::http::header::AUTHORIZATION,
-        ]);
-
     // Connect to the DB, retrying briefly so a cold-boot race — the daemon
     // coming up before Postgres accepts connections (both start together as
     // brew/launchd services) — is absorbed and we reach full mode without ever
@@ -186,7 +193,7 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                 tracing::info!("senseid listening on :{} (full mode)", port);
                 pg_for_shutdown = Some(pg.clone());
                 let (router, queue) = build_full_app(pg).await;
-                (router.layer(cors), Some(queue))
+                (with_cors(router), Some(queue))
             }
             Err(e) => {
                 // WHICH failure is this? A database that does not exist yet is
@@ -248,7 +255,7 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                     }
                 });
 
-                (handle.serving_router().layer(cors), None)
+                (with_cors(handle.serving_router()), None)
             }
         };
 
