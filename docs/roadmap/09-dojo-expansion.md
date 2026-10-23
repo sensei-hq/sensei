@@ -152,7 +152,11 @@ slice builds, passes and ships on its own.
   `can_read_repository_metric` (teammate's user rows, only on repositories the lead can read), the SECURITY INVOKER
   read `dojo.team_member_metrics`, `GET /v1/t/{tenant}/team-metrics` (lead floor) and the Lead → Teams view.
   Relay sessions stay owner-only (#249); the lead reads metric aggregates (sessions = `throughput`, AI usage =
-  `tokens_per_day`), never sessions. Pinned by `database/tests/dojo/lead_team_metrics.sql`.*
+  `tokens_per_day`), never sessions. Pinned by `database/tests/dojo/lead_team_metrics.sql`.
+  Follow-up (user, 2026-10-22): Teams for every member — an admin sees every team with its people, a contributor
+  or maintainer their teams' totals only (`dojo.team_metric_totals`, k-anonymous at 3, D26's floor); rates pooled
+  by their denominator (Σ numerator / Σ denominator); departed teammates stay excluded. Pinned by
+  `database/tests/dojo/team_metric_totals.sql`.*
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
