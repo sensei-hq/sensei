@@ -13,14 +13,15 @@ const CONN: AzureConnectionView = { id: 'org-1', name: 'example-org', verifiedAt
 const IMPORTED: AzureImportResult = {
 	dojo: { key: 'organization/example-org', created: true },
 	organization: { id: 'org-1', name: 'example-org' },
-	projects: { total: 2, mapped: 2, elsewhere: 0, complete: true }
+	projects: { total: 2, mapped: 2, elsewhere: 0, complete: true },
+	members: { complete: true, listed: 3, ended: 0 }
 };
 
 function api(over: Partial<AzureConnectApi> = {}) {
 	return {
 		status: vi.fn().mockResolvedValue({ connections: [CONN], scopes: [] }),
 		connect: vi.fn().mockResolvedValue(IMPORTED),
-		sync: vi.fn().mockResolvedValue({ organization: IMPORTED.organization, projects: IMPORTED.projects }),
+		sync: vi.fn().mockResolvedValue({ organization: IMPORTED.organization, projects: IMPORTED.projects, members: IMPORTED.members }),
 		removeToken: vi.fn().mockResolvedValue(undefined),
 		...over
 	};
@@ -99,7 +100,7 @@ describe('AzureConnectState', () => {
 		const s = new AzureConnectState(a);
 		await s.sync(CONN);
 		expect(a.sync).toHaveBeenCalledWith('org-1');
-		expect(s.message).toBe('example-org synced · 2 projects filed as workspaces');
+		expect(s.message).toBe('example-org synced · 2 projects filed as workspaces · 3 members read');
 		await s.removeToken(CONN);
 		expect(a.removeToken).toHaveBeenCalledWith('org-1');
 		expect(a.status).toHaveBeenCalledTimes(2);

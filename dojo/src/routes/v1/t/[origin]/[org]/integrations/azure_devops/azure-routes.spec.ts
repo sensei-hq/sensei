@@ -82,7 +82,8 @@ const ev = (body: unknown, method = 'POST', origin = 'organization') =>
 const IMPORTED = {
 	dojo: { key: 'organization/acme', created: false },
 	organization: { id: 'org-1', name: 'example-org' },
-	projects: { total: 2, mapped: 2, elsewhere: 0, complete: true }
+	projects: { total: 2, mapped: 2, elsewhere: 0, complete: true },
+	members: { complete: true, listed: 3, ended: 0 }
 };
 
 beforeEach(() => {

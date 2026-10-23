@@ -29,6 +29,9 @@ interface Opts {
 	projects?: AzureProject[];
 	complete?: boolean;
 	reject?: number;
+	members?: { id: string; login: string }[];
+	membersComplete?: boolean;
+	membersFail?: number;
 }
 
 function fakeAzure(o: Opts = {}) {
@@ -46,7 +49,11 @@ function fakeAzure(o: Opts = {}) {
 			asked.push(`prove:${unit.id}`);
 			return o.admin ?? true;
 		},
-		listMembers: async () => ({ members: [], complete: true }),
+		listMembers: async () => {
+			asked.push('members');
+			if (o.membersFail) throw new ForgeReadError(o.membersFail, 'Azure DevOps read failed');
+			return { members: o.members ?? [{ id: ME_AZ, login: 'admin@example.com' }, { id: 'az-user-2', login: 'dev@example.com' }], complete: o.membersComplete ?? true };
+		},
 		listProjects: async () => {
 			asked.push('projects');
 			return { projects: o.projects ?? [P1, P3], complete: o.complete ?? true };
@@ -76,7 +83,8 @@ function db(seed: Partial<Record<string, FakeTable>> = {}) {
 		'rpc:remove_forge_token': { rows: [], ...seed['rpc:remove_forge_token'] },
 		'rpc:forge_token': { rows: [PAT as never], ...seed['rpc:forge_token'] },
 		'rpc:mark_forge_token_rejected': { rows: [], ...seed['rpc:mark_forge_token_rejected'] },
-		'rpc:map_forge_unit': { rows: [{ mapping_id: 'fm-1', tenant_id: HERE, workspace_id: 'w-1' }], ...seed['rpc:map_forge_unit'] }
+		'rpc:map_forge_unit': { rows: [{ mapping_id: 'fm-1', tenant_id: HERE, workspace_id: 'w-1' }], ...seed['rpc:map_forge_unit'] },
+		'rpc:reconcile_unit_members': { rows: [1 as never], ...seed['rpc:reconcile_unit_members'] }
 	});
 }
 
@@ -134,7 +142,8 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 		expect(out).toEqual({
 			dojo: { key: 'organization/example-org', created: true },
 			organization: { id: ORG_ID, name: ORG },
-			projects: { total: 2, mapped: 2, elsewhere: 0, complete: true }
+			projects: { total: 2, mapped: 2, elsewhere: 0, complete: true },
+			members: { complete: true, listed: 2, ended: 1 }
 		});
 		// The answer never carries the token.
 		expect(JSON.stringify(out)).not.toContain(PAT);
@@ -334,6 +343,7 @@ describe('syncAzureOrganization — re-read with the stored token', () => {
 		expect(d.rpcCalls[0]).toEqual({ fn: 'forge_token', args: { p_provider: 'azure_devops', p_external_id: ORG_ID } });
 		expect(writes(d)).not.toContain('set_forge_token');
 		expect(out.projects).toEqual({ total: 2, mapped: 2, elsewhere: 0, complete: true });
+		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1 });
 		expect(JSON.stringify(out)).not.toContain(PAT);
 	});
 
@@ -373,5 +383,54 @@ describe('syncAzureOrganization — re-read with the stored token', () => {
 	it('is a 404 for an organization this dōjō is not connected to', async () => {
 		const err = await syncAzureOrganization(db() as never, ME, HERE, ORG_ID, () => fakeAzure().a).catch((e) => e);
 		expect(err.status).toBe(404);
+	});
+});
+
+describe('members — #309\'s rule, read from the organization\'s side', () => {
+	it('a complete read ends the provisioned members it no longer lists (the database decides who)', async () => {
+		const d = db();
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure().a);
+		const call = d.rpcCalls.find((c) => c.fn === 'reconcile_unit_members');
+		expect(call?.args).toEqual({
+			p_tenant: HERE,
+			p_provider: 'azure_devops',
+			p_auth: 'azure_devops_pat',
+			p_subjects: [ME_AZ, 'az-user-2']
+		});
+		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1 });
+	});
+
+	it('a partial read ends nobody — and says so', async () => {
+		const d = db();
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure({ membersComplete: false }).a);
+		expect(d.rpcCalls.map((c) => c.fn)).not.toContain('reconcile_unit_members');
+		expect(out.members).toEqual({ complete: false, listed: 2, ended: 0 });
+	});
+
+	it('a failed member read ends nobody and is reported — the import itself stands', async () => {
+		const d = db();
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure({ membersFail: 503 }).a);
+		expect(d.rpcCalls.map((c) => c.fn)).not.toContain('reconcile_unit_members');
+		expect(d.rpcCalls.map((c) => c.fn)).toContain('set_forge_token');
+		expect(out.members).toEqual({ error: 'Azure DevOps could not list the members (503); nobody was ended' });
+	});
+
+	it('a read that lists nobody is not a complete answer — nobody is ended', async () => {
+		const d = db();
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure({ members: [] }).a);
+		expect(d.rpcCalls.map((c) => c.fn)).not.toContain('reconcile_unit_members');
+		expect(out.members).toEqual({ complete: false, listed: 0, ended: 0 });
+	});
+
+	it('sync reads the members too, with the stored token', async () => {
+		const d = db({
+			tenant_connections: {
+				rows: [{ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG, token_secret_id: 's', token_state: 'ok' }]
+			}
+		});
+		const { a, asked } = fakeAzure();
+		const out = await syncAzureOrganization(d as never, ME, HERE, ORG_ID, () => a);
+		expect(asked).toContain('members');
+		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1 });
 	});
 });

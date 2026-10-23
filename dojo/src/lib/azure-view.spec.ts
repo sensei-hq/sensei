@@ -30,22 +30,37 @@ describe('tokenLine', () => {
 
 describe('importLine / syncLine', () => {
 	const projects = { total: 3, mapped: 2, elsewhere: 1, complete: true };
+	const members = { complete: true, listed: 12, ended: 0 };
 	it('says where the organization went and how its projects filed', () => {
 		expect(
-			importLine({ dojo: { key: 'organization/example-org', created: true }, organization: { id: 'o', name: 'example-org' }, projects })
-		).toBe('example-org is now the dōjō organization/example-org · 2 projects filed as workspaces · 1 already filed in another dōjō');
+			importLine({ dojo: { key: 'organization/example-org', created: true }, organization: { id: 'o', name: 'example-org' }, projects, members })
+		).toBe('example-org is now the dōjō organization/example-org · 2 projects filed as workspaces · 1 already filed in another dōjō · 12 members read');
 		expect(
 			importLine({
 				dojo: { key: 'organization/here', created: false },
 				organization: { id: 'o', name: 'example-org' },
-				projects: { total: 1, mapped: 1, elsewhere: 0, complete: false }
+				projects: { total: 1, mapped: 1, elsewhere: 0, complete: false },
+				members: { complete: false, listed: 3, ended: 0 }
 			})
-		).toBe('example-org is connected to organization/here · 1 project filed as a workspace · Azure DevOps could not list every project');
+		).toBe(
+			'example-org is connected to organization/here · 1 project filed as a workspace · Azure DevOps could not list every project · the member list was incomplete, so nobody was ended'
+		);
 	});
 
 	it('says what a sync filed', () => {
-		expect(syncLine({ organization: { id: 'o', name: 'example-org' }, projects: { total: 0, mapped: 0, elsewhere: 0, complete: true } })).toBe(
-			'example-org synced · no projects to file'
-		);
+		expect(
+			syncLine({
+				organization: { id: 'o', name: 'example-org' },
+				projects: { total: 0, mapped: 0, elsewhere: 0, complete: true },
+				members: { complete: true, listed: 4, ended: 1 }
+			})
+		).toBe('example-org synced · no projects to file · 4 members read · 1 who left the organization no longer a member');
+		expect(
+			syncLine({
+				organization: { id: 'o', name: 'example-org' },
+				projects: { total: 0, mapped: 0, elsewhere: 0, complete: true },
+				members: { error: 'Azure DevOps could not list the members (503); nobody was ended' }
+			})
+		).toBe('example-org synced · no projects to file · Azure DevOps could not list the members (503); nobody was ended');
 	});
 });

@@ -13,7 +13,8 @@ const PAT = 'ztestpatAZDO0000';
 const IMPORTED: AzureImportResult = {
 	dojo: { key: 'organization/example-org', created: true },
 	organization: { id: 'org-1', name: 'example-org' },
-	projects: { total: 2, mapped: 2, elsewhere: 0, complete: true }
+	projects: { total: 2, mapped: 2, elsewhere: 0, complete: true },
+	members: { complete: true, listed: 3, ended: 0 }
 };
 const CONN: AzureConnectionView = { id: 'org-1', name: 'example-org', verifiedAt: null, token: 'ok', tokenExpiresAt: null };
 const DEAD: AzureConnectionView = { id: 'org-2', name: 'other-org', verifiedAt: null, token: 'needs_new_token', tokenExpiresAt: null };
@@ -24,7 +25,7 @@ function setup(withList = true) {
 		...(withList
 			? {
 					status: vi.fn().mockResolvedValue({ connections: [CONN, DEAD], scopes: [] }),
-					sync: vi.fn().mockResolvedValue({ organization: IMPORTED.organization, projects: IMPORTED.projects }),
+					sync: vi.fn().mockResolvedValue({ organization: IMPORTED.organization, projects: IMPORTED.projects, members: IMPORTED.members }),
 					removeToken: vi.fn().mockResolvedValue(undefined)
 				}
 			: {})

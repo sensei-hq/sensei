@@ -24,9 +24,9 @@ import { AdminError, slugify, type DojoClient } from './admin-data';
 import { refusalStatus } from './db-refusal';
 import { azureOrgFromUrl, type AzureAdapter, type AzureConnection, type AzureProject } from './forge-azure';
 import { ForgeReadError } from './forge-github';
-import type { AzureConnectionView, AzureImportResult, AzureSyncResult } from '../azure-view';
+import type { AzureConnectionView, AzureImportResult, AzureMembersRead, AzureSyncResult } from '../azure-view';
 
-export type { AzureConnectionView, AzureImportResult, AzureSyncResult };
+export type { AzureConnectionView, AzureImportResult, AzureMembersRead, AzureSyncResult };
 import { authMethodFor, claimTenantIfOwner, ensureForgeIdentity, ensureOrgTenant } from './provisioning';
 
 const PROVIDER = 'azure_devops' as const;
@@ -183,6 +183,43 @@ async function mapProjects(
 }
 
 /**
+ * Follow the organization's member list (#309's rule, from the organization's
+ * side): read every member with the token; a COMPLETE read that lists anyone
+ * hands their forge ids to dojo.reconcile_unit_members, which ends the
+ * provisioned memberships of people it no longer lists and restores those who
+ * came back. A partial read, an empty one or a failed one ends nobody — the
+ * failure is said in the answer, and the import or sync that asked still stands.
+ */
+async function followMembers(
+	db: DojoClient,
+	tenantId: string,
+	adapter: AzureAdapter,
+	token: string,
+	unit: { id: string; login: string }
+): Promise<AzureMembersRead> {
+	let read: Awaited<ReturnType<AzureAdapter['listMembers']>>;
+	try {
+		read = await adapter.listMembers(token, unit);
+	} catch (e) {
+		const status = e instanceof ForgeReadError ? ` (${e.forgeStatus})` : '';
+		return { error: `Azure DevOps could not list the members${status}; nobody was ended` };
+	}
+	const listed = read.members.length;
+	if (!read.complete || listed === 0) return { complete: false, listed, ended: 0 };
+	const { data, error } = await db
+		.rpc('reconcile_unit_members', {
+			p_tenant: tenantId,
+			p_provider: PROVIDER,
+			p_auth: authMethodFor(PROVIDER),
+			p_subjects: read.members.map((m) => m.id)
+		})
+		.single();
+	fail(error);
+	if (typeof data !== 'number') throw new AdminError(500, 'reconcile_unit_members did not say how many memberships it ended');
+	return { complete: true, listed, ended: data };
+}
+
+/**
  * Import one Azure DevOps organization with an admin's PAT: validate, then make
  * or connect its dōjō, claim it, store the token in Vault and file its projects
  * as workspaces. See the module header.
@@ -221,10 +258,12 @@ export async function importAzureOrganization(
 	fail(stored.error);
 
 	const filed = await mapProjects(db, principalId, dojo.id, unit.login, read.projects);
+	const members = await followMembers(db, dojo.id, adapter, token, unit);
 	return {
 		dojo: { key: dojo.key, created: dojo.created },
 		organization: { id: unit.id, name: unit.login },
-		projects: { total: read.projects.length, ...filed, complete: read.complete }
+		projects: { total: read.projects.length, ...filed, complete: read.complete },
+		members
 	};
 }
 
@@ -250,9 +289,10 @@ export async function syncAzureOrganization(
 	const token = stored.data;
 	if (typeof token !== 'string' || !token) throw new AdminError(500, `no token could be read for ${org.name}`);
 
+	const adapter = adapterFor(org.name);
 	let checked: Awaited<ReturnType<typeof validate>>;
 	try {
-		checked = await validate(adapterFor(org.name), token);
+		checked = await validate(adapter, token);
 	} catch (e) {
 		if (e instanceof ForgeReadError && e.forgeStatus === 401) {
 			const marked = await db.rpc('mark_forge_token_rejected', { p_provider: PROVIDER, p_external_id: org.id });
@@ -266,9 +306,11 @@ export async function syncAzureOrganization(
 	}
 
 	const filed = await mapProjects(db, principalId, tenantId, org.name, checked.read.projects);
+	const members = await followMembers(db, tenantId, adapter, token, checked.unit);
 	return {
 		organization: org,
-		projects: { total: checked.read.projects.length, ...filed, complete: checked.read.complete }
+		projects: { total: checked.read.projects.length, ...filed, complete: checked.read.complete },
+		members
 	};
 }
 

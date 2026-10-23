@@ -48,17 +48,24 @@ export interface AzureProjectsFiled {
 	complete: boolean;
 }
 
+/** What the member read came to (#309's rule): a complete read ended the
+ *  provisioned members it no longer lists; a partial one ended nobody; a failed
+ *  one is said, and ended nobody. */
+export type AzureMembersRead = { complete: boolean; listed: number; ended: number } | { error: string };
+
 /** What an import came to. Never carries the token. */
 export interface AzureImportResult {
 	dojo: { key: string; created: boolean };
 	organization: { id: string; name: string };
 	projects: AzureProjectsFiled;
+	members: AzureMembersRead;
 }
 
 /** What a sync came to. */
 export interface AzureSyncResult {
 	organization: { id: string; name: string };
 	projects: AzureProjectsFiled;
+	members: AzureMembersRead;
 }
 
 /** The stored token's state, and its expiry when Azure reported one. */
@@ -81,15 +88,23 @@ function filedParts(p: AzureProjectsFiled): string[] {
 	return parts;
 }
 
-/** Where an imported organization went, and how its projects filed. */
+function memberParts(m: AzureMembersRead): string[] {
+	if ('error' in m) return [m.error];
+	if (!m.complete) return ['the member list was incomplete, so nobody was ended'];
+	const parts = [`${m.listed} ${m.listed === 1 ? 'member' : 'members'} read`];
+	if (m.ended) parts.push(`${m.ended} who left the organization no longer ${m.ended === 1 ? 'a member' : 'members'}`);
+	return parts;
+}
+
+/** Where an imported organization went, how its projects filed, and its members. */
 export function importLine(r: AzureImportResult): string {
 	const where = r.dojo.created
 		? `${r.organization.name} is now the dōjō ${r.dojo.key}`
 		: `${r.organization.name} is connected to ${r.dojo.key}`;
-	return [where, ...filedParts(r.projects)].join(' · ');
+	return [where, ...filedParts(r.projects), ...memberParts(r.members)].join(' · ');
 }
 
-/** What a sync filed. */
+/** What a sync filed, and its members. */
 export function syncLine(r: AzureSyncResult): string {
-	return [`${r.organization.name} synced`, ...filedParts(r.projects)].join(' · ');
+	return [`${r.organization.name} synced`, ...filedParts(r.projects), ...memberParts(r.members)].join(' · ');
 }
