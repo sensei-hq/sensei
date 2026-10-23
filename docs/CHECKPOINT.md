@@ -21,7 +21,7 @@
 
 **Remaining:**
 - R9 live check on a real Jira board (two boards, two levels): the user's. The local daemon has no tracker.
-- R5b (Azure DevOps, PAT in Vault) next; then the next release (R5a, R8, R9).
+- **R5b in progress** (an agent builds it on branch `r5b-azure-import` in a worktree): PAT in Vault, the Azure adapter, org → dōjō and project → workspace import, membership. Then the next release (R5a, R8, R9, R5b).
 - #314 (production push: the user's steps); #312 live on an unattended run; #329 stale session
   after a magic-link switch; dbd#103 (a column comment lands one reconcile late).
 - Wave 11 (website from the user's mocks), after the dōjō waves.
