@@ -12,7 +12,7 @@ import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from '
 import type { RelayConstitution } from './constitution-map';
 import type { ContributionRow, DownstreamRow } from './contributions-map';
 import type { DojoCallOpts } from './dojo-api';
-import type { AzureGrantView, AzureImportResult } from './azure-view';
+import type { AzureGrantView, AzureImportResult, MicrosoftLinkStatus } from './azure-view';
 
 // Re-export the shared error under the client name so screens
 // `instanceof` against a local symbol without reaching into the shared module.
@@ -255,6 +255,12 @@ export interface ProvisionResult {
  *  user in an org needed to join. `/github/sync` still routes here. */
 export async function provisionFromForge(opts: DojoCallOpts = {}): Promise<ProvisionResult> {
 	return sendJson(youUrl('/provision'), 'POST', {}, opts);
+}
+
+/** `GET /v1/you/microsoft` — whether the login's Microsoft account is linked
+ *  (#308 R5c); My dōjōs says so when it could not be. */
+export async function getMicrosoftLink(opts: DojoCallOpts = {}): Promise<MicrosoftLinkStatus> {
+	return getJson(youUrl('/microsoft'), opts);
 }
 
 // Azure DevOps through Microsoft Entra (#308 R5b, D42). No request carries a

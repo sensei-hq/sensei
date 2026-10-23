@@ -150,3 +150,14 @@ export function importLine(r: AzureImportResult): string {
 export function syncLine(r: AzureSyncResult): string {
 	return [`${r.organization.name} synced`, ...filedParts(r.projects), ...memberParts(r.members)].join(' · ');
 }
+
+/** Whether the login's Microsoft account is linked to the dōjō (#308 R5c):
+ *  `GET /v1/you/microsoft`. Not linked means no identity was recorded and no
+ *  dōjō joined from it, and says why. */
+export type MicrosoftLinkStatus = { state: 'none' } | { state: 'linked' } | { state: 'not_linked'; reason: string };
+
+/** What My dōjōs says about it — only when it could not be linked. */
+export function microsoftNotice(s: MicrosoftLinkStatus): string | null {
+	if (s.state !== 'not_linked') return null;
+	return `Couldn’t link your Microsoft account: ${s.reason}. Your Azure DevOps organizations’ dōjōs were not joined.`;
+}

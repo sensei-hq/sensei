@@ -21,6 +21,9 @@
 // CLOSED — no identity, no provisioning, a logged reason, and "couldn't link your
 // Microsoft account" on My dōjōs. The spec's "R5c as built" names the live check.
 
+import { AdminError, type DojoClient } from './admin-data';
+import type { MicrosoftLinkStatus } from '../azure-view';
+
 /** A Microsoft Entra object id: a GUID, as Microsoft writes it. */
 const OBJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -33,6 +36,8 @@ export type MicrosoftIdentity =
 /** Why a Microsoft identity could not be linked, as the person reads it. */
 export const NO_OBJECT_ID = 'Microsoft did not send this account’s object id, so it cannot be matched to Azure DevOps';
 export const SEVERAL_ACCOUNTS = 'more than one Microsoft account is linked to this login';
+export const ALREADY_LINKED = 'that Microsoft account is already linked to another dōjō login';
+export const NOT_RECORDED = 'the sign-in did not record it — sign out and sign in with Microsoft again';
 
 function record(v: unknown): Record<string, unknown> | null {
 	return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -54,4 +59,30 @@ export function microsoftIdentity(user: unknown): MicrosoftIdentity {
 	if (typeof oid !== 'string' || !OBJECT_ID.test(oid)) return { state: 'unlinkable', reason: NO_OBJECT_ID };
 	const name = data?.full_name ?? data?.name;
 	return { state: 'ok', objectId: oid, name: typeof name === 'string' && name.trim() ? name.trim() : null };
+}
+
+/**
+ * Whether the login's Microsoft account is linked (#308 R5c): its object id
+ * recorded as THIS person's azure_devops identity. Computed, never stored, so a
+ * sign-in that failed closed shows on the next page load. `db` is the system
+ * client: an identity another person holds is the conflict, and the caller
+ * cannot read it. A failed read throws.
+ */
+export async function microsoftLinkStatus(
+	db: DojoClient,
+	principalId: string,
+	identity: MicrosoftIdentity
+): Promise<MicrosoftLinkStatus> {
+	if (identity.state === 'none') return { state: 'none' };
+	if (identity.state === 'unlinkable') return { state: 'not_linked', reason: identity.reason };
+	const { data, error } = await db
+		.from('identities')
+		.select('principal_id')
+		.eq('provider', 'azure_devops')
+		.eq('subject', identity.objectId)
+		.maybeSingle();
+	if (error) throw new AdminError(500, error.message);
+	const holder = (data as { principal_id: string } | null)?.principal_id;
+	if (!holder) return { state: 'not_linked', reason: NOT_RECORDED };
+	return holder === principalId ? { state: 'linked' } : { state: 'not_linked', reason: ALREADY_LINKED };
 }

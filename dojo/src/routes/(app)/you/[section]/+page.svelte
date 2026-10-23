@@ -90,6 +90,7 @@
 		syncing={you.github.busy}
 		syncMessage={you.github.message}
 		{azure}
+		microsoftNotice={data.microsoftNotice}
 	/>
 {:else if data.section === 'contributions'}
 	<ScrContributions

@@ -7,12 +7,14 @@ import {
 	listContributions,
 	listLibraryPacks,
 	listMyRepos,
+	getMicrosoftLink,
 	ClientApiError,
 	type MyRepoWire
 } from '$lib/client-data';
 import { toKitWorkspaces } from '$lib/workspaces-map';
 import { toKitContributions, toKitDownstreams } from '$lib/contributions-map';
 import { toKitRulePacks } from '$lib/rulepacks-map';
+import { microsoftNotice as noticeFor } from '$lib/azure-view';
 import type { KitWorkspace, KitContribution, KitDownstream, KitRulePack } from '$lib/components/kit/types';
 import { stance, personalLadder } from '$lib/components/kit/fixtures';
 
@@ -83,8 +85,20 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		}
 	}
 
+	// Whether the Microsoft account is linked (#308 R5c) — said on My dōjōs only
+	// when it could not be. A failed check is said too, never read as "linked".
+	let microsoftNotice: string | null = null;
+	if (section === 'dojos') {
+		try {
+			microsoftNotice = noticeFor(await getMicrosoftLink({ fetch, accessToken }));
+		} catch (e) {
+			microsoftNotice = `Could not check your Microsoft account link: ${e instanceof Error ? e.message : 'the request failed'}.`;
+		}
+	}
+
 	return {
 		section,
+		microsoftNotice,
 		repos,
 		reposError,
 		title: labelForSection(section, 'you'),

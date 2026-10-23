@@ -12,7 +12,8 @@ import {
 	provisionFromForge,
 	startAzureConnectAsOwn,
 	listAzureGrantOrganizations,
-	importAzureOrganization
+	importAzureOrganization,
+	getMicrosoftLink
 } from '$lib/client-data';
 
 // A fake fetch that records the call and returns a canned response. Mirrors the
@@ -143,6 +144,14 @@ describe('listWorkspaces / listUserWorkspaces — tenant vs user-wide reads', ()
 		expect(await provisionFromForge({ fetch: fn })).toEqual(result);
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/provision`);
 		expect(calls[0].init?.method).toBe('POST');
+	});
+});
+
+describe('getMicrosoftLink (#308 R5c)', () => {
+	it('GETs /v1/you/microsoft with the bearer and returns the status', async () => {
+		const { fn, calls } = fakeFetch(200, { state: 'not_linked', reason: 'why' });
+		expect(await getMicrosoftLink({ fetch: fn, accessToken: 'jwt' })).toEqual({ state: 'not_linked', reason: 'why' });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/microsoft`);
 	});
 });
 

@@ -20,7 +20,8 @@
 		onSyncGithub,
 		syncing = false,
 		syncMessage = null,
-		azure
+		azure,
+		microsoftNotice = null
 	}: {
 		dojos?: KitDojo[];
 		onOpen?: (dojo: KitDojo) => void;
@@ -33,6 +34,9 @@
 		/** Import an Azure DevOps organization as its own dōjō (#308 R5b) — how an
 		 *  Azure organization's dōjō is first made. Offered only when given. */
 		azure?: AzureConnectState;
+		/** Why the Microsoft account could not be linked (#308 R5c) — said only
+		 *  when it could not; nothing was recorded and no dōjō joined from it. */
+		microsoftNotice?: string | null;
 	} = $props();
 
 	const groups = $derived(groupDojos(dojos));
@@ -70,6 +74,11 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+		{#if microsoftNotice}
+			<div role="alert" class="border-paper-edge bg-paper-soft text-danger rounded-lg border p-4 text-sm">
+				{microsoftNotice}
+			</div>
+		{/if}
 		{#if groups.length}
 			{#each groups as group (group.kind)}
 				<ListSection icon={group.icon} title={group.label} count={group.items.length}>

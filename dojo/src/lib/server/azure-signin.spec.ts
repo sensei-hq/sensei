@@ -13,7 +13,8 @@
 // own `id` is GoTrue's provider_id, the `sub`. `user_metadata` also receives the
 // claims, but a person can rewrite their own user_metadata — it is never read.
 import { describe, it, expect } from 'vitest';
-import { microsoftIdentity } from './azure-signin';
+import { microsoftIdentity, microsoftLinkStatus, NO_OBJECT_ID, ALREADY_LINKED, NOT_RECORDED } from './azure-signin';
+import { fakeDojoDb } from './fake-dojo-db';
 
 const OID = '00000000-0000-4000-8000-0000000000a1';
 
@@ -65,5 +66,46 @@ describe('microsoftIdentity', () => {
 	it('keeps the object id exactly as Microsoft wrote it', () => {
 		const upper = '00000000-0000-4000-8000-0000000000A1';
 		expect(microsoftIdentity(user([azure({ custom_claims: { oid: upper } })]))).toMatchObject({ objectId: upper });
+	});
+});
+
+// What My dōjōs says about the login's Microsoft account (#308 R5c): computed
+// from Supabase's identity and the dōjō's own record, never stored — so a failed
+// link is visible on the next page load, whatever the sign-in hook logged.
+describe('microsoftLinkStatus', () => {
+	const ME = 'p-me';
+	const ok = { state: 'ok' as const, objectId: OID, name: null };
+	const db = (rows: Record<string, unknown>[] = [], error?: { message: string }) =>
+		fakeDojoDb({ identities: { rows, ...(error ? { error } : {}) } });
+
+	it('is none for a login with no Microsoft account, asking nothing', async () => {
+		const d = db();
+		expect(await microsoftLinkStatus(d as never, ME, { state: 'none' })).toEqual({ state: 'none' });
+		expect(d.tables.identities.reads ?? 0).toBe(0);
+	});
+
+	it('is linked when the object id is recorded as this person`s azure_devops identity', async () => {
+		const d = db([{ principal_id: ME, provider: 'azure_devops', subject: OID }]);
+		expect(await microsoftLinkStatus(d as never, ME, ok)).toEqual({ state: 'linked' });
+	});
+
+	it('is not linked, with the reason, when Microsoft sent no object id', async () => {
+		expect(await microsoftLinkStatus(db() as never, ME, { state: 'unlinkable', reason: NO_OBJECT_ID })).toEqual({
+			state: 'not_linked',
+			reason: NO_OBJECT_ID
+		});
+	});
+
+	it('is not linked when another person holds the Microsoft account', async () => {
+		const d = db([{ principal_id: 'p-other', provider: 'azure_devops', subject: OID }]);
+		expect(await microsoftLinkStatus(d as never, ME, ok)).toEqual({ state: 'not_linked', reason: ALREADY_LINKED });
+	});
+
+	it('is not linked when the sign-in never recorded it', async () => {
+		expect(await microsoftLinkStatus(db() as never, ME, ok)).toEqual({ state: 'not_linked', reason: NOT_RECORDED });
+	});
+
+	it('a failed read throws — never "not linked"', async () => {
+		await expect(microsoftLinkStatus(db([], { message: 'boom' }) as never, ME, ok)).rejects.toThrow('boom');
 	});
 });

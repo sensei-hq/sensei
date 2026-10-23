@@ -2,7 +2,7 @@
 // words the screen says about a connection, an import and the scopes a token
 // needs. Pure.
 import { describe, it, expect } from 'vitest';
-import { AZURE_REQUIRED_SCOPES, connectNotice, importLine, syncLine, tokenLine, writeScopesLine, type AzureConnectionView } from './azure-view';
+import { AZURE_REQUIRED_SCOPES, connectNotice, importLine, syncLine, tokenLine, writeScopesLine, type AzureConnectionView, microsoftNotice } from './azure-view';
 
 const conn = (over: Partial<AzureConnectionView> = {}): AzureConnectionView => ({
 	id: 'org-1',
@@ -100,6 +100,21 @@ describe('writeScopesLine', () => {
 		expect(writeScopesLine([])).toBeNull();
 		expect(writeScopesLine(['vso.code_write', 'vso.project_manage'])).toBe(
 			'This Microsoft consent also grants vso.code_write, vso.project_manage. The dōjō only reads — a Microsoft Entra admin can remove these from the app’s permissions.'
+		);
+	});
+});
+
+// My dōjōs says when a Microsoft sign-in could not be linked (#308 R5c): nothing
+// was recorded and nobody provisioned, and the person should know why.
+describe('microsoftNotice', () => {
+	it('says nothing when there is no Microsoft account, or it is linked', () => {
+		expect(microsoftNotice({ state: 'none' })).toBeNull();
+		expect(microsoftNotice({ state: 'linked' })).toBeNull();
+	});
+
+	it('says the account could not be linked, and why', () => {
+		expect(microsoftNotice({ state: 'not_linked', reason: 'more than one Microsoft account is linked to this login' })).toBe(
+			'Couldn’t link your Microsoft account: more than one Microsoft account is linked to this login. Your Azure DevOps organizations’ dōjōs were not joined.'
 		);
 	});
 });
