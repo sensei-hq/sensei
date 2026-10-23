@@ -144,8 +144,10 @@ export async function listAzureOrganizations(token: string, fetchImpl: typeof fe
 	return { organizations, complete };
 }
 
-/** A Microsoft Entra object id (a GUID), lowercased, or null. */
-function entraObjectId(v: unknown): string | null {
+/** A Microsoft Entra id (a GUID: an object id, a tenant id), lowercased, or
+ *  null. The one normalisation every Entra id the dōjō stores goes through, so a
+ *  sign-in's `oid` matches a member read's `originId` (#308 R5c). */
+export function entraObjectId(v: unknown): string | null {
 	const id = (nonEmpty(v) ?? '').toLowerCase();
 	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ? id : null;
 }

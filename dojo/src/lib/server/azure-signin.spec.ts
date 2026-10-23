@@ -63,9 +63,9 @@ describe('microsoftIdentity', () => {
 		expect(microsoftIdentity(u)).toMatchObject({ state: 'unlinkable' });
 	});
 
-	it('keeps the object id exactly as Microsoft wrote it', () => {
+	it('lowercases the object id, as the R5b member read and import key it (forge-azure entraObjectId)', () => {
 		const upper = '00000000-0000-4000-8000-0000000000A1';
-		expect(microsoftIdentity(user([azure({ custom_claims: { oid: upper } })]))).toMatchObject({ objectId: upper });
+		expect(microsoftIdentity(user([azure({ custom_claims: { oid: upper } })]))).toMatchObject({ objectId: OID });
 	});
 });
 

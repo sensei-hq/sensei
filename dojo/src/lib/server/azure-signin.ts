@@ -23,9 +23,7 @@
 
 import { AdminError, type DojoClient } from './admin-data';
 import type { MicrosoftLinkStatus } from '../azure-view';
-
-/** A Microsoft Entra object id: a GUID, as Microsoft writes it. */
-const OBJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { entraObjectId } from './forge-azure';
 
 /** What a login says about its Microsoft account. */
 export type MicrosoftIdentity =
@@ -55,8 +53,9 @@ export function microsoftIdentity(user: unknown): MicrosoftIdentity {
 	if (azure.length > 1) return { state: 'unlinkable', reason: SEVERAL_ACCOUNTS };
 
 	const data = record(azure[0]?.identity_data);
-	const oid = record(data?.custom_claims)?.oid;
-	if (typeof oid !== 'string' || !OBJECT_ID.test(oid)) return { state: 'unlinkable', reason: NO_OBJECT_ID };
+	// Lowercased exactly as R5b keys a member read's originId (entraObjectId).
+	const oid = entraObjectId(record(data?.custom_claims)?.oid);
+	if (!oid) return { state: 'unlinkable', reason: NO_OBJECT_ID };
 	const name = data?.full_name ?? data?.name;
 	return { state: 'ok', objectId: oid, name: typeof name === 'string' && name.trim() ? name.trim() : null };
 }

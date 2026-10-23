@@ -337,8 +337,8 @@ One **multi-tenant app registration** serves both R5b's connect and R5c's Micros
 - **Identity** — `azure-signin.ts` `microsoftIdentity(user)` reads the login's Microsoft account from the
   Supabase user (getUser, never a request's claim): `identities[provider = azure].identity_data.custom_claims.oid`
   (where GoTrue keeps it: see the risk below). Never `sub` (GoTrue's `provider_id`, pairwise per app), never
-  email (D43), never `user_metadata` (the person can rewrite it). The oid must be a GUID; it is kept exactly as
-  Microsoft wrote it, as R5b keeps `originId`. No oid, a malformed one, or two Microsoft accounts on one login is
+  email (D43), never `user_metadata` (the person can rewrite it). The oid must be a GUID and is lowercased through
+  `entraObjectId` (forge-azure.ts), the normalisation R5b's import and member read apply to `originId`. No oid, a malformed one, or two Microsoft accounts on one login is
   `unlinkable`.
 - **Member sets** — `dojo.connection_members (connection_id, subject, read_at)`, owned by the connection
   (deleted with it), service_role only: the connection's last COMPLETE member set. `dojo.reconcile_unit_members`
