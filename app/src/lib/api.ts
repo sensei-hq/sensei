@@ -443,8 +443,9 @@ export function senseiApi(port: number) {
     tryListWorkspaceServices: (id: string) =>
       tryGet<{ services: WorkspaceService[] }>(`/api/workspaces/${enc(id)}/services`),
 
-    setWorkspaceServiceScope: (id: string, serviceId: string, enabled: boolean) =>
-      put(`/api/workspaces/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
+    /** Turn a service on or off for one workspace — done, or why not (#304). */
+    trySetWorkspaceServiceScope: (id: string, serviceId: string, enabled: boolean) =>
+      tryPut(`/api/workspaces/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
 
     tryGetWorkspaceMemories: (id: string) =>
       tryGet<{ active: WorkspaceMemory[]; total: number }>(`/api/workspaces/${enc(id)}/memories`),
