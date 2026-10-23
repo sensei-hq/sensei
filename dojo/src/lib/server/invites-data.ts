@@ -15,6 +15,7 @@ import {
 	type NewMemberInput
 } from './admin-data';
 import { looksLikeEmail } from '../admin-view';
+import { attemptsLeft, recordAttempt, RATE_LIMITS } from './rate-limit';
 
 export { AdminError };
 export type { DojoClient };
@@ -185,26 +186,17 @@ export async function hashInviteToken(token: string): Promise<string> {
 }
 
 /** Failed accepts allowed per person within the window before further attempts
- *  are refused (#311). The token is unguessable; this bounds the guessing anyway. */
-export const ACCEPT_FAILURE_LIMIT = 10;
-const ACCEPT_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+ *  are refused (#311) — the shared rate limit (rate-limit.ts). */
+export const ACCEPT_FAILURE_LIMIT = RATE_LIMITS.invite_accept.limit;
 
 /** How many more failed accepts the caller has in the current window (never
  *  below 0). A failed count is an error — never a free pass. */
-export async function acceptAttemptsLeft(db: DojoClient, principalId: string, nowMs: number): Promise<number> {
-	const since = new Date(nowMs - ACCEPT_FAILURE_WINDOW_MS).toISOString();
-	const { count, error } = await db
-		.from('invite_accept_failures')
-		.select('principal_id', { count: 'exact', head: true })
-		.eq('principal_id', principalId)
-		.gte('failed_at', since);
-	if (error) throw new AdminError(500, error.message);
-	return Math.max(0, ACCEPT_FAILURE_LIMIT - (count ?? 0));
+export function acceptAttemptsLeft(db: DojoClient, principalId: string, nowMs: number): Promise<number> {
+	return attemptsLeft(db, principalId, 'invite_accept', nowMs);
 }
 
 /** Record one failed accept by the caller (#311). */
-export async function recordAcceptFailure(db: DojoClient, principalId: string): Promise<void> {
-	const { error } = await db.from('invite_accept_failures').insert({ principal_id: principalId });
-	if (error) throw new AdminError(500, error.message);
+export function recordAcceptFailure(db: DojoClient, principalId: string): Promise<void> {
+	return recordAttempt(db, principalId, 'invite_accept');
 }
 

@@ -207,9 +207,10 @@ describe('accept attempts (#311)', () => {
 			return Promise.resolve({ count: 3, error: null });
 		};
 		expect(await acceptAttemptsLeft(db, 'u1', NOW)).toBe(7);
-		expect(captured.table).toBe('invite_accept_failures');
+		expect(captured.table).toBe('request_attempts');
 		expect(captured.eqs).toContainEqual(['principal_id', 'u1']);
-		expect(captured.eqs).toContainEqual(['failed_at', new Date(NOW - 15 * 60 * 1000).toISOString()]);
+		expect(captured.eqs).toContainEqual(['action', 'invite_accept']);
+		expect(captured.eqs).toContainEqual(['at', new Date(NOW - 15 * 60 * 1000).toISOString()]);
 	});
 
 	it('never goes below zero, and a failed count is an error, not a free pass', async () => {
@@ -228,6 +229,6 @@ describe('accept attempts (#311)', () => {
 			return Promise.resolve({ error: null });
 		};
 		await recordAcceptFailure(db, 'u1');
-		expect(captured.inserts).toEqual([{ table: 'invite_accept_failures', payload: { principal_id: 'u1' } }]);
+		expect(captured.inserts).toEqual([{ table: 'request_attempts', payload: { principal_id: 'u1', action: 'invite_accept' } }]);
 	});
 });

@@ -21,7 +21,11 @@ describe('seal / openSealed', () => {
 		expect(await openSealed(v, 'auth-1', SECRET, 'purpose-b', NOW)).toBeNull();
 		expect(await openSealed(v, 'auth-1', 'another-secret', 'purpose-a', NOW)).toBeNull();
 		expect(await openSealed(v, 'auth-1', SECRET, 'purpose-a', NOW + 601_000)).toBeNull();
-		const flipped = v.slice(0, -2) + (v.endsWith('A') ? 'B' : 'A') + v.slice(-1);
+		// Always a DIFFERENT character in a byte-carrying position (the last one may
+		// carry padding bits only).
+		const at = v.length - 2;
+		const flipped = v.slice(0, at) + (v[at] === 'A' ? 'B' : 'A') + v.slice(at + 1);
+		expect(flipped).not.toBe(v);
 		expect(await openSealed(flipped, 'auth-1', SECRET, 'purpose-a', NOW)).toBeNull();
 		expect(await openSealed(undefined, 'auth-1', SECRET, 'purpose-a', NOW)).toBeNull();
 		expect(await openSealed('not base64!', 'auth-1', SECRET, 'purpose-a', NOW)).toBeNull();

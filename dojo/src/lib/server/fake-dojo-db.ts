@@ -53,7 +53,7 @@ export interface FakeTable {
 	error?: { code?: string; message: string };
 }
 
-type Filter = { op: 'eq' | 'in' | 'is'; column: string; value: unknown };
+type Filter = { op: 'eq' | 'in' | 'is' | 'gte'; column: string; value: unknown };
 
 const PG_UNIQUE_VIOLATION = '23505';
 
@@ -73,6 +73,8 @@ function matches(row: FakeRow, filters: Filter[]): boolean {
 		const v = row[f.column];
 		if (f.op === 'eq') return v === f.value;
 		if (f.op === 'is') return f.value === null ? v === null || v === undefined : v === f.value;
+		// ISO timestamps and numbers compare in order as written.
+		if (f.op === 'gte') return v != null && String(v) >= String(f.value);
 		return Array.isArray(f.value) && (f.value as unknown[]).includes(v);
 	});
 }
@@ -170,8 +172,14 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 		 *  and the 1000-row cap it exists to defeat stays a code-reading exercise. */
 		let range: { from: number; to: number } | null = null;
 
+		/** `.select(cols, { count: 'exact', head: true })` — answer the row count. */
+		let counted = false;
+
 		const api: Record<string, unknown> = {
-			select: () => api,
+			select: (_cols?: string, opts?: { count?: string; head?: boolean }) => {
+				counted = opts?.count === 'exact';
+				return api;
+			},
 			order: () => api,
 			range: (from: number, to: number) => {
 				range = { from, to };
@@ -183,6 +191,10 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 			},
 			is: (column: string, value: unknown) => {
 				filters.push({ op: 'is', column, value });
+				return api;
+			},
+			gte: (column: string, value: unknown) => {
+				filters.push({ op: 'gte', column, value });
 				return api;
 			},
 			in: (column: string, value: unknown) => {
@@ -215,6 +227,7 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 			},
 			then: (resolve: (v: unknown) => unknown) => {
 				const r = run();
+				if (counted) return Promise.resolve(resolve({ data: null, count: r.error ? null : (r.data?.length ?? 0), error: r.error }));
 				return Promise.resolve(resolve({ data: r.error ? null : r.data, error: r.error }));
 			}
 		};
