@@ -275,6 +275,10 @@ work (#307 and the gaps #309–#321).
 - **Dōjō work, 2026-10-22:** R8 (lead team metrics) merged; R9 (trackers by level, #318 D23) built and reviewed
   and merged; R5b (Azure) is next, then the release that ships R5a, R8 and R9. Status per item:
   docs/roadmap/09-dojo-expansion.md.
+- **2026-10-23:** R5b merged (Azure DevOps through Entra); R5c (sign in with Microsoft) in progress; then **#330**
+  (Terms of Service and Privacy Policy pages at /terms-of-service and /privacy-policy: the Entra app registration
+  and the OAuth consent screens ask for both URLs; the legal wording is the user's, drafted from the code), then
+  the release.
 - **How:** build the website from the new mocks. Each feature reads *coming soon* until it ships;
   flip it to *available* in the change that releases it, not afterwards.
 

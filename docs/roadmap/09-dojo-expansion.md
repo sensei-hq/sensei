@@ -188,6 +188,10 @@ slice builds, passes and ships on its own.
   `azure_devops` identity, and provisioning follows the person's Azure DevOps organizations the way GitHub sign-in follows
   GitHub orgs (#309's rules). Live check: a member of a connected Entra-backed org signs in with Microsoft and lands in
   that org's dōjō; a later complete member read without them ends their membership.
+  *Risk (user 2026-10-23: document, test once the integration is in place):* that Supabase Auth's Azure provider exposes
+  the Entra object id (`oid`; `sub` is per-app) on the sign-in identity is unverified offline. If it does not, sign-in
+  fails closed (no identity, no provisioning, a visible message; never `sub` or email), and the live check settles it:
+  the recorded identity's subject must equal the Azure DevOps entitlement's `originId` for the same person.
 - **R4 · The words.** PRD, specs, guides, `docs/llms`, both `SKILL.md` copies, agents, the website.
   Generic English ("the project's README", a Cargo project) stays.
 
