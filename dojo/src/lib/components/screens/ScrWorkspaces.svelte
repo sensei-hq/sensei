@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Screen } from '@sensei/ui';
-	import { SectionHead, Btn, WorkspaceRow, EmptyState } from '$lib/components/kit';
+	import { SectionHead, Btn, WorkspaceRow, EmptyState, LoadError } from '$lib/components/kit';
 	import type { KitWorkspace } from '$lib/components/kit/types';
 
 	// The full personal workspace list (mockup ScrWorkspaces) — a flush card of
@@ -40,10 +40,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<EmptyState kanji="断" title="Couldn't load your workspaces.">
-				{error}. This is a read error, not an empty list — retry in a moment. Nothing has been hidden
-				or invented.
-			</EmptyState>
+			<LoadError what="the workspaces" {error} />
 		{:else if workspaces.length}
 			<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
 				{#each workspaces as p (p.id)}

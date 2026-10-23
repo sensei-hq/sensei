@@ -22,6 +22,7 @@ export { default as RoleTag } from './RoleTag.svelte';
 export { default as PhasePill } from './PhasePill.svelte';
 export { default as SectionHead } from './SectionHead.svelte';
 export { default as Banner } from './Banner.svelte';
+export { default as LoadError } from './LoadError.svelte';
 export { default as StatBadge } from './StatBadge.svelte';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as Btn } from './Btn.svelte';

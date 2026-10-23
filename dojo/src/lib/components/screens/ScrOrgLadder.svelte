@@ -7,8 +7,7 @@
 		Chip,
 		KanjiToken,
 		RuleRow,
-		RuleEditor
-	} from '$lib/components/kit';
+		RuleEditor, LoadError } from '$lib/components/kit';
 	import type { KitConstitutionSection, KitRule } from '$lib/components/kit/types';
 	import { createOrgLadder } from '$lib/org-ladder-state.svelte';
 	import { untrack } from 'svelte';
@@ -64,7 +63,7 @@
 	<div class="relative">
 		<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 			{#if error}
-				<p role="alert" class="text-sm text-danger m-0">Could not load the dōjō's rules — {error}</p>
+				<LoadError what="the dōjō's rules" {error} />
 			{:else if sections.length === 0}
 				<p class="text-ink-mute text-sm m-0">This dōjō has no published rules yet.</p>
 			{:else}

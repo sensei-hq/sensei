@@ -137,21 +137,28 @@
 {:else if data.section === 'workspaces'}
 	<ScrWorkspaces
 		workspaces={data.workspaces}
+		error={data.workspacesError}
 		showDojo={false}
 		eyebrow={data.orgName + ' · jurisdiction'}
 		title="Workspaces"
 		onOpenWorkspace={openWorkspace}
 	/>
 {:else if data.section === 'triage'}
-	<ScrTriage orgName={data.orgName} groups={data.triage} detail={data.candidateDetail} />
+	<ScrTriage
+		orgName={data.orgName}
+		groups={data.triage}
+		detail={data.candidateDetail}
+		error={data.triageError}
+	/>
 {:else if data.section === 'approvals'}
-	<ScrApprovals orgName={data.orgName} approvals={data.approvals} />
+	<ScrApprovals orgName={data.orgName} approvals={data.approvals} error={data.triageError} />
 {:else if data.section === 'knowledge'}
-	<ScrKnowledge orgName={data.orgName} knowledge={data.knowledge} />
+	<ScrKnowledge orgName={data.orgName} knowledge={data.knowledge} error={data.knowledgeError} />
 {:else if data.section === 'members' || data.section === 'audit'}
 	<ScrRoleSurfaces
 		orgName={data.orgName}
 		tab={data.roleTab}
+		error={data.membersError}
 		members={data.members}
 		policies={data.rolePolicies}
 		audit={data.auditLog}
@@ -176,13 +183,13 @@
 {:else if data.section === 'scopes'}
 	<ScrScopes orgName={data.orgName} owners={data.scopeOwners} />
 {:else if data.section === 'identity'}
-	<ScrIdentity orgName={data.orgName} identity={data.identity} />
+	<ScrIdentity orgName={data.orgName} identity={data.identity} error={data.identityError} />
 {:else if data.section === 'integrations'}
 	<ScrIntegrations orgName={data.orgName} state={integrations} {azure} />
 {:else if data.section === 'health'}
-	<ScrHealth orgName={data.orgName} health={data.health} />
+	<ScrHealth orgName={data.orgName} health={data.health} error={data.healthError} />
 {:else if data.section === 'billing'}
-	<ScrBilling orgName={data.orgName} billing={data.billing} />
+	<ScrBilling orgName={data.orgName} billing={data.billing} error={data.billingError} />
 {:else}
 	<!-- Named branches only. This used to be an unlabelled `{:else}` holding
 	     billing, which happened to be correct because ORG_SECTIONS covered

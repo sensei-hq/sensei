@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Screen } from '@sensei/ui';
-	import { SectionHead, Btn, Chip, KanjiToken, EmptyState } from '$lib/components/kit';
+	import { SectionHead, Btn, Chip, KanjiToken, EmptyState, LoadError } from '$lib/components/kit';
 	import type { KitApproval } from '$lib/components/kit/types';
 	import { impactTone } from '$lib/triage/candidates-view';
 
@@ -14,12 +14,15 @@
 		orgName,
 		approvals = [],
 		onReview,
-		onApprove
+		onApprove,
+		error = null
 	}: {
 		orgName: string;
 		approvals?: KitApproval[];
 		onReview?: (a: KitApproval) => void;
 		onApprove?: (a: KitApproval) => void;
+		/** A failed read — shown in place of the empty state (#335). */
+		error?: string | null;
 	} = $props();
 </script>
 
@@ -33,28 +36,32 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-		{#if approvals.length}
-			<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
-				{#each approvals as a (a.id)}
-					{@const im = impactTone(a.impact)}
-					<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-						<KanjiToken char={a.kanji} size="lg" toneClass="text-accent" w={22} />
-						<div class="flex-1" style="min-width: 0">
-							<div class="text-ink text-sm">{a.title}</div>
-							<div class="mono text-ink-faint text-xs" style="margin-top: 1px">
-								{a.scope} · first approval: {a.first} · {a.when}
-							</div>
-						</div>
-						<Chip toneClass={im.text} softClass={im.soft} edgeClass={im.edge}>{a.impact}</Chip>
-						<Btn size="sm" variant="ghost" icon="eye" onclick={() => onReview?.(a)}>Review</Btn>
-						<Btn size="sm" icon="check-circle" onclick={() => onApprove?.(a)}>Approve</Btn>
-					</div>
-				{/each}
-			</div>
+		{#if error}
+			<LoadError what="the approvals queue" {error} />
 		{:else}
-			<EmptyState kanji="静" title="Nothing awaiting a second look.">
-				High-impact candidates land here for a second signature. The queue is clear.
-			</EmptyState>
+			{#if approvals.length}
+				<div class="bg-paper-soft border-paper-edge overflow-hidden rounded-lg border">
+					{#each approvals as a (a.id)}
+						{@const im = impactTone(a.impact)}
+						<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
+							<KanjiToken char={a.kanji} size="lg" toneClass="text-accent" w={22} />
+							<div class="flex-1" style="min-width: 0">
+								<div class="text-ink text-sm">{a.title}</div>
+								<div class="mono text-ink-faint text-xs" style="margin-top: 1px">
+									{a.scope} · first approval: {a.first} · {a.when}
+								</div>
+							</div>
+							<Chip toneClass={im.text} softClass={im.soft} edgeClass={im.edge}>{a.impact}</Chip>
+							<Btn size="sm" variant="ghost" icon="eye" onclick={() => onReview?.(a)}>Review</Btn>
+							<Btn size="sm" icon="check-circle" onclick={() => onApprove?.(a)}>Approve</Btn>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<EmptyState kanji="静" title="Nothing awaiting a second look.">
+					High-impact candidates land here for a second signature. The queue is clear.
+				</EmptyState>
+			{/if}
 		{/if}
 	</div>
 </Screen>

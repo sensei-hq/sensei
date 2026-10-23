@@ -34,12 +34,11 @@ describe('ScrWorkspaces — the full workspace list', () => {
 	});
 
 	it('shows an ERROR state (distinct from empty) when the read failed', () => {
-		const { getByText, queryByText } = render(ScrWorkspaces, {
+		const { getByRole, queryByText } = render(ScrWorkspaces, {
 			props: { workspaces: [], error: 'could not reach the dojo service' }
 		});
 		// The failure surfaces — never the honest-empty state masking a read error.
-		expect(getByText("Couldn't load your workspaces.")).toBeTruthy();
-		expect(getByText(/could not reach the dojo service/)).toBeTruthy();
+		expect(getByRole('alert').textContent).toContain('could not reach the dojo service');
 		expect(queryByText('No workspaces yet.')).toBeNull();
 	});
 });

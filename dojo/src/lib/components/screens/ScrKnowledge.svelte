@@ -10,7 +10,7 @@
 
 <script lang="ts">
 	import { Screen } from '@sensei/ui';
-	import { SectionHead, Btn, Chip, Icon, ListSection, KanjiToken } from '$lib/components/kit';
+	import { SectionHead, Btn, Chip, Icon, ListSection, KanjiToken, LoadError } from '$lib/components/kit';
 	import type { KitKnowledge } from '$lib/components/kit/types';
 
 	// The maintainer knowledge library (mockup ScrKnowledge) — the published
@@ -20,10 +20,13 @@
 	// Presentational: the page supplies the library (kit fixtures this chunk).
 	let {
 		orgName,
-		knowledge
+		knowledge,
+		error = null
 	}: {
 		orgName: string;
 		knowledge: KitKnowledge;
+		/** A failed read — shown in place of the empty state (#335). */
+		error?: string | null;
 	} = $props();
 </script>
 
@@ -47,54 +50,58 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-		<ListSection
-			icon="check-circle"
-			iconToneClass="text-success"
-			title="Active"
-			count={knowledge.active.length}
-		>
-			{#each knowledge.active as r (r.title)}
-				<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-					<KanjiToken char={r.kanji} size="lg" toneClass="text-accent" w={22} />
-					<div class="flex-1" style="min-width: 0">
-						<div class="text-ink text-sm">{r.title}</div>
-						<div class="mono text-ink-faint text-xs" style="margin-top: 1px">
-							{r.scope} · {r.adopted} · {r.age}
+		{#if error}
+			<LoadError what="the knowledge library" {error} />
+		{:else}
+			<ListSection
+				icon="check-circle"
+				iconToneClass="text-success"
+				title="Active"
+				count={knowledge.active.length}
+			>
+				{#each knowledge.active as r (r.title)}
+					<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
+						<KanjiToken char={r.kanji} size="lg" toneClass="text-accent" w={22} />
+						<div class="flex-1" style="min-width: 0">
+							<div class="text-ink text-sm">{r.title}</div>
+							<div class="mono text-ink-faint text-xs" style="margin-top: 1px">
+								{r.scope} · {r.adopted} · {r.age}
+							</div>
 						</div>
+						<Btn size="sm" variant="ghost" icon="pen-2">Edit</Btn>
 					</div>
-					<Btn size="sm" variant="ghost" icon="pen-2">Edit</Btn>
-				</div>
-			{/each}
-		</ListSection>
+				{/each}
+			</ListSection>
 
-		<ListSection
-			icon="trash-bin-minimalistic"
-			title="Pending prune"
-			count={knowledge.pending.length}
-		>
-			{#each knowledge.pending as r (r.title)}
-				<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-					<KanjiToken char={r.kanji} size="lg" toneClass="text-ink-mute" w={22} />
-					<div class="flex-1" style="min-width: 0">
-						<div class="text-ink-soft text-sm">{r.title}</div>
-						<div class="mono text-ink-faint text-xs" style="margin-top: 1px">{r.scope} · {r.age}</div>
+			<ListSection
+				icon="trash-bin-minimalistic"
+				title="Pending prune"
+				count={knowledge.pending.length}
+			>
+				{#each knowledge.pending as r (r.title)}
+					<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
+						<KanjiToken char={r.kanji} size="lg" toneClass="text-ink-mute" w={22} />
+						<div class="flex-1" style="min-width: 0">
+							<div class="text-ink-soft text-sm">{r.title}</div>
+							<div class="mono text-ink-faint text-xs" style="margin-top: 1px">{r.scope} · {r.age}</div>
+						</div>
+						<Btn size="sm" variant="ghost" icon="restart">Keep</Btn>
 					</div>
-					<Btn size="sm" variant="ghost" icon="restart">Keep</Btn>
-				</div>
-			{/each}
-		</ListSection>
+				{/each}
+			</ListSection>
 
-		<ListSection icon="widget-4" title="Catalog · skills, agents & commands" count={knowledge.catalog.length}>
-			{#each knowledge.catalog as c (c.title)}
-				<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
-					<Icon name={EXT_ICON[c.kind] ?? 'widget-4'} size={18} toneClass="text-accent" />
-					<div class="flex-1" style="min-width: 0">
-						<div class="text-ink text-sm">{c.title}</div>
-						<div class="mono text-ink-faint text-xs" style="margin-top: 1px">{c.scope}</div>
+			<ListSection icon="widget-4" title="Catalog · skills, agents & commands" count={knowledge.catalog.length}>
+				{#each knowledge.catalog as c (c.title)}
+					<div class="border-paper-edge flex items-center gap-4 border-b" style="padding: 12px 16px">
+						<Icon name={EXT_ICON[c.kind] ?? 'widget-4'} size={18} toneClass="text-accent" />
+						<div class="flex-1" style="min-width: 0">
+							<div class="text-ink text-sm">{c.title}</div>
+							<div class="mono text-ink-faint text-xs" style="margin-top: 1px">{c.scope}</div>
+						</div>
+						<Chip mono toneClass="text-ink-mute">{c.kind}</Chip>
 					</div>
-					<Chip mono toneClass="text-ink-mute">{c.kind}</Chip>
-				</div>
-			{/each}
-		</ListSection>
+				{/each}
+			</ListSection>
+		{/if}
 	</div>
 </Screen>
