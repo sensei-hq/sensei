@@ -1,4 +1,4 @@
-// GET /v1/auth/cli/start?challenge=…&port=…&login=… — begin a daemon sign-in.
+// GET /v1/auth/cli/start?challenge=…&port=…&login=…&flow=… — begin a daemon sign-in.
 //
 // Returns the URL to open rather than redirecting: senseid may be headless, and
 // the caller (the desktop app, the CLI) knows better than dōjō does how to put a
@@ -10,7 +10,7 @@
 import type { RequestHandler } from './$types';
 import { env as pub } from '$env/dynamic/public';
 import { apiError } from '$lib/server/dojo-auth';
-import { authorizeUrl, isForwardablePort } from '$lib/server/cli-auth';
+import { authorizeUrl, isFlowId, isForwardablePort } from '$lib/server/cli-auth';
 
 export const GET: RequestHandler = ({ url }) => {
 	const challenge = url.searchParams.get('challenge');
@@ -21,6 +21,10 @@ export const GET: RequestHandler = ({ url }) => {
 	// it break, with an error that says nothing about what was wrong.
 	if (!challenge) return apiError(400, 'challenge is required');
 	if (!isForwardablePort(port)) return apiError(400, 'port must be an integer in 1024–65535');
+	// The daemon's name for this flow (#294). Optional, so an older daemon still
+	// signs in; when given it becomes a path segment, so it must be a plain token.
+	const flow = url.searchParams.get('flow');
+	if (flow !== null && !isFlowId(flow)) return apiError(400, 'flow must be 16–64 of [A-Za-z0-9_-]');
 
 	const supabaseUrl = pub.PUBLIC_SUPABASE_URL;
 	if (!supabaseUrl) return apiError(503, 'dōjō is not configured for sign-in');
@@ -31,7 +35,8 @@ export const GET: RequestHandler = ({ url }) => {
 			origin: url.origin,
 			port: Number(port),
 			challenge,
-			login: url.searchParams.get('login')
+			login: url.searchParams.get('login'),
+			flow: flow ?? undefined
 		})
 	});
 };

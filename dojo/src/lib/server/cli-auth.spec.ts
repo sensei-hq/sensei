@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { authorizeUrl, daemonRedirect, isForwardablePort } from './cli-auth';
+import { authorizeUrl, daemonRedirect, isFlowId, isForwardablePort } from './cli-auth';
 import config from '../../../kavach.config.js';
 
 const base = {
@@ -104,5 +104,31 @@ describe('daemonRedirect', () => {
 		const u = new URL(daemonRedirect(7744, params));
 		expect(u.searchParams.get('error')).toBe('access_denied');
 		expect(u.searchParams.get('error_description')).toBe('the user declined');
+	});
+});
+
+// #294: two daemon sign-ins in flight at once each need their own way back. The
+// daemon names each flow; the id rides in the callback path and is forwarded.
+describe('a named sign-in flow', () => {
+	const FLOW = 'f3R9xQ2mZ7cW1vB8nK4pL6tY0sA5dE';
+
+	it('accepts a long random token, and nothing that could alter the path', () => {
+		expect(isFlowId(FLOW)).toBe(true);
+		for (const bad of ['', 'short', '../7744', 'a/b'.repeat(8), 'has space in it aaaaaaaa', 'x'.repeat(65), null, 42]) {
+			expect(isFlowId(bad)).toBe(false);
+		}
+	});
+
+	it('comes back to dōjō under its own path when named', () => {
+		const redirect = new URL(authorizeUrl({ ...base, flow: FLOW })).searchParams.get('redirect_to');
+		expect(redirect).toBe(`https://dojo.sensei-hq.com/v1/auth/cli/callback/7744/${FLOW}`);
+		const unnamed = new URL(authorizeUrl(base)).searchParams.get('redirect_to');
+		expect(unnamed).toBe('https://dojo.sensei-hq.com/v1/auth/cli/callback/7744');
+	});
+
+	it('reaches the daemon with its flow id beside the code', () => {
+		const to = new URL(daemonRedirect(7744, new URLSearchParams({ code: 'c' }), FLOW));
+		expect([to.searchParams.get('code'), to.searchParams.get('flow')]).toEqual(['c', FLOW]);
+		expect(new URL(daemonRedirect(7744, new URLSearchParams({ code: 'c' }))).searchParams.has('flow')).toBe(false);
 	});
 });
