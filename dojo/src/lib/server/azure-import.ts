@@ -164,7 +164,9 @@ async function mapProjects(
 		}
 		const kept = prev?.workspace_id ? workspaceOf.get(prev.workspace_id) : undefined;
 		const slug = kept ? kept.slug : freeSlug(project, taken);
-		const { error } = await db
+		// p_keep_elsewhere: the database itself leaves a project another dōjō holds
+		// where it is, even if it moved there after the read above.
+		const { data, error } = await db
 			.rpc('map_forge_unit', {
 				p_principal: principalId,
 				p_provider: PROVIDER,
@@ -173,11 +175,15 @@ async function mapProjects(
 				p_tenant: tenantId,
 				p_workspace_slug: slug,
 				p_workspace_name: kept ? kept.name : project.name,
-				p_proven: true
+				p_proven: true,
+				p_keep_elsewhere: true
 			})
 			.single();
 		fail(error);
-		mapped++;
+		const filedIn = (data as { tenant_id?: unknown } | null)?.tenant_id;
+		if (typeof filedIn !== 'string') throw new AdminError(500, `map_forge_unit did not say where ${project.name} is filed`);
+		if (filedIn === tenantId) mapped++;
+		else elsewhere++;
 	}
 	return { mapped, elsewhere };
 }

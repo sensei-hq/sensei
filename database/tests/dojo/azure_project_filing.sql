@@ -128,4 +128,46 @@ begin
     end if;
 end $$;
 
+-- An import keeps a project an admin filed into ANOTHER dōjō where it is — the
+-- database enforces it (p_keep_elsewhere), not only the server's pre-read
+-- (#308 R5b review).
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
+  ('b0000000-0000-4000-8000-000000000c0b', 'organization/ztest-az-elsewhere', 'organization', 'ztest-az-elsewhere', 'Elsewhere', 'x');
+insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via) values
+  ('b0000000-0000-4000-8000-000000000c0b', 'a0000000-0000-4000-8000-000000000c01', 'admin', 'employer', 'sso');
+set local role service_role;
+do $$
+declare
+    r record;
+    n bigint;
+begin
+    perform dojo.map_forge_unit('a0000000-0000-4000-8000-000000000c01', 'azure_devops', 'ztest-proj-away',
+        'ztest-az-org/Away', 'b0000000-0000-4000-8000-000000000c0b', 'away', 'Away', true);
+    select count(*) into n from dojo.audit_events where tenant_id = 'b0000000-0000-4000-8000-000000000c0a';
+
+    select * into r from dojo.map_forge_unit('a0000000-0000-4000-8000-000000000c01', 'azure_devops', 'ztest-proj-away',
+        'ztest-az-org/Away', 'b0000000-0000-4000-8000-000000000c0a', 'away', 'Away', true, true);
+    if r.tenant_id <> 'b0000000-0000-4000-8000-000000000c0b' then
+        raise exception 'keep elsewhere: the answer should name the dōjō it stays in, got %', r;
+    end if;
+    if (select tenant_id from dojo.forge_unit_mappings where external_id = 'ztest-proj-away')
+       <> 'b0000000-0000-4000-8000-000000000c0b' then
+        raise exception 'keep elsewhere: the project was moved';
+    end if;
+    if exists (select 1 from dojo.workspaces where tenant_id = 'b0000000-0000-4000-8000-000000000c0a' and slug = 'away') then
+        raise exception 'keep elsewhere: a workspace was made for a project that stayed away';
+    end if;
+    if (select count(*) from dojo.audit_events where tenant_id = 'b0000000-0000-4000-8000-000000000c0a') <> n then
+        raise exception 'keep elsewhere: a mapping that did not happen was audited';
+    end if;
+
+    -- Without the flag, a proven admin still moves it (R5a re-mapping is unchanged).
+    select * into r from dojo.map_forge_unit('a0000000-0000-4000-8000-000000000c01', 'azure_devops', 'ztest-proj-away',
+        'ztest-az-org/Away', 'b0000000-0000-4000-8000-000000000c0a', 'away', 'Away', true);
+    if r.tenant_id <> 'b0000000-0000-4000-8000-000000000c0a' then
+        raise exception 'keep elsewhere: an explicit re-map was refused, got %', r;
+    end if;
+end $$;
+reset role;
+
 rollback;

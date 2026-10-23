@@ -94,7 +94,9 @@ beforeEach(() => resetFakeIds());
 
 describe('importAzureOrganization — from the personal dōjō (how an Azure organization\'s dōjō is first made)', () => {
 	it('makes the organization\'s dōjō, claims it, stores the token and files each project as a workspace', async () => {
-		const d = db();
+		// The fake numbers rows in order (resetFakeIds): the new org dōjō is `tena-2`,
+		// and map_forge_unit answers that it filed there.
+		const d = db({ 'rpc:map_forge_unit': { rows: [{ mapping_id: 'fm-1', tenant_id: 'tena-2', workspace_id: 'w-1' }] } });
 		const { a } = fakeAzure();
 		const out = await importAzureOrganization(d as never, ME, { as: 'own' }, PAT, a);
 
@@ -134,7 +136,8 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 				p_tenant: org?.id,
 				p_workspace_slug: 'mobile-apps',
 				p_workspace_name: 'Mobile Apps',
-				p_proven: true
+				p_proven: true,
+				p_keep_elsewhere: true
 			},
 			expect.objectContaining({ p_external_id: 'proj-3', p_external_slug: 'example-org/Platform', p_workspace_slug: 'platform' })
 		]);
@@ -251,6 +254,13 @@ describe('importAzureOrganization — from an organization dōjō\'s Integration
 			['proj-4', 'example-org/Mobile Apps!', 'mobile-apps-2', 'Mobile Apps!']
 		]);
 		expect(out.projects).toEqual({ total: 4, mapped: 3, elsewhere: 1, complete: true });
+	});
+
+	it('counts a project the database kept in another dōjō (a re-map that raced the import)', async () => {
+		const d = db({ 'rpc:map_forge_unit': { rows: [{ mapping_id: 'fm-9', tenant_id: 't-other', workspace_id: 'w-away' }] } });
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure({ projects: [P1] }).a);
+		expect(d.rpcCalls.find((c) => c.fn === 'map_forge_unit')?.args.p_keep_elsewhere).toBe(true);
+		expect(out.projects).toEqual({ total: 1, mapped: 0, elsewhere: 1, complete: true });
 	});
 
 	it('says when the project read was not complete', async () => {
