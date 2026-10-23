@@ -192,7 +192,7 @@ The settings screen lists them as repositories.
   - #298: workspace Instruments took 6–28s to open. **Fixed on `fix/298-stored-pairing-keys`**: tool calls pair on `tool_use_id`/`duration_ms` stored as generated columns, not read out of every payload. Live: 0.58s, output identical. Merges after dbd-core moves to a release with sensei-hq/dbd#104 (found here; fixed on dbd develop, c506dfb0). dbd#105 filed.
   - #297: the dōjō sign-in page drops Supabase's `#error` fragment (the user saw a blank form after a linking failure).
   - ~~#106~~ **Closed 2026-10-23**: no view reads a fixture or mock module (guard spec, mutation-probed). Your constitution, Plan & billing, the org constitution (`…/rules`), scopes, the triage detail and the org workspace preview now show real data or a stated absence; live-checked on the local dōjō.
-  - #335 (found via #106): seven org-screen load errors are never rendered, so a failed read shows as empty.
+  - ~~#335~~ **Closed 2026-10-23**: every org screen shows a failed read (`LoadError`, role=alert) in place of its body; a spec checks that each loader error reaches the page. Live with injected 500s.
   - #191: kavach 1.2.0.
 - **Code health:**
   - #199: `has_key` part done via #285. Left: Linux roundtrip tests in CI, and a decision on headless Linux
