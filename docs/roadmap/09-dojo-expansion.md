@@ -178,7 +178,7 @@ slice builds, passes and ships on its own.
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
   org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
-  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 (8a584e51); ships in the next release. R5b (Azure) next, after R9.*
+  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 (8a584e51); ships in the next release. R5b (Azure) merged to develop 2026-10-23 (18f9311c): Microsoft Entra connect flow (D42), refresh token in Vault with compare-and-set rotation, org → dōjō and project → workspace, repositories filed by project, membership provenance per forge and unit, a scheduled member read every 6 h (D44, Cloudflare Cron through `dojo/worker-entry.js`); two independent security reviews, every finding fixed red-first. Live checks wait on the user's Entra app registration (spec: "R5b · one-time setup"). R5c next.*
   *R5a (GitHub) built 2026-10-22 on branch `r5a-github-import` (not merged): the adapter interface, claim through
   `dojo.claim_forge_unit`, `dojo.forge_unit_mappings` + `map_forge_unit`, Admin → Integrations, and registration by
   the mapping — see the spec's "R5a as built". Production's live check waits on the merge and deploy.*
