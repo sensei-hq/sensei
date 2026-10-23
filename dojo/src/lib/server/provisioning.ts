@@ -112,10 +112,12 @@ export interface FallbackIdentity {
 const DOJO_HOST = 'dojo.sensei-hq.org';
 
 /** `dojo.forge_provider` → `dojo.auth_method`. The auth_method enum has no
- *  generic `oauth` label yet (§V.1 puts it in phase 2), so only github has a
- *  valid value — which is why phase 1 provisions github alone. */
+ *  generic `oauth` label yet (§V.1 puts it in phase 2): GitHub is proven by its
+ *  sign-in, Azure DevOps by the PAT an organization admin pasted (#308 R5b, D35);
+ *  GitLab and Bitbucket have no valid value yet. */
 export function authMethodFor(provider: ForgeProvider): string {
 	if (provider === 'github') return 'github_oauth';
+	if (provider === 'azure_devops') return 'azure_devops_pat';
 	throw new AdminError(
 		501,
 		`provisioning from ${provider} needs the generic 'oauth' auth_method (phase 2)`
@@ -385,19 +387,20 @@ async function ensureMembership(
  * a conflict is a 409 that surfaces (it is the shape an accidental Supabase
  * account merge takes), never a quiet reassignment.
  */
-async function ensureIdentity(
+export async function ensureForgeIdentity(
 	db: DojoClient,
 	principalId: string,
-	facts: ForgeFacts
+	forge: ForgeProvider,
+	user: Pick<ForgeUser, 'id' | 'name' | 'email'>
 ): Promise<void> {
-	const provider = authMethodFor(facts.provider);
+	const provider = authMethodFor(forge);
 	const now = new Date().toISOString();
 
 	const found = await db
 		.from('identities')
 		.select('id, principal_id')
 		.eq('provider', provider)
-		.eq('subject', facts.user.id)
+		.eq('subject', user.id)
 		.maybeSingle();
 	if (found.error) throw new AdminError(500, found.error.message);
 
@@ -412,8 +415,8 @@ async function ensureIdentity(
 		const upd = await db
 			.from('identities')
 			.update({
-				email: facts.user.email,
-				display_name: facts.user.name,
+				email: user.email,
+				display_name: user.name,
 				last_login_at: now
 			})
 			.eq('id', row.id)
@@ -428,9 +431,9 @@ async function ensureIdentity(
 		.insert({
 			principal_id: principalId,
 			provider,
-			subject: facts.user.id,
-			email: facts.user.email,
-			display_name: facts.user.name,
+			subject: user.id,
+			email: user.email,
+			display_name: user.name,
 			last_login_at: now
 		})
 		.select('id')
@@ -903,7 +906,7 @@ export async function ensureProvisioned(
 	}
 
 	const authenticatedVia = authMethodFor(facts.provider);
-	await ensureIdentity(db, principalId, facts);
+	await ensureForgeIdentity(db, principalId, facts.provider, facts.user);
 
 	const personal = await ensurePersonalTenant(
 		db,

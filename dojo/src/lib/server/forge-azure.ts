@@ -358,6 +358,8 @@ export interface AzureAdapter extends ForgeAdapter {
 	provider: 'azure_devops';
 	/** The organization this adapter reads. */
 	organization: string;
+	/** The organization's stable id and the token's owner, read now. */
+	connection(token: string): Promise<AzureConnection>;
 	listProjects(token: string, unit: ForgeUnitRef): Promise<AzureProjectsRead>;
 }
 
@@ -371,6 +373,7 @@ export function azureAdapter(organization: string, fetchImpl: typeof fetch = fet
 	return {
 		provider: 'azure_devops',
 		organization: name,
+		connection: (token: string) => readAzureConnection(name, token, fetchImpl),
 		/** The organization, when the token's owner is active in it — with their
 		 *  standing proven now. Empty (a positive answer) when they are not. */
 		listUnits: async (token: string): Promise<ForgeUnitsRead> => {

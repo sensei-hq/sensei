@@ -99,7 +99,14 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 	const state: Record<string, FakeTable> = {};
 	const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
 	for (const [name, t] of Object.entries(tables)) {
-		state[name] = { rows: t.rows.map((r) => ({ ...r })), uniques: t.uniques, reads: 0, error: t.error };
+		// A scalar row (a function that returns one value, read with `.single()`)
+		// stays the value; spreading it would turn a string into an object.
+		state[name] = {
+			rows: t.rows.map((r) => (r !== null && typeof r === 'object' ? { ...r } : r)),
+			uniques: t.uniques,
+			reads: 0,
+			error: t.error
+		};
 	}
 
 	function builder(table: string) {

@@ -122,6 +122,16 @@ describe('readAzureConnection', () => {
 	});
 });
 
+describe('connection', () => {
+	it('is the adapter\'s organization read: its stable id and the token owner', async () => {
+		const { fn, calls } = fakeFetch({ '/_apis/connectionData': { body: F.connectionData() } });
+		const conn = await azureAdapter(F.ORG, fn).connection(PAT);
+		expect(conn.orgId).toBe(F.ORG_ID);
+		expect(conn.user.id).toBe(F.ME_ID);
+		expect(calls[0].url).toBe('https://dev.azure.com/example-org/_apis/connectionData');
+	});
+});
+
 describe('listUnits', () => {
 	it('is the bound organization, by its stable id, with the person proven an admin', async () => {
 		const { fn } = fakeFetch(adminRoutes({ [`Memberships/${F.ME_DESCRIPTOR}`]: { body: F.memberships(F.ME_DESCRIPTOR, [F.PCA_DESCRIPTOR]) } }));
