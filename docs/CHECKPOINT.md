@@ -9,8 +9,8 @@
   and every finding was fixed with a failing test first.
 - #330 Terms of Service and Privacy Policy pages. The user approved the wording.
 - #328 heal defect fixed (0 of 936 live folders were stranded).
-- #329 fixed: a magic-link switch never shows the previous account. #331 fixed: one personal dōjō per
-  person, however many sign-in passes race. Both were verified live on the local dōjō.
+- Sign-in fixes, verified live on the local dōjō: #329 (a magic-link switch never shows the previous
+  account), #331 (one personal dōjō per person, however many passes race), #297 (/signin shows Supabase's error).
 
 **v0.20.0 rehearsal (2026-10-23): passed.**
 - The copy: the 2026-10-21 production dump, brought to v0.19.0 by that tag's reconcile, deploy and diff.
