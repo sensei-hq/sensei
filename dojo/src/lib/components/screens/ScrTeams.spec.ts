@@ -57,7 +57,7 @@ describe('ScrTeams', () => {
 		});
 		expect(getByText('30')).toBeTruthy();
 		expect(queryByText('Lena')).toBeNull();
-		expect(getByText(/at least 3 people/)).toBeTruthy();
+		expect(getByText(/at least 3 other people/)).toBeTruthy();
 	});
 
 	it('on no team: told so', () => {

@@ -128,9 +128,13 @@ team); for a contributor or maintainer, team totals only. `dojo.team_metric_tota
 (SECURITY DEFINER, caller from the session) sums counts and pools rates by their
 own denominator (Σ value × denominator / Σ denominator) over the team's active
 members' rows **on repositories the caller can read**, for the teams the caller is
-on (every team for an admin), and answers a (team, metric) only when at least
-`dojo.k_anonymity_min()` = **3** people sent it — the dōjō's k-anonymity floor
-(D26, the knowledge gate's `K_ANONYMITY_MIN_CONTRIBUTORS`). This is a deliberate
+on (every team for an admin). Below lead it answers a (team, metric) only when at
+least `dojo.k_anonymity_min()` = **3 people other than the reader** sent it (user,
+2026-10-22) — the dōjō's k-anonymity floor (D26, the knowledge gate's
+`K_ANONYMITY_MIN_CONTRIBUTORS`), counted without the caller, so a member who
+subtracts their own number is still left with at least 3 colleagues. The constant
+stays 3; "others" is the function not counting the caller. A lead or admin reads
+per person anyway, so for them the floor counts everyone. This is a deliberate
 exception to D10 (no small-group hiding) for team totals shown to members, at the
 user's direction. Pinned by `database/tests/dojo/team_metric_totals.sql`.
 

@@ -10,8 +10,13 @@ set search_path to dojo, extensions;
 -- own denominator, Σ(value × props.denominator) / Σ props.denominator (null when a
 -- row lacks one) — the same pooling as team_member_metrics.
 --
--- k-anonymity: a (team, metric) is answered only when at least
--- dojo.k_anonymity_min() distinct people sent it, so no member can recover a
+-- k-anonymity (user, 2026-10-22): below lead, a (team, metric) is answered only
+-- when at least dojo.k_anonymity_min() distinct people OTHER THAN THE CALLER sent
+-- it — so a member who subtracts their own number is still left with a total
+-- over at least that many colleagues. The shared constant stays 3 (D26; the
+-- knowledge gate keeps its own meaning); "others" is expressed here, by not
+-- counting the caller. A lead or admin reads per person anyway, so for them the
+-- floor counts everyone who sent it. The rule exists so no member can recover a
 -- colleague's number from a total over one or two people.
 --
 -- SECURITY DEFINER: it must read teammates' rows the caller may not read one by
@@ -66,7 +71,10 @@ as $$
       join dojo.metric_catalogue c on c.id = rm.metric_id and c.key = any (p_keys)
      where dojo.can_read_repository(rm.repository_id, p_tenant)
      group by tm.team_id, c.key
-    having count(distinct rm.principal_id) >= dojo.k_anonymity_min();
+    having count(distinct rm.principal_id)
+               filter (where rm.principal_id <> dojo.current_principal_id()
+                          or dojo.tenant_role_at_least(p_tenant, 'lead'))
+           >= dojo.k_anonymity_min();
 $$;
 
 revoke all on function dojo.team_metric_totals(uuid, text[], date) from public;
@@ -75,4 +83,4 @@ grant execute on function dojo.team_metric_totals(uuid, text[], date) to authent
 comment on function dojo.team_metric_totals(uuid, text[], date) is
 'Per-team totals and denominator-pooled rates for the caller''s teams (every team for
 an admin), over active members'' rows on repositories the caller can read; a
-(team, metric) only when at least k_anonymity_min() people sent it (#307 R8).';
+(team, metric) only when at least k_anonymity_min() people other than the caller sent it (everyone counts for a lead or admin) (#307 R8).';

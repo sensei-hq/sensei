@@ -66,7 +66,8 @@ export function toTeamMetricsView(wire: TeamMetricsWire): TeamMetricsView {
 	return {
 		window: `last ${wire.days} days, since ${wire.since}`,
 		perPerson: wire.per_person,
-		totalsNote: `A team number shows once at least ${wire.k_min} people have sent it.`,
+		// Below lead the floor counts people other than the reader (dojo.team_metric_totals).
+		totalsNote: `A team number shows once at least ${wire.k_min} ${wire.per_person ? '' : 'other '}people have sent it.`,
 		columns: TEAM_METRICS,
 		teams: wire.teams.map((t) => ({
 			id: t.id,

@@ -47,8 +47,8 @@ for everyone below. That half of the console is specified in
     can read (#307 R8). A lead on no team sees only themselves; an admin's Teams
     view lists every team with its people. Contributors and maintainers see their
     own teams' **totals only** — counts summed, rates pooled by their denominator,
-    and a team number only once at least 3 people sent it (k-anonymity, D26's
-    floor). Viewers stay aggregate-only (D6).
+    and a team number only once at least 3 people other than the reader sent it
+    (k-anonymity, D26's floor, counted without the reader). Viewers stay aggregate-only (D6).
   - **Admin** — **change member roles + access policies**: members, identities/SSO,
     scopes & precedence, billing.
   - The **org context `/org/[slug]` exists** (`+page.svelte` + `/projects` +

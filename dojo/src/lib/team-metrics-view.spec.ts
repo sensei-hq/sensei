@@ -83,8 +83,11 @@ describe('toTeamMetricsView', () => {
 		expect(view.teams[0].memberCount).toBe(4);
 	});
 
-	it('says why a total may be missing — the k-anonymity floor', () => {
+	it('says why a total may be missing — the k-anonymity floor, counted without the reader below lead', () => {
 		expect(view.totalsNote).toBe('A team number shows once at least 3 people have sent it.');
+		expect(toTeamMetricsView({ ...wire, per_person: false }).totalsNote).toBe(
+			'A team number shows once at least 3 other people have sent it.'
+		);
 	});
 
 	it('names the window and whether people are shown', () => {

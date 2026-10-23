@@ -155,7 +155,8 @@ slice builds, passes and ships on its own.
   Relay sessions stay owner-only (#249); the lead reads metric aggregates (sessions = `throughput`, AI usage =
   `tokens_per_day`), never sessions. Pinned by `database/tests/dojo/lead_team_metrics.sql`.
   Follow-up (user, 2026-10-22): Teams for every member — an admin sees every team with its people, a contributor
-  or maintainer their teams' totals only (`dojo.team_metric_totals`, k-anonymous at 3, D26's floor); rates pooled
+  or maintainer their teams' totals only (`dojo.team_metric_totals`, k-anonymous: at least 3 senders other than the
+  reader, D26's floor counted without the caller); rates pooled
   by their denominator (Σ numerator / Σ denominator); departed teammates stay excluded. Pinned by
   `database/tests/dojo/team_metric_totals.sql`.*
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
