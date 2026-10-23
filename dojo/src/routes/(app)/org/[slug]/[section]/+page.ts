@@ -14,6 +14,8 @@ import {
 import { listTriage, type TriageRow } from '$lib/triage-data';
 import { toViewerViews, type DojoViewerView, type DojoViewerWire, type ViewerWorkspaceView } from '$lib/viewers-view';
 import { toTeamViews, type TeamView, type TeamWire } from '$lib/teams-view';
+import { toTeamMetricsView, type TeamMetricsView } from '$lib/team-metrics-view';
+import type { TeamMetricsWire } from '$lib/team-metrics';
 import {
 	listMembers,
 	listPolicies,
@@ -21,6 +23,7 @@ import {
 	listAudit,
 	listViewers,
 	listTeams,
+	getTeamMetrics,
 	getHealth,
 	getBilling,
 	type Membership,
@@ -172,6 +175,15 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		}
 	}
 
+	// Teams (lead, #307 R8, D38) — the teams the caller is on, each member's
+	// numbers. A failed read is an error state, never an empty team.
+	const teamsRes = await guardedFor<TeamMetricsWire, TeamMetricsView | null>(
+		'teams',
+		null,
+		(tk) => getTeamMetrics(tk, opts),
+		toTeamMetricsView
+	);
+
 	// Identity (admin).
 	const identityRes = await guardedFor<Identity[], KitIdentity>(
 		'identity',
@@ -248,6 +260,8 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		viewerWorkspaces,
 		teams,
 		membersError,
+		teamMetrics: teamsRes.value,
+		teamMetricsError: teamsRes.error,
 		scopeOwners: scopeOwnersFor(slug),
 		identity: identityRes.value,
 		identityError: identityRes.error,

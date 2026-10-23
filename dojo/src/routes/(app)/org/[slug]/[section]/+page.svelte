@@ -11,6 +11,7 @@
 	import ScrIdentity from '$lib/components/screens/ScrIdentity.svelte';
 	import ScrIntegrations from '$lib/components/screens/ScrIntegrations.svelte';
 	import ScrHealth from '$lib/components/screens/ScrHealth.svelte';
+	import ScrTeams from '$lib/components/screens/ScrTeams.svelte';
 	import ScrBilling from '$lib/components/screens/ScrBilling.svelte';
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
 	import { orgHref, labelForSection } from '$lib/nav';
@@ -150,6 +151,8 @@
 		onRemoveTeamMember={(t, pid) => org.removeTeamMember(t, pid)}
 		onGrantTeam={(t, workspaceId) => org.grantTeamView(t, workspaceId)}
 	/>
+{:else if data.section === 'teams'}
+	<ScrTeams orgName={data.orgName} view={data.teamMetrics} error={data.teamMetricsError} />
 {:else if data.section === 'scopes'}
 	<ScrScopes orgName={data.orgName} owners={data.scopeOwners} />
 {:else if data.section === 'identity'}
