@@ -271,3 +271,12 @@ describe('ScrBilling — plan, tiers, relay rows and invoices', () => {
 		expect(getByText('$408.00')).toBeTruthy();
 	});
 });
+
+describe('ScrScopes — with no scope owners recorded (#106)', () => {
+	afterEach(cleanup);
+
+	it('says no scope has an owner rather than rendering a blank page', () => {
+		const { getByText } = render(ScrScopes, { props: { orgName: 'sensei-hq', owners: [] } });
+		expect(getByText("No scope has an owner yet — every queue is triaged by the dōjō's maintainers.")).toBeTruthy();
+	});
+});

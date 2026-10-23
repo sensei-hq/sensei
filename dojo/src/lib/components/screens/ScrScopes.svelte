@@ -11,7 +11,8 @@
 	// "unowned · fallback" chip when no one owns it. The header carries the
 	// standing description; a warning Banner appears ONLY when a scope is unowned,
 	// so the band means "something needs you" rather than being ambient chrome.
-	// Presentational: the page supplies the rows (kit fixtures this chunk).
+	// Presentational: the page supplies the rows. No ownership is recorded yet, so
+	// the page passes none and the screen says so (#106).
 	let {
 		orgName,
 		owners = [],
@@ -60,6 +61,12 @@
 			<Banner tone="warning" title="{unownedPhrase} — its queue routes to a fallback maintainer.">
 				Assign an owner to give the scope an SLA. Nothing stalls in the meantime.
 			</Banner>
+		{/if}
+
+		{#if owners.length === 0}
+			<p class="text-ink-mute text-sm m-0">
+				No scope has an owner yet — every queue is triaged by the dōjō's maintainers.
+			</p>
 		{/if}
 
 		{#each groups as g (g.name)}

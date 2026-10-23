@@ -10,7 +10,6 @@ import { join } from 'path';
 // `/v1` reads or to a stated absence, one per change. The list only shrinks, and
 // a new importer fails at once.
 const STILL_ON_FIXTURES = [
-	'routes/(app)/org/[slug]/[section]/+page.ts',
 	'routes/(app)/org/[slug]/workspaces/[id]/+page.ts'
 ];
 

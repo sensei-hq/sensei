@@ -133,7 +133,7 @@
 <svelte:head><title>{data.title} · {data.orgName} · Dōjō</title></svelte:head>
 
 {#if data.section === 'ladder'}
-	<ScrOrgLadder orgName={data.orgName} sections={data.sections} />
+	<ScrOrgLadder orgName={data.orgName} sections={data.sections} error={data.sectionsError} />
 {:else if data.section === 'workspaces'}
 	<ScrWorkspaces
 		workspaces={data.workspaces}

@@ -26,6 +26,8 @@ import {
 	getTeamMetrics,
 	getHealth,
 	getBilling,
+	listTenantRules,
+	type TenantRuleWire,
 	type Membership,
 	type Policy,
 	type Identity,
@@ -60,13 +62,10 @@ import type {
 	KitWorkspace,
 	KitIdentity,
 	KitHealth,
-	KitBilling
+	KitBilling,
+	KitConstitutionSection
 } from '$lib/components/kit/types';
-import {
-	orgConstitutionFor,
-	candidateDetailFor,
-	scopeOwnersFor
-} from '$lib/components/kit/fixtures';
+import { rulesToSections } from '$lib/constitution-map';
 
 // An org-zone section route. Resolves the org from the slug against real
 // memberships (redirect to /you if not a member) and validates the section
@@ -87,8 +86,9 @@ import {
 //   • billing           → GET …/billing (admin floor) — the LIVE billable seat
 //     count, and the plan + renewal when an account exists; no price or invoice
 //     exists before a payment provider is wired (D-BILLING), so none is shown.
-// The remaining sections (Overview ladder/workspaces, knowledge, scopes) still render off kit fixtures — their routes aren't built (Tier 3:
-// scopes/workspaces/stance need further wiring).
+//   • ladder            → GET …/rules (member) — the dōjō's published rules.
+// Scopes has no source yet (no ownership is recorded), so it loads none and says
+// so. No section reads the kit fixtures (#106).
 export const load: PageLoad = async ({ parent, params, fetch }) => {
 	const { memberships, accessToken, user } = await parent();
 	const org = orgBySlug(memberships, params.slug);
@@ -122,7 +122,7 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	// Triage (maintainer) — the raw rows feed BOTH the triage groups and the
 	// approvals list, so fetch once and derive both when either section is active.
 	let triage: KitTriageGroup[] = [];
-	let candidateDetail: KitCandidateDetail = candidateDetailFor(slug);
+	let candidateDetail: KitCandidateDetail = toKitCandidateDetail(undefined);
 	let approvals: KitApproval[] = [];
 	let triageError: string | null = null;
 	if (section === 'triage' || section === 'approvals') {
@@ -199,6 +199,14 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		toKitHealth
 	);
 
+	// Constitution (member) — the dōjō's published rules, grouped by scope.
+	const ladderRes = await guardedFor<TenantRuleWire[], KitConstitutionSection[]>(
+		'ladder',
+		[],
+		(tk) => listTenantRules(tk, opts),
+		rulesToSections
+	);
+
 	// Billing (admin) — the LIVE billable seat count (dojo.tenant_seat_usage) and
 	// the account's plan + renewal; nothing a payment provider would supply (#106).
 	const billingRes = await guardedFor<BillingResponse, KitBilling>(
@@ -237,8 +245,9 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		// resolved org + the layout so the actions POST/PATCH/DELETE directly.
 		tenantKey,
 		accessToken,
-		// Overview-section data (fixtures — Tier 3, needs DDL).
-		sections: orgConstitutionFor(slug),
+		// The dōjō's published rules, by scope (`…/rules`).
+		sections: ladderRes.value,
+		sectionsError: ladderRes.error,
 		workspaces: workspacesRes.value,
 		workspacesError: workspacesRes.error,
 		// Maintainer Govern consoles.
@@ -260,7 +269,8 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		membersError,
 		teamMetrics: teamsRes.value,
 		teamMetricsError: teamsRes.error,
-		scopeOwners: scopeOwnersFor(slug),
+		// No scope ownership is recorded anywhere yet; the screen says so.
+		scopeOwners: [],
 		identity: identityRes.value,
 		identityError: identityRes.error,
 		health: healthRes.value,
