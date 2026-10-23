@@ -22,7 +22,7 @@ export function toPreferencesForm(config: Record<string, string>): PreferencesDa
 }
 
 /** Pure: serialize a preferences form back into the config-key/value shape
- *  `setConfig` expects. Mirrors the wizard's `preferences` commit handler
+ *  `appState.setConfigs` expects. Mirrors the wizard's `preferences` commit handler
  *  so both call sites write the same keys — the greeting still reads from
  *  `user_name`, and the wizard still parses `setup.preferences`. */
 export function fromPreferencesForm(form: PreferencesData): Record<string, string> {

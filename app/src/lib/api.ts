@@ -100,38 +100,8 @@ const personaQuery = (persona?: string) => (persona ? `?persona=${encodeURICompo
 export function senseiApi(port: number) {
   const base = apiBase(port);
 
-  // Every read is `tryGet`: the daemon's answer or an ApiResult error (#288).
-  // The write helpers below without a `try` prefix are legacy — they fold a
-  // failure into a sentinel value; new code uses the try- variants.
-  async function post<T>(path: string, body: unknown, fallback: T): Promise<T> {
-    try {
-      const res = await fetch(`${base}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) return await res.json() as T;
-      console.warn('[api] POST non-ok; using fallback', { path, status: res.status, statusText: res.statusText });
-      return fallback;
-    } catch (e) {
-      console.warn('[api] POST failed; using fallback', { path }, e);
-      return fallback;
-    }
-  }
-
-  async function put(path: string, body: unknown) {
-    try {
-      const res = await fetch(`${base}${path}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) console.warn('[api] PUT non-ok', { path, status: res.status, statusText: res.statusText });
-    } catch (e) {
-      console.warn('[api] PUT failed', { path }, e);
-    }
-  }
-
+  // Every read is `tryGet` and every write a try- helper: the daemon's answer or
+  // an ApiResult error, never a default standing in for a failure (#288, #304).
   async function tryPut(path: string, body: unknown): Promise<ApiResult<void>> {
     try {
       const res = await fetch(`${base}${path}`, {
@@ -144,10 +114,6 @@ export function senseiApi(port: number) {
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
-  }
-
-  async function del(path: string) {
-    try { await fetch(`${base}${path}`, { method: 'DELETE' }); } catch { /* non-fatal */ }
   }
 
   async function tryDelete(path: string): Promise<ApiResult<void>> {
@@ -279,27 +245,28 @@ export function senseiApi(port: number) {
 
     // ── Repos (individual git repos) ────────────────────────────────────
 
-    registerRepo: (repoId: string, name: string, path: string) =>
-      post('/api/repos', { repoId, name, path }, { ok: false }),
+    // Every write is a try-write: done, or why not (#304).
+    tryRegisterRepo: (repoId: string, name: string, path: string) =>
+      tryPost<{ ok: boolean }>('/api/repos', { repoId, name, path }),
 
-    updateRepo: (repoId: string, patch: Partial<ServerWorkspace>) =>
-      put(`/api/repos/${enc(repoId)}`, patch),
+    tryUpdateRepo: (repoId: string, patch: Partial<ServerWorkspace>) =>
+      tryPut(`/api/repos/${enc(repoId)}`, patch),
 
-    deleteRepo: (repoId: string) => del(`/api/repos/${enc(repoId)}`),
+    tryDeleteRepo: (repoId: string) => tryDelete(`/api/repos/${enc(repoId)}`),
 
-    excludeRepo: (repoId: string) =>
-      post(`/api/repos/${enc(repoId)}/exclude`, {}, { ok: false }),
+    tryExcludeRepo: (repoId: string) =>
+      tryPost<{ ok: boolean }>(`/api/repos/${enc(repoId)}/exclude`, {}),
 
-    addRepoTag: (repoId: string, tag: string) =>
-      post(`/api/repos/${enc(repoId)}/tags`, { tag }, { ok: false }),
+    tryAddRepoTag: (repoId: string, tag: string) =>
+      tryPost<{ ok: boolean }>(`/api/repos/${enc(repoId)}/tags`, { tag }),
 
-    removeRepoTag: (repoId: string, tag: string) =>
-      del(`/api/repos/${enc(repoId)}/tags/${enc(tag)}`),
+    tryRemoveRepoTag: (repoId: string, tag: string) =>
+      tryDelete(`/api/repos/${enc(repoId)}/tags/${enc(tag)}`),
 
     // ── Workspaces (groups of 1+ repos) ───────────────────────────────────
 
-    createWorkspace: (workspace: object) =>
-      post<{ ok: boolean; id?: string }>('/api/workspaces', workspace, { ok: false }),
+    tryCreateWorkspace: (workspace: object) =>
+      tryPost<{ ok: boolean; id?: string }>('/api/workspaces', workspace),
 
     /** A workspace edit — saved, or why not (#304). The About-tab metadata
      *  form drives a saveStatus (idle/saving/saved/error) lifecycle off the
@@ -309,7 +276,7 @@ export function senseiApi(port: number) {
     tryUpdateWorkspace: (id: string, patch: object): Promise<ApiResult<void>> =>
       tryPut(`/api/workspaces/${enc(id)}`, patch),
 
-    deleteWorkspace: (id: string) => del(`/api/workspaces/${enc(id)}`),
+    tryDeleteWorkspace: (id: string) => tryDelete(`/api/workspaces/${enc(id)}`),
 
     /** Error-propagating reads/writes for Settings · Workspaces (#271): a failed
      *  load is an error state, never an empty list, and a role save that fails
@@ -321,14 +288,14 @@ export function senseiApi(port: number) {
     tryUpdateFolder: (id: string, patch: { role?: string | null }) =>
       tryPut(`/api/folders/${enc(id)}`, patch),
 
-    addWorkspaceRepo: (workspaceId: string, repo: { repoId: string; role?: string }) =>
-      post(`/api/workspaces/${enc(workspaceId)}/repos`, repo, { ok: false }),
+    tryAddWorkspaceRepo: (workspaceId: string, repo: { repoId: string; role?: string }) =>
+      tryPost<{ ok: boolean }>(`/api/workspaces/${enc(workspaceId)}/repos`, repo),
 
-    removeWorkspaceRepo: (workspaceId: string, repoId: string) =>
-      del(`/api/workspaces/${enc(workspaceId)}/repos/${enc(repoId)}`),
+    tryRemoveWorkspaceRepo: (workspaceId: string, repoId: string) =>
+      tryDelete(`/api/workspaces/${enc(workspaceId)}/repos/${enc(repoId)}`),
 
-    analyzeWorkspace: (id: string) =>
-      post<SolutionAnalysis | null>(`/api/workspaces/${enc(id)}/analyze`, {}, null),
+    tryAnalyzeWorkspace: (id: string) =>
+      tryPost<SolutionAnalysis>(`/api/workspaces/${enc(id)}/analyze`, {}),
 
     // ── Workspace detail (new multi-window endpoints) ───────────────────
     /** A workspace's FTR headline (14d / prior / trend / 7d). */
@@ -659,10 +626,8 @@ export function senseiApi(port: number) {
       ),
 
     // ── Indexing ─────────────────────────────────────────────────────────
-    indexRepo: (repoId: string, repoPath: string, force = false) =>
-      post<{ ok: boolean; queued: boolean; taskId: number }>(
-        '/api/index', { repoId, repoPath, force }, { ok: false, queued: false, taskId: -1 },
-      ),
+    tryIndexRepo: (repoId: string, repoPath: string, force = false) =>
+      tryPost<{ ok: boolean; queued: boolean; taskId: number }>('/api/index', { repoId, repoPath, force }),
 
     /** The index task queue (#288: a failure is an error — it used to read as an
      *  idle queue, which the scan's done poller took for "finished"). */
@@ -714,12 +679,12 @@ export function senseiApi(port: number) {
       return tryGet<{ total: number; libs: LibEntry[] }>(`/api/libs?${qs}`);
     },
 
-    indexLib: (libName: string, url: string, version?: string) =>
-      post('/api/libs/index', { libName, url, version }, { ok: false }),
+    tryIndexLib: (libName: string, url: string, version?: string) =>
+      tryPost<{ ok: boolean }>('/api/libs/index', { libName, url, version }),
 
     // ── Unified Query ────────────────────────────────────────────────────
-    query: (q: string, repoId?: string, workspaceId?: string) =>
-      post<Record<string, unknown>>('/api/query', { q, repoId, workspaceId }, {}),
+    tryQuery: (q: string, repoId?: string, workspaceId?: string) =>
+      tryPost<Record<string, unknown>>('/api/query', { q, repoId, workspaceId }),
 
     // ── Sessions ─────────────────────────────────────────────────────────
     /** Every captured session (#288: a failure is an error, not an empty list). */
@@ -906,8 +871,8 @@ export function senseiApi(port: number) {
     },
 
     // ── Marketplace ──────────────────────────────────────────────────
-    marketplaceInstall: (target: string, marketplacePath: string, item?: string, scope?: string) =>
-      post('/api/marketplace/install', { target, marketplacePath, item, scope }, { ok: false }),
+    tryMarketplaceInstall: (target: string, marketplacePath: string, item?: string, scope?: string) =>
+      tryPost<{ ok: boolean }>('/api/marketplace/install', { target, marketplacePath, item, scope }),
 
     // ── Config (user preferences) ──────────────────────────────────────
     /** A config write — stored, or why not (#304). */
@@ -941,21 +906,17 @@ export function senseiApi(port: number) {
       tryGet<{ total: number; mcps: import('./setup/contracts').DaemonMcpEntry[]; stack: string[] }>('/api/instruments'),
 
     // ── Installer ───────────────────────────────────────────────────────
-    installAll: (assistants: string[], scope = 'global') =>
-      post<import('./types').InstallResult>('/api/install', { acps: assistants, scope }, {
-        hooks_installed: 0, skills_installed: 0, commands_installed: 0,
-        stale_commands_removed: 0, stale_skills_removed: 0,
-        assistants_configured: [], errors: [], marketplace_version: '',
-      }),
+    tryInstallAll: (assistants: string[], scope = 'global') =>
+      tryPost<import('./types').InstallResult>('/api/install', { acps: assistants, scope }),
 
-    installHooks: () =>
-      post<{ ok: boolean; count: number }>('/api/install/hooks', {}, { ok: false, count: 0 }),
+    tryInstallHooks: () =>
+      tryPost<{ ok: boolean; count: number }>('/api/install/hooks', {}),
 
-    installItem: (name: string, kind: string) =>
-      post<{ ok: boolean; path?: string; error?: string }>('/api/install/item', { name, kind }, { ok: false }),
+    tryInstallItem: (name: string, kind: string) =>
+      tryPost<{ ok: boolean; path?: string; error?: string }>('/api/install/item', { name, kind }),
 
-    removeItem: (name: string, kind: string) =>
-      post<{ ok: boolean }>('/api/install/item/remove', { name, kind }, { ok: false }),
+    tryRemoveItem: (name: string, kind: string) =>
+      tryPost<{ ok: boolean }>('/api/install/item/remove', { name, kind }),
 
     /** Installed skills and commands (#288: a failure is an error, not "none installed"). */
     tryGetInstalledItems: () => tryGet<import('./types').InstalledItem[]>('/api/install/installed'),
@@ -974,12 +935,8 @@ export function senseiApi(port: number) {
         { kind, enabled },
       ),
 
-    removeAll: (purge = false) =>
-      post<import('./types').RemoveResult>('/api/remove', { purge }, {
-        assistants_removed: [], plugin_removed: false, commands_removed: 0,
-        skills_removed: 0, agents_removed: 0, hooks_removed: false,
-        cache_cleared: false, workspaces_cleaned: [], errors: [],
-      }),
+    tryRemoveAll: (purge = false) =>
+      tryPost<import('./types').RemoveResult>('/api/remove', { purge }),
 
     // ── Gateway routers ──────────────────────────────────────────────────
     /** A failed read is an error, never "no routers" (#286). */
@@ -1032,7 +989,7 @@ export function senseiApi(port: number) {
         { direction },
       ),
 
-    generateImage: (body: {
+    tryGenerateImage: (body: {
       prompt: string;
       output_path?: string;
       model?: string;
@@ -1042,10 +999,9 @@ export function senseiApi(port: number) {
       style?: string;
       n?: number;
     }) =>
-      post<{ ok: boolean; paths: string[]; model?: string; router?: string }>(
+      tryPost<{ ok: boolean; paths: string[]; model?: string; router?: string }>(
         '/api/gateway/image/generate',
         body,
-        { ok: false, paths: [] },
       ),
 
     // ── On-demand local-model provisioning ───────────────────────────────
@@ -1335,25 +1291,7 @@ export function senseiApi(port: number) {
     tryGetDojoSyncState: () => tryGet<SyncStateResponse>('/api/dojo/sync-state'),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
-    stop: () => post('/stop', {}, {}),
-
-    // ── Deprecated aliases (migration: solution→workspace, workspace→repo) ──
-    /** @deprecated Use registerRepo */
-    get registerWorkspace() { return this.registerRepo; },
-    /** @deprecated Use addRepoTag */
-    get addWorkspaceTag() { return this.addRepoTag; },
-    /** @deprecated Use removeRepoTag */
-    get removeWorkspaceTag() { return this.removeRepoTag; },
-    /** @deprecated Use createWorkspace */
-    get createSolution() { return this.createWorkspace; },
-    /** @deprecated Use deleteWorkspace */
-    get deleteSolution() { return this.deleteWorkspace; },
-    /** @deprecated Use addWorkspaceRepo */
-    get addSolutionRepo() { return this.addWorkspaceRepo; },
-    /** @deprecated Use removeWorkspaceRepo */
-    get removeSolutionRepo() { return this.removeWorkspaceRepo; },
-    /** @deprecated Use analyzeWorkspace */
-    get analyzeSolution() { return this.analyzeWorkspace; },
+    tryStop: () => tryPost<Record<string, unknown>>('/stop', {}),
   };
 }
 
