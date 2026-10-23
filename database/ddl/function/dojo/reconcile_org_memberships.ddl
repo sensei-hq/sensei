@@ -9,7 +9,9 @@ set search_path to dojo, extensions;
 -- forge are never touched. Nor is a membership ANOTHER forge provisioned (#308
 -- R5b review, memberships.source_provider): in a dōjō known to GitHub and Azure
 -- DevOps, a GitHub read neither ends nor revives what an Azure import made. A
--- membership with no recorded source predates provenance and was made by GitHub.
+-- membership with NO recorded forge is left alone: nothing proves which read
+-- made it (apply/after/membership_source_backfill.sql attributes what the code
+-- can, and reports the rest).
 -- service_role only: provisioning calls it after a complete forge read, never on
 -- a failed or partial one.
 create or replace function dojo.reconcile_org_memberships(p_principal uuid, p_provider dojo.forge_provider, p_kept uuid[])
@@ -29,7 +31,7 @@ begin
        and t.origin = 'organization'
        and m.user_id = p_principal
        and m.source = 'provisioned'
-       and coalesce(m.source_provider, 'github') = p_provider
+       and m.source_provider = p_provider
        and m.disabled_at is null
        and not (m.tenant_id = any (coalesce(p_kept, '{}')))
        and exists (select 1 from dojo.tenant_connections c
@@ -40,7 +42,7 @@ begin
        set disabled_at = null, disabled_reason = null, updated_at = now()
      where m.user_id = p_principal
        and m.disabled_reason = 'left_org'
-       and coalesce(m.source_provider, 'github') = p_provider
+       and m.source_provider = p_provider
        and m.tenant_id = any (coalesce(p_kept, '{}'));
 
     return v_ended;
