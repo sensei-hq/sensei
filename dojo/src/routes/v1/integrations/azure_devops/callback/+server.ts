@@ -3,8 +3,8 @@
 // top-level navigation, so the person is identified by their dōjō session cookie
 // and every outcome is a 303 back to the screen, naming why when it did not
 // connect (?azure_error=…). The state must open for THIS login and match;
-// only then is the code redeemed and the refresh token sealed as the pending
-// grant. Rate-limited.
+// only then is the attempt counted (rate-limited), the state spent, the code
+// redeemed and the refresh token sealed as the pending grant.
 import type { RequestHandler } from './$types';
 import { dojoDb, serverSecret } from '$lib/server/dojo-supabase';
 import { resolveCaller } from '$lib/server/dojo-auth';
@@ -28,17 +28,16 @@ export const GET: RequestHandler = async (event) => {
 	} catch {
 		return back('not_configured');
 	}
-	try {
-		await guardAttempt(dojoDb(), person.userId, 'azure_connect');
-	} catch {
-		return back('too_many');
-	}
+	// The attempt is counted only once the state has opened for this login and
+	// matched (finishConnect calls the guard): a GET anyone can trigger must not
+	// spend the person's attempts or end their connect in progress.
 	const out = await finishConnect({
 		cfg,
 		authUserId: person.authUserId,
 		secret: serverSecret(),
 		url: event.request.url,
-		stateCookie: event.cookies.get(AZURE_STATE_COOKIE)
+		stateCookie: event.cookies.get(AZURE_STATE_COOKIE),
+		guard: () => guardAttempt(dojoDb(), person.userId, 'azure_connect')
 	});
 	const headers = new Headers({ location: out.location });
 	for (const c of out.cookies) headers.append('set-cookie', c);

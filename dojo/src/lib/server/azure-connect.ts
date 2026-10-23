@@ -87,10 +87,15 @@ export async function startConnect(args: {
 export type AzureConnectError = 'expired' | 'state' | 'denied' | 'entra' | 'signin' | 'not_configured' | 'too_many';
 
 /**
- * Step 2: Microsoft's redirect back. Opens the state for THIS login, checks the
- * returned state, redeems the code, seals the pending grant. Answers where to
- * send the person and the cookies to set — never throws for a refusal: a
- * top-level navigation is answered with a redirect that names the reason.
+ * Step 2: Microsoft's redirect back. Opens the state for THIS login and checks
+ * the returned state FIRST: a callback that does not carry this person's state —
+ * anyone can make their browser GET it — is answered without counting an attempt
+ * and without clearing their state cookie, so it neither spends their attempts
+ * nor ends a connect in progress (#308 R5b review 2). Only a matching state is
+ * counted (`guard`, the rate limit), clears the state (single use) and redeems
+ * the code. Answers where to send the person and the cookies to set — never
+ * throws for a refusal: a top-level navigation is answered with a redirect that
+ * names the reason.
  */
 export async function finishConnect(args: {
 	cfg: AzureEntraConfig;
@@ -98,25 +103,36 @@ export async function finishConnect(args: {
 	secret: string;
 	url: string;
 	stateCookie: string | undefined;
+	/** Counts this attempt (the rate limit); throws when none are left. */
+	guard?: () => Promise<void>;
 	fetchImpl?: typeof fetch;
 	now?: number;
 }): Promise<{ location: string; cookies: string[] }> {
 	const now = args.now ?? Date.now();
 	const u = new URL(args.url);
 	const secure = u.protocol === 'https:';
-	const clearState = cookie(AZURE_STATE_COOKIE, '', 0, secure);
 	const sealed = await openSealed<SealedState>(args.stateCookie, args.authUserId, args.secret, STATE_PURPOSE, now);
-	const back = (error: AzureConnectError | null, target?: AzureConnectTarget, extra: string[] = []) => ({
-		location: `${returnPath(target)}?${error ? `azure_error=${error}` : 'azure=connected'}`,
+	const to = (error: AzureConnectError | null, target?: AzureConnectTarget) =>
+		`${returnPath(target)}?${error ? `azure_error=${error}` : 'azure=connected'}`;
+	if (!sealed || typeof sealed.state !== 'string' || typeof sealed.verifier !== 'string') {
+		return { location: to('expired'), cookies: [] };
+	}
+	if (u.searchParams.get('state') !== sealed.state) return { location: to('state', sealed.target), cookies: [] };
+
+	// The state is this person's: from here the attempt counts and the state is spent.
+	const clearState = cookie(AZURE_STATE_COOKIE, '', 0, secure);
+	const back = (error: AzureConnectError | null, extra: string[] = []) => ({
+		location: to(error, sealed.target),
 		cookies: [clearState, ...extra]
 	});
-	if (!sealed || typeof sealed.state !== 'string' || typeof sealed.verifier !== 'string') return back('expired');
-	if (u.searchParams.get('state') !== sealed.state) return back('state', sealed.target);
-	if (u.searchParams.get('error')) {
-		return back(u.searchParams.get('error') === 'access_denied' ? 'denied' : 'entra', sealed.target);
+	try {
+		await args.guard?.();
+	} catch {
+		return back('too_many');
 	}
+	if (u.searchParams.get('error')) return back(u.searchParams.get('error') === 'access_denied' ? 'denied' : 'entra');
 	const code = u.searchParams.get('code');
-	if (!code) return back('entra', sealed.target);
+	if (!code) return back('entra');
 
 	let tokens;
 	try {
@@ -126,11 +142,11 @@ export async function finishConnect(args: {
 			args.fetchImpl ?? fetch
 		);
 	} catch {
-		return back('entra', sealed.target);
+		return back('entra');
 	}
 	const grant: AzureGrant = { refreshToken: tokens.refreshToken, writeScopes: writeScopesIn(tokens.scopes), target: sealed.target };
 	const grantValue = await seal(grant, args.authUserId, args.secret, GRANT_PURPOSE, GRANT_TTL_SECONDS, now);
-	return back(null, sealed.target, [cookie(AZURE_GRANT_COOKIE, grantValue, GRANT_TTL_SECONDS, secure)]);
+	return back(null, [cookie(AZURE_GRANT_COOKIE, grantValue, GRANT_TTL_SECONDS, secure)]);
 }
 
 /** The pending grant sealed for this login, or null (none, expired, another

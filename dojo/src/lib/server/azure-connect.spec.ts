@@ -4,7 +4,7 @@
 // grant for the same login), and opening that grant to list and import
 // organizations. Nothing here is stored in the database; tokens never appear in
 // a URL, an answer or a message.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { AZURE_DEVOPS_RESOURCE } from './azure-entra';
 import {
 	AZURE_GRANT_COOKIE,
@@ -114,6 +114,7 @@ describe('finishConnect', () => {
 			[s.sealed, s.state, 'auth-someone-else', NOW],
 			[s.sealed, s.state, ME, NOW + 11 * 60 * 1000]
 		];
+		const guard = vi.fn();
 		for (const [cookie, state, who, at] of cases) {
 			const out = await finishConnect({
 				cfg: CFG,
@@ -122,11 +123,34 @@ describe('finishConnect', () => {
 				url: callback({ code: 'c', state }),
 				stateCookie: cookie,
 				fetchImpl: fn,
+				guard,
 				now: at
 			});
 			expect(out.location).toMatch(/azure_error=(expired|state)$/);
-			expect(out.cookies.some((c) => c.startsWith(`${AZURE_GRANT_COOKIE}=`) && !c.startsWith(`${AZURE_GRANT_COOKIE}=;`))).toBe(false);
+			// A GET a third party can trigger neither spends the person's attempts nor
+			// ends their connect in progress (#308 R5b review 2).
+			expect(out.cookies).toEqual([]);
 		}
+		expect(guard).not.toHaveBeenCalled();
+		expect(calls).toHaveLength(0);
+	});
+
+	it('only a matching state is counted against the rate limit, and too many attempts redeem nothing', async () => {
+		const s = await started();
+		const { fn, calls } = fakeFetch({ [TOKEN]: { body: { access_token: 'a', refresh_token: 'r', scope: '' } } });
+		const guard = vi.fn().mockRejectedValue(Object.assign(new Error('too many'), { status: 429 }));
+		const out = await finishConnect({
+			cfg: CFG,
+			authUserId: ME,
+			secret: SECRET,
+			url: callback({ code: 'c', state: s.state }),
+			stateCookie: s.sealed,
+			fetchImpl: fn,
+			guard,
+			now: NOW
+		});
+		expect(guard).toHaveBeenCalledTimes(1);
+		expect(out.location).toBe('/org/t-here/integrations?azure_error=too_many');
 		expect(calls).toHaveLength(0);
 	});
 

@@ -182,11 +182,15 @@ describe('callback', () => {
 		expect(res.status).toBe(303);
 		expect(res.headers.get('location')).toBe('/org/t1/integrations?azure=connected');
 		expect(res.headers.get('set-cookie')).toContain('dojo_azure_grant=sealed');
-		expect(mocks.finishConnect.mock.calls[0][0]).toMatchObject({ authUserId: 'auth-me', url, stateCookie: 'sealed-state', secret: 'route-test-secret' });
+		const args = mocks.finishConnect.mock.calls[0][0];
+		expect(args).toMatchObject({ authUserId: 'auth-me', url, stateCookie: 'sealed-state', secret: 'route-test-secret' });
+		// The attempt is counted only once the state has opened and matched — finishConnect calls the guard.
+		expect(mocks.guardAttempt).not.toHaveBeenCalled();
+		await args.guard();
 		expect(mocks.guardAttempt).toHaveBeenCalledWith(SERVICE, 'p-me', 'azure_connect');
 	});
 
-	it('answers a top-level navigation with a redirect naming why: no session, not configured, too many', async () => {
+	it('answers a top-level navigation with a redirect naming why: no session, not configured', async () => {
 		mocks.resolveCaller.mockRejectedValueOnce(new Response('{}', { status: 401 }));
 		let res = await callback.GET(ev(undefined, 'GET', 'organization', url));
 		expect(res.headers.get('location')).toBe('/you/dojos?azure_error=signin');
@@ -195,11 +199,8 @@ describe('callback', () => {
 		res = await callback.GET(ev(undefined, 'GET', 'organization', url));
 		expect(res.headers.get('location')).toBe('/you/dojos?azure_error=not_configured');
 		Object.assign(mocks.env, CONFIGURED);
-
-		mocks.guardAttempt.mockRejectedValueOnce(new AdminError(429, 'too many'));
-		res = await callback.GET(ev(undefined, 'GET', 'organization', url));
-		expect(res.headers.get('location')).toBe('/you/dojos?azure_error=too_many');
 		expect(mocks.finishConnect).not.toHaveBeenCalled();
+		expect(mocks.guardAttempt).not.toHaveBeenCalled();
 	});
 });
 
