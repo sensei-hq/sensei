@@ -80,6 +80,7 @@ export async function runAzureMemberSync(db: DojoClient, deps: MemberSyncDeps): 
 	if (error) throw new AdminError(500, error.message);
 
 	const results: MemberSyncResult[] = [];
+	const unrecorded: string[] = [];
 	for (const c of (data ?? []) as ConnRow[]) {
 		let result: MemberSyncResult;
 		try {
@@ -90,7 +91,19 @@ export async function runAzureMemberSync(db: DojoClient, deps: MemberSyncDeps): 
 		results.push(result);
 		const failure = 'error' in result ? result.error : 'error' in result.members ? result.members.error : null;
 		if (failure) console.error(`azure member sync: ${c.external_slug}: ${failure}`);
-		await record(db, c.external_id, nowIso, failure);
+		// A record that fails must not stop the run: the next connections still
+		// get read (their reads are what advance the batch). The run fails at the
+		// end instead, so it shows in Cron Events (#308 R5b review 2).
+		try {
+			await record(db, c.external_id, nowIso, failure);
+		} catch (e) {
+			const why = e instanceof Error ? e.message : String(e);
+			console.error(`azure member sync: could not record ${c.external_slug}: ${why}`);
+			unrecorded.push(`${c.external_slug} (${why})`);
+		}
+	}
+	if (unrecorded.length) {
+		throw new AdminError(500, `could not record ${unrecorded.length} member reads: ${unrecorded.join('; ')}`);
 	}
 	return { read: results.length, results };
 }

@@ -51,6 +51,9 @@ export interface FakeTable {
 	 * every test until this existed.
 	 */
 	error?: { code?: string; message: string };
+	/** Make every WRITE (insert, update, delete) on this table fail with this
+	 *  error while reads succeed — a store that can be read but not written. */
+	writeError?: { code?: string; message: string };
 }
 
 type Filter = { op: 'eq' | 'in' | 'is' | 'gte'; column: string; value: unknown };
@@ -107,7 +110,8 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 			rows: t.rows.map((r) => (r !== null && typeof r === 'object' ? { ...r } : r)),
 			uniques: t.uniques,
 			reads: 0,
-			error: t.error
+			error: t.error,
+			writeError: t.writeError
 		};
 	}
 
@@ -124,6 +128,7 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 			// Injected failure wins over everything: a table that cannot be read
 			// cannot be written or counted either.
 			if (t.error) return { data: null, error: t.error };
+			if (pending && t.writeError) return { data: null, error: t.writeError };
 			if (pending?.op === 'insert') {
 				const row: FakeRow = { id: nextId(table.slice(0, 4)), ...pending.payload };
 				for (const u of t.uniques ?? []) {

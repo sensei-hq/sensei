@@ -49,9 +49,9 @@ function adapterFor(fail: Record<string, unknown> = {}, notAdmin: string[] = [])
 	return { make, read, proved };
 }
 
-function db(rows: Record<string, unknown>[]) {
+function db(rows: Record<string, unknown>[], writeError?: { message: string }) {
 	return fakeDojoDb({
-		tenant_connections: { rows },
+		tenant_connections: { rows, writeError },
 		'rpc:forge_token': { rows: ['ztest-refresh-0' as never] },
 		'rpc:rotate_forge_token': { rows: [] },
 		'rpc:mark_forge_token_rejected': { rows: [] },
@@ -126,6 +126,15 @@ describe('runAzureMemberSync', () => {
 		expect(out.results[0]).toEqual({ organization: 'org-name-1', error: 'only a Project Collection Administrator of org-name-1 can connect it' });
 		expect(d.rpcCalls.filter((c) => c.fn === 'reconcile_unit_members').map((c) => c.args.p_unit)).toEqual(['org-2']);
 		expect(d.tables.tenant_connections.rows.find((r) => r.id === 'c-1')?.members_read_error).toMatch(/Project Collection Administrator/);
+	});
+
+	it('a read that cannot be recorded never stops the others — and fails the run at the end (#308 R5b review 2)', async () => {
+		const d = db([conn(1), conn(2), conn(3)], { message: 'write refused' });
+		const a = adapterFor();
+		const err = await runAzureMemberSync(d as never, { cfg: CFG, fetchImpl: entra().fn, adapterFor: a.make, now: NOW }).catch((e) => e);
+		expect(a.read).toEqual(['org-name-1', 'org-name-2', 'org-name-3']);
+		expect(err).toMatchObject({ status: 500 });
+		expect(String(err.message)).toMatch(/could not record 3 member reads/);
 	});
 
 	it('a failed read of the connections is an error — never "nothing to do"', async () => {
