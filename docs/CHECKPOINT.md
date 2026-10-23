@@ -22,7 +22,7 @@
 **Remaining:**
 - R9 live check on a real Jira board (two boards, two levels): the user's. The local daemon has no tracker.
 - **R5b merged** (18f9311c): Azure DevOps import through Microsoft Entra (D42–D44), refresh token in Vault, scheduled member read (cron in `dojo/worker-entry.js`, needs Worker secrets `AZURE_DEVOPS_CLIENT_ID`, `AZURE_DEVOPS_CLIENT_SECRET`, `DOJO_CRON_SECRET` of 32+ chars). Two security reviews, all findings fixed. Gates on the merge with #323: check 0, 1911 tests, test-db 58, dbd diff clean.
-- **Next: R5c** (sign in with Microsoft, D45). Then the release (R5a, R8, R9, R5b, #323), rehearsed on a production copy first: R5b's hooks relabel and backfill membership provenance.
+- **Next: R5c** (sign in with Microsoft, D45; agent on `r5c-microsoft-signin`), then **#330** (Terms of Service and Privacy Policy pages). Then the release (R5a, R8, R9, R5b, #323), rehearsed on a production copy first: R5b's hooks relabel and backfill membership provenance.
 - **The user's step:** one multi-tenant Entra app registration (checklist: spec "R5b · one-time setup"), then the live checks.
 - #314 (production push: the user's steps); #312 live on an unattended run; #329 stale session
   after a magic-link switch; dbd#103 (a column comment lands one reconcile late).
