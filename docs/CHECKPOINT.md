@@ -1,9 +1,9 @@
 # Checkpoint — 2026-10-23
 
 **Slice:** dōjō expansion (docs/roadmap/09-dojo-expansion.md) inside the issue burndown
-(docs/roadmap/08-issue-burndown.md). Released: v0.19.0. Next: **v0.20.0**.
+(docs/roadmap/08-issue-burndown.md). Released: **v0.20.0** and **v0.20.1** (2026-10-23).
 
-**On develop, ships in v0.20.0:**
+**In v0.20.0:**
 - R8 lead team metrics (D38, D41); R9 trackers by level (D23, D40); #323 Jira linkage F9–F11 + API cost (user).
 - R5b Azure DevOps through Entra (D42–D44) and R5c sign in with Microsoft (D45). Each had two security reviews,
   and every finding was fixed with a failing test first.
@@ -18,12 +18,9 @@
 - Row counts were unchanged: tenants 6, memberships 5, connections 3.
 - Provenance: 3 org memberships attributed to GitHub; 2 personal ones left unattributed.
 
-**Next command:** once the user says go: `make bump v=minor` on develop → PR to main → `make release` on
-main → the user approves deploy-dojo.
+**v0.20.1** fixes v0.20.0's daemon upgrade. The schema deploy ran `apply` before `reconcile`, so `comment on column trackers.level` failed. Verified live: the daemon logged "schema deployed for this version 0.20.1", and `dbd diff` reports the live DB in sync.
 
-**Open questions (the user's):**
-- When to release.
-- A contact for export or deletion requests on the privacy page (#330), now or in a follow-up.
+**Next command:** the user approves `deploy-dojo` (the v0.20.1 run; v0.20.0's run is also waiting), then I check the Worker's `/version`, run the #331 production duplicate count, and fix kavach #54/#55 in ~/Developer/kavach.
 
 **Live checks after v0.20.0:**
 - R5b connect and import; R5c oid/tid match.
