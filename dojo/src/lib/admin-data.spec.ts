@@ -24,7 +24,11 @@ import {
 	grantTeamWorkspaceView,
 	listIntegrationUnits,
 	claimIntegrationUnit,
-	mapIntegrationUnit
+	mapIntegrationUnit,
+	listAzureConnections,
+	connectAzure,
+	syncAzure,
+	removeAzureToken
 } from '$lib/admin-data';
 
 // A fake fetch that records the call and returns a canned JSON response. Mirrors
@@ -256,6 +260,22 @@ describe('the dōjō`s integrations (#308 R5a)', () => {
 			['POST', base, JSON.stringify({})],
 			['POST', `${base}/claim`, JSON.stringify({ unit_id: '22' })],
 			['POST', `${base}/map`, JSON.stringify({ unit_id: '22', as: 'workspace', name: 'Acme' })]
+		]);
+		expect(headersOf(calls[0].init).Authorization).toBe('Bearer jwt');
+	});
+
+	it('Azure DevOps: GET the connections, POST connect (the one body that carries the token), sync, DELETE the token', async () => {
+		const { fn, calls } = fakeFetch(200, { connections: [], scopes: [] });
+		await listAzureConnections('organization/acme', { fetch: fn, accessToken: 'jwt' });
+		await connectAzure('organization/acme', 'https://dev.azure.com/example-org', 'ztestpat', { fetch: fn });
+		await syncAzure('organization/acme', 'org-1', { fetch: fn });
+		await removeAzureToken('organization/acme', 'org-1', { fetch: fn });
+		const base = `${dojoApiUrl}/v1/t/organization/acme/integrations/azure_devops`;
+		expect(calls.map((c) => [c.init?.method ?? 'GET', c.url, c.init?.body])).toEqual([
+			['GET', base, undefined],
+			['POST', `${base}/connect`, JSON.stringify({ organization_url: 'https://dev.azure.com/example-org', token: 'ztestpat' })],
+			['POST', `${base}/sync`, JSON.stringify({ organization_id: 'org-1' })],
+			['DELETE', `${base}/token`, JSON.stringify({ organization_id: 'org-1' })]
 		]);
 		expect(headersOf(calls[0].init).Authorization).toBe('Bearer jwt');
 	});

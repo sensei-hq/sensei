@@ -4,6 +4,7 @@ import ScrIntegrations from './ScrIntegrations.svelte';
 import { IntegrationsState } from '$lib/integrations-state.svelte';
 import type { IntegrationUnit } from '$lib/integrations-view';
 import { DojoApiError } from '$lib/dojo-api';
+import { AzureConnectState } from '$lib/azure-connect-state.svelte';
 
 // Admin → Integrations (#308 R5a): connect GitHub (a re-authorization), see the orgs it sees,
 // and for each — what its dōjō is, where its repositories file, and only the acts
@@ -102,5 +103,13 @@ describe('ScrIntegrations', () => {
 		state.error = 'GitHub read failed (401)';
 		const { getByRole } = render(ScrIntegrations, { props: { orgName: 'Here', state } });
 		expect(getByRole('alert').textContent).toContain('GitHub read failed (401)');
+	});
+
+	it('offers Connect Azure DevOps beside GitHub when the page gives it (#308 R5b)', async () => {
+		const { state } = setup();
+		const azure = new AzureConnectState({ connect: vi.fn() });
+		const { getByRole, getByLabelText } = render(ScrIntegrations, { props: { orgName: 'Here', state, azure } });
+		expect(getByRole('button', { name: 'Connect Azure DevOps' })).toBeTruthy();
+		expect((getByLabelText('Personal access token') as HTMLInputElement).type).toBe('password');
 	});
 });

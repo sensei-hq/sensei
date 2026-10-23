@@ -12,6 +12,7 @@ import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from '
 import type { RelayConstitution } from './constitution-map';
 import type { ContributionRow, DownstreamRow } from './contributions-map';
 import type { DojoCallOpts } from './dojo-api';
+import type { AzureImportResult } from './azure-view';
 
 // Re-export the shared error under the client name so screens
 // `instanceof` against a local symbol without reaching into the shared module.
@@ -254,6 +255,18 @@ export interface ProvisionResult {
  *  user in an org needed to join. `/github/sync` still routes here. */
 export async function provisionFromForge(opts: DojoCallOpts = {}): Promise<ProvisionResult> {
 	return sendJson(youUrl('/provision'), 'POST', {}, opts);
+}
+
+/** `POST /v1/you/integrations/azure_devops/connect` — the personal dōjō's import
+ *  of an Azure DevOps organization as its own dōjō (#308 R5b). The one request
+ *  that carries the PAT; the server validates it before storing it, and never
+ *  sends it back. */
+export async function importAzureAsOwnDojo(
+	organizationUrl: string,
+	token: string,
+	opts: DojoCallOpts = {}
+): Promise<AzureImportResult> {
+	return sendJson(youUrl('/integrations/azure_devops/connect'), 'POST', { organization_url: organizationUrl, token }, opts);
 }
 
 /** `POST /v1/t/{tenant}/invites` — an admin issues a magic-link invite (F3b).

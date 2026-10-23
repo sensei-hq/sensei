@@ -24,6 +24,9 @@ import { AdminError, slugify, type DojoClient } from './admin-data';
 import { refusalStatus } from './db-refusal';
 import { azureOrgFromUrl, type AzureAdapter, type AzureConnection, type AzureProject } from './forge-azure';
 import { ForgeReadError } from './forge-github';
+import type { AzureConnectionView, AzureImportResult, AzureSyncResult } from '../azure-view';
+
+export type { AzureConnectionView, AzureImportResult, AzureSyncResult };
 import { authMethodFor, claimTenantIfOwner, ensureForgeIdentity, ensureOrgTenant } from './provisioning';
 
 const PROVIDER = 'azure_devops' as const;
@@ -31,22 +34,6 @@ const PROVIDER = 'azure_devops' as const;
 /** Where the organization goes: its own dōjō (from the personal dōjō), or the
  *  organization dōjō whose Integrations screen asked. */
 export type AzureImportTarget = { as: 'own' } | { as: 'this'; tenantId: string };
-
-/** What an import came to. Never carries the token. */
-export interface AzureImportResult {
-	dojo: { key: string; created: boolean };
-	organization: { id: string; name: string };
-	projects: {
-		/** Projects the token could read. */
-		total: number;
-		/** Filed as workspaces of the dōjō (new, or kept and renamed). */
-		mapped: number;
-		/** Already filed into another dōjō by an admin there — left as they are. */
-		elsewhere: number;
-		/** Whether the project read saw every project. */
-		complete: boolean;
-	};
-}
 
 function fail(error: { code?: string; message: string } | null): void {
 	if (error) throw new AdminError(refusalStatus(error), error.message);
@@ -241,12 +228,6 @@ export async function importAzureOrganization(
 	};
 }
 
-/** What a sync came to. Never carries the token. */
-export interface AzureSyncResult {
-	organization: { id: string; name: string };
-	projects: AzureImportResult['projects'];
-}
-
 /**
  * Re-read one of this dōjō's Azure organizations with its STORED token: re-prove
  * the admin and file its projects (new ones get workspaces; renamed ones keep
@@ -289,17 +270,6 @@ export async function syncAzureOrganization(
 		organization: org,
 		projects: { total: checked.read.projects.length, ...filed, complete: checked.read.complete }
 	};
-}
-
-/** One of a dōjō's Azure DevOps organizations, as the screen shows it. */
-export interface AzureConnectionView {
-	/** The organization's stable id. */
-	id: string;
-	name: string;
-	verifiedAt: string | null;
-	/** The stored token: working, rejected by Azure, or none stored. */
-	token: 'ok' | 'needs_new_token' | 'none';
-	tokenExpiresAt: string | null;
 }
 
 /** This dōjō's Azure DevOps organizations. Throws on a failed read. */

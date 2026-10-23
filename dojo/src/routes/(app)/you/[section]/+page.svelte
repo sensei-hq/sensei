@@ -2,10 +2,12 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import {
 		adoptContribution,
+		importAzureAsOwnDojo,
 		provisionFromForge,
 		setPackAdoption,
 		setRepoElection
 	} from '$lib/client-data';
+	import { AzureConnectState } from '$lib/azure-connect-state.svelte';
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
 	import ScrWorkspaces from '$lib/components/screens/ScrWorkspaces.svelte';
 	import ScrConstitution from '$lib/components/screens/ScrConstitution.svelte';
@@ -37,6 +39,17 @@
 	const syncGithub = () => you.syncGithub(api, invalidateAll);
 	const elect = (repoKey: string, elected: boolean) => you.elect(api, repoKey, elected, invalidateAll);
 
+	// Import an Azure DevOps organization as its own dōjō (#308 R5b) — how an Azure
+	// organization's dōjō is first made. The PAT goes once to the server, which
+	// validates it before storing it; the memberships are re-read after.
+	const azure = new AzureConnectState({
+		connect: async (organizationUrl, token) => {
+			const result = await importAzureAsOwnDojo(organizationUrl, token, { accessToken: data.accessToken });
+			await invalidateAll();
+			return result;
+		}
+	});
+
 	const sharingRepos = $derived(you.sharingRepos(data.repos ?? []));
 	const sharingError = $derived(you.sharingError(data.reposError ?? null));
 </script>
@@ -63,6 +76,7 @@
 		onSyncGithub={syncGithub}
 		syncing={you.github.busy}
 		syncMessage={you.github.message}
+		{azure}
 	/>
 {:else if data.section === 'contributions'}
 	<ScrContributions

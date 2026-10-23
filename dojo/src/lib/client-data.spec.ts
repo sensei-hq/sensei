@@ -9,7 +9,8 @@ import {
 	adoptContribution,
 	createInvite,
 	acceptInvite,
-	provisionFromForge
+	provisionFromForge,
+	importAzureAsOwnDojo
 } from '$lib/client-data';
 
 // A fake fetch that records the call and returns a canned response. Mirrors the
@@ -108,6 +109,15 @@ describe('listWorkspaces / listUserWorkspaces — tenant vs user-wide reads', ()
 		expect(out).toEqual({ tenant_id: 't1', role: 'contributor' });
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/invites/accept`);
 		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ token: 'tok' });
+	});
+
+	it('importAzureAsOwnDojo POSTs the organization URL and token to the personal import', async () => {
+		const result = { dojo: { key: 'organization/example-org', created: true } };
+		const { fn, calls } = fakeFetch(200, result);
+		expect(await importAzureAsOwnDojo('https://dev.azure.com/example-org', 'ztestpat', { fetch: fn, accessToken: 'jwt' })).toEqual(result);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/integrations/azure_devops/connect`);
+		expect(calls[0].init?.method).toBe('POST');
+		expect(calls[0].init?.body).toBe(JSON.stringify({ organization_url: 'https://dev.azure.com/example-org', token: 'ztestpat' }));
 	});
 
 	it('provisionFromForge POSTs to /v1/you/provision and returns the pass result', async () => {

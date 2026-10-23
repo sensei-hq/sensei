@@ -52,16 +52,8 @@ export const MAX_ENTITLEMENT_PAGES = 200;
 const PROJECT_PAGE = 100;
 const MAX_PROJECT_PAGES = 50;
 
-/** The read-only scopes the PAT needs (shown on the screen). An Azure PAT cannot
- *  read its own scopes without a Microsoft Entra token (the PAT Lifecycle
- *  Management API requires one), so the dōjō cannot warn about write scopes; it
- *  asks for exactly these, read only. */
-export const AZURE_REQUIRED_SCOPES = [
-	{ scope: 'vso.project', label: 'Project and Team (Read)', why: 'list the organization’s projects' },
-	{ scope: 'vso.graph', label: 'Graph (Read)', why: 'prove you are a Project Collection Administrator' },
-	{ scope: 'vso.memberentitlementmanagement', label: 'Member Entitlement Management (Read)', why: 'read who is in the organization' },
-	{ scope: 'vso.code', label: 'Code (Read)', why: 'read its repositories' }
-] as const;
+/** The read-only scopes the PAT needs — one list, the screen's (azure-view.ts). */
+export { AZURE_REQUIRED_SCOPES } from '../azure-view';
 
 /**
  * The organization an Azure DevOps URL names — `https://dev.azure.com/{org}…`
