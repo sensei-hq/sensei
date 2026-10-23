@@ -1,6 +1,6 @@
 # Several trackers per workspace, at different levels — design (#318, D23)
 
-**Status:** design for review (2026-10-22). No code until the questions below are answered.
+**Status:** decided 2026-10-22 (Q1–Q3 answered by the user: D40). Ready to build.
 
 ## The decision this serves
 
@@ -35,19 +35,16 @@ daemon pulls what it needs.
 5. **Screens:** the workspace's Integrations screen lists its trackers by level, adds one at a level, and
    shows each one's sync state; the Sprints screen merges the sprint trackers.
 
-## Questions (the user's)
+## Decisions (user, 2026-10-22 — D40)
 
-- **Q1 · What is a "level" in practice?** Is it different **boards/projects** in one Jira site (a portfolio
-  board for epics, team boards for sprints) — the proposal above — or something else (e.g. one board whose
-  epics, sprints and tasks are read separately)?
-- **Q2 · "Possibly one per task":** does a task-level tracker mean a tracker you **configure**, or the link
-  sensei **derives** from a change to its ticket (proposal point 3)?
-- **Q3 · Several sprint trackers in one workspace:** should the Sprints screen **merge** them (one timeline)
-  or show them **side by side** (one per team)?
+- **Q1 · A level is a separate board** (a portfolio board for epics, team boards for sprints): each is its own
+  tracker on the workspace, tagged with its level.
+- **Q2 · A task-level link is derived from the change** (branch / commit / PR → ticket key), never configured.
+- **Q3 · Several sprint trackers show side by side, one lane per team**, not merged.
 
 ## Done gate
 
 - A workspace with an epic tracker and two sprint trackers syncs all three; tasks and sprints carry their
   tracker; epics/milestones read from the epic tracker only.
-- The Sprints screen shows both sprint trackers' sprints (per Q3); usage per ticket still attributes once.
+- The Sprints screen shows the two sprint trackers side by side, one lane each; usage per ticket still attributes once.
 - The single-tracker workspaces of today keep working unchanged (their tracker becomes `level = sprint`).
