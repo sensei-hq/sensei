@@ -15,7 +15,6 @@ import {
 	type NewMemberInput
 } from './admin-data';
 import { looksLikeEmail } from '../admin-view';
-import { attemptsLeft, recordAttempt, RATE_LIMITS } from './rate-limit';
 
 export { AdminError };
 export type { DojoClient };
@@ -185,18 +184,4 @@ export async function hashInviteToken(token: string): Promise<string> {
 	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Failed accepts allowed per person within the window before further attempts
- *  are refused (#311) — the shared rate limit (rate-limit.ts). */
-export const ACCEPT_FAILURE_LIMIT = RATE_LIMITS.invite_accept.limit;
-
-/** How many more failed accepts the caller has in the current window (never
- *  below 0). A failed count is an error — never a free pass. */
-export function acceptAttemptsLeft(db: DojoClient, principalId: string, nowMs: number): Promise<number> {
-	return attemptsLeft(db, principalId, 'invite_accept', nowMs);
-}
-
-/** Record one failed accept by the caller (#311). */
-export function recordAcceptFailure(db: DojoClient, principalId: string): Promise<void> {
-	return recordAttempt(db, principalId, 'invite_accept');
-}
 

@@ -1,15 +1,17 @@
 // Rate-limited attempts (#311, generalised in #308 R5b): an action a person may
 // take only so many times in a window — a failed invite accept, an Azure DevOps
-// connect. Counted per person and action in dojo.request_attempts; a failed
-// count is an error, never a free pass.
+// connect step. Taken atomically by dojo.take_attempt (count + record in one
+// call, serialised per person and action — database/tests/dojo/request_attempts.sql);
+// a failed call is an error, never a free pass.
 import { describe, it, expect } from 'vitest';
 import { fakeDojoDb } from './fake-dojo-db';
-import { attemptsLeft, recordAttempt, RATE_LIMITS, guardAttempt } from './rate-limit';
+import { guardAttempt, RATE_LIMITS, releaseAttempt, takeAttempt } from './rate-limit';
 
-const NOW = 1_800_000_000_000;
-
-function db(rows: Record<string, unknown>[] = [], error?: { message: string }) {
-	return fakeDojoDb({ request_attempts: { rows, error } });
+function db(take: { rows: unknown[]; error?: { message: string } }) {
+	return fakeDojoDb({
+		'rpc:take_attempt': { rows: take.rows as never[], error: take.error },
+		'rpc:release_attempt': { rows: [] }
+	});
 }
 
 describe('rate limits', () => {
@@ -18,39 +20,31 @@ describe('rate limits', () => {
 		expect(RATE_LIMITS.azure_connect.limit).toBeGreaterThan(0);
 	});
 
-	it("counts only this person's attempts at this action in the window", async () => {
-		const recent = new Date(NOW - 60_000).toISOString();
-		const old = new Date(NOW - 60 * 60 * 1000).toISOString();
-		const d = db([
-			{ principal_id: 'p1', action: 'azure_connect', at: recent },
-			{ principal_id: 'p1', action: 'azure_connect', at: recent },
-			{ principal_id: 'p1', action: 'azure_connect', at: old },
-			{ principal_id: 'p1', action: 'invite_accept', at: recent },
-			{ principal_id: 'p2', action: 'azure_connect', at: recent }
+	it('takes an attempt in one call, with the action\'s limit and window', async () => {
+		const d = db({ rows: ['attempt-1'] });
+		expect(await takeAttempt(d as never, 'p1', 'azure_connect')).toBe('attempt-1');
+		expect(d.rpcCalls).toEqual([
+			{
+				fn: 'take_attempt',
+				args: { p_principal: 'p1', p_action: 'azure_connect', p_limit: RATE_LIMITS.azure_connect.limit, p_window: '900 seconds' }
+			}
 		]);
-		expect(await attemptsLeft(d as never, 'p1', 'azure_connect', NOW)).toBe(RATE_LIMITS.azure_connect.limit - 2);
 	});
 
-	it('records an attempt', async () => {
-		const d = db();
-		await recordAttempt(d as never, 'p1', 'azure_connect');
-		expect(d.tables.request_attempts.rows).toEqual([expect.objectContaining({ principal_id: 'p1', action: 'azure_connect' })]);
+	it('none left is null; guardAttempt says 429', async () => {
+		const d = db({ rows: [null] });
+		expect(await takeAttempt(d as never, 'p1', 'azure_connect')).toBeNull();
+		await expect(guardAttempt(d as never, 'p1', 'azure_connect')).rejects.toMatchObject({ status: 429 });
 	});
 
-	it('guardAttempt records one and refuses with 429 once none are left', async () => {
-		const recent = new Date(NOW - 1000).toISOString();
-		const full = db(
-			Array.from({ length: RATE_LIMITS.azure_connect.limit }, () => ({ principal_id: 'p1', action: 'azure_connect', at: recent }))
-		);
-		await expect(guardAttempt(full as never, 'p1', 'azure_connect', NOW)).rejects.toMatchObject({ status: 429 });
-		expect(full.tables.request_attempts.rows).toHaveLength(RATE_LIMITS.azure_connect.limit);
-		const empty = db();
-		await guardAttempt(empty as never, 'p1', 'azure_connect', NOW);
-		expect(empty.tables.request_attempts.rows).toHaveLength(1);
+	it('releases an attempt', async () => {
+		const d = db({ rows: ['attempt-1'] });
+		await releaseAttempt(d as never, 'attempt-1');
+		expect(d.rpcCalls).toEqual([{ fn: 'release_attempt', args: { p_id: 'attempt-1' } }]);
 	});
 
-	it('a failed count is an error, not a free pass', async () => {
-		await expect(attemptsLeft(db([], { message: 'boom' }) as never, 'p1', 'azure_connect', NOW)).rejects.toMatchObject({
+	it('a failed take is an error, not a free pass', async () => {
+		await expect(takeAttempt(db({ rows: [], error: { message: 'boom' } }) as never, 'p1', 'azure_connect')).rejects.toMatchObject({
 			status: 500
 		});
 	});
