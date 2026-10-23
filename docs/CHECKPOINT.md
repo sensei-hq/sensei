@@ -37,5 +37,4 @@
 - #314 (production push: the user's steps); #312 live on an unattended run; dbd#103 (a column comment lands
   one reconcile late). #331: after v0.20.0, count production's `personal/*-2` tenants (counts only); merging
   them is the user's call.
-- Wave 11: the website from the user's mocks.
-- Known: qlty is out of billing minutes; a daemon reinstall needs keychain approval (#283 until #282).
+- Wave 11: the website from the user's mocks. Known: qlty is out of billing minutes; a daemon reinstall needs keychain approval (#283 until #282).
