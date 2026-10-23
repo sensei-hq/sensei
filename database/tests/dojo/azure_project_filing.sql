@@ -170,4 +170,24 @@ begin
 end $$;
 reset role;
 
+-- Two maps of the SAME unit serialise (#308 R5b review 2): with no mapping row
+-- yet there is nothing for FOR UPDATE to lock, so map_forge_unit takes a
+-- transaction-scoped advisory lock on (provider, unit) before it reads.
+set local role service_role;
+do $$
+declare
+    k bigint := hashtext('azure_devops:ztest-proj-locked')::bigint;
+begin
+    perform dojo.map_forge_unit('a0000000-0000-4000-8000-000000000c01', 'azure_devops', 'ztest-proj-locked',
+        'ztest-az-org/Locked', 'b0000000-0000-4000-8000-000000000c0a', 'locked', 'Locked', true, true);
+    if not exists (
+        select 1 from pg_locks l
+         where l.locktype = 'advisory' and l.pid = pg_backend_pid() and l.granted
+           and l.objid::bigint = (k & 4294967295) and l.classid::bigint = ((k >> 32) & 4294967295)
+    ) then
+        raise exception 'map: no advisory lock on (provider, unit) is held';
+    end if;
+end $$;
+reset role;
+
 rollback;

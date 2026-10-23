@@ -67,6 +67,11 @@ begin
       join dojo.tenants t on t.id = c.tenant_id
      where c.provider = p_provider and c.external_id = p_external_id;
 
+    -- Serialise maps of the same unit (#308 R5b review 2): with no mapping row
+    -- yet, FOR UPDATE locks nothing, and two maps into different dōjōs would both
+    -- pass the checks above. Held to the end of the transaction.
+    perform pg_advisory_xact_lock(hashtext(p_provider::text || ':' || p_external_id));
+
     select m.* into v_prev
       from dojo.forge_unit_mappings m
      where m.provider = p_provider and m.external_id = p_external_id
