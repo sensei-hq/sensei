@@ -857,10 +857,9 @@ export function senseiApi(port: number) {
         `/api/scan/roots/${enc(id)}`, { excluded },
       ),
 
-    scanFolder: (root: string, maxDepth = 3) =>
-      post<{ ok: boolean; scanning: boolean }>(
-        '/api/scan', { root, max_depth: maxDepth }, { ok: false, scanning: false },
-      ),
+    /** Start scanning a root — accepted, or why not (#304). */
+    tryScanFolder: (root: string, maxDepth = 3) =>
+      tryPost<{ ok: boolean; scanning: boolean }>('/api/scan', { root, max_depth: maxDepth }),
 
     // ── MCP Tool Proxy ────────────────────────────────────────────────
     tryMcpListTools: () => tryGet<{ tools: McpToolManifest[] }>('/api/mcp/tools'),

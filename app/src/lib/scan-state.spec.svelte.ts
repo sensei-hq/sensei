@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { ScanWorkspaceState, ScanActivityState, commonParent, pollStep } from './scan-state.svelte.js';
+import { describe, it, expect, vi } from 'vitest';
+import { ScanWorkspaceState, ScanActivityState, commonParent, pollStep, triggerScans } from './scan-state.svelte.js';
 import type { ScanWorkspace, ScanWorkspaceFolder, ActivityEvent } from './types.js';
 
 // ── Factories ────────────────────────────────────────────────────────────────
@@ -368,5 +368,28 @@ describe('pollStep', () => {
   });
   it('a failed read is unreachable — never idle, never done', () => {
     expect(pollStep(down, 1)).toEqual({ reachable: false, idlePolls: 0, done: false });
+  });
+});
+
+// #304: scanFolder went through the legacy post, so a root the daemon refused
+// to scan was `{ ok: false }`, ignored — the poller then called an idle queue
+// "done" over a scan that never started.
+describe('triggerScans', () => {
+  const ok = { ok: true as const, data: { ok: true, scanning: true } };
+  const root = (path: string, scanned: boolean) => ({ path, scanned });
+
+  it('scans only the roots not yet scanned', async () => {
+    const tryScanFolder = vi.fn(async (_path: string) => ok);
+    await triggerScans({ tryScanFolder }, [root('/a', false), root('/b', true), root('/c', false)]);
+    expect(tryScanFolder.mock.calls.map((c) => c[0])).toEqual(['/a', '/c']);
+  });
+
+  it('a refused scan throws, naming each root and why', async () => {
+    const tryScanFolder = vi.fn(async (path: string) =>
+      path === '/a' ? ok : { ok: false as const, error: { status: 503, message: 'Service Unavailable' } },
+    );
+    await expect(triggerScans({ tryScanFolder }, [root('/a', false), root('/c', false)]))
+      .rejects.toThrow(/\/c.*Service Unavailable/);
+    expect(tryScanFolder).toHaveBeenCalledTimes(2);
   });
 });
