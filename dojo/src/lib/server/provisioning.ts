@@ -338,15 +338,25 @@ async function myMemberships(db: DojoClient, principalId: string): Promise<Membe
 	return (data ?? []) as Membership[];
 }
 
+/** Which forge read provisioned a membership, and which unit of it (#308 R5b):
+ *  only that forge's read of that unit may end it. */
+interface MembershipSource {
+	provider: ForgeProvider;
+	/** The unit's stable id (a GitHub org, an Azure DevOps organization). */
+	unit: string;
+}
+
 /** Create the membership if it is not already there, and report the role that
- *  ends up in force. An existing row WINS — see the header on overrides. */
+ *  ends up in force. An existing row WINS — see the header on overrides. An org
+ *  membership records the forge and unit whose read provisioned it (`from`). */
 async function ensureMembership(
 	db: DojoClient,
 	tenantId: string,
 	principalId: string,
 	kind: string,
 	authenticatedVia: string,
-	role: string
+	role: string,
+	from?: MembershipSource
 ): Promise<string> {
 	const existing = await db
 		.from('memberships')
@@ -365,8 +375,10 @@ async function ensureMembership(
 			kind,
 			authenticated_via: authenticatedVia,
 			role,
-			// Provisioning made it from a forge proof, so leaving the org ends it (#309).
-			source: 'provisioned'
+			// Provisioning made it from a forge proof, so leaving the org ends it (#309)
+			// — and only that forge's read of that org may (#308 R5b).
+			source: 'provisioned',
+			...(from ? { source_provider: from.provider, source_unit: from.unit } : {})
 		})
 		.select('role')
 		.single();
@@ -602,7 +614,8 @@ export async function ensureOrgTenant(
 			principalId,
 			'employer',
 			authenticatedVia,
-			roleForOrg(org)
+			roleForOrg(org),
+			{ provider, unit: org.id }
 		);
 		// A tenant may have been created by a plain member long before an owner
 		// first signs in, so the claim is attempted on EVERY pass, not only at
@@ -654,7 +667,8 @@ export async function ensureOrgTenant(
 			principalId,
 			'employer',
 			authenticatedVia,
-			roleForOrg(org)
+			roleForOrg(org),
+			{ provider, unit: org.id }
 		);
 		return { id: winner.id, key: winner.key, origin: 'organization', role: joinedRole, created: false };
 	}
@@ -665,7 +679,8 @@ export async function ensureOrgTenant(
 		principalId,
 		'employer',
 		authenticatedVia,
-		roleForOrg(org)
+		roleForOrg(org),
+		{ provider, unit: org.id }
 	);
 	// The creator may themselves be the forge owner, in which case the tenant is
 	// claimed the moment it exists rather than waiting for a second sign-in.

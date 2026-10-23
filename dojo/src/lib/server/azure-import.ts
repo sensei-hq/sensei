@@ -216,6 +216,7 @@ async function followMembers(
 		.rpc('reconcile_unit_members', {
 			p_tenant: tenantId,
 			p_provider: PROVIDER,
+			p_unit: unit.id,
 			p_auth: authMethodFor(PROVIDER),
 			p_subjects: read.members.map((m) => m.id)
 		})

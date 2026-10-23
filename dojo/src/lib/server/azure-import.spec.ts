@@ -106,7 +106,15 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 			expect.objectContaining({ tenant_id: org?.id, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG })
 		]);
 		expect(d.tables.memberships.rows).toContainEqual(
-			expect.objectContaining({ tenant_id: org?.id, user_id: ME, role: 'admin', authenticated_via: 'azure_devops_pat' })
+			expect.objectContaining({
+				tenant_id: org?.id,
+				user_id: ME,
+				role: 'admin',
+				authenticated_via: 'azure_devops_pat',
+				source: 'provisioned',
+				source_provider: 'azure_devops',
+				source_unit: ORG_ID
+			})
 		);
 		// The Azure account is recorded as this person's — what a member read keys on.
 		expect(d.tables.identities.rows).toEqual([
@@ -404,6 +412,7 @@ describe('members — #309\'s rule, read from the organization\'s side', () => {
 		expect(call?.args).toEqual({
 			p_tenant: HERE,
 			p_provider: 'azure_devops',
+			p_unit: ORG_ID,
 			p_auth: 'azure_devops_pat',
 			p_subjects: [ME_AZ, 'az-user-2']
 		});

@@ -35,6 +35,18 @@ insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via,
   ('b0000000-0000-4000-8000-00000000036d', 'a0000000-0000-4000-8000-000000000361', 'maintainer',  'employer', 'github_oauth', 'provisioned'),
   ('b0000000-0000-4000-8000-00000000036e', 'a0000000-0000-4000-8000-000000000361', 'admin',       'personal', 'github_oauth', 'provisioned');
 
+-- A dōjō known to GitHub AND Azure DevOps, where the person's membership was
+-- provisioned by the AZURE import (#308 R5b review): a GitHub read that does not
+-- list the dōjō is not the read that made the membership, and must not end it.
+-- (Memberships above carry no source_provider: made before provenance, by GitHub.)
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
+  ('b0000000-0000-4000-8000-00000000036f', 'organization/ztest-md-dual', 'organization', 'ztest-md-dual', 'Dual', 'x');
+insert into dojo.tenant_connections (tenant_id, provider, external_id, external_slug, connected_by) values
+  ('b0000000-0000-4000-8000-00000000036f', 'github',       'ztest-md-dual-gh', 'ztest-md-dual', 'a1000000-0000-4000-8000-000000000361'),
+  ('b0000000-0000-4000-8000-00000000036f', 'azure_devops', 'ztest-md-dual-az', 'ztest-md-dual', 'a1000000-0000-4000-8000-000000000361');
+insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via, source, source_provider, source_unit) values
+  ('b0000000-0000-4000-8000-00000000036f', 'a0000000-0000-4000-8000-000000000361', 'admin', 'employer', 'azure_devops_pat', 'provisioned', 'azure_devops', 'ztest-md-dual-az');
+
 -- A signed-in caller cannot run it: it is provisioning's, after a forge read.
 set local role authenticated;
 do $$

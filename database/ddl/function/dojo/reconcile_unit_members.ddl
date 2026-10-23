@@ -5,23 +5,27 @@ set search_path to dojo, extensions;
 -- organization's side — an Azure DevOps organization is read with an admin's
 -- stored token, not each person's own).
 --
--- p_subjects are the forge's ids for everyone the read listed; p_auth is the
--- identity kind those ids are recorded under (dojo.identities.provider, e.g.
--- azure_devops_pat). Each ACTIVE membership the forge's provisioning made
--- (source provisioned) in p_tenant — an organization dōjō connected to
--- p_provider — whose person holds an identity of that kind, none of them listed,
--- ends (left_org), and with it any admin or lead power. A membership that ended
--- by leaving and whose person is listed again is restored. Invited memberships,
--- people with no identity of that kind (the read can neither name nor clear
--- them), personal dōjōs and dōjōs not connected to p_provider are never touched.
+-- p_unit is the unit read (its stable id); p_subjects are the forge's ids for
+-- everyone the read listed; p_auth is the identity kind those ids are recorded
+-- under (dojo.identities.provider). Each ACTIVE membership THIS UNIT provisioned
+-- (source provisioned, source_provider = p_provider, source_unit = p_unit) in
+-- p_tenant — an organization dōjō connected to p_provider — whose person holds an
+-- identity of that kind, none of them listed, ends (left_org), and with it any
+-- admin or lead power. A membership this unit provisioned that ended by leaving,
+-- whose person is listed again, is restored — never one another forge or unit
+-- made or ended (#308 R5b review). Invited memberships, people with no identity
+-- of that kind, personal dōjōs and dōjōs not connected to p_provider are never
+-- touched.
 --
 -- A NULL or empty list is refused: only a complete read may end anything (#309),
 -- and an organization read with a member's token always lists that member.
 -- service_role only: the server calls it after a complete forge read, never on a
 -- failed or partial one.
+drop function if exists dojo.reconcile_unit_members(uuid, dojo.forge_provider, dojo.auth_method, text[]);
 create or replace function dojo.reconcile_unit_members(
     p_tenant   uuid,
     p_provider dojo.forge_provider,
+    p_unit     text,
     p_auth     dojo.auth_method,
     p_subjects text[]
 )
@@ -51,6 +55,8 @@ begin
        set disabled_at = now(), disabled_reason = 'left_org', updated_at = now()
      where m.tenant_id = p_tenant
        and m.source = 'provisioned'
+       and m.source_provider = p_provider
+       and m.source_unit = p_unit
        and m.disabled_at is null
        and exists (select 1 from dojo.identities i where i.principal_id = m.user_id and i.provider = p_auth)
        and not exists (select 1 from dojo.identities i
@@ -61,6 +67,8 @@ begin
        set disabled_at = null, disabled_reason = null, updated_at = now()
      where m.tenant_id = p_tenant
        and m.disabled_reason = 'left_org'
+       and m.source_provider = p_provider
+       and m.source_unit = p_unit
        and exists (select 1 from dojo.identities i
                     where i.principal_id = m.user_id and i.provider = p_auth and i.subject = any (p_subjects));
 
@@ -68,10 +76,10 @@ begin
 end;
 $$;
 
-revoke all on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, dojo.auth_method, text[]) from public, anon, authenticated;
-grant execute on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, dojo.auth_method, text[]) to service_role;
+revoke all on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[]) from public, anon, authenticated;
+grant execute on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[]) to service_role;
 
-comment on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, dojo.auth_method, text[]) is
-'End the provisioned memberships of an organization dōjō whose person a complete
-forge member read no longer lists, and restore those that ended by leaving and are
+comment on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[]) is
+'End the memberships one forge unit provisioned in an organization dōjō whose person a complete
+member read of that unit no longer lists, and restore those that ended by leaving and are
 listed again (#308 R5b, #309). Refuses an empty list. service_role only.';
