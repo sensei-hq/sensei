@@ -294,10 +294,7 @@ export function senseiApi(port: number) {
     createWorkspace: (workspace: object) =>
       post<{ ok: boolean; id?: string }>('/api/workspaces', workspace, { ok: false }),
 
-    updateWorkspace: (id: string, patch: object) =>
-      put(`/api/workspaces/${enc(id)}`, patch),
-
-    /** Error-propagating variant of updateWorkspace — the About-tab metadata
+    /** A workspace edit — saved, or why not (#304). The About-tab metadata
      *  form drives a saveStatus (idle/saving/saved/error) lifecycle off the
      *  Result, mirroring trySetConfig on the settings form. The daemon's
      *  PUT /api/workspaces/{id} does a partial (COALESCE) update of the editable
@@ -307,16 +304,13 @@ export function senseiApi(port: number) {
 
     deleteWorkspace: (id: string) => del(`/api/workspaces/${enc(id)}`),
 
-    /** Update a single folder. Currently only `role` is honored daemon-side. */
-    updateFolder: (id: string, patch: { role?: string | null }) =>
-      put(`/api/folders/${enc(id)}`, patch),
-
     /** Error-propagating reads/writes for Settings · Workspaces (#271): a failed
      *  load is an error state, never an empty list, and a role save that fails
      *  is rolled back and reported rather than silently kept on screen. */
     // One read of the list, typed as the wire carries it: the settings and
     // setup view (`DaemonWorkspace`) and the workspaces-index view (`WorkspaceListItem`).
     tryListWorkspaces: () => tryGet<Array<DaemonWorkspace & WorkspaceListItem>>('/api/workspaces'),
+    /** Update a single folder. Currently only `role` is honored daemon-side. */
     tryUpdateFolder: (id: string, patch: { role?: string | null }) =>
       tryPut(`/api/folders/${enc(id)}`, patch),
 
@@ -928,11 +922,13 @@ export function senseiApi(port: number) {
     /** Assistant families the daemon detects (#288: a failure is an error). */
     tryDetectAssistantFamilies: () => tryGet<import('./types').AssistantFamily[]>('/api/assistants/families'),
 
-    configureAssistants: (assistants: string[]) =>
-      post<import('./types').AssistantConfigureResult>('/api/assistants/configure', { acps: assistants }, { configured: [], skipped: [], errors: [] }),
+    /** Configure assistants — the daemon's per-assistant result, or why the
+     *  request failed (#304: a failure was an empty result, read as success). */
+    tryConfigureAssistants: (assistants: string[]) =>
+      tryPost<import('./types').AssistantConfigureResult>('/api/assistants/configure', { acps: assistants }),
 
-    removeAssistants: (assistants: string[] = []) =>
-      post<import('./types').AssistantRemoveResult>('/api/assistants/remove', { acps: assistants }, { assistants_removed: [], errors: [] }),
+    tryRemoveAssistants: (assistants: string[] = []) =>
+      tryPost<import('./types').AssistantRemoveResult>('/api/assistants/remove', { acps: assistants }),
 
     // ── Instruments (MCP registry — setup wizard Instruments stage) ───────
     tryListInstruments: () =>
@@ -1344,8 +1340,6 @@ export function senseiApi(port: number) {
     get removeWorkspaceTag() { return this.removeRepoTag; },
     /** @deprecated Use createWorkspace */
     get createSolution() { return this.createWorkspace; },
-    /** @deprecated Use updateWorkspace */
-    get updateSolution() { return this.updateWorkspace; },
     /** @deprecated Use deleteWorkspace */
     get deleteSolution() { return this.deleteWorkspace; },
     /** @deprecated Use addWorkspaceRepo */
