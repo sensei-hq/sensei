@@ -328,7 +328,9 @@ export interface AzureStoredGrantDeps {
 /**
  * A fresh access token from a connection's STORED grant (#308 R5b, D42): the
  * refresh token is read from Vault, refreshed with Entra, and the rotated one
- * stored back in place (dojo.rotate_forge_token, unaudited). An `invalid_grant`
+ * stored back in place (dojo.rotate_forge_token, unaudited) — both
+ * compare-and-set on the token refreshed, so a sync racing a reconnect never
+ * touches the newer grant. An `invalid_grant`
  * — revoked, expired, consent withdrawn — marks the connection needs_new_token
  * and is a 409 "reconnect": reads stop and no membership is ended (#309). A
  * connection already marked is refused by the database (409).
@@ -342,12 +344,20 @@ export async function accessFromStoredGrant(db: DojoClient, orgId: string, deps:
 		tokens = await refreshGrant(deps.cfg, stored.data, deps.fetchImpl ?? fetch);
 	} catch (e) {
 		if (e instanceof AzureGrantRejected) {
-			const marked = await db.rpc('mark_forge_token_rejected', { p_provider: PROVIDER, p_external_id: orgId });
+			// Compare-and-set: marks only if the stored grant is still the one refused.
+			const marked = await db.rpc('mark_forge_token_rejected', { p_provider: PROVIDER, p_external_id: orgId, p_rejected: stored.data });
 			fail(marked.error);
 		}
 		throw e;
 	}
-	const rotated = await db.rpc('rotate_forge_token', { p_provider: PROVIDER, p_external_id: orgId, p_token: tokens.refreshToken });
+	// Compare-and-set: a no-op when an admin reconnected meanwhile (the stored
+	// grant is newer than the one refreshed here).
+	const rotated = await db.rpc('rotate_forge_token', {
+		p_provider: PROVIDER,
+		p_external_id: orgId,
+		p_expected: stored.data,
+		p_token: tokens.refreshToken
+	});
 	fail(rotated.error);
 	return tokens.accessToken;
 }

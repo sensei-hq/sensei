@@ -39,8 +39,8 @@ begin
         'dojo.set_forge_token(uuid, dojo.forge_provider, text, text, timestamptz)',
         'dojo.remove_forge_token(uuid, dojo.forge_provider, text)',
         'dojo.forge_token(dojo.forge_provider, text)',
-        'dojo.mark_forge_token_rejected(dojo.forge_provider, text)',
-        'dojo.rotate_forge_token(dojo.forge_provider, text, text)'
+        'dojo.mark_forge_token_rejected(dojo.forge_provider, text, text)',
+        'dojo.rotate_forge_token(dojo.forge_provider, text, text, text)'
     ] loop
         foreach r in array array['anon', 'authenticated', 'public'] loop
             if r = 'public' then
@@ -124,8 +124,18 @@ begin
         raise exception 'vault: state or expiry not recorded';
     end if;
 
-    -- A rejected token stops reads until it is replaced.
-    perform dojo.mark_forge_token_rejected('azure_devops', 'ztest-az-b01');
+    -- A rejected token stops reads until it is replaced — but only the token the
+    -- rejection was ABOUT (compare-and-set, #308 R5b review 2): a sync still
+    -- holding an older token must not mark a newer grant.
+    if dojo.mark_forge_token_rejected('azure_devops', 'ztest-az-b01', 'ztest-pat-OLDER-0000') then
+        raise exception 'vault: a rejection of an older token marked the current one';
+    end if;
+    if (select token_state::text from dojo.tenant_connections where external_id = 'ztest-az-b01') <> 'ok' then
+        raise exception 'vault: a stale rejection changed the state';
+    end if;
+    if not dojo.mark_forge_token_rejected('azure_devops', 'ztest-az-b01', 'ztest-pat-FIRST-0001') then
+        raise exception 'vault: a rejection of the current token did not mark it';
+    end if;
     if (select token_state::text from dojo.tenant_connections where external_id = 'ztest-az-b01') <> 'needs_new_token' then
         raise exception 'vault: a rejected token was not marked needs_new_token';
     end if;
@@ -169,7 +179,16 @@ declare
 begin
     select c.token_secret_id into v_secret from dojo.tenant_connections c where c.external_id = 'ztest-az-b01';
     select count(*) into v_audits from dojo.audit_events where tenant_id = 'b0000000-0000-4000-8000-000000000b0a';
-    perform dojo.rotate_forge_token('azure_devops', 'ztest-az-b01', 'ztest-pat-ROTATED-0009');
+    -- A late rotate from a sync that held an OLDER token changes nothing (#308 R5b review 2).
+    if dojo.rotate_forge_token('azure_devops', 'ztest-az-b01', 'ztest-pat-OLDER-0000', 'ztest-pat-STALE-0008') then
+        raise exception 'rotate: a stale rotate replaced the current token';
+    end if;
+    if dojo.forge_token('azure_devops', 'ztest-az-b01') <> 'ztest-pat-SECOND-0002' then
+        raise exception 'rotate: a stale rotate changed the stored token';
+    end if;
+    if not dojo.rotate_forge_token('azure_devops', 'ztest-az-b01', 'ztest-pat-SECOND-0002', 'ztest-pat-ROTATED-0009') then
+        raise exception 'rotate: the current token was not rotated';
+    end if;
     if (select token_secret_id from dojo.tenant_connections where external_id = 'ztest-az-b01') <> v_secret
        or (select count(*) from vault.decrypted_secrets where decrypted_secret like 'ztest-pat-%') <> 1 then
         raise exception 'rotate: expected the one secret, updated in place';
@@ -181,15 +200,39 @@ begin
         raise exception 'rotate: a rotation was audited';
     end if;
     begin
-        perform dojo.rotate_forge_token('azure_devops', 'ztest-az-none', 'ztest-pat-NOWHERE');
+        perform dojo.rotate_forge_token('azure_devops', 'ztest-az-none', 'ztest-pat-X', 'ztest-pat-NOWHERE');
         raise exception 'rotate: a connection with no token was rotated';
     exception when no_data_found then null;
     end;
     begin
-        perform dojo.rotate_forge_token('azure_devops', 'ztest-az-b01', ' ');
+        perform dojo.rotate_forge_token('azure_devops', 'ztest-az-b01', 'ztest-pat-ROTATED-0009', ' ');
         raise exception 'rotate: a blank token was stored';
     exception when invalid_parameter_value then null;
     end;
+
+    -- A rotate never touches the state: it cannot un-reject a dead grant.
+    perform dojo.mark_forge_token_rejected('azure_devops', 'ztest-az-b01', 'ztest-pat-ROTATED-0009');
+    perform dojo.rotate_forge_token('azure_devops', 'ztest-az-b01', 'ztest-pat-ROTATED-0009', 'ztest-pat-ROTATED-0010');
+    if (select token_state::text from dojo.tenant_connections where external_id = 'ztest-az-b01') <> 'needs_new_token' then
+        raise exception 'rotate: a rotate reset a rejected grant to ok';
+    end if;
+end $$;
+reset role;
+
+-- The reconnect race end to end: a sync reads token A, an admin reconnects
+-- (set_forge_token stores B, state ok), then the sync's refresh of A is refused
+-- and its rotate of A arrives late — B is neither marked nor overwritten.
+set local role service_role;
+do $$
+begin
+    perform dojo.set_forge_token('a0000000-0000-4000-8000-000000000b01', 'azure_devops', 'ztest-az-b01',
+                                 'ztest-pat-RECONNECTED-B', null);
+    perform dojo.mark_forge_token_rejected('azure_devops', 'ztest-az-b01', 'ztest-pat-ROTATED-0010');
+    perform dojo.rotate_forge_token('azure_devops', 'ztest-az-b01', 'ztest-pat-ROTATED-0010', 'ztest-pat-LATE-A2');
+    if (select token_state::text from dojo.tenant_connections where external_id = 'ztest-az-b01') <> 'ok'
+       or dojo.forge_token('azure_devops', 'ztest-az-b01') <> 'ztest-pat-RECONNECTED-B' then
+        raise exception 'race: a stale sync marked or overwrote a reconnected grant';
+    end if;
 end $$;
 reset role;
 
@@ -236,12 +279,12 @@ begin
     end if;
     if (select count(*) from dojo.audit_events
          where tenant_id = 'b0000000-0000-4000-8000-000000000b0a' and action = 'forge_token_replaced'
-           and actor_id = 'a0000000-0000-4000-8000-000000000b01') <> 1 then
-        raise exception 'vault: expected one forge_token_replaced audit row';
+           and actor_id = 'a0000000-0000-4000-8000-000000000b01') <> 2 then
+        raise exception 'vault: expected two forge_token_replaced audit rows (a replace, a reconnect)';
     end if;
     if (select count(*) from dojo.audit_events
-         where tenant_id = 'b0000000-0000-4000-8000-000000000b0a' and action = 'forge_token_rejected') <> 1 then
-        raise exception 'vault: expected one forge_token_rejected audit row';
+         where tenant_id = 'b0000000-0000-4000-8000-000000000b0a' and action = 'forge_token_rejected') <> 2 then
+        raise exception 'vault: expected two forge_token_rejected audit rows (one per rejection of the current token)';
     end if;
 end $$;
 

@@ -380,7 +380,8 @@ describe('syncAzureOrganization — re-read with the stored grant (D42)', () => 
 		expect(new URLSearchParams(String(token.calls[0].init?.body)).get('refresh_token')).toBe(REFRESH);
 		expect(d.rpcCalls.slice(0, 2)).toEqual([
 			{ fn: 'forge_token', args: { p_provider: 'azure_devops', p_external_id: ORG_ID } },
-			{ fn: 'rotate_forge_token', args: { p_provider: 'azure_devops', p_external_id: ORG_ID, p_token: 'ztest-refresh-0001' } }
+			// Compare-and-set: only while the stored grant is still the one refreshed.
+			{ fn: 'rotate_forge_token', args: { p_provider: 'azure_devops', p_external_id: ORG_ID, p_expected: REFRESH, p_token: 'ztest-refresh-0001' } }
 		]);
 		expect(asked).toContain(`prove:${ORG_ID}`);
 		expect(writes(d)).not.toContain('set_forge_token');
@@ -401,6 +402,8 @@ describe('syncAzureOrganization — re-read with the stored grant (D42)', () => 
 		expect(err.status).toBe(409);
 		expect(err.message).toMatch(/reconnect Azure DevOps/i);
 		expect(d.rpcCalls.map((c) => c.fn)).toEqual(['forge_token', 'mark_forge_token_rejected']);
+		// Only the grant Microsoft refused is marked — not one an admin reconnected meanwhile.
+		expect(d.rpcCalls[1].args).toEqual({ p_provider: 'azure_devops', p_external_id: ORG_ID, p_rejected: REFRESH });
 		expect(asked).toEqual([]);
 	});
 
