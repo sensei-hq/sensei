@@ -51,9 +51,12 @@ export interface FakeTable {
 	 * every test until this existed.
 	 */
 	error?: { code?: string; message: string };
+	/** Make every WRITE (insert, update, delete) on this table fail with this
+	 *  error while reads succeed — a store that can be read but not written. */
+	writeError?: { code?: string; message: string };
 }
 
-type Filter = { op: 'eq' | 'in' | 'is'; column: string; value: unknown };
+type Filter = { op: 'eq' | 'in' | 'is' | 'gte'; column: string; value: unknown };
 
 const PG_UNIQUE_VIOLATION = '23505';
 
@@ -73,6 +76,8 @@ function matches(row: FakeRow, filters: Filter[]): boolean {
 		const v = row[f.column];
 		if (f.op === 'eq') return v === f.value;
 		if (f.op === 'is') return f.value === null ? v === null || v === undefined : v === f.value;
+		// ISO timestamps and numbers compare in order as written.
+		if (f.op === 'gte') return v != null && String(v) >= String(f.value);
 		return Array.isArray(f.value) && (f.value as unknown[]).includes(v);
 	});
 }
@@ -99,7 +104,15 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 	const state: Record<string, FakeTable> = {};
 	const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
 	for (const [name, t] of Object.entries(tables)) {
-		state[name] = { rows: t.rows.map((r) => ({ ...r })), uniques: t.uniques, reads: 0, error: t.error };
+		// A scalar row (a function that returns one value, read with `.single()`)
+		// stays the value; spreading it would turn a string into an object.
+		state[name] = {
+			rows: t.rows.map((r) => (r !== null && typeof r === 'object' ? { ...r } : r)),
+			uniques: t.uniques,
+			reads: 0,
+			error: t.error,
+			writeError: t.writeError
+		};
 	}
 
 	function builder(table: string) {
@@ -115,6 +128,7 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 			// Injected failure wins over everything: a table that cannot be read
 			// cannot be written or counted either.
 			if (t.error) return { data: null, error: t.error };
+			if (pending && t.writeError) return { data: null, error: t.writeError };
 			if (pending?.op === 'insert') {
 				const row: FakeRow = { id: nextId(table.slice(0, 4)), ...pending.payload };
 				for (const u of t.uniques ?? []) {
@@ -144,6 +158,15 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 				return { data: hit, error: null };
 			}
 			const hits = t.rows.filter((r) => matches(r, filters));
+			if (sort) {
+				const { column, ascending, nullsFirst } = sort;
+				hits.sort((a, b) => {
+					const x = a[column];
+					const y = b[column];
+					if (x == null || y == null) return x == null && y == null ? 0 : (x == null) === nullsFirst ? -1 : 1;
+					return (String(x) < String(y) ? -1 : String(x) > String(y) ? 1 : 0) * (ascending ? 1 : -1);
+				});
+			}
 			// Slice AFTER filtering, matching PostgREST: the range applies to the
 			// result set, not to the table.
 			//
@@ -162,10 +185,22 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 		 *  so paginated reads are testable: without it a page loop is untestable
 		 *  and the 1000-row cap it exists to defeat stays a code-reading exercise. */
 		let range: { from: number; to: number } | null = null;
+		/** `.order(column, { ascending, nullsFirst })` — applied before the range, as PostgREST does. */
+		let sort: { column: string; ascending: boolean; nullsFirst: boolean } | null = null;
+
+		/** `.select(cols, { count: 'exact', head: true })` — answer the row count. */
+		let counted = false;
 
 		const api: Record<string, unknown> = {
-			select: () => api,
-			order: () => api,
+			select: (_cols?: string, opts?: { count?: string; head?: boolean }) => {
+				counted = opts?.count === 'exact';
+				return api;
+			},
+			order: (column: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) => {
+				const ascending = opts?.ascending ?? true;
+				sort = { column, ascending, nullsFirst: opts?.nullsFirst ?? !ascending };
+				return api;
+			},
 			range: (from: number, to: number) => {
 				range = { from, to };
 				return api;
@@ -176,6 +211,10 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 			},
 			is: (column: string, value: unknown) => {
 				filters.push({ op: 'is', column, value });
+				return api;
+			},
+			gte: (column: string, value: unknown) => {
+				filters.push({ op: 'gte', column, value });
 				return api;
 			},
 			in: (column: string, value: unknown) => {
@@ -208,6 +247,7 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 			},
 			then: (resolve: (v: unknown) => unknown) => {
 				const r = run();
+				if (counted) return Promise.resolve(resolve({ data: null, count: r.error ? null : (r.data?.length ?? 0), error: r.error }));
 				return Promise.resolve(resolve({ data: r.error ? null : r.data, error: r.error }));
 			}
 		};

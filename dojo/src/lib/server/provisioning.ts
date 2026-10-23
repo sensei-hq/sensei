@@ -112,10 +112,12 @@ export interface FallbackIdentity {
 const DOJO_HOST = 'dojo.sensei-hq.org';
 
 /** `dojo.forge_provider` → `dojo.auth_method`. The auth_method enum has no
- *  generic `oauth` label yet (§V.1 puts it in phase 2), so only github has a
- *  valid value — which is why phase 1 provisions github alone. */
+ *  generic `oauth` label yet (§V.1 puts it in phase 2): GitHub is proven by its
+ *  sign-in, Azure DevOps by an organization admin's Microsoft Entra connect (#308 R5b, D42);
+ *  GitLab and Bitbucket have no valid value yet. */
 export function authMethodFor(provider: ForgeProvider): string {
 	if (provider === 'github') return 'github_oauth';
+	if (provider === 'azure_devops') return 'azure_devops';
 	throw new AdminError(
 		501,
 		`provisioning from ${provider} needs the generic 'oauth' auth_method (phase 2)`
@@ -336,15 +338,25 @@ async function myMemberships(db: DojoClient, principalId: string): Promise<Membe
 	return (data ?? []) as Membership[];
 }
 
+/** Which forge read provisioned a membership, and which unit of it (#308 R5b):
+ *  only that forge's read of that unit may end it. */
+interface MembershipSource {
+	provider: ForgeProvider;
+	/** The unit's stable id (a GitHub org, an Azure DevOps organization). */
+	unit: string;
+}
+
 /** Create the membership if it is not already there, and report the role that
- *  ends up in force. An existing row WINS — see the header on overrides. */
+ *  ends up in force. An existing row WINS — see the header on overrides. An org
+ *  membership records the forge and unit whose read provisioned it (`from`). */
 async function ensureMembership(
 	db: DojoClient,
 	tenantId: string,
 	principalId: string,
 	kind: string,
 	authenticatedVia: string,
-	role: string
+	role: string,
+	from?: MembershipSource
 ): Promise<string> {
 	const existing = await db
 		.from('memberships')
@@ -363,8 +375,10 @@ async function ensureMembership(
 			kind,
 			authenticated_via: authenticatedVia,
 			role,
-			// Provisioning made it from a forge proof, so leaving the org ends it (#309).
-			source: 'provisioned'
+			// Provisioning made it from a forge proof, so leaving the org ends it (#309)
+			// — and only that forge's read of that org may (#308 R5b).
+			source: 'provisioned',
+			...(from ? { source_provider: from.provider, source_unit: from.unit } : {})
 		})
 		.select('role')
 		.single();
@@ -385,19 +399,20 @@ async function ensureMembership(
  * a conflict is a 409 that surfaces (it is the shape an accidental Supabase
  * account merge takes), never a quiet reassignment.
  */
-async function ensureIdentity(
+export async function ensureForgeIdentity(
 	db: DojoClient,
 	principalId: string,
-	facts: ForgeFacts
+	forge: ForgeProvider,
+	user: Pick<ForgeUser, 'id' | 'name' | 'email'>
 ): Promise<void> {
-	const provider = authMethodFor(facts.provider);
+	const provider = authMethodFor(forge);
 	const now = new Date().toISOString();
 
 	const found = await db
 		.from('identities')
 		.select('id, principal_id')
 		.eq('provider', provider)
-		.eq('subject', facts.user.id)
+		.eq('subject', user.id)
 		.maybeSingle();
 	if (found.error) throw new AdminError(500, found.error.message);
 
@@ -412,8 +427,10 @@ async function ensureIdentity(
 		const upd = await db
 			.from('identities')
 			.update({
-				email: facts.user.email,
-				display_name: facts.user.name,
+				// A read that names no email or name says nothing about them: the
+				// ones on record stay (an Azure read never carries an email).
+				...(user.email ? { email: user.email } : {}),
+				...(user.name ? { display_name: user.name } : {}),
 				last_login_at: now
 			})
 			.eq('id', row.id)
@@ -428,9 +445,9 @@ async function ensureIdentity(
 		.insert({
 			principal_id: principalId,
 			provider,
-			subject: facts.user.id,
-			email: facts.user.email,
-			display_name: facts.user.name,
+			subject: user.id,
+			email: user.email,
+			display_name: user.name,
 			last_login_at: now
 		})
 		.select('id')
@@ -599,7 +616,8 @@ export async function ensureOrgTenant(
 			principalId,
 			'employer',
 			authenticatedVia,
-			roleForOrg(org)
+			roleForOrg(org),
+			{ provider, unit: org.id }
 		);
 		// A tenant may have been created by a plain member long before an owner
 		// first signs in, so the claim is attempted on EVERY pass, not only at
@@ -651,7 +669,8 @@ export async function ensureOrgTenant(
 			principalId,
 			'employer',
 			authenticatedVia,
-			roleForOrg(org)
+			roleForOrg(org),
+			{ provider, unit: org.id }
 		);
 		return { id: winner.id, key: winner.key, origin: 'organization', role: joinedRole, created: false };
 	}
@@ -662,7 +681,8 @@ export async function ensureOrgTenant(
 		principalId,
 		'employer',
 		authenticatedVia,
-		roleForOrg(org)
+		roleForOrg(org),
+		{ provider, unit: org.id }
 	);
 	// The creator may themselves be the forge owner, in which case the tenant is
 	// claimed the moment it exists rather than waiting for a second sign-in.
@@ -903,7 +923,7 @@ export async function ensureProvisioned(
 	}
 
 	const authenticatedVia = authMethodFor(facts.provider);
-	await ensureIdentity(db, principalId, facts);
+	await ensureForgeIdentity(db, principalId, facts.provider, facts.user);
 
 	const personal = await ensurePersonalTenant(
 		db,

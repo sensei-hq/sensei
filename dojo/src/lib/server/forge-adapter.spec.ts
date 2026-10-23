@@ -17,8 +17,9 @@ describe('forgeAdapter', () => {
 	});
 
 	it('refuses a forge that has no adapter yet, rather than reading it as GitHub', () => {
-		// R5b adds Azure DevOps; until then asking for it is a 501, not a GitHub
-		// read with someone else's token.
+		// Azure DevOps' adapter is bound to one named organization
+		// (`azureAdapter(org)`, #308 R5b), so asked for by provider alone it is a
+		// 501 like GitLab and Bitbucket — never a GitHub read with someone else's token.
 		for (const p of ['azure_devops', 'gitlab', 'bitbucket'] as const) {
 			expect(() => forgeAdapter(p)).toThrow(AdminError);
 			try {

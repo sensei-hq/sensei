@@ -164,7 +164,9 @@ export async function registerRepositories(db: DojoClient, repos: RepoInput[]): 
 				p_provider: ref.provider,
 				p_org: ref.org,
 				p_name: (repo.name ?? '').trim() || nameFromKey(repoKey),
-				p_remote_url: repo.remote_url ?? null
+				p_remote_url: repo.remote_url ?? null,
+				// An Azure repository files by its project's mapping first (#308 R5b).
+				...(ref.project ? { p_project: ref.project } : {})
 			})
 			.single();
 		// An error is not a reason: reporting it as `no_connection` would tell the

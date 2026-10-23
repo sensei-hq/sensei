@@ -1,0 +1,15 @@
+{
+	// The config @sveltejs/adapter-cloudflare builds against (svelte.config.js,
+	// `config`). The adapter writes SvelteKit's worker to `main` — kept apart from
+	// the DEPLOYED config (wrangler.jsonc), whose `main` is worker-entry.js, the
+	// wrapper that adds the cron trigger's `scheduled` handler (#308 R5b, D44).
+	// `assets` must match wrangler.jsonc's.
+	"name": "dojo",
+	"compatibility_date": "2026-06-13",
+	"compatibility_flags": ["nodejs_compat"],
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".svelte-kit/cloudflare"
+	}
+}

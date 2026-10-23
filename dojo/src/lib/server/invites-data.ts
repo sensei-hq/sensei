@@ -184,27 +184,4 @@ export async function hashInviteToken(token: string): Promise<string> {
 	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Failed accepts allowed per person within the window before further attempts
- *  are refused (#311). The token is unguessable; this bounds the guessing anyway. */
-export const ACCEPT_FAILURE_LIMIT = 10;
-const ACCEPT_FAILURE_WINDOW_MS = 15 * 60 * 1000;
-
-/** How many more failed accepts the caller has in the current window (never
- *  below 0). A failed count is an error — never a free pass. */
-export async function acceptAttemptsLeft(db: DojoClient, principalId: string, nowMs: number): Promise<number> {
-	const since = new Date(nowMs - ACCEPT_FAILURE_WINDOW_MS).toISOString();
-	const { count, error } = await db
-		.from('invite_accept_failures')
-		.select('principal_id', { count: 'exact', head: true })
-		.eq('principal_id', principalId)
-		.gte('failed_at', since);
-	if (error) throw new AdminError(500, error.message);
-	return Math.max(0, ACCEPT_FAILURE_LIMIT - (count ?? 0));
-}
-
-/** Record one failed accept by the caller (#311). */
-export async function recordAcceptFailure(db: DojoClient, principalId: string): Promise<void> {
-	const { error } = await db.from('invite_accept_failures').insert({ principal_id: principalId });
-	if (error) throw new AdminError(500, error.message);
-}
 

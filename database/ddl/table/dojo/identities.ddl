@@ -46,7 +46,7 @@ impossible.';
 comment on column dojo.identities.principal_id
      is 'The person this proof belongs to. FK to dojo.principals, never to auth.users — see that table for why.';
 comment on column dojo.identities.provider
-     is 'Which auth method produced this subject: sso, github_oauth, or device_code.';
+     is 'Which auth method produced this subject: sso, github_oauth, device_code, or azure_devops (an Azure DevOps account read through a Microsoft Entra connect, by its stable id, #308 R5b).';
 comment on column dojo.identities.subject
      is 'The provider''s subject identifier (OIDC/SAML sub, GitHub user id, or device-code enrollment id).';
 

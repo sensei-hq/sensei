@@ -15,8 +15,8 @@ class AdminError extends Error {
 const mocks = vi.hoisted(() => ({
 	resolveCaller: vi.fn(),
 	acceptInvite: vi.fn(),
-	acceptAttemptsLeft: vi.fn(),
-	recordAcceptFailure: vi.fn()
+	takeAttempt: vi.fn(),
+	releaseAttempt: vi.fn()
 }));
 
 vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({ client: 'service' }) }));
@@ -27,10 +27,9 @@ vi.mock('$lib/server/dojo-auth', () => ({
 }));
 vi.mock('$lib/server/invites-data', () => ({
 	acceptInvite: mocks.acceptInvite,
-	acceptAttemptsLeft: mocks.acceptAttemptsLeft,
-	recordAcceptFailure: mocks.recordAcceptFailure,
 	AdminError
 }));
+vi.mock('$lib/server/rate-limit', () => ({ takeAttempt: mocks.takeAttempt, releaseAttempt: mocks.releaseAttempt }));
 
 const route = await import('./+server');
 
@@ -49,8 +48,8 @@ function ev(body: unknown) {
 beforeEach(() => {
 	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', email: 'ada@acme.co', accessToken: 'jwt-A' });
 	mocks.acceptInvite.mockClear().mockResolvedValue({ tenant_id: 't1', role: 'contributor' });
-	mocks.acceptAttemptsLeft.mockReset().mockResolvedValue(10);
-	mocks.recordAcceptFailure.mockReset().mockResolvedValue(undefined);
+	mocks.takeAttempt.mockReset().mockResolvedValue('attempt-1');
+	mocks.releaseAttempt.mockReset().mockResolvedValue(undefined);
 });
 
 describe('POST /v1/you/invites/accept', () => {
@@ -85,26 +84,34 @@ describe('invite acceptance is the system\'s', () => {
 	});
 });
 
-// #311: failed accepts are counted per person; with none left the route refuses
-// before any invite is read, and each failed accept is recorded.
+// #311: failed accepts are counted per person. An attempt is TAKEN atomically
+// before any invite is read (dojo.take_attempt — concurrent guesses cannot all
+// pass a check made before any of them records, #308 R5b review 2), and given
+// back when the accept did not fail as the caller's error.
 describe('accept attempts are bounded (#311)', () => {
 	it('refuses with 429 when the caller has no attempts left, reading no invite', async () => {
-		mocks.acceptAttemptsLeft.mockResolvedValueOnce(0);
+		mocks.takeAttempt.mockResolvedValueOnce(null);
 		const res = await route.POST(ev({ token: 'tok' }));
 		expect(res.status).toBe(429);
 		expect(mocks.acceptInvite).not.toHaveBeenCalled();
-		expect(mocks.acceptAttemptsLeft).toHaveBeenCalledWith({ client: 'service' }, 'u1', expect.any(Number));
+		expect(mocks.takeAttempt).toHaveBeenCalledWith({ client: 'service' }, 'u1', 'invite_accept');
 	});
 
-	it('records a failed accept, and still says why it failed', async () => {
+	it('keeps the attempt of a failed accept, and still says why it failed', async () => {
 		mocks.acceptInvite.mockRejectedValueOnce(new AdminError(404, 'invalid or expired invite'));
 		const res = await route.POST(ev({ token: 'nope' }));
 		expect(res.status).toBe(404);
-		expect(mocks.recordAcceptFailure).toHaveBeenCalledWith({ client: 'service' }, 'u1');
+		expect(mocks.releaseAttempt).not.toHaveBeenCalled();
 	});
 
-	it('a successful accept records no failure', async () => {
+	it('a successful accept gives its attempt back — it counts no failure', async () => {
 		expect((await route.POST(ev({ token: 'tok' }))).status).toBe(200);
-		expect(mocks.recordAcceptFailure).not.toHaveBeenCalled();
+		expect(mocks.releaseAttempt).toHaveBeenCalledWith({ client: 'service' }, 'attempt-1');
+	});
+
+	it('a server failure gives the attempt back too — it was not a guess', async () => {
+		mocks.acceptInvite.mockRejectedValueOnce(new AdminError(500, 'boom'));
+		expect((await route.POST(ev({ token: 'tok' }))).status).toBe(500);
+		expect(mocks.releaseAttempt).toHaveBeenCalledWith({ client: 'service' }, 'attempt-1');
 	});
 });

@@ -21,51 +21,16 @@ export const FORGE_TOKEN_COOKIE = 'dojo_forge_github';
 export const FORGE_TOKEN_TTL_SECONDS = 3600;
 
 import { githubIdentityId, requireGithubTokenOwner } from './github-identity';
+import { openSealed, seal } from './sealed-value';
 
 const COOKIE_PATH = '/v1/t';
-const enc = new TextEncoder();
-const dec = new TextDecoder();
-
-function b64url(bytes: Uint8Array): string {
-	let s = '';
-	for (const b of bytes) s += String.fromCharCode(b);
-	return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function unb64url(s: string): Uint8Array | null {
-	if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
-	try {
-		const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
-		return Uint8Array.from(bin, (c) => c.charCodeAt(0));
-	} catch {
-		return null;
-	}
-}
-
-/** The AES-GCM key for the seal, derived from the server secret — its own key,
- *  never the secret itself. */
-async function sealKey(secret: string): Promise<CryptoKey> {
-	if (!secret) throw new Error('forge token cookie: no server secret to seal with');
-	const base = await crypto.subtle.importKey('raw', enc.encode(secret), 'HKDF', false, ['deriveKey']);
-	return crypto.subtle.deriveKey(
-		{ name: 'HKDF', hash: 'SHA-256', salt: enc.encode('dojo'), info: enc.encode('forge-token-cookie-v1') },
-		base,
-		{ name: 'AES-GCM', length: 256 },
-		false,
-		['encrypt', 'decrypt']
-	);
-}
+/** The seal's purpose — its own HKDF key (sealed-value.ts). Unchanged from R5a,
+ *  so a cookie sealed before the primitive moved still opens. */
+const PURPOSE = 'forge-token-cookie-v1';
 
 /** Seal `token` for `authUserId`, good for FORGE_TOKEN_TTL_SECONDS from `now`. */
-export async function sealForgeToken(token: string, authUserId: string, secret: string, now = Date.now()): Promise<string> {
-	const key = await sealKey(secret);
-	const iv = crypto.getRandomValues(new Uint8Array(12));
-	const payload = enc.encode(JSON.stringify({ t: token, u: authUserId, exp: now + FORGE_TOKEN_TTL_SECONDS * 1000 }));
-	const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, payload));
-	const out = new Uint8Array(iv.length + sealed.length);
-	out.set(iv);
-	out.set(sealed, iv.length);
-	return b64url(out);
+export function sealForgeToken(token: string, authUserId: string, secret: string, now = Date.now()): Promise<string> {
+	return seal(token, authUserId, secret, PURPOSE, FORGE_TOKEN_TTL_SECONDS, now);
 }
 
 /** The token sealed in `value`, or null when it is absent, tampered with,
@@ -76,17 +41,8 @@ export async function openForgeToken(
 	secret: string,
 	now = Date.now()
 ): Promise<string | null> {
-	const bytes = value ? unb64url(value) : null;
-	if (!bytes || bytes.length < 13 || !secret) return null;
-	try {
-		const key = await sealKey(secret);
-		const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12) }, key, bytes.slice(12));
-		const p = JSON.parse(dec.decode(plain)) as { t?: unknown; u?: unknown; exp?: unknown };
-		if (p.u !== authUserId || typeof p.exp !== 'number' || p.exp < now) return null;
-		return typeof p.t === 'string' && p.t ? p.t : null;
-	} catch {
-		return null;
-	}
+	const t = await openSealed(value, authUserId, secret, PURPOSE, now);
+	return typeof t === 'string' && t ? t : null;
 }
 
 function attributes(maxAge: number, secure: boolean): string {

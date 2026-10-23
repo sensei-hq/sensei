@@ -29,13 +29,18 @@
 		grantTeamWorkspaceView,
 		listIntegrationUnits,
 		claimIntegrationUnit,
-		mapIntegrationUnit
+		mapIntegrationUnit,
+		listAzureConnections,
+		startAzureConnect,
+		syncAzure,
+		removeAzureToken
 	} from '$lib/admin-data';
-	import { createInvite } from '$lib/client-data';
+	import { createInvite, importAzureOrganization, listAzureGrantOrganizations } from '$lib/client-data';
 	import { OrgSectionState } from '$lib/org-section-state.svelte';
 	import { InviteState } from '$lib/invite-state.svelte';
 	import { TeamDraft } from '$lib/teams-state.svelte';
 	import { IntegrationsState } from '$lib/integrations-state.svelte';
+	import { AzureConnectState } from '$lib/azure-connect-state.svelte';
 	import { connectGithub, type KavachSignIn } from '$lib/github-connect';
 	import { providers } from '$kavach/providers';
 	import { getContext, untrack } from 'svelte';
@@ -97,6 +102,18 @@
 		map: (unitId, target) => mapIntegrationUnit(tk(), 'github', unitId, target, opts()),
 		connect: () => connectGithub(kavach, providers, page.url.href)
 	});
+	// Azure DevOps (#308 R5b, D42): connect through Microsoft Entra, import the
+	// organizations into this dōjō; then this dōjō's Azure organizations, each
+	// with its state, Sync and Remove. No token passes through here.
+	const azure = new AzureConnectState({
+		start: () => startAzureConnect(tk(), opts()),
+		navigate: (url) => window.location.assign(url),
+		organizations: () => listAzureGrantOrganizations(opts()),
+		importOrg: (organization) => importAzureOrganization(organization, opts()),
+		status: () => listAzureConnections(tk(), opts()),
+		sync: (organizationId) => syncAzure(tk(), organizationId, opts()),
+		removeToken: (organizationId) => removeAzureToken(tk(), organizationId, opts())
+	});
 	// Read on opening the section, again for another org (this component is
 	// reused), and again after the GitHub connection returns (kavach's sync
 	// invalidates the data, which re-runs this).
@@ -106,6 +123,9 @@
 		untrack(() => {
 			integrations.reset();
 			void integrations.load();
+			azure.reset();
+			azure.notice(page.url.searchParams);
+			void azure.load();
 		});
 	});
 </script>
@@ -158,7 +178,7 @@
 {:else if data.section === 'identity'}
 	<ScrIdentity orgName={data.orgName} identity={data.identity} />
 {:else if data.section === 'integrations'}
-	<ScrIntegrations orgName={data.orgName} state={integrations} />
+	<ScrIntegrations orgName={data.orgName} state={integrations} {azure} />
 {:else if data.section === 'health'}
 	<ScrHealth orgName={data.orgName} health={data.health} />
 {:else if data.section === 'billing'}

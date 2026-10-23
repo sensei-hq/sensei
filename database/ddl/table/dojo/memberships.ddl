@@ -15,6 +15,8 @@ create table if not exists dojo.memberships (
 , disabled_at          timestamptz
 , disabled_reason      dojo.membership_disabled_reason
 , source               dojo.membership_source not null default 'invited'
+, source_provider      dojo.forge_provider
+, source_unit          text
 , created_at           timestamptz           not null default now()
 , updated_at           timestamptz           not null default now()
 , constraint memberships_tenant_user_unique unique (tenant_id, user_id)
@@ -40,7 +42,7 @@ comment on column dojo.memberships.kind
 comment on column dojo.memberships.org_slugs
      is 'Git-remote owner slugs this membership covers (e.g. {sensei-hq,acme}), lowercased. A project whose repo owner is in this set is a candidate to auto-bind here (confirm-inferred in the app About panel). Set once at first-join/setup and overridable; feeds infer_binding with kind-precedence (client > employer > community > personal).';
 comment on column dojo.memberships.authenticated_via
-     is 'How this membership was paired: sso, github_oauth, or device_code.';
+     is 'How this membership was paired: sso, github_oauth, device_code, or azure_devops (an Azure DevOps import, #308 R5b).';
 comment on column dojo.memberships.attribution_default
      is 'Default credit for contributions from this membership: named or anonymous. Source-dereference is a separate always-on invariant (client work is anonymous credit + stripped).';
 comment on column dojo.memberships.sync_status
@@ -57,3 +59,12 @@ comment on column dojo.memberships.source is
 
 comment on column dojo.memberships.disabled_reason is
 'Why disabled_at is set (#309): left_org = a complete forge read no longer lists the person in the org; a rejoin restores only these.';
+
+comment on column dojo.memberships.source_provider is
+'The forge whose read provisioned this membership (#308 R5b): only that forge''s
+reconcile may end or restore it. NULL for an invited membership.';
+
+comment on column dojo.memberships.source_unit is
+'The forge unit (its stable id: a GitHub org, an Azure DevOps organization) whose
+read provisioned this membership (#308 R5b); a member read of that unit alone may
+end it. NULL for an invited membership.';

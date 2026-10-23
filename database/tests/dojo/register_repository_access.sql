@@ -79,6 +79,14 @@ begin
     exception when invalid_parameter_value then null;
     end;
 
+    -- The org is read at its place in the key: a repository NAMED like the org
+    -- (someone-else/ztest-acme) is not the org's.
+    begin
+        perform dojo.register_repository('github.com/someone-else/ztest-acme', 'github', 'ztest-acme', 'ztest-acme', null);
+        raise exception 'register: a repository named like an org was filed under that org';
+    exception when invalid_parameter_value then null;
+    end;
+
     begin
         select count(*) into n from dojo.repositories;
         raise exception 'repositories: a session read the table directly';

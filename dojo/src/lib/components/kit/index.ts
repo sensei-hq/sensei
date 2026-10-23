@@ -28,6 +28,7 @@ export { default as Btn } from './Btn.svelte';
 export { default as ListSection } from './ListSection.svelte';
 export { default as WorkspaceRow } from './WorkspaceRow.svelte';
 export { default as MyDojoRow } from './MyDojoRow.svelte';
+export { default as AzureConnect } from './AzureConnect.svelte';
 
 // Plan / run-detail visualizers (ported from dojo2-kit.jsx K2Plan*).
 export { default as PlanBar } from './PlanBar.svelte';

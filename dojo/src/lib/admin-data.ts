@@ -30,6 +30,7 @@ import type { TeamMetricsWire } from './team-metrics';
 import type { BillableUserWire, BillingAccountWire, SeatUsageWire } from './billing-view';
 import type { ForgeProvider } from './forge-providers';
 import type { IntegrationUnitsView, MapTarget } from './integrations-view';
+import type { AzureStatusView, AzureSyncResult } from './azure-view';
 
 // Re-export the shared error under the admin name so admin screens `instanceof`
 // against a local symbol without reaching into the shared module directly.
@@ -425,6 +426,33 @@ export async function mapIntegrationUnit(
 	opts: DojoCallOpts = {}
 ): Promise<{ tenantId: string; workspaceId: string | null }> {
 	return sendJson(adminUrl(tenantKey, `${integrationsPath(provider)}/map`), 'POST', { unit_id: unitId, ...target }, opts);
+}
+
+// Azure DevOps (#308 R5b) ────────────────────────────────────────────────────────
+
+const azurePath = '/integrations/azure_devops';
+
+/** `GET …/integrations/azure_devops` — this dōjō's Azure DevOps organizations and
+ *  their connection state (never a token), the read scopes the connect asks for,
+ *  and whether this server can connect at all. */
+export async function listAzureConnections(tenantKey: string, opts: DojoCallOpts = {}): Promise<AzureStatusView> {
+	return getJson<AzureStatusView>(adminUrl(tenantKey, azurePath), opts);
+}
+
+/** `POST …/integrations/azure_devops/connect` — start connecting Azure DevOps
+ *  through Microsoft Entra for this dōjō: the URL to send the person to. */
+export async function startAzureConnect(tenantKey: string, opts: DojoCallOpts = {}): Promise<{ url: string }> {
+	return sendJson(adminUrl(tenantKey, `${azurePath}/connect`), 'POST', {}, opts);
+}
+
+/** `POST …/integrations/azure_devops/sync` — re-read with the stored grant. */
+export async function syncAzure(tenantKey: string, organizationId: string, opts: DojoCallOpts = {}): Promise<AzureSyncResult> {
+	return sendJson(adminUrl(tenantKey, `${azurePath}/sync`), 'POST', { organization_id: organizationId }, opts);
+}
+
+/** `DELETE …/integrations/azure_devops/token` — remove the stored grant. */
+export async function removeAzureToken(tenantKey: string, organizationId: string, opts: DojoCallOpts = {}): Promise<void> {
+	await sendJson(adminUrl(tenantKey, `${azurePath}/token`), 'DELETE', { organization_id: organizationId }, opts);
 }
 
 /** `GET …/audit` — the admin audit log, most recent first (read-only). */

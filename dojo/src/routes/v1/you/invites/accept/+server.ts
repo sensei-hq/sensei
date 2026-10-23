@@ -7,7 +7,8 @@
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
-import { acceptInvite, acceptAttemptsLeft, recordAcceptFailure, AdminError } from '$lib/server/invites-data';
+import { acceptInvite, AdminError } from '$lib/server/invites-data';
+import { releaseAttempt, takeAttempt } from '$lib/server/rate-limit';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
@@ -16,16 +17,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const db = dojoDb();
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const token = typeof body.token === 'string' ? body.token : '';
-		// Bounded guessing (#311): with no failed attempts left in the window, refuse
-		// before any invite is read; each failed accept is recorded.
+		// Bounded guessing (#311): an attempt is taken atomically before any invite
+		// is read (none left → 429), and given back unless the accept failed as the
+		// caller's error — a success, or a server failure, counts no guess.
 		const now = Date.now();
-		if ((await acceptAttemptsLeft(db, userId, now)) === 0) {
-			return apiError(429, 'too many failed invite attempts — try again in a few minutes');
-		}
+		const attempt = await takeAttempt(db, userId, 'invite_accept');
+		if (!attempt) return apiError(429, 'too many failed invite attempts — try again in a few minutes');
 		try {
-			return Response.json(await acceptInvite(db, userId, email, token, now));
+			const accepted = await acceptInvite(db, userId, email, token, now);
+			await releaseAttempt(db, attempt);
+			return Response.json(accepted);
 		} catch (e) {
-			if (e instanceof AdminError && e.status >= 400 && e.status < 500) await recordAcceptFailure(db, userId);
+			if (!(e instanceof AdminError && e.status >= 400 && e.status < 500)) await releaseAttempt(db, attempt);
 			throw e;
 		}
 	} catch (e) {

@@ -26,3 +26,17 @@ SUPABASE_SERVICE_ROLE_KEY=
 VAPID_PRIVATE_KEY=
 VAPID_SUBJECT=
 PUBLIC_VAPID_KEY=
+
+# Azure DevOps through Microsoft Entra (#308 R5b, D42) — the multi-tenant app
+# registration's client id and secret (server-only). Prod = Worker secrets:
+# `wrangler secret put AZURE_DEVOPS_CLIENT_ID` and `… AZURE_DEVOPS_CLIENT_SECRET`.
+# Missing → 503 "Azure DevOps is not configured on this dōjō".
+AZURE_DEVOPS_CLIENT_ID=
+AZURE_DEVOPS_CLIENT_SECRET=
+
+# The scheduled Azure DevOps member read (#308 R5b, D44) — the server secret the
+# Worker's cron presents to /v1/internal/azure/member-sync (a random string of at
+# least 32 characters — a shorter one is refused as a misconfiguration).
+# Prod = `wrangler secret put DOJO_CRON_SECRET`. Missing → the cron run fails
+# loudly (Cron Events) and the endpoint answers 503; it is never open.
+DOJO_CRON_SECRET=

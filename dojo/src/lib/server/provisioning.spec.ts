@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { fakeDojoDb, resetFakeIds, provisioningTables, type FakeTable } from './fake-dojo-db';
 import {
 	ensureProvisioned,
+	ensureForgeIdentity,
 	provisionWithToken,
 	refreshForgeVisibility,
 	mirrorRepositoryRoles,
@@ -287,6 +288,13 @@ describe('ensureProvisioned — the identity', () => {
 		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
 		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
 		expect(db.tables.identities.rows).toHaveLength(1);
+	});
+
+	it('a later read that names no email or name keeps the ones on record (#308 R5b review)', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: 'Dev User', email: 'dev@example.com' });
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null });
+		expect(db.tables.identities.rows[0]).toMatchObject({ email: 'dev@example.com', display_name: 'Dev User' });
 	});
 });
 
@@ -1209,6 +1217,23 @@ describe('ensureProvisioned — leaving an org ends the membership it made (#309
 		const orgIds = new Set(out.tenants.map((t) => t.id));
 		const rows = db.tables.memberships.rows.filter((m) => orgIds.has(m.tenant_id as string));
 		expect(rows.map((m) => m.source)).toEqual(['provisioned', 'provisioned']);
+	});
+
+	it('records which forge and which org provisioned each org membership (#308 R5b review)', async () => {
+		// Only that forge's read of that org may end it: in a dōjō known to GitHub
+		// and Azure DevOps, the other forge's read must not.
+		const db = fakeDojoDb(tables());
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		const unitOf = new Map(
+			db.tables.tenant_connections.rows.map((c) => [c.tenant_id as string, c.external_id as string])
+		);
+		const rows = db.tables.memberships.rows.filter((m) => out.tenants.some((t) => t.id === m.tenant_id));
+		expect(rows).toHaveLength(2);
+		for (const m of rows) {
+			expect(m.source_provider).toBe('github');
+			expect(m.source_unit).toBe(unitOf.get(m.tenant_id as string));
+		}
+		expect(new Set(rows.map((m) => m.source_unit))).toEqual(new Set(FACTS.orgs.map((o) => o.id)));
 	});
 
 	it('a failure to reconcile is an error, not a silent pass', async () => {
