@@ -122,6 +122,18 @@ member and reads none (D6, `viewer_audit.sql`). Relay sessions stay owner-only
 console reads through `dojo.team_member_metrics` (SECURITY INVOKER — the row
 policy decides), pinned by `database/tests/dojo/lead_team_metrics.sql`.
 
+**Every member reads their teams' totals (#307 R8, 2026-10-22).** The Teams view
+serves every member: per-person rows for a lead (their teams) and an admin (every
+team); for a contributor or maintainer, team totals only. `dojo.team_metric_totals`
+(SECURITY DEFINER, caller from the session) sums counts and pools rates by their
+own denominator (Σ value × denominator / Σ denominator) over the team's active
+members' rows **on repositories the caller can read**, for the teams the caller is
+on (every team for an admin), and answers a (team, metric) only when at least
+`dojo.k_anonymity_min()` = **3** people sent it — the dōjō's k-anonymity floor
+(D26, the knowledge gate's `K_ANONYMITY_MIN_CONTRIBUTORS`). This is a deliberate
+exception to D10 (no small-group hiding) for team totals shown to members, at the
+user's direction. Pinned by `database/tests/dojo/team_metric_totals.sql`.
+
 A `scope = user` row arrives only as its own person's: `dojo.file_metric_rows`
 takes `principal_id` from the session, never the input, and the daemon sends only rows
 provably the signed-in person's (#240; `docs/spec/dojo/daemon-sync.md` §8, item 4).
