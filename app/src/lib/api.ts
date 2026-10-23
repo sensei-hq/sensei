@@ -67,6 +67,13 @@ export interface RecommendationPreview {
 /** Why a read failed, for the screen to say: the status text, else the status. */
 export const failureReason = (error: ApiError): string => error.message || `HTTP ${error.status}`;
 
+/** A failure in words for a screen: an unreachable daemon is said as such,
+ *  else the status the daemon returned. */
+export const daemonFailure = (error: ApiError): string =>
+  error.status === 0
+    ? `Could not reach the daemon — ${error.message}`
+    : `The daemon returned ${error.status} ${error.message}`;
+
 /** A read's data, or — for a caller that cannot go on without it — a throw
  *  naming what could not be read (#288). */
 export function dataOrThrow<T>(read: ApiResult<T>, what: string): T {
@@ -757,11 +764,10 @@ export function senseiApi(port: number) {
       ),
 
     // ── Scan ─────────────────────────────────────────────────────────────
-    /** Add a root to the DB immediately (synchronous). Does not start scanning. */
-    addWatchRoot: (path: string) =>
-      post<{ ok: boolean; id: string; path: string }>(
-        '/api/scan/roots', { path }, { ok: false, id: '', path },
-      ),
+    /** Add a root to the DB immediately (synchronous). Does not start scanning.
+     *  The stored root, or why it was not added (#304). */
+    tryAddWatchRoot: (path: string) =>
+      tryPost<{ ok: boolean; id: string; path: string }>('/api/scan/roots', { path }),
 
     /** Remove a watch root (#247). The decision is REQUIRED: `keep` pauses it
      *  and leaves its data readable, `remove` prunes everything it held. Result-

@@ -33,6 +33,51 @@ describe('WizardState', () => {
     });
   });
 
+  // #304: the add went through the legacy post, whose failure was `{ ok: false }`
+  // with no reason — the screen kept the typed path but said nothing.
+  describe('addRoot', () => {
+    const added = { ok: true as const, data: { ok: true, id: 'r2', path: '/r2' } };
+
+    it('adds the root the daemon stored and clears the input', async () => {
+      ws.roots.newPath = ' /r2 ';
+      const tryAddWatchRoot = vi.fn(async () => added);
+      expect(await ws.addRoot({ tryAddWatchRoot })).toBeNull();
+      expect(tryAddWatchRoot).toHaveBeenCalledWith('/r2');
+      expect(ws.roots.roots.map((r) => [r.id, r.path, r.name])).toEqual([['r2', '/r2', 'r2']]);
+      expect(ws.roots.newPath).toBe('');
+    });
+
+    it('a refused add keeps the typed path and the list, and says why', async () => {
+      ws.roots.roots = [mockWatchRoot({ id: 'r1' })];
+      ws.roots.newPath = '/r2';
+      const failure = await ws.addRoot({
+        tryAddWatchRoot: async () => ({ ok: false, error: { status: 400, message: 'not a directory' } }),
+      });
+      expect(failure).toMatch(/400 not a directory/);
+      expect(ws.roots.newPath).toBe('/r2');
+      expect(ws.roots.roots.map((r) => r.id)).toEqual(['r1']);
+    });
+
+    it('an unreachable daemon is said as such', async () => {
+      ws.roots.newPath = '/r2';
+      const failure = await ws.addRoot({
+        tryAddWatchRoot: async () => ({ ok: false, error: { status: 0, message: 'connection refused' } }),
+      });
+      expect(failure).toMatch(/could not reach the daemon/i);
+      expect(ws.roots.newPath).toBe('/r2');
+    });
+
+    it('an empty or already-listed path is not sent', async () => {
+      ws.roots.roots = [mockWatchRoot({ id: 'r1', path: '/r1' })];
+      const tryAddWatchRoot = vi.fn(async () => added);
+      ws.roots.newPath = '  ';
+      expect(await ws.addRoot({ tryAddWatchRoot })).toBeNull();
+      ws.roots.newPath = '/r1';
+      expect(await ws.addRoot({ tryAddWatchRoot })).toBeNull();
+      expect(tryAddWatchRoot).not.toHaveBeenCalled();
+    });
+  });
+
   describe('hydrate', () => {
     it('populates stage status from load data', () => {
       ws.hydrate(mockWizardLoadData());

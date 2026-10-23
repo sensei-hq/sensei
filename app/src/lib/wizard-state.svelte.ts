@@ -9,7 +9,7 @@
  * objects; status persists via commitStage; active flips on route change.
  */
 
-import { senseiApi, failureReason, type ApiResult } from './api.js';
+import { senseiApi, failureReason, daemonFailure, type ApiResult } from './api.js';
 import { roleAssignments } from './setup/role-meta.js';
 import { DEFAULT_PREFERENCES } from './setup/preferences.js';
 import { appState } from './appstate.svelte.js';
@@ -649,12 +649,34 @@ export class WizardState {
     tryGetScanRoots: () => Promise<ApiResult<DaemonWatchRoot[]>>;
   }): Promise<string | null> {
     const res = await api.tryGetScanRoots();
-    if (!res.ok) {
-      return res.error.status === 0
-        ? `Could not reach the daemon — ${res.error.message}`
-        : `The daemon returned ${res.error.status} ${res.error.message}`;
-    }
+    if (!res.ok) return daemonFailure(res.error);
     this.roots = { ...this.roots, roots: res.data };
+    return null;
+  }
+
+  /**
+   * Add the typed path as a watch root. Returns `null` when it was added (or
+   * there was nothing new to add), else the failure in words; ON FAILURE THE
+   * TYPED PATH AND THE LIST ARE KEPT, so the user can correct and retry (#304).
+   */
+  async addRoot(api: {
+    tryAddWatchRoot: (path: string) => Promise<ApiResult<{ ok: boolean; id: string; path: string }>>;
+  }): Promise<string | null> {
+    const path = this.roots.newPath.trim();
+    if (!path || this.roots.roots.some((r) => r.path === path)) return null;
+    const res = await api.tryAddWatchRoot(path);
+    if (!res.ok) return daemonFailure(res.error);
+    const added: DaemonWatchRoot = {
+      id: res.data.id,
+      path: res.data.path,
+      name: res.data.path.split('/').pop() ?? res.data.path,
+      status: 'scanning',
+      excluded: [],
+      repos_found: 0,
+      scanned: false,
+      modified_at: new Date().toISOString(),
+    };
+    this.roots = { roots: [...this.roots.roots, added], newPath: '' };
     return null;
   }
 
