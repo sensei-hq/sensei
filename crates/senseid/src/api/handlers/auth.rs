@@ -24,16 +24,66 @@ use crate::db::pg_store::ForgeTokenRow;
 use crate::dojo_client::forge_token::{ForgeTokenAction, forge_token_action, token_state_of};
 use crate::dojo_client::{dojo_auth, pkce, session};
 
-/// The in-flight verifier, between the two legs.
+/// One sign-in in flight: the persona slot, the PKCE verifier, and the GitHub
+/// login it is expected to come back as (`None` for a first connect; the
+/// callback refuses the wrong account with it, #300).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingFlow {
+    pub(crate) persona: String,
+    pub(crate) verifier: String,
+    pub(crate) expected_login: Option<String>,
+}
+
+/// How long a started sign-in waits for its callback before it is dropped.
+pub(crate) const PENDING_FLOW_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// The sign-ins in flight, by flow id (#294).
 ///
-/// One at a time: a second sign-in started before the first completes replaces
-/// it, which is the honest behaviour — the abandoned flow's code is then
-/// unusable, and that is what we want rather than keeping stale verifiers alive.
-/// The in-flight (persona, verifier) pair.
-/// The sign-in in flight: (persona slot, PKCE verifier, the GitHub login it is
-/// expected to come back as — `None` for a first connect). The expected login
-/// is what lets the callback refuse the wrong account (#300).
-static PENDING_VERIFIER: Mutex<Option<(String, String, Option<String>)>> = Mutex::new(None);
+/// One slot used to hold the only pending flow: a second sign-in (another
+/// persona, or a retry) overwrote the first, and the first callback to arrive
+/// took the slot even when its code belonged to the other flow, so both failed.
+/// Each flow now has an id that rides through dōjō and back on the callback, and
+/// a callback finishes only its own flow, once. Abandoned flows expire.
+#[derive(Debug, Default)]
+pub(crate) struct PendingFlows {
+    flows: std::collections::HashMap<String, (PendingFlow, std::time::Instant)>,
+}
+
+impl PendingFlows {
+    /// Start a flow under a fresh id; returns the id.
+    #[cfg(test)]
+    pub(crate) fn start(&mut self, flow: PendingFlow, now: std::time::Instant) -> String {
+        let id = new_flow_id();
+        self.insert(id.clone(), flow, now);
+        id
+    }
+
+    /// Record a flow under an id minted beforehand, pruning expired ones.
+    pub(crate) fn insert(&mut self, id: String, flow: PendingFlow, now: std::time::Instant) {
+        self.flows.retain(|_, (_, at)| now.duration_since(*at) < PENDING_FLOW_TTL);
+        self.flows.insert(id, (flow, now));
+    }
+
+    /// Finish the flow `id`: once, and only while it has not expired.
+    pub(crate) fn take(&mut self, id: &str, now: std::time::Instant) -> Option<PendingFlow> {
+        let (flow, at) = self.flows.remove(id)?;
+        (now.duration_since(at) < PENDING_FLOW_TTL).then_some(flow)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.flows.len()
+    }
+}
+
+/// A flow id: random, and a plain token dōjō accepts as a path segment.
+pub(crate) fn new_flow_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+/// The verifiers live in process memory only (see the module docs).
+static PENDING: std::sync::LazyLock<Mutex<PendingFlows>> =
+    std::sync::LazyLock::new(|| Mutex::new(PendingFlows::default()));
 
 /// Which persona a sign-in is for. Defaults to the label the user is most likely
 /// to mean on a single-identity install.
@@ -151,17 +201,23 @@ pub(crate) async fn signin(
     // dōjō builds the URL. That is the point of routing through it: the daemon
     // holds one setting — where dōjō is — and never learns which identity
     // provider sits behind it or what key talks to it.
-    let url = match dojo_auth::start(&dojo_url(), &challenge, port, p.github_login.as_deref()).await
-    {
-        Ok(url) => url,
-        Err(e) => return Json(serde_json::json!({ "ok": false, "error": e })),
-    };
+    let flow = new_flow_id();
+    let url =
+        match dojo_auth::start(&dojo_url(), &challenge, port, p.github_login.as_deref(), &flow)
+            .await
+        {
+            Ok(url) => url,
+            Err(e) => return Json(serde_json::json!({ "ok": false, "error": e })),
+        };
 
     // Held only once dōjō has accepted the challenge. Storing it before would
     // leave a stale pending flow behind a failed start, and the NEXT callback —
     // possibly from a different attempt — would try to use it.
-    *PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some((persona.clone(), verifier, p.github_login.clone()));
+    PENDING.lock().unwrap_or_else(|e| e.into_inner()).insert(
+        flow,
+        PendingFlow { persona: persona.clone(), verifier, expected_login: p.github_login.clone() },
+        std::time::Instant::now(),
+    );
     Json(serde_json::json!({
         "authorizeUrl": url,
         "callback": callback_url(),
@@ -341,6 +397,8 @@ fn page_of(body: &serde_json::Value) -> SignInPage {
 #[derive(Deserialize)]
 pub(crate) struct CallbackQuery {
     code: Option<String>,
+    /// Which sign-in this is (#294): the id `signin` gave dōjō, forwarded back.
+    flow: Option<String>,
     error: Option<String>,
     error_description: Option<String>,
 }
@@ -380,12 +438,21 @@ async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
     let Some(code) = q.code else {
         return serde_json::json!({ "ok": false, "error": "no code in callback" });
     };
-    let Some((persona, verifier, expected_login)) =
-        PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()).take()
+    // Which sign-in this code belongs to. Without the id, guessing is what made
+    // two sign-ins in flight clobber each other (#294); an older dōjō does not
+    // forward it, and the answer is to update it, not to guess.
+    let Some(flow) = q.flow.filter(|f| !f.is_empty()) else {
+        return serde_json::json!({
+            "ok": false,
+            "error": "dōjō did not return this sign-in's flow id — update dōjō, then sign in again",
+        });
+    };
+    let Some(PendingFlow { persona, verifier, expected_login }) =
+        PENDING.lock().unwrap_or_else(|e| e.into_inner()).take(&flow, std::time::Instant::now())
     else {
         return serde_json::json!({
             "ok": false,
-            "error": "no sign-in in progress — start with POST /api/auth/signin",
+            "error": "no sign-in in progress with this id (it finished, expired, or the daemon restarted) — start with POST /api/auth/signin",
         });
     };
 
@@ -1437,6 +1504,74 @@ mod account_guard_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // #294: two sign-ins in flight (two personas, or a retry) each keep their own
+    // verifier and are finished by their own callback, in either order.
+    fn flow(persona: &str) -> PendingFlow {
+        PendingFlow {
+            persona: persona.into(),
+            verifier: format!("v-{persona}"),
+            expected_login: None,
+        }
+    }
+
+    #[test]
+    fn two_sign_ins_in_flight_finish_in_either_order() {
+        let mut flows = PendingFlows::default();
+        let now = std::time::Instant::now();
+        let a = flows.start(flow("alice"), now);
+        let b = flows.start(flow("bob"), now);
+        assert_ne!(a, b);
+        assert_eq!(flows.take(&b, now).map(|f| f.verifier), Some("v-bob".to_string()));
+        assert_eq!(flows.take(&a, now).map(|f| f.verifier), Some("v-alice".to_string()));
+    }
+
+    #[test]
+    fn a_callback_finishes_only_its_own_flow_once() {
+        let mut flows = PendingFlows::default();
+        let now = std::time::Instant::now();
+        let a = flows.start(flow("alice"), now);
+        assert!(flows.take("not-a-flow-of-ours", now).is_none());
+        assert!(flows.take(&a, now).is_some());
+        assert!(flows.take(&a, now).is_none(), "a code is exchanged once");
+    }
+
+    #[test]
+    fn an_abandoned_flow_expires() {
+        let mut flows = PendingFlows::default();
+        let then = std::time::Instant::now();
+        let a = flows.start(flow("alice"), then);
+        let later = then + PENDING_FLOW_TTL + std::time::Duration::from_secs(1);
+        flows.start(flow("bob"), later);
+        assert!(flows.take(&a, later).is_none());
+        assert_eq!(flows.len(), 1, "starting a flow prunes the expired ones");
+    }
+
+    #[test]
+    fn a_flow_id_is_a_path_safe_token_dojo_accepts() {
+        let id = new_flow_id();
+        assert!((16..=64).contains(&id.len()));
+        assert!(id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    }
+
+    #[tokio::test]
+    async fn a_callback_without_a_flow_id_is_refused_with_why() {
+        // An older dōjō does not forward the flow id. Guessing which pending flow
+        // a code belongs to is what made two sign-ins clobber each other.
+        let state = crate::tasks::test_support::make_ctx().await.app_state.clone();
+        let body = callback_body(
+            state,
+            CallbackQuery {
+                code: Some("c".into()),
+                flow: None,
+                error: None,
+                error_description: None,
+            },
+        )
+        .await;
+        assert_eq!(body["ok"], serde_json::json!(false));
+        assert!(body["error"].as_str().unwrap_or_default().contains("update dōjō"), "{body}");
+    }
 
     #[test]
     fn a_sign_in_whose_identity_did_not_link_is_not_reported_as_a_success() {
