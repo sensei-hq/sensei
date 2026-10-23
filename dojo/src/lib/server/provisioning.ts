@@ -427,8 +427,10 @@ export async function ensureForgeIdentity(
 		const upd = await db
 			.from('identities')
 			.update({
-				email: user.email,
-				display_name: user.name,
+				// A read that names no email or name says nothing about them: the
+				// ones on record stay (an Azure read never carries an email).
+				...(user.email ? { email: user.email } : {}),
+				...(user.name ? { display_name: user.name } : {}),
 				last_login_at: now
 			})
 			.eq('id', row.id)

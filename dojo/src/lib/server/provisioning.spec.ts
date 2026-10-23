@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { fakeDojoDb, resetFakeIds, provisioningTables, type FakeTable } from './fake-dojo-db';
 import {
 	ensureProvisioned,
+	ensureForgeIdentity,
 	provisionWithToken,
 	refreshForgeVisibility,
 	mirrorRepositoryRoles,
@@ -287,6 +288,13 @@ describe('ensureProvisioned — the identity', () => {
 		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
 		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
 		expect(db.tables.identities.rows).toHaveLength(1);
+	});
+
+	it('a later read that names no email or name keeps the ones on record (#308 R5b review)', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: 'Dev User', email: 'dev@example.com' });
+		await ensureForgeIdentity(db as never, PRINCIPAL, 'github', { id: '4242', name: null, email: null });
+		expect(db.tables.identities.rows[0]).toMatchObject({ email: 'dev@example.com', display_name: 'Dev User' });
 	});
 });
 
