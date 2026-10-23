@@ -44,6 +44,11 @@ describe('the legal pages', () => {
 		expect(p).toMatch(/leave an organization/i);
 	});
 
+	it('both pages say where to write, and the privacy policy says it is how to ask for export or deletion', () => {
+		for (const page of LEGAL_PAGES) expect(text(page)).toContain('hi@sensei-hq.com');
+		expect(text(PRIVACY)).toMatch(/exported or deleted[^]*hi@sensei-hq\.com|hi@sensei-hq\.com[^]*exported or deleted/);
+	});
+
 	it('the terms keep ownership of contributed data with the person or organization', () => {
 		expect(text(TERMS)).toMatch(/you keep ownership/i);
 	});

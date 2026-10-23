@@ -65,6 +65,10 @@ export const TERMS: LegalPage = {
 			body: [
 				'You can stop using the dōjō at any time. When you leave an organization, or its administrators remove you, your membership ends. See the Privacy Policy for what happens to your data.'
 			]
+		},
+		{
+			heading: 'Contact',
+			body: ['Questions about these terms: hi@sensei-hq.com.']
 		}
 	]
 };
@@ -113,7 +117,7 @@ export const PRIVACY: LegalPage = {
 		{
 			heading: 'Your choices',
 			body: [
-				'You decide what sensei shares: nothing leaves your machine until you choose to share it. You can ask for your account and the data tied to it to be exported or deleted.'
+				'You decide what sensei shares: nothing leaves your machine until you choose to share it. You can ask for your account and the data tied to it to be exported or deleted by writing to hi@sensei-hq.com.'
 			]
 		},
 		{
@@ -121,6 +125,10 @@ export const PRIVACY: LegalPage = {
 			body: [
 				'When this policy changes, the date above changes with it.'
 			]
+		},
+		{
+			heading: 'Contact',
+			body: ['Questions about your data, or a request to export or delete it: hi@sensei-hq.com.']
 		}
 	]
 };
