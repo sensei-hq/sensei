@@ -7,6 +7,7 @@
 	import { page } from '$app/stores';
 	import { colorMode, loadColorMode, setColorMode } from '$lib/theme.svelte';
 	import { glyphs, loadGlyphMode } from '$lib/glyphs.svelte';
+	import { revealOnSync } from '$lib/auth-landing';
 
 	let { children } = $props();
 
@@ -52,7 +53,9 @@
 		const { createKavach } = await import('kavach');
 		const { adapter, logger } = await import('$kavach/auth');
 		const { invalidateAll } = await import('$app/navigation');
-		const instance = createKavach(adapter, { logger, invalidateAll }) as KavachInstance;
+		// A magic-link landing stays hidden until the reload as the new session (#329).
+		const reload = revealOnSync(document.documentElement, invalidateAll);
+		const instance = createKavach(adapter, { logger, invalidateAll: reload }) as KavachInstance;
 		Object.assign(kavach, instance);
 		instance.onAuthChange($page.url);
 	});

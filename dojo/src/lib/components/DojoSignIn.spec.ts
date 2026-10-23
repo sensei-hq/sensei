@@ -18,6 +18,20 @@ describe('DojoSignIn', () => {
 		expect(getByText('Email me a magic link')).toBeTruthy();
 	});
 
+	// Sign in with Microsoft (#308 R5c, D45) renders beside GitHub, from the same
+	// config — the stub reads kavach.config.js, so the screen lists what ships.
+	it('offers Continue with Microsoft beside Continue with GitHub', () => {
+		const { getByText, container } = render(DojoSignIn);
+		expect(getByText('Continue with Microsoft')).toBeTruthy();
+		const order = [...container.querySelectorAll('[data-auth-provider]')].map((b) => b.getAttribute('data-auth-provider'));
+		expect(order.slice(0, 2)).toEqual(['github', 'azure']);
+	});
+
+	it('says what each sign-in brings, Microsoft included', () => {
+		const { container } = render(DojoSignIn);
+		expect(container.textContent).toMatch(/Microsoft/);
+	});
+
 	// #132 / #241: the left pane is the mockup's product copy (p-signin). It
 	// showed "Acme Corp's" lesson counts and a "+11pp" lift from a fixture — to
 	// every visitor, before sign-in, as fact.
@@ -29,6 +43,24 @@ describe('DojoSignIn', () => {
 		}
 		expect(getByText(/Sign in and sensei picks up where you left off/)).toBeTruthy();
 		expect(container.textContent).not.toMatch(/Acme Corp|lessons shared this week|first-try resolution/);
+	});
+
+	// #330: what a person agrees to is one click away from where they sign in.
+	it('links the Terms of Service and the Privacy Policy', () => {
+		const { getByRole } = render(DojoSignIn);
+		expect(getByRole('link', { name: 'Terms of Service' }).getAttribute('href')).toBe('/terms-of-service');
+		expect(getByRole('link', { name: 'Privacy Policy' }).getAttribute('href')).toBe('/privacy-policy');
+	});
+
+	// #297: a failed sign-in comes back with the reason in the fragment.
+	it('shows the error Supabase returned, and nothing when there was none', async () => {
+		window.history.replaceState(null, '', '/signin#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired');
+		const failed = render(DojoSignIn);
+		expect(await failed.findByText('Email link is invalid or has expired')).toBeTruthy();
+		cleanup();
+		window.history.replaceState(null, '', '/signin');
+		const clean = render(DojoSignIn);
+		expect(clean.queryByRole('status')?.textContent ?? '').not.toMatch(/invalid|expired|error/i);
 	});
 
 	it('offers the self-hosted-Dōjō entry point', () => {

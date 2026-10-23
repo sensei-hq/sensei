@@ -4,6 +4,7 @@ import ScrConstitution from './ScrConstitution.svelte';
 import ScrRulePacks from './ScrRulePacks.svelte';
 import ScrMyDojos from './ScrMyDojos.svelte';
 import ScrContributions from './ScrContributions.svelte';
+import { AzureConnectState } from '$lib/azure-connect-state.svelte';
 import {
 	stance,
 	ladder,
@@ -150,6 +151,15 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 		}
 	});
 
+	it('says when the Microsoft account could not be linked (#308 R5c), and is quiet otherwise', () => {
+		const notice = 'Couldn’t link your Microsoft account: why.';
+		const { getByRole } = render(ScrMyDojos, { props: { dojos, microsoftNotice: notice } });
+		expect(getByRole('alert').textContent).toContain(notice);
+		cleanup();
+		const quiet = render(ScrMyDojos, { props: { dojos } });
+		expect(quiet.queryByRole('alert')).toBeNull();
+	});
+
 	it('fires onOpen when a membership row is clicked', async () => {
 		const onOpen = vi.fn();
 		const { getByText } = render(ScrMyDojos, { props: { dojos, onOpen } });
@@ -160,7 +170,7 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 	it('with no memberships, says where a dōjō comes from — none is made by hand (#307 D11)', () => {
 		const { getByText, queryByText } = render(ScrMyDojos, { props: { dojos: [] } });
 		expect(getByText('No dōjōs yet.')).toBeTruthy();
-		expect(getByText(/your GitHub organizations, or an invite/)).toBeTruthy();
+		expect(getByText(/your GitHub or Azure DevOps organizations, or an invite/)).toBeTruthy();
 		expect(queryByText('Organization')).toBeNull();
 		expect(queryByText(/Create/)).toBeNull();
 	});
@@ -186,6 +196,16 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 	it('offers no sync without a handler', () => {
 		const { queryByText } = render(ScrMyDojos, { props: { dojos } });
 		expect(queryByText('Sync from GitHub')).toBeNull();
+	});
+
+	it('offers the Azure DevOps import when the page gives it — how an Azure organization\'s dōjō is first made (#308 R5b)', () => {
+		const azure = new AzureConnectState({ start: vi.fn(), navigate: vi.fn(), organizations: vi.fn(), importOrg: vi.fn() });
+		const { getByRole, getByText } = render(ScrMyDojos, { props: { dojos, azure } });
+		expect(getByRole('button', { name: 'Connect Azure DevOps' })).toBeTruthy();
+		expect(getByText(/work or school account/)).toBeTruthy();
+		cleanup();
+		const without = render(ScrMyDojos, { props: { dojos } });
+		expect(without.queryByRole('button', { name: 'Connect Azure DevOps' })).toBeNull();
 	});
 
 	it('offers no way to make a dōjō by hand (#307 D11)', () => {

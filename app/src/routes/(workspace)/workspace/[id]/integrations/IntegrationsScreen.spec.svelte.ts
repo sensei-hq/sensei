@@ -22,6 +22,7 @@ afterEach(() => {
 const connected: TrackerConnection = {
   id: 't-1',
   kind: 'jira',
+  level: 'sprint',
   base_url: 'https://acme.atlassian.net',
   account: 'dev@example.com',
   external_scope: 'AUTH',
@@ -106,15 +107,26 @@ describe('not connected', () => {
     expect(button().disabled).toBe(true);
     state.boardUrl = 'https://acme.atlassian.net/jira/software/projects/AUTH/boards/42';
     state.email = 'dev@example.com';
-    flushSync();
-    expect(button().disabled).toBe(true);
     state.token = 'tok';
     flushSync();
+    expect(button().disabled).toBe(true);
+    q<HTMLInputElement>('input[name="level"][value="sprint"]')!.click();
+    flushSync();
+    expect(state.level).toBe('sprint');
     expect(button().disabled).toBe(false);
+  });
+
+  it('asks what the board serves, with nothing chosen for the user', async () => {
+    const { m, q } = await open();
+    const radios = [...m.container.querySelectorAll<HTMLInputElement>('input[name="level"]')];
+    expect(radios.map((r) => r.value)).toEqual(['epic', 'sprint', 'task']);
+    expect(radios.some((r) => r.checked)).toBe(false);
+    expect(q('[data-field="level"] legend')?.textContent).toBe('What the board serves');
   });
 
   it('a rejected token: the alert takes focus, names the token field, and the token is gone', async () => {
     const { state, m, q } = await open();
+    state.level = 'sprint';
     state.boardUrl = 'https://acme.atlassian.net/jira/software/projects/AUTH/boards/42';
     state.email = 'dev@example.com';
     state.token = SENTINEL;
@@ -152,12 +164,44 @@ describe('daemon error', () => {
 describe('connected', () => {
   it('shows the card with its status as text and its actions', async () => {
     const { q } = await open({ tryListTrackers: async () => ({ ok: true, data: [connected] }) });
-    const card = q('[data-view="connected"]')!;
+    const card = q('[data-tracker="t-1"]')!;
     expect(card.textContent).toContain('Jira · acme.atlassian.net · project AUTH · board "AUTH Scrum" (#42)');
     expect(card.textContent).toContain('connected · synced 2 min ago · 6 sprints · 142 tickets');
     for (const a of ['sync', 'replace', 'disconnect']) {
-      expect(q(`[data-action="${a}"]`)).not.toBeNull();
+      expect(card.querySelector(`[data-action="${a}"]`)).not.toBeNull();
     }
+    expect(q('[data-field="board_url"]')).toBeNull();
+  });
+
+  it('lists the boards under their level, epics first, each with its own actions', async () => {
+    const epic = { ...connected, id: 't-2', level: 'epic' as const, board_ref: '43', board_name: 'Portfolio' };
+    const synced: string[] = [];
+    const { m, q } = await open({
+      tryListTrackers: async () => ({ ok: true, data: [connected, epic] }),
+      trySyncTracker: async (_p, t) => {
+        synced.push(t);
+        return { ok: true, data: { counts: { sprints: 0, tasks: 0, removed: 0, links: 0, skipped_members: 0 } } };
+      },
+    });
+    const groups = [...m.container.querySelectorAll<HTMLElement>('[data-level]')];
+    expect(groups.map((g) => [g.dataset.level, g.querySelector('h2')?.textContent])).toEqual([
+      ['epic', 'Epics'],
+      ['sprint', 'Sprints'],
+    ]);
+    q('[data-tracker="t-2"] [data-action="sync"]')!.click();
+    await settle();
+    expect(synced).toEqual(['t-2']);
+  });
+
+  it('Add a board opens the form beside the boards; Cancel closes it', async () => {
+    const { q } = await open({ tryListTrackers: async () => ({ ok: true, data: [connected] }) });
+    q<HTMLButtonElement>('[data-action="add"]')!.click();
+    flushSync();
+    expect(q('[data-field="board_url"]')).not.toBeNull();
+    expect(q('[data-tracker="t-1"]')).not.toBeNull();
+    q<HTMLButtonElement>('[data-action="cancel-add"]')!.click();
+    flushSync();
+    expect(q('[data-field="board_url"]')).toBeNull();
   });
 
   it('Disconnect opens a dialog with Cancel focused; Cancel closes it', async () => {
@@ -165,9 +209,9 @@ describe('connected', () => {
     q<HTMLButtonElement>('[data-action="disconnect"]')!.click();
     flushSync();
     const dialog = q('[data-component="disconnect-dialog"]')!;
-    expect(dialog.textContent).toContain('Disconnect Jira?');
+    expect(dialog.textContent).toContain('Disconnect board #42?');
     expect(dialog.textContent).toContain(
-      'This removes this workspace’s synced sprints, tickets and session links from sensei. Jira itself is not changed.',
+      'This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and Jira itself is not changed.',
     );
     expect((document.activeElement as HTMLElement).dataset.action).toBe('cancel-disconnect');
     (document.activeElement as HTMLButtonElement).click();

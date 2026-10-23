@@ -15,6 +15,71 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-10-23
+
+### Added
+
+- **Azure DevOps comes to the dōjō** (#308 R5b, D36, D42–D44).
+  - **Connect through Microsoft Entra:** an organization admin connects with
+    Microsoft Entra; the organization becomes a dōjō and each project a
+    workspace. Repositories file by project.
+  - **The credential:** only Entra's refresh token is kept, encrypted in Supabase
+    Vault and rotated on each use. Access tokens are never stored.
+  - **Scheduled member read:** a member read runs every 6 hours (a Cloudflare
+    Cron) and ends departed members only after a complete read.
+- **Sign in with Microsoft** (#308 R5c, D45). The person's Entra object id becomes
+  their Azure identity, pinned to their tenant. A member listed by a connected
+  organization joins its dōjō as contributor on sign-in.
+- **Team views per role** (#307 R8, D38, D41).
+  - **Admin and lead:** an admin sees every team; a lead sees the people on the
+    teams they lead.
+  - **Contributors and maintainers:** they see team totals, and only when at
+    least 3 others contributed.
+- **Several tracker boards per workspace, each at a level** (`epic`, `sprint`,
+  `task`) (#318, D23/D40). One credential per Jira site. `sensei tracker
+  connect --level` and `--board`. Integrations groups boards by level; Sprints
+  shows one lane per sprint board.
+- **Jira linkage:** the backlog (tickets in no sprint), tickets first with
+  sprint as a filter, cycle time and the active-time split (F9–F11), and API
+  cost per session priced per message (#323).
+- **Terms of Service and Privacy Policy** at `/terms-of-service` and
+  `/privacy-policy`, linked from sign-in and the nav (#330).
+
+### Fixed
+
+- **Magic-link account switch:** the dōjō no longer shows the previous account's
+  data right after one. The page stays hidden until the new session is the
+  server's (#329).
+- **Duplicate personal dōjō:** a first sign-in no longer creates two. The find
+  and the create are one database step under a per-person lock (#331).
+- **Failed sign-in:** `/signin` shows the reason Supabase returned, instead of a
+  blank form (#297).
+- **Nested standalone repositories:** a nested standalone re-absorbed into its
+  repository takes the repository's anchor, and no longer stays in a phantom
+  workspace (#328).
+
+### Security
+
+- **Two independent security reviews per Azure slice,** with every finding
+  fixed test-first:
+  - membership ends are scoped to the forge and unit that provisioned them;
+  - repository keys match org and project by position;
+  - token rotation is compare-and-set;
+  - the OAuth state is checked before anything is counted;
+  - the rate limiter is atomic;
+  - a Microsoft identity is recorded only when Microsoft confirms the email
+    (`xms_edov`);
+  - a Microsoft token is never sent to GitHub.
+
+### Operations
+
+- **Worker secrets for Azure:** `AZURE_DEVOPS_CLIENT_ID`,
+  `AZURE_DEVOPS_CLIENT_SECRET` and `DOJO_CRON_SECRET` (32+ characters) enable
+  Azure DevOps; without them the routes answer "not configured".
+- **Microsoft sign-in in production needs two things:**
+  - the Entra app must send the `email` and `xms_edov` claims;
+  - the negative live test must pass (see the spec's "R5c · live check").
+
 ## [0.19.0] — 2026-10-22
 
 ### Added

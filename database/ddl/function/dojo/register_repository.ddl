@@ -26,13 +26,22 @@ set search_path to dojo, extensions;
 --
 -- The returned workspace_id is the mapping's: the caller does not re-file a
 -- repository its unit's mapping already placed.
+--
+-- AN AZURE DEVOPS PROJECT IS A UNIT TOO (#308 R5b, D36). An organization is a
+-- dōjō and each project a workspace in it: an import maps each project, named
+-- `{org}/{project}`. The caller passes the project the key names (p_project,
+-- repo-mapping.ts parses it); its mapping decides first, then the
+-- organization's, then the connection. The key must carry the org and that
+-- project AT THEIR PLACES (dojo.repo_key_names), so a direct call cannot file a
+-- repository under another org or another project's workspace.
 drop function if exists dojo.register_repository(text, dojo.forge_provider, text, text, text);
 create or replace function dojo.register_repository(
     p_repo_key   text,
     p_provider   dojo.forge_provider,
     p_org        text,
     p_name       text,
-    p_remote_url text
+    p_remote_url text,
+    p_project    text default null
 )
     returns table (tenant_id uuid, tenant_key text, repository_id uuid, reason text, workspace_id uuid)
     language plpgsql
@@ -43,6 +52,7 @@ as $$
 declare
     v_key  text := lower(btrim(p_repo_key));
     v_org  text := lower(btrim(p_org));
+    v_proj text := nullif(lower(btrim(coalesce(p_project, ''))), '');
     v_hits uuid[];
     v_mine uuid[];
     v_id   uuid;
@@ -50,21 +60,41 @@ declare
     v_map_ws      uuid;
     v_target      uuid;
 begin
-    if v_key = '' or v_org = ''
-       or not (v_org = any (string_to_array(v_key, '/'))
-               or split_part(v_key, '/', 1) = v_org || '.visualstudio.com') then
-        raise exception 'repository key % does not carry the org %', p_repo_key, p_org
+    -- The org (and an Azure project) must sit at its own place in the key — not
+    -- merely appear in it: a repository named like an org or a project would
+    -- otherwise file under it (#308 R5b security review).
+    -- A repository key is a host and a path; past 2 KB it is not one, and the
+    -- project check's percent-decode is quadratic in a segment's length.
+    if length(v_key) > 2048 then
+        raise exception 'repository key is longer than 2048 characters'
+            using errcode = 'invalid_parameter_value';
+    end if;
+    if v_key = '' or not dojo.repo_key_names(v_key, v_org, v_proj) then
+        raise exception 'repository key % does not carry the org % (or the project %) at its place', p_repo_key, p_org, p_project
             using errcode = 'invalid_parameter_value';
     end if;
 
-    select array_agg(m.tenant_id), (array_agg(m.workspace_id))[1] into v_map_tenants, v_map_ws
-      from dojo.forge_unit_mappings m
-     where m.provider = p_provider
-       and lower(m.external_slug) = v_org;
+    -- One entry per distinct PLACE (dōjō, workspace) — not per mapping row: two
+    -- units that share a name and file to the same place are not ambiguous.
+    if v_proj is not null then
+        select array_agg(x.tenant_id), (array_agg(x.workspace_id))[1] into v_map_tenants, v_map_ws
+          from (select distinct m.tenant_id, m.workspace_id
+                  from dojo.forge_unit_mappings m
+                 where m.provider = p_provider
+                   and lower(m.external_slug) = v_org || '/' || v_proj) x;
+    end if;
+
+    if v_map_tenants is null then
+        select array_agg(x.tenant_id), (array_agg(x.workspace_id))[1] into v_map_tenants, v_map_ws
+          from (select distinct m.tenant_id, m.workspace_id
+                  from dojo.forge_unit_mappings m
+                 where m.provider = p_provider
+                   and lower(m.external_slug) = v_org) x;
+    end if;
 
     if v_map_tenants is not null then
-        -- Two units have held the same name (renamed upstream, name re-taken):
-        -- which one this remote means is unknowable.
+        -- Two units have held the same name (renamed upstream, name re-taken) and
+        -- file to different places: which one this remote means is unknowable.
         if cardinality(v_map_tenants) > 1 then
             return query select null::uuid, null::text, null::uuid, 'ambiguous'::text, null::uuid;
             return;
@@ -116,12 +146,13 @@ begin
 end;
 $$;
 
-revoke all on function dojo.register_repository(text, dojo.forge_provider, text, text, text) from public;
-grant execute on function dojo.register_repository(text, dojo.forge_provider, text, text, text) to authenticated;
+revoke all on function dojo.register_repository(text, dojo.forge_provider, text, text, text, text) from public;
+grant execute on function dojo.register_repository(text, dojo.forge_provider, text, text, text, text) to authenticated;
 
-comment on function dojo.register_repository(text, dojo.forge_provider, text, text, text) is
+comment on function dojo.register_repository(text, dojo.forge_provider, text, text, text, text) is
 'Register one repository under the dōjō its forge unit is mapped to (and into the
-mapped workspace), or — with no mapping — the ONE tenant of the caller''s its org
+mapped workspace) — an Azure DevOps repository by its project''s mapping first
+(#308 R5b) — or, with no mapping, the ONE tenant of the caller''s its org
 is connected to; or say why not (no_connection | not_a_member | ambiguous). Reads
 every tenant''s connections and mappings; returns only a reason, never another
 tenant''s id. Refuses a key whose path does not carry the org (#236, #308 R5a).';

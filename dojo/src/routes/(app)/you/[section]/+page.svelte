@@ -2,10 +2,16 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import {
 		adoptContribution,
+		importAzureOrganization,
+		listAzureGrantOrganizations,
+		startAzureConnectAsOwn,
 		provisionFromForge,
 		setPackAdoption,
 		setRepoElection
 	} from '$lib/client-data';
+	import { AzureConnectState } from '$lib/azure-connect-state.svelte';
+	import { page } from '$app/state';
+	import { untrack } from 'svelte';
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
 	import ScrWorkspaces from '$lib/components/screens/ScrWorkspaces.svelte';
 	import ScrConstitution from '$lib/components/screens/ScrConstitution.svelte';
@@ -37,6 +43,26 @@
 	const syncGithub = () => you.syncGithub(api, invalidateAll);
 	const elect = (repoKey: string, elected: boolean) => you.elect(api, repoKey, elected, invalidateAll);
 
+	// Azure DevOps (#308 R5b, D42): connect through Microsoft Entra, then import an
+	// organization as its own dōjō — how an Azure organization's dōjō is first
+	// made. No token passes through here; the memberships are re-read after an
+	// import, and the callback's outcome (?azure=…) is said on return.
+	const opts = () => ({ accessToken: data.accessToken });
+	const azure = new AzureConnectState({
+		start: () => startAzureConnectAsOwn(opts()),
+		navigate: (url) => window.location.assign(url),
+		organizations: () => listAzureGrantOrganizations(opts()),
+		importOrg: (organization) => importAzureOrganization(organization, opts()),
+		afterImport: () => invalidateAll()
+	});
+	$effect(() => {
+		if (data.section !== 'dojos') return;
+		untrack(() => {
+			azure.notice(page.url.searchParams);
+			void azure.load();
+		});
+	});
+
 	const sharingRepos = $derived(you.sharingRepos(data.repos ?? []));
 	const sharingError = $derived(you.sharingError(data.reposError ?? null));
 </script>
@@ -63,6 +89,8 @@
 		onSyncGithub={syncGithub}
 		syncing={you.github.busy}
 		syncMessage={you.github.message}
+		{azure}
+		microsoftNotice={data.microsoftNotice}
 	/>
 {:else if data.section === 'contributions'}
 	<ScrContributions

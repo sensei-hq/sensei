@@ -31,6 +31,24 @@ export function githubIdentityId(user: unknown): string | null {
 	return typeof id === 'string' && id.trim() ? id.trim() : null;
 }
 
+/** GitHub's documented token formats: a prefix naming the kind (gho_ OAuth,
+ *  ghu_ user-to-server, ghp_ / github_pat_ personal, ghs_ / ghr_) then
+ *  [A-Za-z0-9_] — github.blog, "Behind GitHub's new authentication token
+ *  formats". */
+const GITHUB_TOKEN = /^(gh[opusr]_|github_pat_)[A-Za-z0-9_]+$/;
+
+/**
+ * Whether `token` is in one of GitHub's own token formats — the only tokens the
+ * dōjō ever sends to GitHub. A session's provider token is whatever provider the
+ * person just signed in with: after a Microsoft sign-in (#308 R5c) it is a
+ * Microsoft Graph token, and for a login linked to GitHub too, reading it as
+ * GitHub's would post a Microsoft credential to api.github.com and take GitHub's
+ * 401 for "your GitHub grant is dead".
+ */
+export function isGithubToken(token: unknown): token is string {
+	return typeof token === 'string' && GITHUB_TOKEN.test(token);
+}
+
 /** Refuse (403) unless `actual` is the GitHub account linked to the login. */
 export function assertGithubAccount(actual: string, expected: string | null | undefined): void {
 	if (!expected) throw new AdminError(403, 'this login has no GitHub account linked; sign in with GitHub');

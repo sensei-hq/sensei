@@ -26,28 +26,62 @@ describe('forgeRefFromRepoKey', () => {
 		});
 	});
 
-	it('handles BOTH Azure DevOps shapes, whose org is at different depths', () => {
+	it('handles BOTH Azure DevOps shapes, whose org is at different depths — and names the project', () => {
 		// This pair is the whole reason this is a typed per-provider mapping and
-		// not `split('/')[1]`.
+		// not `split('/')[1]`. An Azure project is a workspace of its
+		// organization's dōjō (#308 R5b, D36), so the project is named too.
 		expect(forgeRefFromRepoKey('dev.azure.com/acme/proj/_git/api')).toEqual({
 			provider: 'azure_devops',
-			org: 'acme'
+			org: 'acme',
+			project: 'proj'
 		});
 		// The legacy/SSH form puts a `v3` routing segment first, so the org is
 		// SECOND. Taking segment 1 here would map every Azure repo to an org
 		// called "v3" — one tenant swallowing every customer's repositories.
 		expect(forgeRefFromRepoKey('vs-ssh.visualstudio.com/v3/acme/proj/api')).toEqual({
 			provider: 'azure_devops',
-			org: 'acme'
+			org: 'acme',
+			project: 'proj'
 		});
 		expect(forgeRefFromRepoKey('ssh.dev.azure.com/v3/acme/proj/api')).toEqual({
 			provider: 'azure_devops',
-			org: 'acme'
+			org: 'acme',
+			project: 'proj'
 		});
 		expect(forgeRefFromRepoKey('acme.visualstudio.com/proj/_git/api')).toEqual({
 			provider: 'azure_devops',
-			org: 'acme'
+			org: 'acme',
+			project: 'proj'
 		});
+	});
+
+	it('reads an Azure project name with a space, the legacy collection segment, and a repository named after its project', () => {
+		expect(forgeRefFromRepoKey('dev.azure.com/acme/mobile%20apps/_git/ios')).toEqual({
+			provider: 'azure_devops',
+			org: 'acme',
+			project: 'mobile apps'
+		});
+		expect(forgeRefFromRepoKey('acme.visualstudio.com/defaultcollection/proj/_git/api')).toEqual({
+			provider: 'azure_devops',
+			org: 'acme',
+			project: 'proj'
+		});
+		// `dev.azure.com/{org}/_git/{repo}` is the repository its project is named after.
+		expect(forgeRefFromRepoKey('dev.azure.com/acme/_git/proj')).toEqual({
+			provider: 'azure_devops',
+			org: 'acme',
+			project: 'proj'
+		});
+	});
+
+	it('names no Azure project it cannot read — the org still maps', () => {
+		expect(forgeRefFromRepoKey('dev.azure.com/acme/proj')).toEqual({ provider: 'azure_devops', org: 'acme' });
+		expect(forgeRefFromRepoKey('dev.azure.com/acme/bad%zz/_git/api')).toEqual({ provider: 'azure_devops', org: 'acme' });
+		expect(forgeRefFromRepoKey('dev.azure.com/acme/a%2fb/_git/api')).toEqual({ provider: 'azure_devops', org: 'acme' });
+	});
+
+	it('names no project for a forge that has none', () => {
+		expect(forgeRefFromRepoKey('github.com/acme/api')).toEqual({ provider: 'github', org: 'acme' });
 	});
 
 	it('returns null for a host it does not recognise', () => {

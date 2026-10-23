@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { Screen } from '@sensei/ui';
 	import { Button } from '@rokkit/ui';
-	import { SectionHead, ListSection, MyDojoRow, EmptyState } from '$lib/components/kit';
+	import { SectionHead, ListSection, MyDojoRow, EmptyState, AzureConnect } from '$lib/components/kit';
+	import type { AzureConnectState } from '$lib/azure-connect-state.svelte';
 	import type { KitDojo } from '$lib/components/kit/types';
 	import { groupDojos } from '$lib/personal-view';
 
@@ -18,7 +19,9 @@
 		onOpen,
 		onSyncGithub,
 		syncing = false,
-		syncMessage = null
+		syncMessage = null,
+		azure,
+		microsoftNotice = null
 	}: {
 		dojos?: KitDojo[];
 		onOpen?: (dojo: KitDojo) => void;
@@ -28,6 +31,12 @@
 		syncing?: boolean;
 		/** What the last sync came to, said beside the button. */
 		syncMessage?: string | null;
+		/** Import an Azure DevOps organization as its own dōjō (#308 R5b) — how an
+		 *  Azure organization's dōjō is first made. Offered only when given. */
+		azure?: AzureConnectState;
+		/** Why the Microsoft account could not be linked (#308 R5c) — said only
+		 *  when it could not; nothing was recorded and no dōjō joined from it. */
+		microsoftNotice?: string | null;
 	} = $props();
 
 	const groups = $derived(groupDojos(dojos));
@@ -65,6 +74,11 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+		{#if microsoftNotice}
+			<div role="alert" class="border-paper-edge bg-paper-soft text-danger rounded-lg border p-4 text-sm">
+				{microsoftNotice}
+			</div>
+		{/if}
 		{#if groups.length}
 			{#each groups as group (group.kind)}
 				<ListSection icon={group.icon} title={group.label} count={group.items.length}>
@@ -75,9 +89,16 @@
 			{/each}
 		{:else}
 			<EmptyState kanji="空" title="No dōjōs yet.">
-				A dōjō comes from your GitHub organizations, or an invite — each organization you belong to has
-				one, and you have a personal one. Sync from GitHub to set them up. Working solo needs none of them.
+				A dōjō comes from your GitHub or Azure DevOps organizations, or an invite — each organization you belong
+				to has one, and you have a personal one. Sync from GitHub, or connect Azure DevOps and import an
+				organization you administer, to set them up. Working solo needs none of them.
 			</EmptyState>
+		{/if}
+		{#if azure}
+			<AzureConnect
+				state={azure}
+				intro="Import an Azure DevOps organization you administer as its own dōjō: each of its projects becomes a workspace in it."
+			/>
 		{/if}
 	</div>
 </Screen>

@@ -84,6 +84,24 @@ describe('registerRepositories', () => {
 		error: null
 	});
 
+	it('names an Azure repository\'s project, so it files by its project\'s mapping first (#308 R5b)', async () => {
+		const { db, calls } = rpcDb(filed);
+		await registerRepositories(db, [{ repo_key: 'dev.azure.com/acme/mobile%20apps/_git/ios', name: 'ios' }]);
+		expect(calls).toEqual([
+			{
+				fn: 'register_repository',
+				args: {
+					p_repo_key: 'dev.azure.com/acme/mobile%20apps/_git/ios',
+					p_provider: 'azure_devops',
+					p_org: 'acme',
+					p_name: 'ios',
+					p_remote_url: null,
+					p_project: 'mobile apps'
+				}
+			}
+		]);
+	});
+
 	it('asks the database to file the repository under the forge org it parses', async () => {
 		const { db, calls } = rpcDb(filed);
 		const out = await registerRepositories(db, [

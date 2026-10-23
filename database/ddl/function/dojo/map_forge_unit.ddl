@@ -17,6 +17,12 @@ set search_path to dojo, extensions;
 --     prove can only become workspaces of a dōjō they already administer").
 -- The workspace is found or made by (tenant, slug), as filing does. Audited in
 -- the dōjō it files into, and — when it moved — in the dōjō it left.
+--
+-- p_keep_elsewhere (#308 R5b review): an IMPORT files a unit only where nobody
+-- has placed it yet. With it set, a unit already mapped into ANOTHER dōjō stays
+-- there — nothing is written or audited, and the answer names the dōjō it is in
+-- — so a concurrent re-map cannot be overwritten by an import's stale pre-read.
+drop function if exists dojo.map_forge_unit(uuid, dojo.forge_provider, text, text, uuid, text, text, boolean);
 create or replace function dojo.map_forge_unit(
     p_principal      uuid,
     p_provider       dojo.forge_provider,
@@ -25,7 +31,8 @@ create or replace function dojo.map_forge_unit(
     p_tenant         uuid,
     p_workspace_slug text,
     p_workspace_name text,
-    p_proven         boolean
+    p_proven         boolean,
+    p_keep_elsewhere boolean default false
 )
     returns table (mapping_id uuid, tenant_id uuid, workspace_id uuid)
     language plpgsql
@@ -60,9 +67,20 @@ begin
       join dojo.tenants t on t.id = c.tenant_id
      where c.provider = p_provider and c.external_id = p_external_id;
 
+    -- Serialise maps of the same unit (#308 R5b review 2): with no mapping row
+    -- yet, FOR UPDATE locks nothing, and two maps into different dōjōs would both
+    -- pass the checks above. Held to the end of the transaction.
+    perform pg_advisory_xact_lock(hashtext(p_provider::text || ':' || p_external_id));
+
     select m.* into v_prev
       from dojo.forge_unit_mappings m
-     where m.provider = p_provider and m.external_id = p_external_id;
+     where m.provider = p_provider and m.external_id = p_external_id
+       for update;
+
+    if coalesce(p_keep_elsewhere, false) and v_prev.tenant_id is not null and v_prev.tenant_id <> p_tenant then
+        return query select v_prev.id, v_prev.tenant_id, v_prev.workspace_id;
+        return;
+    end if;
 
     if p_workspace_slug is null then
         if not coalesce(p_proven, false) then
@@ -119,11 +137,12 @@ begin
 end;
 $$;
 
-revoke all on function dojo.map_forge_unit(uuid, dojo.forge_provider, text, text, uuid, text, text, boolean) from public;
-grant execute on function dojo.map_forge_unit(uuid, dojo.forge_provider, text, text, uuid, text, text, boolean) to service_role;
+revoke all on function dojo.map_forge_unit(uuid, dojo.forge_provider, text, text, uuid, text, text, boolean, boolean) from public;
+grant execute on function dojo.map_forge_unit(uuid, dojo.forge_provider, text, text, uuid, text, text, boolean, boolean) to service_role;
 
-comment on function dojo.map_forge_unit(uuid, dojo.forge_provider, text, text, uuid, text, text, boolean) is
+comment on function dojo.map_forge_unit(uuid, dojo.forge_provider, text, text, uuid, text, text, boolean, boolean) is
 'Map a forge unit to its own dōjō or to a workspace in a dōjō the mapper
 administers (#308 R5a). One mapping per unit; audited. service_role only — the
 server reads the forge with the mapper''s own token and passes whether it proved
-them an admin of the unit.';
+them an admin of the unit. p_keep_elsewhere leaves a unit mapped into another
+dōjō where it is (an import).';

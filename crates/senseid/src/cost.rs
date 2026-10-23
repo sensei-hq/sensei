@@ -205,4 +205,51 @@ mod tests {
         assert!((s.window_cost(60) - 2.0 * thirty).abs() < 1e-9);
         assert!((thirty - 200.0).abs() < 3.0, "≈ one month's fee, got {thirty}");
     }
+
+    /// Session API cost C3: the seeded list is Anthropic's published one
+    /// (platform.claude.com/docs/en/about-claude/pricing, read 2026-10-23).
+    #[test]
+    fn the_seeded_price_list_matches_the_published_one() {
+        let rows: Vec<serde_json::Value> =
+            include_str!("../../../database/import/staging/model_prices.jsonl")
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| serde_json::from_str(l).expect("each line is JSON"))
+                .collect();
+        let row = |model: &str, speed: &str, over: i64| {
+            rows.iter()
+                .find(|r| r["model"] == model && r["speed"] == speed && r["prompt_over"] == over)
+                .unwrap_or_else(|| panic!("no row for {model} {speed} >{over}"))
+        };
+        let rates = |r: &serde_json::Value| {
+            ["input", "cache_write_5m", "cache_write_1h", "cache_read", "output"]
+                .map(|k| r[k].as_f64().unwrap_or(f64::NAN))
+        };
+        assert_eq!(rates(row("claude-opus-5-5", "standard", 0)), [4.0, 5.0, 8.0, 0.20, 20.0]);
+        assert_eq!(rates(row("claude-sonnet-5-5", "standard", 0)), [2.0, 2.50, 4.0, 0.10, 10.0]);
+        assert_eq!(rates(row("claude-sonnet-5", "standard", 0)), [2.0, 2.50, 4.0, 0.20, 10.0]);
+        assert_eq!(rates(row("claude-sonnet-4-5", "standard", 0)), [3.0, 3.75, 6.0, 0.30, 15.0]);
+        assert_eq!(rates(row("claude-haiku-4-5", "standard", 0)), [1.0, 1.25, 2.0, 0.10, 5.0]);
+        assert_eq!(rates(row("claude-haiku-5-5", "standard", 0)), [0.10, 0.125, 0.20, 0.01, 0.50]);
+        assert_eq!(
+            rates(row("claude-haiku-5-5", "standard", 100_000)),
+            [0.50, 0.625, 1.0, 0.05, 2.50]
+        );
+        // Fast: the fast input/output, with the model's caching multipliers on top.
+        assert_eq!(rates(row("claude-opus-5-5", "fast", 0)), [8.0, 10.0, 16.0, 0.40, 40.0]);
+        // US-only processing: 1.1x on Claude 4.6 and later, not before.
+        assert_eq!(row("claude-opus-5-5", "standard", 0)["us_multiplier"], 1.1);
+        assert_eq!(row("claude-sonnet-4-6", "standard", 0)["us_multiplier"], 1.1);
+        assert_eq!(row("claude-sonnet-4-5", "standard", 0)["us_multiplier"], 1.0);
+        for r in &rows {
+            assert!(r["source"].as_str().is_some_and(|s| s.starts_with("https://")), "{r}");
+            assert_eq!(r["retrieved_on"], "2026-10-23", "{r}");
+            let dated = |m: &str| {
+                m.rsplit('-')
+                    .next()
+                    .is_some_and(|p| p.len() == 8 && p.bytes().all(|b| b.is_ascii_digit()))
+            };
+            assert!(r["model"].as_str().is_some_and(|m| !dated(m)), "no date suffix: {r}");
+        }
+    }
 }

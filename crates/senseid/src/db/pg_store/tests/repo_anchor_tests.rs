@@ -1376,7 +1376,9 @@ async fn workspace_ftr_and_quality_decode_numeric_metrics() {
         corrections: 0,
         outcome: "completed",
         ftr: true,
-        duration_ms: 1000,
+        duration_ms: Some(1000),
+        claude_ms: Some(1000),
+        user_ms: Some(0),
         module: None,
         tool_usage: &serde_json::json!({}),
     })

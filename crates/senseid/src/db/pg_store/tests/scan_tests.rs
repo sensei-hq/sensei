@@ -408,6 +408,65 @@ async fn scan_state_upsert_and_stale() {
 
 // ── Bug 3: re-absorb a standalone root mis-scoped inside a git repo ────
 
+/// #328: a heal that reaches a nested standalone before its workspace is
+/// placed (the scanner upserts the folder, then places it) skips the phantom
+/// merge. The folder must still end up in the repo's workspace: re-parenting
+/// has to move its repository anchor too, because a folder's workspace is read
+/// through `folders.repository_id`, and once re-absorbed it is never a
+/// candidate again.
+#[tokio::test]
+async fn a_nested_standalone_healed_before_its_workspace_lands_follows_the_repo() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let root_path = format!("/_test/heal_late/{uniq}");
+    let root_id =
+        s.add_watch_root(&root_path, "heal_late_root", &serde_json::json!([])).await.unwrap();
+    let repo_abs = format!("{root_path}/repo");
+    let repo_pid =
+        s.create_workspace(&format!("_test:heal_late_repo_{uniq}"), None, None).await.unwrap();
+    let repo_fid = s.upsert_repo_kind(&root_id, "git", "repo", &repo_abs).await.unwrap();
+    crate::tasks::test_support::give_folder_a_repository(
+        &s,
+        &repo_fid,
+        &format!("late-repo-{uniq}"),
+    )
+    .await
+    .unwrap();
+    s.set_folder_workspace(&repo_fid, &repo_pid, "root", None).await.unwrap();
+
+    // The standalone is upserted with its own repository, but not placed yet.
+    let sub_abs = format!("{repo_abs}/crates/sub");
+    let sub_fid = s.upsert_repo_kind(&root_id, "standalone", "sub", &sub_abs).await.unwrap();
+    let sub_repo = crate::tasks::test_support::give_folder_a_repository(
+        &s,
+        &sub_fid,
+        &format!("late-sub-{uniq}"),
+    )
+    .await
+    .unwrap();
+
+    s.heal_nested_standalone_roots().await.unwrap();
+
+    // The placement lands after the heal.
+    let late_pid =
+        s.create_workspace(&format!("_test:heal_late_phantom_{uniq}"), None, None).await.unwrap();
+    s.link_workspace_repository(&late_pid, &sub_repo).await.unwrap();
+
+    let (kind, pid): (String, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
+        "SELECT kind::text, sensei.sole_workspace_of(id) FROM sensei.folders WHERE id = $1",
+    )
+    .bind(sub_fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(kind, "folder");
+    assert_eq!(
+        pid,
+        Some(repo_pid),
+        "a re-absorbed folder's workspace is the repo's, whatever lands later"
+    );
+}
+
 #[tokio::test]
 async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     let s = pg_store().await;

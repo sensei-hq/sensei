@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { Screen } from '@sensei/ui';
 	import { Button } from '@rokkit/ui';
-	import { SectionHead, Chip, Icon, ListSection } from '$lib/components/kit';
+	import { SectionHead, Chip, Icon, ListSection, AzureConnect } from '$lib/components/kit';
 	import { dojoLine, mappingLine } from '$lib/integrations-view';
 	import type { IntegrationsState } from '$lib/integrations-state.svelte';
+	import type { AzureConnectState } from '$lib/azure-connect-state.svelte';
 
 	// Admin → Integrations (#308 R5a, D20): a dōjō comes from a git integration.
 	// The admin connects GitHub (a re-authorization through the dōjō's sign-in —
@@ -11,8 +12,10 @@
 	// and for each: what its dōjō is (claimed, or who can claim it), where its
 	// repositories file, and only the acts this person may take — claim its dōjō,
 	// make it its own dōjō, or file it as a workspace of this one. Presentational:
-	// the state holds the list and the acts.
-	let { orgName, state }: { orgName: string; state: IntegrationsState } = $props();
+	// the state holds the list and the acts. Azure DevOps (#308 R5b, D42) sits
+	// beside GitHub when the page gives its state: a Microsoft Entra connect, then
+	// the organizations to import — each joins this dōjō, its projects workspaces.
+	let { orgName, state, azure }: { orgName: string; state: IntegrationsState; azure?: AzureConnectState } = $props();
 </script>
 
 <Screen>
@@ -22,7 +25,7 @@
 				kanji="繋"
 				eyebrow={orgName + ' · admin'}
 				title="Integrations"
-				description="A dōjō comes from a git integration. See the GitHub organizations you belong to, claim an organization's dōjō if you administer it on GitHub, or file an organization's repositories as a workspace of this dōjō."
+				description="A dōjō comes from a git integration. See the GitHub organizations you belong to, claim an organization's dōjō if you administer it on GitHub, or file an organization's repositories as a workspace of this dōjō. Connect Azure DevOps through Microsoft to bring an organization into this dōjō, each project a workspace."
 			/>
 		</div>
 	{/snippet}
@@ -111,6 +114,13 @@
 					<div class="text-ink-mute p-4 text-sm">This GitHub account sees no organizations.</div>
 				{/each}
 			</ListSection>
+		{/if}
+
+		{#if azure}
+			<AzureConnect
+				state={azure}
+				intro={'Import an Azure DevOps organization into ' + orgName + ': it joins this dōjō, and each of its projects becomes a workspace here.'}
+			/>
 		{/if}
 	</div>
 </Screen>

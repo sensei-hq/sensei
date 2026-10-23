@@ -29,6 +29,14 @@ describe('kavach config — landing cutover', () => {
 		expect(publics.has('/signin')).toBe(true);
 		expect(publics.has('/v1')).toBe(true);
 	});
+
+	// #330: the legal pages are linked from the Entra and GitHub consent screens,
+	// so a person who has never signed in must be able to read them.
+	it('keeps the Terms of Service and Privacy Policy public', () => {
+		const publics = new Set(config.rules.filter((r) => r.public).map((r) => r.path));
+		expect(publics.has('/terms-of-service')).toBe(true);
+		expect(publics.has('/privacy-policy')).toBe(true);
+	});
 });
 
 // The GitHub token minted at sign-in is the ONLY way the dōjō learns whether a
@@ -51,5 +59,28 @@ describe('kavach config — the forge token must be able to SEE private repos', 
 		// is what Supabase resolves the profile from. Adding a scope must not
 		// silently drop either.
 		expect(github()?.scopes).toEqual(expect.arrayContaining(['read:org', 'user:email']));
+	});
+});
+
+// Sign in with Microsoft (#308 R5c, D45): Supabase Auth's Azure provider, beside
+// GitHub, with SIGN-IN scopes only. GoTrue always puts `openid` first
+// (supabase/auth internal/api/provider/azure.go: `oauthScopes := []string{"openid"}`)
+// and appends what the client asks, so asking `email profile` requests exactly
+// `openid email profile`. `email` is what Supabase needs for the account's email;
+// nothing here may reach Azure DevOps or Microsoft Graph beyond the profile.
+describe('kavach config — Sign in with Microsoft', () => {
+	const azure = () => config.providers.find((p) => p.name === 'azure');
+
+	it('offers Microsoft as an OAuth provider, labelled for the person signing in', () => {
+		expect(azure()).toMatchObject({ mode: 'oauth', label: 'Continue with Microsoft' });
+	});
+
+	it('asks for the sign-in scopes only: email and profile (GoTrue adds openid)', () => {
+		expect(azure()?.scopes).toEqual(['email', 'profile']);
+	});
+
+	it('lists Microsoft right after GitHub, ahead of the email options', () => {
+		const names = config.providers.map((p) => p.name);
+		expect(names.indexOf('azure')).toBe(names.indexOf('github') + 1);
 	});
 });

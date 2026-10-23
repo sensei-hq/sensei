@@ -16,6 +16,7 @@
     "F6 app screen",
     "F7 sprints screen",
     "F8 on-demand discovery",
+    "F9 backlog",
     "F5 live verification"
   ],
   "current_phase": "F5 live verification",
@@ -30,7 +31,9 @@
     "F4 usage (12 tests red-first + 1 by_source assertion added after mutation N8 survived; tracker 128/128, cli 70/70; mutations N1-N8 caught); live board got_a_guy↔senecaglobal.jira.com #333 connected (12 sprints, 728 tickets) after *.jira.com host fix",
     "F6 app screen (50 unit tests red-first: state 24, panel 13 incl. axe x3, ModalShell 6, api 6, sidebar 1; app 1837/1837; svelte-check 0; verified live in headless chromium against senecaglobal board)",
     "F7 sprints screen (asked for by the user after F6; 27 tests red-first: state 15, panel 11 incl. axe x4, api 1; app 1864/1864; svelte-check 0; live on senecaglobal board)",
-    "F8 on-demand discovery (17 tests red-first + 2 updated to the R11 contract; tracker 143/143; app 1865/1865; cli 70/70)"
+    "F8 on-demand discovery (17 tests red-first + 2 updated to the R11 contract; tracker 143/143; app 1865/1865; cli 70/70)",
+    "F9 backlog (9 tests red-first + 1 row expectation updated; tracker 146/146, cli 79/79, app 2338/2338; live 199 backlog tickets)",
+    "Live R11 check 2026-10-21: lookup of P057542601-782 discovered in 1.6 s; session naming P057542601-783 linked 0.7 s after ingest (prompt; branch was main). C34 still unchecked (both test tickets backlog)"
   ],
   "decomposition_approved": "2026-10-16 (user)",
   "gate_status": "pass",

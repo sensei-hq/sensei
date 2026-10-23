@@ -41,7 +41,8 @@ import {
 	type ForgeUser
 } from './forge-github';
 import { forgeRefFromRepoKey } from './repo-mapping';
-import { assertGithubAccount } from './github-identity';
+import { assertGithubAccount, isGithubToken } from './github-identity';
+import type { MicrosoftIdentity } from './azure-signin';
 
 /** One tenant this pass established the caller's place in. */
 export interface ProvisionedTenant {
@@ -90,7 +91,14 @@ export interface ProvisionResult {
 	 *  recorded, or why it could not read the forge — in which case it changed
 	 *  nothing. Present only when the forge was read. */
 	roles?: RoleMirrorResult;
+	/** Whether the login's Microsoft account was linked (#308 R5c) — and if not,
+	 *  why. Present only when the login has a Microsoft account. */
+	microsoft?: MicrosoftSignInResult;
 }
+
+/** What a Microsoft sign-in came to: linked (its object id recorded, its dōjōs
+ *  joined), or why it could not be — in which case nothing was recorded. */
+export type MicrosoftSignInResult = { linked: true } | { linked: false; reason: string };
 
 /** What the per-person forge mirror did. */
 export interface RoleMirrorResult {
@@ -107,15 +115,21 @@ export interface FallbackIdentity {
 	 *  Supabase user). A forge token is used only if GitHub says it is this
 	 *  account; with none linked, a token is refused (#308 R5a review). */
 	githubId?: string | null;
+	/** The Microsoft account linked to the login (`microsoftIdentity` of the
+	 *  validated Supabase user, #308 R5c): its Entra object id provisions the
+	 *  person from the stored Azure DevOps member sets. */
+	microsoft?: MicrosoftIdentity;
 }
 
 const DOJO_HOST = 'dojo.sensei-hq.org';
 
 /** `dojo.forge_provider` → `dojo.auth_method`. The auth_method enum has no
- *  generic `oauth` label yet (§V.1 puts it in phase 2), so only github has a
- *  valid value — which is why phase 1 provisions github alone. */
+ *  generic `oauth` label yet (§V.1 puts it in phase 2): GitHub is proven by its
+ *  sign-in, Azure DevOps by an organization admin's Microsoft Entra connect (#308 R5b, D42);
+ *  GitLab and Bitbucket have no valid value yet. */
 export function authMethodFor(provider: ForgeProvider): string {
 	if (provider === 'github') return 'github_oauth';
+	if (provider === 'azure_devops') return 'azure_devops';
 	throw new AdminError(
 		501,
 		`provisioning from ${provider} needs the generic 'oauth' auth_method (phase 2)`
@@ -181,8 +195,12 @@ async function mappedAsWorkspace(db: DojoClient, provider: ForgeProvider, extern
 
 /** Forge standing → `dojo.member_role`. An org owner/admin administers the
  *  tenant; everyone else starts as a contributor and is promoted explicitly. */
+function roleForStanding(standing: ForgeOrg['role']): string {
+	return standing === 'admin' ? 'admin' : 'contributor';
+}
+
 function roleForOrg(org: ForgeOrg): string {
-	return org.role === 'admin' ? 'admin' : 'contributor';
+	return roleForStanding(org.role);
 }
 
 function tenantUrl(key: string): string {
@@ -199,12 +217,8 @@ async function insertTenantWithFreeSlug(
 	db: DojoClient,
 	origin: 'personal' | 'organization',
 	preferredSlug: string,
-	name: string,
-	/** Consulted on a key collision BEFORE escalating to `-2`. Returning a tenant
-	 *  means "that collision is me, racing myself" — adopt it instead of forking.
-	 *  Absent for orgs, which are arbitrated by their forge connection instead. */
-	adoptIfMine?: (key: string) => Promise<{ id: string; key: string } | null>
-): Promise<{ id: string; key: string; slug: string; adopted?: boolean }> {
+	name: string
+): Promise<{ id: string; key: string; slug: string }> {
 	for (let attempt = 1; attempt <= 20; attempt += 1) {
 		const slug = attempt === 1 ? preferredSlug : `${preferredSlug}-${attempt}`;
 		const key = `${origin}/${slug}`;
@@ -215,46 +229,8 @@ async function insertTenantWithFreeSlug(
 			.single();
 		if (!error) return { id: (data as { id: string }).id, key, slug };
 		if ((error as { code?: string }).code !== '23505') throw new AdminError(500, error.message);
-		const mine = adoptIfMine ? await adoptIfMine(key) : null;
-		if (mine) return { id: mine.id, key: mine.key, slug, adopted: true };
 	}
 	throw new AdminError(409, `could not find a free slug near "${preferredSlug}"`);
-}
-
-/**
- * On a PERSONAL key collision: is the colliding tenant mine, or another human's?
- *
- * `-2` exists for a real reason — two different people can both be `devuser`
- * on two forges, and joining them into one dōjō would be far worse than a
- * duplicate (§II.3). But it is wrong when a pass collides with ITSELF, which is
- * what produced `personal/devuser-2` two milliseconds after
- * `personal/devuser`.
- *
- * The distinguisher is membership. If this principal is ALREADY a member of the
- * colliding tenant, it is mine and I lost a race against myself — adopt it.
- * Otherwise it belongs to someone else and the caller must keep escalating.
- *
- * Returns null rather than throwing: "not mine" is an ordinary answer here, and
- * the caller's next attempt is the correct response to it.
- */
-export async function adoptOwnPersonalTenant(
-	db: DojoClient,
-	key: string,
-	principalId: string
-): Promise<{ id: string; key: string } | null> {
-	const t = await db.from('tenants').select('id, key').eq('key', key).maybeSingle();
-	if (t.error) throw new AdminError(500, t.error.message);
-	if (!t.data) return null;
-	const row = t.data as { id: string; key: string };
-
-	const m = await db
-		.from('memberships')
-		.select('id')
-		.eq('tenant_id', row.id)
-		.eq('user_id', principalId)
-		.maybeSingle();
-	if (m.error) throw new AdminError(500, m.error.message);
-	return m.data ? row : null;
 }
 
 /**
@@ -336,15 +312,25 @@ async function myMemberships(db: DojoClient, principalId: string): Promise<Membe
 	return (data ?? []) as Membership[];
 }
 
+/** Which forge read provisioned a membership, and which unit of it (#308 R5b):
+ *  only that forge's read of that unit may end it. */
+interface MembershipSource {
+	provider: ForgeProvider;
+	/** The unit's stable id (a GitHub org, an Azure DevOps organization). */
+	unit: string;
+}
+
 /** Create the membership if it is not already there, and report the role that
- *  ends up in force. An existing row WINS — see the header on overrides. */
+ *  ends up in force. An existing row WINS — see the header on overrides. An org
+ *  membership records the forge and unit whose read provisioned it (`from`). */
 async function ensureMembership(
 	db: DojoClient,
 	tenantId: string,
 	principalId: string,
 	kind: string,
 	authenticatedVia: string,
-	role: string
+	role: string,
+	from?: MembershipSource
 ): Promise<string> {
 	const existing = await db
 		.from('memberships')
@@ -363,8 +349,10 @@ async function ensureMembership(
 			kind,
 			authenticated_via: authenticatedVia,
 			role,
-			// Provisioning made it from a forge proof, so leaving the org ends it (#309).
-			source: 'provisioned'
+			// Provisioning made it from a forge proof, so leaving the org ends it (#309)
+			// — and only that forge's read of that org may (#308 R5b).
+			source: 'provisioned',
+			...(from ? { source_provider: from.provider, source_unit: from.unit } : {})
 		})
 		.select('role')
 		.single();
@@ -385,19 +373,20 @@ async function ensureMembership(
  * a conflict is a 409 that surfaces (it is the shape an accidental Supabase
  * account merge takes), never a quiet reassignment.
  */
-async function ensureIdentity(
+export async function ensureForgeIdentity(
 	db: DojoClient,
 	principalId: string,
-	facts: ForgeFacts
+	forge: ForgeProvider,
+	user: Pick<ForgeUser, 'id' | 'name' | 'email'>
 ): Promise<void> {
-	const provider = authMethodFor(facts.provider);
+	const provider = authMethodFor(forge);
 	const now = new Date().toISOString();
 
 	const found = await db
 		.from('identities')
 		.select('id, principal_id')
 		.eq('provider', provider)
-		.eq('subject', facts.user.id)
+		.eq('subject', user.id)
 		.maybeSingle();
 	if (found.error) throw new AdminError(500, found.error.message);
 
@@ -412,8 +401,10 @@ async function ensureIdentity(
 		const upd = await db
 			.from('identities')
 			.update({
-				email: facts.user.email,
-				display_name: facts.user.name,
+				// A read that names no email or name says nothing about them: the
+				// ones on record stay (an Azure read never carries an email).
+				...(user.email ? { email: user.email } : {}),
+				...(user.name ? { display_name: user.name } : {}),
 				last_login_at: now
 			})
 			.eq('id', row.id)
@@ -428,9 +419,9 @@ async function ensureIdentity(
 		.insert({
 			principal_id: principalId,
 			provider,
-			subject: facts.user.id,
-			email: facts.user.email,
-			display_name: facts.user.name,
+			subject: user.id,
+			email: user.email,
+			display_name: user.name,
 			last_login_at: now
 		})
 		.select('id')
@@ -448,9 +439,12 @@ async function ensureIdentity(
  * The caller's personal dōjō, created if absent (D1 — always active, no
  * activation step).
  *
- * Found by the caller's existing personal MEMBERSHIP, never by re-deriving the
- * slug: a forge handle is renameable, and re-deriving would create a second
- * personal dōjō and strand the first one's history.
+ * One database call (`dojo.ensure_personal_tenant`): it finds the person's
+ * personal dōjō by their personal MEMBERSHIP (a forge handle is renameable, so
+ * re-deriving the slug would strand the first one's history), or creates it and
+ * its admin membership together, under a per-person lock. Two sign-in passes
+ * milliseconds apart — kavach posts once per auth event — used to each find
+ * "none yet" here and leave `<slug>-2` behind (#331).
  */
 async function ensurePersonalTenant(
 	db: DojoClient,
@@ -459,47 +453,20 @@ async function ensurePersonalTenant(
 	displayName: string,
 	authenticatedVia: string
 ): Promise<ProvisionedTenant | null> {
-	const mine = await myMemberships(db, principalId);
-	const tenantIds = mine.map((m) => m.tenant_id);
-
-	if (tenantIds.length > 0) {
-		const owned = await db
-			.from('tenants')
-			.select('id, key, origin')
-			.eq('origin', 'personal')
-			.in('id', tenantIds);
-		if (owned.error) throw new AdminError(500, owned.error.message);
-		const existing = (owned.data ?? [])[0] as { id: string; key: string } | undefined;
-		if (existing) {
-			const role = mine.find((m) => m.tenant_id === existing.id);
-			return {
-				id: existing.id,
-				key: existing.key,
-				origin: 'personal',
-				role: role?.role ?? 'admin',
-				created: false
-			};
-		}
-	}
-
 	const slug = slugify(preferredSlug);
 	if (!slug) return null;
-	const tenant = await insertTenantWithFreeSlug(
-		db,
-		'personal',
-		slug,
-		`${displayName}'s Dōjō`,
-		(key) => adoptOwnPersonalTenant(db, key, principalId)
-	);
-	const role = await ensureMembership(
-		db,
-		tenant.id,
-		principalId,
-		'personal',
-		authenticatedVia,
-		'admin'
-	);
-	return { id: tenant.id, key: tenant.key, origin: 'personal', role, created: true };
+	const { data, error } = await db
+		.rpc('ensure_personal_tenant', {
+			p_principal: principalId,
+			p_slug: slug,
+			p_name: `${displayName}'s Dōjō`,
+			p_auth: authenticatedVia,
+			p_url_base: DOJO_HOST
+		})
+		.single();
+	if (error) throw new AdminError(500, error.message);
+	const row = data as { tenant_id: string; key: string; role: string; created: boolean };
+	return { id: row.tenant_id, key: row.key, origin: 'personal', role: row.role, created: row.created };
 }
 
 /**
@@ -599,7 +566,8 @@ export async function ensureOrgTenant(
 			principalId,
 			'employer',
 			authenticatedVia,
-			roleForOrg(org)
+			roleForOrg(org),
+			{ provider, unit: org.id }
 		);
 		// A tenant may have been created by a plain member long before an owner
 		// first signs in, so the claim is attempted on EVERY pass, not only at
@@ -651,7 +619,8 @@ export async function ensureOrgTenant(
 			principalId,
 			'employer',
 			authenticatedVia,
-			roleForOrg(org)
+			roleForOrg(org),
+			{ provider, unit: org.id }
 		);
 		return { id: winner.id, key: winner.key, origin: 'organization', role: joinedRole, created: false };
 	}
@@ -662,7 +631,8 @@ export async function ensureOrgTenant(
 		principalId,
 		'employer',
 		authenticatedVia,
-		roleForOrg(org)
+		roleForOrg(org),
+		{ provider, unit: org.id }
 	);
 	// The creator may themselves be the forge owner, in which case the tenant is
 	// claimed the moment it exists rather than waiting for a second sign-in.
@@ -882,6 +852,70 @@ export async function ensureProvisioned(
 	facts: ForgeFacts | null,
 	fallback: FallbackIdentity = {}
 ): Promise<ProvisionResult> {
+	const result = await ensureForgeProvisioned(db, principalId, facts, fallback);
+	const microsoft = fallback.microsoft;
+	if (!microsoft || microsoft.state === 'none') return result;
+	if (microsoft.state === 'unlinkable') {
+		// FAIL CLOSED (#308 R5c): no identity is recorded and nobody is provisioned
+		// on a guess. Said in the log and in the answer, and on My dōjōs.
+		console.error(`[microsoft sign-in] principal ${principalId} not linked: ${microsoft.reason}`);
+		return { ...result, microsoft: { linked: false, reason: microsoft.reason } };
+	}
+	const joined = await provisionFromMemberSets(db, principalId, microsoft);
+	return { ...result, tenants: [...result.tenants, ...joined], microsoft: { linked: true } };
+}
+
+/**
+ * A Microsoft sign-in (#308 R5c, D45): record the person's Entra object id as
+ * their azure_devops identity — a 409 if it is already another person's, never
+ * a re-point — and join every Azure-backed organization dōjō whose last
+ * COMPLETE member set lists it (dojo.units_listing_member). The sign-in token
+ * cannot read Azure DevOps; the member sets are what the import, Sync and the
+ * scheduled read last proved. Same rule as a member read: contributor (no admin
+ * is proven), provenance the forge and the unit, so that unit's later complete
+ * read ends it when the person leaves (#309). An existing membership wins.
+ */
+async function provisionFromMemberSets(
+	db: DojoClient,
+	principalId: string,
+	microsoft: Extract<MicrosoftIdentity, { state: 'ok' }>
+): Promise<ProvisionedTenant[]> {
+	const provider = 'azure_devops' as const;
+	await ensureForgeIdentity(db, principalId, provider, { id: microsoft.objectId, name: microsoft.name, email: null });
+
+	const { data, error } = await db.rpc('units_listing_member', {
+		p_provider: provider,
+		p_subject: microsoft.objectId,
+		p_directory: microsoft.tenantId
+	});
+	if (error) throw new AdminError(500, error.message);
+	const units = (data ?? []) as { tenant_id: string; unit: string }[];
+	if (units.length === 0) return [];
+
+	const found = await db.from('tenants').select('id, key').in('id', units.map((u) => u.tenant_id));
+	if (found.error) throw new AdminError(500, found.error.message);
+	const keyOf = new Map(((found.data ?? []) as { id: string; key: string }[]).map((t) => [t.id, t.key]));
+
+	const joined: ProvisionedTenant[] = [];
+	for (const u of units) {
+		const key = keyOf.get(u.tenant_id);
+		if (!key) throw new AdminError(500, 'a member set names a dōjō that does not exist');
+		const role = await ensureMembership(db, u.tenant_id, principalId, 'employer', authMethodFor(provider), roleForStanding('member'), {
+			provider,
+			unit: u.unit
+		});
+		joined.push({ id: u.tenant_id, key, origin: 'organization', role, created: false });
+	}
+	return joined;
+}
+
+/** The forge half of a pass: the personal dōjō, and the org dōjōs a forge read proves. */
+async function ensureForgeProvisioned(
+	db: DojoClient,
+	principalId: string,
+	facts: ForgeFacts | null,
+	fallback: FallbackIdentity
+): Promise<ProvisionResult> {
 	if (!facts) {
 		// Name the personal dōjō from the email's local part. A derived slug, not
 		// an invented identity — and when there is nothing to derive from we
@@ -903,7 +937,7 @@ export async function ensureProvisioned(
 	}
 
 	const authenticatedVia = authMethodFor(facts.provider);
-	await ensureIdentity(db, principalId, facts);
+	await ensureForgeIdentity(db, principalId, facts.provider, facts.user);
 
 	const personal = await ensurePersonalTenant(
 		db,
@@ -969,7 +1003,9 @@ export async function provisionWithToken(
 	fallback: FallbackIdentity = {},
 	fetchImpl: typeof fetch = fetch
 ): Promise<ProvisionResult> {
-	if (!providerToken) return ensureProvisioned(db, principalId, null, fallback);
+	// Only a GitHub token is ever sent to GitHub: a Microsoft sign-in's provider
+	// token (#308 R5c) provisions as a pass with no forge token.
+	if (!isGithubToken(providerToken)) return ensureProvisioned(db, principalId, null, fallback);
 
 	let facts: ForgeFacts;
 	try {

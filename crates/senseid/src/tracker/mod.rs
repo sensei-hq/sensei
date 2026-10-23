@@ -40,6 +40,32 @@ impl TrackerKind {
     }
 }
 
+/// What a tracker's board serves in its workspace — the `sensei.tracker_level`
+/// enum (D40, `docs/spec/tracker-levels.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TrackerLevel {
+    Epic,
+    Sprint,
+    Task,
+}
+
+impl TrackerLevel {
+    /// In the enum's declared order, which is also the order trackers list in.
+    pub const ALL: [TrackerLevel; 3] =
+        [TrackerLevel::Epic, TrackerLevel::Sprint, TrackerLevel::Task];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrackerLevel::Epic => "epic",
+            TrackerLevel::Sprint => "sprint",
+            TrackerLevel::Task => "task",
+        }
+    }
+    pub fn parse(s: &str) -> Option<TrackerLevel> {
+        TrackerLevel::ALL.into_iter().find(|l| l.as_str() == s)
+    }
+}
+
 /// An API token. Its `Debug` never prints the value, so a token cannot reach a
 /// log line through `{:?}` on any struct that carries it.
 #[derive(Clone, PartialEq, Eq)]
@@ -424,6 +450,11 @@ pub mod test_support {
             self
         }
         /// Every `jql` asked, in order.
+        /// Every path asked, in order.
+        pub fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+
         pub fn jql_calls(&self) -> Vec<String> {
             self.jql_calls.lock().unwrap().clone()
         }
@@ -457,6 +488,27 @@ pub mod test_support {
 
         /// Board 42 of project AUTH: sprints 100 (closed) and 101 (active), three
         /// issues over two pages; 10001 in sprint 100, 10002 + 10003 in sprint 101.
+        /// Another board on this site, with no sprints and no issues: it connects
+        /// and syncs cleanly beside board 42.
+        pub fn with_board(self, id: u32, name: &str) -> Self {
+            use serde_json::json;
+            self.with(
+                &format!("/rest/agile/1.0/board/{id}"),
+                0,
+                json!({"id": id, "name": name, "location": {"projectKey": "AUTH"}}),
+            )
+            .with(
+                &format!("/rest/agile/1.0/board/{id}/sprint"),
+                0,
+                json!({"startAt": 0, "isLast": true, "values": []}),
+            )
+            .with(
+                &format!("/rest/agile/1.0/board/{id}/issue"),
+                0,
+                json!({"startAt": 0, "total": 0, "issues": []}),
+            )
+        }
+
         pub fn standard() -> Self {
             use serde_json::json;
             let issue = |id: &str, key: &str| {
@@ -593,6 +645,23 @@ mod seam_tests {
                 a.kind()
             );
         }
+    }
+
+    #[test]
+    fn tracker_levels_are_exactly_the_ddl_enum_labels() {
+        let ddl = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../database/ddl/enum/sensei/tracker_level.ddl"
+        ))
+        .unwrap();
+        let body = ddl.split("as enum (").nth(1).and_then(|b| b.split(");").next()).unwrap();
+        let labels: Vec<&str> = body.lines().filter_map(|l| l.split('\'').nth(1)).collect();
+        let ours: Vec<&str> = TrackerLevel::ALL.iter().map(|l| l.as_str()).collect();
+        assert_eq!(labels, ours);
+        for l in TrackerLevel::ALL {
+            assert_eq!(TrackerLevel::parse(l.as_str()), Some(l));
+        }
+        assert_eq!(TrackerLevel::parse("portfolio"), None);
     }
 
     #[test]

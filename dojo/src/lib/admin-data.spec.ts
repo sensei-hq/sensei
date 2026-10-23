@@ -22,9 +22,14 @@ import {
 	addTeamMember,
 	removeTeamMember,
 	grantTeamWorkspaceView,
+	getTeamMetrics,
 	listIntegrationUnits,
 	claimIntegrationUnit,
-	mapIntegrationUnit
+	mapIntegrationUnit,
+	listAzureConnections,
+	startAzureConnect,
+	syncAzure,
+	removeAzureToken
 } from '$lib/admin-data';
 
 // A fake fetch that records the call and returns a canned JSON response. Mirrors
@@ -217,6 +222,20 @@ describe("the dōjō's viewers (#307 D8)", () => {
 	});
 });
 
+describe("the lead's team view (#307 R8, D38)", () => {
+	it('reads GET …/team-metrics and returns the wire as sent', async () => {
+		const wire = { since: '2026-10-16', days: 7, teams: [] };
+		const { fn, calls } = fakeFetch(200, wire);
+		expect(await getTeamMetrics('personal/acme', { fetch: fn })).toEqual(wire);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/personal/acme/team-metrics`);
+	});
+
+	it('a refusal is an error, never an empty view', async () => {
+		const { fn } = fakeFetch(403, { error: 'lead role required' });
+		await expect(getTeamMetrics('personal/acme', { fetch: fn })).rejects.toThrow();
+	});
+});
+
 describe("the dōjō's teams (#307 D7)", () => {
 	it('lists them', async () => {
 		const { fn, calls } = fakeFetch(200, { teams: [{ id: 't1', name: 'P', members: [] }] });
@@ -256,6 +275,22 @@ describe('the dōjō`s integrations (#308 R5a)', () => {
 			['POST', base, JSON.stringify({})],
 			['POST', `${base}/claim`, JSON.stringify({ unit_id: '22' })],
 			['POST', `${base}/map`, JSON.stringify({ unit_id: '22', as: 'workspace', name: 'Acme' })]
+		]);
+		expect(headersOf(calls[0].init).Authorization).toBe('Bearer jwt');
+	});
+
+	it('Azure DevOps: GET the connections, POST start (no body carries a token), sync, DELETE the grant', async () => {
+		const { fn, calls } = fakeFetch(200, { connections: [], scopes: [], configured: true });
+		await listAzureConnections('organization/acme', { fetch: fn, accessToken: 'jwt' });
+		await startAzureConnect('organization/acme', { fetch: fn });
+		await syncAzure('organization/acme', 'org-1', { fetch: fn });
+		await removeAzureToken('organization/acme', 'org-1', { fetch: fn });
+		const base = `${dojoApiUrl}/v1/t/organization/acme/integrations/azure_devops`;
+		expect(calls.map((c) => [c.init?.method ?? 'GET', c.url, c.init?.body])).toEqual([
+			['GET', base, undefined],
+			['POST', `${base}/connect`, JSON.stringify({})],
+			['POST', `${base}/sync`, JSON.stringify({ organization_id: 'org-1' })],
+			['DELETE', `${base}/token`, JSON.stringify({ organization_id: 'org-1' })]
 		]);
 		expect(headersOf(calls[0].init).Authorization).toBe('Bearer jwt');
 	});

@@ -331,6 +331,7 @@ impl TranscriptAdapter for CursorAdapter {
             events: session.as_ref().map_or_else(Vec::new, |s| s.events.clone()),
             model: None, // Cursor JSONL does not carry model info
             tokens: None,
+            messages: Vec::new(),
         }
     }
 }

@@ -53,6 +53,15 @@ evidence) are preserved in [`history/backlog/writeups.md`](history/backlog/write
 
 Full one-liners and prior context: [`history/backlog/writeups.md`](history/backlog/writeups.md).
 
+- **A branch's DDL change never reaches the dev database on start** — the boot
+  deploy (`tasks/schema_deploy.rs`) runs only when the binary's version differs
+  from `sensei.config.schema_deployed_version`, so with `SENSEI_DDL_DIR` set (the
+  process-compose daemon) a new column on the same version is skipped and every
+  query naming it fails (hit 2026-10-22: F11's `sessions.claude_time` → 500 on the
+  Tickets screen until a manual `dbd reconcile`). `process-compose.yaml` says the
+  opposite. Deploy whenever `SENSEI_DDL_DIR` is set, or key the stamp on the DDL's
+  content hash.
+
 - **The daemon's startup schema upgrade fails on any release that adds a
   commented column** — `sensei_bootstrap::database::deploy_to` runs `apply`
   (which re-runs each table's DDL, its `comment on column` included) BEFORE the
@@ -64,6 +73,8 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   install meets it. Fix in the deploy order (reconcile the tables' columns
   before re-applying their comments), with a `deploy_upgrade.rs` test that adds
   a commented column.
+  Until then `sessions.claude_time` and `sessions.user_time` (tracker F11) carry
+  inline `--` comments only; give them `comment on column` with the fix.
 
 - **Library capability provisioning + version-aware doc queries** — nothing
   installs a library's declared skills/agents; `get_lib_docs` lacks a `version`

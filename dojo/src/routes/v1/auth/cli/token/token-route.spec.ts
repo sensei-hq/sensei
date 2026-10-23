@@ -77,7 +77,7 @@ describe('POST /v1/auth/cli/token', () => {
 		expect(principalId).toBe('p1'); // …translated to the principal
 		expect(token).toBe('gh-provider');
 		// Provisioning refuses a token of any other GitHub account (#308 R5a review).
-		expect(fallback).toEqual({ email: 'j@example.com', githubId: '4242' });
+		expect(fallback).toEqual({ email: 'j@example.com', githubId: '4242', microsoft: { state: 'none' } });
 	});
 
 	it('still returns the session when provisioning throws', async () => {

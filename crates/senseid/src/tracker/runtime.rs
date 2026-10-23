@@ -79,7 +79,7 @@ pub async fn sync_stored(
     rt: &TrackerRuntime,
     row: &TrackerRow,
 ) -> Result<crate::db::pg_store::trackers::ApplyCounts, crate::tracker::sync::SyncError> {
-    use crate::tracker::sync::{SYNC_DEADLINE, SyncError, sync_tracker};
+    use crate::tracker::sync::{SYNC_DEADLINE, SyncError, sync_with_credential};
     let adapter = crate::tracker::TrackerKind::parse(&row.kind)
         .and_then(crate::tracker::adapter_for_kind)
         .ok_or(SyncError::Failed(TrackerError::UnsupportedTracker))?;
@@ -92,7 +92,16 @@ pub async fn sync_stored(
             return Err(SyncError::Failed(e));
         }
     };
-    sync_tracker(pg, &rt.locks, row.id, adapter, transport.as_ref(), SYNC_DEADLINE).await
+    sync_with_credential(
+        pg,
+        &rt.locks,
+        row.id,
+        adapter,
+        transport.as_ref(),
+        SYNC_DEADLINE,
+        &row.secret_service,
+    )
+    .await
 }
 
 /// R11 discovery for one stored tracker, resolving its adapter and transport.

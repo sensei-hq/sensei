@@ -19,6 +19,7 @@ import { dojoDb } from './dojo-supabase';
 import { resolvePrincipalId } from './principal-resolve';
 import { provisionWithToken } from './provisioning';
 import { githubIdentityId } from './github-identity';
+import { microsoftIdentity } from './azure-signin';
 import { AdminError } from './admin-data';
 
 /** The provider session as the browser sends it, narrowed to what we read. */
@@ -49,8 +50,10 @@ export async function provisionOnSignIn(
 	if (!session || !PROVISIONING_EVENTS.has(event)) return;
 
 	// Who this is, by Supabase's word for the access token — never the session's
-	// own `user` claim — and the GitHub account linked to that login, which is
-	// the only account whose token provisioning will use (#308 R5a review).
+	// own `user` claim — the GitHub account linked to that login, which is the
+	// only account whose token provisioning will use (#308 R5a review), and the
+	// Microsoft account, whose Entra object id provisions them from the stored
+	// Azure DevOps member sets (#308 R5c).
 	const accessToken = typeof session.access_token === 'string' ? session.access_token : '';
 	if (!accessToken) return; // not a session we can attribute to anyone
 
@@ -60,6 +63,7 @@ export async function provisionOnSignIn(
 	const principalId = await resolvePrincipalId(db, data.user.id);
 	await provisionWithToken(db, principalId, session.provider_token ?? null, {
 		email: data.user.email ?? null,
-		githubId: githubIdentityId(data.user)
+		githubId: githubIdentityId(data.user),
+		microsoft: microsoftIdentity(data.user)
 	});
 }

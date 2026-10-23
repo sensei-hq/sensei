@@ -51,15 +51,15 @@ describe('workspace-sidebar-view', () => {
             expect(ids).toContain('metrics');
             expect(ids.indexOf('metrics')).toBe(ids.indexOf('overview') + 1);
         });
-        it('places Sprints (期) then Integrations (繋) between Impact and About', () => {
+        it('places Tickets (札) then Integrations (繋) between Impact and About', () => {
             const ids = SECTIONS.map((s) => s.id);
-            expect(ids.indexOf('sprints')).toBe(ids.indexOf('impact') + 1);
-            expect(ids.indexOf('integrations')).toBe(ids.indexOf('sprints') + 1);
+            expect(ids.indexOf('tickets')).toBe(ids.indexOf('impact') + 1);
+            expect(ids.indexOf('integrations')).toBe(ids.indexOf('tickets') + 1);
             expect(ids.indexOf('about')).toBe(ids.indexOf('integrations') + 1);
-            expect(SECTIONS.find((s) => s.id === 'sprints')).toEqual({
-                id: 'sprints',
-                kanji: '期',
-                label: 'Sprints',
+            expect(SECTIONS.find((s) => s.id === 'tickets')).toEqual({
+                id: 'tickets',
+                kanji: '札',
+                label: 'Tickets',
             });
             expect(SECTIONS.find((s) => s.id === 'integrations')).toEqual({
                 id: 'integrations',

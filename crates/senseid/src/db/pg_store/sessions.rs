@@ -12,7 +12,10 @@ pub struct SessionMetricsRow<'a> {
     pub corrections: i32,
     pub outcome: &'a str,
     pub ftr: bool,
-    pub duration_ms: i64,
+    /// Active time and its R12 split; `None` writes NULL (no hook events).
+    pub duration_ms: Option<i64>,
+    pub claude_ms: Option<i64>,
+    pub user_ms: Option<i64>,
     pub module: Option<&'a str>,
     pub tool_usage: &'a serde_json::Value,
 }
@@ -981,6 +984,7 @@ impl PgStore {
             "SELECT s.id, s.client_session_id, coalesce(s.folder_id, s.repo_folder_id) FROM activity.sessions s
              WHERE s.workspace_id = $1 AND s.client_session_id IS NOT NULL
                AND (s.analyzed_at IS NULL
+                    OR (s.duration IS NOT NULL AND s.claude_time IS NULL)
                     OR EXISTS (SELECT 1 FROM activity.assistant_events e
                                WHERE e.session_id = s.client_session_id
                                  AND to_timestamp(e.ts / 1000.0) > s.analyzed_at))"
@@ -1532,6 +1536,8 @@ impl PgStore {
             outcome,
             ftr,
             duration_ms,
+            claude_ms,
+            user_ms,
             module,
             tool_usage,
         } = row;
@@ -1540,7 +1546,9 @@ impl PgStore {
                 SET outcome = $2::sensei.session_outcome, ftr = $3, turns = $4,
                     corrections = $5, duration = make_interval(secs => $6::float8 / 1000.0),
                     module = $7, analyzed_at = now(),
-                    props = props || jsonb_build_object('tool_usage', $8::jsonb)
+                    props = props || jsonb_build_object('tool_usage', $8::jsonb),
+                    claude_time = make_interval(secs => $9::float8 / 1000.0),
+                    user_time = make_interval(secs => $10::float8 / 1000.0)
               WHERE id = $1",
         )
         .bind(session_id)
@@ -1551,6 +1559,8 @@ impl PgStore {
         .bind(duration_ms)
         .bind(module)
         .bind(tool_usage)
+        .bind(claude_ms)
+        .bind(user_ms)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

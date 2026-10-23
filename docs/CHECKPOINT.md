@@ -1,41 +1,40 @@
-# Checkpoint — 2026-10-21
+# Checkpoint — 2026-10-23
 
-**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md) — the security and production gaps (#309–#321, roadmap/06-gaps.md).
+**Slice:** dōjō expansion (docs/roadmap/09-dojo-expansion.md) inside the issue burndown
+(docs/roadmap/08-issue-burndown.md). Released: v0.19.0. Next: **v0.20.0**.
 
-**Done:**
-- **v0.16.0 released.** Tag 16869d1f; PR #322 merged as e62764fb. The production dōjō reconcile was approved by the user
-  and went exactly as rehearsed, and `dbd diff` is in sync. The Worker serves 0.16.0 (gitSha e62764f). #315 closed.
-  The scratch prod copy is dropped; the user's dump file is kept.
-- #312 built (4fcea9de, D28): an unanswered hard-block in an unattended run is denied. Live proof comes with the next release.
-- Placement floor (nightly, red since 10-19): @sensei/glyphs (5981faab, tsconfig: ES5 had no Set) and
-  @sensei/marketplace (356ce9a0, vendored engine `claude-code` types — user decision; `make plugin-types src=…`
-  refreshes them). CI re-run on develop green (run 39676172084).
-- #307 R2b done (f080e38a, e6c58885): the dōjō's pages say workspace; fixed the Viewers tab's R2a drift (shipped in
-  v0.16.0, no prod viewers yet — needs the next release). Verified live on the local dōjō.
-- #313 closed (6dad1e33): grant changes audited in-transaction; a viewer reads no one else (SQL-pinned). Verified live
-  on the local dōjō through the API (2 audit rows for 4 calls).
+**On develop, ships in v0.20.0:**
+- R8 lead team metrics (D38, D41); R9 trackers by level (D23, D40); #323 Jira linkage F9–F11 + API cost (user).
+- R5b Azure DevOps through Entra (D42–D44) and R5c sign in with Microsoft (D45). Each had two security reviews,
+  and every finding was fixed with a failing test first.
+- #330 Terms of Service and Privacy Policy pages. The user approved the wording.
+- #328 heal defect fixed (0 of 936 live folders were stranded).
+- Sign-in fixes, verified live on the local dōjō: #329 (a magic-link switch never shows the previous
+  account), #331 (one personal dōjō per person, however many passes race), #297 (/signin shows Supabase's error).
+
+**v0.20.0 rehearsal (2026-10-23): passed.**
+- The copy: the 2026-10-21 production dump, brought to v0.19.0 by that tag's reconcile, deploy and diff.
+- Develop's dōjō deploy ran twice. Pass 2 changed nothing, and `dbd diff` was clean after each pass.
+- Row counts were unchanged: tenants 6, memberships 5, connections 3.
+- Provenance: 3 org memberships attributed to GitHub; 2 personal ones left unattributed.
+
+**Next command:** once the user says go: `make bump v=minor` on develop → PR to main → `make release` on
+main → the user approves deploy-dojo.
+
+**Open questions (the user's):**
+- When to release.
+- A contact for export or deletion requests on the privacy page (#330), now or in a follow-up.
+
+**Live checks after v0.20.0:**
+- R5b connect and import; R5c oid/tid match.
+- The negative `xms_edov` test, which blocks enabling Microsoft sign-in in production.
+- These need the Worker secrets `AZURE_DEVOPS_CLIENT_ID`, `AZURE_DEVOPS_CLIENT_SECRET` and `DOJO_CRON_SECRET`,
+  the connect redirect URI, the `vso.*` permissions, and the `email` and `xms_edov` claims.
+- R9: two Jira boards at two levels.
 
 **Remaining:**
-- #314 (user steps: enrol the daemon with production, prod URL env, VAPID + Worker secrets, phone test).
-- #307 R2b, R3; #318 rest (D25/D29 stacks applied at a level, D23 trackers).
-- Wave 11 (after the dōjō waves): the website from the user's new mocks; coming soon → available as each ships.
-
-**Next command:** the next release (R5a + Worker-on-tag) waits on the user's go — bump on develop → PR → `make release` on main. After its `deploy-worker` passes, tell the user it is safe to remove the Worker's Cloudflare git connection. R5a merged (8a584e51): claim, unit mappings, Integrations screen with Connect GitHub re-auth (D39), and the token-ownership fix (7a7015d7, also closes the pre-existing /v1/you/provision gap). Security review clean after the fix. Gates on my solo run: Rust 4242/0, app, dōjō, SQL green. Then R8 (D38: the lead's per-person team metrics), then R5b (Azure).
-Wave 0b code done (335618b9: release-guard + `on-main` job; next release = PR → main → `make bump` ON main). Worker-on-tag waits on the user (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID secrets; remove the Worker's git triggers).
-Wave 0c done (SSRF fixed 9381ec2e, the rest triaged and dismissed with reasons; #1 closes with the next release).
-**v0.17.0 released 2026-10-22:** prod dōjō DB in sync (approved deploy-dojo), Worker 0.17.0 (6df9990, PR #324 merged
-on red CodeQL — all alerts pre-existing — user decision), the local daemon migrated as rehearsed. Rehearsal copies dropped.
-**R3a inventory (daemon DB catalogue, 2026-10-21):** tables sensei.projects, repositories_in_projects, service_projects,
-extension_projects; 19 `project_id`-style columns (activity, history, inference, sensei) + staging.memories.project_name;
-17 views (project_metric_*, project_*); fn sole_project_of; enums project_maturity + 'project' in entity_scope,
-memory_scope, sync_entity; task kinds analyze_project / compute_project_metrics / compile_projects. Keep: dbd.* (dbd's
-word); extension_scope 'project' if it is Claude Code's scope (check).
-
-**Open questions:**
-- Client scope as a governance level: retire it (recommended)?
-- Carried: #289, #149, #133, #282, #194.
-
-**Known-broken / pending:**
-- qlty is out of billing minutes, and the
-  Cloudflare "Workers Builds: dojo" preview check fails; the production deploy works.
-- Keychain approval needed after every daemon reinstall (#283 until #282).
+- #314 (production push: the user's steps); #312 live on an unattended run; dbd#103 (a column comment lands
+  one reconcile late). #331: after v0.20.0, count production's `personal/*-2` tenants (counts only); merging
+  them is the user's call.
+- Wave 11: the website from the user's mocks.
+- Known: qlty is out of billing minutes; a daemon reinstall needs keychain approval (#283 until #282).

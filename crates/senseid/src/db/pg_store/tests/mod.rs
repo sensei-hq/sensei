@@ -13,6 +13,7 @@ use sqlx_core::query_as::query_as;
 // the never-point-at-`sensei` guard.
 
 mod activity_tests;
+mod api_cost_tests;
 mod config_tests;
 mod dojo_tests;
 mod gateway_tests;

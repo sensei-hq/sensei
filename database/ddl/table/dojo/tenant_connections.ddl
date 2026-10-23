@@ -17,6 +17,12 @@ create table if not exists dojo.tenant_connections (
   , external_slug  text                not null            -- the forge's name for the org
   , connected_by   uuid                not null            -- the user who linked it
   , verified_at    timestamptz                             -- when org control was last proven
+  , token_secret_id  uuid
+  , token_state      dojo.forge_token_state
+  , token_expires_at timestamptz
+  , members_read_at    timestamptz
+  , members_read_error text
+  , member_set_read_at timestamptz
   , created_at     timestamptz         not null default now()
   , updated_at     timestamptz         not null default now()
 );
@@ -62,6 +68,36 @@ comment on column dojo.tenant_connections.verified_at is
 connection exists but grants nothing. Re-proved on each provisioning pass, and
 only a pass that positively read the forge may clear it — an API outage must
 never be read as "the org is gone".';
+
+comment on column dojo.tenant_connections.token_secret_id is
+'The Supabase Vault secret (vault.secrets.id) holding this connection''s forge
+grant (#308 R5b, D42: the Microsoft Entra refresh token of the Azure DevOps admin
+who connected; access tokens are never stored). NULL when none. Never the token:
+it is written, rotated, replaced, removed and read only through
+dojo.set_forge_token / rotate_forge_token / remove_forge_token / forge_token
+(service_role only).';
+
+comment on column dojo.tenant_connections.token_state is
+'ok, or needs_new_token once the forge rejected the stored grant (a refresh
+answered invalid_grant: revoked, expired, or consent withdrawn) — reads stop until
+an admin reconnects. NULL when no token is stored.';
+
+comment on column dojo.tenant_connections.token_expires_at is
+'When the stored grant expires, when the forge says (NULL when unknown — Entra does
+not report a refresh token''s lifetime).';
+
+comment on column dojo.tenant_connections.members_read_at is
+'When the scheduled member read last read this connection (#308 R5b, D44) — the
+run reads the longest-unread first. NULL until it has.';
+
+comment on column dojo.tenant_connections.member_set_read_at is
+'When this connection''s member set (dojo.connection_members) was last replaced by a complete
+read — import, Sync or the scheduled read (#308 R5c). NULL until one. A set older than
+dojo.member_set_max_age_hours() provisions no sign-in.';
+
+comment on column dojo.tenant_connections.members_read_error is
+'Why the last scheduled member read of this connection ended nobody (a failed,
+partial or refused read), or NULL when it read completely. Never a token.';
 
 -- RLS on, and no session grant: read only by provisioning (the system) and
 -- dojo.register_repository, which returns a reason, never another tenant's id (#236).

@@ -106,7 +106,7 @@ export const KANJI_ICONS = {
   '響': 'i-solar-soundwave-bold-duotone',
   '情': 'i-solar-heart-bold-duotone',
   '繋': 'i-solar-link-bold-duotone',
-  '期': 'i-solar-calendar-bold-duotone',
+  '札': 'i-solar-ticket-bold-duotone',
   '為': 'i-solar-checklist-bold-duotone',
   '証': 'i-solar-verified-check-bold-duotone',
   '式': 'i-solar-code-square-bold-duotone',

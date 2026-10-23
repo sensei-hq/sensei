@@ -7,9 +7,9 @@
 // creates the kavach instance whose `.handle` (from @kavach/sentry) guards
 // routes in src/hooks.server.ts.
 //
-// Magic-link (OTP) is the primary sign-in for orgs not on GitHub — see the
-// DojoSignIn mockup. GitHub OAuth is planned but out of scope for R6 (the
-// supabase local stack from R5 provides the OTP/magic-link path via Inbucket).
+// Sign-in: GitHub and Microsoft (OAuth), or a magic link / password for anyone
+// on neither — see the DojoSignIn mockup. Locally, the supabase stack delivers
+// the magic link through Inbucket.
 
 export default {
 	adapter: 'supabase',
@@ -50,6 +50,15 @@ export default {
 	//             strongest argument for the GitHub App migration above.
 	providers: [
 		{ mode: 'oauth', name: 'github', label: 'Continue with GitHub', scopes: ['read:org', 'user:email', 'repo'] },
+		//  - `azure` (OAuth, #308 R5c, D45): Sign in with Microsoft through Supabase
+		//    Auth's Azure provider, against the multi-tenant `organizations`
+		//    authority (supabase/config.toml). SIGN-IN scopes only: GoTrue always
+		//    asks `openid` first and appends these, so the request is exactly
+		//    `openid email profile`; `email` is what Supabase reads the account's
+		//    email from. The token it yields cannot read Azure DevOps, and nothing
+		//    uses it: the person's Entra object id (from the ID token GoTrue
+		//    verified) is what provisions them (azure-signin.ts).
+		{ mode: 'oauth', name: 'azure', label: 'Continue with Microsoft', scopes: ['email', 'profile'] },
 		{ mode: 'otp', name: 'magic', label: 'Email me a magic link' },
 		// Email + password. `name: 'email'` is the field key AuthProvider passes to
 		// signIn ({ email, password }) → the adapter's signInWithPassword.
@@ -87,6 +96,10 @@ export default {
 		// Unmatched paths fall through to the sentry guard's 401→/signin redirect,
 		// so an explicit public rule is required to exempt it.
 		{ path: '/version', public: true },
+		// The Terms of Service and Privacy Policy (#330): linked from the GitHub and
+		// Microsoft consent screens, so they must open without a session.
+		{ path: '/terms-of-service', public: true },
+		{ path: '/privacy-policy', public: true },
 		// The machine/token API (/v1/*) self-authenticates in-handler (device-token
 		// or Supabase-JWT plane, see dojo-auth.ts) — it must bypass kavach's web
 		// session guard, or every daemon/API call 303-redirects to /signin.

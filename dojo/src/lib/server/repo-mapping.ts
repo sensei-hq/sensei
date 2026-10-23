@@ -20,6 +20,11 @@ export interface ForgeRef {
 	/** The forge's name for the org — matched against
 	 *  `tenant_connections.external_slug`. */
 	org: string;
+	/** Azure DevOps only: the project the repository is in, decoded and
+	 *  lowercased — an Azure project is a workspace of its organization's dōjō
+	 *  (#308 R5b, D36), mapped as `{org}/{project}`. Absent when the key does not
+	 *  name one readably; the org still maps. */
+	project?: string;
 }
 
 /**
@@ -56,6 +61,36 @@ const HOSTS: Record<string, HostRule> = {
  *  the path, which no segment index can express. */
 const VISUALSTUDIO_SUFFIX = '.visualstudio.com';
 
+/** A project segment, percent-decoded (`mobile%20apps` → `mobile apps`), or
+ *  undefined when it does not decode or decodes to something that is not one
+ *  name (an Azure project name holds no `/`). */
+function projectName(segment: string | undefined): string | undefined {
+	if (!segment) return undefined;
+	let name: string;
+	try {
+		name = decodeURIComponent(segment);
+	} catch {
+		return undefined;
+	}
+	return name && !name.includes('/') && name !== '_git' ? name : undefined;
+}
+
+/**
+ * The project an Azure DevOps repository path names, given the path after the
+ * org: `{project}/_git/{repo}` (https), `_git/{repo}` (the repository named after
+ * its project), or `{project}/{repo}` (SSH, `sshForm`).
+ */
+function azureProject(rest: string[], sshForm: boolean): string | undefined {
+	if (sshForm) return rest.length >= 2 ? projectName(rest[0]) : undefined;
+	if (rest[0] === '_git') return projectName(rest[1]);
+	return rest[1] === '_git' ? projectName(rest[0]) : undefined;
+}
+
+/** The ref, with the Azure project when one is readable. */
+function azureRef(org: string, project: string | undefined): ForgeRef {
+	return project ? { provider: 'azure_devops', org, project } : { provider: 'azure_devops', org };
+}
+
 /**
  * The forge org a repository key belongs to, or `null` when the host is not one
  * we can attribute. Pure.
@@ -73,7 +108,11 @@ export function forgeRefFromRepoKey(repoKey: string): ForgeRef | null {
 	if (rule) {
 		if (path.length < rule.minSegments) return null;
 		const org = path[rule.orgIndex];
-		return org ? { provider: rule.provider, org } : null;
+		if (!org) return null;
+		if (rule.provider === 'azure_devops') {
+			return azureRef(org, azureProject(path.slice(rule.orgIndex + 1), host !== 'dev.azure.com'));
+		}
+		return { provider: rule.provider, org };
 	}
 
 	// The per-account Azure host. Guarded by an exact suffix on a label boundary
@@ -83,7 +122,9 @@ export function forgeRefFromRepoKey(repoKey: string): ForgeRef | null {
 		const org = host.slice(0, -VISUALSTUDIO_SUFFIX.length);
 		// `vs-ssh` is the shared SSH endpoint handled above, not an org.
 		if (org && !org.includes('.') && path.length >= 2) {
-			return { provider: 'azure_devops', org };
+			// The pre-2018 URL carries the collection: `{org}.visualstudio.com/DefaultCollection/{project}/_git/{repo}`.
+			const rest = path[0] === 'defaultcollection' ? path.slice(1) : path;
+			return azureRef(org, azureProject(rest, false));
 		}
 		return null;
 	}

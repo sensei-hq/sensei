@@ -2,6 +2,8 @@
 	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { AuthProvider } from '@kavach/ui';
 	import { providers } from '$kavach/providers';
+	import { onMount } from 'svelte';
+	import { signinErrorFrom } from '$lib/auth-landing';
 
 	let selfHost = $state(false);
 	let selfHostUrl = $state('dojo.acme.internal');
@@ -13,6 +15,16 @@
 	// F3c org auto-join) or a magic-link email — driven by the `$kavach/providers`
 	// list generated from kavach.config. We only surface the outcome message; no
 	// per-provider code.
+	// A failed sign-in comes back with the reason in the URL (#297): show it. The
+	// fragment stays: SvelteKit's replaceState throws until the router has started,
+	// which it has not on this first load, and the reason is still true on reload.
+	onMount(() => {
+		const failed = signinErrorFrom(window.location.hash, window.location.search);
+		if (!failed) return;
+		authError = true;
+		authMsg = failed.message;
+	});
+
 	function onAuthError(e: { message?: string } | undefined) {
 		authError = true;
 		authMsg = e?.message ?? 'Could not sign in.';
@@ -102,11 +114,11 @@
 				Sign in to continue
 			</h2>
 			<p class="text-ink-mute mb-6 mt-2 text-sm" style="line-height: 1.55">
-				GitHub brings your organizations and roles automatically. No GitHub? Use a magic link.
+				GitHub or Microsoft brings your organizations automatically. Neither? Use a magic link.
 			</p>
 
 			<!-- Sign-in providers — kavach's AuthProvider renders each from the config
-			     (github OAuth with read:org scopes · magic-link email); one component,
+			     (github and azure OAuth · magic-link email · password); one component,
 			     no per-provider code. -->
 			<div class="signin-auth flex flex-col gap-3 text-sm">
 				{#each providers as provider (provider.name)}
@@ -126,7 +138,7 @@
 				</div>
 			{:else}
 				<div class="text-ink-faint mt-3 text-center text-xs">
-					GitHub brings your orgs &amp; roles; magic link is for orgs not on GitHub.
+					GitHub or Microsoft brings your orgs; magic link is for everyone else.
 				</div>
 			{/if}
 
@@ -163,8 +175,8 @@
 							>
 						</div>
 						<div class="text-ink-faint mt-2 text-xs" style="line-height: 1.5">
-							Same sign-in — your server authenticates you through GitHub (or your email magic link) on
-							its own domain.
+							Same sign-in — your server authenticates you through GitHub, Microsoft or your email magic
+							link on its own domain.
 						</div>
 					</div>
 				{/if}
@@ -172,6 +184,12 @@
 
 			<div class="text-ink-faint mt-6 text-center text-xs" style="line-height: 1.5">
 				One sign-in for the hosted SaaS and any self-hosted Dōjō.
+			</div>
+			<div class="text-ink-faint mt-3 text-center text-xs" style="line-height: 1.5">
+				By signing in you agree to the
+				<a href="/terms-of-service" class="text-ink-soft underline">Terms of Service</a>
+				and the
+				<a href="/privacy-policy" class="text-ink-soft underline">Privacy Policy</a>.
 			</div>
 		</div>
 	</div>

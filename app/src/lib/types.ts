@@ -2143,9 +2143,13 @@ export interface PruneResult {
 
 /** A workspace's tracker connection as `GET /api/workspaces/{id}/trackers` returns
  *  it. Never the token, never the keyring name. */
+/** What a board serves in its workspace (D40): the `sensei.tracker_level` enum. */
+export type TrackerLevel = 'epic' | 'sprint' | 'task';
+
 export interface TrackerConnection {
   id: string;
   kind: 'jira';
+  level: TrackerLevel;
   /** Normalised by the daemon, e.g. `https://acme.atlassian.net`. */
   base_url: string;
   /** The account the token belongs to (Jira: the Atlassian email). */
@@ -2191,6 +2195,22 @@ export interface TrackerUsage {
   tokens_reasoning_n: number;
   metered_cost: number | null;
   metered_cost_n: number;
+  /** Active time's split (spec R12): Claude working, and you. */
+  claude_secs: number | null;
+  claude_n: number;
+  user_secs: number | null;
+  user_n: number;
+  /** Each ended session's clock time, idle inside it included. */
+  wall_secs: number | null;
+  wall_n: number;
+  /** The first session's start and the last ended one's end (ISO): the cycle time's span. */
+  first_at: string | null;
+  last_at: string | null;
+  /** API cost at list prices (session-api-cost C5), over `api_cost_n` sessions;
+   *  `api_cost_partial` of them had work that could not be priced (a lower bound). */
+  api_cost: number | null;
+  api_cost_n: number;
+  api_cost_partial: number;
 }
 
 /** One sprint as `GET …/sprints` returns it. Without a window the count and the
@@ -2244,6 +2264,12 @@ export interface TrackerTaskDetail {
     started_at: string | null;
     links: Array<{ source: 'branch' | 'prompt' | 'commit'; matched_key: string; mentions: number }>;
   }>;
+}
+
+/** `GET …/backlog`: the tickets in no sprint, and their all-time usage. */
+export interface BacklogUsage {
+  tickets: number;
+  usage: TrackerUsage;
 }
 
 /** A sprint's `unlinked` session (`GET …/sessions/unlinked`). */

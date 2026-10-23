@@ -112,18 +112,20 @@ begin
     end;
 end $$;
 
--- Failed accepts are the system's to count (#311): no session reads or writes them.
+-- Failed accepts — and every other rate-limited attempt (dojo.request_attempts,
+-- #311 generalised in #308 R5b) — are the system's to count: no session reads or
+-- writes them.
 set local role authenticated;
 do $$
 begin
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-0000000000c1"}', true);
     begin
-        perform count(*) from dojo.invite_accept_failures;
+        perform count(*) from dojo.request_attempts;
         raise exception 'a session read the invite accept failures';
     exception when insufficient_privilege then null;
     end;
     begin
-        insert into dojo.invite_accept_failures (principal_id) values ('a0000000-0000-4000-8000-0000000000c1');
+        insert into dojo.request_attempts (principal_id, action) values ('a0000000-0000-4000-8000-0000000000c1', 'invite_accept');
         raise exception 'a session wrote an invite accept failure';
     exception when insufficient_privilege then null;
     end;

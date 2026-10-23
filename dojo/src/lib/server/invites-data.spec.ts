@@ -4,8 +4,6 @@ import {
 	createInvite,
 	acceptInvite,
 	hashInviteToken,
-	acceptAttemptsLeft,
-	recordAcceptFailure,
 	AdminError,
 	type DojoClient
 } from './invites-data';
@@ -197,37 +195,4 @@ describe('hashInviteToken (#311)', () => {
 	});
 });
 
-// #311: failed accepts are counted per person; ten in fifteen minutes and the
-// next attempt is refused before any invite is read.
-describe('accept attempts (#311)', () => {
-	it('counts the caller\'s failures in the last 15 minutes', async () => {
-		const { db, captured } = makeDb();
-		(db as unknown as { gte: unknown }).gte = (c: string, v: unknown) => {
-			captured.eqs.push([c, v]);
-			return Promise.resolve({ count: 3, error: null });
-		};
-		expect(await acceptAttemptsLeft(db, 'u1', NOW)).toBe(7);
-		expect(captured.table).toBe('invite_accept_failures');
-		expect(captured.eqs).toContainEqual(['principal_id', 'u1']);
-		expect(captured.eqs).toContainEqual(['failed_at', new Date(NOW - 15 * 60 * 1000).toISOString()]);
-	});
 
-	it('never goes below zero, and a failed count is an error, not a free pass', async () => {
-		const many = makeDb();
-		(many.db as unknown as { gte: unknown }).gte = () => Promise.resolve({ count: 25, error: null });
-		expect(await acceptAttemptsLeft(many.db, 'u1', NOW)).toBe(0);
-		const broken = makeDb();
-		(broken.db as unknown as { gte: unknown }).gte = () => Promise.resolve({ count: null, error: { message: 'boom' } });
-		await expect(acceptAttemptsLeft(broken.db, 'u1', NOW)).rejects.toMatchObject({ status: 500 });
-	});
-
-	it('records a failure for the caller', async () => {
-		const { db, captured } = makeDb({ error: null });
-		(db as unknown as { insert: unknown }).insert = (p: Record<string, unknown>) => {
-			captured.inserts.push({ table: captured.table, payload: p });
-			return Promise.resolve({ error: null });
-		};
-		await recordAcceptFailure(db, 'u1');
-		expect(captured.inserts).toEqual([{ table: 'invite_accept_failures', payload: { principal_id: 'u1' } }]);
-	});
-});

@@ -26,6 +26,10 @@ export interface ForgeMember {
 	/** The forge's stable user id — `dojo.identities.subject`. */
 	id: string;
 	login: string;
+	/** The member's directory, where the forge names one — for Azure DevOps the
+	 *  Entra tenant id (GraphUser.domain). A Microsoft sign-in is matched only
+	 *  from it (#308 R5c review). null: none, so no sign-in matches. */
+	directory?: string | null;
 }
 
 /** The units one read found, and whether it saw every one. */
@@ -56,9 +60,12 @@ export interface ForgeAdapter {
 /**
  * The adapter for one provider. `fetchImpl` is injected for tests.
  *
- * Only GitHub has one (D37: one complete source first). Any other provider is a
- * 501 — answering it with the GitHub adapter would send one forge's token to
- * another's API and read the answer as truth.
+ * Only GitHub is answered here. Azure DevOps' adapter is bound to ONE named
+ * organization (`azureAdapter(org)` in forge-azure.ts — the person picks it from
+ * the organizations their Entra connect can see), so it is built by the Azure
+ * routes, which have the organization; asked for by provider alone it is a 501, like GitLab and
+ * Bitbucket. Answering any of them with the GitHub adapter would send one forge's
+ * token to another's API and read the answer as truth.
  */
 export function forgeAdapter(provider: ForgeProvider, fetchImpl: typeof fetch = fetch): ForgeAdapter {
 	if (provider === 'github') return githubAdapter(fetchImpl);
