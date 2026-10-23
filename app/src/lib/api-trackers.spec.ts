@@ -82,7 +82,7 @@ describe('tracker wrappers', () => {
     expect(fetch.mock.calls.every((c) => (c[1]?.method ?? 'GET') === 'GET')).toBe(true);
   });
 
-  it('the backlog reads hit the board's …/backlog and …/tasks?backlog=true', async () => {
+  it('the backlog reads hit the board’s …/backlog and …/tasks?backlog=true', async () => {
     const fetch = stub(200, { tickets: 0, usage: {} });
     expect((await api().tryGetBacklog(P, 't-1')).ok).toBe(true);
     expect((await api().tryListBacklogTasks(P, 't-1')).ok).toBe(true);
