@@ -966,7 +966,9 @@ mod tests {
     ///
     /// MUTATION: drop the token step from `repair_sessions` — tokens stay NULL.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn the_repair_pass_sets_session_tokens_from_their_turns() {
+        let _tokens = crate::tasks::test_support::SESSION_TOKENS_SWEEP_GATE.sweeping();
         let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
             return;
         };
@@ -1097,7 +1099,9 @@ mod tests {
 "#;
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn backfill_ingests_then_skips_unchanged() {
+        let _watermarks = crate::tasks::test_support::WATERMARK_SWEEP_GATE.using();
         let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
         let sid = format!("_test-tx-{}", uuid::Uuid::new_v4());
         // temp transcript: <root>/proj/<sid>.jsonl (mirrors ~/.claude layout)

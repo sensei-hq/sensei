@@ -3,9 +3,11 @@
 use super::*;
 use crate::transcript::TranscriptMessage;
 
-/// A model name only this test uses, so seeded prices never collide.
+/// A model name only this test uses, so seeded prices never collide. The whole
+/// uuid, never a slice: an 8-character slice that happens to be all digits reads
+/// as a `-YYYYMMDD` date suffix, which pricing strips.
 fn model(tag: &str) -> String {
-    format!("_test-{tag}-{}", &uuid::Uuid::new_v4().simple().to_string()[..8])
+    format!("_test-{tag}-{}", uuid::Uuid::new_v4().simple())
 }
 
 /// A price row: `[input, cache_write_5m, cache_write_1h, cache_read, output]` USD/MTok.
@@ -252,7 +254,9 @@ async fn a_session_reports_its_priced_part_and_what_it_could_not_price() {
 /// C6: the one-time re-read clears the Claude watermarks once, so every Claude
 /// transcript is parsed again under C1; a second call is a no-op.
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
 async fn the_message_rewrite_resets_claude_watermarks_once() {
+    let _sweep = crate::tasks::test_support::WATERMARK_SWEEP_GATE.sweeping();
     let s = pg_store().await;
     sqlx_core::query::query("DELETE FROM sensei.config WHERE key = 'transcripts.messages_v1'")
         .execute(s.pool())

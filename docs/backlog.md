@@ -53,13 +53,6 @@ evidence) are preserved in [`history/backlog/writeups.md`](history/backlog/write
 
 Full one-liners and prior context: [`history/backlog/writeups.md`](history/backlog/writeups.md).
 
-- **Two `turn_usage_tests` race each other** — `refreshing_all_sessions_touches_only_those_that_differ`
-  refreshes every session in the shared test DB while `a_sessions_tokens_are_the_sum_of_its_turns`
-  asserts its own refresh wrote something; when the refresh-all lands first the other sees nothing
-  to change and fails (`refresh_session_tokens` returns false). Fails in most parallel runs, never
-  with `--test-threads=1` (seen 2026-10-23 on `feature/jira_ticket_linkage_1` and after). Scope the
-  refresh-all test to its own sessions, or assert the tokens rather than the "wrote" flag.
-
 - **A branch's DDL change never reaches the dev database on start** — the boot
   deploy (`tasks/schema_deploy.rs`) runs only when the binary's version differs
   from `sensei.config.schema_deployed_version`, so with `SENSEI_DDL_DIR` set (the

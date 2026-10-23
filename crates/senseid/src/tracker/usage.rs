@@ -444,7 +444,8 @@ mod tests {
         let Ok(pg) = PgStore::connect_test().await else { return };
         let (t, p) = connected_tracker(&pg).await;
         let r = repo_in(&pg, p).await;
-        let model = format!("_test-usage-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+        // The whole uuid: an all-digit 8-character slice would read as a date suffix.
+        let model = format!("_test-usage-{}", uuid::Uuid::new_v4().simple());
         sqlx_core::query::query(
             "INSERT INTO sensei.model_prices (model, effective_from, input, cache_write_5m,
                     cache_write_1h, cache_read, output, source, retrieved_on)
