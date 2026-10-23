@@ -74,10 +74,15 @@ export const graphUser = (over: Record<string, unknown> = {}) => ({
 	...over
 });
 
+/** The organization's Entra directory, as GraphUser.domain names it ("for AAD
+ *  the tenantID of the directory"), uppercased as a service may write it. */
+export const DIRECTORY = 'f00d0000-0000-4000-8000-0000000000e1';
+
 const entitlement = (id: string | undefined, principalName: string, status = 'active', originId?: string, origin = 'aad') => ({
 	id,
 	user: {
 		subjectKind: 'user',
+		domain: origin === 'aad' ? DIRECTORY.toUpperCase() : 'GitHub',
 		principalName,
 		mailAddress: principalName,
 		displayName: principalName.split('@')[0],

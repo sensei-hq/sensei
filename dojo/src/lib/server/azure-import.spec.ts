@@ -59,7 +59,7 @@ function fakeAzure(o: Opts = {}) {
 		listMembers: async () => {
 			asked.push('members');
 			if (o.membersFail) throw new ForgeReadError(o.membersFail, 'Azure DevOps read failed');
-			return { members: o.members ?? [{ id: ME_AZ, login: 'admin@example.com' }, { id: 'az-user-2', login: 'dev@example.com' }], complete: o.membersComplete ?? true };
+			return { members: o.members ?? [{ id: ME_AZ, login: 'admin@example.com', directory: 'dir-1' }, { id: 'az-user-2', login: 'dev@example.com' }], complete: o.membersComplete ?? true };
 		},
 		listProjects: async () => {
 			asked.push('projects');
@@ -92,7 +92,8 @@ function db(seed: Partial<Record<string, FakeTable>> = {}) {
 		'rpc:rotate_forge_token': { rows: [], ...seed['rpc:rotate_forge_token'] },
 		'rpc:mark_forge_token_rejected': { rows: [], ...seed['rpc:mark_forge_token_rejected'] },
 		'rpc:map_forge_unit': { rows: [{ mapping_id: 'fm-1', tenant_id: HERE, workspace_id: 'w-1' }], ...seed['rpc:map_forge_unit'] },
-		'rpc:reconcile_unit_members': { rows: [1 as never], ...seed['rpc:reconcile_unit_members'] }
+		'rpc:reconcile_unit_members': { rows: [{ ended: 1, joined: 1 }], ...seed['rpc:reconcile_unit_members'] },
+		'rpc:member_set_max_age_hours': { rows: [48 as never], ...seed['rpc:member_set_max_age_hours'] }
 	});
 }
 
@@ -162,7 +163,7 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 			dojo: { key: 'organization/example-org', created: true },
 			organization: { id: ORG_ID, name: ORG },
 			projects: { total: 2, mapped: 2, elsewhere: 0, complete: true },
-			members: { complete: true, listed: 2, ended: 1 }
+			members: { complete: true, listed: 2, ended: 1, joined: 1 }
 		});
 		// The answer never carries a token.
 		expect(JSON.stringify(out)).not.toContain(ACCESS);
@@ -314,14 +315,31 @@ describe('listAzureConnections', () => {
 		const d = db({
 			tenant_connections: {
 				rows: [
-					{ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG, verified_at: '2026-10-22T00:00:00Z', token_secret_id: 'sec-1', token_state: 'needs_new_token', token_expires_at: null },
+					{ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG, verified_at: '2026-10-22T00:00:00Z', token_secret_id: 'sec-1', token_state: 'needs_new_token', token_expires_at: null, member_set_read_at: '2026-10-22T00:00:00Z' },
 					{ id: 'c-gh', tenant_id: HERE, provider: 'github', external_id: '22', external_slug: 'acme' }
 				]
 			}
 		});
-		expect(await listAzureConnections(d as never, HERE)).toEqual([
-			{ id: ORG_ID, name: ORG, verifiedAt: '2026-10-22T00:00:00Z', token: 'needs_new_token', tokenExpiresAt: null }
+		const NOW = Date.parse('2026-10-23T12:00:00Z');
+		expect(await listAzureConnections(d as never, HERE, NOW)).toEqual([
+			{ id: ORG_ID, name: ORG, verifiedAt: '2026-10-22T00:00:00Z', token: 'needs_new_token', tokenExpiresAt: null, memberSetReadAt: '2026-10-22T00:00:00Z', memberSetStale: false }
 		]);
+	});
+
+	it('marks a member set older than the database`s maximum age stale, and one never read stale too (#308 R5c review)', async () => {
+		const row = (at: string | null) => ({ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG, member_set_read_at: at });
+		const at = '2026-10-21T00:00:00Z';
+		const just = Date.parse(at) + 48 * 3600_000 - 1;
+		const past = Date.parse(at) + 48 * 3600_000 + 1;
+		expect((await listAzureConnections(db({ tenant_connections: { rows: [row(at)] } }) as never, HERE, just))[0].memberSetStale).toBe(false);
+		expect((await listAzureConnections(db({ tenant_connections: { rows: [row(at)] } }) as never, HERE, past))[0].memberSetStale).toBe(true);
+		// The age is the database's one constant, not a copy here.
+		const shorter = db({ tenant_connections: { rows: [row(at)] }, 'rpc:member_set_max_age_hours': { rows: [1 as never] } });
+		expect((await listAzureConnections(shorter as never, HERE, Date.parse(at) + 2 * 3600_000))[0].memberSetStale).toBe(true);
+		expect((await listAzureConnections(db({ tenant_connections: { rows: [row(null)] } }) as never, HERE, just))[0]).toMatchObject({
+			memberSetReadAt: null,
+			memberSetStale: true
+		});
 	});
 
 	it('says a connection without a stored token has none', async () => {
@@ -386,7 +404,7 @@ describe('syncAzureOrganization — re-read with the stored grant (D42)', () => 
 		expect(asked).toContain(`prove:${ORG_ID}`);
 		expect(writes(d)).not.toContain('set_forge_token');
 		expect(out.projects).toEqual({ total: 2, mapped: 2, elsewhere: 0, complete: true });
-		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1 });
+		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1, joined: 1 });
 		expect(JSON.stringify(out)).not.toContain('ztest-refresh');
 	});
 
@@ -449,16 +467,25 @@ describe('members — #309\'s rule, read from the organization\'s side', () => {
 			p_provider: 'azure_devops',
 			p_unit: ORG_ID,
 			p_auth: 'azure_devops',
-			p_subjects: [ME_AZ, 'az-user-2']
+			p_subjects: [ME_AZ, 'az-user-2'],
+			p_directories: ['dir-1', null]
 		});
-		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1 });
+		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1, joined: 1 });
+	});
+
+	it('an answer that does not say what it ended and joined is a failure, never a zero', async () => {
+		for (const answer of [1, { ended: 1 }, { joined: 0 }, null]) {
+			const d = db({ 'rpc:reconcile_unit_members': { rows: [answer as never] } });
+			const err = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure().a).catch((e) => e);
+			expect(err.status).toBe(500);
+		}
 	});
 
 	it('a partial read ends nobody — and says so', async () => {
 		const d = db();
 		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure({ membersComplete: false }).a);
 		expect(d.rpcCalls.map((c) => c.fn)).not.toContain('reconcile_unit_members');
-		expect(out.members).toEqual({ complete: false, listed: 2, ended: 0 });
+		expect(out.members).toEqual({ complete: false, listed: 2, ended: 0, joined: 0 });
 	});
 
 	it('a failed member read ends nobody and is reported — the import itself stands', async () => {
@@ -473,7 +500,7 @@ describe('members — #309\'s rule, read from the organization\'s side', () => {
 		const d = db();
 		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure({ members: [] }).a);
 		expect(d.rpcCalls.map((c) => c.fn)).not.toContain('reconcile_unit_members');
-		expect(out.members).toEqual({ complete: false, listed: 0, ended: 0 });
+		expect(out.members).toEqual({ complete: false, listed: 0, ended: 0, joined: 0 });
 	});
 
 	it('sync reads the members too, with the stored grant', async () => {
@@ -486,6 +513,6 @@ describe('members — #309\'s rule, read from the organization\'s side', () => {
 		const token = fakeFetch({ [TOKEN_URL]: { body: { access_token: ACCESS, refresh_token: REFRESH, scope: '' } } });
 		const out = await syncAzureOrganization(d as never, ME, HERE, ORG_ID, { cfg: CFG, fetchImpl: token.fn, adapterFor: () => a });
 		expect(asked).toContain('members');
-		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1 });
+		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1, joined: 1 });
 	});
 });

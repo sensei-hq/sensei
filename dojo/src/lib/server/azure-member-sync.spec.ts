@@ -55,7 +55,7 @@ function db(rows: Record<string, unknown>[], writeError?: { message: string }) {
 		'rpc:forge_token': { rows: ['ztest-refresh-0' as never] },
 		'rpc:rotate_forge_token': { rows: [] },
 		'rpc:mark_forge_token_rejected': { rows: [] },
-		'rpc:reconcile_unit_members': { rows: [0 as never] }
+		'rpc:reconcile_unit_members': { rows: [{ ended: 0, joined: 0 }] }
 	});
 }
 
@@ -71,8 +71,8 @@ describe('runAzureMemberSync', () => {
 		expect(out).toEqual({
 			read: 2,
 			results: [
-				{ organization: 'org-name-1', members: { complete: true, listed: 1, ended: 0 } },
-				{ organization: 'org-name-2', members: { complete: true, listed: 1, ended: 0 } }
+				{ organization: 'org-name-1', members: { complete: true, listed: 1, ended: 0, joined: 0 } },
+				{ organization: 'org-name-2', members: { complete: true, listed: 1, ended: 0, joined: 0 } }
 			]
 		});
 		const at = new Date(NOW).toISOString();

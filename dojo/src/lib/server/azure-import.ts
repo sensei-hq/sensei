@@ -231,9 +231,12 @@ async function mapProjects(
  * Follow the organization's member list (#309's rule, from the organization's
  * side): read every member with the token; a COMPLETE read that lists anyone
  * hands their forge ids to dojo.reconcile_unit_members, which ends the
- * provisioned memberships of people it no longer lists and restores those who
- * came back. A partial read, an empty one or a failed one ends nobody — the
- * failure is said in the answer, and the import or sync that asked still stands.
+ * provisioned memberships of people it no longer lists, restores those who
+ * came back, keeps the list as the connection's member set and joins the listed
+ * people who already signed in (#308 R5c — what a Microsoft sign-in provisions
+ * from). A partial read, an empty one or a failed one ends, joins and keeps
+ * nothing — the failure is said in the answer, and the import or sync that
+ * asked still stands.
  */
 export async function followMembers(
 	db: DojoClient,
@@ -250,19 +253,23 @@ export async function followMembers(
 		return { error: `Azure DevOps could not list the members${status}; nobody was ended` };
 	}
 	const listed = read.members.length;
-	if (!read.complete || listed === 0) return { complete: false, listed, ended: 0 };
+	if (!read.complete || listed === 0) return { complete: false, listed, ended: 0, joined: 0 };
 	const { data, error } = await db
 		.rpc('reconcile_unit_members', {
 			p_tenant: tenantId,
 			p_provider: PROVIDER,
 			p_unit: unit.id,
 			p_auth: authMethodFor(PROVIDER),
-			p_subjects: read.members.map((m) => m.id)
+			p_subjects: read.members.map((m) => m.id),
+			p_directories: read.members.map((m) => m.directory ?? null)
 		})
 		.single();
 	fail(error);
-	if (typeof data !== 'number') throw new AdminError(500, 'reconcile_unit_members did not say how many memberships it ended');
-	return { complete: true, listed, ended: data };
+	const row = data as { ended?: unknown; joined?: unknown } | null;
+	if (typeof row?.ended !== 'number' || typeof row.joined !== 'number') {
+		throw new AdminError(500, 'reconcile_unit_members did not say how many memberships it ended and joined');
+	}
+	return { complete: true, listed, ended: row.ended, joined: row.joined };
 }
 
 /**
@@ -390,14 +397,24 @@ export async function syncAzureOrganization(
 	};
 }
 
-/** This dōjō's Azure DevOps organizations. Throws on a failed read. */
-export async function listAzureConnections(db: DojoClient, tenantId: string): Promise<AzureConnectionView[]> {
-	const { data, error } = await db
-		.from('tenant_connections')
-		.select('external_id, external_slug, verified_at, token_secret_id, token_state, token_expires_at')
-		.eq('tenant_id', tenantId)
-		.eq('provider', PROVIDER);
+/** This dōjō's Azure DevOps organizations, and whether each one's last complete
+ *  member set is fresh enough to provision a Microsoft sign-in from (#308 R5c
+ *  review): the age is the database's one constant, dojo.member_set_max_age_hours.
+ *  Throws on a failed read. */
+export async function listAzureConnections(db: DojoClient, tenantId: string, now = Date.now()): Promise<AzureConnectionView[]> {
+	const [rows, age] = await Promise.all([
+		db
+			.from('tenant_connections')
+			.select('external_id, external_slug, verified_at, token_secret_id, token_state, token_expires_at, member_set_read_at')
+			.eq('tenant_id', tenantId)
+			.eq('provider', PROVIDER),
+		db.rpc('member_set_max_age_hours').single()
+	]);
+	const { data, error } = rows;
 	fail(error);
+	fail(age.error);
+	if (typeof age.data !== 'number') throw new AdminError(500, 'member_set_max_age_hours did not answer a number of hours');
+	const maxAgeMs = age.data * 3600_000;
 	return ((data ?? []) as Record<string, unknown>[])
 		.filter((r) => typeof r.external_id === 'string')
 		.map((r) => ({
@@ -405,7 +422,9 @@ export async function listAzureConnections(db: DojoClient, tenantId: string): Pr
 			name: r.external_slug as string,
 			verifiedAt: (r.verified_at as string | null) ?? null,
 			token: r.token_secret_id ? ((r.token_state as 'ok' | 'needs_new_token' | null) ?? 'ok') : 'none',
-			tokenExpiresAt: (r.token_expires_at as string | null) ?? null
+			tokenExpiresAt: (r.token_expires_at as string | null) ?? null,
+			memberSetReadAt: (r.member_set_read_at as string | null) ?? null,
+			memberSetStale: !r.member_set_read_at || now - Date.parse(r.member_set_read_at as string) > maxAgeMs
 		}));
 }
 

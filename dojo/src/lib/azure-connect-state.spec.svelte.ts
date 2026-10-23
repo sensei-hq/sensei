@@ -8,13 +8,13 @@ import type { AzureConnectionView, AzureGrantView, AzureImportResult } from './a
 // are listed (with the write-scope warning) and each can be imported. A dōjō's
 // connections list each organization's state; sync re-reads with the stored
 // grant. No token ever passes through here. A failure says why.
-const CONN: AzureConnectionView = { id: 'org-1', name: 'example-org', verifiedAt: null, token: 'ok', tokenExpiresAt: null };
+const CONN: AzureConnectionView = { id: 'org-1', name: 'example-org', verifiedAt: null, token: 'ok', tokenExpiresAt: null, memberSetReadAt: null, memberSetStale: true };
 const GRANT: AzureGrantView = { organizations: [{ id: 'a1', name: 'example-org' }], complete: true, writeScopes: [], target: 'this' };
 const IMPORTED: AzureImportResult = {
 	dojo: { key: 'organization/example-org', created: true },
 	organization: { id: 'org-1', name: 'example-org' },
 	projects: { total: 2, mapped: 2, elsewhere: 0, complete: true },
-	members: { complete: true, listed: 3, ended: 0 }
+	members: { complete: true, listed: 3, ended: 0, joined: 0 }
 };
 const NO_GRANT = new DojoApiError(428, 'Connect Azure DevOps first — the connection has expired or was never made');
 

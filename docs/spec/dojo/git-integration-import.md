@@ -272,7 +272,7 @@ Vault per connection; access tokens live for one request.
 - **Screen** — `AzureConnect` (kit): Connect (no token field anywhere), the read scopes, the work-or-school
   note, the callback's outcome, the organizations to import with the write-scope warning, and on an org dōjō each
   connection's state with Sync and Remove. On Admin → Integrations beside GitHub, and on My dōjōs.
-- **Not in R5b**: Microsoft sign-in (R5c, D45); provisioning Azure members who are not yet dōjō users (only
+- **Not in R5b**: Microsoft sign-in (R5c, D45 — see "R5c as built"); provisioning Azure members who are not yet dōjō users (only
   people who connected hold an Azure identity, so only they can be provisioned or ended by a member read).
 
 ### R5b · one-time setup (the user's checklist)
@@ -289,10 +289,11 @@ One **multi-tenant app registration** serves both R5b's connect and R5c's Micros
    - R5b connect, production: `https://<dōjō origin>/v1/integrations/azure_devops/callback`.
    - R5c sign-in (Supabase), local: `http://localhost:54321/auth/v1/callback`.
    - R5c sign-in (Supabase), production: `https://<project-ref>.supabase.co/auth/v1/callback`.
-3. **API permissions** (delegated) — Microsoft Graph: `openid`, `email`, `profile`, `offline_access` (R5c
-   sign-in). Azure DevOps: `vso.profile`, `vso.project`, `vso.graph`, `vso.memberentitlementmanagement`,
-   `vso.code` (R5b connect) — read scopes only; do not add `user_impersonation` or any `_write`/`_manage`
-   scope. Tenants that restrict user consent need their Entra admin to grant consent to the app.
+3. **API permissions** (delegated) — Microsoft Graph: `openid`, `email`, `profile` (R5c sign-in asks exactly
+   these) and `offline_access` (R5b connect's refresh token). Azure DevOps: `vso.profile`, `vso.project`,
+   `vso.graph`, `vso.memberentitlementmanagement`, `vso.code` (R5b connect) — read scopes only; do not add
+   `user_impersonation` or any `_write`/`_manage` scope. Tenants that restrict user consent need their Entra
+   admin to grant consent to the app.
 4. **Token configuration** — add optional claims `email` and `xms_edov` to the ID token (Supabase's guidance
    for a verified email, R5c).
 5. **Certificates & secrets** — one client secret (note its expiry; rotate before it). Used in two places:
@@ -309,6 +310,154 @@ One **multi-tenant app registration** serves both R5b's connect and R5c's Micros
    `dev.azure.com/<org>/<project>/_git/<repo>` registered by the daemon files into that project's workspace.
    Check that `vault.secrets` holds one secret per connection and `audit_events` names `forge_token_set`
    without a token.
+
+### R5c as built (2026-10-23, branch `r5c-microsoft-signin`)
+
+- **The sign-in page** — `kavach.config.js` lists `{ mode: 'oauth', name: 'azure', label: 'Continue with
+  Microsoft', scopes: ['email', 'profile'] }` right after GitHub. GoTrue always asks `openid` first and appends
+  the client's scopes (`supabase/auth` `internal/api/provider/azure.go`, `oauthScopes := []string{"openid"}`),
+  so the request is exactly `openid email profile`. `DojoSignIn` renders every configured provider (the vitest
+  stub is now the config's own list), and `uno.config.js` aliases `i-auth-azure` to the Microsoft logo.
+- **Nothing GitHub-only runs on a Microsoft token** — after a Microsoft sign-in the session's `provider_token`
+  is a Microsoft Graph token. `isGithubToken` (`github-identity.ts`) recognises GitHub's documented formats
+  (`gho_`, `ghu_`, `ghp_`, `ghs_`, `ghr_`, `github_pat_`); `provisionWithToken` treats any other token as no
+  forge token, and `captureForgeToken` neither sends it to GitHub nor seals it. Before this, a login linked to
+  GitHub and Microsoft would have posted its Microsoft token to `api.github.com` and read the 401 as a dead
+  GitHub grant.
+- **Local Supabase** — `supabase/config.toml` `[auth.external.azure]`: enabled, `client_id` /
+  `secret` from `SUPABASE_AUTH_EXTERNAL_AZURE_CLIENT_ID` / `_SECRET` (named in `dojo/.env.example`), `url =
+  "https://login.microsoftonline.com/organizations"`, `redirect_uri = "http://localhost:54321/auth/v1/callback"`;
+  `additional_redirect_urls` gains `http://localhost:5173`, `http://localhost:5173/**`, `http://localhost:5175/**`.
+  Like GitHub's block, unset variables only warn: verified on a throwaway stack (its own project id and ports)
+  that `supabase start` succeeds with both unset, `/auth/v1/settings` lists `azure`, and
+  `/auth/v1/authorize?provider=azure&scopes=email%20profile` redirects to
+  `login.microsoftonline.com/organizations/oauth2/v2.0/authorize` with `scope=openid+email+profile` and the
+  localhost `redirect_uri`. Locally, use the dōjō at `http://localhost:5173`. The running local Supabase needs a
+  restart (`supabase stop && supabase start`, data kept) to pick the block up.
+- **Identity** — `azure-signin.ts` `microsoftIdentity(user)` reads the login's Microsoft account from the
+  Supabase user (getUser, never a request's claim): `identities[provider = azure].identity_data.custom_claims.oid`
+  (where GoTrue keeps it: see the risk below). Never `sub` (GoTrue's `provider_id`, pairwise per app), never
+  email (D43), never `user_metadata` (the person can rewrite it). The oid must be a GUID and is lowercased through
+  `entraObjectId` (forge-azure.ts), the normalisation R5b's import and member read apply to `originId`.
+  The token must also carry a confirmed `xms_edov` (`true`, `1`, `"1"` or `"true"`, read from the same
+  `custom_claims`): Microsoft vouching for the email is the guard against the nOAuth exposure below, so a
+  Microsoft account without it is never recorded or provisioned from (`EMAIL_NOT_VERIFIED_BY_MICROSOFT`). The
+  sign-in's tenant id (`custom_claims.tid`, a GUID, lowercased) is required too (`NO_TENANT_ID`): it pins the
+  member-set lookup (below). No oid, a malformed one, no confirmed `xms_edov`, no `tid`, or two Microsoft
+  accounts on one login is `unlinkable`.
+- **Member sets** — `dojo.connection_members (connection_id, subject, directory, read_at)`, owned by the connection
+  (deleted with it), service_role only: the connection's last COMPLETE member set. `dojo.reconcile_unit_members`
+  (only a complete read calls it: import, Sync, the scheduled read) now also replaces the set and provisions
+  every listed person who already holds the identity but has no membership in the dōjō — `contributor` (a
+  member read proves no admin; the forge-read rule `roleForOrg` applies), `employer`, provenance the forge and
+  unit. An existing membership always wins. It returns `(ended, joined)` and takes `p_directories` beside
+  `p_subjects` (below); `apply/after/retired_functions.sql` drops the old five-argument version, which would
+  otherwise be an ambiguous overload. A partial, empty or failed read never calls it, and a NULL/empty list is
+  refused with the set unchanged. `dojo.units_listing_member(provider, subject, directory)` names the
+  organization dōjōs whose last complete set lists a person (personal dōjōs never). Pinned by
+  `database/tests/dojo/connection_member_sets.sql`.
+- **The tenant is pinned** (security review, defence in depth) — the member read already gets each member's
+  directory: a user entitlement's `user` is a `GraphUser`, whose `domain` is documented as "the name of the
+  container of origin for a graph member … for AAD the tenantID of the directory"
+  ([search user entitlements](https://learn.microsoft.com/en-us/rest/api/azure/devops/memberentitlementmanagement/user-entitlements/search-user-entitlements?view=azure-devops-rest-7.1),
+  GraphUser). `listAzureMembers` records it per member (`directory`, through `entraObjectId`; not a GUID → none),
+  the set keeps it, and `units_listing_member` names a dōjō only when the sign-in's `tid` equals the member's
+  directory. No extra Azure DevOps call. A member recorded with no directory is listed (a departure still ends
+  them) but matches no sign-in. Pinned per member rather than per organization: the same read names it, and no
+  documented call states an organization's backing tenant.
+- **Fresh sets only** (security review, stale grant) — each replacement stamps
+  `tenant_connections.member_set_read_at`; `units_listing_member` ignores a set older than
+  `dojo.member_set_max_age_hours()` — **48 hours**, eight runs of the 6-hourly scheduled read, the one constant
+  (SQL; the Integrations screen reads it too). A dead grant (`needs_new_token`) or a stopped schedule therefore
+  stops sign-in provisioning within two days instead of joining removed people indefinitely. Admin →
+  Integrations shows each connection's "Member list read <date>", and "… is stale — Microsoft sign-ins join
+  nobody from it until a Sync reads it again" (or "No complete member list yet") in the warning colour.
+- **Provisioning on sign-in** — `ensureProvisioned` (shared by the kavach session hook, the CLI token
+  exchange and `POST /v1/you/provision`, all of which pass `microsoft`) records the oid as the person's
+  `azure_devops` identity through `ensureForgeIdentity` (another person's: 409, never a re-point) and joins each
+  dōjō `units_listing_member` names through `ensureMembership`, `from = { azure_devops, unit }` — so that unit's
+  next complete read ends it when they leave (#309). The answer carries `microsoft: { linked: true }`.
+  `unlinkable` FAILS CLOSED: no identity, no provisioning, `console.error` with the reason, and
+  `microsoft: { linked: false, reason }`. The personal dōjō and the GitHub half are unchanged.
+- **Visible state** — `GET /v1/you/microsoft` (`microsoftLinkStatus`, computed, never stored): `none`, `linked`,
+  or `not_linked` with the reason (no object id; several Microsoft accounts; held by another dōjō login; not
+  recorded). My dōjōs shows "Couldn't link your Microsoft account: <reason>. Your Azure DevOps organizations'
+  dōjōs were not joined." as an alert; a failed check is said, never read as linked.
+- **Accepted (security review, item 4): no consent step.** A listed member who signs in with Microsoft joins the
+  organization's dōjō as `contributor` without being asked. The relationship is the Azure DevOps organization
+  listing them, by the object id in their own tenant (and, since the tenant pin, from that tenant), on a complete
+  read made with an organization admin's grant — the same standing GitHub sign-in provisioning acts on. They can
+  leave the dōjō; leaving the organization ends it (#309).
+- **Not in R5c**: provisioning a Microsoft user into an organization no complete read has listed them in yet
+  (they join at the next import, Sync or scheduled read, which provisions listed people who hold the identity);
+  B2B guests (an Azure DevOps organization lists a guest by the object id in ITS tenant, while sign-in through
+  `organizations` yields their HOME tenant's object id, so they do not match).
+
+**RISK — where the object id comes from (unverified offline).**
+- *Assumed*: Supabase Auth keeps the Entra `oid` claim at `identities[provider = azure].identity_data.custom_claims.oid`
+  (and, by the same rule, `tid` and `xms_edov` beside it).
+  Source: `supabase/auth` `internal/api/provider/oidc.go` `parseAzureIDToken` copies every verified ID-token claim
+  except `aud iss iat nbf exp c_hash at_hash aio nonce rh uti jti ver sub name preferred_username` into
+  `Metadata.CustomClaims`, serialised as `custom_claims` (`provider.go` `Claims`); `external.go` stores
+  `structs.Map(userData.Metadata)` as the identity's `identity_data` and rewrites it at every sign-in. Microsoft
+  puts `oid` in every v2.0 ID token ([ID token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)).
+  Read at `supabase/auth` v2.197.0; the running local stack is GoTrue v2.193.0.
+- *Why unverified*: it needs a real Microsoft sign-in, which needs the app registration; there is none yet.
+- *If it is wrong*: every Microsoft sign-in is `unlinkable` — it fails closed: no identity, no membership, a
+  logged reason, and the My dōjōs alert. Nothing keys on `sub` or email.
+- *The live test that settles it*: sign in with Microsoft as a member of a connected Entra-backed Azure DevOps
+  organization; then compare `select subject from dojo.identities where provider = 'azure_devops' and principal_id
+  = <their principal>` with that person's `user.originId` in the organization's user entitlements (Azure DevOps
+  `GET https://vsaex.dev.azure.com/{org}/_apis/userentitlements`, `user.origin = aad`). Equal: settled. My dōjōs
+  shows the alert instead: the assumption is wrong, and the identity data GoTrue recorded
+  (`auth.identities.identity_data` for that user) says where the claim went.
+
+### R5c · what the user sets
+
+On the **same** app registration as R5b (its one-time setup above):
+1. **Redirect URIs** (platform Web) — the two Supabase callbacks: `http://localhost:54321/auth/v1/callback`
+   (local) and `https://<project-ref>.supabase.co/auth/v1/callback` (production; the dashboard's Azure provider
+   shows it).
+2. **API permissions** — Microsoft Graph delegated `openid`, `email`, `profile`.
+3. **Token configuration — MANDATORY GO-LIVE GATE.** Optional claims `email` and `xms_edov` on the **ID
+   token and the access token**. Supabase's Azure provider needs an email (without one GoTrue refuses the
+   sign-in: "Error getting user email from external provider"). With `xms_edov` in the token, GoTrue counts
+   the email verified only when the domain owner verified it; WITHOUT the claim it assumes verified
+   (`AzureIDTokenClaims.IsEmailVerified`). Supabase links a new identity to an existing login by verified
+   email, so without `xms_edov` a Microsoft account carrying someone else's address — set by whoever
+   administers that account's tenant — joins that person's dōjō login (the "nOAuth" pattern). The dōjō code
+   refuses to record or provision from a Microsoft account without a confirmed `xms_edov`, but it cannot undo
+   GoTrue's link to the login itself: only this claim prevents that. Microsoft sign-in is not enabled in
+   production until this is set and live-check step 5 passes.
+4. **Production Supabase** — Dashboard → Authentication → Sign In / Providers → **Azure**: enabled; Application
+   (client) ID = the app registration's client id; Secret Value = one of its client secrets; Azure Tenant URL =
+   `https://login.microsoftonline.com/organizations`. The production dōjō origin is already among the redirect
+   URLs (GitHub's sign-in uses it).
+5. **Local** — export `SUPABASE_AUTH_EXTERNAL_AZURE_CLIENT_ID` and `SUPABASE_AUTH_EXTERNAL_AZURE_SECRET` in the
+   shell that runs `supabase start` (then restart the local stack) and open the dōjō at `http://localhost:5173`.
+6. **Database** — the release's `dbd` converge adds `dojo.connection_members`, `dojo.units_listing_member`,
+   `dojo.member_set_max_age_hours`, `tenant_connections.member_set_read_at` and
+   `connection_members.directory`; `dojo.reconcile_unit_members` and `units_listing_member` gain an argument
+   (`retired_functions.sql` drops the old signatures). Member sets fill on each
+   connection's next import, Sync or scheduled read; until then a Microsoft sign-in joins nothing.
+
+### R5c · live check
+
+1. With the setup above, a member of a connected Entra-backed Azure DevOps organization (not a guest) whose
+   organization has had a complete member read since the deploy: **Continue with Microsoft** → lands on the dōjō;
+   My dōjōs lists that organization's dōjō, as contributor; no alert.
+2. The risk test above: their `dojo.identities` `azure_devops` subject equals their entitlement's `originId`,
+   and the set's `connection_members.directory` for them equals their sign-in's `tid`.
+3. In the organization, remove them; run Sync (or wait for the scheduled read): their membership ends
+   (`left_org`), and `dojo.connection_members` no longer lists them.
+4. A person whose Microsoft account is also linked to GitHub signs in with Microsoft: no request reaches
+   `api.github.com` with the Microsoft token (the GitHub sync answers `no_forge_token`, not
+   `forge_token_rejected`).
+5. **NEGATIVE — RELEASE BLOCKER for enabling Microsoft sign-in in production.** In a test Entra tenant you
+   administer, set a user's `mail` to the address of an existing dōjō login (one that signed in with GitHub or a
+   magic link). That user signs in with Microsoft. They must NOT land in that login: the result is a new login,
+   or the sign-in is refused. Check `auth.identities` for the existing login: it gains no `azure` identity. If
+   they land in it, `xms_edov` is not reaching GoTrue — do not enable the provider.
 
 ## The Azure grant is a secret (D42's consequence)
 

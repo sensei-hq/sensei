@@ -151,6 +151,15 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 		}
 	});
 
+	it('says when the Microsoft account could not be linked (#308 R5c), and is quiet otherwise', () => {
+		const notice = 'Couldn’t link your Microsoft account: why.';
+		const { getByRole } = render(ScrMyDojos, { props: { dojos, microsoftNotice: notice } });
+		expect(getByRole('alert').textContent).toContain(notice);
+		cleanup();
+		const quiet = render(ScrMyDojos, { props: { dojos } });
+		expect(quiet.queryByRole('alert')).toBeNull();
+	});
+
 	it('fires onOpen when a membership row is clicked', async () => {
 		const onOpen = vi.fn();
 		const { getByText } = render(ScrMyDojos, { props: { dojos, onOpen } });

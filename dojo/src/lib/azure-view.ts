@@ -32,6 +32,11 @@ export interface AzureConnectionView {
 	/** The stored token: working, rejected by Azure, or none stored. */
 	token: 'ok' | 'needs_new_token' | 'none';
 	tokenExpiresAt: string | null;
+	/** When the last complete member read replaced the member set; null: none yet. */
+	memberSetReadAt: string | null;
+	/** Older than dojo.member_set_max_age_hours (or never read): a Microsoft
+	 *  sign-in joins nobody from it (#308 R5c review). */
+	memberSetStale: boolean;
 }
 
 /** GET …/integrations/azure_devops. */
@@ -67,9 +72,10 @@ export interface AzureProjectsFiled {
 }
 
 /** What the member read came to (#309's rule): a complete read ended the
- *  provisioned members it no longer lists; a partial one ended nobody; a failed
+ *  provisioned members it no longer lists and joined the listed people who had
+ *  already signed in (#308 R5c); a partial one ended and joined nobody; a failed
  *  one is said, and ended nobody. */
-export type AzureMembersRead = { complete: boolean; listed: number; ended: number } | { error: string };
+export type AzureMembersRead = { complete: boolean; listed: number; ended: number; joined: number } | { error: string };
 
 /** What an import came to. Never carries the token. */
 export interface AzureImportResult {
@@ -87,6 +93,13 @@ export interface AzureSyncResult {
 }
 
 /** The stored grant's state, and its expiry when one is known. */
+/** Whether the member list a Microsoft sign-in joins from is fresh (#308 R5c). */
+export function memberSetLine(c: AzureConnectionView): string {
+	if (!c.memberSetReadAt) return 'No complete member list yet — Microsoft sign-ins join nobody until a Sync reads one';
+	const at = `Member list read ${c.memberSetReadAt.slice(0, 10)}`;
+	return c.memberSetStale ? `${at} is stale — Microsoft sign-ins join nobody from it until a Sync reads it again` : at;
+}
+
 export function tokenLine(c: AzureConnectionView): string {
 	if (c.token === 'none') return 'Not connected — connect Azure DevOps to sync';
 	if (c.token === 'needs_new_token') return 'Microsoft no longer accepts this connection — reconnect Azure DevOps';
@@ -132,6 +145,7 @@ function memberParts(m: AzureMembersRead): string[] {
 	if ('error' in m) return [m.error];
 	if (!m.complete) return ['the member list was incomplete, so nobody was ended'];
 	const parts = [`${m.listed} ${m.listed === 1 ? 'member' : 'members'} read`];
+	if (m.joined) parts.push(`${m.joined} who had signed in now ${m.joined === 1 ? 'a member' : 'members'}`);
 	if (m.ended) parts.push(`${m.ended} who left the organization no longer ${m.ended === 1 ? 'a member' : 'members'}`);
 	return parts;
 }
@@ -147,4 +161,15 @@ export function importLine(r: AzureImportResult): string {
 /** What a sync filed, and its members. */
 export function syncLine(r: AzureSyncResult): string {
 	return [`${r.organization.name} synced`, ...filedParts(r.projects), ...memberParts(r.members)].join(' · ');
+}
+
+/** Whether the login's Microsoft account is linked to the dōjō (#308 R5c):
+ *  `GET /v1/you/microsoft`. Not linked means no identity was recorded and no
+ *  dōjō joined from it, and says why. */
+export type MicrosoftLinkStatus = { state: 'none' } | { state: 'linked' } | { state: 'not_linked'; reason: string };
+
+/** What My dōjōs says about it — only when it could not be linked. */
+export function microsoftNotice(s: MicrosoftLinkStatus): string | null {
+	if (s.state !== 'not_linked') return null;
+	return `Couldn’t link your Microsoft account: ${s.reason}. Your Azure DevOps organizations’ dōjōs were not joined.`;
 }

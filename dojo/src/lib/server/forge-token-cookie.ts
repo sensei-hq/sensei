@@ -20,7 +20,7 @@ export const FORGE_TOKEN_COOKIE = 'dojo_forge_github';
 /** How long a connected token is honoured. */
 export const FORGE_TOKEN_TTL_SECONDS = 3600;
 
-import { githubIdentityId, requireGithubTokenOwner } from './github-identity';
+import { githubIdentityId, isGithubToken, requireGithubTokenOwner } from './github-identity';
 import { openSealed, seal } from './sealed-value';
 
 const COOKIE_PATH = '/v1/t';
@@ -64,8 +64,8 @@ export function clearForgeTokenCookie(secure: boolean): string {
 const CONNECT_EVENTS = new Set(['SIGNED_IN', 'INITIAL_SESSION', 'USER_UPDATED']);
 
 /**
- * Wrap kavach's /auth/session answer: after a GitHub sign-in, add the sealed
- * provider token as its own cookie — only once GitHub's `GET /user` says the
+ * Wrap kavach's /auth/session answer: after a GitHub sign-in (a provider token
+ * in GitHub's own format), add the sealed provider token as its own cookie — only once GitHub's `GET /user` says the
  * token is the GitHub account linked to the synced login; after a sign-out,
  * clear it. Bound to the
  * login the session SYNCED as (the answer's session, which kavach validated),
@@ -93,8 +93,9 @@ export async function captureForgeToken(
 		response.ok &&
 		typeof sent.event === 'string' &&
 		CONNECT_EVENTS.has(sent.event) &&
-		typeof sent.session.provider_token === 'string' &&
-		sent.session.provider_token
+		// A GitHub token only: a Microsoft sign-in's (#308 R5c) is never sent to
+		// GitHub, nor sealed as a GitHub connection.
+		isGithubToken(sent.session.provider_token)
 	) {
 		// Judged from what kavach VALIDATED, never from what the request claims: the
 		// synced login, and the GitHub account Supabase linked to it. The posted

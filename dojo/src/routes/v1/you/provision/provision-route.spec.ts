@@ -56,7 +56,7 @@ function ev(opts: { sessionToken?: string | null; body?: unknown } = {}) {
 beforeEach(() => {
 	mocks.resolveCaller
 		.mockClear()
-		.mockResolvedValue({ userId: 'p1', authUserId: 'u1', email: 'j@example.com', accessToken: 'jwt-A', githubId: '4242' });
+		.mockResolvedValue({ userId: 'p1', authUserId: 'u1', email: 'j@example.com', accessToken: 'jwt-A', githubId: '4242', microsoft: { state: 'ok', objectId: '00000000-0000-4000-8000-0000000000a1', name: null } });
 	mocks.provisionWithToken.mockClear().mockResolvedValue(RESULT);
 });
 
@@ -71,7 +71,7 @@ describe('POST /v1/you/provision', () => {
 		expect(token).toBe('gh-session');
 		// The GitHub account linked to the LOGIN: provisioning refuses a token of
 		// any other account (#308 R5a review).
-		expect(fallback).toEqual({ email: 'j@example.com', githubId: '4242' });
+		expect(fallback).toEqual({ email: 'j@example.com', githubId: '4242', microsoft: { state: 'ok', objectId: '00000000-0000-4000-8000-0000000000a1', name: null } });
 	});
 
 	it('refuses a token of another GitHub account with 403, naming why', async () => {

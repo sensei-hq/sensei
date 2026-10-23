@@ -347,6 +347,13 @@ export function provisioningTables(seed: Partial<Record<string, FakeTable>> = {}
 			rows: [],
 			...seed['rpc:claim_forge_unit']
 		},
+		// Where a Microsoft sign-in provisions (#308 R5c): the organization dōjōs
+		// whose last complete member set lists the person; proven in
+		// database/tests/dojo/connection_member_sets.sql.
+		'rpc:units_listing_member': {
+			rows: [],
+			...seed['rpc:units_listing_member']
+		},
 		// Where an org's repositories file (#308 R5a): read before an org dōjō is
 		// created, so an org an admin filed elsewhere as a workspace gets none.
 		forge_unit_mappings: {

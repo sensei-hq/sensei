@@ -78,7 +78,7 @@ reset role;
 
 do $$
 begin
-    if has_function_privilege('anon', 'dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[])', 'execute') then
+    if has_function_privilege('anon', 'dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[], text[])', 'execute') then
         raise exception 'anon may reconcile unit members';
     end if;
 end $$;
@@ -101,15 +101,15 @@ begin
     end;
 
     -- A dōjō that is not connected to the forge is not this forge's to end.
-    select dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0b', 'azure_devops', 'ztest-um-org', 'azure_devops',
-                                       array['ztest-az-s1']) into n;
+    select ended into n from dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0b', 'azure_devops', 'ztest-um-org', 'azure_devops',
+                                                         array['ztest-az-s1']);
     if n <> 0 then
         raise exception 'unit members: a dōjō not connected to Azure DevOps had % memberships ended', n;
     end if;
 
     -- The complete read lists the admin and the returner; the leaver is gone.
-    select dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org', 'azure_devops',
-                                       array['ztest-az-s1', 'ztest-az-s5', 'ztest-az-s7']) into n;
+    select ended into n from dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org', 'azure_devops',
+                                                         array['ztest-az-s1', 'ztest-az-s5', 'ztest-az-s7']);
     if n <> 1 then
         raise exception 'unit members: expected one membership ended, got %', n;
     end if;
