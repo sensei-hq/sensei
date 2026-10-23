@@ -45,6 +45,13 @@ describe('DojoSignIn', () => {
 		expect(container.textContent).not.toMatch(/Acme Corp|lessons shared this week|first-try resolution/);
 	});
 
+	// #330: what a person agrees to is one click away from where they sign in.
+	it('links the Terms of Service and the Privacy Policy', () => {
+		const { getByRole } = render(DojoSignIn);
+		expect(getByRole('link', { name: 'Terms of Service' }).getAttribute('href')).toBe('/terms-of-service');
+		expect(getByRole('link', { name: 'Privacy Policy' }).getAttribute('href')).toBe('/privacy-policy');
+	});
+
 	it('offers the self-hosted-Dōjō entry point', () => {
 		const { getByText } = render(DojoSignIn);
 		expect(getByText(/Connecting to a self-hosted/i)).toBeTruthy();

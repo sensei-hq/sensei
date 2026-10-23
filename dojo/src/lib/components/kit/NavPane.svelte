@@ -96,4 +96,8 @@
 	>
 		<span class="kanji">結</span>Dōjō v{dojoBuild.version}
 	</div>
+	<div class="text-ink-faint flex gap-3 text-xs" style="padding: 4px 8px 0">
+		<a href="/terms-of-service" class="text-ink-faint underline">Terms</a>
+		<a href="/privacy-policy" class="text-ink-faint underline">Privacy</a>
+	</div>
 </aside>

@@ -29,6 +29,14 @@ describe('kavach config — landing cutover', () => {
 		expect(publics.has('/signin')).toBe(true);
 		expect(publics.has('/v1')).toBe(true);
 	});
+
+	// #330: the legal pages are linked from the Entra and GitHub consent screens,
+	// so a person who has never signed in must be able to read them.
+	it('keeps the Terms of Service and Privacy Policy public', () => {
+		const publics = new Set(config.rules.filter((r) => r.public).map((r) => r.path));
+		expect(publics.has('/terms-of-service')).toBe(true);
+		expect(publics.has('/privacy-policy')).toBe(true);
+	});
 });
 
 // The GitHub token minted at sign-in is the ONLY way the dōjō learns whether a

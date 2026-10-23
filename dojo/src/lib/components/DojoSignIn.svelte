@@ -173,6 +173,12 @@
 			<div class="text-ink-faint mt-6 text-center text-xs" style="line-height: 1.5">
 				One sign-in for the hosted SaaS and any self-hosted Dōjō.
 			</div>
+			<div class="text-ink-faint mt-3 text-center text-xs" style="line-height: 1.5">
+				By signing in you agree to the
+				<a href="/terms-of-service" class="text-ink-soft underline">Terms of Service</a>
+				and the
+				<a href="/privacy-policy" class="text-ink-soft underline">Privacy Policy</a>.
+			</div>
 		</div>
 	</div>
 </div>
