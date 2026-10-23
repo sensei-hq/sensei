@@ -5,7 +5,7 @@
   import { PageHeader, Screen } from '$lib/components';
   import ModalShell from '$lib/components/ModalShell.svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { CREATE_TOKEN_URL, type TrackerIntegration } from './integrations-state.svelte.js';
+  import { CREATE_TOKEN_URL, LEVELS, type TrackerIntegration } from './integrations-state.svelte.js';
 
   let { screen }: { screen: TrackerIntegration } = $props();
 
@@ -16,8 +16,6 @@
   $effect(() => {
     if (screen.alertSeq > 0 && alertEl) alertEl.focus();
   });
-
-  const showForm = $derived(screen.view === 'not_connected' || screen.replacing);
 
   /** The alert describes the field it concerns; otherwise the field's own help. */
   const describedBy = (field: string, help: string | null) =>
@@ -69,8 +67,8 @@
       kanji="繋"
       icon="i-solar-link-bold-duotone"
       eyebrow="Integrations"
-      title="Issue tracker"
-      description="Connect this workspace’s Jira board so sensei can link AI sessions to tickets and report time and tokens per ticket. Read-only: sensei never changes anything in Jira."
+      title="Issue trackers"
+      description="Connect this workspace’s Jira boards, each at a level, so sensei can link AI sessions to tickets and report time and tokens per ticket. Read-only: sensei never changes anything in Jira."
     />
   {/snippet}
 <section data-screen="integrations" class="flex flex-col">
@@ -111,51 +109,63 @@
         </div>
       </div>
     {:else}
-      {#if screen.view === 'connected' && screen.tracker}
-        <div data-view="connected" class="flex flex-col gap-3 rounded-lg border border-paper-edge bg-paper-soft p-4">
-          <p class="m-0 text-sm text-ink">{screen.cardTitle}</p>
-          <p class="m-0 flex items-center gap-2 text-xs text-ink-mute" data-status={screen.tracker.status}>
-            <span
-              aria-hidden="true"
-              class="inline-block size-2 rounded-full"
-              class:bg-success={screen.tracker.status === 'connected'}
-              class:bg-warning={screen.tracker.status === 'stale' || screen.tracker.status === 'pending'}
-              class:bg-danger={screen.tracker.status === 'error'}
-            ></span>
-            {screen.cardStatus}
-          </p>
-          <div class="flex flex-wrap gap-2">
-            <button
-              type="button"
-              class={button}
-              data-action="sync"
-              disabled={screen.busy !== null}
-              onclick={() => screen.sync()}>{screen.busy === 'sync' ? 'Syncing…' : 'Sync now'}</button
-            >
-            <button
-              type="button"
-              class={button}
-              data-action="replace"
-              disabled={screen.busy !== null}
-              onclick={() => screen.startReplace()}>Replace token</button
-            >
-            <button
-              type="button"
-              class="{button} text-danger"
-              data-action="disconnect"
-              disabled={screen.busy !== null}
-              onclick={(e) => {
-                // Focus it first so closing the dialog returns here, also where a
-                // click does not focus buttons (WebKit).
-                (e.currentTarget as HTMLElement).focus();
-                screen.askDisconnect();
-              }}>Disconnect</button
-            >
-          </div>
+      {#each screen.groups as group (group.level)}
+        <section data-level={group.level} aria-labelledby="level-{group.level}" class="flex flex-col gap-3">
+          <h2 id="level-{group.level}" class="m-0 font-heading text-sm text-ink">{group.label}</h2>
+          {#each group.trackers as tracker (tracker.id)}
+            <div data-tracker={tracker.id} class="flex flex-col gap-3 rounded-lg border border-paper-edge bg-paper-soft p-4">
+              <p class="m-0 text-sm text-ink">{screen.cardTitle(tracker)}</p>
+              <p class="m-0 flex items-center gap-2 text-xs text-ink-mute" data-status={tracker.status}>
+                <span
+                  aria-hidden="true"
+                  class="inline-block size-2 rounded-full"
+                  class:bg-success={tracker.status === 'connected'}
+                  class:bg-warning={tracker.status === 'stale' || tracker.status === 'pending'}
+                  class:bg-danger={tracker.status === 'error'}
+                ></span>
+                {screen.cardStatus(tracker)}
+              </p>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class={button}
+                  data-action="sync"
+                  disabled={screen.busy !== null}
+                  onclick={() => screen.sync(tracker.id)}
+                  >{screen.busy === 'sync' && screen.busyTracker === tracker.id ? 'Syncing…' : 'Sync now'}</button
+                >
+                <button
+                  type="button"
+                  class={button}
+                  data-action="replace"
+                  disabled={screen.busy !== null}
+                  onclick={() => screen.startReplace(tracker)}>Replace token</button
+                >
+                <button
+                  type="button"
+                  class="{button} text-danger"
+                  data-action="disconnect"
+                  disabled={screen.busy !== null}
+                  onclick={(e) => {
+                    // Focus it first so closing the dialog returns here, also where a
+                    // click does not focus buttons (WebKit).
+                    (e.currentTarget as HTMLElement).focus();
+                    screen.askDisconnect(tracker);
+                  }}>Disconnect</button
+                >
+              </div>
+            </div>
+          {/each}
+        </section>
+      {/each}
+
+      {#if screen.view === 'connected' && !screen.showForm}
+        <div>
+          <button type="button" class={button} data-action="add" onclick={() => screen.startAdd()}>Add a board</button>
         </div>
       {/if}
 
-      {#if showForm}
+      {#if screen.showForm}
         <form
           class="flex flex-col gap-4"
           onsubmit={(e) => {
@@ -163,6 +173,26 @@
             void screen.connect();
           }}
         >
+          <fieldset
+            class="m-0 flex flex-col gap-2 border-0 p-0"
+            data-field="level"
+            aria-describedby={describedBy('level', null)}
+          >
+            <legend class="mb-1 text-sm text-ink">What the board serves</legend>
+            {#each LEVELS as l (l.level)}
+              <label class="flex items-start gap-2 text-sm text-ink">
+                <input
+                  type="radio"
+                  name="level"
+                  value={l.level}
+                  checked={screen.level === l.level}
+                  onchange={() => (screen.level = l.level)}
+                />
+                <span>{l.label} <span class="text-xs text-ink-soft">· {l.help}</span></span>
+              </label>
+            {/each}
+          </fieldset>
+
           <fieldset class="m-0 flex gap-4 border-0 p-0">
             <legend class="mb-1 text-sm text-ink">Tracker</legend>
             <label class="flex items-center gap-2 text-sm text-ink" data-tracker="jira">
@@ -246,10 +276,18 @@
               data-action="connect"
               disabled={!screen.canConnect || screen.busy !== null}
             >
-              {screen.busy === 'connect' ? 'Checking credentials and board…' : screen.replacing ? 'Replace token' : 'Connect'}
+              {screen.busy === 'connect'
+                ? 'Checking credentials and board…'
+                : screen.replacing !== null
+                  ? 'Replace token'
+                  : 'Connect'}
             </button>
-            {#if screen.replacing}
+            {#if screen.replacing !== null}
               <button type="button" class={button} data-action="cancel-replace" onclick={() => screen.cancelReplace()}
+                >Cancel</button
+              >
+            {:else if screen.adding}
+              <button type="button" class={button} data-action="cancel-add" onclick={() => screen.cancelAdd()}
                 >Cancel</button
               >
             {/if}
@@ -262,14 +300,16 @@
 </Screen>
 
 <ModalShell
-  open={screen.confirmingDisconnect}
+  open={screen.confirmingDisconnect !== null}
   component="disconnect-dialog"
   labelledBy="disconnect-title"
   onClose={() => screen.cancelDisconnect()}
 >
-  <h2 id="disconnect-title" class="m-0 font-heading text-base text-ink">Disconnect Jira?</h2>
+  <h2 id="disconnect-title" class="m-0 font-heading text-base text-ink">
+    Disconnect board #{screen.confirmingDisconnect?.board_ref}?
+  </h2>
   <p class="m-0 text-sm text-ink-soft">
-    This removes this workspace’s synced sprints, tickets and session links from sensei. Jira itself is not changed.
+    This removes this board’s synced sprints, tickets and session links from sensei. The workspace’s other boards stay, and Jira itself is not changed.
   </p>
   <div class="flex justify-end gap-2">
     <button type="button" class={button} data-action="cancel-disconnect" onclick={() => screen.cancelDisconnect()}

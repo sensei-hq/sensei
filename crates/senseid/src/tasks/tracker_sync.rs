@@ -49,7 +49,8 @@ pub async fn tick_with(
     for row in &rows {
         match crate::tracker::runtime::sync_stored(pg, rt, row).await {
             // Busy: a manual sync is running; Gone: disconnected meanwhile.
-            Ok(_) | Err(SyncError::Busy) | Err(SyncError::Gone) => {}
+            // Superseded: the row's new credential syncs on the next tick.
+            Ok(_) | Err(SyncError::Busy | SyncError::Gone | SyncError::Superseded) => {}
             Err(e) => {
                 failed += 1;
                 tracing::warn!(tracker_id = %row.id, "tracker_sync: {e:?}");
@@ -82,7 +83,7 @@ mod tests {
     use crate::tracker::jira::JiraAdapter;
     use crate::tracker::runtime::test_support::fake_runtime;
     use crate::tracker::test_support::FakeBoard;
-    use crate::tracker::{ApiToken, ConnectParams, TrackerError};
+    use crate::tracker::{ApiToken, ConnectParams, TrackerError, TrackerLevel};
 
     async fn connected(pg: &PgStore, rt: &TrackerRuntime, site: &str) -> uuid::Uuid {
         let p = pg
@@ -96,10 +97,18 @@ mod tests {
             token: ApiToken("t".into()),
             project_key: None,
         };
-        connect(pg, rt.secrets.clone(), &JiraAdapter, &FakeBoard::standard(), p, params)
-            .await
-            .unwrap()
-            .tracker_id
+        connect(
+            pg,
+            rt.secrets.clone(),
+            &JiraAdapter,
+            &FakeBoard::standard(),
+            p,
+            TrackerLevel::Sprint,
+            params,
+        )
+        .await
+        .unwrap()
+        .tracker_id
     }
     fn site() -> String {
         format!("https://t{}.atlassian.net", uuid::Uuid::new_v4().simple())

@@ -36,7 +36,7 @@ self-managed hosts).
 
 ## Desktop app connect screen (user, 2026-10-16)
 
-Project window section 繋 Integrations: `docs/spec/screen/project-integrations.md`
+Project window section 繋 Integrations: `docs/spec/screen/workspace-integrations.md`
 (plan F6). Form: Board URL, Atlassian account email (required: Jira Cloud tokens are
 `email:token`), API token. The project key is derived from the board. Reviewed for UX
 (a11y, dialog, recovery actions) and conformance (every daemon code mapped;
@@ -106,7 +106,7 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   (`/project/[id]/sprints`): sprint list (active selected), the sprint's own usage split
   (linked / other / not linked) or why it has none, its tickets with sessions, active AI
   time, tokens and cost, a ticket's per-repo breakdown and sessions (old keys shown "as
-  <key>"), unlinked sessions on demand. Spec `docs/spec/screen/project-sprints.md`; the
+  <key>"), unlinked sessions on demand. Spec `docs/spec/screen/workspace-sprints.md`; the
   tracker error words moved to `$lib/tracker-errors.ts` (second consumer). 27 new tests;
   app 1864/1864, svelte-check 0; checked live on the real board.
 - **F8 on-demand discovery (R11)** ✅ (asked for 2026-10-19) a ticket first named in a

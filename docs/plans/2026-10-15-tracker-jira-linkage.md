@@ -88,7 +88,7 @@ CLI are the v1 contract.
 - **Issue:** TBD
 - **Layers:** app (`project-sidebar-view.ts` section 繋 Integrations; `integrations/+page.svelte`; `api.ts` wrappers for list/connect/sync/disconnect)
 - **Depends on:** F1 (routes, status, sync, `board_url` parsing). F2 is not required.
-- **Acceptance criteria:** [`spec/screen/project-integrations.md`](../spec/screen/project-integrations.md) done gate 1–6.
+- **Acceptance criteria:** [`spec/screen/workspace-integrations.md`](../spec/screen/workspace-integrations.md) done gate 1–6.
 - **Test scenarios:**
   - Given only a pasted board URL, When Connect, Then the connected card shows the daemon-derived site and board id.
   - Given a wrong token, When Connect, Then "Jira rejected the email and token…" and the token field is empty.
@@ -99,7 +99,7 @@ CLI are the v1 contract.
 - **Issue:** TBD
 - **Layers:** app (`project-sidebar-view.ts` section 期 Sprints; `sprints/+page.svelte`, `sprints-state.svelte.ts`, `SprintsScreen.svelte`; `api.ts` wrappers for the four F4 read routes; the tracker error words moved to `$lib` as their second consumer appears)
 - **Depends on:** F4 (routes), F6 (error words, sidebar placement)
-- **Acceptance criteria:** [`spec/screen/project-sprints.md`](../spec/screen/project-sprints.md) done gate 1–7.
+- **Acceptance criteria:** [`spec/screen/workspace-sprints.md`](../spec/screen/workspace-sprints.md) done gate 1–7.
 - **Test scenarios:**
   - Given a connected project, When the screen opens, Then the active sprint is selected and its tickets are listed with active AI time and tokens.
   - Given a future sprint, When it is selected, Then "Not started…" shows and no zero.

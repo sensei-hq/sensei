@@ -49,14 +49,17 @@ fn tracker_routes() -> Router<AppState> {
     Router::new()
         .route(
             "/api/workspaces/{id}/trackers",
-            get(trackers::list_trackers).delete(trackers::disconnect_tracker),
+            get(trackers::list_trackers).post(trackers::connect_tracker),
         )
-        .route("/api/workspaces/{id}/trackers/sync", post(trackers::sync_tracker))
-        .route("/api/workspaces/{id}/trackers/{kind}/connect", post(trackers::connect_tracker))
-        .route("/api/workspaces/{id}/sprints", get(trackers::list_sprints))
-        .route("/api/workspaces/{id}/tracker-tasks", get(trackers::list_tracker_tasks))
+        .route("/api/workspaces/{id}/trackers/{tracker}", delete(trackers::disconnect_tracker))
+        .route("/api/workspaces/{id}/trackers/{tracker}/sync", post(trackers::sync_tracker))
+        .route("/api/workspaces/{id}/trackers/{tracker}/sprints", get(trackers::list_sprints))
+        .route("/api/workspaces/{id}/trackers/{tracker}/tasks", get(trackers::list_tracker_tasks))
+        .route(
+            "/api/workspaces/{id}/trackers/{tracker}/sessions/unlinked",
+            get(trackers::list_unlinked_sessions),
+        )
         .route("/api/workspaces/{id}/tracker-tasks/{key}", get(trackers::get_tracker_task))
-        .route("/api/workspaces/{id}/sessions/unlinked", get(trackers::list_unlinked_sessions))
         .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
 }
 

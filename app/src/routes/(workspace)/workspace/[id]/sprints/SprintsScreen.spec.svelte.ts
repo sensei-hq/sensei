@@ -74,6 +74,7 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
         {
           id: 't',
           kind: 'jira',
+          level: 'sprint',
           base_url: 'https://acme.atlassian.net',
           account: 'a@b.c',
           external_scope: 'AUTH',
@@ -181,16 +182,42 @@ describe('ready', () => {
   });
 });
 
+const twoBoards: SprintsApi['tryListTrackers'] = async () => {
+  const one = await api().tryListTrackers('p-1');
+  if (!one.ok) return one;
+  return { ok: true, data: [one.data[0], { ...one.data[0], id: 't2', board_ref: '44', board_name: 'Mobile Scrum' }] };
+};
+
+describe('several sprint boards (D40)', () => {
+  it('shows one lane per board, side by side, each named and with its own sprints', async () => {
+    const mobile: SprintUsageRow = { ...active, id: 'm7', name: 'Mobile 7' };
+    const { m, q, screen } = await open({
+      tryListTrackers: twoBoards,
+      tryListSprints: async (_p, t) => ({ ok: true, data: t === 't2' ? [mobile] : [future, active] }),
+    });
+    const lanes = [...m.container.querySelectorAll<HTMLElement>('[data-lane]')];
+    expect(lanes.map((l) => [l.dataset.lane, l.getAttribute('aria-label')])).toEqual([
+      ['t', 'AUTH Scrum sprints'],
+      ['t2', 'Mobile Scrum sprints'],
+    ]);
+    expect(lanes[0].parentElement).toBe(lanes[1].parentElement);
+    expect(lanes[1].querySelector('h2')?.textContent).toBe('Mobile Scrum');
+    q<HTMLButtonElement>('[data-lane="t2"] button[data-sprint="m7"]')!.click();
+    await settle();
+    expect(screen.selected?.name).toBe('Mobile 7');
+  });
+
+  it('one board keeps its name in the header and no lane heading', async () => {
+    const { m } = await open();
+    expect(m.container.querySelector('[data-lane] h2')).toBe(null);
+  });
+});
+
 describe('not connected', () => {
   it('points to Integrations', async () => {
-    const { q } = await open({
-      tryListSprints: async () => ({
-        ok: false,
-        error: { status: 404, message: 'not_connected', body: { error: 'not_connected' } },
-      }),
-    });
+    const { q } = await open({ tryListTrackers: async () => ({ ok: true, data: [] }) });
     const view = q('[data-view="not_connected"]')!;
-    expect(view.textContent).toContain('This workspace has no tracker connected.');
+    expect(view.textContent).toContain('This workspace has no sprint board connected.');
     expect(view.querySelector('a')!.getAttribute('href')).toBe('/workspace/p-1/integrations');
   });
 });
@@ -210,7 +237,8 @@ describe('accessibility (axe, structural rules; contrast is checked in the e2e s
   const states: Array<[string, Partial<SprintsApi>, boolean]> = [
     ['ready', {}, false],
     ['ticket', {}, true],
-    ['not connected', { tryListSprints: async () => ({ ok: false, error: { status: 404, message: 'not_connected', body: { error: 'not_connected' } } }) }, false],
+    ['not connected', { tryListTrackers: async () => ({ ok: true, data: [] }) }, false],
+    ['two lanes', { tryListTrackers: twoBoards }, false],
     ['daemon error', { tryListSprints: async () => ({ ok: false, error: { status: 0, message: 'x' } }) }, false],
   ];
   for (const [name, over, ticket] of states) {

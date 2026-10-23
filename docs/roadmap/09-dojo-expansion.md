@@ -149,7 +149,7 @@ slice builds, passes and ships on its own.
   per-person metrics (`repository_metrics` by principal, sessions, AI usage) for the members of the teams they
   lead, across every workspace the lead can access; the read policy and the lead's console view follow. Viewers
   stay aggregate-only (D6, pinned by #313's SQL test).
-  *Built 2026-10-22 on branch `r8-lead-team-metrics` (not merged): `dojo.leads_team_member` + a lead clause in
+  *Built 2026-10-22 on branch `r8-lead-team-metrics`: `dojo.leads_team_member` + a lead clause in
   `can_read_repository_metric` (teammate's user rows, only on repositories the lead can read), the SECURITY INVOKER
   read `dojo.team_member_metrics`, `GET /v1/t/{tenant}/team-metrics` (lead floor) and the Lead → Teams view.
   Relay sessions stay owner-only (#249); the lead reads metric aggregates (sessions = `throughput`, AI usage =
@@ -159,11 +159,22 @@ slice builds, passes and ships on its own.
   reader, D26's floor counted without the caller); rates pooled
   by their denominator (Σ numerator / Σ denominator); departed teammates stay excluded. Pinned by
   `database/tests/dojo/team_metric_totals.sql`.*
+  *Done 2026-10-22: merged to develop as 21a5d1a3 (D41). Walked
+  through in the browser on the local dōjō for all five roles: the lead sees per-person rows for its team, m2 and c1
+  see the team total only when 3 others contributed, the admin sees every team, a viewer gets 403. Ships in the next
+  release. Found while walking it: #329 (the first render after a magic-link account switch uses the old session).*
+- **R9 · Trackers by level (D23, D40).** *Merged to develop 2026-10-22 (branch `r9-tracker-levels`, aad7ed90): `sensei.trackers.level`
+  (`epic | sprint | task`; old rows become sprint), several boards per workspace, one credential per site, per-board
+  routes, `sensei tracker … --level/--board`, Integrations grouped by level, Sprints lanes side by side. An
+  independent review found 6 defects (secret drain race, `--board` ambiguity across sites, lookup stopping at a
+  busy board, a re-key read as gone, stale sibling errors, detail flipping between boards); each fixed red-first. Epics and
+  milestones have no reader yet; that is T3's. The live check on a real Jira board (two boards, two levels) is the
+  user's: the local daemon has no tracker connected.*
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
   org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
-  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 (8a584e51); ships in the next release. R5b (Azure) next after R8.*
+  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 (8a584e51); ships in the next release. R5b (Azure) next, after R9.*
   *R5a (GitHub) built 2026-10-22 on branch `r5a-github-import` (not merged): the adapter interface, claim through
   `dojo.claim_forge_unit`, `dojo.forge_unit_mappings` + `map_forge_unit`, Admin → Integrations, and registration by
   the mapping — see the spec's "R5a as built". Production's live check waits on the merge and deploy.*
