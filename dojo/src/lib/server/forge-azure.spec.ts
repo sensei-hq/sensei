@@ -17,11 +17,12 @@ const UNIT = { id: F.ORG_ID, login: F.ORG };
 const basic = `Basic ${btoa(':' + PAT)}`;
 
 function adminRoutes(over: Record<string, FakeRoute> = {}): Record<string, FakeRoute> {
+	// A test's own routes win over these (a later spread replaces a value in place).
 	return {
-		...over,
 		'/_apis/connectionData': { body: F.connectionData() },
 		'continuationToken=groups-2': { body: F.groupsPage2 },
-		'/_apis/graph/groups': { body: F.groupsPage1, headers: { 'content-type': 'application/json', 'x-ms-continuationtoken': 'groups-2' } }
+		'/_apis/graph/groups': { body: F.groupsPage1, headers: { 'content-type': 'application/json', 'x-ms-continuationtoken': 'groups-2' } },
+		...over
 	};
 }
 
@@ -199,6 +200,33 @@ describe('proveAdmin (Project Collection Administrators, via the Graph API)', ()
 		await expect(azureAdapter(F.ORG, failed.fn).proveAdmin(PAT, UNIT)).rejects.toBeInstanceOf(ForgeReadError);
 	});
 
+	it('takes the collection\'s own admin group, never a project group of the same name (#308 R5b review)', async () => {
+		// A project named like the organization could hold a group whose principal
+		// name reads `[org]\Project Collection Administrators`; it sits in the
+		// project's scope (Classification/TeamProject), not the collection's.
+		const impostor = {
+			subjectKind: 'group',
+			domain: 'vstfs:///Classification/TeamProject/ca97818a-3c86-4f95-b591-a4263b656b9e',
+			principalName: `[${F.ORG}]\\Project Collection Administrators`,
+			descriptor: F.OTHER_GROUP
+		};
+		const proven = fakeFetch(
+			adminRoutes({
+				'/_apis/graph/groups': { body: { count: 2, value: [impostor, ...F.groupsPage2.value] } },
+				[`Memberships/${F.ME_DESCRIPTOR}`]: { body: F.memberships(F.ME_DESCRIPTOR, [F.OTHER_GROUP]) },
+				[`Memberships/${F.OTHER_GROUP}`]: { body: F.memberships(F.OTHER_GROUP, []) }
+			})
+		);
+		// Membership of the impostor group proves nothing.
+		expect(await azureAdapter(F.ORG, proven.fn).proveAdmin(PAT, UNIT)).toBe(false);
+
+		const onlyImpostor = fakeFetch(adminRoutes({ '/_apis/graph/groups': { body: { count: 1, value: [impostor] } } }));
+		await expect(azureAdapter(F.ORG, onlyImpostor.fn).proveAdmin(PAT, UNIT)).rejects.toBeInstanceOf(AdminError);
+
+		const twice = fakeFetch(adminRoutes({ '/_apis/graph/groups': { body: { count: 2, value: [...F.groupsPage2.value, ...F.groupsPage2.value] } } }));
+		await expect(azureAdapter(F.ORG, twice.fn).proveAdmin(PAT, UNIT)).rejects.toBeInstanceOf(AdminError);
+	});
+
 	it('throws on a membership graph too deep or cyclic to finish, rather than guessing', async () => {
 		const many = Array.from({ length: 200 }, (_, i) => `vssgp.g${i}`);
 		const { fn } = fakeFetch(
@@ -240,6 +268,26 @@ describe('listMembers (user entitlements, paged by continuation token)', () => {
 		});
 		const read = await azureAdapter(F.ORG, fn).listMembers(PAT, UNIT);
 		expect(read.members.map((m) => m.login)).toEqual(['ops@example.com']);
+	});
+
+	it('reads a continuation token sent as a one-item array (the shape earlier API versions use)', async () => {
+		const { fn, calls } = fakeFetch({
+			'continuationToken=page-2': { body: F.entitlementsPage2 },
+			'/_apis/userentitlements': { body: { ...F.entitlementsPage1, continuationToken: ['page-2'] } }
+		});
+		const read = await azureAdapter(F.ORG, fn).listMembers(PAT, UNIT);
+		expect(calls).toHaveLength(2);
+		expect(read.members).toHaveLength(3);
+		expect(read.complete).toBe(true);
+		const last = fakeFetch({ '/_apis/userentitlements': { body: { ...F.entitlementsPage2, continuationToken: [] } } });
+		expect((await azureAdapter(F.ORG, last.fn).listMembers(PAT, UNIT)).complete).toBe(true);
+	});
+
+	it('a continuation token it cannot read is never taken for the last page — it throws (#308 R5b review)', async () => {
+		for (const token of [{ next: 'page-2' }, ['a', 'b'], [7], 42]) {
+			const { fn } = fakeFetch({ '/_apis/userentitlements': { body: { ...F.entitlementsPage1, continuationToken: token } } });
+			await expect(azureAdapter(F.ORG, fn).listMembers(PAT, UNIT), JSON.stringify(token)).rejects.toBeInstanceOf(AdminError);
+		}
 	});
 
 	it('is incomplete when an entry cannot be named', async () => {

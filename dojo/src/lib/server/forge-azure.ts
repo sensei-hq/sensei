@@ -182,11 +182,19 @@ export async function readAzureConnection(org: string, token: string, fetchImpl:
 
 /** The Graph descriptor of the organization's Project Collection Administrators.
  *  https://learn.microsoft.com/en-us/rest/api/azure/devops/graph/groups/list?view=azure-devops-rest-7.1
- *  — paged by the `X-MS-ContinuationToken` response header; the group is named
- *  `[{org}]\Project Collection Administrators`. Throws when it is not found: every
- *  organization has one, so not seeing it is a read we could not make. */
-async function adminGroup(name: string, token: string, fetchImpl: typeof fetch): Promise<string> {
+ *  — paged by the `X-MS-ContinuationToken` response header. The group is named
+ *  `[{org}]\\Project Collection Administrators`, and — the check that matters —
+ *  sits in the COLLECTION's scope: its `domain` is
+ *  `vstfs:///Framework/IdentityDomain/{the organization's id}` ("for VSTS groups
+ *  the ScopeId"), where a project group's is `vstfs:///Classification/TeamProject/…`.
+ *  A project named like the organization could hold a group with the same
+ *  principal name (#308 R5b review), so exactly one collection-scope match is
+ *  required. Throws otherwise: every organization has one, so not seeing it — or
+ *  seeing two — is a read we cannot trust. */
+async function adminGroup(name: string, orgId: string, token: string, fetchImpl: typeof fetch): Promise<string> {
 	const wanted = `[${name}]\\project collection administrators`;
+	const scope = `vstfs:///framework/identitydomain/${orgId.toLowerCase()}`;
+	const found: string[] = [];
 	let continuation: string | null = null;
 	for (let page = 0; page < MAX_GROUP_PAGES; page++) {
 		const q: string = continuation ? `continuationToken=${encodeURIComponent(continuation)}&` : '';
@@ -197,16 +205,20 @@ async function adminGroup(name: string, token: string, fetchImpl: typeof fetch):
 		);
 		if (!Array.isArray(body.value)) throw new AdminError(502, 'Azure DevOps returned groups that are not a list');
 		for (const g of body.value as Record<string, unknown>[]) {
-			if ((nonEmpty(g.principalName) ?? '').toLowerCase() === wanted) {
-				const d = nonEmpty(g.descriptor);
-				if (d && DESCRIPTOR.test(d)) return d;
-			}
+			if ((nonEmpty(g.principalName) ?? '').toLowerCase() !== wanted) continue;
+			if ((nonEmpty(g.domain) ?? '').toLowerCase() !== scope) continue;
+			const d = nonEmpty(g.descriptor);
+			if (!d || !DESCRIPTOR.test(d)) throw new AdminError(502, 'Azure DevOps returned an admin group this cannot address');
+			found.push(d);
 		}
 		const next = headers.get('x-ms-continuationtoken');
 		if (!next || next === continuation) break;
 		continuation = next;
 	}
-	throw new AdminError(502, `could not find ${name}'s Project Collection Administrators group`);
+	if (found.length !== 1) {
+		throw new AdminError(502, `could not find exactly one Project Collection Administrators group for ${name}`);
+	}
+	return found[0];
 }
 
 /** The groups one subject is directly in.
@@ -239,7 +251,7 @@ async function containersOf(name: string, descriptor: string, token: string, fet
 async function proveAzureAdmin(name: string, token: string, unit: ForgeUnitRef, fetchImpl: typeof fetch): Promise<boolean> {
 	const conn = await readAzureConnection(name, token, fetchImpl);
 	if (conn.orgId !== unit.id || !conn.user.active) return false;
-	const admins = await adminGroup(name, token, fetchImpl);
+	const admins = await adminGroup(name, conn.orgId, token, fetchImpl);
 
 	const seen = new Set<string>([conn.user.descriptor]);
 	const queue = [conn.user.descriptor];
@@ -258,6 +270,25 @@ async function proveAzureAdmin(name: string, token: string, unit: ForgeUnitRef, 
 		}
 	}
 	return false;
+}
+
+/**
+ * The next page's continuation token, or null on the last page. 7.1 documents a
+ * string (PagedGraphMemberList.continuationToken —
+ * https://learn.microsoft.com/en-us/rest/api/azure/devops/memberentitlementmanagement/members/get?view=azure-devops-rest-7.1);
+ * earlier versions send a string array, so a one-string array is read too and an
+ * empty one (or null) ends the read. Anything else THROWS (#308 R5b review):
+ * reading a token we do not understand as "no more pages" would call page one
+ * complete and end everyone after it.
+ */
+function continuationOf(v: unknown): string | null {
+	if (v === null || v === undefined) return null;
+	if (typeof v === 'string') return v.trim() || null;
+	if (Array.isArray(v)) {
+		if (v.length === 0) return null;
+		if (v.length === 1 && typeof v[0] === 'string') return v[0].trim() || null;
+	}
+	throw new AdminError(502, 'Azure DevOps returned a continuation token this cannot read; not reading a partial member list');
 }
 
 /** Statuses that are not membership: removed, or access switched off. */
@@ -295,7 +326,7 @@ async function listAzureMembers(name: string, token: string, fetchImpl: typeof f
 			}
 			members.push({ id, login });
 		}
-		const next = nonEmpty(body.continuationToken);
+		const next = continuationOf(body.continuationToken);
 		if (!next) return { members, complete };
 		if (tokens.has(next)) throw new AdminError(502, 'Azure DevOps repeated a continuation token; not reading a partial member list');
 		tokens.add(next);
