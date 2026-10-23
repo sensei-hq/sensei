@@ -1,0 +1,69 @@
+// Sign in with Microsoft records the person's Microsoft Entra OBJECT ID (`oid`)
+// as their Azure identity (#308 R5c, D45) — the id R5b's import and member read
+// key on (Azure DevOps Graph `originId`, origin `aad`). Never `sub` (pairwise:
+// a different value per application) and never email (D43).
+//
+// Where GoTrue puts it (supabase/auth, internal/api/provider/oidc.go,
+// parseAzureIDToken): every ID-token claim except a fixed list (aud, iss, iat,
+// nbf, exp, c_hash, at_hash, aio, nonce, rh, uti, jti, ver, sub, name,
+// preferred_username) goes to `Metadata.CustomClaims`, serialised as
+// `custom_claims` (provider.go `Claims`), and the identity's `identity_data` is
+// that map (external.go), rewritten on every sign-in. So the oid is
+// `identities[provider = azure].identity_data.custom_claims.oid`. The identity's
+// own `id` is GoTrue's provider_id, the `sub`. `user_metadata` also receives the
+// claims, but a person can rewrite their own user_metadata — it is never read.
+import { describe, it, expect } from 'vitest';
+import { microsoftIdentity } from './azure-signin';
+
+const OID = '00000000-0000-4000-8000-0000000000a1';
+
+const user = (identities: unknown[], extra: Record<string, unknown> = {}) => ({ id: 'auth-alice', identities, ...extra });
+const azure = (identity_data: unknown, id = 'pairwise-sub-xyz') => ({ provider: 'azure', id, identity_data });
+
+describe('microsoftIdentity', () => {
+	it('is the object id from the Microsoft identity GoTrue recorded, with the name', () => {
+		const u = user([
+			{ provider: 'github', id: '111' },
+			azure({ sub: 'pairwise-sub-xyz', full_name: 'Alice Example', custom_claims: { oid: OID, tid: 'tenant-1' } })
+		]);
+		expect(microsoftIdentity(u)).toEqual({ state: 'ok', objectId: OID, name: 'Alice Example' });
+	});
+
+	it('is none when the login has no Microsoft identity', () => {
+		for (const u of [null, undefined, {}, user([]), user([{ provider: 'github', id: '111' }])]) {
+			expect(microsoftIdentity(u)).toEqual({ state: 'none' });
+		}
+	});
+
+	it('is unlinkable — never sub, never email — when GoTrue recorded no object id', () => {
+		for (const data of [
+			{ sub: 'pairwise-sub-xyz', email: 'alice@example.com' },
+			{ sub: 'pairwise-sub-xyz', custom_claims: {} },
+			{ custom_claims: { oid: '' } },
+			{ custom_claims: { oid: 42 } },
+			{ custom_claims: { oid: 'not-a-guid' } },
+			null
+		]) {
+			const out = microsoftIdentity(user([azure(data)]));
+			expect(out.state).toBe('unlinkable');
+			expect(JSON.stringify(out)).not.toContain('pairwise-sub-xyz');
+			expect(JSON.stringify(out)).not.toContain('alice@example.com');
+		}
+	});
+
+	it('never reads the object id from user_metadata, which the person can rewrite', () => {
+		const u = user([azure({ sub: 'pairwise-sub-xyz' })], { user_metadata: { custom_claims: { oid: OID } } });
+		expect(microsoftIdentity(u).state).toBe('unlinkable');
+	});
+
+	it('is unlinkable when more than one Microsoft account is linked — which one would be guessing', () => {
+		const other = '00000000-0000-4000-8000-0000000000a2';
+		const u = user([azure({ custom_claims: { oid: OID } }, 's1'), azure({ custom_claims: { oid: other } }, 's2')]);
+		expect(microsoftIdentity(u)).toMatchObject({ state: 'unlinkable' });
+	});
+
+	it('keeps the object id exactly as Microsoft wrote it', () => {
+		const upper = '00000000-0000-4000-8000-0000000000A1';
+		expect(microsoftIdentity(user([azure({ custom_claims: { oid: upper } })]))).toMatchObject({ objectId: upper });
+	});
+});

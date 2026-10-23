@@ -1258,3 +1258,131 @@ describe('ensureProvisioned — leaving an org ends the membership it made (#309
 		await expect(ensureProvisioned(db as never, PRINCIPAL, FACTS)).rejects.toThrow();
 	});
 });
+
+// Sign in with Microsoft (#308 R5c, D45). The sign-in token cannot read Azure
+// DevOps, so the person is provisioned from what the dōjō already holds: every
+// Azure-backed organization dōjō whose last COMPLETE member set lists their Entra
+// object id (dojo.units_listing_member — its rules are proven in
+// database/tests/dojo/connection_member_sets.sql). The object id becomes their
+// azure_devops identity, the same key R5b's import and member read use.
+describe('ensureProvisioned — a Microsoft sign-in (#308 R5c)', () => {
+	const OID = '00000000-0000-4000-8000-0000000000a1';
+	const MS = { state: 'ok' as const, objectId: OID, name: 'Alice Example' };
+	const AZ_DOJO = { id: 't-az', key: 'organization/example-az', origin: 'organization', slug: 'example-az', name: 'example-az' };
+	const listed = (rows: { tenant_id: string; unit: string }[]) => ({ 'rpc:units_listing_member': { rows } });
+
+	it('records the object id as the azure_devops identity and joins every dōjō whose member set lists it', async () => {
+		const db = fakeDojoDb(tables({ tenants: { rows: [AZ_DOJO], uniques: [{ columns: ['key'] }] }, ...listed([{ tenant_id: 't-az', unit: 'az-org-1' }]) }));
+		const out = await ensureProvisioned(db as never, PRINCIPAL, null, { email: 'alice@example.com', microsoft: MS });
+
+		expect(db.tables.identities.rows).toEqual([
+			expect.objectContaining({ principal_id: PRINCIPAL, provider: 'azure_devops', subject: OID, display_name: 'Alice Example', email: null })
+		]);
+		expect(db.rpcCalls.find((c) => c.fn === 'units_listing_member')?.args).toEqual({ p_provider: 'azure_devops', p_subject: OID });
+		const m = db.tables.memberships.rows.find((r) => r.tenant_id === 't-az');
+		expect(m).toMatchObject({
+			user_id: PRINCIPAL,
+			kind: 'employer',
+			authenticated_via: 'azure_devops',
+			role: 'contributor',
+			source: 'provisioned',
+			source_provider: 'azure_devops',
+			source_unit: 'az-org-1'
+		});
+		expect(out.tenants).toEqual([{ id: 't-az', key: 'organization/example-az', origin: 'organization', role: 'contributor', created: false }]);
+		expect(out.microsoft).toEqual({ linked: true });
+		// …and the personal dōjō is still made, from the email, as for any sign-in
+		// with no forge token.
+		expect(out.personal?.key).toBe('personal/alice');
+	});
+
+	it('joins nothing when no member set lists them — the identity is still recorded', async () => {
+		const db = fakeDojoDb(tables(listed([])));
+		const out = await ensureProvisioned(db as never, PRINCIPAL, null, { email: 'alice@example.com', microsoft: MS });
+		expect(db.tables.identities.rows).toHaveLength(1);
+		expect(db.tables.memberships.rows.filter((r) => r.kind === 'employer')).toEqual([]);
+		expect(out.tenants).toEqual([]);
+		expect(out.microsoft).toEqual({ linked: true });
+	});
+
+	it('leaves an existing membership as it is — an override or an invite wins', async () => {
+		const db = fakeDojoDb(
+			tables({
+				tenants: { rows: [AZ_DOJO], uniques: [{ columns: ['key'] }] },
+				memberships: {
+					rows: [{ id: 'm-1', tenant_id: 't-az', user_id: PRINCIPAL, role: 'lead', kind: 'client', source: 'invited' }],
+					uniques: [{ columns: ['tenant_id', 'user_id'] }]
+				},
+				...listed([{ tenant_id: 't-az', unit: 'az-org-1' }])
+			})
+		);
+		const out = await ensureProvisioned(db as never, PRINCIPAL, null, { email: 'alice@example.com', microsoft: MS });
+		expect(db.tables.memberships.rows.filter((r) => r.tenant_id === 't-az')).toEqual([
+			{ id: 'm-1', tenant_id: 't-az', user_id: PRINCIPAL, role: 'lead', kind: 'client', source: 'invited' }
+		]);
+		expect(out.tenants).toEqual([expect.objectContaining({ id: 't-az', role: 'lead' })]);
+	});
+
+	it('is a 409 when the Microsoft account is already another person`s — never a re-point, and nobody joins', async () => {
+		const db = fakeDojoDb(
+			tables({
+				identities: {
+					rows: [{ id: 'i-1', principal_id: 'p-someone-else', provider: 'azure_devops', subject: OID }],
+					uniques: [{ columns: ['provider', 'subject'] }]
+				},
+				tenants: { rows: [AZ_DOJO], uniques: [{ columns: ['key'] }] },
+				...listed([{ tenant_id: 't-az', unit: 'az-org-1' }])
+			})
+		);
+		const err = await ensureProvisioned(db as never, PRINCIPAL, null, { email: 'alice@example.com', microsoft: MS }).catch((e) => e);
+		expect(err.status).toBe(409);
+		expect(db.tables.identities.rows).toEqual([{ id: 'i-1', principal_id: 'p-someone-else', provider: 'azure_devops', subject: OID }]);
+		expect(db.tables.memberships.rows.filter((r) => r.tenant_id === 't-az')).toEqual([]);
+	});
+
+	it('FAILS CLOSED when Microsoft gave no object id: no identity, no provisioning, a logged reason, and it says so', async () => {
+		const logged: unknown[][] = [];
+		const original = console.error;
+		console.error = (...a: unknown[]) => void logged.push(a);
+		try {
+			const db = fakeDojoDb(tables({ tenants: { rows: [AZ_DOJO], uniques: [{ columns: ['key'] }] }, ...listed([{ tenant_id: 't-az', unit: 'az-org-1' }]) }));
+			const reason = 'Microsoft did not send this account`s object id';
+			const out = await ensureProvisioned(db as never, PRINCIPAL, null, { email: 'alice@example.com', microsoft: { state: 'unlinkable', reason } });
+			expect(db.tables.identities.rows).toEqual([]);
+			expect(db.rpcCalls.map((c) => c.fn)).not.toContain('units_listing_member');
+			expect(db.tables.memberships.rows.filter((r) => r.tenant_id === 't-az')).toEqual([]);
+			expect(out.microsoft).toEqual({ linked: false, reason });
+			expect(logged.some((a) => String(a[0]).includes(reason))).toBe(true);
+			// The personal dōjō does not depend on Microsoft.
+			expect(out.personal?.key).toBe('personal/alice');
+		} finally {
+			console.error = original;
+		}
+	});
+
+	it('does nothing Microsoft-shaped for a login with no Microsoft identity', async () => {
+		const db = fakeDojoDb(tables());
+		const out = await ensureProvisioned(db as never, PRINCIPAL, null, { email: 'magic@example.com', microsoft: { state: 'none' } });
+		expect(db.rpcCalls.map((c) => c.fn)).not.toContain('units_listing_member');
+		expect(out).not.toHaveProperty('microsoft');
+	});
+
+	it('provisions from Microsoft beside GitHub when the login has both', async () => {
+		const db = fakeDojoDb(tables({ tenants: { rows: [AZ_DOJO], uniques: [{ columns: ['key'] }] }, ...listed([{ tenant_id: 't-az', unit: 'az-org-1' }]) }));
+		const out = await ensureProvisioned(db as never, PRINCIPAL, FACTS, { microsoft: MS });
+		expect(out.tenants.map((t) => t.key)).toEqual(['organization/sensei-hq', 'organization/acme', 'organization/example-az']);
+		expect(db.tables.identities.rows.map((r) => r.provider).sort()).toEqual(['azure_devops', 'github_oauth']);
+	});
+
+	it('still provisions from Microsoft when there is no email to name a personal dōjō from', async () => {
+		const db = fakeDojoDb(tables({ tenants: { rows: [AZ_DOJO], uniques: [{ columns: ['key'] }] }, ...listed([{ tenant_id: 't-az', unit: 'az-org-1' }]) }));
+		const out = await ensureProvisioned(db as never, PRINCIPAL, null, { microsoft: MS });
+		expect(out.reason).toBe('no_identity');
+		expect(out.tenants.map((t) => t.key)).toEqual(['organization/example-az']);
+	});
+
+	it('a failed member-set read is an error, never "listed nowhere"', async () => {
+		const db = fakeDojoDb(tables({ 'rpc:units_listing_member': { rows: [], error: { message: 'boom' } } }));
+		await expect(ensureProvisioned(db as never, PRINCIPAL, null, { email: 'alice@example.com', microsoft: MS })).rejects.toThrow('boom');
+	});
+});

@@ -22,6 +22,7 @@ import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolvePrincipalId } from '$lib/server/principal-resolve';
 import { provisionWithToken } from '$lib/server/provisioning';
 import { githubIdentityId } from '$lib/server/github-identity';
+import { microsoftIdentity } from '$lib/server/azure-signin';
 
 /**
  * Provision on the way through — the daemon caller of §II.7.
@@ -61,7 +62,8 @@ async function provisionFromSession(sessionJson: string): Promise<void> {
 	// token of any other account (#308 R5a review).
 	await provisionWithToken(db, principalId, providerToken, {
 		email: typeof user?.email === 'string' ? user.email : null,
-		githubId: githubIdentityId(user)
+		githubId: githubIdentityId(user),
+		microsoft: microsoftIdentity(user)
 	});
 }
 

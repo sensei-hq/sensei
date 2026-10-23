@@ -9,6 +9,7 @@
 
 import { dojoDb, roleToAccess, accessLabel, ACCESS, type AccessLevel } from './dojo-supabase';
 import { githubIdentityId } from './github-identity';
+import { microsoftIdentity, type MicrosoftIdentity } from './azure-signin';
 import { resolvePrincipalId } from './principal-resolve';
 import { AdminError } from './admin-data';
 
@@ -94,6 +95,8 @@ export async function resolveCaller(
 	accessToken: string;
 	/** The GitHub account linked to this login, or null (github-identity.ts). */
 	githubId: string | null;
+	/** The Microsoft account linked to this login (azure-signin.ts, #308 R5c). */
+	microsoft: MicrosoftIdentity;
 }> {
 	const token = tokenFrom(request, locals);
 	if (!token) throw apiError(401, 'unauthenticated');
@@ -123,7 +126,8 @@ export async function resolveCaller(
 		authUserId,
 		email: userData.user.email ?? null,
 		accessToken: token,
-		githubId: githubIdentityId(userData.user)
+		githubId: githubIdentityId(userData.user),
+		microsoft: microsoftIdentity(userData.user)
 	};
 }
 

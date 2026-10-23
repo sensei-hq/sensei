@@ -16,7 +16,7 @@ import { provisionWithToken } from '$lib/server/provisioning';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, email, githubId } = await resolveCaller(request, locals);
+		const { userId, email, githubId, microsoft } = await resolveCaller(request, locals);
 		// System work, named (access matrix "What stays service_role", #236).
 		const db = dojoDb();
 
@@ -42,7 +42,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const fromSession =
 			(locals as { session?: { provider_token?: string | null } }).session?.provider_token ?? null;
 
-		const result = await provisionWithToken(db, userId, fromBody ?? fromSession, { email, githubId });
+		const result = await provisionWithToken(db, userId, fromBody ?? fromSession, { email, githubId, microsoft });
 		return Response.json(result);
 	} catch (e) {
 		if (e instanceof Response) return e;

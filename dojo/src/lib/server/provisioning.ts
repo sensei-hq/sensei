@@ -42,6 +42,7 @@ import {
 } from './forge-github';
 import { forgeRefFromRepoKey } from './repo-mapping';
 import { assertGithubAccount, isGithubToken } from './github-identity';
+import type { MicrosoftIdentity } from './azure-signin';
 
 /** One tenant this pass established the caller's place in. */
 export interface ProvisionedTenant {
@@ -90,7 +91,14 @@ export interface ProvisionResult {
 	 *  recorded, or why it could not read the forge — in which case it changed
 	 *  nothing. Present only when the forge was read. */
 	roles?: RoleMirrorResult;
+	/** Whether the login's Microsoft account was linked (#308 R5c) — and if not,
+	 *  why. Present only when the login has a Microsoft account. */
+	microsoft?: MicrosoftSignInResult;
 }
+
+/** What a Microsoft sign-in came to: linked (its object id recorded, its dōjōs
+ *  joined), or why it could not be — in which case nothing was recorded. */
+export type MicrosoftSignInResult = { linked: true } | { linked: false; reason: string };
 
 /** What the per-person forge mirror did. */
 export interface RoleMirrorResult {
@@ -107,6 +115,10 @@ export interface FallbackIdentity {
 	 *  Supabase user). A forge token is used only if GitHub says it is this
 	 *  account; with none linked, a token is refused (#308 R5a review). */
 	githubId?: string | null;
+	/** The Microsoft account linked to the login (`microsoftIdentity` of the
+	 *  validated Supabase user, #308 R5c): its Entra object id provisions the
+	 *  person from the stored Azure DevOps member sets. */
+	microsoft?: MicrosoftIdentity;
 }
 
 const DOJO_HOST = 'dojo.sensei-hq.org';
@@ -183,8 +195,12 @@ async function mappedAsWorkspace(db: DojoClient, provider: ForgeProvider, extern
 
 /** Forge standing → `dojo.member_role`. An org owner/admin administers the
  *  tenant; everyone else starts as a contributor and is promoted explicitly. */
+function roleForStanding(standing: ForgeOrg['role']): string {
+	return standing === 'admin' ? 'admin' : 'contributor';
+}
+
 function roleForOrg(org: ForgeOrg): string {
-	return org.role === 'admin' ? 'admin' : 'contributor';
+	return roleForStanding(org.role);
 }
 
 function tenantUrl(key: string): string {
@@ -901,6 +917,66 @@ export async function ensureProvisioned(
 	principalId: string,
 	facts: ForgeFacts | null,
 	fallback: FallbackIdentity = {}
+): Promise<ProvisionResult> {
+	const result = await ensureForgeProvisioned(db, principalId, facts, fallback);
+	const microsoft = fallback.microsoft;
+	if (!microsoft || microsoft.state === 'none') return result;
+	if (microsoft.state === 'unlinkable') {
+		// FAIL CLOSED (#308 R5c): no identity is recorded and nobody is provisioned
+		// on a guess. Said in the log and in the answer, and on My dōjōs.
+		console.error(`[microsoft sign-in] principal ${principalId} not linked: ${microsoft.reason}`);
+		return { ...result, microsoft: { linked: false, reason: microsoft.reason } };
+	}
+	const joined = await provisionFromMemberSets(db, principalId, microsoft);
+	return { ...result, tenants: [...result.tenants, ...joined], microsoft: { linked: true } };
+}
+
+/**
+ * A Microsoft sign-in (#308 R5c, D45): record the person's Entra object id as
+ * their azure_devops identity — a 409 if it is already another person's, never
+ * a re-point — and join every Azure-backed organization dōjō whose last
+ * COMPLETE member set lists it (dojo.units_listing_member). The sign-in token
+ * cannot read Azure DevOps; the member sets are what the import, Sync and the
+ * scheduled read last proved. Same rule as a member read: contributor (no admin
+ * is proven), provenance the forge and the unit, so that unit's later complete
+ * read ends it when the person leaves (#309). An existing membership wins.
+ */
+async function provisionFromMemberSets(
+	db: DojoClient,
+	principalId: string,
+	microsoft: Extract<MicrosoftIdentity, { state: 'ok' }>
+): Promise<ProvisionedTenant[]> {
+	const provider = 'azure_devops' as const;
+	await ensureForgeIdentity(db, principalId, provider, { id: microsoft.objectId, name: microsoft.name, email: null });
+
+	const { data, error } = await db.rpc('units_listing_member', { p_provider: provider, p_subject: microsoft.objectId });
+	if (error) throw new AdminError(500, error.message);
+	const units = (data ?? []) as { tenant_id: string; unit: string }[];
+	if (units.length === 0) return [];
+
+	const found = await db.from('tenants').select('id, key').in('id', units.map((u) => u.tenant_id));
+	if (found.error) throw new AdminError(500, found.error.message);
+	const keyOf = new Map(((found.data ?? []) as { id: string; key: string }[]).map((t) => [t.id, t.key]));
+
+	const joined: ProvisionedTenant[] = [];
+	for (const u of units) {
+		const key = keyOf.get(u.tenant_id);
+		if (!key) throw new AdminError(500, 'a member set names a dōjō that does not exist');
+		const role = await ensureMembership(db, u.tenant_id, principalId, 'employer', authMethodFor(provider), roleForStanding('member'), {
+			provider,
+			unit: u.unit
+		});
+		joined.push({ id: u.tenant_id, key, origin: 'organization', role, created: false });
+	}
+	return joined;
+}
+
+/** The forge half of a pass: the personal dōjō, and the org dōjōs a forge read proves. */
+async function ensureForgeProvisioned(
+	db: DojoClient,
+	principalId: string,
+	facts: ForgeFacts | null,
+	fallback: FallbackIdentity
 ): Promise<ProvisionResult> {
 	if (!facts) {
 		// Name the personal dōjō from the email's local part. A derived slug, not

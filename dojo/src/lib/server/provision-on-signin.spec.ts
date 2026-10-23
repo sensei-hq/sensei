@@ -45,14 +45,35 @@ describe('provisionOnSignIn', () => {
 		const [, principalId, token, fallback] = mocks.provisionWithToken.mock.calls[0];
 		expect(principalId).toBe('p1');
 		expect(token).toBe('gho_forge_token');
-		expect(fallback).toEqual({ email: 'j@example.com', githubId: '4242' });
+		expect(fallback).toEqual({ email: 'j@example.com', githubId: '4242', microsoft: { state: 'none' } });
 		expect(mocks.getUser).toHaveBeenCalledWith('at');
 	});
 
 	it('keys on the login Supabase validated, not the one the session claims', async () => {
 		await provisionOnSignIn({ ...SESSION, user: { id: 'someone-else', email: 'x@example.com' } }, 'SIGNED_IN');
 		expect(mocks.resolvePrincipalId.mock.calls[0][1]).toBe('u1');
-		expect(mocks.provisionWithToken.mock.calls[0][3]).toEqual({ email: 'j@example.com', githubId: '4242' });
+		expect(mocks.provisionWithToken.mock.calls[0][3]).toEqual({ email: 'j@example.com', githubId: '4242', microsoft: { state: 'none' } });
+	});
+
+	it('passes the Microsoft account Supabase linked to the login, by its Entra object id (#308 R5c)', async () => {
+		// A Microsoft sign-in: GoTrue recorded the verified ID token's claims as the
+		// azure identity's identity_data.custom_claims (oid among them).
+		mocks.getUser.mockResolvedValue({
+			data: {
+				user: {
+					id: 'u1',
+					email: 'j@example.com',
+					identities: [{ provider: 'azure', id: 'pairwise-sub', identity_data: { full_name: 'J Example', custom_claims: { oid: '00000000-0000-4000-8000-0000000000a1' } } }]
+				}
+			},
+			error: null
+		});
+		await provisionOnSignIn(SESSION, 'SIGNED_IN');
+		expect(mocks.provisionWithToken.mock.calls[0][3]).toEqual({
+			email: 'j@example.com',
+			githubId: null,
+			microsoft: { state: 'ok', objectId: '00000000-0000-4000-8000-0000000000a1', name: 'J Example' }
+		});
 	});
 
 	it('provisions nothing when Supabase will not vouch for the session', async () => {
