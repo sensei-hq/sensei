@@ -17,6 +17,9 @@ create table if not exists dojo.tenant_connections (
   , external_slug  text                not null            -- the forge's name for the org
   , connected_by   uuid                not null            -- the user who linked it
   , verified_at    timestamptz                             -- when org control was last proven
+  , token_secret_id  uuid
+  , token_state      dojo.forge_token_state
+  , token_expires_at timestamptz
   , created_at     timestamptz         not null default now()
   , updated_at     timestamptz         not null default now()
 );
@@ -62,6 +65,19 @@ comment on column dojo.tenant_connections.verified_at is
 connection exists but grants nothing. Re-proved on each provisioning pass, and
 only a pass that positively read the forge may clear it — an API outage must
 never be read as "the org is gone".';
+
+comment on column dojo.tenant_connections.token_secret_id is
+'The Supabase Vault secret (vault.secrets.id) holding the forge token an admin
+pasted for this connection (#308 R5b, D35: an Azure DevOps PAT). NULL when none.
+Never the token: it is written, replaced, removed and read only through
+dojo.set_forge_token / remove_forge_token / forge_token (service_role only).';
+
+comment on column dojo.tenant_connections.token_state is
+'ok, or needs_new_token once the forge rejected the stored token (expired or
+revoked) — reads stop until an admin replaces it. NULL when no token is stored.';
+
+comment on column dojo.tenant_connections.token_expires_at is
+'When the stored token expires, when the forge says (NULL when unknown).';
 
 -- RLS on, and no session grant: read only by provisioning (the system) and
 -- dojo.register_repository, which returns a reason, never another tenant's id (#236).
