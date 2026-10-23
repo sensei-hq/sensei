@@ -41,7 +41,7 @@ import {
 	type ForgeUser
 } from './forge-github';
 import { forgeRefFromRepoKey } from './repo-mapping';
-import { assertGithubAccount } from './github-identity';
+import { assertGithubAccount, isGithubToken } from './github-identity';
 
 /** One tenant this pass established the caller's place in. */
 export interface ProvisionedTenant {
@@ -989,7 +989,9 @@ export async function provisionWithToken(
 	fallback: FallbackIdentity = {},
 	fetchImpl: typeof fetch = fetch
 ): Promise<ProvisionResult> {
-	if (!providerToken) return ensureProvisioned(db, principalId, null, fallback);
+	// Only a GitHub token is ever sent to GitHub: a Microsoft sign-in's provider
+	// token (#308 R5c) provisions as a pass with no forge token.
+	if (!isGithubToken(providerToken)) return ensureProvisioned(db, principalId, null, fallback);
 
 	let facts: ForgeFacts;
 	try {

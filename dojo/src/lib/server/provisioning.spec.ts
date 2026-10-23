@@ -705,13 +705,30 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		const out = await provisionWithToken(
 			db as never,
 			PRINCIPAL,
-			'gh-token',
+			'gho_token',
 			{ githubId: '4242' },
 			forgeFetch(200, GH_USER, GH_ORGS)
 		);
 		expect(out.synced).toBe(true);
 		expect(out.personal?.key).toBe('personal/devuser');
 		expect(out.tenants.map((t) => t.key)).toEqual(['organization/sensei-hq']);
+	});
+
+	it('never sends a Microsoft sign-in`s token to GitHub — it is not a GitHub token (#308 R5c)', async () => {
+		// A login linked to GitHub AND Microsoft, signing in with Microsoft: the
+		// session's provider_token is a Microsoft Graph token. Read as GitHub's,
+		// GitHub would see it and answer 401 — "your GitHub grant is dead".
+		const calls: string[] = [];
+		const spy = (async (url: string | URL | Request) => {
+			calls.push(String(url));
+			return { ok: false, status: 401, json: async () => ({}) } as Response;
+		}) as unknown as typeof fetch;
+		const db = fakeDojoDb(tables());
+		const microsoft = ['eyJ0eXAiOiJKV1QifQ', 'eyJhdWQiOiJ4In0', 'c2ln'].join('.');
+		const out = await provisionWithToken(db as never, PRINCIPAL, microsoft, { email: 'j@example.com', githubId: '4242' }, spy);
+		expect(calls).toEqual([]);
+		expect(out).toMatchObject({ synced: false, reason: 'no_forge_token' });
+		expect(out.personal?.key).toBe('personal/j');
 	});
 
 	it('reports forge_unreachable — distinctly from no_forge_token — when the API fails', async () => {
@@ -722,7 +739,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		const out = await provisionWithToken(
 			db as never,
 			PRINCIPAL,
-			'gh-token',
+			'gho_token',
 			{ email: 'j@example.com' },
 			forgeFetch(503, GH_USER, GH_ORGS)
 		);
@@ -745,7 +762,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		const out = await provisionWithToken(
 			db as never,
 			PRINCIPAL,
-			'revoked-token',
+			'gho_revoked_token',
 			{ email: 'j@example.com' },
 			forgeFetch(401, GH_USER, GH_ORGS)
 		);
@@ -765,7 +782,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		const out = await provisionWithToken(
 			db as never,
 			PRINCIPAL,
-			'gh-token',
+			'gho_token',
 			{ email: 'j@example.com' },
 			forgeFetch(403, GH_USER, GH_ORGS)
 		);
@@ -779,7 +796,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		const err = await provisionWithToken(
 			db as never,
 			PRINCIPAL,
-			'someone-elses-token',
+			'gho_someone_elses_token',
 			{ email: 'j@example.com', githubId: '111' },
 			forgeFetch(200, GH_USER, GH_ORGS)
 		).catch((e) => e);
@@ -792,7 +809,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 
 	it('REFUSES a token when the login has no GitHub account linked', async () => {
 		const db = fakeDojoDb(tables());
-		const err = await provisionWithToken(db as never, PRINCIPAL, 'gh-token', { email: 'j@example.com' }, forgeFetch(200, GH_USER, GH_ORGS)).catch((e) => e);
+		const err = await provisionWithToken(db as never, PRINCIPAL, 'gho_token', { email: 'j@example.com' }, forgeFetch(200, GH_USER, GH_ORGS)).catch((e) => e);
 		expect(err.status).toBe(403);
 		expect(db.tables.memberships.rows).toEqual([]);
 	});
@@ -866,7 +883,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		// only server-side place `provider_token` is reachable.
 		const db = fakeDojoDb(withRegisteredRepo());
 		const forge = fullForgeFetch({ 'devuser/thing': false });
-		const out = await provisionWithToken(db as never, PRINCIPAL, 'gh-token', { githubId: '4242' }, forge.fn);
+		const out = await provisionWithToken(db as never, PRINCIPAL, 'gho_token', { githubId: '4242' }, forge.fn);
 
 		expect(out.synced).toBe(true);
 		expect(out.visibility).toMatchObject({ captured: 1 });
@@ -891,7 +908,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		const out = await provisionWithToken(
 			db as never,
 			PRINCIPAL,
-			'gh-token',
+			'gho_token',
 			{ email: 'j@example.com' },
 			forgeFetch(503, GH_USER, GH_ORGS)
 		);
@@ -1175,11 +1192,11 @@ describe('mirrorRepositoryRoles — the per-person forge mirror', () => {
 				return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
 			}) as unknown as typeof fetch;
 
-		const ok = await provisionWithToken(fakeDojoDb(tables()) as never, PRINCIPAL, 'tok', { githubId: '4242' }, fetchAll(200));
+		const ok = await provisionWithToken(fakeDojoDb(tables()) as never, PRINCIPAL, 'gho_tok', { githubId: '4242' }, fetchAll(200));
 		expect(ok.synced).toBe(true);
 		expect(ok.roles).toEqual({ tenants: 1, repositories: 2 });
 
-		const failed = await provisionWithToken(fakeDojoDb(tables()) as never, PRINCIPAL, 'tok', { githubId: '4242' }, fetchAll(502));
+		const failed = await provisionWithToken(fakeDojoDb(tables()) as never, PRINCIPAL, 'gho_tok', { githubId: '4242' }, fetchAll(502));
 		expect(failed.synced).toBe(true);
 		expect(failed.roles?.error).toMatch(/502/);
 		expect(failed.roles?.tenants).toBeUndefined();

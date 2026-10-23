@@ -117,6 +117,17 @@ describe('captureForgeToken — the /auth/session response', () => {
 		expect(res.headers.getSetCookie()).toContain('session=x; Path=/');
 	});
 
+	it('never sends a Microsoft sign-in`s token to GitHub, and seals nothing (#308 R5c)', async () => {
+		// The login is linked to GitHub (111) and has just signed in with Microsoft:
+		// the posted provider_token is Microsoft's, which GitHub must never see.
+		const gh = githubSays(111);
+		const microsoft = { ...GITHUB_SESSION, provider_token: ['eyJ0eXAiOiJKV1QifQ', 'eyJhdWQiOiJ4In0', 'c2ln'].join('.') };
+		const res = await captureForgeToken(sync({ event: 'SIGNED_IN', session: microsoft }), answered(SYNCED), SECRET, NOW, gh.fn);
+		expect(gh.calls).toEqual([]);
+		expect(res.headers.getSetCookie().some((c) => c.startsWith(`${FORGE_TOKEN_COOKIE}=`))).toBe(false);
+		expect(res.status).toBe(200);
+	});
+
 	it('does not seal a token GitHub would not identify', async () => {
 		const res = await captureForgeToken(sync({ event: 'SIGNED_IN', session: GITHUB_SESSION }), answered(SYNCED), SECRET, NOW, githubSays(111, 401).fn);
 		expect(res.headers.getSetCookie().some((c) => c.startsWith(`${FORGE_TOKEN_COOKIE}=`))).toBe(false);

@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { AdminError } from './admin-data';
 import { ForgeReadError } from './forge-github';
 import { fakeFetch } from './fake-forge-fetch';
-import { githubIdentityId, assertGithubAccount, requireGithubTokenOwner } from './github-identity';
+import { githubIdentityId, assertGithubAccount, requireGithubTokenOwner, isGithubToken } from './github-identity';
 
 const linked = (id: unknown) => ({
 	id: 'auth-alice',
@@ -73,5 +73,26 @@ describe('requireGithubTokenOwner', () => {
 	it('throws when GitHub cannot answer — an unread token is not anyone`s', async () => {
 		const f = fakeFetch({ '/user': { status: 401, body: {} } });
 		await expect(requireGithubTokenOwner('tok', '111', f.fn)).rejects.toBeInstanceOf(ForgeReadError);
+	});
+});
+
+// A Microsoft sign-in (#308 R5c) also hands the dōjō a provider token — a
+// Microsoft Graph token. It must never be sent to GitHub: a login linked to both
+// GitHub and Microsoft would otherwise post its Microsoft token to api.github.com
+// and read GitHub's 401 as "your GitHub grant is dead". GitHub's own tokens carry
+// a documented prefix (gho_ OAuth, ghu_ user-to-server, ghp_/github_pat_ personal,
+// ghs_/ghr_ — github.blog "Behind GitHub's new authentication token formats").
+describe('isGithubToken', () => {
+	it('is true for the documented GitHub token formats', () => {
+		for (const t of ['gho_16C7e42F292c6912E7710c838347Ae178B4a', 'ghu_abc123', 'ghp_abc123', 'ghs_abc', 'ghr_abc', 'github_pat_11ABC_def']) {
+			expect(isGithubToken(t)).toBe(true);
+		}
+	});
+
+	it('is false for a Microsoft token (a JWT), anything else, or nothing', () => {
+		const jwt = ['eyJ0eXAiOiJKV1QifQ', 'eyJhdWQiOiJ4In0', 'c2ln'].join('.');
+		for (const t of [jwt, 'EwBwA8l6BAAU', 'gho_', 'gho_a.b', ' gho_abc', '', null, undefined, 42]) {
+			expect(isGithubToken(t)).toBe(false);
+		}
 	});
 });
