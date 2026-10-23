@@ -1,7 +1,7 @@
 set search_path to dojo, extensions;
 
 -- A connection that goes — deleted, or with its dōjō — takes its Vault secret
--- with it (#308 R5b, D35), so no token outlives the connection it was pasted for.
+-- with it (#308 R5b, D42), so no token outlives the connection it was pasted for.
 create or replace function dojo.tenant_connections_forget_token()
 returns trigger
 language plpgsql

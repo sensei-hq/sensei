@@ -1,11 +1,11 @@
 set search_path to dojo, extensions;
 
--- Store the forge token an admin pasted for one connection (#308 R5b, D35: an
--- Azure DevOps PAT) in Supabase Vault, or replace the one stored.
+-- Store the forge grant an admin connected for one connection (#308 R5b, D42: an
+-- Azure DevOps admin's Microsoft Entra refresh token) in Supabase Vault, or replace the one stored.
 --
--- The caller is the server (service_role). It has already validated the token
--- against the forge — it lists the organization and proves the admin — so a
--- failing token never reaches this. What this enforces:
+-- The caller is the server (service_role). It has already validated the grant
+-- against the forge — its owner is in the organization and proves the admin —
+-- so a failing grant never reaches this. What this enforces:
 --   * the connection exists, and the principal is an ACTIVE admin of its dōjō;
 --   * the token is not blank;
 --   * ONE secret per connection: the first write creates it, a replace updates it
@@ -83,6 +83,6 @@ revoke all on function dojo.set_forge_token(uuid, dojo.forge_provider, text, tex
 grant execute on function dojo.set_forge_token(uuid, dojo.forge_provider, text, text, timestamptz) to service_role;
 
 comment on function dojo.set_forge_token(uuid, dojo.forge_provider, text, text, timestamptz) is
-'Store or replace a connection''s forge token in Supabase Vault (#308 R5b, D35):
+'Store or replace a connection''s forge token in Supabase Vault (#308 R5b, D42):
 one secret per connection, an active admin of the dōjō only, audited without the
 token. service_role only — the server validates the token against the forge first.';

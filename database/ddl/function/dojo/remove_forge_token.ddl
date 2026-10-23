@@ -1,6 +1,6 @@
 set search_path to dojo, extensions;
 
--- Remove a connection's stored forge token (#308 R5b, D35): delete its Vault
+-- Remove a connection's stored forge token (#308 R5b, D42): delete its Vault
 -- secret, clear the connection's token columns and audit forge_token_removed (by
 -- whom; never the token). An active admin of the dōjō only. True when a token was
 -- removed, false when there was none.

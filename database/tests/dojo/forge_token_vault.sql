@@ -1,4 +1,5 @@
--- An Azure DevOps PAT is a secret (#308 R5b, D35): it lives in Supabase Vault,
+-- An Azure DevOps grant is a secret (#308 R5b, D42: the Microsoft Entra refresh
+-- token of the admin who connected; access tokens are never stored): it lives in Supabase Vault,
 -- and dojo.tenant_connections keeps only the Vault secret's id, the token's state
 -- (ok | needs_new_token) and its expiry when known.
 --
@@ -38,7 +39,8 @@ begin
         'dojo.set_forge_token(uuid, dojo.forge_provider, text, text, timestamptz)',
         'dojo.remove_forge_token(uuid, dojo.forge_provider, text)',
         'dojo.forge_token(dojo.forge_provider, text)',
-        'dojo.mark_forge_token_rejected(dojo.forge_provider, text)'
+        'dojo.mark_forge_token_rejected(dojo.forge_provider, text)',
+        'dojo.rotate_forge_token(dojo.forge_provider, text, text)'
     ] loop
         foreach r in array array['anon', 'authenticated', 'public'] loop
             if r = 'public' then
@@ -154,6 +156,40 @@ begin
        or (select token_expires_at from dojo.tenant_connections where external_id = 'ztest-az-b01') is not null then
         raise exception 'vault: a replace did not reset the state and expiry';
     end if;
+end $$;
+reset role;
+
+-- A refresh rotates the token (D42): the system stores the new one in place —
+-- one secret, the new value, no audit row (it is not a person's act).
+set local role service_role;
+do $$
+declare
+    v_secret uuid;
+    v_audits bigint;
+begin
+    select c.token_secret_id into v_secret from dojo.tenant_connections c where c.external_id = 'ztest-az-b01';
+    select count(*) into v_audits from dojo.audit_events where tenant_id = 'b0000000-0000-4000-8000-000000000b0a';
+    perform dojo.rotate_forge_token('azure_devops', 'ztest-az-b01', 'ztest-pat-ROTATED-0009');
+    if (select token_secret_id from dojo.tenant_connections where external_id = 'ztest-az-b01') <> v_secret
+       or (select count(*) from vault.decrypted_secrets where decrypted_secret like 'ztest-pat-%') <> 1 then
+        raise exception 'rotate: expected the one secret, updated in place';
+    end if;
+    if dojo.forge_token('azure_devops', 'ztest-az-b01') <> 'ztest-pat-ROTATED-0009' then
+        raise exception 'rotate: the rotated token is not the one read';
+    end if;
+    if (select count(*) from dojo.audit_events where tenant_id = 'b0000000-0000-4000-8000-000000000b0a') <> v_audits then
+        raise exception 'rotate: a rotation was audited';
+    end if;
+    begin
+        perform dojo.rotate_forge_token('azure_devops', 'ztest-az-none', 'ztest-pat-NOWHERE');
+        raise exception 'rotate: a connection with no token was rotated';
+    exception when no_data_found then null;
+    end;
+    begin
+        perform dojo.rotate_forge_token('azure_devops', 'ztest-az-b01', ' ');
+        raise exception 'rotate: a blank token was stored';
+    exception when invalid_parameter_value then null;
+    end;
 end $$;
 reset role;
 

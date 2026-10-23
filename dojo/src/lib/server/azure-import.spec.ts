@@ -110,7 +110,7 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 				tenant_id: org?.id,
 				user_id: ME,
 				role: 'admin',
-				authenticated_via: 'azure_devops_pat',
+				authenticated_via: 'azure_devops',
 				source: 'provisioned',
 				source_provider: 'azure_devops',
 				source_unit: ORG_ID
@@ -118,7 +118,7 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 		);
 		// The Azure account is recorded as this person's — what a member read keys on.
 		expect(d.tables.identities.rows).toEqual([
-			expect.objectContaining({ principal_id: ME, provider: 'azure_devops_pat', subject: ME_AZ })
+			expect.objectContaining({ principal_id: ME, provider: 'azure_devops', subject: ME_AZ })
 		]);
 
 		const calls = d.rpcCalls;
@@ -413,7 +413,7 @@ describe('members — #309\'s rule, read from the organization\'s side', () => {
 			p_tenant: HERE,
 			p_provider: 'azure_devops',
 			p_unit: ORG_ID,
-			p_auth: 'azure_devops_pat',
+			p_auth: 'azure_devops',
 			p_subjects: [ME_AZ, 'az-user-2']
 		});
 		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1 });

@@ -37,14 +37,14 @@ insert into dojo.principals (id, auth_user_id, display_name) values
   ('a0000000-0000-4000-8000-000000000d07', 'a1000000-0000-4000-8000-000000000d07', 'ztest-um-gh-left'),
   ('a0000000-0000-4000-8000-000000000d08', 'a1000000-0000-4000-8000-000000000d08', 'ztest-um-other-org');
 insert into dojo.identities (principal_id, provider, subject) values
-  ('a0000000-0000-4000-8000-000000000d01', 'azure_devops_pat', 'ztest-az-s1'),
-  ('a0000000-0000-4000-8000-000000000d02', 'azure_devops_pat', 'ztest-az-s2'),
+  ('a0000000-0000-4000-8000-000000000d01', 'azure_devops', 'ztest-az-s1'),
+  ('a0000000-0000-4000-8000-000000000d02', 'azure_devops', 'ztest-az-s2'),
   ('a0000000-0000-4000-8000-000000000d03', 'github_oauth',     'ztest-gh-s3'),
-  ('a0000000-0000-4000-8000-000000000d04', 'azure_devops_pat', 'ztest-az-s4'),
-  ('a0000000-0000-4000-8000-000000000d05', 'azure_devops_pat', 'ztest-az-s5'),
-  ('a0000000-0000-4000-8000-000000000d06', 'azure_devops_pat', 'ztest-az-s6'),
-  ('a0000000-0000-4000-8000-000000000d07', 'azure_devops_pat', 'ztest-az-s7'),
-  ('a0000000-0000-4000-8000-000000000d08', 'azure_devops_pat', 'ztest-az-s8');
+  ('a0000000-0000-4000-8000-000000000d04', 'azure_devops', 'ztest-az-s4'),
+  ('a0000000-0000-4000-8000-000000000d05', 'azure_devops', 'ztest-az-s5'),
+  ('a0000000-0000-4000-8000-000000000d06', 'azure_devops', 'ztest-az-s6'),
+  ('a0000000-0000-4000-8000-000000000d07', 'azure_devops', 'ztest-az-s7'),
+  ('a0000000-0000-4000-8000-000000000d08', 'azure_devops', 'ztest-az-s8');
 insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
   ('b0000000-0000-4000-8000-000000000d0a', 'organization/ztest-um-az', 'organization', 'ztest-um-az', 'Azure org', 'x'),
   ('b0000000-0000-4000-8000-000000000d0b', 'organization/ztest-um-gh', 'organization', 'ztest-um-gh', 'GitHub org', 'x');
@@ -55,21 +55,21 @@ insert into dojo.tenant_connections (tenant_id, provider, external_id, external_
   ('b0000000-0000-4000-8000-000000000d0a', 'github',       'ztest-um-gh-az', 'ztest-um-gh-az', 'a0000000-0000-4000-8000-000000000d01'),
   ('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org-2', 'ztest-um-az-2', 'a0000000-0000-4000-8000-000000000d01');
 insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via, source, source_provider, source_unit, disabled_at, disabled_reason) values
-  ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d01', 'admin',       'employer', 'azure_devops_pat', 'provisioned', 'azure_devops', 'ztest-um-org',   null, null),
-  ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d02', 'admin',       'employer', 'azure_devops_pat', 'provisioned', 'azure_devops', 'ztest-um-org',   null, null),
+  ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d01', 'admin',       'employer', 'azure_devops', 'provisioned', 'azure_devops', 'ztest-um-org',   null, null),
+  ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d02', 'admin',       'employer', 'azure_devops', 'provisioned', 'azure_devops', 'ztest-um-org',   null, null),
   ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d03', 'contributor', 'employer', 'github_oauth',     'provisioned', 'azure_devops', 'ztest-um-org',   null, null),
   ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d04', 'contributor', 'client',   'sso',              'invited',     null,           null,             null, null),
-  ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d05', 'contributor', 'employer', 'azure_devops_pat', 'provisioned', 'azure_devops', 'ztest-um-org',   now(), 'left_org'),
+  ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d05', 'contributor', 'employer', 'azure_devops', 'provisioned', 'azure_devops', 'ztest-um-org',   now(), 'left_org'),
   ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d06', 'lead',        'employer', 'github_oauth',     'provisioned', 'github',       'ztest-um-gh-az', null, null),
   ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d07', 'admin',       'employer', 'github_oauth',     'provisioned', 'github',       'ztest-um-gh-az', now(), 'left_org'),
-  ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d08', 'contributor', 'employer', 'azure_devops_pat', 'provisioned', 'azure_devops', 'ztest-um-org-2', null, null),
+  ('b0000000-0000-4000-8000-000000000d0a', 'a0000000-0000-4000-8000-000000000d08', 'contributor', 'employer', 'azure_devops', 'provisioned', 'azure_devops', 'ztest-um-org-2', null, null),
   ('b0000000-0000-4000-8000-000000000d0b', 'a0000000-0000-4000-8000-000000000d02', 'contributor', 'employer', 'github_oauth',     'provisioned', 'github',       'ztest-um-gh',    null, null);
 
 -- A signed-in caller cannot run it: it follows the server's forge read.
 set local role authenticated;
 do $$
 begin
-    perform dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org', 'azure_devops_pat',
+    perform dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org', 'azure_devops',
                                         array['ztest-az-s1']);
     raise exception 'a signed-in caller reconciled unit members';
 exception when insufficient_privilege then null;
@@ -90,25 +90,25 @@ declare
 begin
     -- No list, or an empty one, is not a complete read: refused, nobody ended.
     begin
-        perform dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org', 'azure_devops_pat', null);
+        perform dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org', 'azure_devops', null);
         raise exception 'unit members: a NULL list was accepted';
     exception when invalid_parameter_value then null;
     end;
     begin
-        perform dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org', 'azure_devops_pat', '{}'::text[]);
+        perform dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org', 'azure_devops', '{}'::text[]);
         raise exception 'unit members: an empty list was accepted';
     exception when invalid_parameter_value then null;
     end;
 
     -- A dōjō that is not connected to the forge is not this forge's to end.
-    select dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0b', 'azure_devops', 'ztest-um-org', 'azure_devops_pat',
+    select dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0b', 'azure_devops', 'ztest-um-org', 'azure_devops',
                                        array['ztest-az-s1']) into n;
     if n <> 0 then
         raise exception 'unit members: a dōjō not connected to Azure DevOps had % memberships ended', n;
     end if;
 
     -- The complete read lists the admin and the returner; the leaver is gone.
-    select dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org', 'azure_devops_pat',
+    select dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000d0a', 'azure_devops', 'ztest-um-org', 'azure_devops',
                                        array['ztest-az-s1', 'ztest-az-s5', 'ztest-az-s7']) into n;
     if n <> 1 then
         raise exception 'unit members: expected one membership ended, got %', n;

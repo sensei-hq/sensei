@@ -45,7 +45,7 @@ insert into dojo.tenant_connections (tenant_id, provider, external_id, external_
   ('b0000000-0000-4000-8000-00000000036f', 'github',       'ztest-md-dual-gh', 'ztest-md-dual', 'a1000000-0000-4000-8000-000000000361'),
   ('b0000000-0000-4000-8000-00000000036f', 'azure_devops', 'ztest-md-dual-az', 'ztest-md-dual', 'a1000000-0000-4000-8000-000000000361');
 insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via, source, source_provider, source_unit) values
-  ('b0000000-0000-4000-8000-00000000036f', 'a0000000-0000-4000-8000-000000000361', 'admin', 'employer', 'azure_devops_pat', 'provisioned', 'azure_devops', 'ztest-md-dual-az');
+  ('b0000000-0000-4000-8000-00000000036f', 'a0000000-0000-4000-8000-000000000361', 'admin', 'employer', 'azure_devops', 'provisioned', 'azure_devops', 'ztest-md-dual-az');
 
 -- A signed-in caller cannot run it: it is provisioning's, after a forge read.
 set local role authenticated;

@@ -67,17 +67,21 @@ only a pass that positively read the forge may clear it — an API outage must
 never be read as "the org is gone".';
 
 comment on column dojo.tenant_connections.token_secret_id is
-'The Supabase Vault secret (vault.secrets.id) holding the forge token an admin
-pasted for this connection (#308 R5b, D35: an Azure DevOps PAT). NULL when none.
-Never the token: it is written, replaced, removed and read only through
-dojo.set_forge_token / remove_forge_token / forge_token (service_role only).';
+'The Supabase Vault secret (vault.secrets.id) holding this connection''s forge
+grant (#308 R5b, D42: the Microsoft Entra refresh token of the Azure DevOps admin
+who connected; access tokens are never stored). NULL when none. Never the token:
+it is written, rotated, replaced, removed and read only through
+dojo.set_forge_token / rotate_forge_token / remove_forge_token / forge_token
+(service_role only).';
 
 comment on column dojo.tenant_connections.token_state is
-'ok, or needs_new_token once the forge rejected the stored token (expired or
-revoked) — reads stop until an admin replaces it. NULL when no token is stored.';
+'ok, or needs_new_token once the forge rejected the stored grant (a refresh
+answered invalid_grant: revoked, expired, or consent withdrawn) — reads stop until
+an admin reconnects. NULL when no token is stored.';
 
 comment on column dojo.tenant_connections.token_expires_at is
-'When the stored token expires, when the forge says (NULL when unknown).';
+'When the stored grant expires, when the forge says (NULL when unknown — Entra does
+not report a refresh token''s lifetime).';
 
 -- RLS on, and no session grant: read only by provisioning (the system) and
 -- dojo.register_repository, which returns a reason, never another tenant's id (#236).

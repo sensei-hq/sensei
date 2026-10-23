@@ -1,7 +1,7 @@
 set search_path to dojo, extensions;
 
 -- Read a connection's stored forge token, decrypted from Supabase Vault, for the
--- server's own reads of the forge (#308 R5b, D35). service_role only; the server
+-- server's own reads of the forge (#308 R5b, D42). service_role only; the server
 -- uses it for one request and never returns, logs or echoes it.
 --
 -- Fails rather than answering NULL: no connection or no token is no_data_found;

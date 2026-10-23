@@ -113,11 +113,11 @@ const DOJO_HOST = 'dojo.sensei-hq.org';
 
 /** `dojo.forge_provider` → `dojo.auth_method`. The auth_method enum has no
  *  generic `oauth` label yet (§V.1 puts it in phase 2): GitHub is proven by its
- *  sign-in, Azure DevOps by the PAT an organization admin pasted (#308 R5b, D35);
+ *  sign-in, Azure DevOps by an organization admin's Microsoft Entra connect (#308 R5b, D42);
  *  GitLab and Bitbucket have no valid value yet. */
 export function authMethodFor(provider: ForgeProvider): string {
 	if (provider === 'github') return 'github_oauth';
-	if (provider === 'azure_devops') return 'azure_devops_pat';
+	if (provider === 'azure_devops') return 'azure_devops';
 	throw new AdminError(
 		501,
 		`provisioning from ${provider} needs the generic 'oauth' auth_method (phase 2)`
