@@ -990,49 +990,27 @@ describe('adoptConnectedTenant — losing the race must JOIN, never fork', () =>
 	});
 });
 
-// The PERSONAL half of the same race: `personal/devuser` AND
-// `personal/devuser-2`, also 2ms apart.
-//
-// The `-2` escalation is CORRECT for two different humans who are both
-// `devuser` on two forges — that is exactly why it exists (§II.3). It is
-// wrong when a pass collides with ITSELF. The distinguisher is membership: if
-// the colliding tenant already has a membership for this same principal, it is
-// mine and I raced myself; if it does not, it is someone else's and I must land
-// somewhere of my own.
-import { adoptOwnPersonalTenant } from './provisioning';
-
-describe('adoptOwnPersonalTenant — tell "I raced myself" from "another human, same name"', () => {
-	const ALICE = 'p-alice';
-	function tbl(memberUserId: string | null): Record<string, FakeTable> {
-		return {
-			tenants: {
-				rows: [{ id: 't-existing', key: 'personal/devuser', origin: 'personal', slug: 'devuser' }],
-				uniques: [{ columns: ['key'] }]
-			},
-			memberships: {
-				rows: memberUserId ? [{ id: 'm1', tenant_id: 't-existing', user_id: memberUserId }] : [],
-				uniques: [{ columns: ['tenant_id', 'user_id'] }]
-			}
-		};
-	}
-
-	it('adopts the colliding tenant when THIS principal is already a member', async () => {
-		const db = fakeDojoDb(tbl(ALICE));
-		await expect(
-			adoptOwnPersonalTenant(db as never, 'personal/devuser', ALICE)
-		).resolves.toMatchObject({ id: 't-existing', key: 'personal/devuser' });
-	});
-
-	it('returns null for a DIFFERENT human with the same login, so -2 still happens', async () => {
-		// Losing this distinction would silently join two unrelated people into one
-		// dōjō — far worse than a duplicate.
-		const db = fakeDojoDb(tbl('p-someone-else'));
-		await expect(adoptOwnPersonalTenant(db as never, 'personal/devuser', ALICE)).resolves.toBeNull();
-	});
-
-	it('returns null when the colliding tenant has no members at all', async () => {
-		const db = fakeDojoDb(tbl(null));
-		await expect(adoptOwnPersonalTenant(db as never, 'personal/devuser', ALICE)).resolves.toBeNull();
+// #331: two sign-in passes milliseconds apart (kavach posts once per auth event)
+// each found "no personal dōjō yet" and the loser made `<slug>-2`. The find and
+// the create are now one database function under a per-person lock; the race
+// itself, and "another person's slug escalates, never joins", are proved in
+// database/tests/dojo/personal_tenant_once.sql.
+describe('the personal dōjō is found or created by the database, in one step (#331)', () => {
+	it('asks ensure_personal_tenant with the person, the slug, the name, the method and the url', async () => {
+		const db = fakeDojoDb(tables());
+		await ensureProvisioned(db as never, PRINCIPAL, FACTS);
+		const calls = db.rpcCalls.filter((c) => c.fn === 'ensure_personal_tenant');
+		expect(calls).toHaveLength(1);
+		expect(calls[0].args).toMatchObject({
+			p_principal: PRINCIPAL,
+			p_slug: 'devuser',
+			p_name: "Dev User's Dōjō",
+			p_auth: 'github_oauth'
+		});
+		// The same url base every dōjō gets (tenantUrl), not a second spelling of it.
+		const tenant = db.tables.tenants.rows.find((t) => t.key === 'personal/devuser');
+		expect(calls[0].args.p_url_base).toBeTruthy();
+		expect(tenant?.dojo_url).toBe(`${calls[0].args.p_url_base}/personal/devuser`);
 	});
 });
 

@@ -254,6 +254,41 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 		return api;
 	}
 
+	/** `dojo.ensure_personal_tenant` over the fake tables: the person's personal
+	 *  dōjō by their personal membership, else a new tenant at the first free
+	 *  `slug`, `slug-2`… with its admin membership. The lock and the race are the
+	 *  database's to prove (database/tests/dojo/personal_tenant_once.sql). */
+	function ensurePersonalTenant(args: Record<string, unknown>) {
+		const tenants = state.tenants;
+		const memberships = state.memberships;
+		const failed = tenants?.error ?? memberships?.error ?? tenants?.writeError ?? memberships?.writeError;
+		if (failed) return { data: null, error: failed };
+		const principal = args.p_principal;
+		for (const m of memberships.rows) {
+			if (m.user_id !== principal) continue;
+			const t = tenants.rows.find((r) => r.id === m.tenant_id && r.origin === 'personal');
+			if (t) return { data: { tenant_id: t.id, key: t.key, role: m.role, created: false }, error: null };
+		}
+		for (let attempt = 1; attempt <= 20; attempt += 1) {
+			const slug = attempt === 1 ? String(args.p_slug) : `${args.p_slug}-${attempt}`;
+			const key = `personal/${slug}`;
+			if (tenants.rows.some((r) => r.key === key)) continue;
+			const id = nextId('tena');
+			tenants.rows.push({ id, key, origin: 'personal', slug, name: args.p_name, dojo_url: `${args.p_url_base}/${key}`, scope: 'private' });
+			memberships.rows.push({
+				id: nextId('memb'),
+				tenant_id: id,
+				user_id: principal,
+				kind: 'personal',
+				authenticated_via: args.p_auth,
+				role: 'admin',
+				source: 'provisioned'
+			});
+			return { data: { tenant_id: id, key, role: 'admin', created: true }, error: null };
+		}
+		return { data: null, error: { code: '23505', message: `no free personal slug near "${args.p_slug}"` } };
+	}
+
 	return {
 		from: (table: string) => builder(table),
 		/** A set-returning function, read like a table: `rpc('my_repositories')`
@@ -262,6 +297,10 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 		 *  database's to prove, in database/tests; here the fixture IS its result. */
 		rpc: (fn: string, args?: Record<string, unknown>) => {
 			rpcCalls.push({ fn, args: args ?? {} });
+			if (fn === 'ensure_personal_tenant' && !state['rpc:ensure_personal_tenant']) {
+				const result = ensurePersonalTenant(args ?? {});
+				return { single: () => Promise.resolve(result) };
+			}
 			return builder(`rpc:${fn}`);
 		},
 		/** Every rpc made, with its arguments, for assertions on what was asked. */

@@ -217,12 +217,8 @@ async function insertTenantWithFreeSlug(
 	db: DojoClient,
 	origin: 'personal' | 'organization',
 	preferredSlug: string,
-	name: string,
-	/** Consulted on a key collision BEFORE escalating to `-2`. Returning a tenant
-	 *  means "that collision is me, racing myself" — adopt it instead of forking.
-	 *  Absent for orgs, which are arbitrated by their forge connection instead. */
-	adoptIfMine?: (key: string) => Promise<{ id: string; key: string } | null>
-): Promise<{ id: string; key: string; slug: string; adopted?: boolean }> {
+	name: string
+): Promise<{ id: string; key: string; slug: string }> {
 	for (let attempt = 1; attempt <= 20; attempt += 1) {
 		const slug = attempt === 1 ? preferredSlug : `${preferredSlug}-${attempt}`;
 		const key = `${origin}/${slug}`;
@@ -233,46 +229,8 @@ async function insertTenantWithFreeSlug(
 			.single();
 		if (!error) return { id: (data as { id: string }).id, key, slug };
 		if ((error as { code?: string }).code !== '23505') throw new AdminError(500, error.message);
-		const mine = adoptIfMine ? await adoptIfMine(key) : null;
-		if (mine) return { id: mine.id, key: mine.key, slug, adopted: true };
 	}
 	throw new AdminError(409, `could not find a free slug near "${preferredSlug}"`);
-}
-
-/**
- * On a PERSONAL key collision: is the colliding tenant mine, or another human's?
- *
- * `-2` exists for a real reason — two different people can both be `devuser`
- * on two forges, and joining them into one dōjō would be far worse than a
- * duplicate (§II.3). But it is wrong when a pass collides with ITSELF, which is
- * what produced `personal/devuser-2` two milliseconds after
- * `personal/devuser`.
- *
- * The distinguisher is membership. If this principal is ALREADY a member of the
- * colliding tenant, it is mine and I lost a race against myself — adopt it.
- * Otherwise it belongs to someone else and the caller must keep escalating.
- *
- * Returns null rather than throwing: "not mine" is an ordinary answer here, and
- * the caller's next attempt is the correct response to it.
- */
-export async function adoptOwnPersonalTenant(
-	db: DojoClient,
-	key: string,
-	principalId: string
-): Promise<{ id: string; key: string } | null> {
-	const t = await db.from('tenants').select('id, key').eq('key', key).maybeSingle();
-	if (t.error) throw new AdminError(500, t.error.message);
-	if (!t.data) return null;
-	const row = t.data as { id: string; key: string };
-
-	const m = await db
-		.from('memberships')
-		.select('id')
-		.eq('tenant_id', row.id)
-		.eq('user_id', principalId)
-		.maybeSingle();
-	if (m.error) throw new AdminError(500, m.error.message);
-	return m.data ? row : null;
 }
 
 /**
@@ -481,9 +439,12 @@ export async function ensureForgeIdentity(
  * The caller's personal dōjō, created if absent (D1 — always active, no
  * activation step).
  *
- * Found by the caller's existing personal MEMBERSHIP, never by re-deriving the
- * slug: a forge handle is renameable, and re-deriving would create a second
- * personal dōjō and strand the first one's history.
+ * One database call (`dojo.ensure_personal_tenant`): it finds the person's
+ * personal dōjō by their personal MEMBERSHIP (a forge handle is renameable, so
+ * re-deriving the slug would strand the first one's history), or creates it and
+ * its admin membership together, under a per-person lock. Two sign-in passes
+ * milliseconds apart — kavach posts once per auth event — used to each find
+ * "none yet" here and leave `<slug>-2` behind (#331).
  */
 async function ensurePersonalTenant(
 	db: DojoClient,
@@ -492,47 +453,20 @@ async function ensurePersonalTenant(
 	displayName: string,
 	authenticatedVia: string
 ): Promise<ProvisionedTenant | null> {
-	const mine = await myMemberships(db, principalId);
-	const tenantIds = mine.map((m) => m.tenant_id);
-
-	if (tenantIds.length > 0) {
-		const owned = await db
-			.from('tenants')
-			.select('id, key, origin')
-			.eq('origin', 'personal')
-			.in('id', tenantIds);
-		if (owned.error) throw new AdminError(500, owned.error.message);
-		const existing = (owned.data ?? [])[0] as { id: string; key: string } | undefined;
-		if (existing) {
-			const role = mine.find((m) => m.tenant_id === existing.id);
-			return {
-				id: existing.id,
-				key: existing.key,
-				origin: 'personal',
-				role: role?.role ?? 'admin',
-				created: false
-			};
-		}
-	}
-
 	const slug = slugify(preferredSlug);
 	if (!slug) return null;
-	const tenant = await insertTenantWithFreeSlug(
-		db,
-		'personal',
-		slug,
-		`${displayName}'s Dōjō`,
-		(key) => adoptOwnPersonalTenant(db, key, principalId)
-	);
-	const role = await ensureMembership(
-		db,
-		tenant.id,
-		principalId,
-		'personal',
-		authenticatedVia,
-		'admin'
-	);
-	return { id: tenant.id, key: tenant.key, origin: 'personal', role, created: true };
+	const { data, error } = await db
+		.rpc('ensure_personal_tenant', {
+			p_principal: principalId,
+			p_slug: slug,
+			p_name: `${displayName}'s Dōjō`,
+			p_auth: authenticatedVia,
+			p_url_base: DOJO_HOST
+		})
+		.single();
+	if (error) throw new AdminError(500, error.message);
+	const row = data as { tenant_id: string; key: string; role: string; created: boolean };
+	return { id: row.tenant_id, key: row.key, origin: 'personal', role: row.role, created: row.created };
 }
 
 /**
