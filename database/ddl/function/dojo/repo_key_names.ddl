@@ -10,8 +10,10 @@ set search_path to dojo, extensions;
 --   {org}.visualstudio.com[/defaultcollection]/…        the org is in the host
 -- An Azure project is `{project}/_git/{repo}`, or `_git/{repo}` for the
 -- repository named after its project (https), or `{project}/{repo}` (SSH). The
--- project segment is compared percent-decoded. A project on a forge with none is
--- not named.
+-- project segment is compared percent-decoded and lowercased (an encoded `%C3%9C`
+-- is `Ü`, which lowering the raw key cannot reach). A project on a forge with
+-- none is not named. A key longer than 2 KB names nothing (the decode is
+-- quadratic in the segment's length; register_repository refuses such a key).
 create or replace function dojo.repo_key_names(p_repo_key text, p_org text, p_project text)
     returns boolean
     language plpgsql
@@ -26,7 +28,7 @@ declare
     v_b    integer;
     v_seg  text;
 begin
-    if v_org = '' or cardinality(v_p) < 3 then
+    if v_org = '' or length(coalesce(p_repo_key, '')) > 2048 or cardinality(v_p) < 3 then
         return false;
     end if;
     v_host := v_p[1];
@@ -38,7 +40,7 @@ begin
         if v_proj is null then
             return true;
         end if;
-        return cardinality(v_p) >= 5 and dojo.percent_decode(v_p[4]) = v_proj;
+        return cardinality(v_p) >= 5 and lower(dojo.percent_decode(v_p[4])) = v_proj;
     end if;
 
     if v_host like '%.visualstudio.com' then
@@ -66,7 +68,7 @@ begin
         when v_p[v_b] = '_git' then v_p[v_b + 1]
         when v_p[v_b + 1] = '_git' then v_p[v_b]
     end;
-    return v_seg is not null and dojo.percent_decode(v_seg) = v_proj;
+    return v_seg is not null and lower(dojo.percent_decode(v_seg)) = v_proj;
 end;
 $$;
 

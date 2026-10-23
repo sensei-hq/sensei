@@ -63,6 +63,12 @@ begin
     -- The org (and an Azure project) must sit at its own place in the key — not
     -- merely appear in it: a repository named like an org or a project would
     -- otherwise file under it (#308 R5b security review).
+    -- A repository key is a host and a path; past 2 KB it is not one, and the
+    -- project check's percent-decode is quadratic in a segment's length.
+    if length(v_key) > 2048 then
+        raise exception 'repository key is longer than 2048 characters'
+            using errcode = 'invalid_parameter_value';
+    end if;
     if v_key = '' or not dojo.repo_key_names(v_key, v_org, v_proj) then
         raise exception 'repository key % does not carry the org % (or the project %) at its place', p_repo_key, p_org, p_project
             using errcode = 'invalid_parameter_value';

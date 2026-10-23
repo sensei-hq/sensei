@@ -34,6 +34,8 @@ begin
     -- A second unit that held the same name, filed to the SAME place: not ambiguous.
     perform dojo.map_forge_unit('a0000000-0000-4000-8000-000000000c01', 'azure_devops', 'ztest-proj-2-old',
         'ztest-az-org/platform', 'b0000000-0000-4000-8000-000000000c0a', 'platform', 'platform', true);
+    perform dojo.map_forge_unit('a0000000-0000-4000-8000-000000000c01', 'azure_devops', 'ztest-proj-uber',
+        'ztest-az-org/Über', 'b0000000-0000-4000-8000-000000000c0a', 'uber', 'Über', true);
     perform dojo.map_forge_unit('a0000000-0000-4000-8000-000000000c01', 'azure_devops', 'ztest-proj-3',
         'ztest-az-org/R&D', 'b0000000-0000-4000-8000-000000000c0a', 'r-d', 'R&D', true);
 end $$;
@@ -110,6 +112,27 @@ begin
     if r.reason is not null or r.workspace_id is distinct from ws then
         raise exception 'azure: a percent-encoded project did not file by its mapping, got %', r;
     end if;
+
+    -- A project name whose ENCODED form is uppercase (%C3%9C is Ü) still matches:
+    -- the decoded segment is lowered too (#308 R5b review 2).
+    select w.id into ws from dojo.workspaces w
+     where w.tenant_id = 'b0000000-0000-4000-8000-000000000c0a' and w.slug = 'uber';
+    select * into r from dojo.register_repository('dev.azure.com/ztest-az-org/%C3%9Cber/_git/lab', 'azure_devops',
+        'ztest-az-org', 'lab', null, 'über');
+    if r.reason is not null or r.workspace_id is distinct from ws then
+        raise exception 'azure: an encoded uppercase project did not file by its mapping, got %', r;
+    end if;
+
+    -- A key longer than 2 KB is refused before any decoding (#308 R5b review 2).
+    begin
+        perform dojo.register_repository('dev.azure.com/ztest-az-org/' || repeat('a', 2100) || '/_git/x', 'azure_devops',
+            'ztest-az-org', 'x', null, repeat('a', 2100));
+        raise exception 'azure: a 2 KB+ repository key was accepted';
+    exception when invalid_parameter_value then
+        if sqlerrm not like '%longer than 2048%' then
+            raise exception 'azure: a 2 KB+ key was refused, but not for its length: %', sqlerrm;
+        end if;
+    end;
 
     -- Someone outside the dōjō is told so, and nothing is filed for them.
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000c02"}', true);
