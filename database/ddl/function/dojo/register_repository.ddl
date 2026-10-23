@@ -31,8 +31,9 @@ set search_path to dojo, extensions;
 -- dōjō and each project a workspace in it: an import maps each project, named
 -- `{org}/{project}`. The caller passes the project the key names (p_project,
 -- repo-mapping.ts parses it); its mapping decides first, then the
--- organization's, then the connection. The key must carry that project, so a
--- direct call cannot file a repository under another project's workspace.
+-- organization's, then the connection. The key must carry the org and that
+-- project AT THEIR PLACES (dojo.repo_key_names), so a direct call cannot file a
+-- repository under another org or another project's workspace.
 drop function if exists dojo.register_repository(text, dojo.forge_provider, text, text, text);
 create or replace function dojo.register_repository(
     p_repo_key   text,
@@ -59,37 +60,35 @@ declare
     v_map_ws      uuid;
     v_target      uuid;
 begin
-    if v_key = '' or v_org = ''
-       or not (v_org = any (string_to_array(v_key, '/'))
-               or split_part(v_key, '/', 1) = v_org || '.visualstudio.com') then
-        raise exception 'repository key % does not carry the org %', p_repo_key, p_org
+    -- The org (and an Azure project) must sit at its own place in the key — not
+    -- merely appear in it: a repository named like an org or a project would
+    -- otherwise file under it (#308 R5b security review).
+    if v_key = '' or not dojo.repo_key_names(v_key, v_org, v_proj) then
+        raise exception 'repository key % does not carry the org % (or the project %) at its place', p_repo_key, p_org, p_project
             using errcode = 'invalid_parameter_value';
     end if;
 
-    if v_proj is not null
-       and not (v_proj = any (string_to_array(v_key, '/'))
-                or replace(v_proj, ' ', '%20') = any (string_to_array(v_key, '/'))) then
-        raise exception 'repository key % does not carry the project %', p_repo_key, p_project
-            using errcode = 'invalid_parameter_value';
-    end if;
-
+    -- One entry per distinct PLACE (dōjō, workspace) — not per mapping row: two
+    -- units that share a name and file to the same place are not ambiguous.
     if v_proj is not null then
-        select array_agg(m.tenant_id), (array_agg(m.workspace_id))[1] into v_map_tenants, v_map_ws
-          from dojo.forge_unit_mappings m
-         where m.provider = p_provider
-           and lower(m.external_slug) = v_org || '/' || v_proj;
+        select array_agg(x.tenant_id), (array_agg(x.workspace_id))[1] into v_map_tenants, v_map_ws
+          from (select distinct m.tenant_id, m.workspace_id
+                  from dojo.forge_unit_mappings m
+                 where m.provider = p_provider
+                   and lower(m.external_slug) = v_org || '/' || v_proj) x;
     end if;
 
     if v_map_tenants is null then
-        select array_agg(m.tenant_id), (array_agg(m.workspace_id))[1] into v_map_tenants, v_map_ws
-          from dojo.forge_unit_mappings m
-         where m.provider = p_provider
-           and lower(m.external_slug) = v_org;
+        select array_agg(x.tenant_id), (array_agg(x.workspace_id))[1] into v_map_tenants, v_map_ws
+          from (select distinct m.tenant_id, m.workspace_id
+                  from dojo.forge_unit_mappings m
+                 where m.provider = p_provider
+                   and lower(m.external_slug) = v_org) x;
     end if;
 
     if v_map_tenants is not null then
-        -- Two units have held the same name (renamed upstream, name re-taken):
-        -- which one this remote means is unknowable.
+        -- Two units have held the same name (renamed upstream, name re-taken) and
+        -- file to different places: which one this remote means is unknowable.
         if cardinality(v_map_tenants) > 1 then
             return query select null::uuid, null::text, null::uuid, 'ambiguous'::text, null::uuid;
             return;

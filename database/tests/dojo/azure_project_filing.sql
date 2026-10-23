@@ -31,6 +31,11 @@ begin
         'ztest-az-org/Mobile Apps', 'b0000000-0000-4000-8000-000000000c0a', 'mobile-apps', 'Mobile Apps', true);
     perform dojo.map_forge_unit('a0000000-0000-4000-8000-000000000c01', 'azure_devops', 'ztest-proj-2',
         'ztest-az-org/platform', 'b0000000-0000-4000-8000-000000000c0a', 'platform', 'platform', true);
+    -- A second unit that held the same name, filed to the SAME place: not ambiguous.
+    perform dojo.map_forge_unit('a0000000-0000-4000-8000-000000000c01', 'azure_devops', 'ztest-proj-2-old',
+        'ztest-az-org/platform', 'b0000000-0000-4000-8000-000000000c0a', 'platform', 'platform', true);
+    perform dojo.map_forge_unit('a0000000-0000-4000-8000-000000000c01', 'azure_devops', 'ztest-proj-3',
+        'ztest-az-org/R&D', 'b0000000-0000-4000-8000-000000000c0a', 'r-d', 'R&D', true);
 end $$;
 reset role;
 
@@ -81,6 +86,30 @@ begin
         raise exception 'azure: a caller filed a repository under a project its key does not name';
     exception when invalid_parameter_value then null;
     end;
+
+    -- The project is read at ITS place in the key, not anywhere: a repository
+    -- named after another project cannot move into that project's workspace.
+    begin
+        perform dojo.register_repository('dev.azure.com/ztest-az-org/sandbox/_git/platform', 'azure_devops',
+            'ztest-az-org', 'platform', null, 'platform');
+        raise exception 'azure: a repository named like a project filed into that project';
+    exception when invalid_parameter_value then null;
+    end;
+    -- …and the organization at its place too.
+    begin
+        perform dojo.register_repository('dev.azure.com/other/ztest-az-org/_git/x', 'azure_devops',
+            'ztest-az-org', 'x', null, null);
+        raise exception 'azure: an org named as a project was read as the org';
+    exception when invalid_parameter_value then null;
+    end;
+    -- A project name the key percent-encodes is still that project.
+    select w.id into ws from dojo.workspaces w
+     where w.tenant_id = 'b0000000-0000-4000-8000-000000000c0a' and w.slug = 'r-d';
+    select * into r from dojo.register_repository('dev.azure.com/ztest-az-org/r%26d/_git/lab', 'azure_devops',
+        'ztest-az-org', 'lab', null, 'r&d');
+    if r.reason is not null or r.workspace_id is distinct from ws then
+        raise exception 'azure: a percent-encoded project did not file by its mapping, got %', r;
+    end if;
 
     -- Someone outside the dōjō is told so, and nothing is filed for them.
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000c02"}', true);
