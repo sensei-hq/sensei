@@ -210,6 +210,10 @@ The settings screen lists them as repositories.
 
 ## Wave 5 — production-readiness defects that need real work
 
+- ~~#334~~ **Closed 2026-10-23** (91e2eb52, ships next release): any web page could write to the daemon — the
+  origin guard covered only tracker routes and CORS allowed every origin. Now `caller_guard` on the whole router
+  (loopback `Host` always; an app `Origin` or none for writes) and CORS for the app's origins only. Live on a
+  throwaway daemon: the original repro → 403 with nothing added; the app's origin and the CLI still write.
 - #178 (B1): bound the parse stack.
 - #188 (B2): surface watchdog abandonment. Measured 300–1,800 a day in early October.
 - ~~C1~~: `public.logs` size — #180, closed.

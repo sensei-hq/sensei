@@ -22,7 +22,12 @@
 
 **Kavach #54 and #55 fixed** on jerrythomas/kavach `develop` (1644470, 3654e64): sync once per session change, and the landing guard built into kavach (`pendingLanding`, on by default). Verified live on the dōjō with the dōjō's own guard removed: one session POST, and the page hidden until the new session's reload. The dōjō upgrade waits in worktree `kavach-landing` until kavach is published.
 
-**On develop since v0.20.1:** #294 (each daemon sign-in in flight keeps its own verifier; dōjō forwards a flow id; live check: two back-to-back `sensei auth renew` runs after the release). #304 (app writes return `ApiResult`; post/put/del gone; open until a click-through in the Tauri app). **Next: #334 (high)**: any web origin can write to the daemon; the guard covers only tracker routes, and CORS allows every origin.
+**On develop since v0.20.1:**
+- #294: each daemon sign-in in flight keeps its own verifier, and the dōjō forwards a flow id. Live check after the release: two back-to-back `sensei auth renew` runs.
+- #304: app writes return `ApiResult`, and post/put/del are gone. Stays open until a click-through in the Tauri app.
+- **#334 closed** (91e2eb52): `caller_guard` covers the whole router (Host must be loopback; a write needs the app's Origin or none), and CORS answers only the app's origins. Verified live on a throwaway daemon (`--instance probe334`, since deleted).
+
+**Next in wave order:** #298, workspace Instruments takes 11–28s to open: `mcp-tool-stats` pairs every tool call through `session_tool_calls`. Then #106: the last fixture imports, plus a vitest guard.
 
 **Next command:** the user approves `deploy-dojo` (both v0.20.0 and v0.20.1 runs are waiting) and says go on a kavach release (minor: 1.3.0). Then: check the Worker's `/version`; count #331 production duplicates; bump the dōjō to the new kavach and drop `app.html`'s guard.
 
