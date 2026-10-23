@@ -144,6 +144,77 @@ workspace of it, and its repositories file there.
 
 The same adapter and screen; organization → dōjō, project → workspace (D36); the PAT in Vault (D35).
 
+**Deviations found while building (for the user to confirm, 2026-10-23):**
+- **No organization list from a PAT.** "Organizations via the accounts API" does not work with the token D35 chose:
+  Microsoft's PAT page says the Organizations and Profiles APIs need a Microsoft Entra token, an organization-scoped
+  PAT gets an empty accounts list, and global ("all accessible organizations") PATs stop working on **1 Dec 2026**
+  ([PAT docs](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate)).
+  So the admin types the organization's URL beside the token, and the adapter is bound to that one organization:
+  `listUnits` answers whether the token's owner is active in it (with their role proven), not "every organization".
+- **The token owner and the organization's stable id come from `GET https://dev.azure.com/{org}/_apis/connectionData`**
+  (`authenticatedUser.id`/`subjectDescriptor`/`isActive`, `instanceId`). It is not in the REST reference; it is the
+  call Microsoft's own client makes on connect (`azure-devops-node-api`, `LocationsInterfaces.ConnectionData`). The
+  documented alternative, the Profile API, needs an Entra token.
+- **No write-scope warning.** A PAT cannot read its own scopes: the PAT Lifecycle Management API takes only a
+  Microsoft Entra token. The screen therefore lists the four read-only scopes to give the token and asks for a
+  read-only, single-organization token; it does not claim to check.
+- **Expiry is unknown.** For the same reason Azure does not tell a PAT its expiry; `token_expires_at` stays NULL
+  and the screen says "expiry not reported by Azure DevOps". A rejected token (401) is what marks it
+  `needs_new_token`.
+
+### R5b as built (2026-10-23, branch `r5b-azure-import`)
+
+- **The PAT in Vault** — `tenant_connections` gained `token_secret_id` (a `vault.secrets` id), `token_state`
+  (`dojo.forge_token_state`: `ok | needs_new_token`; NULL = none) and `token_expires_at`. `dojo.set_forge_token`,
+  `remove_forge_token`, `forge_token` and `mark_forge_token_rejected` are SECURITY DEFINER, service_role only (anon,
+  authenticated and PUBLIC revoked). Writes need an ACTIVE admin of the connection's dōjō and audit
+  `forge_token_set | forge_token_replaced | forge_token_removed` (actor, provider, org name — never the token);
+  a 401 audits `forge_token_rejected`. A replace updates the one secret in place (`vault.update_secret`); a removed
+  or deleted connection deletes its secret (trigger `tenant_connections_forget_token`). `forge_token` raises rather
+  than answering NULL: none stored → 404, rejected → 409. Pinned by `database/tests/dojo/forge_token_vault.sql`.
+- **Adapter** — `dojo/src/lib/server/forge-azure.ts`, `azureAdapter(org, fetch)` behind `ForgeAdapter` plus
+  `connection` and `listProjects`. PAT as Basic auth; only `dev.azure.com`, `vssps.dev.azure.com` and
+  `vsaex.dev.azure.com`, https, redirects not followed (Azure answers a bad token with a sign-in page, 203/302 —
+  read as a rejected token). Org names are validated (`[a-z0-9][a-z0-9-]{0,49}`) before any URL; descriptors and
+  continuation tokens from Azure are validated or encoded. `proveAdmin`: the org's `Project Collection
+  Administrators` group (Graph groups, paged by `X-MS-ContinuationToken`), then the token owner's memberships walked
+  up through nested groups (Graph memberships, `direction=up`); true only for the org's stable id, false only after a
+  finished walk, throws on a failed read, a missing group or more than 100 lookups. `listMembers`: user entitlements
+  by `continuationToken` (the reference names the page `items`, the service answers `members`; both are read),
+  removed/disabled users excluded, incomplete on an unnamed entry, throws on a failed page, a repeated token or more
+  than 200 pages. `listProjects`: `$top/$skip`, by stable id. `forgeAdapter('azure_devops')` stays 501 — the adapter
+  needs its organization.
+- **Import** (`azure-import.ts`) — validate first (owner active in the org, a Project Collection Administrator, the
+  projects read), then write. From an **organization dōjō's** Admin → Integrations (`POST
+  /v1/t/{origin}/{org}/integrations/azure_devops/connect`): the org connects to THAT dōjō (409 if another holds it) —
+  one dōjō known to GitHub and Azure — and is claimed via `claim_forge_unit`. From the **personal dōjō** (My dōjōs,
+  `POST /v1/you/integrations/azure_devops/connect`): the org's own dōjō is made, or joined as a proven admin, through
+  `ensureOrgTenant` — the only way an Azure org's dōjō is first made; no other create path was added. Then the token
+  goes to Vault and each project is mapped (`map_forge_unit`, keyed by the project's stable id, named
+  `{org}/{project}`) to a workspace of that dōjō; a project already filed there keeps its workspace across a rename,
+  one filed elsewhere is left, slugs never repeat. The token owner's Azure identity is recorded
+  (`dojo.auth_method` gained `azure_devops_pat`; one Azure account is one person — a 409 otherwise). `GET …/azure_devops`
+  lists the dōjō's Azure orgs and token state; `POST …/sync` re-reads with the stored token (a 401 marks
+  `needs_new_token`, 409); `DELETE …/token` removes it. A token Azure will not take is a 422 naming no token; an
+  outage stays 502. Admin floor on every tenant route.
+- **Repositories file by project** — `repo-mapping.ts` names the project (https, SSH v3, `{org}.visualstudio.com`
+  with or without `DefaultCollection`, `_git/{repo}` named after its project, `%20` decoded); `register_repository`
+  takes `p_project` and resolves the project's mapping first, then the org's, then the connection. The key must carry
+  the project it names. Unmapped stays unmapped. `database/tests/dojo/azure_project_filing.sql`.
+- **Membership** — `dojo.reconcile_unit_members(tenant, provider, auth, subjects)`: #309's rule read from the
+  organization's side (an admin's stored token lists the org's members, where GitHub reads each person's own orgs).
+  A complete, non-empty read ends the provisioned memberships of people holding an Azure identity none of which is
+  listed (`left_org`) and restores those listed again; invited members, people with no Azure identity, personal dōjōs
+  and dōjōs not connected to Azure are untouched; a NULL/empty list is refused. Import and sync call it only after a
+  complete read; partial/empty/failed reads end nobody and say so. `database/tests/dojo/unit_member_departure.sql`.
+  GitHub provisioning on sign-in is unchanged.
+- **Screen** — `AzureConnect` (kit): organization URL, PAT in a `type=password autocomplete=off` field emptied after
+  every request, the four read-only scopes, the result; on an org dōjō the connected orgs with token state, Sync and
+  Remove token.
+- **Not in R5b**: a scheduled member sync (it runs on import and on Sync); provisioning Azure members who are not yet
+  dōjō users (there is no Azure sign-in — only people who imported with their own PAT hold an Azure identity, so
+  only they can be ended by a member read); the token's expiry.
+
 ## The PAT is a secret (D35's consequence)
 
 - Stored in **Supabase Vault** (`vault.secrets`, encrypted at rest); `tenant_connections` keeps only the
