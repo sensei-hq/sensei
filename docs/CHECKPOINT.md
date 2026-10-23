@@ -22,7 +22,7 @@
 
 **Kavach #54 and #55 fixed** on jerrythomas/kavach `develop` (1644470, 3654e64): sync once per session change, and the landing guard built into kavach (`pendingLanding`, on by default). Verified live on the dōjō with the dōjō's own guard removed: one session POST, and the page hidden until the new session's reload. The dōjō upgrade waits in worktree `kavach-landing` until kavach is published.
 
-**On develop since v0.20.1:** #294 (each daemon sign-in in flight keeps its own verifier; dōjō forwards a flow id). Its live check is two back-to-back `sensei auth renew` runs after the next release.
+**On develop since v0.20.1:** #294 (each daemon sign-in in flight keeps its own verifier; dōjō forwards a flow id; live check: two back-to-back `sensei auth renew` runs after the release). #304 (app writes return `ApiResult`; post/put/del gone; open until a click-through in the Tauri app). **Next: #334 (high)**: any web origin can write to the daemon; the guard covers only tracker routes, and CORS allows every origin.
 
 **Next command:** the user approves `deploy-dojo` (both v0.20.0 and v0.20.1 runs are waiting) and says go on a kavach release (minor: 1.3.0). Then: check the Worker's `/version`; count #331 production duplicates; bump the dōjō to the new kavach and drop `app.html`'s guard.
 
