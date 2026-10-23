@@ -26,7 +26,7 @@ beforeEach(() => {
 	mocks.runAzureMemberSync.mockResolvedValue({ read: 1, results: [{ organization: 'example-org', members: { complete: true, listed: 3, ended: 1 } }] });
 	for (const k of Object.keys(mocks.env)) delete mocks.env[k];
 	Object.assign(mocks.env, {
-		DOJO_CRON_SECRET: 'cron-secret-0000-0000-0000-0000',
+		DOJO_CRON_SECRET: 'cron-secret-0000-0000-0000-0000-0000',
 		AZURE_DEVOPS_CLIENT_ID: 'client-id-0000',
 		AZURE_DEVOPS_CLIENT_SECRET: 'client-secret-0000'
 	});
@@ -34,7 +34,7 @@ beforeEach(() => {
 
 describe('the member-sync trigger', () => {
 	it('runs the scheduled read for the server secret, and answers what it came to', async () => {
-		const res = await post('Bearer cron-secret-0000-0000-0000-0000');
+		const res = await post('Bearer cron-secret-0000-0000-0000-0000-0000');
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ read: 1, results: [{ organization: 'example-org', members: { complete: true, listed: 3, ended: 1 } }] });
 		const [db, deps] = mocks.runAzureMemberSync.mock.calls[0];
@@ -44,7 +44,7 @@ describe('the member-sync trigger', () => {
 	});
 
 	it('refuses anything else (401) and runs nothing', async () => {
-		for (const auth of [undefined, 'Bearer wrong', 'cron-secret-0000-0000-0000-0000', 'Bearer cron-secret-0000-0000-0000-000', 'Basic x']) {
+		for (const auth of [undefined, 'Bearer wrong', 'cron-secret-0000-0000-0000-0000-0000', 'Bearer cron-secret-0000-0000-0000-0000-000', 'Basic x']) {
 			expect((await post(auth)).status).toBe(401);
 		}
 		expect(mocks.runAzureMemberSync).not.toHaveBeenCalled();
@@ -54,14 +54,22 @@ describe('the member-sync trigger', () => {
 		delete mocks.env.DOJO_CRON_SECRET;
 		expect((await post('Bearer ')).status).toBe(503);
 		expect((await post()).status).toBe(503);
-		mocks.env.DOJO_CRON_SECRET = 'cron-secret-0000-0000-0000-0000';
+		mocks.env.DOJO_CRON_SECRET = 'cron-secret-0000-0000-0000-0000-0000';
 		delete mocks.env.AZURE_DEVOPS_CLIENT_SECRET;
-		expect((await post('Bearer cron-secret-0000-0000-0000-0000')).status).toBe(503);
+		expect((await post('Bearer cron-secret-0000-0000-0000-0000-0000')).status).toBe(503);
+		expect(mocks.runAzureMemberSync).not.toHaveBeenCalled();
+	});
+
+	it('a secret shorter than 32 characters is a misconfiguration (503) — never accepted, even when presented', async () => {
+		mocks.env.DOJO_CRON_SECRET = 'short-secret-0000';
+		expect((await post('Bearer short-secret-0000')).status).toBe(503);
+		mocks.env.DOJO_CRON_SECRET = 'x'.repeat(31);
+		expect((await post('Bearer ' + 'x'.repeat(31))).status).toBe(503);
 		expect(mocks.runAzureMemberSync).not.toHaveBeenCalled();
 	});
 
 	it('a run that cannot read the connections is an error answer, not a success', async () => {
 		mocks.runAzureMemberSync.mockRejectedValue(Object.assign(new Error('boom'), { status: 500 }));
-		expect((await post('Bearer cron-secret-0000-0000-0000-0000')).status).toBe(500);
+		expect((await post('Bearer cron-secret-0000-0000-0000-0000-0000')).status).toBe(500);
 	});
 });
