@@ -33,7 +33,7 @@ import {
 	type HealthRollup,
 	type BillingResponse
 } from '$lib/admin-data';
-import { toKitBilling } from '$lib/billing-map';
+import { toKitBilling, noBilling } from '$lib/billing-map';
 import {
 	toKitTriageGroups,
 	toKitApprovals,
@@ -65,8 +65,7 @@ import type {
 import {
 	orgConstitutionFor,
 	candidateDetailFor,
-	scopeOwnersFor,
-	billingFor
+	scopeOwnersFor
 } from '$lib/components/kit/fixtures';
 
 // An org-zone section route. Resolves the org from the slug against real
@@ -86,8 +85,8 @@ import {
 //   • identity          → GET …/identities (admin floor)
 //   • health            → GET …/health (admin floor)
 //   • billing           → GET …/billing (admin floor) — the LIVE billable seat
-//     count overlaid on the illustrative pricing catalog (perSeat/tiers/invoices
-//     stay fixture until a payment provider is wired, D-BILLING).
+//     count, and the plan + renewal when an account exists; no price or invoice
+//     exists before a payment provider is wired (D-BILLING), so none is shown.
 // The remaining sections (Overview ladder/workspaces, knowledge, scopes) still render off kit fixtures — their routes aren't built (Tier 3:
 // scopes/workspaces/stance need further wiring).
 export const load: PageLoad = async ({ parent, params, fetch }) => {
@@ -200,14 +199,13 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 		toKitHealth
 	);
 
-	// Billing (admin) — the LIVE billable seat count (dojo.tenant_seat_usage) +
-	// plan/renewal overlaid onto the illustrative pricing catalog (perSeat/tiers/
-	// invoices stay fixture until a payment provider is wired, D-BILLING).
+	// Billing (admin) — the LIVE billable seat count (dojo.tenant_seat_usage) and
+	// the account's plan + renewal; nothing a payment provider would supply (#106).
 	const billingRes = await guardedFor<BillingResponse, KitBilling>(
 		'billing',
-		billingFor(slug),
+		noBilling(),
 		(tk) => getBilling(tk, opts),
-		(res) => toKitBilling(billingFor(slug), res)
+		toKitBilling
 	);
 
 	// Workspaces (org) — the tenant's dojo.workspaces (daemon-populated on relay runs).
