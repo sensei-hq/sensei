@@ -15,10 +15,14 @@
     across sites, lookup stopping at a busy board, a re-key read as "gone", stale sibling errors, ticket
     detail flipping between boards). All 6 are fixed, each with a red test first.
 
+- **#328 fixed:** the CI flake was a real heal defect. A nested standalone re-absorbed before its workspace landed
+  kept its own repository anchor and stayed in a phantom workspace for good. The heal now moves the anchor.
+  Live: 0 of 936 folders were stranded.
+
 **Remaining:**
 - R9 live check on a real Jira board (two boards, two levels): the user's. The local daemon has no tracker.
 - R5b (Azure DevOps, PAT in Vault) next; then the next release (R5a, R8, R9).
-- #314 (production push: the user's steps); #312 live on an unattended run; #328 flaky test; #329 stale session
+- #314 (production push: the user's steps); #312 live on an unattended run; #329 stale session
   after a magic-link switch; dbd#103 (a column comment lands one reconcile late).
 - Wave 11 (website from the user's mocks), after the dōjō waves.
 
