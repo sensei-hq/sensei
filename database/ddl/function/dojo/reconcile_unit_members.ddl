@@ -27,6 +27,11 @@ set search_path to dojo, extensions;
 --     rule), employer, from this forge and unit. An existing membership, active
 --     or ended, invited or another forge's, always wins.
 --
+-- p_directories, when given, lines up with p_subjects: each member's directory
+-- (for Azure DevOps the Entra tenant id, GraphUser.domain), kept in the set so a
+-- sign-in is matched only from that tenant (#308 R5c review). NULL for a member
+-- with none, who no sign-in then matches; a list of another length is refused.
+--
 -- A NULL or empty list is refused: only a complete read may end anything (#309),
 -- and an organization read with a member's token always lists that member. The
 -- refusal leaves the stored set as it was. Returns how many memberships it ended
@@ -34,11 +39,12 @@ set search_path to dojo, extensions;
 -- complete forge read, never on a failed or partial one.
 drop function if exists dojo.reconcile_unit_members(uuid, dojo.forge_provider, dojo.auth_method, text[]);
 create or replace function dojo.reconcile_unit_members(
-    p_tenant   uuid,
-    p_provider dojo.forge_provider,
-    p_unit     text,
-    p_auth     dojo.auth_method,
-    p_subjects text[]
+    p_tenant      uuid,
+    p_provider    dojo.forge_provider,
+    p_unit        text,
+    p_auth        dojo.auth_method,
+    p_subjects    text[],
+    p_directories text[] default null
 )
     returns table (ended integer, joined integer)
     language plpgsql
@@ -53,6 +59,10 @@ declare
 begin
     if p_subjects is null or cardinality(p_subjects) = 0 then
         raise exception 'a complete member list is needed to end a membership'
+            using errcode = 'invalid_parameter_value';
+    end if;
+    if p_directories is not null and cardinality(p_directories) <> cardinality(p_subjects) then
+        raise exception 'the member directories must line up with the members'
             using errcode = 'invalid_parameter_value';
     end if;
 
@@ -93,8 +103,10 @@ begin
     if v_conn is not null then
         delete from dojo.connection_members where connection_id = v_conn;
         update dojo.tenant_connections set member_set_read_at = now() where id = v_conn;
-        insert into dojo.connection_members (connection_id, subject, read_at)
-        select distinct v_conn, s, now() from unnest(p_subjects) as s;
+        insert into dojo.connection_members (connection_id, subject, directory, read_at)
+        select distinct on (m.s) v_conn, m.s, m.d, now()
+          from unnest(p_subjects, coalesce(p_directories, array_fill(null::text, array[cardinality(p_subjects)]))) as m(s, d)
+         order by m.s, m.d nulls last;
 
         insert into dojo.memberships
             (tenant_id, user_id, role, kind, authenticated_via, source, source_provider, source_unit)
@@ -113,10 +125,10 @@ begin
 end;
 $$;
 
-revoke all on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[]) from public, anon, authenticated;
-grant execute on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[]) to service_role;
+revoke all on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[], text[]) from public, anon, authenticated;
+grant execute on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[], text[]) to service_role;
 
-comment on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[]) is
+comment on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[], text[]) is
 'End the memberships one forge unit provisioned in an organization dōjō whose person a complete
 member read of that unit no longer lists, and restore those that ended by leaving and are
 listed again (#308 R5b, #309). Keep the list as the connection''s member set and provision the

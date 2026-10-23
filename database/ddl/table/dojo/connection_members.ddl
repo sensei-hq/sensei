@@ -8,6 +8,7 @@ set search_path to dojo, extensions;
 create table if not exists dojo.connection_members (
   connection_id uuid        not null references dojo.tenant_connections(id) on delete cascade
 , subject       text        not null
+, directory     text
 , read_at       timestamptz not null
 , primary key (connection_id, subject)
 );
@@ -24,6 +25,8 @@ comment on column dojo.connection_members.connection_id
      is 'The connection whose organization was read (dojo.tenant_connections.id).';
 comment on column dojo.connection_members.subject
      is 'A listed member''s stable forge id, as dojo.identities.subject holds it (for Azure DevOps, the Microsoft Entra object id).';
+comment on column dojo.connection_members.directory
+     is 'The directory the read named the member in — for Azure DevOps the Entra tenant id (GraphUser.domain). A sign-in matches only from this tenant (#308 R5c review); NULL is never matched.';
 comment on column dojo.connection_members.read_at
      is 'When the complete read that listed them ran; the same for the whole set.';
 

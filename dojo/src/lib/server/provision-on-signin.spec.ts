@@ -63,7 +63,7 @@ describe('provisionOnSignIn', () => {
 				user: {
 					id: 'u1',
 					email: 'j@example.com',
-					identities: [{ provider: 'azure', id: 'pairwise-sub', identity_data: { full_name: 'J Example', custom_claims: { oid: '00000000-0000-4000-8000-0000000000a1', xms_edov: true } } }]
+					identities: [{ provider: 'azure', id: 'pairwise-sub', identity_data: { full_name: 'J Example', custom_claims: { oid: '00000000-0000-4000-8000-0000000000a1', tid: 'f00d0000-0000-4000-8000-0000000000e1', xms_edov: true } } }]
 				}
 			},
 			error: null
@@ -72,7 +72,7 @@ describe('provisionOnSignIn', () => {
 		expect(mocks.provisionWithToken.mock.calls[0][3]).toEqual({
 			email: 'j@example.com',
 			githubId: null,
-			microsoft: { state: 'ok', objectId: '00000000-0000-4000-8000-0000000000a1', name: 'J Example' }
+			microsoft: { state: 'ok', objectId: '00000000-0000-4000-8000-0000000000a1', tenantId: 'f00d0000-0000-4000-8000-0000000000e1', name: 'J Example' }
 		});
 	});
 

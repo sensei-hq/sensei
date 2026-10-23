@@ -26,6 +26,10 @@ export interface ForgeMember {
 	/** The forge's stable user id — `dojo.identities.subject`. */
 	id: string;
 	login: string;
+	/** The member's directory, where the forge names one — for Azure DevOps the
+	 *  Entra tenant id (GraphUser.domain). A Microsoft sign-in is matched only
+	 *  from it (#308 R5c review). null: none, so no sign-in matches. */
+	directory?: string | null;
 }
 
 /** The units one read found, and whether it saw every one. */

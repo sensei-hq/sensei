@@ -65,7 +65,7 @@ begin
     exception when insufficient_privilege then null;
     end;
     begin
-        perform dojo.units_listing_member('azure_devops', 'ztest-oid-2');
+        perform dojo.units_listing_member('azure_devops', 'ztest-oid-2', 'ztest-dir-a');
         raise exception 'a signed-in caller ran the member-set lookup';
     exception when insufficient_privilege then null;
     end;
@@ -74,7 +74,7 @@ reset role;
 
 do $$
 begin
-    if has_function_privilege('anon', 'dojo.units_listing_member(dojo.forge_provider, text)', 'execute') then
+    if has_function_privilege('anon', 'dojo.units_listing_member(dojo.forge_provider, text, text)', 'execute') then
         raise exception 'anon may run the member-set lookup';
     end if;
 end $$;
@@ -89,7 +89,8 @@ begin
     -- in. Nobody departed, so nobody ends; two are joined: the signed-in member and
     -- the other dōjō's member (here).
     select * into r from dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000c5a', 'azure_devops', 'ztest-cm-org', 'azure_devops',
-                                                     array['ztest-oid-1', 'ztest-oid-2', 'ztest-oid-4', 'ztest-oid-5', 'ztest-oid-6', 'ztest-oid-7', 'ztest-oid-2']);
+                                                     array['ztest-oid-1', 'ztest-oid-2', 'ztest-oid-4', 'ztest-oid-5', 'ztest-oid-6', 'ztest-oid-7', 'ztest-oid-2'],
+                                                     array['ztest-dir-a', 'ztest-dir-a', 'ztest-dir-a', 'ztest-dir-a', 'ztest-dir-a', null, 'ztest-dir-a']);
     if r.ended <> 0 or r.joined <> 2 then
         raise exception 'member set: expected 0 ended and 2 joined, got %', r;
     end if;
@@ -174,15 +175,46 @@ begin
     end if;
 
     -- The lookup: the dōjōs whose last complete set lists a person.
-    if (select array_agg(unit) from dojo.units_listing_member('azure_devops', 'ztest-oid-2')) <> array['ztest-cm-org']
-       or (select array_agg(tenant_id) from dojo.units_listing_member('azure_devops', 'ztest-oid-2'))
+    if (select array_agg(unit) from dojo.units_listing_member('azure_devops', 'ztest-oid-2', 'ztest-dir-a')) <> array['ztest-cm-org']
+       or (select array_agg(tenant_id) from dojo.units_listing_member('azure_devops', 'ztest-oid-2', 'ztest-dir-a'))
           <> array['b0000000-0000-4000-8000-000000000c5a'::uuid] then
         raise exception 'member set: the lookup does not name the dōjō whose set lists the person';
     end if;
-    if exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-3'))
-       or exists (select 1 from dojo.units_listing_member('github', 'ztest-oid-2')) then
+    if exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-3', 'ztest-dir-a'))
+       or exists (select 1 from dojo.units_listing_member('github', 'ztest-oid-2', 'ztest-dir-a')) then
         raise exception 'member set: the lookup named a dōjō for an unlisted person, or for another forge';
     end if;
+end $$;
+reset role;
+
+-- The sign-in's TENANT is pinned (#308 R5c review): a member read records each
+-- member's Entra directory (GraphUser.domain: "for AAD the tenantID of the
+-- directory"), and the lookup names a dōjō only when the sign-in's `tid` is that
+-- directory. A member read with no directory is never matched; a directory list
+-- that does not line up with the subjects is refused.
+do $$
+begin
+    if (select directory from dojo.connection_members
+         where connection_id = 'c0000000-0000-4000-8000-000000000c5a' and subject = 'ztest-oid-2') is distinct from 'ztest-dir-a'
+       or (select directory from dojo.connection_members
+            where connection_id = 'c0000000-0000-4000-8000-000000000c5a' and subject = 'ztest-oid-7') is not null then
+        raise exception 'member set: the members'' directories were not kept';
+    end if;
+end $$;
+set local role service_role;
+do $$
+begin
+    if exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-2', 'ztest-dir-b'))
+       or exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-2', null))
+       or exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-7', 'ztest-dir-a')) then
+        raise exception 'member set: a sign-in from another directory, or a member with none, was matched';
+    end if;
+    begin
+        perform dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000c5a', 'azure_devops', 'ztest-cm-org', 'azure_devops',
+                                            array['ztest-oid-1', 'ztest-oid-4'], array['ztest-dir-a']);
+        raise exception 'member set: directories that do not line up with the subjects were accepted';
+    exception when invalid_parameter_value then null;
+    end;
 end $$;
 reset role;
 
@@ -203,7 +235,7 @@ update dojo.tenant_connections set member_set_read_at = now() - interval '47 hou
 set local role service_role;
 do $$
 begin
-    if not exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-2')) then
+    if not exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-2', 'ztest-dir-a')) then
         raise exception 'member set: a set inside the maximum age joined nobody';
     end if;
 end $$;
@@ -213,7 +245,7 @@ update dojo.tenant_connections set member_set_read_at = now() - interval '49 hou
 set local role service_role;
 do $$
 begin
-    if exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-2')) then
+    if exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-2', 'ztest-dir-a')) then
         raise exception 'member set: a stale set still names a dōjō to join';
     end if;
 end $$;
@@ -228,12 +260,12 @@ declare
     r record;
 begin
     select * into r from dojo.reconcile_unit_members('b0000000-0000-4000-8000-000000000c5a', 'azure_devops', 'ztest-cm-org', 'azure_devops',
-                                                     array['ztest-oid-1', 'ztest-oid-4']);
+                                                     array['ztest-oid-1', 'ztest-oid-4'], array['ztest-dir-a', 'ztest-dir-a']);
     if r.ended <> 2 or r.joined <> 0 then
         -- the signed-in member and the other dōjō's member, both this unit's
         raise exception 'member set: expected 2 ended and 0 joined on the later read, got %', r;
     end if;
-    if exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-2')) then
+    if exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-2', 'ztest-dir-a')) then
         raise exception 'member set: a later read did not replace the set';
     end if;
 end $$;
@@ -242,12 +274,12 @@ reset role;
 -- A set on a personal dōjō's connection is never a place to provision into.
 insert into dojo.tenant_connections (id, tenant_id, provider, external_id, external_slug, connected_by, member_set_read_at) values
   ('c0000000-0000-4000-8000-000000000c5d', 'b0000000-0000-4000-8000-000000000c5c', 'azure_devops', 'ztest-cm-me', 'ztest-cm-me', 'a0000000-0000-4000-8000-000000000c51', now());
-insert into dojo.connection_members (connection_id, subject, read_at) values
-  ('c0000000-0000-4000-8000-000000000c5d', 'ztest-oid-3', now());
+insert into dojo.connection_members (connection_id, subject, directory, read_at) values
+  ('c0000000-0000-4000-8000-000000000c5d', 'ztest-oid-3', 'ztest-dir-a', now());
 set local role service_role;
 do $$
 begin
-    if exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-3')) then
+    if exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-3', 'ztest-dir-a')) then
         raise exception 'member set: the lookup named a personal dōjō';
     end if;
 end $$;

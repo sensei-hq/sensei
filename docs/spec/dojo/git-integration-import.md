@@ -341,18 +341,30 @@ One **multi-tenant app registration** serves both R5b's connect and R5c's Micros
   `entraObjectId` (forge-azure.ts), the normalisation R5b's import and member read apply to `originId`.
   The token must also carry a confirmed `xms_edov` (`true`, `1`, `"1"` or `"true"`, read from the same
   `custom_claims`): Microsoft vouching for the email is the guard against the nOAuth exposure below, so a
-  Microsoft account without it is never recorded or provisioned from (`EMAIL_NOT_VERIFIED_BY_MICROSOFT`). No
-  oid, a malformed one, no confirmed `xms_edov`, or two Microsoft accounts on one login is `unlinkable`.
-- **Member sets** — `dojo.connection_members (connection_id, subject, read_at)`, owned by the connection
+  Microsoft account without it is never recorded or provisioned from (`EMAIL_NOT_VERIFIED_BY_MICROSOFT`). The
+  sign-in's tenant id (`custom_claims.tid`, a GUID, lowercased) is required too (`NO_TENANT_ID`): it pins the
+  member-set lookup (below). No oid, a malformed one, no confirmed `xms_edov`, no `tid`, or two Microsoft
+  accounts on one login is `unlinkable`.
+- **Member sets** — `dojo.connection_members (connection_id, subject, directory, read_at)`, owned by the connection
   (deleted with it), service_role only: the connection's last COMPLETE member set. `dojo.reconcile_unit_members`
   (only a complete read calls it: import, Sync, the scheduled read) now also replaces the set and provisions
   every listed person who already holds the identity but has no membership in the dōjō — `contributor` (a
   member read proves no admin; the forge-read rule `roleForOrg` applies), `employer`, provenance the forge and
-  unit. An existing membership always wins. It returns `(ended, joined)`;
-  `apply/before/dojo_reconcile_unit_members_retyped.sql` drops the integer version first. A partial, empty or
-  failed read never calls it, and a NULL/empty list is refused with the set unchanged.
-  `dojo.units_listing_member(provider, subject)` names the organization dōjōs whose last complete set lists a
-  person (personal dōjōs never). Pinned by `database/tests/dojo/connection_member_sets.sql`.
+  unit. An existing membership always wins. It returns `(ended, joined)` and takes `p_directories` beside
+  `p_subjects` (below); `apply/after/retired_functions.sql` drops the old five-argument version, which would
+  otherwise be an ambiguous overload. A partial, empty or failed read never calls it, and a NULL/empty list is
+  refused with the set unchanged. `dojo.units_listing_member(provider, subject, directory)` names the
+  organization dōjōs whose last complete set lists a person (personal dōjōs never). Pinned by
+  `database/tests/dojo/connection_member_sets.sql`.
+- **The tenant is pinned** (security review, defence in depth) — the member read already gets each member's
+  directory: a user entitlement's `user` is a `GraphUser`, whose `domain` is documented as "the name of the
+  container of origin for a graph member … for AAD the tenantID of the directory"
+  ([search user entitlements](https://learn.microsoft.com/en-us/rest/api/azure/devops/memberentitlementmanagement/user-entitlements/search-user-entitlements?view=azure-devops-rest-7.1),
+  GraphUser). `listAzureMembers` records it per member (`directory`, through `entraObjectId`; not a GUID → none),
+  the set keeps it, and `units_listing_member` names a dōjō only when the sign-in's `tid` equals the member's
+  directory. No extra Azure DevOps call. A member recorded with no directory is listed (a departure still ends
+  them) but matches no sign-in. Pinned per member rather than per organization: the same read names it, and no
+  documented call states an organization's backing tenant.
 - **Fresh sets only** (security review, stale grant) — each replacement stamps
   `tenant_connections.member_set_read_at`; `units_listing_member` ignores a set older than
   `dojo.member_set_max_age_hours()` — **48 hours**, eight runs of the 6-hourly scheduled read, the one constant
@@ -371,13 +383,19 @@ One **multi-tenant app registration** serves both R5b's connect and R5c's Micros
   or `not_linked` with the reason (no object id; several Microsoft accounts; held by another dōjō login; not
   recorded). My dōjōs shows "Couldn't link your Microsoft account: <reason>. Your Azure DevOps organizations'
   dōjōs were not joined." as an alert; a failed check is said, never read as linked.
+- **Accepted (security review, item 4): no consent step.** A listed member who signs in with Microsoft joins the
+  organization's dōjō as `contributor` without being asked. The relationship is the Azure DevOps organization
+  listing them, by the object id in their own tenant (and, since the tenant pin, from that tenant), on a complete
+  read made with an organization admin's grant — the same standing GitHub sign-in provisioning acts on. They can
+  leave the dōjō; leaving the organization ends it (#309).
 - **Not in R5c**: provisioning a Microsoft user into an organization no complete read has listed them in yet
   (they join at the next import, Sync or scheduled read, which provisions listed people who hold the identity);
   B2B guests (an Azure DevOps organization lists a guest by the object id in ITS tenant, while sign-in through
   `organizations` yields their HOME tenant's object id, so they do not match).
 
 **RISK — where the object id comes from (unverified offline).**
-- *Assumed*: Supabase Auth keeps the Entra `oid` claim at `identities[provider = azure].identity_data.custom_claims.oid`.
+- *Assumed*: Supabase Auth keeps the Entra `oid` claim at `identities[provider = azure].identity_data.custom_claims.oid`
+  (and, by the same rule, `tid` and `xms_edov` beside it).
   Source: `supabase/auth` `internal/api/provider/oidc.go` `parseAzureIDToken` copies every verified ID-token claim
   except `aud iss iat nbf exp c_hash at_hash aio nonce rh uti jti ver sub name preferred_username` into
   `Metadata.CustomClaims`, serialised as `custom_claims` (`provider.go` `Claims`); `external.go` stores
@@ -418,8 +436,9 @@ On the **same** app registration as R5b (its one-time setup above):
 5. **Local** — export `SUPABASE_AUTH_EXTERNAL_AZURE_CLIENT_ID` and `SUPABASE_AUTH_EXTERNAL_AZURE_SECRET` in the
    shell that runs `supabase start` (then restart the local stack) and open the dōjō at `http://localhost:5173`.
 6. **Database** — the release's `dbd` converge adds `dojo.connection_members`, `dojo.units_listing_member`,
-   `dojo.member_set_max_age_hours` and `tenant_connections.member_set_read_at`, and retypes
-   `dojo.reconcile_unit_members` (the before-hook drops the old one). Member sets fill on each
+   `dojo.member_set_max_age_hours`, `tenant_connections.member_set_read_at` and
+   `connection_members.directory`; `dojo.reconcile_unit_members` and `units_listing_member` gain an argument
+   (`retired_functions.sql` drops the old signatures). Member sets fill on each
    connection's next import, Sync or scheduled read; until then a Microsoft sign-in joins nothing.
 
 ### R5c · live check
@@ -427,7 +446,8 @@ On the **same** app registration as R5b (its one-time setup above):
 1. With the setup above, a member of a connected Entra-backed Azure DevOps organization (not a guest) whose
    organization has had a complete member read since the deploy: **Continue with Microsoft** → lands on the dōjō;
    My dōjōs lists that organization's dōjō, as contributor; no alert.
-2. The risk test above: their `dojo.identities` `azure_devops` subject equals their entitlement's `originId`.
+2. The risk test above: their `dojo.identities` `azure_devops` subject equals their entitlement's `originId`,
+   and the set's `connection_members.directory` for them equals their sign-in's `tid`.
 3. In the organization, remove them; run Sync (or wait for the scheduled read): their membership ends
    (`left_org`), and `dojo.connection_members` no longer lists them.
 4. A person whose Microsoft account is also linked to GitHub signs in with Microsoft: no request reaches

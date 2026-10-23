@@ -78,7 +78,7 @@ reset role;
 
 do $$
 begin
-    if has_function_privilege('anon', 'dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[])', 'execute') then
+    if has_function_privilege('anon', 'dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[], text[])', 'execute') then
         raise exception 'anon may reconcile unit members';
     end if;
 end $$;

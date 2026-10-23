@@ -383,7 +383,10 @@ async function listAzureMembers(name: string, token: string, fetchImpl: typeof f
 				complete = false;
 				continue;
 			}
-			members.push({ id, login });
+			// GraphUser.domain: "for AAD the tenantID of the directory" (the same
+			// documented GraphUser, search-user-entitlements). Not a tenant id: listed
+			// without one, so a departure still ends them but no sign-in matches.
+			members.push({ id, login, directory: entraObjectId(user.domain) });
 		}
 		const next = continuationOf(body.continuationToken);
 		if (!next) return { members, complete };

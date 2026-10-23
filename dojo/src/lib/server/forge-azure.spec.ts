@@ -247,13 +247,25 @@ describe('listMembers (user entitlements, paged by continuation token)', () => {
 		// (R5c) will also see — never by email.
 		expect(read).toEqual({
 			members: [
-				{ id: F.ME_OID, login: 'admin@example.com' },
-				{ id: 'a0e10000-0000-4000-8000-000000000002', login: 'dev@example.com' },
-				{ id: 'a0e10000-0000-4000-8000-000000000003', login: 'ops@example.com' }
+				{ id: F.ME_OID, login: 'admin@example.com', directory: F.DIRECTORY },
+				{ id: 'a0e10000-0000-4000-8000-000000000002', login: 'dev@example.com', directory: F.DIRECTORY },
+				{ id: 'a0e10000-0000-4000-8000-000000000003', login: 'ops@example.com', directory: F.DIRECTORY }
 			],
 			complete: true
 		});
 		expect(calls.map((c) => new URL(c.url).host)).toEqual(['vsaex.dev.azure.com', 'vsaex.dev.azure.com']);
+	});
+
+	// Each member's Entra directory (#308 R5c review): GraphUser.domain, "for AAD the
+	// tenantID of the directory" (search-user-entitlements, GraphUser) — read from
+	// the same page, lowercased like every Entra id. A sign-in is matched only from
+	// it. A member whose domain is not a tenant id is still listed (so a departure
+	// still ends them) but with no directory, which no sign-in matches.
+	it('records each member`s Entra directory, and none when the domain is not a tenant id', async () => {
+		const odd = { ...F.entitlementsPage2.members[0], user: { ...F.entitlementsPage2.members[0].user, domain: 'contoso.example' } };
+		const { fn } = fakeFetch({ '/_apis/userentitlements': { body: { members: [odd], continuationToken: null } } });
+		const read = await azureAdapter(F.ORG, fn).listMembers(ACCESS, UNIT);
+		expect(read).toEqual({ members: [{ id: 'a0e10000-0000-4000-8000-000000000003', login: 'ops@example.com', directory: null }], complete: true });
 	});
 
 	it('reads the documented `items` key as well as the `members` key the service answers with', async () => {

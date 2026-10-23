@@ -949,7 +949,11 @@ async function provisionFromMemberSets(
 	const provider = 'azure_devops' as const;
 	await ensureForgeIdentity(db, principalId, provider, { id: microsoft.objectId, name: microsoft.name, email: null });
 
-	const { data, error } = await db.rpc('units_listing_member', { p_provider: provider, p_subject: microsoft.objectId });
+	const { data, error } = await db.rpc('units_listing_member', {
+		p_provider: provider,
+		p_subject: microsoft.objectId,
+		p_directory: microsoft.tenantId
+	});
 	if (error) throw new AdminError(500, error.message);
 	const units = (data ?? []) as { tenant_id: string; unit: string }[];
 	if (units.length === 0) return [];

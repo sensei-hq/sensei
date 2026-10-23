@@ -59,7 +59,7 @@ function fakeAzure(o: Opts = {}) {
 		listMembers: async () => {
 			asked.push('members');
 			if (o.membersFail) throw new ForgeReadError(o.membersFail, 'Azure DevOps read failed');
-			return { members: o.members ?? [{ id: ME_AZ, login: 'admin@example.com' }, { id: 'az-user-2', login: 'dev@example.com' }], complete: o.membersComplete ?? true };
+			return { members: o.members ?? [{ id: ME_AZ, login: 'admin@example.com', directory: 'dir-1' }, { id: 'az-user-2', login: 'dev@example.com' }], complete: o.membersComplete ?? true };
 		},
 		listProjects: async () => {
 			asked.push('projects');
@@ -467,7 +467,8 @@ describe('members — #309\'s rule, read from the organization\'s side', () => {
 			p_provider: 'azure_devops',
 			p_unit: ORG_ID,
 			p_auth: 'azure_devops',
-			p_subjects: [ME_AZ, 'az-user-2']
+			p_subjects: [ME_AZ, 'az-user-2'],
+			p_directories: ['dir-1', null]
 		});
 		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1, joined: 1 });
 	});

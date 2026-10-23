@@ -1267,7 +1267,8 @@ describe('ensureProvisioned — leaving an org ends the membership it made (#309
 // azure_devops identity, the same key R5b's import and member read use.
 describe('ensureProvisioned — a Microsoft sign-in (#308 R5c)', () => {
 	const OID = '00000000-0000-4000-8000-0000000000a1';
-	const MS = { state: 'ok' as const, objectId: OID, name: 'Alice Example' };
+	const TID = 'f00d0000-0000-4000-8000-0000000000e1';
+	const MS = { state: 'ok' as const, objectId: OID, tenantId: TID, name: 'Alice Example' };
 	const AZ_DOJO = { id: 't-az', key: 'organization/example-az', origin: 'organization', slug: 'example-az', name: 'example-az' };
 	const listed = (rows: { tenant_id: string; unit: string }[]) => ({ 'rpc:units_listing_member': { rows } });
 
@@ -1278,7 +1279,7 @@ describe('ensureProvisioned — a Microsoft sign-in (#308 R5c)', () => {
 		expect(db.tables.identities.rows).toEqual([
 			expect.objectContaining({ principal_id: PRINCIPAL, provider: 'azure_devops', subject: OID, display_name: 'Alice Example', email: null })
 		]);
-		expect(db.rpcCalls.find((c) => c.fn === 'units_listing_member')?.args).toEqual({ p_provider: 'azure_devops', p_subject: OID });
+		expect(db.rpcCalls.find((c) => c.fn === 'units_listing_member')?.args).toEqual({ p_provider: 'azure_devops', p_subject: OID, p_directory: TID });
 		const m = db.tables.memberships.rows.find((r) => r.tenant_id === 't-az');
 		expect(m).toMatchObject({
 			user_id: PRINCIPAL,

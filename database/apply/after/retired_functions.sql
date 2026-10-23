@@ -31,3 +31,10 @@ drop function if exists sensei.sole_project_of(uuid);
 -- ledger's action filter and the incidents policy's owner check go with it.
 drop function if exists dojo.is_confidentiality_action(text);
 drop function if exists dojo.principal_is_member(uuid, uuid);
+
+-- 2026-10-23 (#308 R5c review): a complete member read also keeps each member's
+-- Entra directory, and a sign-in is matched only from it — both functions gained
+-- an argument. Left in place, the old reconcile is an ambiguous overload of the
+-- new one (its sixth argument has a default).
+drop function if exists dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[]);
+drop function if exists dojo.units_listing_member(dojo.forge_provider, text);

@@ -260,7 +260,8 @@ export async function followMembers(
 			p_provider: PROVIDER,
 			p_unit: unit.id,
 			p_auth: authMethodFor(PROVIDER),
-			p_subjects: read.members.map((m) => m.id)
+			p_subjects: read.members.map((m) => m.id),
+			p_directories: read.members.map((m) => m.directory ?? null)
 		})
 		.single();
 	fail(error);

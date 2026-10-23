@@ -28,11 +28,12 @@ import { entraObjectId } from './forge-azure';
 /** What a login says about its Microsoft account. */
 export type MicrosoftIdentity =
 	| { state: 'none' }
-	| { state: 'ok'; objectId: string; name: string | null }
+	| { state: 'ok'; objectId: string; tenantId: string; name: string | null }
 	| { state: 'unlinkable'; reason: string };
 
 /** Why a Microsoft identity could not be linked, as the person reads it. */
 export const NO_OBJECT_ID = 'Microsoft did not send this account’s object id, so it cannot be matched to Azure DevOps';
+export const NO_TENANT_ID = 'Microsoft did not send this account’s tenant id, so its organization cannot be confirmed';
 export const EMAIL_NOT_VERIFIED_BY_MICROSOFT =
 	'Microsoft did not confirm this account’s email; ask your admin to configure the app’s xms_edov claim';
 export const SEVERAL_ACCOUNTS = 'more than one Microsoft account is linked to this login';
@@ -72,8 +73,13 @@ export function microsoftIdentity(user: unknown): MicrosoftIdentity {
 	if (!edovConfirmed(record(data?.custom_claims)?.xms_edov)) {
 		return { state: 'unlinkable', reason: EMAIL_NOT_VERIFIED_BY_MICROSOFT };
 	}
+	// The sign-in's tenant (`tid`, kept in custom_claims like `oid`): a member set
+	// names a dōjō only for a sign-in from the directory its read named the member
+	// in (#308 R5c review, units_listing_member).
+	const tenantId = entraObjectId(record(data?.custom_claims)?.tid);
+	if (!tenantId) return { state: 'unlinkable', reason: NO_TENANT_ID };
 	const name = data?.full_name ?? data?.name;
-	return { state: 'ok', objectId: oid, name: typeof name === 'string' && name.trim() ? name.trim() : null };
+	return { state: 'ok', objectId: oid, tenantId, name: typeof name === 'string' && name.trim() ? name.trim() : null };
 }
 
 /**
