@@ -87,6 +87,10 @@ export default {
 		// Unmatched paths fall through to the sentry guard's 401→/signin redirect,
 		// so an explicit public rule is required to exempt it.
 		{ path: '/version', public: true },
+		// The Terms of Service and Privacy Policy (#330): linked from the GitHub and
+		// Microsoft consent screens, so they must open without a session.
+		{ path: '/terms-of-service', public: true },
+		{ path: '/privacy-policy', public: true },
 		// The machine/token API (/v1/*) self-authenticates in-handler (device-token
 		// or Supabase-JWT plane, see dojo-auth.ts) — it must bypass kavach's web
 		// session guard, or every daemon/API call 303-redirects to /signin.
