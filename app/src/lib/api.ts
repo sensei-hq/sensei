@@ -910,11 +910,7 @@ export function senseiApi(port: number) {
       post('/api/marketplace/install', { target, marketplacePath, item, scope }, { ok: false }),
 
     // ── Config (user preferences) ──────────────────────────────────────
-    setConfig: (config: Record<string, string>) =>
-      put('/api/config', config),
-
-    /** Error-propagating variant of setConfig — required where drift between
-     *  daemon and localStorage caches would corrupt downstream state. */
+    /** A config write — stored, or why not (#304). */
     trySetConfig: (config: Record<string, string>) =>
       tryPut('/api/config', config),
 
@@ -923,7 +919,7 @@ export function senseiApi(port: number) {
      *  empty config" (clear cache). */
     tryGetConfig: () => tryGet<Record<string, string>>('/api/config'),
 
-    deleteConfig: (key: string) => del(`/api/config/${enc(key)}`),
+    tryDeleteConfig: (key: string) => tryDelete(`/api/config/${enc(key)}`),
 
     // ── Assistants ────────────────────────────────────────────────────────
     /** Detected assistants (#288: a failure is an error, not "none detected"). */
