@@ -2,6 +2,8 @@
 	import KanjiToken from '$lib/components/kit/KanjiToken.svelte';
 	import { AuthProvider } from '@kavach/ui';
 	import { providers } from '$kavach/providers';
+	import { onMount } from 'svelte';
+	import { signinErrorFrom } from '$lib/auth-landing';
 
 	let selfHost = $state(false);
 	let selfHostUrl = $state('dojo.acme.internal');
@@ -13,6 +15,16 @@
 	// F3c org auto-join) or a magic-link email — driven by the `$kavach/providers`
 	// list generated from kavach.config. We only surface the outcome message; no
 	// per-provider code.
+	// A failed sign-in comes back with the reason in the URL (#297): show it. The
+	// fragment stays: SvelteKit's replaceState throws until the router has started,
+	// which it has not on this first load, and the reason is still true on reload.
+	onMount(() => {
+		const failed = signinErrorFrom(window.location.hash, window.location.search);
+		if (!failed) return;
+		authError = true;
+		authMsg = failed.message;
+	});
+
 	function onAuthError(e: { message?: string } | undefined) {
 		authError = true;
 		authMsg = e?.message ?? 'Could not sign in.';

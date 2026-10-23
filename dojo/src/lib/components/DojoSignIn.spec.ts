@@ -52,6 +52,17 @@ describe('DojoSignIn', () => {
 		expect(getByRole('link', { name: 'Privacy Policy' }).getAttribute('href')).toBe('/privacy-policy');
 	});
 
+	// #297: a failed sign-in comes back with the reason in the fragment.
+	it('shows the error Supabase returned, and nothing when there was none', async () => {
+		window.history.replaceState(null, '', '/signin#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired');
+		const failed = render(DojoSignIn);
+		expect(await failed.findByText('Email link is invalid or has expired')).toBeTruthy();
+		cleanup();
+		window.history.replaceState(null, '', '/signin');
+		const clean = render(DojoSignIn);
+		expect(clean.queryByRole('status')?.textContent ?? '').not.toMatch(/invalid|expired|error/i);
+	});
+
 	it('offers the self-hosted-Dōjō entry point', () => {
 		const { getByText } = render(DojoSignIn);
 		expect(getByText(/Connecting to a self-hosted/i)).toBeTruthy();
