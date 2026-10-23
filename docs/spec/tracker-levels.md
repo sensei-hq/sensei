@@ -33,7 +33,7 @@ daemon pulls what it needs.
 4. **The credential stays the workspace's** (D14): one credential per tracker *site* (`base_url`), shared by
    every tracker on that site in the workspace.
 5. **Screens:** the workspace's Integrations screen lists its trackers by level, adds one at a level, and
-   shows each one's sync state; the Sprints screen merges the sprint trackers.
+   shows each one's sync state; the Sprints screen shows the sprint trackers side by side, one lane each (D40).
 
 ## Decisions (user, 2026-10-22 — D40)
 
