@@ -222,3 +222,52 @@ async fn a_column_an_older_release_s_views_read_is_dropped_once_they_are_replace
     assert_eq!(saved.len(), 1, "{saved:?}");
     assert!(std::fs::read_to_string(&saved[0]).unwrap().contains("from-v1"));
 }
+
+/// A design of one table, in `dir`: v2 adds a column and comments on it, in the
+/// same file — the shape of `sensei.trackers.level` in 0.20.0.
+fn commented_design(dir: &Path, added: bool) {
+    let ddl = dir.join("ddl");
+    std::fs::create_dir_all(ddl.join("table/app")).unwrap();
+    std::fs::write(
+        dir.join("design.yaml"),
+        "project:\n  name: upgrade_fixture\nsource:\n  dialect: postgresql\nschemas:\n  - app\n",
+    )
+    .unwrap();
+    let (column, comment) = if added {
+        (", added text", "\ncomment on column app.things.added is 'added by v2';\n")
+    } else {
+        ("", "")
+    };
+    std::fs::write(
+        ddl.join("table/app/things.ddl"),
+        format!(
+            "create table if not exists app.things (\n  id int primary key\n{column}\n);\n{comment}"
+        ),
+    )
+    .unwrap();
+}
+
+/// 0.20.0 shipped a daemon whose upgrade failed: `apply` re-ran the table's file
+/// for a table that already existed, so its `comment on column` ran before
+/// `reconcile` had added the column ("column \"level\" of relation \"trackers\"
+/// does not exist"), and the daemon kept the previous schema.
+#[tokio::test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
+async fn a_column_this_release_adds_and_comments_on_is_added_before_its_comment_runs() {
+    let db = Scratch::new("addcomment");
+    let backups = tempfile::tempdir().unwrap();
+    let (v1, v2) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    commented_design(v1.path(), false);
+    commented_design(v2.path(), true);
+    sensei_bootstrap::database::deploy_to(&db.url(), v1.path(), backups.path())
+        .await
+        .expect("v1 deploys");
+    psql(&db.0, "insert into app.things values (1)");
+
+    sensei_bootstrap::database::deploy_to(&db.url(), v2.path(), backups.path())
+        .await
+        .expect("v2 adds the column, then comments on it");
+
+    assert_eq!(psql(&db.0, "select col_description('app.things'::regclass, 2)"), "added by v2");
+    assert_eq!(psql(&db.0, "select count(*) from app.things"), "1", "the row stays");
+}
