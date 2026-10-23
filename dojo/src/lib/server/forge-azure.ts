@@ -1,18 +1,14 @@
-// Azure DevOps behind the one forge interface (#308 R5b, D35/D36).
+// Azure DevOps behind the one forge interface (#308 R5b, D36/D42).
 //
 // A unit is an Azure DevOps ORGANIZATION (its own dōjō); its PROJECTS become
-// workspaces inside it. Every read is made with the personal access token an
-// organization admin pasted (D35), sent as HTTP Basic auth — never in a URL,
-// never logged, never in an error message.
+// workspaces inside it. Every read is made with a Microsoft Entra ACCESS token
+// for the Azure DevOps resource (azure-entra.ts), sent as a bearer — never in a
+// URL, never logged, never in an error message. The dōjō stores only the
+// refresh token it came from (D42).
 //
-// ONE ORGANIZATION PER ADAPTER. An organization-scoped PAT cannot enumerate the
-// organizations its owner belongs to: the Profile and Accounts APIs need a
-// Microsoft Entra token ("Some APIs, including the Organizations, Profiles, and
-// PAT Lifecycle Management APIs, require Microsoft Entra tokens" —
-// https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate#can-i-use-pats-with-all-azure-devops-rest-apis),
-// and global ("all accessible organizations") PATs stop working on 1 Dec 2026.
-// So the admin names the organization (its URL) and the adapter is bound to it;
-// `listUnits` answers whether the token's owner is in THAT organization.
+// ONE ORGANIZATION PER ADAPTER. `azureAdapter(org)` reads one organization the
+// admin picked from `listAzureOrganizations` (the organizations the token's
+// owner belongs to); `listUnits` answers whether that owner is active in it.
 //
 // SAFE BY CONSTRUCTION. Requests reach only Azure DevOps' API hosts
 // (AZURE_HOSTS), over https, without following a redirect (Azure answers a bad
@@ -30,7 +26,7 @@ import type { ForgeAdapter, ForgeMember, ForgeMembersRead, ForgeUnit, ForgeUnitR
 import { ForgeReadError } from './forge-github';
 
 /** The only hosts an Azure DevOps read may reach. */
-const AZURE_HOSTS = new Set(['dev.azure.com', 'vssps.dev.azure.com', 'vsaex.dev.azure.com']);
+const AZURE_HOSTS = new Set(['app.vssps.visualstudio.com', 'dev.azure.com', 'vssps.dev.azure.com', 'vsaex.dev.azure.com']);
 
 /** An organization name: letters, digits and hyphens, starting with a letter or
  *  digit, at most 50 characters (Azure DevOps' own naming rule). Nothing that
@@ -52,7 +48,7 @@ export const MAX_ENTITLEMENT_PAGES = 200;
 const PROJECT_PAGE = 100;
 const MAX_PROJECT_PAGES = 50;
 
-/** The read-only scopes the PAT needs — one list, the screen's (azure-view.ts). */
+/** The read scopes the Entra connect asks for — one list, the screen’s (azure-view.ts). */
 export { AZURE_REQUIRED_SCOPES } from '../azure-view';
 
 /**
@@ -91,11 +87,12 @@ function orgName(org: string): string {
 	return name;
 }
 
-/** A PAT is printable ASCII with no whitespace; anything else is refused before
- *  it reaches a header. Its value never appears in the message. */
+/** An access token is printable ASCII with no whitespace (an Entra JWT, a few
+ *  KB); anything else is refused before it reaches a header. Its value never
+ *  appears in the message. */
 function checkToken(token: string): void {
-	if (typeof token !== 'string' || !/^[\x21-\x7e]{1,512}$/.test(token)) {
-		throw new AdminError(400, 'that is not an Azure DevOps personal access token');
+	if (typeof token !== 'string' || !/^[\x21-\x7e]{1,16384}$/.test(token)) {
+		throw new AdminError(400, 'that is not an Azure DevOps access token');
 	}
 }
 
@@ -109,7 +106,8 @@ interface AzureAnswer {
 }
 
 /**
- * One GET against an Azure DevOps API host, with the PAT as Basic auth. Throws
+ * One GET against an Azure DevOps API host, with the Entra access token as a
+ * bearer (#308 R5b, D42). Throws
  * ForgeReadError (Azure's status) on anything but a 200 JSON answer — a 203 or a
  * redirect is Azure's sign-in page for a token it will not take.
  */
@@ -120,7 +118,7 @@ async function azureGet(url: string, token: string, fetchImpl: typeof fetch): Pr
 	}
 	const where = `${u.host}${u.pathname}`;
 	const res = await fetchImpl(u.toString(), {
-		headers: { Authorization: `Basic ${btoa(':' + token)}`, Accept: 'application/json', 'User-Agent': 'sensei-dojo' },
+		headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'sensei-dojo' },
 		redirect: 'manual'
 	});
 	if (res.status !== 200) throw new ForgeReadError(res.status, `Azure DevOps read failed (${res.status}) for ${where}`);
@@ -131,6 +129,48 @@ async function azureGet(url: string, token: string, fetchImpl: typeof fetch): Pr
 	const body = (await res.json().catch(() => null)) as unknown;
 	if (!body || typeof body !== 'object') throw new AdminError(502, `Azure DevOps returned no readable answer for ${where}`);
 	return { body: body as Record<string, unknown>, headers: res.headers };
+}
+
+/** One Azure DevOps organization the token's owner belongs to. */
+export interface AzureOrganization {
+	/** The account id the Accounts API names it by. */
+	id: string;
+	/** Its name — what its URLs carry (lowercased). */
+	name: string;
+}
+
+/**
+ * The organizations the token's owner belongs to — the Profiles API's `me`, then
+ * the Accounts API by that member id (both need `vso.profile` and an Entra
+ * token, which a PAT could not give —
+ * https://learn.microsoft.com/en-us/rest/api/azure/devops/profile/profiles/get?view=azure-devops-rest-7.1,
+ * https://learn.microsoft.com/en-us/rest/api/azure/devops/account/accounts/list?view=azure-devops-rest-7.1).
+ * An account whose name could not be an organization's is skipped and the read
+ * marked incomplete; a failed read throws — never an empty list.
+ */
+export async function listAzureOrganizations(token: string, fetchImpl: typeof fetch = fetch): Promise<{ organizations: AzureOrganization[]; complete: boolean }> {
+	checkToken(token);
+	const { body: me } = await azureGet('https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1', token, fetchImpl);
+	const memberId = nonEmpty(me.id);
+	if (!memberId || !/^[0-9a-fA-F-]{36}$/.test(memberId)) throw new AdminError(502, 'Azure DevOps returned a profile without an id');
+	const { body } = await azureGet(
+		`https://app.vssps.visualstudio.com/_apis/accounts?memberId=${memberId}&api-version=7.1`,
+		token,
+		fetchImpl
+	);
+	if (!Array.isArray(body.value)) throw new AdminError(502, 'Azure DevOps returned organizations that are not a list');
+	const organizations: AzureOrganization[] = [];
+	let complete = true;
+	for (const a of body.value as Record<string, unknown>[]) {
+		const id = nonEmpty(a?.accountId);
+		const name = (nonEmpty(a?.accountName) ?? '').toLowerCase();
+		if (!id || !ORG_NAME.test(name)) {
+			complete = false;
+			continue;
+		}
+		organizations.push({ id, name });
+	}
+	return { organizations, complete };
 }
 
 /** The token's owner as Azure names them in one organization. */

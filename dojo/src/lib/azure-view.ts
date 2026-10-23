@@ -5,16 +5,18 @@
 // needs, and the words each line says. Pure, so a client module may import it.
 
 /**
- * The scopes the personal access token needs — read only. Azure DevOps does not
- * let a PAT read its own scopes without a Microsoft Entra token (the PAT
- * Lifecycle Management API requires one), so the dōjō cannot check for write
- * scopes; the screen asks for exactly these.
+ * The Azure DevOps scopes the dōjō asks Microsoft Entra for — read only
+ * (https://learn.microsoft.com/en-us/azure/devops/integrate/get-started/authentication/oauth#available-scopes).
+ * `vso.profile` reads the organizations you belong to (Profiles and Accounts
+ * APIs); the rest read one organization. The connect also asks for
+ * `offline_access` (the refresh token the dōjō keeps) and `openid`.
  */
 export const AZURE_REQUIRED_SCOPES = [
-	{ scope: 'vso.project', label: 'Project and Team (Read)', why: 'list the organization’s projects' },
-	{ scope: 'vso.graph', label: 'Graph (Read)', why: 'prove you are a Project Collection Administrator' },
-	{ scope: 'vso.memberentitlementmanagement', label: 'Member Entitlement Management (Read)', why: 'read who is in the organization' },
-	{ scope: 'vso.code', label: 'Code (Read)', why: 'read its repositories' }
+	{ scope: 'vso.profile', label: 'User profile (read)', why: 'list the organizations you belong to' },
+	{ scope: 'vso.project', label: 'Project and team (read)', why: 'list an organization’s projects' },
+	{ scope: 'vso.graph', label: 'Graph (read)', why: 'prove you are a Project Collection Administrator' },
+	{ scope: 'vso.memberentitlementmanagement', label: 'Member entitlement management (read)', why: 'read who is in the organization' },
+	{ scope: 'vso.code', label: 'Code (read)', why: 'read its repositories' }
 ] as const;
 
 export type AzureScope = (typeof AZURE_REQUIRED_SCOPES)[number];

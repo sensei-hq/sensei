@@ -8,13 +8,14 @@
 import { describe, it, expect } from 'vitest';
 import { AdminError } from './admin-data';
 import { ForgeReadError } from './forge-github';
-import { azureAdapter, azureOrgFromUrl, readAzureConnection, AZURE_REQUIRED_SCOPES } from './forge-azure';
+import { azureAdapter, azureOrgFromUrl, listAzureOrganizations, readAzureConnection, AZURE_REQUIRED_SCOPES } from './forge-azure';
 import { fakeFetch, type FakeRoute } from './fake-forge-fetch';
 import * as F from './forge-azure.fixtures';
 
-const PAT = 'ztestpat0000000000000000000000000000000000000000AZDOabcd';
+// An Entra access token for the Azure DevOps resource (#308 R5b, D42) — a JWT, opaque here.
+const PAT = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJ6dGVzdCI6InRva2VuIn0.c2lnbmF0dXJl';
 const UNIT = { id: F.ORG_ID, login: F.ORG };
-const basic = `Basic ${btoa(':' + PAT)}`;
+const basic = `Bearer ${PAT}`;
 
 function adminRoutes(over: Record<string, FakeRoute> = {}): Record<string, FakeRoute> {
 	// A test's own routes win over these (a later spread replaces a value in place).
@@ -64,17 +65,18 @@ describe('the Azure adapter, before any request', () => {
 		}
 	});
 
-	it('refuses a token that could not be a PAT, without asking Azure', async () => {
+	it('refuses a token that could not be an access token, without asking Azure', async () => {
 		const { fn, calls } = fakeFetch(adminRoutes());
 		const a = azureAdapter(F.ORG, fn);
-		for (const bad of ['', '   ', 'has space', 'line\nbreak', 'x'.repeat(513)]) {
+		for (const bad of ['', '   ', 'has space', 'line\nbreak', 'x'.repeat(16385)]) {
 			await expect(a.listUnits(bad), JSON.stringify(bad)).rejects.toMatchObject({ status: 400 });
 		}
 		expect(calls).toHaveLength(0);
 	});
 
-	it('names the read-only scopes the token needs', () => {
+	it('names the read-only scopes the connect asks for', () => {
 		expect(AZURE_REQUIRED_SCOPES.map((s) => s.scope)).toEqual([
+			'vso.profile',
 			'vso.project',
 			'vso.graph',
 			'vso.memberentitlementmanagement',
@@ -84,7 +86,7 @@ describe('the Azure adapter, before any request', () => {
 });
 
 describe('readAzureConnection', () => {
-	it('reads the organization id and the token owner, by Basic auth to the org host only', async () => {
+	it('reads the organization id and the token owner, with the bearer token, from the org host only', async () => {
 		const { fn, calls } = fakeFetch({ '/_apis/connectionData': { body: F.connectionData() } });
 		expect(await readAzureConnection(F.ORG, PAT, fn)).toEqual({
 			orgId: F.ORG_ID,
@@ -329,5 +331,44 @@ describe('listProjects', () => {
 		expect((await azureAdapter(F.ORG, partial.fn).listProjects(PAT, UNIT)).complete).toBe(false);
 		const failed = fakeFetch({ '/_apis/projects': { status: 401, body: {} } });
 		await expect(azureAdapter(F.ORG, failed.fn).listProjects(PAT, UNIT)).rejects.toMatchObject({ forgeStatus: 401 });
+	});
+});
+
+describe('listAzureOrganizations (Profiles + Accounts, vso.profile)', () => {
+	// https://learn.microsoft.com/en-us/rest/api/azure/devops/profile/profiles/get?view=azure-devops-rest-7.1
+	// https://learn.microsoft.com/en-us/rest/api/azure/devops/account/accounts/list?view=azure-devops-rest-7.1
+	const me = { displayName: 'Example Admin', publicAlias: F.ME_ID, emailAddress: 'admin@example.com', id: F.ME_ID };
+	const accounts = {
+		count: 3,
+		value: [
+			{ accountId: '6affcbef-fe5d-44c6-8a29-439b79aaa118', accountUri: 'https://vssps.dev.azure.com/example-org/', accountName: 'Example-Org', properties: {} },
+			{ accountId: 'bf83696f-383b-4980-95b5-1f1127640a8a', accountUri: 'https://vssps.dev.azure.com/second-org/', accountName: 'second-org', properties: {} },
+			{ accountId: 'aaaaaaaa-0000-4000-8000-000000000000', accountName: 'not a name/../x', properties: {} }
+		]
+	};
+
+	it('lists the organizations the token\'s owner belongs to, by name — and says when one could not be read', async () => {
+		const { fn, calls } = fakeFetch({ '/_apis/profile/profiles/me': { body: me }, '/_apis/accounts': { body: accounts } });
+		expect(await listAzureOrganizations(PAT, fn)).toEqual({
+			organizations: [
+				{ id: '6affcbef-fe5d-44c6-8a29-439b79aaa118', name: 'example-org' },
+				{ id: 'bf83696f-383b-4980-95b5-1f1127640a8a', name: 'second-org' }
+			],
+			complete: false
+		});
+		expect(calls.map((c) => c.url)).toEqual([
+			'https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1',
+			`https://app.vssps.visualstudio.com/_apis/accounts?memberId=${F.ME_ID}&api-version=7.1`
+		]);
+		for (const c of calls) expect((c.init?.headers as Record<string, string>).Authorization).toBe(basic);
+	});
+
+	it('throws on a failed read or a profile with no id — never an empty list', async () => {
+		const failed = fakeFetch({ '/_apis/profile/profiles/me': { status: 401, body: {} } });
+		await expect(listAzureOrganizations(PAT, failed.fn)).rejects.toBeInstanceOf(ForgeReadError);
+		const noId = fakeFetch({ '/_apis/profile/profiles/me': { body: { displayName: 'x' } } });
+		await expect(listAzureOrganizations(PAT, noId.fn)).rejects.toBeInstanceOf(AdminError);
+		const notList = fakeFetch({ '/_apis/profile/profiles/me': { body: me }, '/_apis/accounts': { body: { count: 0 } } });
+		await expect(listAzureOrganizations(PAT, notList.fn)).rejects.toBeInstanceOf(AdminError);
 	});
 });

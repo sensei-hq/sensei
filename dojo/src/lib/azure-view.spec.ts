@@ -15,7 +15,7 @@ const conn = (over: Partial<AzureConnectionView> = {}): AzureConnectionView => (
 
 describe('AZURE_REQUIRED_SCOPES', () => {
 	it('asks for read scopes only', () => {
-		expect(AZURE_REQUIRED_SCOPES.every((s) => s.label.endsWith('(Read)'))).toBe(true);
+		expect(AZURE_REQUIRED_SCOPES.every((s) => s.label.endsWith('(read)'))).toBe(true);
 	});
 });
 
