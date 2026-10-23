@@ -102,11 +102,11 @@
 				Sign in to continue
 			</h2>
 			<p class="text-ink-mute mb-6 mt-2 text-sm" style="line-height: 1.55">
-				GitHub brings your organizations and roles automatically. No GitHub? Use a magic link.
+				GitHub or Microsoft brings your organizations automatically. Neither? Use a magic link.
 			</p>
 
 			<!-- Sign-in providers — kavach's AuthProvider renders each from the config
-			     (github OAuth with read:org scopes · magic-link email); one component,
+			     (github and azure OAuth · magic-link email · password); one component,
 			     no per-provider code. -->
 			<div class="signin-auth flex flex-col gap-3 text-sm">
 				{#each providers as provider (provider.name)}
@@ -126,7 +126,7 @@
 				</div>
 			{:else}
 				<div class="text-ink-faint mt-3 text-center text-xs">
-					GitHub brings your orgs &amp; roles; magic link is for orgs not on GitHub.
+					GitHub or Microsoft brings your orgs; magic link is for everyone else.
 				</div>
 			{/if}
 
@@ -163,8 +163,8 @@
 							>
 						</div>
 						<div class="text-ink-faint mt-2 text-xs" style="line-height: 1.5">
-							Same sign-in — your server authenticates you through GitHub (or your email magic link) on
-							its own domain.
+							Same sign-in — your server authenticates you through GitHub, Microsoft or your email magic
+							link on its own domain.
 						</div>
 					</div>
 				{/if}
