@@ -28,6 +28,13 @@
   after a magic-link switch; dbd#103 (a column comment lands one reconcile late).
 - Wave 11 (website from the user's mocks), after the dōjō waves.
 
+**v0.20.0 rehearsal (2026-10-23): passed.** On a copy of production (the 2026-10-21 dump, brought to v0.19.0 by that tag's own reconcile, deploy and diff), develop's dōjō deploy ran twice:
+- pass 1 created 4 objects, altered 4 and ran 15 hooks; pass 2 changed nothing; `dbd diff` was clean after each;
+- every row count was unchanged (tenants 6, memberships 5, principals 2, identities 2, connections 3);
+- provenance: 3 org memberships attributed to GitHub, 2 personal memberships left unattributed;
+- `invite_accept_failures` was dropped by its hook.
+The copy was dropped afterwards.
+
 **Next command:** `make bump v=minor` on develop → PR to main → `make release` on main → the user approves
 deploy-dojo. Or, before releasing, start R5b per docs/spec/dojo/git-integration-import.md.
 
