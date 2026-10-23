@@ -23,9 +23,11 @@
 - #304: app writes return `ApiResult`, and post/put/del are gone. Stays open until a click-through in the Tauri app.
 - **#334 closed** (91e2eb52): `caller_guard` covers the whole router (Host must be loopback; a write needs the app's Origin or none), and CORS answers only the app's origins. Verified live on a throwaway daemon (`--instance probe334`, since deleted).
 
-**Next in wave order:** #298, workspace Instruments takes 11–28s to open: `mcp-tool-stats` pairs every tool call through `session_tool_calls`. Then #106: the last fixture imports, plus a vitest guard.
+**#298 fixed on branch `fix/298-stored-pairing-keys`** (live: 6–8.4s → 0.58s, output identical). The live DB is converged with the fixed dbd. It is blocked on **dbd 0.27.6**: dbd#104 (a new generated column was added plain), fixed on dbd develop c506dfb0. Then bump the 4 dbd pins, merge the branch, and run `deploy_upgrade --ignored`. dbd#105 is filed (promoting a column a view reads).
 
-**Next command:** the user approves `deploy-dojo` (both v0.20.0 and v0.20.1 runs are waiting) and says go on a kavach release (minor: 1.3.0). Then: check the Worker's `/version`; count #331 production duplicates; bump the dōjō to the new kavach and drop `app.html`'s guard.
+**Next in wave order:** #106: the last fixture imports, plus a vitest guard.
+
+**Next command:** the user says go on dbd 0.27.6; approves `deploy-dojo` (both v0.20.0 and v0.20.1 runs are waiting) and says go on a kavach release (minor: 1.3.0). Then: check the Worker's `/version`; count #331 production duplicates; bump the dōjō to the new kavach and drop `app.html`'s guard.
 
 **Live checks after v0.20.0:** R5b connect and import; R5c oid/tid match; the negative `xms_edov` test, which blocks enabling Microsoft sign-in in production. These need the Worker secrets (`AZURE_DEVOPS_CLIENT_ID`, `AZURE_DEVOPS_CLIENT_SECRET`, `DOJO_CRON_SECRET`), the redirect URI, the `vso.*` permissions and the `email` and `xms_edov` claims. R9: two Jira boards at two levels.
 
