@@ -20,7 +20,9 @@
 
 **v0.20.1** fixes v0.20.0's daemon upgrade. The schema deploy ran `apply` before `reconcile`, so `comment on column trackers.level` failed. Verified live: the daemon logged "schema deployed for this version 0.20.1", and `dbd diff` reports the live DB in sync.
 
-**Next command:** the user approves `deploy-dojo` (the v0.20.1 run; v0.20.0's run is also waiting), then I check the Worker's `/version`, run the #331 production duplicate count, and fix kavach #54/#55 in ~/Developer/kavach.
+**Kavach #54 and #55 fixed** on jerrythomas/kavach `develop` (1644470, 3654e64): sync once per session change, and the landing guard built into kavach (`pendingLanding`, on by default). Verified live on the dōjō with the dōjō's own guard removed: one session POST, and the page hidden until the new session's reload. The dōjō upgrade waits in worktree `kavach-landing` until kavach is published.
+
+**Next command:** the user approves `deploy-dojo` (both v0.20.0 and v0.20.1 runs are waiting) and says go on a kavach release (minor: 1.3.0). Then: check the Worker's `/version`; count #331 production duplicates; bump the dōjō to the new kavach and drop `app.html`'s guard.
 
 **Live checks after v0.20.0:**
 - R5b connect and import; R5c oid/tid match.
