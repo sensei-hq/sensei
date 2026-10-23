@@ -338,8 +338,11 @@ One **multi-tenant app registration** serves both R5b's connect and R5c's Micros
   Supabase user (getUser, never a request's claim): `identities[provider = azure].identity_data.custom_claims.oid`
   (where GoTrue keeps it: see the risk below). Never `sub` (GoTrue's `provider_id`, pairwise per app), never
   email (D43), never `user_metadata` (the person can rewrite it). The oid must be a GUID and is lowercased through
-  `entraObjectId` (forge-azure.ts), the normalisation R5b's import and member read apply to `originId`. No oid, a malformed one, or two Microsoft accounts on one login is
-  `unlinkable`.
+  `entraObjectId` (forge-azure.ts), the normalisation R5b's import and member read apply to `originId`.
+  The token must also carry a confirmed `xms_edov` (`true`, `1`, `"1"` or `"true"`, read from the same
+  `custom_claims`): Microsoft vouching for the email is the guard against the nOAuth exposure below, so a
+  Microsoft account without it is never recorded or provisioned from (`EMAIL_NOT_VERIFIED_BY_MICROSOFT`). No
+  oid, a malformed one, no confirmed `xms_edov`, or two Microsoft accounts on one login is `unlinkable`.
 - **Member sets** — `dojo.connection_members (connection_id, subject, read_at)`, owned by the connection
   (deleted with it), service_role only: the connection's last COMPLETE member set. `dojo.reconcile_unit_members`
   (only a complete read calls it: import, Sync, the scheduled read) now also replaces the set and provisions
@@ -391,12 +394,16 @@ On the **same** app registration as R5b (its one-time setup above):
    (local) and `https://<project-ref>.supabase.co/auth/v1/callback` (production; the dashboard's Azure provider
    shows it).
 2. **API permissions** — Microsoft Graph delegated `openid`, `email`, `profile`.
-3. **Token configuration** — optional ID-token claims `email` and `xms_edov`. Supabase's Azure provider needs an
-   email (without one GoTrue refuses the sign-in: "Error getting user email from external provider"). With
-   `xms_edov` in the token, GoTrue counts the email verified only when the domain owner verified it; WITHOUT the
-   claim it assumes verified (`AzureIDTokenClaims.IsEmailVerified`). That matters because Supabase links a new
-   identity to an existing login by verified email: without `xms_edov`, a Microsoft account carrying someone
-   else's unverified address could join that person's login.
+3. **Token configuration — MANDATORY GO-LIVE GATE.** Optional claims `email` and `xms_edov` on the **ID
+   token and the access token**. Supabase's Azure provider needs an email (without one GoTrue refuses the
+   sign-in: "Error getting user email from external provider"). With `xms_edov` in the token, GoTrue counts
+   the email verified only when the domain owner verified it; WITHOUT the claim it assumes verified
+   (`AzureIDTokenClaims.IsEmailVerified`). Supabase links a new identity to an existing login by verified
+   email, so without `xms_edov` a Microsoft account carrying someone else's address — set by whoever
+   administers that account's tenant — joins that person's dōjō login (the "nOAuth" pattern). The dōjō code
+   refuses to record or provision from a Microsoft account without a confirmed `xms_edov`, but it cannot undo
+   GoTrue's link to the login itself: only this claim prevents that. Microsoft sign-in is not enabled in
+   production until this is set and live-check step 5 passes.
 4. **Production Supabase** — Dashboard → Authentication → Sign In / Providers → **Azure**: enabled; Application
    (client) ID = the app registration's client id; Secret Value = one of its client secrets; Azure Tenant URL =
    `https://login.microsoftonline.com/organizations`. The production dōjō origin is already among the redirect
@@ -418,6 +425,11 @@ On the **same** app registration as R5b (its one-time setup above):
 4. A person whose Microsoft account is also linked to GitHub signs in with Microsoft: no request reaches
    `api.github.com` with the Microsoft token (the GitHub sync answers `no_forge_token`, not
    `forge_token_rejected`).
+5. **NEGATIVE — RELEASE BLOCKER for enabling Microsoft sign-in in production.** In a test Entra tenant you
+   administer, set a user's `mail` to the address of an existing dōjō login (one that signed in with GitHub or a
+   magic link). That user signs in with Microsoft. They must NOT land in that login: the result is a new login,
+   or the sign-in is refused. Check `auth.identities` for the existing login: it gains no `azure` identity. If
+   they land in it, `xms_edov` is not reaching GoTrue — do not enable the provider.
 
 ## The Azure grant is a secret (D42's consequence)
 

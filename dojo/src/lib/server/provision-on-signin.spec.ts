@@ -63,7 +63,7 @@ describe('provisionOnSignIn', () => {
 				user: {
 					id: 'u1',
 					email: 'j@example.com',
-					identities: [{ provider: 'azure', id: 'pairwise-sub', identity_data: { full_name: 'J Example', custom_claims: { oid: '00000000-0000-4000-8000-0000000000a1' } } }]
+					identities: [{ provider: 'azure', id: 'pairwise-sub', identity_data: { full_name: 'J Example', custom_claims: { oid: '00000000-0000-4000-8000-0000000000a1', xms_edov: true } } }]
 				}
 			},
 			error: null

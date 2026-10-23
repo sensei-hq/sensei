@@ -33,9 +33,17 @@ export type MicrosoftIdentity =
 
 /** Why a Microsoft identity could not be linked, as the person reads it. */
 export const NO_OBJECT_ID = 'Microsoft did not send this account’s object id, so it cannot be matched to Azure DevOps';
+export const EMAIL_NOT_VERIFIED_BY_MICROSOFT =
+	'Microsoft did not confirm this account’s email; ask your admin to configure the app’s xms_edov claim';
 export const SEVERAL_ACCOUNTS = 'more than one Microsoft account is linked to this login';
 export const ALREADY_LINKED = 'that Microsoft account is already linked to another dōjō login';
 export const NOT_RECORDED = 'the sign-in did not record it — sign out and sign in with Microsoft again';
+
+/** Microsoft writes a confirmed `xms_edov` as `true`, `1`, `"1"` or `"true"`
+ *  (GoTrue accepts the boolean and the two strings). Absent is not confirmed. */
+function edovConfirmed(v: unknown): boolean {
+	return v === true || v === 1 || v === '1' || v === 'true';
+}
 
 function record(v: unknown): Record<string, unknown> | null {
 	return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -56,6 +64,14 @@ export function microsoftIdentity(user: unknown): MicrosoftIdentity {
 	// Lowercased exactly as R5b keys a member read's originId (entraObjectId).
 	const oid = entraObjectId(record(data?.custom_claims)?.oid);
 	if (!oid) return { state: 'unlinkable', reason: NO_OBJECT_ID };
+	// The nOAuth guard (#308 R5c security review): Supabase links a new identity
+	// to an existing login by VERIFIED email, and GoTrue takes a Microsoft email
+	// as verified when the token has no `xms_edov` (oidc.go IsEmailVerified). The
+	// app registration's xms_edov claim is what stops that link; this refuses to
+	// record or provision from any Microsoft account Microsoft did not vouch for.
+	if (!edovConfirmed(record(data?.custom_claims)?.xms_edov)) {
+		return { state: 'unlinkable', reason: EMAIL_NOT_VERIFIED_BY_MICROSOFT };
+	}
 	const name = data?.full_name ?? data?.name;
 	return { state: 'ok', objectId: oid, name: typeof name === 'string' && name.trim() ? name.trim() : null };
 }

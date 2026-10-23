@@ -13,7 +13,7 @@
 // own `id` is GoTrue's provider_id, the `sub`. `user_metadata` also receives the
 // claims, but a person can rewrite their own user_metadata — it is never read.
 import { describe, it, expect } from 'vitest';
-import { microsoftIdentity, microsoftLinkStatus, NO_OBJECT_ID, ALREADY_LINKED, NOT_RECORDED } from './azure-signin';
+import { microsoftIdentity, microsoftLinkStatus, NO_OBJECT_ID, ALREADY_LINKED, NOT_RECORDED, EMAIL_NOT_VERIFIED_BY_MICROSOFT } from './azure-signin';
 import { fakeDojoDb } from './fake-dojo-db';
 
 const OID = '00000000-0000-4000-8000-0000000000a1';
@@ -25,7 +25,7 @@ describe('microsoftIdentity', () => {
 	it('is the object id from the Microsoft identity GoTrue recorded, with the name', () => {
 		const u = user([
 			{ provider: 'github', id: '111' },
-			azure({ sub: 'pairwise-sub-xyz', full_name: 'Alice Example', custom_claims: { oid: OID, tid: 'tenant-1' } })
+			azure({ sub: 'pairwise-sub-xyz', full_name: 'Alice Example', custom_claims: { oid: OID, tid: 'tenant-1', xms_edov: true } })
 		]);
 		expect(microsoftIdentity(u)).toEqual({ state: 'ok', objectId: OID, name: 'Alice Example' });
 	});
@@ -52,6 +52,24 @@ describe('microsoftIdentity', () => {
 		}
 	});
 
+	// The nOAuth exposure (#308 R5c security review): Supabase links a new
+	// identity to an existing login by VERIFIED email, and without `xms_edov`
+	// GoTrue assumes a Microsoft email is verified. The dōjō cannot stop that link
+	// (the app registration's xms_edov claim does), but it never records or
+	// provisions from a Microsoft account whose email Microsoft did not confirm.
+	it('is unlinkable unless Microsoft confirmed the email (xms_edov), whatever the object id', () => {
+		for (const edov of [undefined, false, 0, '0', 'false', '', null, 'yes']) {
+			const out = microsoftIdentity(user([azure({ custom_claims: { oid: OID, ...(edov === undefined ? {} : { xms_edov: edov }) } })]));
+			expect(out).toEqual({ state: 'unlinkable', reason: EMAIL_NOT_VERIFIED_BY_MICROSOFT });
+		}
+	});
+
+	it('accepts every way Microsoft writes a confirmed xms_edov', () => {
+		for (const edov of [true, '1', 1, 'true']) {
+			expect(microsoftIdentity(user([azure({ custom_claims: { oid: OID, xms_edov: edov } })]))).toMatchObject({ state: 'ok', objectId: OID });
+		}
+	});
+
 	it('never reads the object id from user_metadata, which the person can rewrite', () => {
 		const u = user([azure({ sub: 'pairwise-sub-xyz' })], { user_metadata: { custom_claims: { oid: OID } } });
 		expect(microsoftIdentity(u).state).toBe('unlinkable');
@@ -59,13 +77,13 @@ describe('microsoftIdentity', () => {
 
 	it('is unlinkable when more than one Microsoft account is linked — which one would be guessing', () => {
 		const other = '00000000-0000-4000-8000-0000000000a2';
-		const u = user([azure({ custom_claims: { oid: OID } }, 's1'), azure({ custom_claims: { oid: other } }, 's2')]);
+		const u = user([azure({ custom_claims: { oid: OID, xms_edov: true } }, 's1'), azure({ custom_claims: { oid: other, xms_edov: true } }, 's2')]);
 		expect(microsoftIdentity(u)).toMatchObject({ state: 'unlinkable' });
 	});
 
 	it('lowercases the object id, as the R5b member read and import key it (forge-azure entraObjectId)', () => {
 		const upper = '00000000-0000-4000-8000-0000000000A1';
-		expect(microsoftIdentity(user([azure({ custom_claims: { oid: upper } })]))).toMatchObject({ objectId: OID });
+		expect(microsoftIdentity(user([azure({ custom_claims: { oid: upper, xms_edov: true } })]))).toMatchObject({ objectId: OID });
 	});
 });
 
