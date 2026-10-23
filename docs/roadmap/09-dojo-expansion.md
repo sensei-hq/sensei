@@ -182,7 +182,7 @@ slice builds, passes and ships on its own.
   *R5a (GitHub) built 2026-10-22 on branch `r5a-github-import` (not merged): the adapter interface, claim through
   `dojo.claim_forge_unit`, `dojo.forge_unit_mappings` + `map_forge_unit`, Admin → Integrations, and registration by
   the mapping — see the spec's "R5a as built". Production's live check waits on the merge and deploy.*
-- **R5c · Sign in with Microsoft (D45).** *Built 2026-10-23 on branch `r5c-microsoft-signin` (spec: "R5c as built"); the oid's place in Supabase's Azure identity is read from GoTrue's source and waits on the live check.* Add `azure` to the dōjō's kavach providers
+- **R5c · Sign in with Microsoft (D45).** *Merged to develop 2026-10-23 (ed078710, spec: "R5c as built"; two review rounds: `xms_edov` required, oid lowercased and tenant-pinned, member sets at most 48 h old); the oid's place in Supabase's Azure identity is read from GoTrue's source and waits on the live check.* Add `azure` to the dōjō's kavach providers
   and the login page (sign-in scopes only); local `supabase/config.toml` `[auth.external.azure]` and production's Azure
   provider take the app registration's client id and secret. A Microsoft sign-in records the Entra object id as an
   `azure_devops` identity, and provisioning follows the person's Azure DevOps organizations the way GitHub sign-in follows
