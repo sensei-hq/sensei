@@ -156,10 +156,13 @@ pub async fn deploy_to(db_url: &str, project_dir: &Path, backup_dir: &Path) -> R
     // the seed that used the value failed the import (0.11 → 0.12). So:
     //   1. plan the reconcile; when it drops data, copy the tables it alters out
     //      and drop the views that read them (views hold no rows);
-    //   2. apply — creates what is missing and every view and function at this
-    //      release's definition, those views included;
-    //   3. reconcile with allow_destructive — ALTERs tables and enums to the
-    //      design. Whole tables are never pruned here;
+    //   2. reconcile with allow_destructive — creates what is missing and ALTERs
+    //      tables and enums to the design. Whole tables are never pruned here;
+    //   3. apply — every view and function at this release's definition, those
+    //      views included. AFTER reconcile, because `apply` re-runs each table's
+    //      whole file: a `comment on column` for a column this release adds ran
+    //      before reconcile had added it, and 0.20.0's upgrade failed on
+    //      `sensei.trackers.level` ("column does not exist");
     //   4. import the seed.
     // Reconcile alters tables before it re-applies views, and `create or
     // replace view` cannot drop a view's column, so without step 1 a column an
@@ -187,13 +190,6 @@ pub async fn deploy_to(db_url: &str, project_dir: &Path, backup_dir: &Path) -> R
         drop_views_reading(db_url, &tables)?;
     }
 
-    tracing::info!("dbd phase: apply");
-    design
-        .apply(&adapter, None, false, Some(&scope), step_progress("apply", &schema_failures))
-        .await
-        .map_err(|e| format!("dbd apply failed: {e}"))?;
-    surface_step_failures("apply", &schema_failures)?;
-
     tracing::info!("dbd phase: reconcile");
     let plan = design
         .reconcile(
@@ -210,6 +206,13 @@ pub async fn deploy_to(db_url: &str, project_dir: &Path, backup_dir: &Path) -> R
     for warning in &plan.warnings {
         tracing::warn!(dbd_step = "reconcile", warning, "reconcile advisory");
     }
+
+    tracing::info!("dbd phase: apply");
+    design
+        .apply(&adapter, None, false, Some(&scope), step_progress("apply", &schema_failures))
+        .await
+        .map_err(|e| format!("dbd apply failed: {e}"))?;
+    surface_step_failures("apply", &schema_failures)?;
 
     tracing::info!("dbd phase: import_data");
     design

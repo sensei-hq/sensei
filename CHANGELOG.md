@@ -15,6 +15,21 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.20.1] — 2026-10-23
+
+### Fixed
+
+- **Upgrading the daemon to 0.20.0 failed its schema deploy,** so the daemon kept
+  the previous schema ("column \"level\" of relation \"trackers\" does not
+  exist").
+  - **Cause:** the upgrade ran `apply` before `reconcile`. `apply` re-runs a
+    table's whole DDL file, so a comment on a column this release adds ran
+    before `reconcile` had added the column.
+  - **Fix:** the deploy now reconciles first, then applies.
+  - **Verified:** a new upgrade test pins the order, and the deploy was
+    rehearsed twice on a copy of a real 0.19 schema; `dbd diff` is clean. The
+    dōjō deploy was not affected.
+
 ## [0.20.0] — 2026-10-23
 
 ### Added
