@@ -201,7 +201,9 @@ Vault per connection; access tokens live for one request.
   `forge_token` and `mark_forge_token_rejected` are SECURITY DEFINER, service_role only (anon, authenticated
   and PUBLIC revoked). Set/replace/remove need an ACTIVE admin of the dōjō and audit `forge_token_set |
   _replaced | _removed` (actor, provider, org name — never the token); a refused grant audits
-  `forge_token_rejected`; rotation (each refresh) updates the one secret in place, unaudited. A deleted
+  `forge_token_rejected`; rotation (each refresh) updates the one secret in place, unaudited. Rotate and
+  reject are compare-and-set on the token the caller refreshed (a sync racing a reconnect never marks or
+  overwrites the newer grant), and rotate never touches `token_state`. A deleted
   connection deletes its secret (trigger). `forge_token` raises rather than answering NULL (none → 404,
   rejected → 409). Pinned by `database/tests/dojo/forge_token_vault.sql`.
 - **Entra client** — `dojo/src/lib/server/azure-entra.ts`: authorize URL (S256 PKCE, `prompt=select_account`),
@@ -224,7 +226,10 @@ Vault per connection; access tokens live for one request.
     {organization}` imports one where the connect started (an org dōjō target re-checks the admin). Using the
     grant refreshes it and re-seals the rotated token. 428 without a grant.
   - Every connect step is rate-limited: `dojo.request_attempts` (#311's limiter, generalised: `invite_accept`
-    and `azure_connect`, 30 per 15 minutes) — `rate-limit.ts`.
+    and `azure_connect`, 30 per 15 minutes) — `rate-limit.ts`. An attempt is taken atomically by
+    `dojo.take_attempt` (count + record under an advisory lock per person and action, the action's old rows
+    purged); `dojo.release_attempt` gives one back (a successful invite accept). The callback validates the state
+    first: only a state that opens for the login and matches is counted, spent and redeemed.
 - **Adapter** — `forge-azure.ts`, `azureAdapter(org)` behind `ForgeAdapter` plus `connection`, `owner` and
   `listProjects`. Bearer reads only to `app.vssps.visualstudio.com`, `dev.azure.com`, `vssps.dev.azure.com`,
   `vsaex.dev.azure.com`, https, redirects not followed (203/302 read as refused). Org names validated before
@@ -244,16 +249,22 @@ Vault per connection; access tokens live for one request.
   the stored grant (`rotate_forge_token`), re-proves, files, follows.
 - **Repositories file by project** — `repo-mapping.ts` names the project; `register_repository(…, p_project)`
   resolves the project's mapping, then the org's, then the connection; `dojo.repo_key_names` checks the org and
-  project AT THEIR PLACES in the key (percent-decoded); mapping ambiguity counts distinct places.
+  project AT THEIR PLACES in the key (percent-decoded, lowercased); a key over 2 KB is refused; mapping
+  ambiguity counts distinct places; `map_forge_unit` serialises maps of one unit with an advisory lock.
   `database/tests/dojo/azure_project_filing.sql`, `register_repository_access.sql`.
 - **Membership** — `memberships.source_provider` / `source_unit` record which forge and unit provisioned a row.
   `dojo.reconcile_unit_members(tenant, provider, unit, auth, subjects)` ends/restores only rows that unit
-  provisioned (`left_org`); `reconcile_org_memberships` only GitHub's (a row with no source predates provenance
-  and was GitHub's; the backfill hook records it). A NULL/empty list is refused. GitHub sign-in provisioning is
+  provisioned (`left_org`); `reconcile_org_memberships` only GitHub's. Provenance is attributed from the code,
+  never guessed (`apply/after/membership_source_backfill.sql`): only `ensureMembership` writes `provisioned`, in
+  an org dōjō only with `github_oauth` (GitHub) or `azure_devops` (the import); `sso` and `device_code` org rows
+  and personal-dōjō rows stay unattributed, are reported, and no reconcile acts on them. #309's relabel applies
+  only to rows from before v0.16.0. A NULL/empty member list is refused. GitHub sign-in provisioning is
   unchanged. `unit_member_departure.sql`, `membership_departure.sql`.
 - **Scheduled read** — `azure-member-sync.ts`: up to 10 working connections per run, longest-unread first;
-  refresh → same org? → members → reconcile; each outcome recorded on the connection and logged, one failure
-  never stops the others. Trigger: `wrangler.jsonc` `triggers.crons ["17 */6 * * *"]`. adapter-cloudflare 7.x
+  refresh → the same admin proof Sync and import run (`proveGrant`: active, Project Collection Administrator) →
+  same org? → members → reconcile; each outcome recorded on the connection and logged, one failure (or one
+  unrecordable outcome) never stops the others, and the run fails at the end if any could not be recorded.
+  `DOJO_CRON_SECRET` must be at least 32 characters. Trigger: `wrangler.jsonc` `triggers.crons ["17 */6 * * *"]`. adapter-cloudflare 7.x
   has no `scheduled` export and writes its worker to its config's `main`, so it builds against
   `wrangler.sveltekit.jsonc` and the deployed `main` is `dojo/worker-entry.js`, which re-exports `fetch` and adds
   `scheduled()`: an in-process `POST /v1/internal/azure/member-sync` bearing `DOJO_CRON_SECRET` (constant-time
