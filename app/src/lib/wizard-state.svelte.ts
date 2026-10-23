@@ -9,7 +9,7 @@
  * objects; status persists via commitStage; active flips on route change.
  */
 
-import { senseiApi, failureReason, type ApiResult } from './api.js';
+import { senseiApi, failureReason, daemonFailure, type ApiResult } from './api.js';
 import { roleAssignments } from './setup/role-meta.js';
 import { DEFAULT_PREFERENCES } from './setup/preferences.js';
 import { appState } from './appstate.svelte.js';
@@ -123,6 +123,14 @@ export interface AssignmentsSlice {
 
 // ── Commit handlers ─────────────────────────────────────────
 
+/** Why an assistant configure/remove did not fully land — the daemon's
+ *  refusal, or the errors it reported — or null when it did (#304: a refusal
+ *  used to arrive as an empty result, which read as success). */
+function assistantWriteFailure(res: ApiResult<{ errors: string[] }>): string | null {
+  if (!res.ok) return failureReason(res.error);
+  return res.data.errors.length > 0 ? res.data.errors.join('; ') : null;
+}
+
 type CommitFn = (ws: WizardState, api: ReturnType<typeof senseiApi>) => Promise<void>;
 
 const COMMIT_HANDLERS: Record<string, CommitFn> = {
@@ -157,33 +165,22 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       const wasConfigured = familyIsConfigured(family);
 
       if (family.selected && !wasConfigured) {
-        try {
-          const result = await api.configureAssistants(variantIds);
-          if (result.errors.length > 0) {
-            const msg = result.errors.join('; ');
-            ws.markFamilyError(family.id, msg);
-            failed.push(family.id);
-          } else {
-            for (const v of family.variants) if (v.installed) v.configured = true;
-            ws.markFamilyDone(family.id);
-          }
-        } catch (e) {
-          ws.markFamilyError(family.id, e instanceof Error ? e.message : String(e));
+        const failure = assistantWriteFailure(await api.tryConfigureAssistants(variantIds));
+        if (failure) {
+          ws.markFamilyError(family.id, failure);
           failed.push(family.id);
+        } else {
+          for (const v of family.variants) if (v.installed) v.configured = true;
+          ws.markFamilyDone(family.id);
         }
       } else if (!family.selected && wasConfigured) {
-        try {
-          const result = await api.removeAssistants(variantIds);
-          if (result.errors.length > 0) {
-            ws.markFamilyError(family.id, result.errors.join('; '));
-            failed.push(family.id);
-          } else {
-            for (const v of family.variants) v.configured = false;
-            ws.markFamilyIdle(family.id);
-          }
-        } catch (e) {
-          ws.markFamilyError(family.id, e instanceof Error ? e.message : String(e));
+        const failure = assistantWriteFailure(await api.tryRemoveAssistants(variantIds));
+        if (failure) {
+          ws.markFamilyError(family.id, failure);
           failed.push(family.id);
+        } else {
+          for (const v of family.variants) v.configured = false;
+          ws.markFamilyIdle(family.id);
         }
       }
       // else: switch already matches daemon state, nothing to do
@@ -207,11 +204,15 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
     // persists name/description; per-folder role mutations go through the
     // dedicated /api/folders/{id} endpoint so a role change doesn't have
     // to round-trip through workspace metadata.
+    // A save the daemon refused fails the stage, naming what was not saved;
+    // the edits stay on screen for another try (#304).
     for (const p of ws.workspaces.workspaces) {
       if (ws.workspaces.confirmed[p.id] === false) continue;
-      await api.updateWorkspace(p.id, { name: p.name, description: p.description });
+      const saved = await api.tryUpdateWorkspace(p.id, { name: p.name, description: p.description });
+      if (!saved.ok) throw new Error(`Workspace "${p.name}" was not saved: ${failureReason(saved.error)}`);
       for (const folder of p.folders) {
-        await api.updateFolder(folder.id, { role: folder.role });
+        const role = await api.tryUpdateFolder(folder.id, { role: folder.role });
+        if (!role.ok) throw new Error(`The role of "${folder.name}" was not saved: ${failureReason(role.error)}`);
       }
     }
   },
@@ -546,31 +547,20 @@ export class WizardState {
     family.selected = willEnable;
 
     const api = senseiApi(appState.port);
-    try {
-      if (willEnable) {
-        const result = await api.configureAssistants(variantIds);
-        if (result.errors.length > 0) {
-          this.markFamilyError(familyId, result.errors.join('; '));
-          family.selected = false;
-          throw new Error(result.errors.join('; '));
-        }
-        for (const v of family.variants) if (v.installed) v.configured = true;
-        this.markFamilyDone(familyId);
-      } else {
-        const result = await api.removeAssistants(variantIds);
-        if (result.errors.length > 0) {
-          this.markFamilyError(familyId, result.errors.join('; '));
-          family.selected = true;
-          throw new Error(result.errors.join('; '));
-        }
-        for (const v of family.variants) v.configured = false;
-        this.markFamilyIdle(familyId);
-      }
-    } catch (e) {
-      // Defensive revert in case the inner branches missed something.
+    const failure = assistantWriteFailure(
+      willEnable ? await api.tryConfigureAssistants(variantIds) : await api.tryRemoveAssistants(variantIds),
+    );
+    if (failure) {
       family.selected = !willEnable;
-      this.markFamilyError(familyId, e instanceof Error ? e.message : String(e));
-      throw e;
+      this.markFamilyError(familyId, failure);
+      throw new Error(failure);
+    }
+    if (willEnable) {
+      for (const v of family.variants) if (v.installed) v.configured = true;
+      this.markFamilyDone(familyId);
+    } else {
+      for (const v of family.variants) v.configured = false;
+      this.markFamilyIdle(familyId);
     }
   }
 
@@ -585,17 +575,13 @@ export class WizardState {
 
     const api = senseiApi(appState.port);
     this.markFamilyConfiguring(familyId);
-    try {
-      const result = await api.configureAssistants(variantIds);
-      if (result.errors.length > 0) {
-        this.markFamilyError(familyId, result.errors.join('; '));
-        return;
-      }
-      for (const v of family.variants) if (v.installed) v.configured = true;
-      this.markFamilyDone(familyId);
-    } catch (e) {
-      this.markFamilyError(familyId, e instanceof Error ? e.message : String(e));
+    const failure = assistantWriteFailure(await api.tryConfigureAssistants(variantIds));
+    if (failure) {
+      this.markFamilyError(familyId, failure);
+      return;
     }
+    for (const v of family.variants) if (v.installed) v.configured = true;
+    this.markFamilyDone(familyId);
   }
 
   // ── Lifecycle ──
@@ -663,12 +649,34 @@ export class WizardState {
     tryGetScanRoots: () => Promise<ApiResult<DaemonWatchRoot[]>>;
   }): Promise<string | null> {
     const res = await api.tryGetScanRoots();
-    if (!res.ok) {
-      return res.error.status === 0
-        ? `Could not reach the daemon — ${res.error.message}`
-        : `The daemon returned ${res.error.status} ${res.error.message}`;
-    }
+    if (!res.ok) return daemonFailure(res.error);
     this.roots = { ...this.roots, roots: res.data };
+    return null;
+  }
+
+  /**
+   * Add the typed path as a watch root. Returns `null` when it was added (or
+   * there was nothing new to add), else the failure in words; ON FAILURE THE
+   * TYPED PATH AND THE LIST ARE KEPT, so the user can correct and retry (#304).
+   */
+  async addRoot(api: {
+    tryAddWatchRoot: (path: string) => Promise<ApiResult<{ ok: boolean; id: string; path: string }>>;
+  }): Promise<string | null> {
+    const path = this.roots.newPath.trim();
+    if (!path || this.roots.roots.some((r) => r.path === path)) return null;
+    const res = await api.tryAddWatchRoot(path);
+    if (!res.ok) return daemonFailure(res.error);
+    const added: DaemonWatchRoot = {
+      id: res.data.id,
+      path: res.data.path,
+      name: res.data.path.split('/').pop() ?? res.data.path,
+      status: 'scanning',
+      excluded: [],
+      repos_found: 0,
+      scanned: false,
+      modified_at: new Date().toISOString(),
+    };
+    this.roots = { roots: [...this.roots.roots, added], newPath: '' };
     return null;
   }
 

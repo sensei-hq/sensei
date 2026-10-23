@@ -6,6 +6,7 @@
     import { page } from '$app/state';
     import type { WorkspaceMcpToolStat, WorkspaceService } from '$lib/types.js';
     import ToolBubbles from './ToolBubbles.svelte';
+    import { WorkspaceServicesState } from './services-state.svelte.js';
 
     let { data } = $props();
     const workspaceId = $derived(page.params.id ?? '');
@@ -28,21 +29,11 @@
     const totalCalls = $derived(stats.reduce((a, t) => a + (t.calls || 0), 0));
     const totalErrors = $derived(stats.reduce((a, t) => a + (t.errors || 0), 0));
 
-    // Per-service toggle state — tracks in-flight PUTs so the row disables
-    // while the round-trip is happening (prevents double-flip races).
-    let toggling = $state<Record<string, boolean>>({});
-    async function toggleService(service: WorkspaceService) {
-        if (!workspaceId) return;
-        toggling = { ...toggling, [service.id]: true };
-        try {
-            await senseiApi(appState.port).setWorkspaceServiceScope(
-                workspaceId, service.id, !service.enabledForWorkspace,
-            );
-            await invalidateAll();
-        } finally {
-            toggling = { ...toggling, [service.id]: false };
-        }
-    }
+    // Per-service toggle: in flight while its write is out (the row disables,
+    // so no double-flip), and a refusal is said on the row (#304).
+    const servicesState = new WorkspaceServicesState();
+    const toggleService = (service: WorkspaceService) =>
+        servicesState.toggle(senseiApi(appState.port), workspaceId, service, invalidateAll);
 
     function fmtInt(n: number | null | undefined): string {
         return n == null ? '—' : n.toLocaleString();
@@ -96,12 +87,17 @@
                                 type="button"
                                 class="toggle text-xs px-3 py-1 rounded-full border cursor-pointer"
                                 class:enabled={service.enabledForWorkspace}
-                                disabled={toggling[service.id]}
+                                disabled={servicesState.isToggling(service.id)}
                                 aria-pressed={service.enabledForWorkspace}
                                 data-testid={`service-toggle-${service.name}`}
                                 onclick={() => toggleService(service)}
                             >{service.enabledForWorkspace ? 'On' : 'Off'}</button>
                         </li>
+                        {#if servicesState.toggleError(service.id)}
+                            <li class="text-xs text-danger px-2" data-testid={`service-toggle-error-${service.name}`}>
+                                {service.displayName}: {servicesState.toggleError(service.id)}
+                            </li>
+                        {/if}
                     {/each}
                 </ul>
             </section>
