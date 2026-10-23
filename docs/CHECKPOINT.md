@@ -21,7 +21,7 @@
 
 **Remaining:**
 - R9 live check on a real Jira board (two boards, two levels): the user's. The local daemon has no tracker.
-- **R5b in progress** (an agent builds it on branch `r5b-azure-import` in a worktree): PAT in Vault, the Azure adapter, org → dōjō and project → workspace import, membership. Then the next release (R5a, R8, R9, R5b).
+- **R5b in progress, being reworked:** the first build (a PAT in Vault) passed every gate. The user then chose Entra OAuth (D42), stable-id matching (D43) and a scheduled member read (D44). The agent on `r5b-azure-import` is also fixing a security review's 8 findings. The user's step: a multi-tenant Entra app registration (checklist in the spec when done). Then the next release (R5a, R8, R9, R5b).
 - #314 (production push: the user's steps); #312 live on an unattended run; #329 stale session
   after a magic-link switch; dbd#103 (a column comment lands one reconcile late).
 - Wave 11 (website from the user's mocks), after the dōjō waves.
