@@ -1,5 +1,6 @@
 <script lang="ts">
-  // The Sprints screen (docs/spec/screen/workspace-sprints.md).
+  // The Sprints screen (docs/spec/screen/workspace-sprints.md): one lane per
+  // sprint board, side by side (D40).
   // PRESENTATIONAL: the numbers, words and requests are sprints-state's; this
   // renders them and reports clicks.
   import { PageHeader, Screen } from '$lib/components';
@@ -46,7 +47,7 @@
       <p class="m-0 text-sm text-ink-soft">Reading sprints…</p>
     {:else if screen.view === 'not_connected'}
       <div data-view="not_connected" class="flex flex-col gap-2 text-sm text-ink">
-        <p class="m-0">This workspace has no tracker connected.</p>
+        <p class="m-0">This workspace has no sprint board connected.</p>
         <a href="/workspace/{workspaceId}/integrations" class="self-start text-primary underline">Connect one in Integrations</a>
       </div>
     {:else if screen.view === 'daemon_error'}
@@ -58,29 +59,36 @@
       </div>
     {:else}
       <div class="flex flex-col gap-6 md:flex-row">
-        <nav aria-label="Sprints" class="shrink-0 md:w-64">
-          <ul class="m-0 flex list-none flex-col gap-1 p-0">
-            {#each screen.rows as r (r.id)}
-              <li>
-                <button
-                  type="button"
-                  data-sprint={r.id}
-                  aria-current={r.current ? 'true' : undefined}
-                  class="flex w-full flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left {r.current
-                    ? 'border-primary bg-paper-soft'
-                    : 'border-transparent hover:bg-paper-mute'}"
-                  onclick={() => screen.select(r.id)}
-                >
-                  <span class="text-sm text-ink">{r.name}</span>
-                  <span class="text-xs text-ink-mute">{r.state} · {r.dates}</span>
-                  <span class="text-xs text-ink-soft">{r.tickets}</span>
-                </button>
-              </li>
-            {:else}
-              <li class="text-sm text-ink-soft">The board has no sprints.</li>
-            {/each}
-          </ul>
-        </nav>
+        <div class="flex shrink-0 gap-4 overflow-x-auto">
+          {#each screen.lanes as lane (lane.id)}
+            <nav aria-label="{lane.title} sprints" data-lane={lane.id} class="flex shrink-0 flex-col gap-2 md:w-64">
+              {#if screen.lanes.length > 1}
+                <h2 class="m-0 font-heading text-sm text-ink">{lane.title}</h2>
+              {/if}
+              <ul class="m-0 flex list-none flex-col gap-1 p-0">
+                {#each lane.rows as r (r.id)}
+                  <li>
+                    <button
+                      type="button"
+                      data-sprint={r.id}
+                      aria-current={r.current ? 'true' : undefined}
+                      class="flex w-full flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left {r.current
+                        ? 'border-primary bg-paper-soft'
+                        : 'border-transparent hover:bg-paper-mute'}"
+                      onclick={() => screen.select(r.id)}
+                    >
+                      <span class="text-sm text-ink">{r.name}</span>
+                      <span class="text-xs text-ink-mute">{r.state} · {r.dates}</span>
+                      <span class="text-xs text-ink-soft">{r.tickets}</span>
+                    </button>
+                  </li>
+                {:else}
+                  <li class="text-sm text-ink-soft">The board has no sprints.</li>
+                {/each}
+              </ul>
+            </nav>
+          {/each}
+        </div>
 
         <div class="flex min-w-0 flex-1 flex-col gap-4">
           {#if screen.ticket}

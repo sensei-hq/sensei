@@ -47,13 +47,17 @@ pub enum SyncError {
     Busy,
     /// The tracker no longer exists.
     Gone,
+    /// The tracker's credential changed since this sync's token was read (a
+    /// re-connect, or its site re-keyed): nothing is recorded; sync again.
+    Superseded,
     /// The provider or credential failed; recorded as `last_error`.
     Failed(TrackerError),
     /// The database failed; recorded as `db` when the row is still reachable.
     Db(String),
 }
 
-/// Sync one tracker end to end.
+/// Sync one tracker end to end, on whatever credential its row names now.
+#[cfg(test)]
 pub async fn sync_tracker(
     pg: &PgStore,
     locks: &TrackerLocks,
@@ -62,11 +66,40 @@ pub async fn sync_tracker(
     transport: &dyn GetTransport,
     deadline: Duration,
 ) -> Result<ApplyCounts, SyncError> {
+    run(pg, locks, tracker_id, adapter, transport, deadline, None).await
+}
+
+/// [`sync_tracker`] with a transport built from the token `secret_service`
+/// names: once the row names another, the sync is superseded and records nothing.
+pub async fn sync_with_credential(
+    pg: &PgStore,
+    locks: &TrackerLocks,
+    tracker_id: uuid::Uuid,
+    adapter: &'static dyn TrackerAdapter,
+    transport: &dyn GetTransport,
+    deadline: Duration,
+    secret_service: &str,
+) -> Result<ApplyCounts, SyncError> {
+    run(pg, locks, tracker_id, adapter, transport, deadline, Some(secret_service)).await
+}
+
+async fn run(
+    pg: &PgStore,
+    locks: &TrackerLocks,
+    tracker_id: uuid::Uuid,
+    adapter: &'static dyn TrackerAdapter,
+    transport: &dyn GetTransport,
+    deadline: Duration,
+    credential: Option<&str>,
+) -> Result<ApplyCounts, SyncError> {
     // 1. Guard.
     let Some(_guard) = locks.try_lock(tracker_id) else {
         return Err(SyncError::Busy);
     };
     let row = pg.tracker_by_id(tracker_id).await.map_err(SyncError::Db)?.ok_or(SyncError::Gone)?;
+    if credential.is_some_and(|c| c != row.secret_service) {
+        return Err(SyncError::Superseded);
+    }
     pg.mark_tracker_attempt(tracker_id).await.map_err(SyncError::Db)?;
     let prev = pg.tracker_prev_state(tracker_id).await.map_err(SyncError::Db)?;
 
@@ -116,6 +149,7 @@ pub async fn sync_tracker(
     match pg.apply_tracker_snapshot(tracker_id, &secret_service, &snapshot, &patch, &links).await {
         Ok(counts) => Ok(counts),
         Err(ApplyError::Gone) => Err(SyncError::Gone),
+        Err(ApplyError::Superseded) => Err(SyncError::Superseded),
         Err(ApplyError::Db(e)) => Err(record_db(pg, tracker_id, &secret_service, e).await),
     }
 }
@@ -403,7 +437,7 @@ mod tests {
         let board = FakeBoard::standard().on_call(Box::new(move |_path| {
             let pg = pg2.clone();
             Box::pin(async move {
-                pg.delete_tracker_for_workspace(p).await.unwrap();
+                pg.delete_tracker(p, t).await.unwrap();
             })
         }));
         assert_eq!(sync(&pg, t, &board).await, Err(SyncError::Gone));
@@ -702,12 +736,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_sync_whose_transport_predates_a_rekey_is_superseded_and_records_nothing() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, _p) = connected_tracker(&pg).await;
+        let stale = pg.tracker_by_id(t).await.unwrap().unwrap().secret_service;
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET secret_service = secret_service || '.new' WHERE id = $1",
+        )
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let revoked =
+            FakeBoard::standard().fail("/rest/agile/1.0/board/42", TrackerError::Unauthorized);
+        let r = sync_with_credential(
+            &pg,
+            &TrackerLocks::default(),
+            t,
+            &JiraAdapter,
+            &revoked,
+            SYNC_DEADLINE,
+            &stale,
+        )
+        .await;
+        assert_eq!(r, Err(SyncError::Superseded));
+        let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        assert_eq!(row.last_error, None, "the old token's failure is not the new token's");
+        assert!(revoked.calls().is_empty(), "nothing fetched on a superseded token");
+    }
+
+    #[tokio::test]
     async fn a_sync_on_the_old_credential_does_not_record_success_after_a_reconnect() {
         let Ok(pg) = PgStore::connect_test().await else { return };
         let (t, _p) = connected_tracker(&pg).await;
         let board = FakeBoard::standard().on_call(reconnect_mid_sync(&pg, t));
         let r = sync(&pg, t, &board).await;
-        assert_eq!(r, Err(SyncError::Gone), "a superseded sync is discarded");
+        assert_eq!(r, Err(SyncError::Superseded), "a superseded sync is discarded, not gone");
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
         assert!(row.last_success_at.is_none(), "the new credential has not synced yet");
     }

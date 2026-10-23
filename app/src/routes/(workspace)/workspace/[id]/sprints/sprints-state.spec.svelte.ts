@@ -68,6 +68,7 @@ const task = (over: Partial<TrackerTaskRow> = {}): TrackerTaskRow => ({
 const tracker: TrackerConnection = {
   id: 't-1',
   kind: 'jira',
+  level: 'sprint',
   base_url: 'https://acme.atlassian.net',
   account: 'dev@example.com',
   external_scope: 'AUTH',
@@ -90,12 +91,12 @@ function daemon(over: Partial<SprintsApi> = {}) {
   const calls: string[] = [];
   const api: SprintsApi = {
     tryListTrackers: async () => ok([tracker]),
-    tryListSprints: async () => {
-      calls.push('sprints');
+    tryListSprints: async (_p, t) => {
+      calls.push(`sprints:${t}`);
       return ok([sprint({ id: 's13', name: 'Sprint 13', state: 'active' }), sprint()]);
     },
-    tryListTrackerTasks: async (_p, s) => {
-      calls.push(`tasks:${s}`);
+    tryListTrackerTasks: async (_p, t, s) => {
+      calls.push(`tasks:${t}/${s}`);
       return ok([task()]);
     },
     tryGetTrackerTask: async (_p, key) => {
@@ -116,8 +117,8 @@ function daemon(over: Partial<SprintsApi> = {}) {
         ],
       });
     },
-    tryListUnlinkedSessions: async (_p, s) => {
-      calls.push(`unlinked:${s}`);
+    tryListUnlinkedSessions: async (_p, t, s) => {
+      calls.push(`unlinked:${t}/${s}`);
       return ok<UnlinkedSession[]>([{ id: 'u1', started_at: '2026-06-17T09:00:00Z', task: 'refactor' }]);
     },
     ...over,
@@ -138,7 +139,7 @@ describe('loading', () => {
     expect(s.view).toBe('ready');
     expect(s.boardTitle).toBe('AUTH Scrum');
     expect(s.selected?.name).toBe('Sprint 13');
-    expect(calls).toContain('tasks:s13');
+    expect(calls).toContain('tasks:t-1/s13');
     expect(s.tasks?.map((t) => t.key)).toEqual(['AUTH-2']);
   });
 
@@ -149,14 +150,53 @@ describe('loading', () => {
     expect(s.selected?.id).toBe('a');
   });
 
-  it('no tracker is the not-connected state', async () => {
-    const { s } = await ready({ tryListSprints: async () => fail(404, 'not_connected') });
-    expect(s.view).toBe('not_connected');
+  it('no sprint board is the not-connected state, an epic board alone included', async () => {
+    const none = await ready({ tryListTrackers: async () => ok([]) });
+    expect(none.s.view).toBe('not_connected');
+    const epicOnly = await ready({ tryListTrackers: async () => ok([{ ...tracker, level: 'epic' as const }]) });
+    expect(epicOnly.s.view).toBe('not_connected');
+    expect(epicOnly.calls.some((c) => c.startsWith('sprints:'))).toBe(false);
+  });
+
+  it('two sprint boards are two lanes side by side, in the order listed; other levels are left out (D40)', async () => {
+    const mobile = { ...tracker, id: 't-2', board_ref: '44', board_name: 'Mobile Scrum' };
+    const epic = { ...tracker, id: 't-3', level: 'epic' as const, board_ref: '43', board_name: 'Portfolio' };
+    const read: string[] = [];
+    const { s, calls } = await ready({
+      tryListTrackers: async () => ok([epic, tracker, mobile]),
+      tryListSprints: async (_p, t) => {
+        read.push(`sprints:${t}`);
+        return t === 't-2'
+          ? ok([sprint({ id: 'm7', name: 'Mobile 7', state: 'active' })])
+          : ok([sprint({ id: 's13', name: 'Sprint 13', state: 'active' }), sprint()]);
+      },
+    });
+    expect(s.lanes.map((l) => [l.id, l.title, l.rows.map((r) => r.id)])).toEqual([
+      ['t-1', 'AUTH Scrum', ['s13', 's12']],
+      ['t-2', 'Mobile Scrum', ['m7']],
+    ]);
+    expect(s.boardTitle).toBe('');
+    expect(read.sort()).toEqual(['sprints:t-1', 'sprints:t-2']);
+
+    await s.select('m7');
+    expect(s.selected?.name).toBe('Mobile 7');
+    expect(calls).toContain('tasks:t-2/m7');
+    await s.toggleUnlinked();
+    expect(calls).toContain('unlinked:t-2/m7');
+  });
+
+  it('one lane failing to read is the daemon error, never a missing lane', async () => {
+    const mobile = { ...tracker, id: 't-2', board_ref: '44' };
+    const { s } = await ready({
+      tryListTrackers: async () => ok([tracker, mobile]),
+      tryListSprints: async (_p, t) => (t === 't-2' ? fail(500, 'internal') : ok([sprint()])),
+    });
+    expect([s.view, s.loadError]).toEqual(['daemon_error', 'The sensei daemon hit a database error.']);
   });
 
   // A failed read is never "no tracker connected".
   it('a failed read is the daemon error, in the same words as Integrations', async () => {
-    const down = await ready({ tryListSprints: async () => fail(0) });
+    const down = await ready({ tryListTrackers: async () => fail(0) });
     expect([down.s.view, down.s.loadError]).toEqual(['daemon_error', 'The sensei daemon didn’t respond.']);
     const broken = await ready({ tryListSprints: async () => fail(500, 'internal') });
     expect([broken.s.view, broken.s.loadError]).toEqual([
@@ -176,7 +216,7 @@ describe('selecting', () => {
   it('reads the chosen sprint’s tickets; a slower earlier answer never wins', async () => {
     let releaseFirst!: () => void;
     const { s, api } = await ready();
-    api.tryListTrackerTasks = (_p, id) =>
+    api.tryListTrackerTasks = (_p, _t, id) =>
       id === 's13'
         ? new Promise((r) => {
             releaseFirst = () => r(ok([task({ key: 'STALE-1' })]));
@@ -226,8 +266,9 @@ describe('the usage strip', () => {
 
   it('lists a sprint’s rows with state, dates and ticket count', async () => {
     const { s } = await ready();
-    expect(s.rows[1]).toEqual({ id: 's12', name: 'Sprint 12', state: 'closed', dates: 'Jun 15 – Jun 25', tickets: '5 tickets', current: false });
-    expect(s.rows[0].current).toBe(true);
+    const rows = s.lanes[0].rows;
+    expect(rows[1]).toEqual({ id: 's12', name: 'Sprint 12', state: 'closed', dates: 'Jun 15 – Jun 25', tickets: '5 tickets', current: false });
+    expect(rows[0].current).toBe(true);
   });
 });
 
@@ -287,7 +328,7 @@ describe('unlinked sessions', () => {
   it('reads them for the selected sprint on demand', async () => {
     const { s, calls } = await ready();
     await s.toggleUnlinked();
-    expect(calls).toContain('unlinked:s13');
+    expect(calls).toContain('unlinked:t-1/s13');
     expect(s.unlinked?.map((u) => u.id)).toEqual(['u1']);
     await s.toggleUnlinked();
     expect(s.unlinked).toBe(null);

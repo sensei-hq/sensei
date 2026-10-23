@@ -1,6 +1,6 @@
 # Several trackers per workspace, at different levels — design (#318, D23)
 
-**Status:** decided 2026-10-22 (Q1–Q3 answered by the user: D40). Ready to build.
+**Status:** decided 2026-10-22 (Q1–Q3 answered by the user: D40). Built on branch `r9-tracker-levels` (daemon, CLI, app).
 
 ## The decision this serves
 
@@ -56,10 +56,10 @@ What the code assumes today, and the change for each — one tracker per workspa
 | Layer | Today | Change |
 |---|---|---|
 | DDL `sensei.trackers` | `unique (workspace_id)`; `unique (kind, base_url, board_ref)` | add `level tracker_level` (enum `epic\|sprint\|task`, default `sprint` so today's rows become sprint trackers); drop `unique (workspace_id)`; **keep** the board key — a board is one tracker at one level, and `(workspace_id, level, board_ref)` alone would collide one board id across two sites |
-| Credential (D14) | per tracker row: `secret_service = com.sensei.tracker.<kind>.<uuid>`, fresh per connect, tombstoned by a row trigger | new `sensei.tracker_sites (workspace_id, kind, base_url, account, secret_service)`, unique `(workspace_id, kind, base_url)`; trackers reference their site; the tombstone triggers move to the site, so removing one of several trackers never revokes a shared secret |
+| Credential (D14) | per tracker row: `secret_service = com.sensei.tracker.<kind>.<uuid>`, fresh per connect, tombstoned by a row trigger | **no new table** (revised while building): every connect re-keys the workspace's other boards on the same `(kind, base_url)` to the new secret, so they share one; the existing drain already drops a tombstone whose secret a tracker still references (`secret_service_referenced`), so removing one of several boards never revokes the shared secret |
 | Store | `tracker_for_workspace` (`fetch_optional`), `connect_tracker` replaces the old tracker, `delete_tracker_for_workspace` deletes all | `trackers_for_workspace` → `Vec`; connect adds (or re-keys the same board); disconnect takes a tracker id |
-| HTTP | `/api/workspaces/{id}/trackers` returns `[]` or `[one]`; sync/sprints/tasks resolve the one tracker | list returns all with `level`; connect takes `level`; sync/disconnect take `/trackers/{tracker_id}`; sprints return per tracker (lanes); ticket lookup searches the workspace's trackers |
-| CLI | `list[0]`; no tracker selector | `--level` on connect; `--board` selector where a workspace has several |
+| HTTP | `/api/workspaces/{id}/trackers` returns `[]` or `[one]`; sync/sprints/tasks resolve the one tracker | list returns all with `level`; connect takes `level`; connect is `POST …/trackers {kind, level, …}` (the old `/trackers/{kind}/connect` would clash with `/trackers/{tracker}/…`); sync, disconnect, sprints, tasks and unlinked sessions are under `/trackers/{tracker}`; ticket lookup stays workspace-wide and discovers across boards in level order |
+| CLI | `list[0]`; no tracker selector | `--level` required on connect (passed through; the daemon owns the list); `--board` (board number or tracker id) where a workspace has several; `sync` without `--board` syncs every board |
 | App | `data[0]` on Integrations and Sprints | Integrations lists trackers grouped by level with "add at a level"; Sprints renders one lane per sprint tracker |
 
 **Epics and milestones (T3, V11) have no reader yet** — the Jira adapter fetches neither, no table holds them. R9 makes

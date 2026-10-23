@@ -2143,9 +2143,13 @@ export interface PruneResult {
 
 /** A workspace's tracker connection as `GET /api/workspaces/{id}/trackers` returns
  *  it. Never the token, never the keyring name. */
+/** What a board serves in its workspace (D40): the `sensei.tracker_level` enum. */
+export type TrackerLevel = 'epic' | 'sprint' | 'task';
+
 export interface TrackerConnection {
   id: string;
   kind: 'jira';
+  level: TrackerLevel;
   /** Normalised by the daemon, e.g. `https://acme.atlassian.net`. */
   base_url: string;
   /** The account the token belongs to (Jira: the Atlassian email). */

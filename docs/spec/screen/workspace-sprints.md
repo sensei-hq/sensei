@@ -1,11 +1,11 @@
 # 期 · Project window · Sprints
 
 **Segment:** 04 · The project window
-**Route:** `/project/[id]/sprints`
+**Route:** `/workspace/[id]/sprints`
 **Source mockup:** none. Layout follows the project window's list + detail screens
 (Sessions); numbers follow the Sessions digest's formatters.
 **App files:**
-- `app/src/routes/(project)/project/[id]/sprints/+page.svelte`
+- `app/src/routes/(workspace)/workspace/[id]/sprints/+page.svelte`
 - `sprints-state.svelte.ts` (state, words, actions) and `SprintsScreen.svelte` (template)
 - the sidebar entry `{ id: 'sprints', kanji: '期', label: 'Sprints' }` in
   `project-sidebar-view.ts` `SECTIONS`, after `impact` and before `integrations`
@@ -15,6 +15,22 @@
 **Daemon contract:** [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md)
 R7 (usage), R8 (`GET …/sprints`, `…/tracker-tasks[?sprint=]`, `…/tracker-tasks/{key}`,
 `…/sessions/unlinked?sprint=`). No new daemon route.
+
+
+## Lanes side by side (D40, 2026-10-22)
+
+This section overrides the single-board text below (spec `docs/spec/tracker-levels.md`, Q3).
+
+- The screen reads `GET …/trackers` and shows **one lane per `level = sprint` board**, side by side
+  (`nav[data-lane=<tracker id>]`, labelled "<board> sprints"), in the order the daemon lists them. Epic and
+  task boards have no lane.
+- With one lane the header title is the board's name and the lane has no heading; with several, the header
+  says "Sprints" and each lane is headed by its board.
+- Each lane's sprints come from `GET …/trackers/{tracker}/sprints`; selecting a sprint in any lane reads
+  `…/trackers/{tracker}/tasks?sprint=` and `…/sessions/unlinked?sprint=` from that lane's board.
+- **No sprint board** (none, or only epic/task boards) is the not-connected state: "This workspace has no
+  sprint board connected." with the link to Integrations. **Any lane's read failing** is the daemon-error
+  state; a lane is never silently missing.
 
 ## Purpose
 
@@ -101,5 +117,5 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 
 ## Related
 
-- Connection: [`project-integrations.md`](project-integrations.md)
+- Connection: [`workspace-integrations.md`](workspace-integrations.md)
 - Daemon: [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md)

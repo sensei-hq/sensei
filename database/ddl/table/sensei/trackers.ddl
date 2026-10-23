@@ -1,11 +1,13 @@
 set search_path to sensei, extensions;
 
--- One issue-tracker connection (a board) per sensei workspace, and one workspace
--- per board. Spec: docs/spec/daemon/tracker-jira-linkage.md R1-R3.
+-- Issue-tracker connections (boards) of a sensei workspace, each at a level, and
+-- one workspace per board. Spec: docs/spec/daemon/tracker-jira-linkage.md R1-R3,
+-- docs/spec/tracker-levels.md (D40).
 create table if not exists trackers (
   id               uuid          primary key default gen_random_uuid()
 , workspace_id     uuid          not null references sensei.workspaces(id) on delete cascade
 , kind             tracker_kind  not null
+, level            tracker_level not null default 'sprint'
 , base_url         text          not null
 , account          text          not null
 , external_scope   text          not null
@@ -17,15 +19,16 @@ create table if not exists trackers (
 , last_error       tracker_error
 , discovered_through timestamptz not null default now()
 , created_at       timestamptz   not null default now()
-, unique (workspace_id)
 , unique (kind, base_url, board_ref)
 );
 
 comment on table trackers is
-'An issue-tracker board connected to a sensei workspace: one tracker per workspace (one sprint calendar) and one workspace per board. Read-only mirror source for sensei.sprints / sensei.tracker_tasks. The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.';
+'An issue-tracker board connected to a sensei workspace at a level (epic, sprint, task): a workspace may hold several, and a board belongs to one workspace. Trackers of one workspace on one site share its credential (D14). Read-only mirror source for sensei.sprints / sensei.tracker_tasks. The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.';
 
 comment on column trackers.workspace_id
-     is 'The sensei workspace this board belongs to. Unique: a workspace has exactly one tracker. ON DELETE CASCADE, and the delete trigger still tombstones the secret.';
+     is 'The sensei workspace this board belongs to. ON DELETE CASCADE, and the delete trigger still tombstones the secret.';
+comment on column trackers.level
+     is 'What the board serves in the workspace (D40): epic (portfolio), sprint (a team board, one Sprints lane), task (linked from changes). Rows from before levels are sprint trackers.';
 comment on column trackers.kind
      is 'Which adapter speaks to this tracker (crate::tracker::adapter_for_kind).';
 comment on column trackers.base_url
@@ -39,7 +42,7 @@ comment on column trackers.board_ref
 comment on column trackers.params
      is 'Adapter-specific extras (e.g. board_name). Never secrets.';
 comment on column trackers.secret_service
-     is 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Changing it tombstones the old value.';
+     is 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Shared by every tracker of the workspace on the same (kind, base_url): a connect re-keys them all. Changing it tombstones the old value; the drain keeps a secret another tracker still references.';
 comment on column trackers.last_attempt_at
      is 'When a sync last started (written before the fetch, outside any transaction).';
 comment on column trackers.last_success_at

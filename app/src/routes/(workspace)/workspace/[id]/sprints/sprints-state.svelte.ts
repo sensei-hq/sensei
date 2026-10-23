@@ -1,4 +1,5 @@
-// The workspace window's Sprints screen. Spec: docs/spec/screen/workspace-sprints.md.
+// The workspace window's Sprints screen: one lane per sprint board, side by side
+// (D40). Spec: docs/spec/screen/workspace-sprints.md, docs/spec/tracker-levels.md.
 import type { ApiResult } from '$lib/api.js';
 import { activeMinutes, compactDuration, compactTokens } from '$lib/sessions-digest.js';
 import { errorFor } from '$lib/tracker-errors.js';
@@ -13,11 +14,33 @@ import type {
 
 export interface SprintsApi {
   tryListTrackers: (workspaceId: string) => Promise<ApiResult<TrackerConnection[]>>;
-  tryListSprints: (workspaceId: string) => Promise<ApiResult<SprintUsageRow[]>>;
-  tryListTrackerTasks: (workspaceId: string, sprintId?: string) => Promise<ApiResult<TrackerTaskRow[]>>;
+  tryListSprints: (workspaceId: string, trackerId: string) => Promise<ApiResult<SprintUsageRow[]>>;
+  tryListTrackerTasks: (
+    workspaceId: string,
+    trackerId: string,
+    sprintId?: string,
+  ) => Promise<ApiResult<TrackerTaskRow[]>>;
   tryGetTrackerTask: (workspaceId: string, key: string) => Promise<ApiResult<TrackerTaskDetail>>;
-  tryListUnlinkedSessions: (workspaceId: string, sprintId: string) => Promise<ApiResult<UnlinkedSession[]>>;
+  tryListUnlinkedSessions: (
+    workspaceId: string,
+    trackerId: string,
+    sprintId: string,
+  ) => Promise<ApiResult<UnlinkedSession[]>>;
 }
+
+/** One sprint board's sprints. */
+interface Lane {
+  tracker: TrackerConnection;
+  sprints: SprintUsageRow[];
+}
+
+export interface LaneView {
+  id: string;
+  title: string;
+  rows: SprintRowView[];
+}
+
+const boardName = (t: TrackerConnection) => t.board_name ?? `board #${t.board_ref}`;
 
 export interface UsageCells {
   sessions: string;
@@ -82,8 +105,7 @@ export class SprintsState {
 
   view = $state<View>('loading');
   loadError = $state<string | null>(null);
-  boardTitle = $state('');
-  sprints = $state<SprintUsageRow[]>([]);
+  #lanes = $state<Lane[]>([]);
   selectedId = $state<string | null>(null);
   tasks = $state<TrackerTaskRow[] | null>(null);
   tasksError = $state<string | null>(null);
@@ -97,18 +119,32 @@ export class SprintsState {
     this.#workspaceId = workspaceId;
   }
 
-  get selected(): SprintUsageRow | null {
-    return this.sprints.find((s) => s.id === this.selectedId) ?? null;
+  /** The board's name when there is one lane; the lanes carry their own names otherwise. */
+  get boardTitle(): string {
+    return this.#lanes.length === 1 ? boardName(this.#lanes[0].tracker) : '';
   }
 
-  get rows(): SprintRowView[] {
-    return this.sprints.map((s) => ({
-      id: s.id,
-      name: s.name,
-      state: s.state,
-      dates: dateRange(s),
-      tickets: `${s.tasks} ticket${s.tasks === 1 ? '' : 's'}`,
-      current: s.id === this.selectedId,
+  /** The lane holding `sprintId`. */
+  #laneOf(sprintId: string | null): Lane | null {
+    return this.#lanes.find((l) => l.sprints.some((s) => s.id === sprintId)) ?? null;
+  }
+
+  get selected(): SprintUsageRow | null {
+    return this.#laneOf(this.selectedId)?.sprints.find((s) => s.id === this.selectedId) ?? null;
+  }
+
+  get lanes(): LaneView[] {
+    return this.#lanes.map((l) => ({
+      id: l.tracker.id,
+      title: boardName(l.tracker),
+      rows: l.sprints.map((s) => ({
+        id: s.id,
+        name: s.name,
+        state: s.state,
+        dates: dateRange(s),
+        tickets: `${s.tasks} ticket${s.tasks === 1 ? '' : 's'}`,
+        current: s.id === this.selectedId,
+      })),
     }));
   }
 
@@ -157,35 +193,31 @@ export class SprintsState {
 
   async load() {
     this.view = 'loading';
-    const [trackers, sprints] = await Promise.all([
-      this.#api.tryListTrackers(this.#workspaceId),
-      this.#api.tryListSprints(this.#workspaceId),
-    ]);
-    if (!sprints.ok) {
-      const body = 'body' in sprints.error ? sprints.error.body : undefined;
-      if (sprints.error.status === 404 && body?.error === 'not_connected') {
-        this.view = 'not_connected';
-        return;
-      }
-      this.loadError = failureText(sprints.error);
-      this.view = 'daemon_error';
-      return;
-    }
+    const trackers = await this.#api.tryListTrackers(this.#workspaceId);
     if (!trackers.ok) {
       this.loadError = failureText(trackers.error);
       this.view = 'daemon_error';
       return;
     }
-    const t = trackers.data[0];
-    if (!t) {
+    const boards = trackers.data.filter((t) => t.level === 'sprint');
+    if (boards.length === 0) {
       this.view = 'not_connected';
       return;
     }
+    const reads = await Promise.all(boards.map((t) => this.#api.tryListSprints(this.#workspaceId, t.id)));
+    const lanes: Lane[] = [];
+    for (const [i, res] of reads.entries()) {
+      if (!res.ok) {
+        this.loadError = failureText(res.error);
+        this.view = 'daemon_error';
+        return;
+      }
+      lanes.push({ tracker: boards[i], sprints: res.data });
+    }
     this.loadError = null;
-    this.boardTitle = t.board_name ?? `board #${t.board_ref}`;
-    this.sprints = sprints.data;
+    this.#lanes = lanes;
     this.view = 'ready';
-    const first = sprints.data.find((s) => s.state === 'active') ?? sprints.data[0];
+    const first = lanes[0].sprints.find((s) => s.state === 'active') ?? lanes[0].sprints[0];
     if (first) await this.select(first.id);
   }
 
@@ -198,7 +230,9 @@ export class SprintsState {
     this.ticketError = null;
     this.unlinked = null;
     this.unlinkedError = null;
-    const res = await this.#api.tryListTrackerTasks(this.#workspaceId, id);
+    const lane = this.#laneOf(id);
+    if (!lane) return;
+    const res = await this.#api.tryListTrackerTasks(this.#workspaceId, lane.tracker.id, id);
     if (seq !== this.#seq) return;
     if (res.ok) this.tasks = res.data;
     else this.tasksError = failureText(res.error);
@@ -226,9 +260,10 @@ export class SprintsState {
       return;
     }
     const id = this.selectedId;
-    if (!id) return;
+    const lane = this.#laneOf(id);
+    if (!id || !lane) return;
     this.unlinkedError = null;
-    const res = await this.#api.tryListUnlinkedSessions(this.#workspaceId, id);
+    const res = await this.#api.tryListUnlinkedSessions(this.#workspaceId, lane.tracker.id, id);
     if (id !== this.selectedId) return;
     if (res.ok) this.unlinked = res.data;
     else this.unlinkedError = failureText(res.error);

@@ -148,7 +148,17 @@ slice builds, passes and ships on its own.
 - **R8 · The lead sees their team's per-person metrics (D38).** *Planned 2026-10-22, after R5a.* A lead reads
   per-person metrics (`repository_metrics` by principal, sessions, AI usage) for the members of the teams they
   lead, across every workspace the lead can access; the read policy and the lead's console view follow. Viewers
-  stay aggregate-only (D6, pinned by #313's SQL test).
+  stay aggregate-only (D6, pinned by #313's SQL test). *Done 2026-10-22: merged to develop as 21a5d1a3 (D41). Walked
+  through in the browser on the local dōjō for all five roles: the lead sees per-person rows for its team, m2 and c1
+  see the team total only when 3 others contributed, the admin sees every team, a viewer gets 403. Ships in the next
+  release. Found while walking it: #329 (the first render after a magic-link account switch uses the old session).*
+- **R9 · Trackers by level (D23, D40).** *Built 2026-10-22 on branch `r9-tracker-levels`: `sensei.trackers.level`
+  (`epic | sprint | task`; old rows become sprint), several boards per workspace, one credential per site, per-board
+  routes, `sensei tracker … --level/--board`, Integrations grouped by level, Sprints lanes side by side. An
+  independent review found 6 defects (secret drain race, `--board` ambiguity across sites, lookup stopping at a
+  busy board, a re-key read as gone, stale sibling errors, detail flipping between boards); each fixed red-first. Epics and
+  milestones have no reader yet; that is T3's. The live check on a real Jira board (two boards, two levels) is the
+  user's: the local daemon has no tracker connected.*
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the

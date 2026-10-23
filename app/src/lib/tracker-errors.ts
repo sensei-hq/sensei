@@ -7,7 +7,7 @@ export interface TrackerAlert {
   code: string;
   text: string;
   /** The form field the failure concerns, for `aria-describedby`. */
-  field: 'board_url' | 'email' | 'token' | null;
+  field: 'board_url' | 'email' | 'token' | 'level' | null;
   link: { href: string; label: string } | null;
 }
 
@@ -36,11 +36,15 @@ const WORDS: Record<string, string> = {
   credential_store: keychain,
   forbidden_caller: 'The sensei daemon refused this window’s request.',
   not_connected: 'This workspace has no tracker connected.',
+  tracker_not_found: 'This board is no longer connected to this workspace.',
+  level_required: 'Choose what the board serves.',
+  invalid_level: 'A board serves epics, sprints or tasks.',
   workspace_not_found: 'This workspace no longer exists in sensei.',
   internal: 'The sensei daemon hit a database error.',
   db: 'sensei hit a database error while syncing.',
   unsupported_tracker: 'This tracker type isn’t available in this version of sensei.',
   busy: 'A sync is already running.',
+  superseded: 'The board’s token changed while it synced. Sync again.',
   task_not_found: 'No ticket with that key in sensei.',
   bad_request: 'Jira rejected the request.',
 };
@@ -51,6 +55,8 @@ const FIELD: Record<string, TrackerAlert['field']> = {
   email_required: 'email',
   token_required: 'token',
   unauthorized: 'token',
+  level_required: 'level',
+  invalid_level: 'level',
 };
 
 /** The alert for a failed request: `status` 0 is the daemon not answering. */
