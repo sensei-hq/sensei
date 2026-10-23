@@ -104,7 +104,9 @@ pub(crate) fn parse_timestamp_ms(v: &serde_json::Value) -> Option<i64> {
 
 /// Promote per-record signals into `TurnFacts`. Shared across adapters that use
 /// the Claude-style JSON structure (`message.usage`, `gitBranch`, etc.).
-/// Sum across the turn's records; LAST `stop_reason` wins.
+/// Sum across the turn's records; LAST `stop_reason` wins. A response written on
+/// several records (one per content block, each repeating its `usage`) is counted
+/// once, by `message.id`.
 pub(crate) fn merge_facts(facts: &mut TurnFacts, v: &serde_json::Value) {
     let str_of = |x: Option<&serde_json::Value>| {
         x.and_then(|t| t.as_str()).filter(|t| !t.is_empty()).map(str::to_string)
@@ -131,6 +133,11 @@ pub(crate) fn merge_facts(facts: &mut TurnFacts, v: &serde_json::Value) {
     let Some(u) = m.get("usage") else { return };
     if facts.service_tier.is_none() {
         facts.service_tier = str_of(u.get("service_tier"));
+    }
+    if let Some(id) = m.get("id").and_then(|x| x.as_str())
+        && !facts.counted_messages.insert(id.to_string())
+    {
+        return;
     }
     let add = |slot: &mut Option<i64>, n: Option<i64>| {
         if let Some(n) = n {
@@ -222,6 +229,8 @@ pub struct TurnFacts {
     pub git_branch: Option<String>,
     pub effort: Option<String>,
     pub service_tier: Option<String>,
+    /// The `message.id`s whose usage is already in the sums above.
+    pub counted_messages: std::collections::HashSet<String>,
 }
 
 /// A synthesized hook-stream event reconstructed from a transcript (#75) — the
@@ -274,6 +283,36 @@ pub struct ParsedTranscript {
     /// none (honest-empty — the coordinator leaves the columns NULL, never a
     /// fabricated 0).
     pub tokens: Option<SessionTokens>,
+    /// One row per API response → `activity.transcript_messages`, what its API
+    /// cost is priced from. Empty for a source that does not report per response.
+    pub messages: Vec<TranscriptMessage>,
+}
+
+/// One API response's usage, counted once (spec session-api-cost C2). Facts, not
+/// a price: `activity.message_api_cost` prices it at read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TranscriptMessage {
+    /// `message.id`, or `line:<n>` for a usage record that carries none.
+    pub message_id: String,
+    /// The turn it falls in; `None` before the first human prompt.
+    pub turn_index: Option<i32>,
+    /// Epoch ms of the record.
+    pub at: Option<i64>,
+    pub model: String,
+    pub speed: Option<String>,
+    pub inference_geo: Option<String>,
+    pub service_tier: Option<String>,
+    /// Fresh input only.
+    pub input: i64,
+    pub cache_write_5m: i64,
+    pub cache_write_1h: i64,
+    /// `false` when the record gave only a total cache write (put in `cache_write_5m`).
+    pub cache_split_known: bool,
+    pub cache_read: i64,
+    /// Output, thinking included.
+    pub output: i64,
+    /// The thinking part of `output`, where reported.
+    pub thinking: Option<i64>,
 }
 
 /// One session's total usage, kept SPLIT.
@@ -519,6 +558,11 @@ async fn ingest_one(
                 &parsed.turns,
             )
             .await?;
+        // The session's API responses, each once (session-api-cost C2). Only a
+        // source that reports per response writes them; the rest have none to replace.
+        if !parsed.messages.is_empty() {
+            pg.upsert_transcript_messages(adapter.source(), &session_id, &parsed.messages).await?;
+        }
         // The count recorded is what was WRITTEN, not what was parsed. Recording
         // `parsed.turns.len()` made the stored number incapable of disagreeing
         // with reality, so a watermark claiming turns that no longer exist was
@@ -752,6 +796,15 @@ pub async fn backfill(
         tracing::error!(error = %e, "transcript backfill: consent unreadable; reading no transcripts");
         std::collections::HashSet::new()
     });
+    // Once: re-read Claude transcripts ingested before each response was counted
+    // once (session-api-cost C6). A failure retries on the next backfill.
+    match pg.reset_claude_watermarks_once().await {
+        Ok(true) => {
+            tracing::info!("transcript backfill: re-reading Claude transcripts once (messages_v1)")
+        }
+        Ok(false) => {}
+        Err(e) => tracing::warn!(error = %e, "transcript backfill: messages_v1 reset failed"),
+    }
     let (files_seen, enqueued) = dispatch(queue, parent, since, &consented).await;
     let sessions_repaired = repair_sessions(pg).await;
     BackfillOutcome { files_seen, enqueued, sessions_repaired }
@@ -913,7 +966,9 @@ mod tests {
     ///
     /// MUTATION: drop the token step from `repair_sessions` — tokens stay NULL.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn the_repair_pass_sets_session_tokens_from_their_turns() {
+        let _tokens = crate::tasks::test_support::SESSION_TOKENS_SWEEP_GATE.sweeping();
         let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
             return;
         };
@@ -1044,7 +1099,9 @@ mod tests {
 "#;
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn backfill_ingests_then_skips_unchanged() {
+        let _watermarks = crate::tasks::test_support::WATERMARK_SWEEP_GATE.using();
         let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
         let sid = format!("_test-tx-{}", uuid::Uuid::new_v4());
         // temp transcript: <root>/proj/<sid>.jsonl (mirrors ~/.claude layout)

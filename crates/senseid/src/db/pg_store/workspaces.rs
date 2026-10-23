@@ -671,11 +671,30 @@ impl PgStore {
             //    watch root (it may have been registered under another).
             //
             //    NO `workspace_id`: the folder does not carry one any more (#211).
-            //    Re-parenting it under the repo is the whole re-attribution —
-            //    its workspace now follows the repo's junction row, so there is no
-            //    second value to keep in step. This step therefore runs whether
-            //    or not the repo resolves to a workspace; `g_pid` is needed only
-            //    for the phantom-workspace merge below.
+            //    Its workspace is read through `folders.repository_id`, so the
+            //    re-attribution is moving that anchor: the folder, and the
+            //    descendants that inherited its repository, take the repo's. Then
+            //    the workspace follows the repo's junction row whether or not the
+            //    phantom merge below runs — it is skipped when the standalone had
+            //    no workspace yet, and once re-absorbed the folder is never a
+            //    candidate again (#328). `g_pid` is needed only for that merge.
+            if let Err(e) = sqlx_core::query::query(
+                "WITH s AS (SELECT repository_id AS old, abs_path FROM sensei.folders WHERE id = $1),
+                      g AS (SELECT repository_id AS new FROM sensei.folders WHERE id = $2)
+                 UPDATE sensei.folders f
+                    SET repository_id = g.new, modified_at = now()
+                   FROM s, g
+                  WHERE (f.id = $1 OR starts_with(f.abs_path, s.abs_path || '/'))
+                    AND f.repository_id IS NOT DISTINCT FROM s.old",
+            )
+            .bind(s_id)
+            .bind(g_id)
+            .execute(&self.pool)
+            .await
+            {
+                tracing::warn!(folder = %s_id, error = %e, "heal_nested_standalone_roots: re-anchor failed");
+                continue;
+            }
             if let Err(e) = sqlx_core::query::query(
                 "UPDATE sensei.folders
                     SET kind = 'folder'::sensei.folder_kind,

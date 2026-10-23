@@ -141,6 +141,37 @@ impl TestSweepGate {
 /// and the last assertion that depends on it, not merely around the parse.
 pub(crate) static SCAN_STATE_SWEEP_GATE: TestSweepGate = TestSweepGate::new();
 
+/// Serialises `reset_claude_watermarks_once` against every test whose own
+/// `claude_code` capture watermark must survive.
+///
+/// The reset is DATABASE-WIDE by design (session-api-cost C6: every Claude
+/// transcript is read again once), so its test cannot be scoped to its own row.
+/// Concurrently it deletes a sibling's watermark between the write and the
+/// assertion: `backfill_ingests_then_skips_unchanged` then re-ingests instead of
+/// skipping, and the prune test's "watermark fixture did not land" fires.
+///
+/// Hold [`TestSweepGate::using`] from writing the watermark (or the first
+/// ingest) to the last assertion that depends on it.
+pub(crate) static WATERMARK_SWEEP_GATE: TestSweepGate = TestSweepGate::new();
+
+/// Serialises `refresh_all_session_tokens` (directly or through
+/// `repair_sessions`) against every test that asserts what its OWN session's
+/// `refresh_session_tokens` wrote.
+///
+/// The refresh-all is DATABASE-WIDE by design: the repair pass brings every
+/// session to its turn sums. Concurrently it writes a sibling's session first, so
+/// the sibling's own refresh finds nothing to change and returns `false` —
+/// `a_sessions_tokens_are_the_sum_of_its_turns` failed on "the session had
+/// turns", and two refresh-alls against each other made
+/// `refreshing_all_sessions_touches_only_those_that_differ` count fewer than its
+/// own two sessions. Measured: both fail in most parallel runs and never with
+/// `--test-threads=1`.
+///
+/// Hold [`TestSweepGate::sweeping`] for a refresh-all; hold
+/// [`TestSweepGate::using`] from seeding the session's turns to the assertion on
+/// what its refresh wrote.
+pub(crate) static SESSION_TOKENS_SWEEP_GATE: TestSweepGate = TestSweepGate::new();
+
 /// Serialises the tests that edit a SEEDED `sensei.schedules` row, or run the
 /// seed import.
 ///

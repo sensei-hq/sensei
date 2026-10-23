@@ -16,28 +16,43 @@ pub enum TrackerCmd {
         #[command(subcommand)]
         kind: ConnectKind,
     },
-    /// Sync the workspace's tracker now
+    /// Sync the workspace's trackers now (one board with --board)
     Sync {
         #[arg(long)]
         workspace: String,
+        /// Which of the workspace's boards: its board number or tracker id (needed when it has several)
+        #[arg(long)]
+        board: Option<String>,
     },
-    /// Disconnect the workspace's tracker (Jira itself is not changed)
+    /// Disconnect one of the workspace's boards (Jira itself is not changed)
     Disconnect {
         #[arg(long)]
         workspace: String,
+        /// Which of the workspace's boards: its board number or tracker id (needed when it has several)
+        #[arg(long)]
+        board: Option<String>,
     },
-    /// The workspace's sprints, with ticket counts and sessions in each window
+    /// A board's sprints, with ticket counts and sessions in each window
     Sprints {
         #[arg(long)]
         workspace: String,
+        /// Which of the workspace's boards: its board number or tracker id (needed when it has several)
+        #[arg(long)]
+        board: Option<String>,
     },
-    /// Active AI time and tokens per ticket: all tickets, a sprint's, or one
+    /// Active AI time and tokens per ticket: a board's tickets, a sprint's, or one
     Usage {
         #[arg(long)]
         workspace: String,
+        /// Which of the workspace's boards: its board number or tracker id (needed when it has several)
+        #[arg(long)]
+        board: Option<String>,
         /// A sprint id or exact name
         #[arg(long, conflicts_with = "key")]
         sprint: Option<String>,
+        /// The tickets in no sprint
+        #[arg(long, conflicts_with_all = ["sprint", "key"])]
+        backlog: bool,
         /// One ticket key (current or former), e.g. AUTH-420
         key: Option<String>,
         /// One row per repository (with a ticket key)
@@ -67,6 +82,9 @@ pub enum ConnectKind {
         /// Optional: the board's Jira project key, checked against the board
         #[arg(long)]
         project_key: Option<String>,
+        /// What the board serves in the workspace: epic, sprint or task
+        #[arg(long)]
+        level: String,
     },
 }
 
@@ -104,13 +122,60 @@ fn resolve_named(list: &Value, input: &str, noun: &str) -> Result<String, String
     }
 }
 
+/// The tracker id for `--board` (a board number or a tracker id) from the
+/// `GET …/trackers` list; without `--board`, the workspace's only tracker.
+pub fn resolve_tracker(trackers: &Value, board: Option<&str>) -> Result<String, String> {
+    let list = trackers.as_array().map(Vec::as_slice).unwrap_or_default();
+    let id_of = |t: &Value| t["id"].as_str().unwrap_or_default().to_string();
+    let label = |t: &Value| {
+        format!(
+            "{} #{} ({})",
+            t["level"].as_str().unwrap_or("?"),
+            t["board_ref"].as_str().unwrap_or("?"),
+            t["board_name"].as_str().unwrap_or("?")
+        )
+    };
+    let boards = || list.iter().map(label).collect::<Vec<_>>().join(", ");
+    match (board, list) {
+        (_, []) => Err("This workspace has no tracker connected.".into()),
+        (None, [one]) => Ok(id_of(one)),
+        (None, _) => {
+            Err(format!("This workspace has several boards; pass one with --board: {}", boards()))
+        }
+        (Some(b), _) => {
+            let matches: Vec<&Value> = list
+                .iter()
+                .filter(|t| t["board_ref"].as_str() == Some(b) || id_of(t).eq_ignore_ascii_case(b))
+                .collect();
+            match matches.as_slice() {
+                [one] => Ok(id_of(one)),
+                [] => Err(format!("No board {b} in this workspace; boards: {}", boards())),
+                // Board numbers are per site: two sites can both have a #42.
+                many => Err(format!(
+                    "{} boards are numbered {b}; pass the tracker id with --board: {}",
+                    many.len(),
+                    many.iter()
+                        .map(|t| format!(
+                            "{} on {} ({})",
+                            label(t),
+                            t["base_url"].as_str().unwrap_or("?"),
+                            id_of(t)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            }
+        }
+    }
+}
+
 /// The sprint id for `input` (a uuid or an exact sprint name) from the
 /// `GET …/sprints` list, by the same rule as workspaces.
 pub fn resolve_sprint(sprints: &Value, input: &str) -> Result<String, String> {
     resolve_named(sprints, input, "sprint")
 }
 
-/// Active AI time as `h:mm`; blank when no session had a duration.
+/// A time (active AI time, its split, session or cycle time) as `h:mm`; blank when unknown.
 pub fn active_time(secs: Option<f64>) -> String {
     secs.map(|s| {
         let minutes = (s.max(0.0) / 60.0).floor() as u64;
@@ -119,16 +184,50 @@ pub fn active_time(secs: Option<f64>) -> String {
     .unwrap_or_default()
 }
 
+/// The `sensei tracker sprints` line for the backlog (`GET …/backlog`).
+pub fn backlog_row(backlog: &Value) -> Vec<String> {
+    // No window, so no "sessions in window" or "unlinked": those need dates.
+    vec![
+        "Backlog".into(),
+        "no sprint".into(),
+        String::new(),
+        String::new(),
+        backlog["tickets"].to_string(),
+        String::new(),
+        backlog["usage"]["sessions"].to_string(),
+        String::new(),
+    ]
+}
+
+/// The span from `first_at` to `last_at` in seconds; `None` while either is unknown.
+fn cycle_secs(usage: &Value) -> Option<f64> {
+    let at = |k: &str| usage[k].as_str().and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok());
+    Some((at("last_at")? - at("first_at")?).num_seconds() as f64)
+}
+
+/// The usage's API cost at list prices (session-api-cost C5): "1.24", "1.24+"
+/// when some of its work could not be priced (a lower bound), "<0.01" for a
+/// fraction of a cent; blank when nothing was priced.
+fn api_cost(usage: &Value) -> String {
+    let Some(c) = usage["api_cost"].as_f64() else { return String::new() };
+    let partial = if usage["api_cost_partial"].as_i64().unwrap_or(0) > 0 { "+" } else { "" };
+    if c > 0.0 && c < 0.005 { format!("<0.01{partial}") } else { format!("{c:.2}{partial}") }
+}
+
 /// The usage table's header.
-pub const USAGE_HEADER: [&str; 8] = [
+pub const USAGE_HEADER: [&str; 12] = [
     "key",
     "summary",
     "sessions (branch/prompt)",
     "active AI time",
+    "claude",
+    "you",
+    "session time",
+    "cycle time",
     "fresh tokens",
     "cache-read",
     "out tokens",
-    "cost",
+    "api cost",
 ];
 
 /// One usage row's cells, in [`USAGE_HEADER`] order. Unknown values are blank, never `0`.
@@ -144,10 +243,14 @@ pub fn usage_cells(label: &str, summary: &str, usage: &Value) -> Vec<String> {
             usage["by_source"]["prompt"].as_i64().unwrap_or(0)
         ),
         active_time(usage["active_secs"].as_f64()),
+        active_time(usage["claude_secs"].as_f64()),
+        active_time(usage["user_secs"].as_f64()),
+        active_time(usage["wall_secs"].as_f64()),
+        active_time(cycle_secs(usage)),
         count(&usage["tokens_fresh"]),
         count(&usage["cache_read"]),
         count(&usage["tokens_out"]),
-        usage["metered_cost"].as_f64().map(|c| format!("{c:.2}")).unwrap_or_default(),
+        api_cost(usage),
     ]
 }
 
@@ -200,9 +303,12 @@ pub fn jira_connect_body(
     board: Option<&str>,
     email: &str,
     project_key: Option<&str>,
+    level: &str,
     token: &str,
 ) -> Value {
     let mut body = serde_json::Map::new();
+    body.insert("kind".into(), "jira".into());
+    body.insert("level".into(), level.into());
     match board_url {
         Some(u) => {
             body.insert("board_url".into(), u.into());
@@ -271,8 +377,12 @@ pub fn describe_error(status: u16, body: &Value) -> String {
         "token_required" => format!("No API token: set {TOKEN_ENV} or pipe it on stdin."),
         "unsupported_tracker" => "This tracker type isn't available in this version of sensei.".into(),
         "not_connected" => "This workspace has no tracker connected.".into(),
+        "tracker_not_found" => "No such board in this workspace.".into(),
+        "level_required" => "Pass --level: what the board serves (epic, sprint or task).".into(),
+        "invalid_level" => "--level must be epic, sprint or task.".into(),
         "workspace_not_found" => "No such workspace.".into(),
-        "busy" => "A sync is already running for this workspace.".into(),
+        "busy" => "A sync is already running for this board.".into(),
+        "superseded" => "The board's token changed while it synced. Sync again.".into(),
         "rate_limited" => "Jira is rate-limiting requests. Try again in a minute.".into(),
         "token_missing" | "credential_store" => {
             "The saved token can't be read from the system keychain. Connect again to replace it.".into()
@@ -303,9 +413,15 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
         let workspaces = get_json(&client, &format!("{base}/api/workspaces"))?;
         resolve_workspace(&workspaces, input)
     };
+    // `…/api/workspaces/{ws}/trackers/{tracker}` for `--board`.
+    let tracker_uri = |ws: &str, board: Option<&str>| -> Result<String, String> {
+        let list = format!("{base}/api/workspaces/{ws}/trackers");
+        let tracker = resolve_tracker(&get_json(&client, &list)?, board)?;
+        Ok(format!("{list}/{tracker}"))
+    };
     match cmd {
         TrackerCmd::Connect {
-            kind: ConnectKind::Jira { workspace, board_url, url, board, email, project_key },
+            kind: ConnectKind::Jira { workspace, board_url, url, board, email, project_key, level },
         } => {
             let id = workspace_id(&workspace)?;
             let env = std::env::var(TOKEN_ENV).ok();
@@ -319,11 +435,12 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                 board.as_deref(),
                 &email,
                 project_key.as_deref(),
+                &level,
                 &token,
             );
             // Two validation requests at up to 30 s each, plus the keyring.
             let resp = crate::client_with_timeout(90)
-                .post(format!("{base}/api/workspaces/{id}/trackers/jira/connect"))
+                .post(format!("{base}/api/workspaces/{id}/trackers"))
                 .json(&body)
                 .send()
                 .map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
@@ -341,30 +458,51 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                 t["base_url"].as_str().unwrap_or("?"),
             );
             println!("First sync running…");
-            wait_for_first_sync(&client, &format!("{base}/api/workspaces/{id}/trackers"))
+            wait_for_first_sync(
+                &client,
+                &format!("{base}/api/workspaces/{id}/trackers"),
+                t["id"].as_str().unwrap_or_default(),
+            )
         }
-        TrackerCmd::Sync { workspace } => {
+        TrackerCmd::Sync { workspace, board } => {
             let id = workspace_id(&workspace)?;
-            let resp = crate::client_with_timeout(660)
-                .post(format!("{base}/api/workspaces/{id}/trackers/sync"))
-                .send()
-                .map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
-            let status = resp.status().as_u16();
-            let v: Value = resp.json().unwrap_or(Value::Null);
-            if status != 200 {
-                return Err(describe_error(status, &v));
+            let list = format!("{base}/api/workspaces/{id}/trackers");
+            let trackers = get_json(&client, &list)?;
+            let ids: Vec<String> = match board.as_deref() {
+                Some(b) => vec![resolve_tracker(&trackers, Some(b))?],
+                None => trackers
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|t| t["id"].as_str().map(String::from))
+                    .collect(),
+            };
+            if ids.is_empty() {
+                return Err(describe_error(404, &serde_json::json!({"error": "not_connected"})));
             }
-            let c = &v["counts"];
-            println!(
-                "Synced: {} sprints, {} tickets, {} session links ({} removed, {} sprint members skipped).",
-                c["sprints"], c["tasks"], c["links"], c["removed"], c["skipped_members"]
-            );
+            for tracker in ids {
+                let resp = crate::client_with_timeout(660)
+                    .post(format!("{list}/{tracker}/sync"))
+                    .send()
+                    .map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
+                let status = resp.status().as_u16();
+                let v: Value = resp.json().unwrap_or(Value::Null);
+                if status != 200 {
+                    return Err(describe_error(status, &v));
+                }
+                let c = &v["counts"];
+                println!(
+                    "Synced {tracker}: {} sprints, {} tickets, {} session links ({} removed, {} sprint members skipped).",
+                    c["sprints"], c["tasks"], c["links"], c["removed"], c["skipped_members"]
+                );
+            }
             Ok(())
         }
-        TrackerCmd::Disconnect { workspace } => {
+        TrackerCmd::Disconnect { workspace, board } => {
             let id = workspace_id(&workspace)?;
             let resp = client
-                .delete(format!("{base}/api/workspaces/{id}/trackers"))
+                .delete(tracker_uri(&id, board.as_deref())?)
                 .send()
                 .map_err(|e| format!("could not reach the sensei daemon: {e}"))?;
             let status = resp.status().as_u16();
@@ -374,9 +512,10 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             }
             Err(describe_error(status, &resp.json().unwrap_or(Value::Null)))
         }
-        TrackerCmd::Sprints { workspace } => {
+        TrackerCmd::Sprints { workspace, board } => {
             let id = workspace_id(&workspace)?;
-            let sprints = get_json(&client, &format!("{base}/api/workspaces/{id}/sprints"))?;
+            let sprints =
+                get_json(&client, &format!("{}/sprints", tracker_uri(&id, board.as_deref())?))?;
             let rows: Vec<Vec<String>> = sprints
                 .as_array()
                 .map(Vec::as_slice)
@@ -406,6 +545,11 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                     ]
                 })
                 .collect();
+            let mut rows = rows;
+            rows.push(backlog_row(&get_json(
+                &client,
+                &format!("{}/backlog", tracker_uri(&id, board.as_deref())?),
+            )?));
             println!(
                 "{}",
                 table(
@@ -424,7 +568,7 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             );
             Ok(())
         }
-        TrackerCmd::Usage { workspace, sprint, key, by_repo } => {
+        TrackerCmd::Usage { workspace, board, sprint, backlog, key, by_repo } => {
             let id = workspace_id(&workspace)?;
             let mut rows = Vec::new();
             let mut footer = Vec::new();
@@ -446,11 +590,16 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                     }
                 }
             } else {
-                let mut uri = format!("{base}/api/workspaces/{id}/tracker-tasks");
+                let tracker = tracker_uri(&id, board.as_deref())?;
+                let mut uri = format!("{tracker}/tasks");
                 let mut sprint_row = None;
+                let mut backlog_total = None;
+                if backlog {
+                    uri = format!("{uri}?backlog=true");
+                    backlog_total = Some(get_json(&client, &format!("{tracker}/backlog"))?);
+                }
                 if let Some(sprint) = sprint {
-                    let sprints =
-                        get_json(&client, &format!("{base}/api/workspaces/{id}/sprints"))?;
+                    let sprints = get_json(&client, &format!("{tracker}/sprints"))?;
                     let sid = resolve_sprint(&sprints, &sprint)?;
                     uri = format!("{uri}?sprint={sid}");
                     sprint_row = sprints
@@ -476,6 +625,10 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                         "{} tickets without AI sessions not shown.",
                         list.len() - worked.len()
                     ));
+                }
+                if let Some(b) = backlog_total {
+                    // The backlog's own total: each session once, never a sum of tickets.
+                    rows.push(usage_cells("backlog total", "", &b["usage"]));
                 }
                 if let Some(s) = sprint_row {
                     match s["reason"].as_str() {
@@ -512,11 +665,20 @@ fn get_json(client: &reqwest::blocking::Client, url: &str) -> Result<Value, Stri
     Ok(v)
 }
 
-/// Poll the connection until its status leaves `pending` (2 s steps, ≤ 120 s).
-fn wait_for_first_sync(client: &reqwest::blocking::Client, url: &str) -> Result<(), String> {
+/// Poll the new connection `id` until its status leaves `pending` (2 s steps, ≤ 120 s).
+fn wait_for_first_sync(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    id: &str,
+) -> Result<(), String> {
     for _ in 0..60 {
         let list = get_json(client, url)?;
-        let t = &list[0];
+        let t = list
+            .as_array()
+            .and_then(|l| l.iter().find(|t| t["id"].as_str() == Some(id)))
+            .ok_or_else(|| {
+                describe_error(404, &serde_json::json!({"error": "tracker_not_found"}))
+            })?;
         match t["status"].as_str() {
             Some("pending") => std::thread::sleep(std::time::Duration::from_secs(2)),
             Some("error") => {
@@ -566,7 +728,9 @@ mod tests {
             "--board-url",
             "https://a.atlassian.net/x/boards/4",
             "--email",
-            "e@x.io",
+            "dev@example.com",
+            "--level",
+            "sprint",
         ])
         .unwrap();
         assert!(
@@ -583,9 +747,25 @@ mod tests {
                 "--board",
                 "4",
                 "--email",
-                "e@x.io"
+                "dev@example.com",
+                "--level",
+                "epic"
             ])
             .is_ok()
+        );
+        assert!(
+            parse(&[
+                "connect",
+                "jira",
+                "--workspace",
+                "p",
+                "--board-url",
+                "https://a.atlassian.net/x/boards/4",
+                "--email",
+                "dev@example.com"
+            ])
+            .is_err(),
+            "the level is the user's choice, never defaulted"
         );
     }
 
@@ -635,14 +815,58 @@ mod tests {
     }
 
     #[test]
-    fn sync_and_disconnect_take_a_workspace() {
+    fn sync_and_disconnect_take_a_workspace_and_optionally_a_board() {
         assert_eq!(
             parse(&["sync", "--workspace", "p"]).unwrap(),
-            TrackerCmd::Sync { workspace: "p".into() }
+            TrackerCmd::Sync { workspace: "p".into(), board: None }
         );
         assert_eq!(
-            parse(&["disconnect", "--workspace", "p"]).unwrap(),
-            TrackerCmd::Disconnect { workspace: "p".into() }
+            parse(&["disconnect", "--workspace", "p", "--board", "42"]).unwrap(),
+            TrackerCmd::Disconnect { workspace: "p".into(), board: Some("42".into()) }
+        );
+    }
+
+    fn trackers() -> Value {
+        json!([
+            {"id": "77777777-7777-7777-7777-777777777777", "level": "epic", "board_ref": "43", "board_name": "Portfolio"},
+            {"id": "88888888-8888-8888-8888-888888888888", "level": "sprint", "board_ref": "42", "board_name": "AUTH Scrum"}
+        ])
+    }
+
+    #[test]
+    fn a_tracker_resolves_by_board_or_id_or_as_the_only_one() {
+        assert_eq!(
+            resolve_tracker(&trackers(), Some("42")),
+            Ok("88888888-8888-8888-8888-888888888888".into())
+        );
+        assert_eq!(
+            resolve_tracker(&trackers(), Some("77777777-7777-7777-7777-777777777777")),
+            Ok("77777777-7777-7777-7777-777777777777".into())
+        );
+        let several = resolve_tracker(&trackers(), None).unwrap_err();
+        assert!(
+            several.contains("--board")
+                && several.contains("epic #43")
+                && several.contains("sprint #42"),
+            "{several}"
+        );
+        let only = json!([trackers()[1].clone()]);
+        assert_eq!(resolve_tracker(&only, None), Ok("88888888-8888-8888-8888-888888888888".into()));
+        assert!(resolve_tracker(&trackers(), Some("99")).unwrap_err().contains("#42"));
+        let two_sites = json!([
+            {"id": "77777777-7777-7777-7777-777777777777", "level": "sprint", "board_ref": "42", "board_name": "A", "base_url": "https://a.atlassian.net"},
+            {"id": "88888888-8888-8888-8888-888888888888", "level": "task", "board_ref": "42", "board_name": "B", "base_url": "https://b.atlassian.net"}
+        ]);
+        let ambiguous = resolve_tracker(&two_sites, Some("42")).unwrap_err();
+        assert!(
+            ambiguous.contains("a.atlassian.net")
+                && ambiguous.contains("b.atlassian.net")
+                && ambiguous.contains("7777"),
+            "two boards numbered 42 are never guessed between: {ambiguous}"
+        );
+        assert_eq!(
+            resolve_tracker(&json!([]), None).unwrap_err(),
+            "This workspace has no tracker connected."
         );
     }
 
@@ -684,22 +908,24 @@ mod tests {
                 Some("https://a.atlassian.net/x/boards/4"),
                 None,
                 None,
-                "e@x.io",
+                "dev@example.com",
                 None,
+                "sprint",
                 "tok"
             ),
-            json!({"board_url": "https://a.atlassian.net/x/boards/4", "email": "e@x.io", "api_token": "tok"})
+            json!({"kind": "jira", "level": "sprint", "board_url": "https://a.atlassian.net/x/boards/4", "email": "dev@example.com", "api_token": "tok"})
         );
         assert_eq!(
             jira_connect_body(
                 None,
                 Some("https://a.atlassian.net"),
                 Some("4"),
-                "e@x.io",
+                "dev@example.com",
                 Some("AUTH"),
+                "epic",
                 "tok"
             ),
-            json!({"base_url": "https://a.atlassian.net", "board_id": "4", "email": "e@x.io", "api_token": "tok", "project_key": "AUTH"})
+            json!({"kind": "jira", "level": "epic", "base_url": "https://a.atlassian.net", "board_id": "4", "email": "dev@example.com", "api_token": "tok", "project_key": "AUTH"})
         );
     }
 
@@ -741,6 +967,16 @@ mod tests {
         assert!(taken.contains("other"), "{taken}");
         assert!(describe_error(404, &json!({"error": "board_not_found", "base_url": "https://a.atlassian.net", "board_ref": "4"})).contains("#4"));
         assert!(
+            describe_error(422, &json!({"error": "invalid_level"}))
+                .contains("epic, sprint or task")
+        );
+        assert!(describe_error(422, &json!({"error": "level_required"})).contains("--level"));
+        assert!(describe_error(409, &json!({"error": "superseded"})).contains("Sync again"));
+        assert_eq!(
+            describe_error(404, &json!({"error": "tracker_not_found"})),
+            "No such board in this workspace."
+        );
+        assert!(
             describe_error(500, &json!({"error": "mystery"})).contains("mystery"),
             "unknown codes are shown, not hidden"
         );
@@ -750,22 +986,26 @@ mod tests {
     fn sprints_and_usage_parse() {
         assert_eq!(
             parse(&["sprints", "--workspace", "p"]).unwrap(),
-            TrackerCmd::Sprints { workspace: "p".into() }
+            TrackerCmd::Sprints { workspace: "p".into(), board: None }
         );
         assert_eq!(
             parse(&["usage", "--workspace", "p", "AUTH-1", "--by-repo"]).unwrap(),
             TrackerCmd::Usage {
                 workspace: "p".into(),
+                board: None,
                 sprint: None,
+                backlog: false,
                 key: Some("AUTH-1".into()),
                 by_repo: true
             }
         );
         assert_eq!(
-            parse(&["usage", "--workspace", "p", "--sprint", "Sprint 2"]).unwrap(),
+            parse(&["usage", "--workspace", "p", "--board", "42", "--sprint", "Sprint 2"]).unwrap(),
             TrackerCmd::Usage {
                 workspace: "p".into(),
+                board: Some("42".into()),
                 sprint: Some("Sprint 2".into()),
+                backlog: false,
                 key: None,
                 by_repo: false
             }
@@ -817,10 +1057,60 @@ mod tests {
         });
         assert_eq!(
             usage_cells("AUTH-2", "Login", &usage),
-            vec!["AUTH-2", "Login", "3 (3/1)", "0:03", "15", "", "40", ""]
+            vec!["AUTH-2", "Login", "3 (3/1)", "0:03", "", "", "", "", "15", "", "40", ""]
         );
         assert!(USAGE_HEADER.contains(&"active AI time"), "never just \"hours\"");
-        let priced = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0}, "metered_cost": 1.5, "metered_cost_n": 1});
-        assert_eq!(usage_cells("K-1", "", &priced)[7], "1.50");
+        // The cost column is the API cost (session API cost C5); "+" when only
+        // partly priced; a source's own metered figure is not shown.
+        assert_eq!(USAGE_HEADER[11], "api cost");
+        let metered = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0}, "metered_cost": 1.5, "metered_cost_n": 1});
+        assert_eq!(usage_cells("K-1", "", &metered)[11], "");
+        let priced = json!({"sessions": 2, "by_source": {"branch": 2, "prompt": 0}, "api_cost": 1.2449, "api_cost_n": 2, "api_cost_partial": 0});
+        assert_eq!(usage_cells("K-1", "", &priced)[11], "1.24");
+        let partial = json!({"sessions": 2, "by_source": {"branch": 2, "prompt": 0}, "api_cost": 1.2449, "api_cost_n": 2, "api_cost_partial": 1});
+        assert_eq!(usage_cells("K-1", "", &partial)[11], "1.24+");
+    }
+
+    #[test]
+    fn usage_cells_split_active_time_and_span_the_cycle() {
+        let usage = json!({
+            "sessions": 2, "by_source": {"branch": 2, "prompt": 0},
+            "active_secs": 2400.0, "active_n": 2,
+            "claude_secs": 1800.0, "claude_n": 2, "user_secs": 600.0, "user_n": 2,
+            "wall_secs": 3000.0, "wall_n": 2,
+            "first_at": "2026-10-05T10:00:00Z", "last_at": "2026-10-07T17:20:00Z"
+        });
+        assert_eq!(
+            USAGE_HEADER[3..8],
+            ["active AI time", "claude", "you", "session time", "cycle time"]
+        );
+        assert_eq!(
+            usage_cells("AUTH-2", "", &usage)[3..8],
+            ["0:40", "0:30", "0:10", "0:50", "55:20"]
+        );
+        let open = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0},
+                          "first_at": "2026-10-05T10:00:00Z", "last_at": null});
+        assert_eq!(usage_cells("AUTH-2", "", &open)[7], "", "no session ended: no cycle time");
+    }
+
+    #[test]
+    fn backlog_is_its_own_usage_scope_and_a_sprints_line() {
+        assert_eq!(
+            parse(&["usage", "--workspace", "p", "--board", "42", "--backlog"]).unwrap(),
+            TrackerCmd::Usage {
+                workspace: "p".into(),
+                board: Some("42".into()),
+                sprint: None,
+                backlog: true,
+                key: None,
+                by_repo: false
+            }
+        );
+        assert!(parse(&["usage", "--workspace", "p", "--backlog", "--sprint", "s"]).is_err());
+        assert!(parse(&["usage", "--workspace", "p", "--backlog", "AUTH-1"]).is_err());
+        assert_eq!(
+            backlog_row(&json!({"tickets": 2, "usage": {"sessions": 1}})),
+            vec!["Backlog", "no sprint", "", "", "2", "", "1", ""]
+        );
     }
 }

@@ -1,12 +1,12 @@
-# 繋 · Project window · Integrations
+# 繋 · Workspace window · Integrations
 
 **Segment:** 04 · The project window
-**Route:** `/project/[id]/integrations`
+**Route:** `/workspace/[id]/integrations`
 **Source mockup:** none yet. The shape follows `ProvidersSection.svelte` (secret entry)
 and the connected-state line of the Dōjō mockup's Integrations tab
 (`mockups/Sensei/lib/dojo2/dojo2-project.jsx`).
 **App files:**
-- `app/src/routes/(project)/project/[id]/integrations/+page.svelte`
+- `app/src/routes/(workspace)/workspace/[id]/integrations/+page.svelte`
 - the sidebar entry `{ id: 'integrations', kanji: '繋', label: 'Integrations' }` in
   `project-sidebar-view.ts` `SECTIONS`, after `sprints` and before `about`
   (`isSectionActive` matches it by the `/integrations` route prefix)
@@ -19,7 +19,25 @@ and the connected-state line of the Dōjō mockup's Integrations tab
 trackers today). The Observatory's "Dōjō connections" are a different thing: your
 memberships in Dōjō organisations. The two names stay distinct on purpose.
 
-## Purpose
+## Several boards, by level (D40, 2026-10-22)
+
+This section overrides "one project has one tracker" below (spec `docs/spec/tracker-levels.md`).
+
+- **Header** "Issue trackers". The screen lists the workspace's boards under a heading per level, in the
+  order **Epics**, **Sprints**, **Tasks**; a level without a board has no heading. Each board is a card
+  (`data-tracker=<id>`) with its own Sync now, Replace token and Disconnect.
+- **Add a board** (`data-action="add"`) opens the form beside the cards; Cancel closes it.
+- The form's first field is **"What the board serves"**: three radios (Epics, Sprints, Tasks, each with a
+  one-line help). **None is preselected**, and Connect stays disabled until one is chosen. Replace token
+  pre-selects the board's own level.
+- **Disconnect board #N?** names the board; the body says the workspace's other boards stay and Jira is not
+  changed.
+- Polling runs while any board is `pending`; the status line follows the board connected last.
+- New codes: `tracker_not_found` "This board is no longer connected to this workspace."; `level_required`
+  "Choose what the board serves." and `invalid_level` "A board serves epics, sprints or tasks." (both
+  describe the level field).
+
+
 
 Where a user **connects this project to its issue tracker**: Jira today, GitLab
 later. One project has one tracker (spec R1), so this is a per-project screen, not
@@ -127,8 +145,8 @@ failure, focus moves to the alert.
 - Requests carry the app's own Origin, which the daemon's tracker guard allows
   through the reused `ALLOWED_ORIGINS` (`tauri://localhost`, dev
   `http://localhost:5173` and `http://127.0.0.1:5173`).
-- The screen shows no ticket/sprint usage; that is the Sprints screen's
-  ([`project-sprints.md`](project-sprints.md)).
+- The screen shows no ticket/sprint usage; that is the Tickets screen's
+  ([`workspace-tickets.md`](workspace-tickets.md)).
 
 ## Done gate
 

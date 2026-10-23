@@ -88,7 +88,7 @@ CLI are the v1 contract.
 - **Issue:** TBD
 - **Layers:** app (`project-sidebar-view.ts` section 繋 Integrations; `integrations/+page.svelte`; `api.ts` wrappers for list/connect/sync/disconnect)
 - **Depends on:** F1 (routes, status, sync, `board_url` parsing). F2 is not required.
-- **Acceptance criteria:** [`spec/screen/project-integrations.md`](../spec/screen/project-integrations.md) done gate 1–6.
+- **Acceptance criteria:** [`spec/screen/workspace-integrations.md`](../spec/screen/workspace-integrations.md) done gate 1–6.
 - **Test scenarios:**
   - Given only a pasted board URL, When Connect, Then the connected card shows the daemon-derived site and board id.
   - Given a wrong token, When Connect, Then "Jira rejected the email and token…" and the token field is empty.
@@ -99,7 +99,7 @@ CLI are the v1 contract.
 - **Issue:** TBD
 - **Layers:** app (`project-sidebar-view.ts` section 期 Sprints; `sprints/+page.svelte`, `sprints-state.svelte.ts`, `SprintsScreen.svelte`; `api.ts` wrappers for the four F4 read routes; the tracker error words moved to `$lib` as their second consumer appears)
 - **Depends on:** F4 (routes), F6 (error words, sidebar placement)
-- **Acceptance criteria:** [`spec/screen/project-sprints.md`](../spec/screen/project-sprints.md) done gate 1–7.
+- **Acceptance criteria:** [`spec/screen/workspace-tickets.md`](../spec/screen/workspace-tickets.md) done gate 1–7.
 - **Test scenarios:**
   - Given a connected project, When the screen opens, Then the active sprint is selected and its tickets are listed with active AI time and tokens.
   - Given a future sprint, When it is selected, Then "Not started…" shows and no zero.
@@ -117,6 +117,35 @@ CLI are the v1 contract.
   - Given P-404 is not on the board, When it is discovered twice within 6 h, Then Jira is asked once.
   - Given text `P-9x;DROP`, When keys are extracted, Then only the shape-valid `P-9` can reach JQL.
   - Given a full sync after discovery, Then the discovered ticket remains, its links are recomputed, and its negative-cache row is gone.
+
+### Feature 9: Backlog (tickets in no sprint)
+
+- **Issue:** TBD
+- **Layers:** daemon (`TaskScope { All, Sprint, Backlog }` for the ticket list; backlog usage through the shared grouped usage; `GET …/backlog`; `?backlog=true`) → CLI (`usage --backlog`, a backlog line in `sprints`) → app (Backlog row and detail on the Sprints screen)
+- **Depends on:** F4, F7
+- **Acceptance criteria:** Done gate 1n; screen done gate 6b.
+- **Test scenarios:**
+  - Given P-783 in no sprint, When the backlog is read, Then P-783 is listed and a sprint's ticket is not.
+  - Given one session linked to two backlog tickets, When backlog usage is read, Then `sessions = 1`.
+
+### Feature 10: Tickets first (sprint as a filter)
+
+- **Issue:** TBD
+- **Layers:** app only — the Sprints screen becomes 札 Tickets (`/workspace/[id]/tickets`): every ticket by default, a searchable sprint filter (All / each sprint / Backlog, rokkit `Select filterable`), an AI-only switch, a Sprint column. No daemon change.
+- **Depends on:** F7, F9
+- **Acceptance criteria:** [`spec/screen/workspace-tickets.md`](../spec/screen/workspace-tickets.md) done gate 1–7.
+
+### Feature 11: Cycle time and the active-time split
+
+- **Issue:** TBD
+- **Layers:** DDL (`sessions.claude_time`, `sessions.user_time`) → analyzer (R12: split active time into Claude's and yours; `NULL`, not `0`, for a session with no hook events; re-pick sessions analysed before R12) → usage (R7: `claude_*`, `user_*`, `wall_*`, `first_at`, `last_at`) → app (Cycle column; ticket detail shows Claude / you, session time, cycle time) → CLI (`usage --key` prints the same).
+- **Depends on:** F4, F10
+- **Acceptance criteria:** spec R7 and R12; screen done gate 8.
+- **Test scenarios:**
+  - Given prompt 10:00, Stop 10:10, prompt 10:15, Stop 10:20, When analysed, Then Claude 15 min, you 5 min, active 20 min.
+  - Given a Notification at 10:02 and the next tool event at 10:05 inside a turn, Then those 3 min are yours.
+  - Given a session with a transcript and no hook events, When analysed, Then `duration`, `claude_time`, `user_time` are `NULL`.
+  - Given sessions on a ticket Mon 10:00–10:30 and Wed 17:00–17:20, When ticket usage is read, Then the cycle time is 2 d 7 h 20 m and `wall_secs` is 50 min.
 
 ### Feature 5: Live verification (human)
 
@@ -143,6 +172,12 @@ graph LR
   F3 --> F8
   F4 --> F8
   F8 --> F5
+  F7 --> F9
+  F9 --> F5
+  F9 --> F10
+  F10 --> F5
+  F10 --> F11
+  F11 --> F5
 ```
 
 First task: **F1.1** — needs the user's Jira Cloud site, board id and API token.

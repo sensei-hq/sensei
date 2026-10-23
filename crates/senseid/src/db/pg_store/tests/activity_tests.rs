@@ -64,6 +64,7 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     // and this test makes its own session eligible on purpose. See
     // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
     let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
+    let _watermarks = crate::tasks::test_support::WATERMARK_SWEEP_GATE.using();
     let s = pg_store().await;
     let suffix = format!("prune_del_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;

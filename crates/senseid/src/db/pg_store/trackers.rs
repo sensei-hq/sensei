@@ -14,6 +14,8 @@ pub struct TrackerRow {
     pub id: uuid::Uuid,
     pub workspace_id: uuid::Uuid,
     pub kind: String,
+    /// `epic | sprint | task` (D40).
+    pub level: String,
     pub base_url: String,
     pub account: String,
     pub external_scope: String,
@@ -40,6 +42,7 @@ pub struct BoardOwner {
 pub struct NewTracker {
     pub workspace_id: uuid::Uuid,
     pub kind: String,
+    pub level: String,
     pub base_url: String,
     pub account: String,
     pub external_scope: String,
@@ -89,6 +92,8 @@ pub struct LinkedSession {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskDetail {
     pub id: uuid::Uuid,
+    /// The tracker whose board holds the ticket.
+    pub tracker_id: uuid::Uuid,
     pub key: String,
     pub summary: Option<String>,
     pub issue_type: Option<String>,
@@ -108,13 +113,16 @@ pub struct DiscoverCounts {
 /// Why an apply did not commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplyError {
-    /// The tracker row no longer exists (disconnected or re-boarded mid-sync).
+    /// The tracker row no longer exists (disconnected mid-sync).
     Gone,
+    /// The row exists under another credential (re-connected, or re-keyed with
+    /// its site, mid-sync): this result belongs to the old token.
+    Superseded,
     Db(String),
 }
 
 const TRACKER_SELECT: &str =
-    "SELECT id, workspace_id, kind::text, base_url, account, external_scope, board_ref,
+    "SELECT id, workspace_id, kind::text, level::text, base_url, account, external_scope, board_ref,
         params, secret_service, last_attempt_at, last_success_at, last_error::text,
         discovered_through
    FROM sensei.trackers";
@@ -122,6 +130,7 @@ const TRACKER_SELECT: &str =
 type TrackerTuple = (
     uuid::Uuid,
     uuid::Uuid,
+    String,
     String,
     String,
     String,
@@ -140,16 +149,17 @@ fn tracker_row(t: TrackerTuple) -> TrackerRow {
         id: t.0,
         workspace_id: t.1,
         kind: t.2,
-        base_url: t.3,
-        account: t.4,
-        external_scope: t.5,
-        board_ref: t.6,
-        params: t.7,
-        secret_service: t.8,
-        last_attempt_at: t.9,
-        last_success_at: t.10,
-        last_error: t.11,
-        discovered_through: t.12,
+        level: t.3,
+        base_url: t.4,
+        account: t.5,
+        external_scope: t.6,
+        board_ref: t.7,
+        params: t.8,
+        secret_service: t.9,
+        last_attempt_at: t.10,
+        last_success_at: t.11,
+        last_error: t.12,
+        discovered_through: t.13,
     }
 }
 
@@ -346,17 +356,18 @@ impl PgStore {
             .map_err(|e| e.to_string())
     }
 
-    pub async fn tracker_for_workspace(
+    /// The workspace's trackers, by level (epic, sprint, task) then age.
+    pub async fn trackers_for_workspace(
         &self,
         workspace_id: uuid::Uuid,
-    ) -> Result<Option<TrackerRow>, String> {
+    ) -> Result<Vec<TrackerRow>, String> {
         sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!(
-            "{TRACKER_SELECT} WHERE workspace_id = $1"
+            "{TRACKER_SELECT} WHERE workspace_id = $1 ORDER BY level, created_at, id"
         ))
         .bind(workspace_id)
-        .fetch_optional(&self.pool)
+        .fetch_all(&self.pool)
         .await
-        .map(|r| r.map(tracker_row))
+        .map(|rows| rows.into_iter().map(tracker_row).collect())
         .map_err(|e| e.to_string())
     }
 
@@ -449,17 +460,18 @@ impl PgStore {
             .await
             .map_err(db)?;
 
-        // Gone, or re-connected since the sync started: the result is superseded.
-        let locked = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
-            "SELECT id FROM sensei.trackers WHERE id = $1 AND secret_service = $2 FOR UPDATE",
+        // Gone, or re-keyed since the sync started: the result is superseded.
+        let locked = sqlx_core::query_as::query_as::<_, (String,)>(
+            "SELECT secret_service FROM sensei.trackers WHERE id = $1 FOR UPDATE",
         )
         .bind(id)
-        .bind(secret_service)
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
-        if locked.is_none() {
-            return Err(ApplyError::Gone);
+        match locked {
+            None => return Err(ApplyError::Gone),
+            Some((current,)) if current != secret_service => return Err(ApplyError::Superseded),
+            Some(_) => {}
         }
 
         // Sprints.
@@ -700,19 +712,19 @@ impl PgStore {
         key: &str,
     ) -> Result<Option<TaskDetail>, String> {
         let err = |e: sqlx_core::Error| e.to_string();
-        let Some((task_id, key, summary, issue_type, status, removed)) =
+        let Some((task_id, tracker_id, key, summary, issue_type, status, removed)) =
             sqlx_core::query_as::query_as::<
                 _,
-                (uuid::Uuid, String, Option<String>, Option<String>, Option<String>, bool),
+                (uuid::Uuid, uuid::Uuid, String, Option<String>, Option<String>, Option<String>, bool),
             >(
-                "SELECT t.id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL
+                "SELECT t.id, t.tracker_id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL
                    FROM sensei.tracker_tasks t JOIN sensei.trackers tr ON tr.id = t.tracker_id
                   WHERE tr.workspace_id = $1
                     AND (upper(t.key) = upper($2)
                          OR EXISTS (SELECT 1 FROM sensei.tracker_task_keys k
                                      WHERE k.task_id = t.id AND upper(k.key) = upper($2)))
                   ORDER BY upper(t.key) = upper($2) DESC, t.removed_at IS NULL DESC,
-                           t.last_seen_at DESC NULLS LAST
+                           tr.level DESC, tr.created_at, tr.id
                   LIMIT 1",
             )
             .bind(workspace_id)
@@ -749,7 +761,16 @@ impl PgStore {
                 _ => sessions.push(LinkedSession { id, started_at, links: vec![link] }),
             }
         }
-        Ok(Some(TaskDetail { id: task_id, key, summary, issue_type, status, removed, sessions }))
+        Ok(Some(TaskDetail {
+            id: task_id,
+            tracker_id,
+            key,
+            summary,
+            issue_type,
+            status,
+            removed,
+            sessions,
+        }))
     }
 
     /// Keys the tracker's board answered it does not have, checked within `ttl`.
@@ -898,10 +919,11 @@ impl PgStore {
         .map_err(|e| e.to_string())
     }
 
+    /// Persist a connect: `(tracker id, created, the site's other boards re-keyed to its token)`.
     pub async fn connect_tracker(
         &self,
         t: &NewTracker,
-    ) -> Result<(uuid::Uuid, bool), ConnectDbError> {
+    ) -> Result<(uuid::Uuid, bool, Vec<uuid::Uuid>), ConnectDbError> {
         let db = |e: sqlx_core::Error| {
             if is_unique_violation(&e) {
                 ConnectDbError::BoardTaken
@@ -921,27 +943,30 @@ impl PgStore {
         if workspace.is_none() {
             return Err(ConnectDbError::Db("workspace not found".into()));
         }
-        let existing = sqlx_core::query_as::query_as::<_, (uuid::Uuid, String, String, String)>(
-            "SELECT id, kind::text, base_url, board_ref FROM sensei.trackers WHERE workspace_id = $1",
+        let existing = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+            "SELECT id FROM sensei.trackers
+              WHERE workspace_id = $1 AND kind = $2::sensei.tracker_kind AND base_url = $3 AND board_ref = $4",
         )
         .bind(t.workspace_id)
+        .bind(&t.kind)
+        .bind(&t.base_url)
+        .bind(&t.board_ref)
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
 
-        let same_board = |(_, kind, base, board): &(uuid::Uuid, String, String, String)| {
-            *kind == t.kind && *base == t.base_url && *board == t.board_ref
-        };
         let outcome = match existing {
-            Some(row) if same_board(&row) => {
+            Some((id,)) => {
                 // The secret_service update fires the swap trigger, tombstoning the old secret.
                 sqlx_core::query::query(
                     "UPDATE sensei.trackers
-                        SET account = $2, external_scope = $3, params = params || $4, secret_service = $5,
+                        SET level = $2::sensei.tracker_level, account = $3, external_scope = $4,
+                            params = params || $5, secret_service = $6,
                             last_success_at = NULL, last_error = NULL
                       WHERE id = $1",
                 )
-                .bind(row.0)
+                .bind(id)
+                .bind(&t.level)
                 .bind(&t.account)
                 .bind(&t.external_scope)
                 .bind(&t.params)
@@ -949,25 +974,18 @@ impl PgStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
-                (row.0, false)
+                (id, false)
             }
-            other => {
-                if let Some(old) = other {
-                    // Another board: the delete trigger tombstones the old secret.
-                    sqlx_core::query::query("DELETE FROM sensei.trackers WHERE id = $1")
-                        .bind(old.0)
-                        .execute(&mut *tx)
-                        .await
-                        .map_err(db)?;
-                }
+            None => {
                 let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
                     "INSERT INTO sensei.trackers
-                            (workspace_id, kind, base_url, account, external_scope, board_ref, params, secret_service)
-                     VALUES ($1, $2::sensei.tracker_kind, $3, $4, $5, $6, $7, $8)
+                            (workspace_id, kind, level, base_url, account, external_scope, board_ref, params, secret_service)
+                     VALUES ($1, $2::sensei.tracker_kind, $3::sensei.tracker_level, $4, $5, $6, $7, $8, $9)
                      RETURNING id",
                 )
                 .bind(t.workspace_id)
                 .bind(&t.kind)
+                .bind(&t.level)
                 .bind(&t.base_url)
                 .bind(&t.account)
                 .bind(&t.external_scope)
@@ -981,6 +999,27 @@ impl PgStore {
             }
         };
 
+        // One credential per site (D14): the workspace's other boards on this site
+        // move to the new token; the swap trigger tombstones each old secret. The
+        // old token's failure no longer describes them; the caller re-syncs them.
+        let rekeyed: Vec<uuid::Uuid> = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+            "UPDATE sensei.trackers SET account = $4, secret_service = $5, last_error = NULL
+              WHERE workspace_id = $1 AND kind = $2::sensei.tracker_kind AND base_url = $3
+                AND secret_service <> $5
+             RETURNING id",
+        )
+        .bind(t.workspace_id)
+        .bind(&t.kind)
+        .bind(&t.base_url)
+        .bind(&t.account)
+        .bind(&t.secret_service)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db)?
+        .into_iter()
+        .map(|(id,)| id)
+        .collect();
+
         let cleared = sqlx_core::query::query(
             "DELETE FROM sensei.tracker_secret_tombstones WHERE secret_service = $1",
         )
@@ -993,7 +1032,7 @@ impl PgStore {
             return Err(ConnectDbError::PendingTombstoneGone);
         }
         tx.commit().await.map_err(db)?;
-        Ok(outcome)
+        Ok((outcome.0, outcome.1, rekeyed))
     }
 
     /// Every tracker, for the scheduled sync.
@@ -1019,11 +1058,14 @@ impl PgStore {
         .map_err(|e| e.to_string())
     }
 
-    pub async fn delete_tracker_for_workspace(
+    /// Delete one of the workspace's trackers. `false` when the workspace has no such tracker.
+    pub async fn delete_tracker(
         &self,
         workspace_id: uuid::Uuid,
+        tracker_id: uuid::Uuid,
     ) -> Result<bool, String> {
-        sqlx_core::query::query("DELETE FROM sensei.trackers WHERE workspace_id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.trackers WHERE id = $1 AND workspace_id = $2")
+            .bind(tracker_id)
             .bind(workspace_id)
             .execute(&self.pool)
             .await
@@ -1048,15 +1090,47 @@ impl PgStore {
         .map_err(|e| e.to_string())
     }
 
-    pub async fn secret_service_referenced(&self, secret_service: &str) -> Result<bool, String> {
-        sqlx_core::query_as::query_as::<_, (bool,)>(
+    /// Drop the tombstone of a secret a tracker still references, atomically: the
+    /// tombstone row is locked for the check, so a trigger re-arming it for the
+    /// last referencing tracker either waits for this to commit (and writes a
+    /// fresh row) or commits first (and the check sees the tracker gone).
+    /// `None`: no such tombstone; `Some(true)`: still referenced, tombstone
+    /// dropped; `Some(false)`: unreferenced, tombstone kept for the delete.
+    pub async fn release_referenced_tombstone(
+        &self,
+        secret_service: &str,
+    ) -> Result<Option<bool>, String> {
+        let err = |e: sqlx_core::Error| e.to_string();
+        let mut tx = self.pool.begin().await.map_err(err)?;
+        let held = sqlx_core::query_as::query_as::<_, (String,)>(
+            "SELECT secret_service FROM sensei.tracker_secret_tombstones
+              WHERE secret_service = $1 FOR UPDATE",
+        )
+        .bind(secret_service)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(err)?;
+        if held.is_none() {
+            return Ok(None);
+        }
+        let (referenced,): (bool,) = sqlx_core::query_as::query_as(
             "SELECT EXISTS (SELECT 1 FROM sensei.trackers WHERE secret_service = $1)",
         )
         .bind(secret_service)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
-        .map(|(b,)| b)
-        .map_err(|e| e.to_string())
+        .map_err(err)?;
+        if referenced {
+            sqlx_core::query::query(
+                "DELETE FROM sensei.tracker_secret_tombstones WHERE secret_service = $1",
+            )
+            .bind(secret_service)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+        }
+        tx.commit().await.map_err(err)?;
+        Ok(Some(referenced))
     }
 
     /// Push a tombstone's next attempt back (its keyring delete failed).
@@ -1188,15 +1262,52 @@ mod schema_tests {
     }
 
     #[tokio::test]
-    async fn a_workspace_holds_at_most_one_tracker() {
+    async fn a_workspace_holds_several_boards_and_a_board_defaults_to_the_sprint_level() {
         let Ok(pg) = PgStore::connect_test().await else { return };
-        let p = workspace(&pg, "one-per-workspace").await;
+        let p = workspace(&pg, "several").await;
         let (s1, s2) = (unique("a"), unique("b"));
-        insert_tracker(&pg, p, "https://a.atlassian.net", "1", &s1).await.unwrap();
-        let second = insert_tracker(&pg, p, "https://b.atlassian.net", "2", &s2).await;
-        assert!(
-            second.is_err(),
-            "a second tracker on one workspace must violate unique(workspace_id)"
+        let base = format!("https://t{}.atlassian.net", uuid::Uuid::new_v4().simple());
+        let a = insert_tracker(&pg, p, &base, "1", &s1).await.unwrap();
+        let b = insert_tracker(&pg, p, &base, "2", &s2).await.unwrap();
+        let levels: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, level::text FROM sensei.trackers WHERE workspace_id = $1 ORDER BY board_ref",
+        )
+        .bind(p)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(levels, [(a, "sprint".to_string()), (b, "sprint".to_string())]);
+        cleanup(&pg, p, &[&s1, &s2]).await;
+    }
+
+    #[tokio::test]
+    async fn a_ticket_on_two_boards_is_read_from_the_narrower_board_whichever_synced_last() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let p = workspace(&pg, "two-copies").await;
+        let (s1, s2) = (unique("epic"), unique("sprint"));
+        let base = format!("https://t{}.atlassian.net", uuid::Uuid::new_v4().simple());
+        let sprint = insert_tracker(&pg, p, &base, "42", &s2).await.unwrap();
+        let epic = insert_tracker(&pg, p, &base, "43", &s1).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.trackers SET level = 'epic' WHERE id = $1")
+            .bind(epic)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        for (tracker, seen) in [(sprint, "2026-10-01"), (epic, "2026-10-20")] {
+            sqlx_core::query::query(
+                "INSERT INTO sensei.tracker_tasks (tracker_id, external_id, key, last_seen_at)
+                 VALUES ($1, '10001', 'AUTH-1', $2::timestamptz)",
+            )
+            .bind(tracker)
+            .bind(seen)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        let detail = pg.tracker_task_detail(p, "auth-1").await.unwrap().unwrap();
+        assert_eq!(
+            detail.tracker_id, sprint,
+            "task, then sprint, then epic; never by sync recency"
         );
         cleanup(&pg, p, &[&s1, &s2]).await;
     }

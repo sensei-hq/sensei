@@ -838,6 +838,7 @@ impl TranscriptAdapter for VscodeAdapter {
                         events: parse_otel_session(content).map_or_else(Vec::new, |s| s.events),
                         model: extract_otel_model(content),
                         tokens: extract_otel_tokens(content),
+                        messages: Vec::new(),
                     };
                 }
                 "journal" => {
@@ -848,6 +849,7 @@ impl TranscriptAdapter for VscodeAdapter {
                             .map_or_else(Vec::new, |s| s.events),
                         model: extract_journal_model(inner),
                         tokens: None,
+                        messages: Vec::new(),
                     };
                 }
                 "transcript" => {
@@ -858,6 +860,7 @@ impl TranscriptAdapter for VscodeAdapter {
                         events: session.as_ref().map_or_else(Vec::new, |s| s.events.clone()),
                         model: extract_transcript_model(inner),
                         tokens: None,
+                        messages: Vec::new(),
                     };
                 }
                 _ => {}
@@ -873,6 +876,7 @@ impl TranscriptAdapter for VscodeAdapter {
                     events: parse_otel_session(content).map_or_else(Vec::new, |s| s.events),
                     model: extract_otel_model(content),
                     tokens: extract_otel_tokens(content),
+                    messages: Vec::new(),
                 };
             }
             if is_delta_journal(trimmed) {
@@ -883,6 +887,7 @@ impl TranscriptAdapter for VscodeAdapter {
                         .map_or_else(Vec::new, |s| s.events),
                     model: extract_journal_model(content),
                     tokens: None,
+                    messages: Vec::new(),
                 };
             }
         }
@@ -894,6 +899,7 @@ impl TranscriptAdapter for VscodeAdapter {
             events: session.as_ref().map_or_else(Vec::new, |s| s.events.clone()),
             model: extract_transcript_model(content),
             tokens: None,
+            messages: Vec::new(),
         }
     }
 }

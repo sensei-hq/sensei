@@ -46,8 +46,14 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D35 | How does a dōjō sign in to Azure DevOps? (R5 Q1) | **A personal access token an admin pastes** (user 2026-10-22), stored in Supabase Vault and never returned, logged or audited as a value. |
 | D36 | How does an Azure DevOps organization map? (R5 Q2) | **Organization → dōjō, project → workspace** (user 2026-10-22). |
 | D37 | What is R5's first slice? (R5 Q3) | **One complete source first** (user 2026-10-22, revised): R5a finishes GitHub end to end (adapter, claim by an org admin, the import/mapping screen, repositories filing by the mapping); R5b adds Azure DevOps only after that. GitLab and Bitbucket later. |
-| D38 | What is the lead role for, now that Clients is gone (D34)? | **A team lead** (user 2026-10-22): a lead sees the metrics of every team member, per person, across all the workspaces the lead can access. Viewers stay aggregate-only (D6); a lead is a member, not a viewer. |
+| D38 | What is the lead role for, now that Clients is gone (D34)? | **A team lead** (user 2026-10-22): a lead sees the metrics of every team member, per person, across all the workspaces the lead can access. Viewers stay aggregate-only (D6); a lead is a member, not a viewer. **The team is only the teams the lead is on** (user, 2026-10-22); a lead on no team sees only themselves. |
 | D39 | How does an admin give the Integrations screen a GitHub token? (R5a) | **Re-authorize with GitHub** (user 2026-10-22): a Connect GitHub button runs GitHub OAuth again (read:org); the fresh token serves that session's reads only. It is never stored, logged or echoed. No pasted-token path. |
+| D40 | D23 in practice: what is a tracker's level, and how do several show? | **A level is a separate board** (portfolio board → epics, team boards → sprints), each its own tracker tagged with its level; **a task-level link is derived** from the change (branch/commit/PR → ticket key), never configured; **several sprint trackers show side by side**, one lane per team (user 2026-10-22). Spec: docs/spec/tracker-levels.md. |
+| D41 | The Teams view, per role (R8) | **An admin sees every team** with per-person rows; **a lead sees the teams they are on** with per-person rows; **contributors and maintainers see their own teams as aggregates only** (no per-person rows; a total shows only when **at least 3 people other than the reader** contributed — user 2026-10-22); **rates are weighted by volume** (each day's sessions/changes), sums stay sums; **a departed teammate drops out** of the lead's view (history stays readable to the repository's maintainers, D6) (user 2026-10-22). |
+| D42 | Azure DevOps connects through Microsoft Entra OAuth (R5b; revisits D35) | A personal access token cannot list its owner's organizations, read its own scopes or report its expiry: Microsoft gates those APIs behind an Entra token. So the admin **connects with Microsoft Entra** (a delegated, authorization-code connect flow run by the dōjō server, separate from dōjō sign-in), using **one multi-tenant app registration** for sensei. The **refresh token** is kept in Supabase Vault (R5b's Vault design); access tokens are never stored. With an Entra token, the organizations list, the token's scopes (the write-scope warning) and the token's validity can be read. Organizations whose users are personal Microsoft accounts (MSA) cannot connect through Entra (Microsoft limitation), and the screen says so (user 2026-10-23). |
+| D43 | Azure members match by stable id only (R5b) | A member read adds or ends only people who carry the Azure identity, matched on its stable id, never on email: an Azure principal name is not a verified email (user 2026-10-23). |
+| D44 | The Azure member read runs on a schedule (R5b) | Besides import and Sync, a scheduled job reads each connected Azure organization's members and applies #309's rule (a complete read ends departed provisioned members; a partial read ends nobody) (user 2026-10-23). |
+| D45 | Sign in with Microsoft (R5c, after R5b) | The login page offers **Microsoft** beside GitHub, through kavach's existing `azure` provider and Supabase Auth's Azure provider, with sign-in scopes only (`openid email profile`). A sign-in records the person's Entra object id as their Azure identity, so the member read (D43, D44) can provision and end every member of an Entra-backed Azure DevOps organization by stable id, as GitHub sign-in does for GitHub orgs. **One** multi-tenant app registration serves both sign-in and R5b's connect flow; the user creates it (user 2026-10-23). |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -147,14 +153,41 @@ slice builds, passes and ships on its own.
   per-person metrics (`repository_metrics` by principal, sessions, AI usage) for the members of the teams they
   lead, across every workspace the lead can access; the read policy and the lead's console view follow. Viewers
   stay aggregate-only (D6, pinned by #313's SQL test).
+  *Built 2026-10-22 on branch `r8-lead-team-metrics`: `dojo.leads_team_member` + a lead clause in
+  `can_read_repository_metric` (teammate's user rows, only on repositories the lead can read), the SECURITY INVOKER
+  read `dojo.team_member_metrics`, `GET /v1/t/{tenant}/team-metrics` (lead floor) and the Lead → Teams view.
+  Relay sessions stay owner-only (#249); the lead reads metric aggregates (sessions = `throughput`, AI usage =
+  `tokens_per_day`), never sessions. Pinned by `database/tests/dojo/lead_team_metrics.sql`.
+  Follow-up (user, 2026-10-22): Teams for every member — an admin sees every team with its people, a contributor
+  or maintainer their teams' totals only (`dojo.team_metric_totals`, k-anonymous: at least 3 senders other than the
+  reader, D26's floor counted without the caller); rates pooled
+  by their denominator (Σ numerator / Σ denominator); departed teammates stay excluded. Pinned by
+  `database/tests/dojo/team_metric_totals.sql`.*
+  *Done 2026-10-22: merged to develop as 21a5d1a3 (D41). Walked
+  through in the browser on the local dōjō for all five roles: the lead sees per-person rows for its team, m2 and c1
+  see the team total only when 3 others contributed, the admin sees every team, a viewer gets 403. Ships in the next
+  release. Found while walking it: #329 (the first render after a magic-link account switch uses the old session).*
+- **R9 · Trackers by level (D23, D40).** *Merged to develop 2026-10-22 (branch `r9-tracker-levels`, aad7ed90): `sensei.trackers.level`
+  (`epic | sprint | task`; old rows become sprint), several boards per workspace, one credential per site, per-board
+  routes, `sensei tracker … --level/--board`, Integrations grouped by level, Sprints lanes side by side. An
+  independent review found 6 defects (secret drain race, `--board` ambiguity across sites, lookup stopping at a
+  busy board, a re-key read as gone, stale sibling errors, detail flipping between boards); each fixed red-first. Epics and
+  milestones have no reader yet; that is T3's. The live check on a real Jira board (two boards, two levels) is the
+  user's: the local daemon has no tracker connected.*
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
   org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
-  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 (8a584e51); ships in the next release. R5b (Azure) next after R8.*
+  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 (8a584e51); ships in the next release. R5b (Azure) next, after R9.*
   *R5a (GitHub) built 2026-10-22 on branch `r5a-github-import` (not merged): the adapter interface, claim through
   `dojo.claim_forge_unit`, `dojo.forge_unit_mappings` + `map_forge_unit`, Admin → Integrations, and registration by
   the mapping — see the spec's "R5a as built". Production's live check waits on the merge and deploy.*
+- **R5c · Sign in with Microsoft (D45).** *Queued 2026-10-23, after R5b.* Add `azure` to the dōjō's kavach providers
+  and the login page (sign-in scopes only); local `supabase/config.toml` `[auth.external.azure]` and production's Azure
+  provider take the app registration's client id and secret. A Microsoft sign-in records the Entra object id as an
+  `azure_devops` identity, and provisioning follows the person's Azure DevOps organizations the way GitHub sign-in follows
+  GitHub orgs (#309's rules). Live check: a member of a connected Entra-backed org signs in with Microsoft and lands in
+  that org's dōjō; a later complete member read without them ends their membership.
 - **R4 · The words.** PRD, specs, guides, `docs/llms`, both `SKILL.md` copies, agents, the website.
   Generic English ("the project's README", a Cargo project) stays.
 

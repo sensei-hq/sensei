@@ -221,6 +221,7 @@ impl TranscriptAdapter for OpenCodeAdapter {
             events: session.map(|s| s.events).unwrap_or_default(),
             model: extract_dominant_model(content),
             tokens: extract_tokens(content),
+            messages: Vec::new(),
         }
     }
 }

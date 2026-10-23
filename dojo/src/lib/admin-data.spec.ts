@@ -22,6 +22,7 @@ import {
 	addTeamMember,
 	removeTeamMember,
 	grantTeamWorkspaceView,
+	getTeamMetrics,
 	listIntegrationUnits,
 	claimIntegrationUnit,
 	mapIntegrationUnit,
@@ -218,6 +219,20 @@ describe("the dōjō's viewers (#307 D8)", () => {
 		await expect(grantWorkspaceView('personal/acme', 'v1', 'p1', { fetch: fn })).rejects.toThrow(
 			'invite them to this dōjō as a viewer first'
 		);
+	});
+});
+
+describe("the lead's team view (#307 R8, D38)", () => {
+	it('reads GET …/team-metrics and returns the wire as sent', async () => {
+		const wire = { since: '2026-10-16', days: 7, teams: [] };
+		const { fn, calls } = fakeFetch(200, wire);
+		expect(await getTeamMetrics('personal/acme', { fetch: fn })).toEqual(wire);
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/personal/acme/team-metrics`);
+	});
+
+	it('a refusal is an error, never an empty view', async () => {
+		const { fn } = fakeFetch(403, { error: 'lead role required' });
+		await expect(getTeamMetrics('personal/acme', { fetch: fn })).rejects.toThrow();
 	});
 });
 

@@ -26,6 +26,7 @@ afterEach(() => {
 
 const api = () => senseiApi(7744);
 const P = '11111111-1111-1111-1111-111111111111';
+const T = '22222222-2222-2222-2222-222222222222';
 
 function stub(status: number, body?: unknown) {
   const fetch = vi.fn().mockResolvedValue(response(status, body));
@@ -40,50 +41,59 @@ describe('tracker wrappers', () => {
     expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers`);
   });
 
-  it('connect POSTs the adapter body to …/trackers/{kind}/connect', async () => {
+  it('connect POSTs the kind, the level and the adapter body to …/trackers', async () => {
     const fetch = stub(201, { tracker: { id: 't' }, first_sync: { pending: true } });
     const body = { board_url: 'https://a.atlassian.net/x/boards/4', email: 'e@x.io', api_token: 'tok' };
-    const res = await api().tryConnectTracker(P, 'jira', body);
+    const res = await api().tryConnectTracker(P, 'jira', 'epic', body);
     expect(res.ok).toBe(true);
     const [url, init] = fetch.mock.calls[0];
-    expect(url).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers/jira/connect`);
+    expect(url).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers`);
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toEqual(body);
+    expect(JSON.parse(init.body)).toEqual({ kind: 'jira', level: 'epic', ...body });
   });
 
-  it('sync POSTs …/trackers/sync and disconnect DELETEs …/trackers (204, no body)', async () => {
+  it('sync POSTs …/trackers/{tracker}/sync and disconnect DELETEs …/trackers/{tracker} (204, no body)', async () => {
     const fetch = stub(200, { counts: { sprints: 1 } });
-    expect((await api().trySyncTracker(P)).ok).toBe(true);
-    expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers/sync`);
+    expect((await api().trySyncTracker(P, T)).ok).toBe(true);
+    expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers/${T}/sync`);
     expect(fetch.mock.calls[0][1].method).toBe('POST');
 
     const del = stub(204);
-    expect(await api().tryDisconnectTracker(P)).toEqual({ ok: true, data: undefined });
+    expect(await api().tryDisconnectTracker(P, T)).toEqual({ ok: true, data: undefined });
+    expect(del.mock.calls[0][0]).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers/${T}`);
     expect(del.mock.calls[0][1].method).toBe('DELETE');
   });
 
-  it('the usage reads hit the F4 routes, encoding the sprint and the key', async () => {
+  it('the usage reads hit one tracker\'s routes, encoding the sprint and the key', async () => {
     const fetch = stub(200, []);
-    await api().tryListSprints(P);
-    await api().tryListTrackerTasks(P, 'sprint-1');
-    await api().tryListTrackerTasks(P);
+    await api().tryListSprints(P, T);
+    await api().tryListTrackerTasks(P, T, 'sprint-1');
+    await api().tryListTrackerTasks(P, T);
     await api().tryGetTrackerTask(P, 'AUTH 1/2');
-    await api().tryListUnlinkedSessions(P, 'sprint-1');
+    await api().tryListUnlinkedSessions(P, T, 'sprint-1');
     const base = `http://127.0.0.1:7744/api/workspaces/${P}`;
     expect(fetch.mock.calls.map((c) => c[0])).toEqual([
-      `${base}/sprints`,
-      `${base}/tracker-tasks?sprint=sprint-1`,
-      `${base}/tracker-tasks`,
+      `${base}/trackers/${T}/sprints`,
+      `${base}/trackers/${T}/tasks?sprint=sprint-1`,
+      `${base}/trackers/${T}/tasks`,
       `${base}/tracker-tasks/AUTH%201%2F2`,
-      `${base}/sessions/unlinked?sprint=sprint-1`,
+      `${base}/trackers/${T}/sessions/unlinked?sprint=sprint-1`,
     ]);
     expect(fetch.mock.calls.every((c) => (c[1]?.method ?? 'GET') === 'GET')).toBe(true);
+  });
+
+  it('the backlog reads hit the board’s …/backlog and …/tasks?backlog=true', async () => {
+    const fetch = stub(200, { tickets: 0, usage: {} });
+    expect((await api().tryGetBacklog(P, 't-1')).ok).toBe(true);
+    expect((await api().tryListBacklogTasks(P, 't-1')).ok).toBe(true);
+    const base = `http://127.0.0.1:7744/api/workspaces/${P}/trackers/t-1`;
+    expect(fetch.mock.calls.map((c) => c[0])).toEqual([`${base}/backlog`, `${base}/tasks?backlog=true`]);
   });
 
   it('a refusal carries the code as the message and the body beside it', async () => {
     const owner = { error: 'board_already_connected', workspace: { id: 'p2', name: 'other' } };
     stub(409, owner);
-    const res = await api().tryConnectTracker(P, 'jira', {});
+    const res = await api().tryConnectTracker(P, 'jira', 'sprint', {});
     expect(res).toEqual({
       ok: false,
       error: { status: 409, message: 'board_already_connected', body: owner },

@@ -31,7 +31,7 @@ duplicate, leaving 89. The production-readiness items
 | `deploy-dojo` + live check of user-scoped metrics | #240 |
 | Write `dojo_memberships.sync_status` from the sync, or retire it; drop the 2026-08-29 held row | #184 |
 
-## Wave 0b — release from main tags (user, 2026-10-22) — all items done in code (335618b9, 8afc5bcc two-step, cec18935 Worker-on-tag); proven on the next release, then the user removes the Worker's Cloudflare git triggers
+## Wave 0b — release from main tags (user, 2026-10-22) — **done**: proven in v0.19.0 (deploy-worker built and deployed Worker version 29f5754b from the tag after deploy-dojo; live builtAt matches). The user removes the Cloudflare git connection.
 
 Every release bumps the version (patch or minor): one tag, one release run. A tagged release ships from
 **main**; develop is for scanning, coverage and tests. Mirrors rokkit/kavach.
@@ -272,6 +272,9 @@ Bring them to the compiler-grade resolution Rust and TypeScript have.
 The user updated the website mocks on 2026-10-21 with the features added since: diagrams and lenses,
 workspaces with issue-tracker integration, planning, release tracking. Taken up **after** the dōjō
 work (#307 and the gaps #309–#321).
+- **Dōjō work, 2026-10-22:** R8 (lead team metrics) merged; R9 (trackers by level, #318 D23) built and reviewed
+  and merged; R5b (Azure) is next, then the release that ships R5a, R8 and R9. Status per item:
+  docs/roadmap/09-dojo-expansion.md.
 - **How:** build the website from the new mocks. Each feature reads *coming soon* until it ships;
   flip it to *available* in the change that releases it, not afterwards.
 

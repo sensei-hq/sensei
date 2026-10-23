@@ -66,8 +66,14 @@ describe('navForOrg — additive role rank filtering', () => {
 		expect(navForOrg('maintainer').map((g) => g.group)).toEqual(['Overview', 'Govern']);
 	});
 
-	it('a lead sees what a maintainer sees — a dōjō has no Clients section (D34)', () => {
+	it('a lead sees what a maintainer sees in the nav — the Teams view is what widens (#307 R8, D38)', () => {
 		expect(navForOrg('lead').map((g) => g.group)).toEqual(['Overview', 'Govern']);
+	});
+
+	it('every member has Teams in the Overview (totals below lead, people from lead up)', () => {
+		for (const role of ['contributor', 'maintainer', 'lead', 'admin']) {
+			expect(navForOrg(role)[0].items.map((i) => i.id)).toContain('teams');
+		}
 	});
 
 	it('an admin sees every group', () => {
