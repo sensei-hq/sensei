@@ -2,7 +2,7 @@
 	import { Button } from '@rokkit/ui';
 	import Icon from './Icon.svelte';
 	import ListSection from './ListSection.svelte';
-	import { AZURE_REQUIRED_SCOPES, tokenLine, writeScopesLine } from '$lib/azure-view';
+	import { AZURE_REQUIRED_SCOPES, memberSetLine, tokenLine, writeScopesLine } from '$lib/azure-view';
 	import type { AzureConnectState } from '$lib/azure-connect-state.svelte';
 
 	// Connect Azure DevOps through Microsoft Entra (#308 R5b, D36/D42). Connect
@@ -91,6 +91,7 @@
 					<div class="flex min-w-0 flex-1 flex-col gap-1">
 						<span class="text-ink text-sm font-medium">{c.name}</span>
 						<span class={c.token === 'ok' ? 'text-ink-mute text-xs' : 'text-warning text-xs'}>{tokenLine(c)}</span>
+						<span class={c.memberSetStale ? 'text-warning text-xs' : 'text-ink-mute text-xs'}>{memberSetLine(c)}</span>
 					</div>
 					<div class="flex flex-wrap items-center gap-2">
 						<Button

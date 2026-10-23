@@ -353,6 +353,13 @@ One **multi-tenant app registration** serves both R5b's connect and R5c's Micros
   failed read never calls it, and a NULL/empty list is refused with the set unchanged.
   `dojo.units_listing_member(provider, subject)` names the organization dōjōs whose last complete set lists a
   person (personal dōjōs never). Pinned by `database/tests/dojo/connection_member_sets.sql`.
+- **Fresh sets only** (security review, stale grant) — each replacement stamps
+  `tenant_connections.member_set_read_at`; `units_listing_member` ignores a set older than
+  `dojo.member_set_max_age_hours()` — **48 hours**, eight runs of the 6-hourly scheduled read, the one constant
+  (SQL; the Integrations screen reads it too). A dead grant (`needs_new_token`) or a stopped schedule therefore
+  stops sign-in provisioning within two days instead of joining removed people indefinitely. Admin →
+  Integrations shows each connection's "Member list read <date>", and "… is stale — Microsoft sign-ins join
+  nobody from it until a Sync reads it again" (or "No complete member list yet") in the warning colour.
 - **Provisioning on sign-in** — `ensureProvisioned` (shared by the kavach session hook, the CLI token
   exchange and `POST /v1/you/provision`, all of which pass `microsoft`) records the oid as the person's
   `azure_devops` identity through `ensureForgeIdentity` (another person's: 409, never a re-point) and joins each
@@ -410,8 +417,9 @@ On the **same** app registration as R5b (its one-time setup above):
    URLs (GitHub's sign-in uses it).
 5. **Local** — export `SUPABASE_AUTH_EXTERNAL_AZURE_CLIENT_ID` and `SUPABASE_AUTH_EXTERNAL_AZURE_SECRET` in the
    shell that runs `supabase start` (then restart the local stack) and open the dōjō at `http://localhost:5173`.
-6. **Database** — the release's `dbd` converge adds `dojo.connection_members` and `dojo.units_listing_member`
-   and retypes `dojo.reconcile_unit_members` (the before-hook drops the old one). Member sets fill on each
+6. **Database** — the release's `dbd` converge adds `dojo.connection_members`, `dojo.units_listing_member`,
+   `dojo.member_set_max_age_hours` and `tenant_connections.member_set_read_at`, and retypes
+   `dojo.reconcile_unit_members` (the before-hook drops the old one). Member sets fill on each
    connection's next import, Sync or scheduled read; until then a Microsoft sign-in joins nothing.
 
 ### R5c · live check

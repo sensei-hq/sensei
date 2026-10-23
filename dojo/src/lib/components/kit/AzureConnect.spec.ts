@@ -16,8 +16,8 @@ const IMPORTED: AzureImportResult = {
 	projects: { total: 2, mapped: 2, elsewhere: 0, complete: true },
 	members: { complete: true, listed: 3, ended: 0, joined: 0 }
 };
-const CONN: AzureConnectionView = { id: 'org-1', name: 'example-org', verifiedAt: null, token: 'ok', tokenExpiresAt: null };
-const DEAD: AzureConnectionView = { id: 'org-2', name: 'other-org', verifiedAt: null, token: 'needs_new_token', tokenExpiresAt: null };
+const CONN: AzureConnectionView = { id: 'org-1', name: 'example-org', verifiedAt: null, token: 'ok', tokenExpiresAt: null, memberSetReadAt: null, memberSetStale: true };
+const DEAD: AzureConnectionView = { id: 'org-2', name: 'other-org', verifiedAt: null, token: 'needs_new_token', tokenExpiresAt: null, memberSetReadAt: null, memberSetStale: true };
 const GRANT: AzureGrantView = { organizations: [{ id: 'a1', name: 'example-org' }, { id: 'a2', name: 'second-org' }], complete: true, writeScopes: [], target: 'this' };
 
 function setup(over: { grant?: AzureGrantView | null; configured?: boolean; withList?: boolean } = {}) {
@@ -85,8 +85,10 @@ describe('AzureConnect', () => {
 	it('on an organization dōjō: each organization, its state, Sync and Remove', async () => {
 		const { api, state } = setup({ grant: null });
 		await state.load();
-		const { getByText, getByRole } = render(AzureConnect, { props: { state } });
+		const { getByText, getAllByText, getByRole } = render(AzureConnect, { props: { state } });
 		expect(getByText(/reconnect Azure DevOps/)).toBeTruthy();
+		// …and whether its member list is fresh enough to join a Microsoft sign-in from (#308 R5c review).
+		expect(getAllByText(/No complete member list yet/)).toHaveLength(2);
 		// A connection Microsoft no longer accepts cannot sync; only reconnecting mends it.
 		expect((getByRole('button', { name: 'Sync other-org' }) as HTMLButtonElement).disabled).toBe(true);
 		const sync = getByRole('button', { name: 'Sync example-org' }) as HTMLButtonElement;

@@ -396,14 +396,24 @@ export async function syncAzureOrganization(
 	};
 }
 
-/** This dōjō's Azure DevOps organizations. Throws on a failed read. */
-export async function listAzureConnections(db: DojoClient, tenantId: string): Promise<AzureConnectionView[]> {
-	const { data, error } = await db
-		.from('tenant_connections')
-		.select('external_id, external_slug, verified_at, token_secret_id, token_state, token_expires_at')
-		.eq('tenant_id', tenantId)
-		.eq('provider', PROVIDER);
+/** This dōjō's Azure DevOps organizations, and whether each one's last complete
+ *  member set is fresh enough to provision a Microsoft sign-in from (#308 R5c
+ *  review): the age is the database's one constant, dojo.member_set_max_age_hours.
+ *  Throws on a failed read. */
+export async function listAzureConnections(db: DojoClient, tenantId: string, now = Date.now()): Promise<AzureConnectionView[]> {
+	const [rows, age] = await Promise.all([
+		db
+			.from('tenant_connections')
+			.select('external_id, external_slug, verified_at, token_secret_id, token_state, token_expires_at, member_set_read_at')
+			.eq('tenant_id', tenantId)
+			.eq('provider', PROVIDER),
+		db.rpc('member_set_max_age_hours').single()
+	]);
+	const { data, error } = rows;
 	fail(error);
+	fail(age.error);
+	if (typeof age.data !== 'number') throw new AdminError(500, 'member_set_max_age_hours did not answer a number of hours');
+	const maxAgeMs = age.data * 3600_000;
 	return ((data ?? []) as Record<string, unknown>[])
 		.filter((r) => typeof r.external_id === 'string')
 		.map((r) => ({
@@ -411,7 +421,9 @@ export async function listAzureConnections(db: DojoClient, tenantId: string): Pr
 			name: r.external_slug as string,
 			verifiedAt: (r.verified_at as string | null) ?? null,
 			token: r.token_secret_id ? ((r.token_state as 'ok' | 'needs_new_token' | null) ?? 'ok') : 'none',
-			tokenExpiresAt: (r.token_expires_at as string | null) ?? null
+			tokenExpiresAt: (r.token_expires_at as string | null) ?? null,
+			memberSetReadAt: (r.member_set_read_at as string | null) ?? null,
+			memberSetStale: !r.member_set_read_at || now - Date.parse(r.member_set_read_at as string) > maxAgeMs
 		}));
 }
 

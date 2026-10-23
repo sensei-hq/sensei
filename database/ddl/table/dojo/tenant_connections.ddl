@@ -22,6 +22,7 @@ create table if not exists dojo.tenant_connections (
   , token_expires_at timestamptz
   , members_read_at    timestamptz
   , members_read_error text
+  , member_set_read_at timestamptz
   , created_at     timestamptz         not null default now()
   , updated_at     timestamptz         not null default now()
 );
@@ -88,6 +89,11 @@ not report a refresh token''s lifetime).';
 comment on column dojo.tenant_connections.members_read_at is
 'When the scheduled member read last read this connection (#308 R5b, D44) — the
 run reads the longest-unread first. NULL until it has.';
+
+comment on column dojo.tenant_connections.member_set_read_at is
+'When this connection''s member set (dojo.connection_members) was last replaced by a complete
+read — import, Sync or the scheduled read (#308 R5c). NULL until one. A set older than
+dojo.member_set_max_age_hours() provisions no sign-in.';
 
 comment on column dojo.tenant_connections.members_read_error is
 'Why the last scheduled member read of this connection ended nobody (a failed,

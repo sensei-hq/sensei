@@ -12,7 +12,8 @@
 --     earlier) but has no membership in the dōjō: contributor, employer, from
 --     that forge and unit — the role rule of a forge read that proves no admin.
 -- dojo.units_listing_member(provider, subject) answers which organization dōjōs'
--- last complete set lists a person — what a Microsoft sign-in provisions into.
+-- last complete set lists a person — what a Microsoft sign-in provisions into —
+-- unless that set is older than dojo.member_set_max_age_hours().
 --
 -- WHAT BREAKS THIS TEST: a listed signed-in person not provisioned, or
 -- provisioned with another role/source/unit; an unlisted one provisioned; a
@@ -20,8 +21,8 @@
 -- GitHub-provisioned or invited membership changed; another dōjō's members
 -- touched or joined; a later read not replacing the set; the lookup naming a
 -- dōjō whose set does not list the person, a personal dōjō, or another forge's;
--- the set outliving its connection; a signed-in caller reading the set or the
--- lookup.
+-- the set outliving its connection; a stale set naming a dōjō, or a fresh one
+-- not; a signed-in caller reading the set or the lookup.
 
 begin;
 
@@ -185,6 +186,40 @@ begin
 end $$;
 reset role;
 
+-- A STALE set joins nobody (#308 R5c review): past dojo.member_set_max_age_hours()
+-- (48 h, eight scheduled reads) since its complete read — a dead grant or a stopped
+-- schedule — a sign-in provisions nothing from it.
+do $$
+begin
+    if dojo.member_set_max_age_hours() <> 48 then
+        raise exception 'member set: the maximum age is not 48 hours';
+    end if;
+    if (select member_set_read_at from dojo.tenant_connections where id = 'c0000000-0000-4000-8000-000000000c5a') <> now() then
+        raise exception 'member set: the complete read did not stamp the connection''s member_set_read_at';
+    end if;
+end $$;
+update dojo.tenant_connections set member_set_read_at = now() - interval '47 hours'
+ where id = 'c0000000-0000-4000-8000-000000000c5a';
+set local role service_role;
+do $$
+begin
+    if not exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-2')) then
+        raise exception 'member set: a set inside the maximum age joined nobody';
+    end if;
+end $$;
+reset role;
+update dojo.tenant_connections set member_set_read_at = now() - interval '49 hours'
+ where id = 'c0000000-0000-4000-8000-000000000c5a';
+set local role service_role;
+do $$
+begin
+    if exists (select 1 from dojo.units_listing_member('azure_devops', 'ztest-oid-2')) then
+        raise exception 'member set: a stale set still names a dōjō to join';
+    end if;
+end $$;
+reset role;
+update dojo.tenant_connections set member_set_read_at = now() where id = 'c0000000-0000-4000-8000-000000000c5a';
+
 -- A later complete read replaces the set: the person it no longer lists is no
 -- longer found, and their membership ends (#309).
 set local role service_role;
@@ -205,8 +240,8 @@ end $$;
 reset role;
 
 -- A set on a personal dōjō's connection is never a place to provision into.
-insert into dojo.tenant_connections (id, tenant_id, provider, external_id, external_slug, connected_by) values
-  ('c0000000-0000-4000-8000-000000000c5d', 'b0000000-0000-4000-8000-000000000c5c', 'azure_devops', 'ztest-cm-me', 'ztest-cm-me', 'a0000000-0000-4000-8000-000000000c51');
+insert into dojo.tenant_connections (id, tenant_id, provider, external_id, external_slug, connected_by, member_set_read_at) values
+  ('c0000000-0000-4000-8000-000000000c5d', 'b0000000-0000-4000-8000-000000000c5c', 'azure_devops', 'ztest-cm-me', 'ztest-cm-me', 'a0000000-0000-4000-8000-000000000c51', now());
 insert into dojo.connection_members (connection_id, subject, read_at) values
   ('c0000000-0000-4000-8000-000000000c5d', 'ztest-oid-3', now());
 set local role service_role;

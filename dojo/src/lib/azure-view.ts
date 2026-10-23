@@ -32,6 +32,11 @@ export interface AzureConnectionView {
 	/** The stored token: working, rejected by Azure, or none stored. */
 	token: 'ok' | 'needs_new_token' | 'none';
 	tokenExpiresAt: string | null;
+	/** When the last complete member read replaced the member set; null: none yet. */
+	memberSetReadAt: string | null;
+	/** Older than dojo.member_set_max_age_hours (or never read): a Microsoft
+	 *  sign-in joins nobody from it (#308 R5c review). */
+	memberSetStale: boolean;
 }
 
 /** GET …/integrations/azure_devops. */
@@ -88,6 +93,13 @@ export interface AzureSyncResult {
 }
 
 /** The stored grant's state, and its expiry when one is known. */
+/** Whether the member list a Microsoft sign-in joins from is fresh (#308 R5c). */
+export function memberSetLine(c: AzureConnectionView): string {
+	if (!c.memberSetReadAt) return 'No complete member list yet — Microsoft sign-ins join nobody until a Sync reads one';
+	const at = `Member list read ${c.memberSetReadAt.slice(0, 10)}`;
+	return c.memberSetStale ? `${at} is stale — Microsoft sign-ins join nobody from it until a Sync reads it again` : at;
+}
+
 export function tokenLine(c: AzureConnectionView): string {
 	if (c.token === 'none') return 'Not connected — connect Azure DevOps to sync';
 	if (c.token === 'needs_new_token') return 'Microsoft no longer accepts this connection — reconnect Azure DevOps';

@@ -92,7 +92,8 @@ function db(seed: Partial<Record<string, FakeTable>> = {}) {
 		'rpc:rotate_forge_token': { rows: [], ...seed['rpc:rotate_forge_token'] },
 		'rpc:mark_forge_token_rejected': { rows: [], ...seed['rpc:mark_forge_token_rejected'] },
 		'rpc:map_forge_unit': { rows: [{ mapping_id: 'fm-1', tenant_id: HERE, workspace_id: 'w-1' }], ...seed['rpc:map_forge_unit'] },
-		'rpc:reconcile_unit_members': { rows: [{ ended: 1, joined: 1 }], ...seed['rpc:reconcile_unit_members'] }
+		'rpc:reconcile_unit_members': { rows: [{ ended: 1, joined: 1 }], ...seed['rpc:reconcile_unit_members'] },
+		'rpc:member_set_max_age_hours': { rows: [48 as never], ...seed['rpc:member_set_max_age_hours'] }
 	});
 }
 
@@ -314,14 +315,31 @@ describe('listAzureConnections', () => {
 		const d = db({
 			tenant_connections: {
 				rows: [
-					{ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG, verified_at: '2026-10-22T00:00:00Z', token_secret_id: 'sec-1', token_state: 'needs_new_token', token_expires_at: null },
+					{ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG, verified_at: '2026-10-22T00:00:00Z', token_secret_id: 'sec-1', token_state: 'needs_new_token', token_expires_at: null, member_set_read_at: '2026-10-22T00:00:00Z' },
 					{ id: 'c-gh', tenant_id: HERE, provider: 'github', external_id: '22', external_slug: 'acme' }
 				]
 			}
 		});
-		expect(await listAzureConnections(d as never, HERE)).toEqual([
-			{ id: ORG_ID, name: ORG, verifiedAt: '2026-10-22T00:00:00Z', token: 'needs_new_token', tokenExpiresAt: null }
+		const NOW = Date.parse('2026-10-23T12:00:00Z');
+		expect(await listAzureConnections(d as never, HERE, NOW)).toEqual([
+			{ id: ORG_ID, name: ORG, verifiedAt: '2026-10-22T00:00:00Z', token: 'needs_new_token', tokenExpiresAt: null, memberSetReadAt: '2026-10-22T00:00:00Z', memberSetStale: false }
 		]);
+	});
+
+	it('marks a member set older than the database`s maximum age stale, and one never read stale too (#308 R5c review)', async () => {
+		const row = (at: string | null) => ({ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG, member_set_read_at: at });
+		const at = '2026-10-21T00:00:00Z';
+		const just = Date.parse(at) + 48 * 3600_000 - 1;
+		const past = Date.parse(at) + 48 * 3600_000 + 1;
+		expect((await listAzureConnections(db({ tenant_connections: { rows: [row(at)] } }) as never, HERE, just))[0].memberSetStale).toBe(false);
+		expect((await listAzureConnections(db({ tenant_connections: { rows: [row(at)] } }) as never, HERE, past))[0].memberSetStale).toBe(true);
+		// The age is the database's one constant, not a copy here.
+		const shorter = db({ tenant_connections: { rows: [row(at)] }, 'rpc:member_set_max_age_hours': { rows: [1 as never] } });
+		expect((await listAzureConnections(shorter as never, HERE, Date.parse(at) + 2 * 3600_000))[0].memberSetStale).toBe(true);
+		expect((await listAzureConnections(db({ tenant_connections: { rows: [row(null)] } }) as never, HERE, just))[0]).toMatchObject({
+			memberSetReadAt: null,
+			memberSetStale: true
+		});
 	});
 
 	it('says a connection without a stored token has none', async () => {

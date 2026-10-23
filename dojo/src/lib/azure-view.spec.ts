@@ -2,7 +2,7 @@
 // words the screen says about a connection, an import and the scopes a token
 // needs. Pure.
 import { describe, it, expect } from 'vitest';
-import { AZURE_REQUIRED_SCOPES, connectNotice, importLine, syncLine, tokenLine, writeScopesLine, type AzureConnectionView, microsoftNotice } from './azure-view';
+import { AZURE_REQUIRED_SCOPES, connectNotice, importLine, memberSetLine, syncLine, tokenLine, writeScopesLine, type AzureConnectionView, microsoftNotice } from './azure-view';
 
 const conn = (over: Partial<AzureConnectionView> = {}): AzureConnectionView => ({
 	id: 'org-1',
@@ -10,12 +10,28 @@ const conn = (over: Partial<AzureConnectionView> = {}): AzureConnectionView => (
 	verifiedAt: '2026-10-22T00:00:00Z',
 	token: 'ok',
 	tokenExpiresAt: null,
+	memberSetReadAt: '2026-10-22T06:00:00Z',
+	memberSetStale: false,
 	...over
 });
 
 describe('AZURE_REQUIRED_SCOPES', () => {
 	it('asks for read scopes only', () => {
 		expect(AZURE_REQUIRED_SCOPES.every((s) => s.label.endsWith('(read)'))).toBe(true);
+	});
+});
+
+// A sign-in provisions from the connection's last complete member set only while
+// it is fresh (#308 R5c review); the admin sees when it is not.
+describe('memberSetLine', () => {
+	it('says when the member list was read, and when it is too old to join anyone from', () => {
+		expect(memberSetLine(conn())).toBe('Member list read 2026-10-22');
+		expect(memberSetLine(conn({ memberSetStale: true }))).toBe(
+			'Member list read 2026-10-22 is stale — Microsoft sign-ins join nobody from it until a Sync reads it again'
+		);
+		expect(memberSetLine(conn({ memberSetReadAt: null, memberSetStale: true }))).toBe(
+			'No complete member list yet — Microsoft sign-ins join nobody until a Sync reads one'
+		);
 	});
 });
 

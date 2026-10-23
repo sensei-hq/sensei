@@ -4,7 +4,9 @@ set search_path to dojo, extensions;
 -- D45): each (dōjō, unit) whose connection to p_provider holds p_subject in its
 -- dojo.connection_members. A Microsoft sign-in cannot read Azure DevOps, so it is
 -- provisioned into exactly these (provisioning.ts, from = p_provider and the unit).
--- Personal dōjōs and unproven connections are never named. service_role only.
+-- Personal dōjōs and unproven connections are never named, nor a set older than
+-- dojo.member_set_max_age_hours() (#308 R5c review: a dead grant or a stopped
+-- schedule must not keep joining people removed since). service_role only.
 create or replace function dojo.units_listing_member(
     p_provider dojo.forge_provider,
     p_subject  text
@@ -23,6 +25,7 @@ as $$
        and c.provider = p_provider
        and c.external_id is not null
        and t.origin = 'organization'
+       and c.member_set_read_at > now() - make_interval(hours => dojo.member_set_max_age_hours())
      order by c.tenant_id, c.external_id;
 $$;
 

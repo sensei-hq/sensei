@@ -92,6 +92,7 @@ begin
 
     if v_conn is not null then
         delete from dojo.connection_members where connection_id = v_conn;
+        update dojo.tenant_connections set member_set_read_at = now() where id = v_conn;
         insert into dojo.connection_members (connection_id, subject, read_at)
         select distinct v_conn, s, now() from unnest(p_subjects) as s;
 
