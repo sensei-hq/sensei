@@ -274,7 +274,6 @@ pub(crate) struct FrontmatterSyncBody {
     pub organization: Option<String>,
     pub client: Option<String>,
     pub workspace: Option<String>,
-    pub team: Option<String>,
     pub role: Option<String>,
     #[serde(default)]
     pub stack: Vec<String>,
@@ -320,7 +319,6 @@ pub(crate) async fn sync_readme_frontmatter(
         organization: body.organization,
         client: body.client,
         workspace: body.workspace,
-        team: body.team,
         role: body.role,
         stack: body.stack,
         summary: body.summary,

@@ -31,6 +31,37 @@ duplicate, leaving 89. The production-readiness items
 | `deploy-dojo` + live check of user-scoped metrics | #240 |
 | Write `dojo_memberships.sync_status` from the sync, or retire it; drop the 2026-08-29 held row | #184 |
 
+## Wave 0b — release from main tags (user, 2026-10-22) — **done**: proven in v0.19.0 (deploy-worker built and deployed Worker version 29f5754b from the tag after deploy-dojo; live builtAt matches). The user removes the Cloudflare git connection.
+
+Every release bumps the version (patch or minor): one tag, one release run. A tagged release ships from
+**main**; develop is for scanning, coverage and tests. Mirrors rokkit/kavach.
+1. `make bump` refuses unless on a clean `main` equal to `origin/main`; bumps, tags, pushes main + tag, then
+   merges main back into develop.
+2. `release.yml` verifies the tag is on main (fail closed) before any publish, deploy or DB job.
+3. The dōjō Worker deploys from the tag in `release.yml` after the DB job — **user step:** repo secrets
+   `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, and remove the `dojo` Worker's Cloudflare git build triggers
+   (also clears the failing "Workers Builds: dojo" PR check).
+4. Scanning stays on develop, main and PRs.
+5. CLAUDE.md release section, the release skill and the dojo-worker-deploy memory follow.
+
+## Wave 0c — CodeQL's open alerts on main (2026-10-22) — done
+
+*Done 2026-10-22.* The critical SSRF is fixed with tests (9381ec2e; alert #1 closes when it reaches main). Every
+other alert was triaged against the code and dismissed in GitHub with its reason: the path ones are the local API's
+feature or exact-DB-guarded; the allocation ones are sized by an already-parsed body or clamped to 500; the logging
+ones print ids and names in test assertions. The screen-shell alerts closed with 11602156 and 35efa6d4. Open: 1 (#1).
+
+PR #324 was merged red on CodeQL (user decision, so the dōjō Worker matched its migrated database). Every
+alert already existed on main. Each one is fixed with a test, or dismissed in GitHub with a written reason;
+no alert is left open without one.
+- **#1 critical** SSRF, `indexer/lib_indexer.rs:272` (first).
+- **Path traversal ×5:** `api/handlers/workspace.rs` ×4, `libraries.rs:79`.
+- **Uncontrolled allocation ×3:** `knowledge.rs`, `observatory.rs`, `tasks/ticker.rs`.
+- **Cleartext logging:** in `dojo_client/session.rs` ×3, `app/src-tauri/log_collector.rs`,
+  `tools/session-report/retro.rs`, and the pg_store tests (`dojo_tests.rs`, `workspaces_tests.rs`).
+- **Improper code sanitization:** `app/e2e/tests-inspect/libraries-inspect.spec.ts:22`.
+- The screen-shell spec alerts are fixed on develop (11602156, 35efa6d4); they close when that code reaches main.
+
 ## Wave 1 — Settings → Workspaces / Repositories (#271, #269, #144)
 
 **Status 2026-10-19: built and verified on live data.**
@@ -241,6 +272,9 @@ Bring them to the compiler-grade resolution Rust and TypeScript have.
 The user updated the website mocks on 2026-10-21 with the features added since: diagrams and lenses,
 workspaces with issue-tracker integration, planning, release tracking. Taken up **after** the dōjō
 work (#307 and the gaps #309–#321).
+- **Dōjō work, 2026-10-22:** R8 (lead team metrics) merged; R9 (trackers by level, #318 D23) built and reviewed
+  and merged; R5b (Azure) is next, then the release that ships R5a, R8 and R9. Status per item:
+  docs/roadmap/09-dojo-expansion.md.
 - **How:** build the website from the new mocks. Each feature reads *coming soon* until it ships;
   flip it to *available* in the change that releases it, not afterwards.
 

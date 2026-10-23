@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	ALL_PACKS,
 	LIB_CATS,
+	LIB_LEVELS,
 	LIB_PACKS,
 	type LibPack
 } from '$lib/library-data';
@@ -35,7 +36,7 @@ function fixturePack(): LibPack {
 		area: 'core',
 		name: 'Fixture',
 		source: 'test',
-		defLevel: 'team',
+		defLevel: 'workspace',
 		rec: false,
 		regulated: false,
 		checkers: [],
@@ -86,11 +87,12 @@ describe('catalog helpers', () => {
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 
-	it('defaultLevel reads the pack defLevel, falling back to org', () => {
-		expect(defaultLevel('sec-owasp')).toBe('org');
-		expect(defaultLevel('arch-gof')).toBe('team');
-		expect(defaultLevel('stk-ts')).toBe('stack');
-		expect(defaultLevel('unknown-pack')).toBe('org');
+	it('defaultLevel reads the pack defLevel, falling back to the dōjō', () => {
+		expect(defaultLevel('sec-owasp')).toBe('dojo');
+		expect(defaultLevel('arch-gof')).toBe('workspace');
+		// a stack pack applies at each repository where the stack is detected (D33).
+		expect(defaultLevel('stk-ts')).toBe('repository');
+		expect(defaultLevel('unknown-pack')).toBe('dojo');
 	});
 });
 
@@ -113,7 +115,7 @@ describe('selection toggles', () => {
 		const sel: LibrarySelection = {
 			...emptySelection(),
 			included: { 'fix:0': true },
-			authored: [{ id: 'a1', text: 'ship flags in two releases', area: 'core', level: 'org', hard: false }]
+			authored: [{ id: 'a1', text: 'ship flags in two releases', area: 'core', level: 'dojo', hard: false }]
 		};
 		expect(includedCount(sel)).toBe(1);
 		expect(selectedCount(sel)).toBe(2);
@@ -122,20 +124,29 @@ describe('selection toggles', () => {
 
 describe('per-pack level', () => {
 	it('levelForPack returns the default when no override is set', () => {
-		expect(levelForPack(emptySelection(), 'sec-owasp')).toBe('org');
-		expect(levelForPack(emptySelection(), 'arch-gof')).toBe('team');
+		expect(levelForPack(emptySelection(), 'sec-owasp')).toBe('dojo');
+		expect(levelForPack(emptySelection(), 'arch-gof')).toBe('workspace');
 	});
 
 	it('levelForPack returns the override when set', () => {
-		const sel: LibrarySelection = { ...emptySelection(), packLevel: { 'sec-owasp': 'proj' } };
-		expect(levelForPack(sel, 'sec-owasp')).toBe('proj');
+		const sel: LibrarySelection = { ...emptySelection(), packLevel: { 'sec-owasp': 'workspace' } };
+		expect(levelForPack(sel, 'sec-owasp')).toBe('workspace');
+	});
+
+	it('the levels are where a pack is applied: dōjō · workspace · repository (D25 · D29)', () => {
+		expect(LIB_LEVELS.map((l) => l.id)).toEqual(['dojo', 'workspace', 'repository']);
+		expect(LIB_LEVELS.map((l) => l.label)).toEqual(['Dōjō', 'Workspace', 'Repository']);
+	});
+
+	it('every language & stack pack applies at the repository where its stack is detected (D33)', () => {
+		expect(LIB_PACKS.stack.length).toBeGreaterThan(0);
+		expect(LIB_PACKS.stack.every((p) => p.defLevel === 'repository')).toBe(true);
 	});
 
 	it('levelLabel maps ids to labels and passes an unknown through', () => {
-		expect(levelLabel('org')).toBe('Org');
-		expect(levelLabel('team')).toBe('Team');
-		expect(levelLabel('proj')).toBe('Workspace');
-		expect(levelLabel('stack')).toBe('Stack');
+		expect(levelLabel('dojo')).toBe('Dōjō');
+		expect(levelLabel('workspace')).toBe('Workspace');
+		expect(levelLabel('repository')).toBe('Repository');
 	});
 });
 
@@ -202,8 +213,8 @@ describe('counts (the live footer)', () => {
 		const sel: LibrarySelection = {
 			...emptySelection(),
 			authored: [
-				{ id: 'a1', text: 'no PII in logs', area: 'sec', level: 'org', hard: true },
-				{ id: 'a2', text: 'log at info by default', area: 'core', level: 'org', hard: false }
+				{ id: 'a1', text: 'no PII in logs', area: 'sec', level: 'dojo', hard: true },
+				{ id: 'a2', text: 'log at info by default', area: 'core', level: 'dojo', hard: false }
 			]
 		};
 		expect(selectedCount(sel)).toBe(2);

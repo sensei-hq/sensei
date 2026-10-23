@@ -34,7 +34,12 @@ as $$
        -- management: the whole tenant, user-scoped rows included
     or dojo.tenant_role_at_least(p_tenant_id, 'admin')
        -- another person's numbers: a maintainer or above on the repository (#307 D6)
-    or (p_scope = 'user' and dojo.repo_role_at_least(p_repository_id, 'maintainer'));
+    or (p_scope = 'user' and dojo.repo_role_at_least(p_repository_id, 'maintainer'))
+       -- a team lead: their teammates' numbers, on repositories the lead can read
+       -- (#307 R8, D38 — the team picks whose; the repository still decides where)
+    or (p_scope = 'user'
+        and dojo.leads_team_member(p_principal_id, p_tenant_id)
+        and dojo.can_read_repository(p_repository_id, p_tenant_id));
 $$;
 
 revoke all on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) from public;
@@ -44,6 +49,8 @@ comment on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) is
 'Row authorization for dojo.repository_metrics, per the access matrix ("Metrics",
 docs/spec/dojo/access-matrix.md): own user-scoped rows always; repo-scoped rows for
 anyone with a role on the repository (#307 D5); another person''s user-scoped rows
-for a maintainer or above on the repository (D6); the whole tenant for its admins.
-Composed from current_principal_id, can_read_repository, repo_role_at_least and
-tenant_role_at_least, so the relationships have one definition.';
+for a maintainer or above on the repository (D6), and for a lead of the dōjō who
+shares a team with that person and can read the repository (R8, D38); the whole
+tenant for its admins. Composed from current_principal_id, can_read_repository,
+repo_role_at_least, leads_team_member and tenant_role_at_least, so the
+relationships have one definition.';

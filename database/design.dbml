@@ -726,6 +726,12 @@ Enum "sensei"."tracker_kind" {
   "jira"
 }
 
+Enum "sensei"."tracker_level" {
+  "epic"
+  "sprint"
+  "task"
+}
+
 Enum "sensei"."watch_status" {
   "scanning"
   "watching"
@@ -1535,10 +1541,10 @@ modified_at, so a user edit is never clobbered by a re-deploy.'''
 }
 
 Table "sensei"."scopes" {
-  "key" text [pk, not null, note: 'Stable identifier (e.g. general, user, organization, client, technology, team, workspace, repository).']
+  "key" text [pk, not null, note: 'Stable identifier: general, user, organization (the dōjō), workspace, repository (#318 R6: the ladder is dōjō → workspace → repository; a stack is a pack applied at a level, not a level).']
   "name" text [not null, note: 'Human-readable label.']
   "level" int [not null, note: 'Precedence rank. Higher = more specific = wins. general=0 … repository=70.']
-  "shareable" boolean [not null, default: false, note: 'Whether knowledge at this scope federates to a shared DÅjÅ (organization/client/team = true).']
+  "shareable" boolean [not null, default: false, note: 'Whether knowledge at this scope federates to a shared DÅjÅ (organization = true).']
   "description" text [note: 'What this scope is for.']
   "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
@@ -2536,11 +2542,12 @@ Table "sensei"."namespaces" {
   }
 
   Note: '''Concrete instances of a scope — e.g. (organization, "Sensei HQ"),
-(workspace, "sensei"), (technology, "rust"). A repo belongs to a SET of these
-(via repository_namespaces, or for a `workspace` namespace via the workspace of the
-same name); there is no parent_id tree — precedence comes from the
-scope level (optionally overridden per namespace). Created at scan time from
-README frontmatter (organization/workspace/team) and detected stack.'''
+(workspace, "sensei"), (repository, "github.com/sensei-hq/sensei"). A repo belongs
+to a SET of these (via repository_namespaces, or for a `workspace` namespace via the
+workspace of the same name); there is no parent_id tree — precedence comes from the
+scope level (optionally overridden per namespace). Created at scan time from README
+frontmatter (organization/workspace); a repository's own namespace is made when a
+detected stack adopts its pack there (sensei.repository_namespace, #318 R6).'''
 }
 
 Table "sensei"."persona_emails" {
@@ -2680,14 +2687,15 @@ the Instruments playground can offer per-workspace MCP configurations.'''
 
 Table "sensei"."trackers" {
   "id" uuid [pk, not null, default: `gen_random_uuid()`]
-  "workspace_id" uuid [not null, note: 'The sensei workspace this board belongs to. Unique: a workspace has exactly one tracker. ON DELETE CASCADE, and the delete trigger still tombstones the secret.']
+  "workspace_id" uuid [not null, note: 'The sensei workspace this board belongs to. ON DELETE CASCADE, and the delete trigger still tombstones the secret.']
   "kind" sensei.tracker_kind [not null, note: 'Which adapter speaks to this tracker (crate::tracker::adapter_for_kind).']
+  "level" sensei.tracker_level [not null, default: 'sprint', note: 'What the board serves in the workspace (D40): epic (portfolio), sprint (a team board, one Sprints lane), task (linked from changes). Rows from before levels are sprint trackers.']
   "base_url" text [not null, note: 'Adapter-normalised origin, exactly "https://" + lowercase host, no port/path/slash (crate::tracker::http::normalize_base_url). Part of the board identity.']
   "account" text [not null, note: 'The account the token belongs to, as the adapter defines it (Jira: the Atlassian email). Keyring account of secret_service.']
   "external_scope" text [not null, note: 'The provider scope shown to users (Jira: the board\'s project key, or the board name for a multi-project board).']
   "board_ref" text [not null, note: 'The board, in the adapter\'s canonical form (Jira: decimal board id, no leading zeros) so one board cannot be connected twice under two spellings.']
   "params" jsonb [not null, default: '{}', note: 'Adapter-specific extras (e.g. board_name). Never secrets.']
-  "secret_service" text [not null, note: 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Changing it tombstones the old value.']
+  "secret_service" text [not null, note: 'Keyring service of the API token, com.sensei.tracker.<kind>.<credential uuid>; a fresh uuid on every connect, so an entry is never overwritten in place. Shared by every tracker of the workspace on the same (kind, base_url): a connect re-keys them all. Changing it tombstones the old value; the drain keeps a secret another tracker still references.']
   "last_attempt_at" timestamptz [note: 'When a sync last started (written before the fetch, outside any transaction).']
   "last_success_at" timestamptz [note: 'When a sync last committed in full. NULL = never (status pending), also reset by a re-connect.']
   "last_error" sensei.tracker_error [note: 'Failure code of the last sync or connect; NULL after a success. Never a raw message.']
@@ -2695,11 +2703,10 @@ Table "sensei"."trackers" {
   "created_at" timestamptz [not null, default: `now()`, note: 'When the connection was first made.']
 
   indexes {
-    workspace_id [unique, note: 'unique constraint']
     (kind, base_url, board_ref) [unique, note: 'unique constraint']
   }
 
-  Note: 'An issue-tracker board connected to a sensei workspace: one tracker per workspace (one sprint calendar) and one workspace per board. Read-only mirror source for sensei.sprints / sensei.tracker_tasks. The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.'
+  Note: 'An issue-tracker board connected to a sensei workspace at a level (epic, sprint, task): a workspace may hold several, and a board belongs to one workspace. Trackers of one workspace on one site share its credential (D14). Read-only mirror source for sensei.sprints / sensei.tracker_tasks. The API token is never stored here; secret_service names its keyring entry. Deleting a row (or its workspace) tombstones that entry via the tracker_secret_tombstone trigger.'
 }
 
 Table "activity"."run_events" {
@@ -3360,7 +3367,7 @@ Table "sensei"."memories" {
   "workspace_id" uuid [note: 'Foreign key to workspaces. Null = global memory (applies to all workspaces).']
   "scope" sensei.memory_scope [not null, default: 'workspace', note: 'When to surface: global (always), workspace (this workspace), stack (matching tech), task_type (matching task), module (matching code area). Legacy axis — superseded by namespace_id for governance resolution.']
   "scope_filter" text [note: 'Qualifier for scope: stack name (e.g. "rust"), task type (e.g. "fix"), module path (e.g. "src/api"). Null for global/workspace scope.']
-  "namespace_id" uuid [note: 'Governance scope instance this rule applies to (organization/workspace/technology/...). Null = unscoped (general). Resolution gathers rules across a repo\'s member namespaces + always-on general/user.\n\nGovernance plane: a memory positioned on a namespace (where it applies) + enforcement (how much authority it carries). namespace_id supersedes the legacy scope/scope_filter/workspace_id triple for resolution; the old columns are retained during the transition so the flat assemble_context keeps working.']
+  "namespace_id" uuid [note: 'Governance scope instance this rule applies to (organization/workspace/repository). Null = unscoped (general). Resolution gathers rules across a repo\'s member namespaces + always-on general/user.\n\nGovernance plane: a memory positioned on a namespace (where it applies) + enforcement (how much authority it carries). namespace_id supersedes the legacy scope/scope_filter/workspace_id triple for resolution; the old columns are retained during the transition so the flat assemble_context keeps working.']
   "enforcement" sensei.enforcement [not null, default: 'recommended', note: 'Authority axis: advisory < recommended < required < mandatory. mandatory = non-overridable constitution tier (a more specific scope cannot weaken it).']
   "origin" text [not null, default: 'learned', note: 'Provenance: learned (knowledge plane), authored (written directly), promoted (elevated from a narrower scope), federated (pulled from a DÅjÅ), dojo (applied from a Dōjō downstream artifact — see sensei.dojo_inbox).']
   "source_id" uuid [note: 'When origin=promoted/federated, the id of the source memory (or remote record) this was derived from. Null otherwise.']
@@ -3423,7 +3430,7 @@ Table "sensei"."referenced_libraries" {
 
 Table "sensei"."repository_namespaces" {
   "repository_id" uuid [pk, not null, note: 'FK to sensei.repositories — the repo, by identity rather than by checkout, so every clone resolves the same rules.']
-  "namespace_id" uuid [pk, not null, note: 'FK to sensei.namespaces — a scope instance the repository belongs to. Never a `project`-scope namespace; see the table comment.']
+  "namespace_id" uuid [pk, not null, note: 'FK to sensei.namespaces — a scope instance the repository belongs to. Never a `workspace`-scope namespace; see the table comment.']
   "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
   indexes {
@@ -3434,19 +3441,21 @@ Table "sensei"."repository_namespaces" {
 resolves rules through.
 
 - **What it is.** One row per (repository, namespace). A repository joins one
-  namespace per applicable scope: an organization, a team, and a technology
-  namespace per detected language.
+  namespace per applicable scope: its organization, and its own namespace on the
+  `repository` rung (sensei.repository_namespace) — where the packs of its
+  detected stacks are adopted (#318 R6, D33).
 - **How to use it.** Resolve a cwd to its folder, lift to
   `folders.repository_id`, then union the rules of every member namespace with
   the always-present `user` and `general` scopes, ordered by scope level. There
   is no tree to walk — multi-membership falls out for free, so a repository can
-  belong to two organizations or two technology namespaces with no special case.
+  belong to two organizations with no special case.
 - **What it is NOT.** It is not workspace membership. That is
   `repositories_in_workspaces`, and it is the only place a workspace is recorded. A
-  `project`-scope namespace must never be bound here: it would be a second
+  `workspace`-scope namespace must never be bound here: it would be a second
   writer for a fact `repositories_in_workspaces` already owns, which is exactly how
   the predecessor drifted.
-- **Who writes it.** The scan, from README frontmatter plus the detected stack.
+- **Who writes it.** The scan, from README frontmatter (organization) and, through
+  sensei.adopt_stack_pack, the detected stack (the repository's own namespace).
 
 Keyed on the REPOSITORY, not on a folder. The predecessor
 (`folder_namespaces`) keyed the binding on a folder, and all 447 live rows sat
@@ -3528,7 +3537,7 @@ Table "sensei"."sprints" {
 Table "sensei"."stances" {
   "id" uuid [pk, not null, default: `gen_random_uuid()`]
   "user_key" text [not null, note: 'The user this stance belongs to — the git identity (user.email, resolved like get_user_for_workspace). Stance follows the user, not a tenant.']
-  "namespace_id" uuid [note: 'The scope instance this stance applies at (organization/client/workspace/stack …); NULL = the user\'s default across scopes. Most-specific rung overrides.']
+  "namespace_id" uuid [note: 'The scope instance this stance applies at (organization/workspace/repository); NULL = the user\'s default across scopes. Most-specific rung overrides.']
   "autonomy" sensei.stance_autonomy [not null, default: 'ask_on_guarded']
   "sharing" sensei.stance_sharing [not null, default: 'patterns']
   "review" sensei.stance_review [not null, default: 'one_maintainer']
@@ -3985,7 +3994,7 @@ Table "sensei"."playbook_run" {
 
 Table "sensei"."rule_pack_adoptions" {
   "pack_id" uuid [pk, not null]
-  "namespace_id" uuid [pk, not null, note: 'The adopting namespace — a concrete sensei.namespaces instance, polymorphic over the scope ladder (organization / workspace / stack / …). Org-level adoption uses the org\'s namespace id.']
+  "namespace_id" uuid [pk, not null, note: 'The adopting namespace — a concrete sensei.namespaces instance, polymorphic over the scope ladder (organization / workspace / repository). Org-level adoption uses the org\'s namespace id.']
   "pinned_version" int [not null]
   "enforcement" sensei.enforcement
   "adopted_by" text [not null]
@@ -3997,8 +4006,8 @@ Table "sensei"."rule_pack_adoptions" {
   }
 
   Note: '''A namespace's adoption of a rule pack — the bind that makes a library pack govern.
-namespace_id is the adopting scope instance (org id at org-level, workspace at
-workspace-level, stack at stack-level). Resolution unions an adopted pack's rules for
+namespace_id is the adopting scope instance (org at the dōjō level, workspace at
+workspace-level, repository at repository-level — a stack pack is adopted there). Resolution unions an adopted pack's rules for
 every repo whose namespace set includes namespace_id. Pins a pack version; a per-
 adoption enforcement override can raise (or lower) the whole pack's tier locally.'''
 }

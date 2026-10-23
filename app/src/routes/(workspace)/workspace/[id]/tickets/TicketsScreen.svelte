@@ -47,7 +47,7 @@
       <p class="m-0 text-sm text-ink-soft">Reading tickets…</p>
     {:else if screen.view === 'not_connected'}
       <div data-view="not_connected" class="flex flex-col gap-2 text-sm text-ink">
-        <p class="m-0">This workspace has no tracker connected.</p>
+        <p class="m-0">This workspace has no sprint board connected.</p>
         <a href="/workspace/{workspaceId}/integrations" class="self-start text-primary underline">Connect one in Integrations</a>
       </div>
     {:else if screen.view === 'daemon_error'}
@@ -65,7 +65,7 @@
           <div data-view="ticket" class="flex flex-col gap-4">
             <div>
               <button type="button" class={button} data-action="back" onclick={() => screen.closeTicket()}
-                >Back to {screen.filterLabel}</button
+                >{screen.backLabel}</button
               >
             </div>
             <div class="flex flex-col gap-1">
@@ -113,117 +113,130 @@
             {/if}
           </div>
         {:else}
-          <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <label class="flex items-center gap-2 text-sm text-ink-mute">
-              <span>Sprint</span>
-              <div class="min-w-[14rem]" data-filter="sprint">
-                <Select
-                  filterable
-                  items={screen.filterItems}
-                  value={screen.filter}
-                  onchange={(v) => screen.setFilter(String(v))}
-                />
-              </div>
-            </label>
-            <span class="flex items-center gap-2 text-sm text-ink">
-              <input type="checkbox" id="tickets-ai-only" data-filter="ai-only" bind:checked={screen.aiOnly} />
-              <label for="tickets-ai-only">Only tickets with AI sessions</label>
-            </span>
-            <p data-count class="m-0 text-sm text-ink-mute">{screen.countLine}</p>
-          </div>
-
-          {@const strip = screen.strip}
-          {#if strip}
-            <div data-strip class="flex flex-col gap-2 rounded-lg border border-paper-edge bg-paper-soft p-4">
-              {#if strip.kind === 'reason'}
-                <p class="m-0 text-sm text-ink-soft">{strip.text}</p>
-              {:else}
-                <p class="m-0 text-sm text-ink">{strip.total}</p>
-                {#each strip.parts as part (part.label)}
-                  <div class="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
-                    {#if part.label === 'Not linked' && part.sessions !== '0'}
-                      <button
-                        type="button"
-                        class="bg-transparent p-0 text-ink underline"
-                        aria-expanded={screen.unlinked !== null}
-                        data-action="unlinked"
-                        onclick={() => screen.toggleUnlinked()}>{part.label}</button
-                      >
-                    {:else}
-                      <span class="text-ink">{part.label}</span>
-                    {/if}
-                    <span class="text-ink-mute">sessions <span class="text-ink">{part.sessions}</span></span>
-                    <span class="text-ink-mute">active AI time <span class="text-ink">{part.active}</span></span>
-                    <span class="text-ink-mute">fresh tokens <span class="text-ink">{part.fresh}</span></span>
-                  </div>
-                {/each}
-              {/if}
-            </div>
-          {/if}
-
-          {#if screen.unlinkedError}
-            <p role="alert" class="m-0 text-sm text-danger">{screen.unlinkedError}</p>
-          {/if}
-          {#if screen.unlinked}
-            <ul class="m-0 flex list-none flex-col gap-1 p-0" aria-label="Sessions not linked to a ticket">
-              {#each screen.unlinked as u (u.id)}
-                <li class="flex flex-wrap gap-3 text-sm">
-                  <a href={replayHref(u.id)} data-session={u.id} class="text-primary underline">{when(u.started_at)}</a>
-                  <span class="text-ink-mute">{u.task || 'session'}</span>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-
           {#if screen.ticketError}
             <p role="alert" class="m-0 text-sm text-danger">{screen.ticketError}</p>
           {/if}
+          <div class="flex min-w-0 flex-col gap-6 xl:flex-row">
+            {#each screen.lanes as lane (lane.id)}
+              <section
+                data-lane={lane.id}
+                aria-label="{lane.title} tickets"
+                class="flex min-w-0 flex-1 flex-col gap-4"
+              >
+                {#if screen.lanes.length > 1}
+                  <h2 class="m-0 font-heading text-base text-ink">{lane.title}</h2>
+                {/if}
+              <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
+                <label class="flex items-center gap-2 text-sm text-ink-mute">
+                  <span>Sprint</span>
+                  <div class="min-w-[14rem]" data-filter="sprint">
+                    <Select
+                      filterable
+                      items={lane.filterItems}
+                      value={lane.filter}
+                      onchange={(v) => lane.setFilter(String(v))}
+                    />
+                  </div>
+                </label>
+                <span class="flex items-center gap-2 text-sm text-ink">
+                  <input type="checkbox" id="tickets-ai-only-{lane.id}" data-filter="ai-only" bind:checked={lane.aiOnly} />
+                  <label for="tickets-ai-only-{lane.id}">Only tickets with AI sessions</label>
+                </span>
+                <p data-count class="m-0 text-sm text-ink-mute">{lane.countLine}</p>
+              </div>
 
-          {#if screen.tasksError}
-            <p role="alert" class="m-0 text-sm text-danger">{screen.tasksError}</p>
-          {:else if screen.tasks === null}
-            <p class="m-0 text-sm text-ink-soft">Reading tickets…</p>
-          {:else if screen.visibleTasks.length === 0}
-            <p class="m-0 text-sm text-ink-soft">No tickets to show.</p>
-          {:else}
-            <div class="overflow-x-auto">
-              <div class="min-w-[52rem]">
-                <div aria-hidden="true" class="{COLS} border-b border-paper-edge px-2 pb-1 text-xs text-ink-mute">
-                  <span>Ticket</span><span>Sprint</span><span>Status</span><span>Sessions (branch/prompt)</span>
-                  <span>Active AI time</span><span>Cycle time</span><span>Fresh tokens</span><span>Out tokens</span><span>Cost</span>
+              {#if lane.strip}
+                {@const strip = lane.strip}
+                <div data-strip class="flex flex-col gap-2 rounded-lg border border-paper-edge bg-paper-soft p-4">
+                  {#if strip.kind === 'reason'}
+                    <p class="m-0 text-sm text-ink-soft">{strip.text}</p>
+                  {:else}
+                    <p class="m-0 text-sm text-ink">{strip.total}</p>
+                    {#each strip.parts as part (part.label)}
+                      <div class="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
+                        {#if part.label === 'Not linked' && part.sessions !== '0'}
+                          <button
+                            type="button"
+                            class="bg-transparent p-0 text-ink underline"
+                            aria-expanded={lane.unlinked !== null}
+                            data-action="unlinked"
+                            onclick={() => lane.toggleUnlinked()}>{part.label}</button
+                          >
+                        {:else}
+                          <span class="text-ink">{part.label}</span>
+                        {/if}
+                        <span class="text-ink-mute">sessions <span class="text-ink">{part.sessions}</span></span>
+                        <span class="text-ink-mute">active AI time <span class="text-ink">{part.active}</span></span>
+                        <span class="text-ink-mute">fresh tokens <span class="text-ink">{part.fresh}</span></span>
+                      </div>
+                    {/each}
+                  {/if}
                 </div>
-                <ul class="m-0 list-none p-0">
-                  {#each screen.visibleTasks as t (t.key)}
-                    {@const c = usageCells(t.usage)}
-                    <li>
-                      <button
-                        type="button"
-                        data-ticket={t.key}
-                        class="{COLS} w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-paper-mute"
-                        onclick={() => screen.openTicket(t.key)}
-                      >
-                        <span class="flex min-w-0 flex-col">
-                          <span class="font-mono text-xs text-ink-mute">{t.key}</span>
-                          <span class="truncate text-ink" title={t.summary ?? ''}>{t.summary ?? ''}</span>
-                        </span>
-                        <span class="truncate text-ink-mute"><span class="sr-only">sprint </span><span data-cell="sprint">{screen.sprintOf(t)}</span></span>
-                        <span class="truncate text-ink-mute"><span class="sr-only">status </span>{t.status ?? '—'}</span>
-                        <span><span class="sr-only">sessions </span><span data-cell="sessions">{c.sessions}</span></span>
-                        <span><span class="sr-only">active AI time </span><span data-cell="active">{c.active}</span></span>
-                        <span><span class="sr-only">cycle time </span><span data-cell="cycle">{c.cycle}</span></span>
-                        <span><span class="sr-only">fresh tokens </span><span data-cell="fresh">{c.fresh}</span></span>
-                        <span><span class="sr-only">out tokens </span><span data-cell="out">{c.out}</span></span>
-                        <span><span class="sr-only">cost </span><span data-cell="cost">{c.cost}</span></span>
-                      </button>
+              {/if}
+
+              {#if lane.unlinkedError}
+                <p role="alert" class="m-0 text-sm text-danger">{lane.unlinkedError}</p>
+              {/if}
+              {#if lane.unlinked}
+                <ul class="m-0 flex list-none flex-col gap-1 p-0" aria-label="Sessions not linked to a ticket">
+                  {#each lane.unlinked as u (u.id)}
+                    <li class="flex flex-wrap gap-3 text-sm">
+                      <a href={replayHref(u.id)} data-session={u.id} class="text-primary underline">{when(u.started_at)}</a>
+                      <span class="text-ink-mute">{u.task || 'session'}</span>
                     </li>
                   {/each}
                 </ul>
-              </div>
-            </div>
-            {#if screen.sharedNote}
-              <p class="m-0 text-xs text-ink-soft">{screen.sharedNote}</p>
-            {/if}
-          {/if}
+              {/if}
+
+
+              {#if lane.tasksError}
+                <p role="alert" class="m-0 text-sm text-danger">{lane.tasksError}</p>
+              {:else if lane.tasks === null}
+                <p class="m-0 text-sm text-ink-soft">Reading tickets…</p>
+              {:else if lane.visibleTasks.length === 0}
+                <p class="m-0 text-sm text-ink-soft">No tickets to show.</p>
+              {:else}
+                <div class="overflow-x-auto">
+                  <div class="min-w-[52rem]">
+                    <div aria-hidden="true" class="{COLS} border-b border-paper-edge px-2 pb-1 text-xs text-ink-mute">
+                      <span>Ticket</span><span>Sprint</span><span>Status</span><span>Sessions (branch/prompt)</span>
+                      <span>Active AI time</span><span>Cycle time</span><span>Fresh tokens</span><span>Out tokens</span><span>Cost</span>
+                    </div>
+                    <ul class="m-0 list-none p-0">
+                      {#each lane.visibleTasks as t (t.key)}
+                        {@const c = usageCells(t.usage)}
+                        <li>
+                          <button
+                            type="button"
+                            data-ticket={t.key}
+                            class="{COLS} w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-paper-mute"
+                            onclick={() => screen.openTicket(lane, t.key)}
+                          >
+                            <span class="flex min-w-0 flex-col">
+                              <span class="font-mono text-xs text-ink-mute">{t.key}</span>
+                              <span class="truncate text-ink" title={t.summary ?? ''}>{t.summary ?? ''}</span>
+                            </span>
+                            <span class="truncate text-ink-mute"><span class="sr-only">sprint </span><span data-cell="sprint">{lane.sprintOf(t)}</span></span>
+                            <span class="truncate text-ink-mute"><span class="sr-only">status </span>{t.status ?? '—'}</span>
+                            <span><span class="sr-only">sessions </span><span data-cell="sessions">{c.sessions}</span></span>
+                            <span><span class="sr-only">active AI time </span><span data-cell="active">{c.active}</span></span>
+                            <span><span class="sr-only">cycle time </span><span data-cell="cycle">{c.cycle}</span></span>
+                            <span><span class="sr-only">fresh tokens </span><span data-cell="fresh">{c.fresh}</span></span>
+                            <span><span class="sr-only">out tokens </span><span data-cell="out">{c.out}</span></span>
+                            <span><span class="sr-only">cost </span><span data-cell="cost">{c.cost}</span></span>
+                          </button>
+                        </li>
+                      {/each}
+                    </ul>
+                  </div>
+                </div>
+                {#if lane.sharedNote}
+                  <p class="m-0 text-xs text-ink-soft">{lane.sharedNote}</p>
+                {/if}
+              {/if}
+              </section>
+            {/each}
+          </div>
         {/if}
       </div>
     {/if}

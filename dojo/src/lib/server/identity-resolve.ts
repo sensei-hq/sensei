@@ -75,8 +75,8 @@ export function pickBestIdentity(rows: IdentityNameRow[]): ResolvedName {
  * fabrication).
  *
  * Only principals who are MEMBERS of `tenantId` are resolved. Identities carry
- * no tenant, and an id can come straight from a request body (an incident's
- * `owner_id`), so "the caller already scoped it" is not a property this
+ * no tenant, and an id can come straight from a request body, so "the caller
+ * already scoped it" is not a property this
  * function can assume; an id outside the tenant resolves to nothing.
  */
 export async function resolveDisplayNames(
@@ -89,7 +89,7 @@ export async function resolveDisplayNames(
 	];
 	if (requested.length === 0) return new Map();
 	// TENANT FIRST. `identities` has no tenant column, and an id can arrive from
-	// a request body (an incident's owner_id) — so an unscoped read hands the
+	// a request body — so an unscoped read hands the
 	// caller anyone's name and email. Only the tenant's members are resolved; any
 	// other id resolves to nothing, exactly as an unknown id does.
 	const members = await db

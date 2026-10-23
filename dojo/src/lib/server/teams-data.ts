@@ -21,8 +21,11 @@ export interface Team {
 	members: TeamMember[];
 }
 
-/** The dōjō's teams by name, each with its members named. */
-export async function listTeams(db: DojoClient, tenantId: string): Promise<Team[]> {
+/** The dōjō's teams by name, each with its members named. The teams and their
+ *  members are read as `db` (the caller); the names through `nameDb` — the service
+ *  client when the caller may read the ids but not the identities (the access
+ *  matrix's `resolveDisplayNames` exception: names for ids the caller already read). */
+export async function listTeams(db: DojoClient, tenantId: string, nameDb: DojoClient = db): Promise<Team[]> {
 	const teams = await db.from('teams').select('id, name').eq('tenant_id', tenantId);
 	if (teams.error) throw new AdminError(500, teams.error.message);
 	const rows = ((teams.data ?? []) as Array<{ id: string; name: string }>).sort((a, b) => a.name.localeCompare(b.name));
@@ -38,7 +41,7 @@ export async function listTeams(db: DojoClient, tenantId: string): Promise<Team[
 	if (members.error) throw new AdminError(500, members.error.message);
 	const links = (members.data ?? []) as Array<{ team_id: string; principal_id: string }>;
 	const names = await resolveDisplayNames(
-		db,
+		nameDb,
 		tenantId,
 		links.map((l) => l.principal_id)
 	);

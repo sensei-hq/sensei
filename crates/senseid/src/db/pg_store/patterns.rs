@@ -254,7 +254,7 @@ impl PgStore {
         // Legacy memory_scope mirrors the governance scope for the older read paths;
         // the real binding is namespace_id + enforcement.
         let mem_scope = match gov_scope {
-            "technology" | "team" | "organization" | "client" => "stack",
+            "organization" => "stack",
             "general" | "user" => "global",
             _ => "workspace",
         };

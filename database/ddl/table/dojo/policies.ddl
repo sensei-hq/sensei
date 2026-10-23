@@ -17,8 +17,7 @@ create index if not exists policies_tenant_idx on dojo.policies(tenant_id);
 comment on table dojo.policies is
 'Per-scope governance policy set by an admin (the policy grid): attribution
 default, confidentiality rules, and retention window for a scope. Policy edits
-take effect on the next batch. Engagements may layer overrides on top (see
-dojo.engagements.policy_overrides).';
+take effect on the next batch.';
 
 comment on column dojo.policies.scope_key
      is 'The scope this policy applies to (e.g. all-org, team:mobile, stack:rust).';

@@ -592,6 +592,10 @@ ship:
 
 bump:
 	@if [ -z "$(v)" ]; then echo "Usage: make bump v=patch|minor|major|<version>"; exit 1; fi
+	@# Step 1 of 2 (wave 0b, user 2026-10-22): the version is bumped on a clean
+	@# develop and reaches main through the PR — main is protected, so nothing is
+	@# pushed to it directly. Step 2 is `make release`, on main.
+	@./scripts/release-guard.sh bump
 	$(eval _v := $(shell \
 	  cur=$$(cat VERSION); \
 	  if [ "$(v)" = "patch" ]; then echo "$$cur" | awk -F. '{printf "%s.%s.%s", $$1, $$2, $$3+1}'; \
@@ -690,44 +694,30 @@ bump:
 	@# Schema snapshot artefacts, when the project is released (see above).
 	@if [ -d database/snapshots ]; then git add database/design.yaml database/snapshots; fi
 	@git commit -m "chore: bump to v$(_v)"
+	@git push origin develop
+	@echo "v$(_v) is bumped on develop. Next: open the develop → main PR, merge it when green, then on main: git checkout main && git pull && make release"
+
+# Step 2 of 2 (wave 0b, user 2026-10-22): on a clean `main` that matches
+# origin/main and whose VERSION is not yet tagged, tag main's head and push ONLY
+# the tag — tags are not protected, the branch is. The tag runs release.yml
+# (its `on-main` job checks the commit is on main), which builds, releases, and
+# deploys the dōjō database. Then: clear the dbd cache, sync the marketplace,
+# install locally, and merge main back into develop.
+.PHONY: release
+release:
+	@./scripts/release-guard.sh release
+	$(eval _v := $(shell tr -d '[:space:]' < VERSION))
 	@git tag v$(_v)
-	@git push origin HEAD
 	@git push origin v$(_v)
-	@echo "Pushed v$(_v) — GitHub Actions will build release artifacts and update tap SHA256s"
-	@# Invalidate the dbd schema-source cache now that the DDL version changed,
-	@# so the next daemon deploy fetches v$(_v)'s DDL instead of serving the
-	@# previous version's cached bundle (which would re-apply the old schema).
+	@echo "Pushed v$(_v) — release.yml builds the artifacts, the release and the tap."
 	@$(MAKE) dbd-cache-clear
-	@# DELIBERATELY NOT `tap-push`. The homebrew formula and cask are templates
-	@# carrying `REPLACE_WITH_*_SHA256`, because a checksum cannot exist until the
-	@# release assets do. Pushing them here published a version nobody could
-	@# install and left `release.yml`'s `update-tap` to repair it minutes later —
-	@# fail-OPEN. When TAP_GITHUB_TOKEN expired the repair stopped, and the tap sat
-	@# advertising placeholder checksums for ~8 releases with the last good formula
-	@# already overwritten. `update-tap` is now the sole writer of both files and
-	@# renders them from these templates, so a failure leaves the tap on the
-	@# previous installable release.
 	@echo "Syncing marketplace..."
 	@$(MAKE) marketplace-push
-	@# Install the version we just tagged, so the machine that cut the release is
-	@# running it. Deliberately AFTER the push: the tag is what CI builds from, so
-	@# a local toolchain problem must not strand a release that is already valid
-	@# everywhere else. It re-runs db-backup, release-builds the crates, and
-	@# replaces /Applications/Sensei.app (quitting a running instance first).
 	@echo "Installing v$(_v) locally..."
 	@$(MAKE) install
-	@# ...and `install` now ends with `make clean` itself, so the tree that build
-	@# needed is reclaimed as part of it. There is deliberately NO second clean
-	@# here: it would be a no-op running `cargo clean` over an already-empty
-	@# target/, and a reader would reasonably wonder which one was the real one.
-	@#
-	@# This supersedes the `clean-cache` prune that used to run here: that kept the
-	@# 5 newest incremental caches, and `clean` removes target/ outright, so doing
-	@# both would just be pruning something a moment before deleting its parent.
-	@#
-	@# The trade is deliberate: the next dev build after a bump is COLD (a full
-	@# rebuild, several minutes). A release is infrequent and target/ reaches tens
-	@# of GB, so paying the rebuild once per release beats carrying the disk.
+	@git checkout -q develop && git pull -q --ff-only origin develop && \
+	  git merge --no-ff -q main -m "Merge main (v$(_v)) into develop" && \
+	  git push -q origin develop && echo "develop now carries main (v$(_v))"
 
 # Clear the dbd schema-source cache. The daemon resolves its DDL from
 # `sensei-hq/sensei/database@v<VERSION>` and dbd caches resolved sources per

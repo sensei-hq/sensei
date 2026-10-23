@@ -84,16 +84,16 @@ describe('createLibraryStore — non-negotiable ★', () => {
 describe('createLibraryStore — per-pack level', () => {
 	it('returns the pack default until overridden, then the override', () => {
 		const s = createLibraryStore();
-		expect(s.levelForPack(owasp.id)).toBe('org'); // default
-		s.setPackLevel(owasp.id, 'proj');
-		expect(s.levelForPack(owasp.id)).toBe('proj');
+		expect(s.levelForPack(owasp.id)).toBe('dojo'); // default
+		s.setPackLevel(owasp.id, 'workspace');
+		expect(s.levelForPack(owasp.id)).toBe('workspace');
 	});
 });
 
 describe('createLibraryStore — write your own', () => {
 	it('adds an authored rule and counts it as selected', () => {
 		const s = createLibraryStore();
-		const id = s.addAuthored('flags removed within two releases', 'core', 'org', false);
+		const id = s.addAuthored('flags removed within two releases', 'core', 'dojo', false);
 		expect(id).not.toBeNull();
 		expect(s.selectedCount).toBe(1);
 		expect(s.authored).toHaveLength(1);
@@ -102,23 +102,23 @@ describe('createLibraryStore — write your own', () => {
 
 	it('trims and ignores blank authored text', () => {
 		const s = createLibraryStore();
-		expect(s.addAuthored('   ', 'core', 'org', false)).toBeNull();
+		expect(s.addAuthored('   ', 'core', 'dojo', false)).toBeNull();
 		expect(s.selectedCount).toBe(0);
-		const id = s.addAuthored('  keep me  ', 'core', 'org', false);
+		const id = s.addAuthored('  keep me  ', 'core', 'dojo', false);
 		expect(id).not.toBeNull();
 		expect(s.authored[0].text).toBe('keep me');
 	});
 
 	it('counts an authored hard rule as non-negotiable', () => {
 		const s = createLibraryStore();
-		s.addAuthored('no PII in logs', 'sec', 'org', true);
+		s.addAuthored('no PII in logs', 'sec', 'dojo', true);
 		expect(s.nonNegotiableCount).toBe(1);
 	});
 
 	it('classifies authored rules per area and removes by id', () => {
 		const s = createLibraryStore();
-		s.addAuthored('core rule', 'core', 'org', false);
-		const secId = s.addAuthored('sec rule', 'sec', 'org', false);
+		s.addAuthored('core rule', 'core', 'dojo', false);
+		const secId = s.addAuthored('sec rule', 'sec', 'dojo', false);
 		expect(s.authoredInArea('core')).toHaveLength(1);
 		expect(s.authoredInArea('sec')).toHaveLength(1);
 		expect(s.authoredInArea('design')).toHaveLength(0);

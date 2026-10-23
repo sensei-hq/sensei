@@ -26,7 +26,7 @@ import type {
   SchemaPayload,
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
   TranscriptSourceConsent,
-  TrackerConnection, TrackerSyncCounts,
+  TrackerConnection, TrackerLevel, TrackerSyncCounts,
   SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession, BacklogUsage,
 } from './types.js';
 import type {
@@ -792,33 +792,46 @@ export function senseiApi(port: number) {
     // some, the values the screen shows (the owning workspace, the board asked for).
     tryListTrackers: (workspaceId: string) =>
       tryJson<TrackerConnection[]>('GET', `/api/workspaces/${enc(workspaceId)}/trackers`),
-    tryConnectTracker: (workspaceId: string, kind: string, body: Record<string, unknown>) =>
+    tryConnectTracker: (
+      workspaceId: string,
+      kind: string,
+      level: TrackerLevel,
+      body: Record<string, unknown>,
+    ) =>
       tryJson<{ tracker: TrackerConnection; first_sync: { pending: boolean } }>(
-        'POST', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(kind)}/connect`, body,
+        'POST', `/api/workspaces/${enc(workspaceId)}/trackers`, { kind, level, ...body },
       ),
-    trySyncTracker: (workspaceId: string) =>
-      tryJson<{ counts: TrackerSyncCounts }>('POST', `/api/workspaces/${enc(workspaceId)}/trackers/sync`),
-    tryDisconnectTracker: (workspaceId: string) =>
-      tryJson<void>('DELETE', `/api/workspaces/${enc(workspaceId)}/trackers`),
-    // Usage reads (spec R7/R8). Result-based: a failed read must never pass for
-    // "no tracker" or an empty sprint.
-    tryListSprints: (workspaceId: string) =>
-      tryJson<SprintUsageRow[]>('GET', `/api/workspaces/${enc(workspaceId)}/sprints`),
-    tryListTrackerTasks: (workspaceId: string, sprintId?: string) =>
+    trySyncTracker: (workspaceId: string, trackerId: string) =>
+      tryJson<{ counts: TrackerSyncCounts }>(
+        'POST', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/sync`,
+      ),
+    tryDisconnectTracker: (workspaceId: string, trackerId: string) =>
+      tryJson<void>('DELETE', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}`),
+    // Usage reads (spec R7/R8), one board each (D40). Result-based: a failed read
+    // must never pass for "no tracker" or an empty sprint.
+    tryListSprints: (workspaceId: string, trackerId: string) =>
+      tryJson<SprintUsageRow[]>(
+        'GET', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/sprints`,
+      ),
+    tryListTrackerTasks: (workspaceId: string, trackerId: string, sprintId?: string) =>
       tryJson<TrackerTaskRow[]>(
         'GET',
-        `/api/workspaces/${enc(workspaceId)}/tracker-tasks${sprintId ? `?sprint=${enc(sprintId)}` : ''}`,
+        `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/tasks${sprintId ? `?sprint=${enc(sprintId)}` : ''}`,
       ),
-    tryGetBacklog: (workspaceId: string) =>
-      tryJson<BacklogUsage>('GET', `/api/workspaces/${enc(workspaceId)}/backlog`),
-    tryListBacklogTasks: (workspaceId: string) =>
-      tryJson<TrackerTaskRow[]>('GET', `/api/workspaces/${enc(workspaceId)}/tracker-tasks?backlog=true`),
+    tryGetBacklog: (workspaceId: string, trackerId: string) =>
+      tryJson<BacklogUsage>(
+        'GET', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/backlog`,
+      ),
+    tryListBacklogTasks: (workspaceId: string, trackerId: string) =>
+      tryJson<TrackerTaskRow[]>(
+        'GET', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/tasks?backlog=true`,
+      ),
     tryGetTrackerTask: (workspaceId: string, key: string) =>
       tryJson<TrackerTaskDetail>('GET', `/api/workspaces/${enc(workspaceId)}/tracker-tasks/${enc(key)}`),
-    tryListUnlinkedSessions: (workspaceId: string, sprintId: string) =>
+    tryListUnlinkedSessions: (workspaceId: string, trackerId: string, sprintId: string) =>
       tryJson<UnlinkedSession[]>(
         'GET',
-        `/api/workspaces/${enc(workspaceId)}/sessions/unlinked?sprint=${enc(sprintId)}`,
+        `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/sessions/unlinked?sprint=${enc(sprintId)}`,
       ),
 
     /** What stops syncing if this root is removed. */
@@ -1085,11 +1098,11 @@ export function senseiApi(port: number) {
         `/api/knowledge/memories/${enc(id)}/generalise`, {},
       ),
 
-    // Widen a proven memory up the scope ladder (workspace → user → org →
+    // Widen a proven memory up the scope ladder (workspace → user → dōjō →
     // collective). Reuses the EXISTING promote route — it creates a `proposed`
     // copy on the target namespace (origin=promoted); accepting it through the
     // normal proposal flow is the governance gate, so it never auto-applies.
-    // `gov_scope` names the target scope ("user" | "org" | "global"); the other
+    // `gov_scope` names the target scope ("user" | "organization" | "global"); the other
     // fields stay optional for namespace/folder-resolved promotions.
     promoteMemory: (
       id: string,

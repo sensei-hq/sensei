@@ -56,7 +56,7 @@ function ev(opts: { sessionToken?: string | null; body?: unknown } = {}) {
 beforeEach(() => {
 	mocks.resolveCaller
 		.mockClear()
-		.mockResolvedValue({ userId: 'p1', authUserId: 'u1', email: 'j@example.com', accessToken: 'jwt-A' });
+		.mockResolvedValue({ userId: 'p1', authUserId: 'u1', email: 'j@example.com', accessToken: 'jwt-A', githubId: '4242' });
 	mocks.provisionWithToken.mockClear().mockResolvedValue(RESULT);
 });
 
@@ -69,7 +69,18 @@ describe('POST /v1/you/provision', () => {
 		// memberships key on principal ids (§VIII.2).
 		expect(principalId).toBe('p1');
 		expect(token).toBe('gh-session');
-		expect(fallback).toEqual({ email: 'j@example.com' });
+		// The GitHub account linked to the LOGIN: provisioning refuses a token of
+		// any other account (#308 R5a review).
+		expect(fallback).toEqual({ email: 'j@example.com', githubId: '4242' });
+	});
+
+	it('refuses a token of another GitHub account with 403, naming why', async () => {
+		mocks.provisionWithToken.mockRejectedValue(
+			new AdminError(403, 'that GitHub token belongs to a different GitHub account than this login')
+		);
+		const res = await route.POST(ev({ body: { provider_token: 'someone-elses' } }));
+		expect(res.status).toBe(403);
+		expect((await res.json()).error).toMatch(/different GitHub account/);
 	});
 
 	it('prefers a token in the body over the session one', async () => {

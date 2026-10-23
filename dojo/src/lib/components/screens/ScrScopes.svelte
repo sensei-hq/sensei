@@ -2,9 +2,11 @@
 	import { Screen } from '@sensei/ui';
 	import { SectionHead, Banner, Btn, Chip, Avatar, RoleTag, ListSection } from '$lib/components/kit';
 	import type { KitScopeOwner } from '$lib/components/kit/types';
+	import { LADDER_GROUPS, type LadderGroupName } from '$lib/org-ladder-view';
 
 	// The admin scope-ownership screen (mockup ScrScopes) — who owns and triages
-	// each scope's queue, grouped Company · Teams · Stacks. Each row is a scope
+	// each scope's queue, grouped by its ladder level — Dōjō · Workspace ·
+	// Repository (D25). Each row is a scope
 	// with its queue depth + SLA and its named owner (Avatar + RoleTag), or an
 	// "unowned · fallback" chip when no one owns it. The header carries the
 	// standing description; a warning Banner appears ONLY when a scope is unowned,
@@ -20,12 +22,13 @@
 		onAssign?: (o: KitScopeOwner) => void;
 	} = $props();
 
-	// The authoring groups, in the mockup's fixed order + icon.
-	const groups: { name: string; icon: string }[] = [
-		{ name: 'Company', icon: 'buildings-2' },
-		{ name: 'Teams', icon: 'users-group-rounded' },
-		{ name: 'Stacks', icon: 'layers-minimalistic' }
-	];
+	// The ladder levels, broad → specific (the shared `LADDER_GROUPS` order) + icon.
+	const ICONS: Record<LadderGroupName, string> = {
+		Dōjō: 'buildings-2',
+		Workspace: 'folder',
+		Repository: 'layers-minimalistic'
+	};
+	const groups = LADDER_GROUPS.map((name) => ({ name, icon: ICONS[name] }));
 
 	const unowned = $derived(owners.filter((r) => !r.owner).length);
 	// "3 scope has no owner" was the old copy — agree the verb with the count.

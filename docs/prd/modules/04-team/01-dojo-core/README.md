@@ -3,8 +3,7 @@
 **Plane:** team · **Status:** [roadmap/04-team.md](../../../../roadmap/04-team.md) ·
 **Serves:** team developer ([persona 2](../../../03-personas.md#2--team-developer--the-inheritor)),
 maintainer ([persona 3](../../../03-personas.md#3--maintainer--the-curator)),
-org admin ([persona 4](../../../03-personas.md#4--org-admin--the-plane-owner)),
-engagement / client lead ([persona 5](../../../03-personas.md#5--engagement--client-lead--the-confidentiality-guard))
+org admin ([persona 4](../../../03-personas.md#4--org-admin--the-plane-owner))
 
 ## Purpose
 
@@ -42,7 +41,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
   artifact kinds: `memory`, `rule`, `skill`, `command`, `agent`, `pattern`);
   triage/approval with scoring (auto-approve 0.8, per-contributor weight,
   FTR-delta credit, k-anonymity ≥3); anonymization (origin-based strip +
-  universal strip); audit ledger + compliance export; governance resolution
+  universal strip); the audit trail; governance resolution
   (`governance.rs` — gather → order by enforcement desc + scope level desc →
   mandatory-lock → dedup, cached 5 min); the `get_rules` / `get_layered_context`
   MCP tools.
@@ -52,7 +51,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
 ## Surfaces
 
 - **API (Worker `/v1`)** — `/v1/t/{tenant}/rules` · `/artifacts` · `/triage`
-  · `/triage/promote` · `/audit` · `/compliance/export` · `/engagements`
+  · `/triage/promote` · `/audit`
   · `/projects` · `/knowledge` · `/rules/resolved` · `/policies` · `/members`
   · `/identities` · `/relay/{gates,inbox}` · `/health`.
 - **Daemon** — `dojo/client.rs` (tenant base URL, artifacts/relay URLs,
@@ -65,8 +64,8 @@ feels this as *I sign in once, and the right rules just work — wherever I code
   (GitHub, magic-link).
 - **Data** — `dojo.repositories` (visibility: public/private/not-captured),
   `repository_elections`, `repository_metrics`, `memberships`, `shared_rules`,
-  `tenants`, `audit_log`, `audit_events`, `engagements` (`tenant_scopes` is
-  planned, not built).
+  `tenants`, `audit_log`, `audit_events` (`tenant_scopes` is planned, not
+  built). A dōjō has no engagements or incidents (D34).
 
 ## Data invariants
 
@@ -112,7 +111,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
   appears in the next `get_rules` call (5 min cache).
 - Client work is anonymized by the universal strip; the employer never receives
   the client's finding.
-- The audit ledger records every promote/triage/decide event immutably.
+- The audit trail records every promote/triage/decide event immutably.
 
 ```bash
 curl -s "https://dojo.sensei-hq.com/v1/t/org/sensei-hq/rules/resolved?repo=..." | jq '.rules|length'

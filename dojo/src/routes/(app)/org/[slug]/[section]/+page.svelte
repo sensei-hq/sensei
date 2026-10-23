@@ -6,13 +6,12 @@
 	import ScrTriage from '$lib/components/screens/ScrTriage.svelte';
 	import ScrApprovals from '$lib/components/screens/ScrApprovals.svelte';
 	import ScrKnowledge from '$lib/components/screens/ScrKnowledge.svelte';
-	import ScrEngagements from '$lib/components/screens/ScrEngagements.svelte';
-	import ScrIncidents from '$lib/components/screens/ScrIncidents.svelte';
-	import ScrClientAudit from '$lib/components/screens/ScrClientAudit.svelte';
 	import ScrRoleSurfaces from '$lib/components/screens/ScrRoleSurfaces.svelte';
 	import ScrScopes from '$lib/components/screens/ScrScopes.svelte';
 	import ScrIdentity from '$lib/components/screens/ScrIdentity.svelte';
+	import ScrIntegrations from '$lib/components/screens/ScrIntegrations.svelte';
 	import ScrHealth from '$lib/components/screens/ScrHealth.svelte';
+	import ScrTeams from '$lib/components/screens/ScrTeams.svelte';
 	import ScrBilling from '$lib/components/screens/ScrBilling.svelte';
 	import ScrPlaceholder from '$lib/components/screens/ScrPlaceholder.svelte';
 	import { orgHref, labelForSection } from '$lib/nav';
@@ -27,29 +26,25 @@
 		deleteTeam,
 		addTeamMember,
 		removeTeamMember,
-		grantTeamWorkspaceView
+		grantTeamWorkspaceView,
+		listIntegrationUnits,
+		claimIntegrationUnit,
+		mapIntegrationUnit
 	} from '$lib/admin-data';
-	import {
-		createIncident,
-		updateIncident,
-		deleteIncident,
-		getIncident,
-		updateEngagement,
-		deleteEngagement,
-		createEngagement,
-		createInvite
-	} from '$lib/client-data';
+	import { createInvite } from '$lib/client-data';
 	import { OrgSectionState } from '$lib/org-section-state.svelte';
 	import { InviteState } from '$lib/invite-state.svelte';
 	import { TeamDraft } from '$lib/teams-state.svelte';
-	import { toKitIncidentDetail } from '$lib/incidents-map';
+	import { IntegrationsState } from '$lib/integrations-state.svelte';
+	import { connectGithub, type KavachSignIn } from '$lib/github-connect';
+	import { providers } from '$kavach/providers';
+	import { getContext, untrack } from 'svelte';
 	import type { KitWorkspace } from '$lib/components/kit/types';
 
 	// The org-zone section screen. Dispatches to the real screen for every NAV_ORG
 	// destination off the kit fixtures the loader supplies: the Overview
 	// (ladder · workspaces), the maintainer Govern consoles
-	// (triage · approvals · knowledge), the lead Clients consoles
-	// (engagements · incidents · clientaudit) and the admin consoles
+	// (triage · approvals · knowledge) and the admin consoles
 	// (members/scopes/identity/audit/health/billing) — the full dojo screen set,
 	// so the trailing ScrPlaceholder branch is unreachable today and exists only
 	// to catch a section added to NAV_ORG before its screen. The `members` and
@@ -76,13 +71,6 @@
 	const org = new OrgSectionState(
 		{
 			setRole: (userId, role) => setMemberRole(tk(), userId, role, opts()),
-			reportIncident: (title) => createIncident(tk(), { title }, opts()),
-			resolveIncident: (id) => updateIncident(tk(), id, { resolved: true }, opts()),
-			removeIncident: (id) => deleteIncident(tk(), id, opts()),
-			openIncident: async (id) => toKitIncidentDetail(await getIncident(tk(), id, opts())),
-			newEngagement: (clientName) => createEngagement(tk(), { client_name: clientName }, opts()),
-			closeEngagement: (id) => updateEngagement(tk(), id, { status: 'ended' }, opts()),
-			removeEngagement: (id) => deleteEngagement(tk(), id, opts()),
 			removeViewer: (pid) => removeViewer(tk(), pid, opts()),
 			grantView: (pid, workspaceId) => grantWorkspaceView(tk(), pid, workspaceId, opts()),
 			revokeView: (pid, workspaceId) => revokeWorkspaceView(tk(), pid, workspaceId, opts()),
@@ -99,6 +87,27 @@
 	const invite = new InviteState((input) => createInvite(tk(), input, opts()), page.url.origin);
 	// New team / Rename (#307 A3).
 	const teamDraft = new TeamDraft();
+	// Admin → Integrations (#308 R5a): GitHub, bound to this dōjō and session.
+	// The GitHub token is the server's (a sealed cookie set when Connect GitHub
+	// re-authorized through kavach); nothing here sends one.
+	const kavach = getContext<KavachSignIn>('kavach');
+	const integrations = new IntegrationsState({
+		list: () => listIntegrationUnits(tk(), 'github', opts()),
+		claim: (unitId) => claimIntegrationUnit(tk(), 'github', unitId, opts()),
+		map: (unitId, target) => mapIntegrationUnit(tk(), 'github', unitId, target, opts()),
+		connect: () => connectGithub(kavach, providers, page.url.href)
+	});
+	// Read on opening the section, again for another org (this component is
+	// reused), and again after the GitHub connection returns (kavach's sync
+	// invalidates the data, which re-runs this).
+	$effect(() => {
+		const current = data; // a new object after every load, the reload included
+		if (current.section !== 'integrations') return;
+		untrack(() => {
+			integrations.reset();
+			void integrations.load();
+		});
+	});
 </script>
 
 <svelte:head><title>{data.title} · {data.orgName} · Dōjō</title></svelte:head>
@@ -119,28 +128,6 @@
 	<ScrApprovals orgName={data.orgName} approvals={data.approvals} />
 {:else if data.section === 'knowledge'}
 	<ScrKnowledge orgName={data.orgName} knowledge={data.knowledge} />
-{:else if data.section === 'engagements'}
-	<ScrEngagements
-		orgName={data.orgName}
-		engagements={data.engagements}
-		confidentiality={data.confidentiality}
-		onNew={org.newEngagement}
-		onClose={org.closeEngagement}
-		onDelete={org.removeEngagement}
-	/>
-{:else if data.section === 'incidents'}
-	<ScrIncidents
-		orgName={data.orgName}
-		incidents={data.incidents}
-		detail={org.incidentDetail}
-		onOpen={(i) => org.openIncident(i)}
-		onCloseDetail={() => org.closeIncident()}
-		onReport={org.reportIncident}
-		onResolve={org.resolveIncident}
-		onDelete={org.removeIncident}
-	/>
-{:else if data.section === 'clientaudit'}
-	<ScrClientAudit orgName={data.orgName} entries={data.clientAudit} />
 {:else if data.section === 'members' || data.section === 'audit'}
 	<ScrRoleSurfaces
 		orgName={data.orgName}
@@ -164,10 +151,14 @@
 		onRemoveTeamMember={(t, pid) => org.removeTeamMember(t, pid)}
 		onGrantTeam={(t, workspaceId) => org.grantTeamView(t, workspaceId)}
 	/>
+{:else if data.section === 'teams'}
+	<ScrTeams orgName={data.orgName} view={data.teamMetrics} error={data.teamMetricsError} />
 {:else if data.section === 'scopes'}
 	<ScrScopes orgName={data.orgName} owners={data.scopeOwners} />
 {:else if data.section === 'identity'}
 	<ScrIdentity orgName={data.orgName} identity={data.identity} />
+{:else if data.section === 'integrations'}
+	<ScrIntegrations orgName={data.orgName} state={integrations} />
 {:else if data.section === 'health'}
 	<ScrHealth orgName={data.orgName} health={data.health} />
 {:else if data.section === 'billing'}

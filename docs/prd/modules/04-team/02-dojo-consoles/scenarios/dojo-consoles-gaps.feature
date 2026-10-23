@@ -42,11 +42,11 @@ Feature: Dōjō Consoles — the org context role surfaces (built; not yet pinne
 
   # resolved: T-2
   NO TEST
-  Scenario: a lead sees engagements, incidents, and audit in the org context
-    Given a user with lead role
+  Scenario: a dōjō has no Clients section (D34)
+    Given a user with any role
     When they open the org context
-    Then they see /engagements, /incidents, /audit
-    Built — the Clients group is gated at lead (navForOrg).
+    Then there is no /engagements, /incidents or /clientaudit section
+    Built — nav.spec.ts and shell.spec.ts assert the absence (#307 R7).
 
   # resolved: T-2
   NO TEST

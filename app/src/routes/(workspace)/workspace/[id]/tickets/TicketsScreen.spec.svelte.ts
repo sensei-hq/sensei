@@ -10,7 +10,7 @@ import { mountComponent } from '$lib/test-mount.js';
 import { replayHref } from '$lib/sessions-digest.js';
 import TicketsScreen from './TicketsScreen.svelte';
 import { TicketsState, type SprintsApi } from './tickets-state.svelte.js';
-import type { SprintUsageRow, TrackerUsage } from '$lib/types.js';
+import type { SprintUsageRow, TrackerConnection, TrackerUsage } from '$lib/types.js';
 
 let cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -87,6 +87,7 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
           external_scope: 'AUTH',
           board_ref: '42',
           board_name: 'AUTH Scrum',
+          level: 'sprint',
           status: 'connected',
           last_success_at: null,
           last_error: null,
@@ -166,6 +167,24 @@ describe('ready', () => {
     expect(q('[data-strip]')).toBe(null);
   });
 
+  it('one lane needs no heading; two sprint boards are two lanes side by side, each headed (D40)', async () => {
+    const one = await open();
+    expect(one.m.container.querySelectorAll('section[data-lane]').length).toBe(1);
+    expect(one.q('section[data-lane] h2')).toBe(null);
+
+    const base = (await api().tryListTrackers('p-1')) as { ok: true; data: TrackerConnection[] };
+    const mobile = { ...base.data[0], id: 't2', board_ref: '44', board_name: 'Mobile Scrum' };
+    const { m } = await open({ tryListTrackers: async () => ({ ok: true, data: [base.data[0], mobile] }) });
+    const lanes = [...m.container.querySelectorAll('section[data-lane]')];
+    expect(lanes.map((l) => l.querySelector('h2')?.textContent?.trim())).toEqual(['AUTH Scrum', 'Mobile Scrum']);
+    for (const lane of lanes) {
+      expect(lane.querySelector('[data-filter="sprint"]')).not.toBe(null);
+      const input = lane.querySelector<HTMLInputElement>('input[data-filter="ai-only"]')!;
+      expect(lane.querySelector(`label[for="${input.id}"]`)).not.toBe(null);
+    }
+    expect(new Set(lanes.map((l) => l.querySelector('input[data-filter="ai-only"]')!.id)).size).toBe(2);
+  });
+
   it('each row names its sprint', async () => {
     const { q } = await open();
     expect(q('[data-ticket="AUTH-2"] [data-cell="sprint"]')!.textContent!.trim()).toBe('Sprint 13');
@@ -208,7 +227,7 @@ describe('ready', () => {
 
   it('a future sprint, filtered to, says it has not started, with no zeros', async () => {
     const { q, screen } = await open();
-    await screen.setFilter('s14');
+    await screen.lanes[0].setFilter('s14');
     flushSync();
     const strip = q('[data-strip]')!;
     expect(strip.textContent).toContain('Not started.');
@@ -272,7 +291,7 @@ describe('ready', () => {
 describe('backlog', () => {
   it('filtering to Backlog lists the tickets in no sprint, with their total', async () => {
     const { q, screen } = await open();
-    await screen.setFilter('backlog');
+    await screen.lanes[0].setFilter('backlog');
     flushSync();
     expect(q('[data-strip]')!.textContent).toContain('1 ticket in no sprint');
     expect(q('[data-ticket="P-783"] [data-cell="sprint"]')!.textContent!.trim()).toBe('Backlog');
@@ -282,13 +301,13 @@ describe('backlog', () => {
 describe('not connected', () => {
   it('points to Integrations', async () => {
     const { q } = await open({
-      tryListSprints: async () => ({
-        ok: false,
-        error: { status: 404, message: 'not_connected', body: { error: 'not_connected' } },
+      tryListTrackers: async () => ({
+        ok: true,
+        data: [],
       }),
     });
     const view = q('[data-view="not_connected"]')!;
-    expect(view.textContent).toContain('This workspace has no tracker connected.');
+    expect(view.textContent).toContain('This workspace has no sprint board connected.');
     expect(view.querySelector('a')!.getAttribute('href')).toBe('/workspace/p-1/integrations');
   });
 });
@@ -308,7 +327,7 @@ describe('accessibility (axe, structural rules; contrast is checked in the e2e s
   const states: Array<[string, Partial<SprintsApi>, boolean]> = [
     ['ready', {}, false],
     ['ticket', {}, true],
-    ['not connected', { tryListSprints: async () => ({ ok: false, error: { status: 404, message: 'not_connected', body: { error: 'not_connected' } } }) }, false],
+    ['not connected', { tryListTrackers: async () => ({ ok: true, data: [] }) }, false],
     ['daemon error', { tryListSprints: async () => ({ ok: false, error: { status: 0, message: 'x' } }) }, false],
   ];
   for (const [name, over, ticket] of states) {

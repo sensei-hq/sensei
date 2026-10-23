@@ -18,16 +18,16 @@ describe('createOrgLadder — reactive authoring state', () => {
 		expect(l.editing).toBe(null);
 	});
 
-	it('buckets sections into Company · Teams · Stacks groups', () => {
+	it('buckets sections into Dōjō · Workspace · Repository groups', () => {
 		const l = createOrgLadder(sections);
-		expect(l.groups.map((g) => g.group)).toEqual(['Company', 'Teams', 'Stacks']);
+		expect(l.groups.map((g) => g.group)).toEqual(['Dōjō', 'Workspace', 'Repository']);
 	});
 
 	it('setActive focuses another section', () => {
 		const l = createOrgLadder(sections);
-		l.setActive('team-pay');
-		expect(l.active).toBe('team-pay');
-		expect(l.section.id).toBe('team-pay');
+		l.setActive('ws-payments');
+		expect(l.active).toBe('ws-payments');
+		expect(l.section.id).toBe('ws-payments');
 	});
 
 	it('every rule is included on open (excluded = 0)', () => {
@@ -48,9 +48,9 @@ describe('createOrgLadder — reactive authoring state', () => {
 
 	it('include state is scoped to a section — switching sections resets the count', () => {
 		const l = createOrgLadder(sections);
-		l.toggleInclude(0); // exclude a company rule
+		l.toggleInclude(0); // exclude a dōjō rule
 		expect(l.excluded).toBe(1);
-		l.setActive('team-pay');
+		l.setActive('ws-payments');
 		expect(l.excluded).toBe(0);
 	});
 

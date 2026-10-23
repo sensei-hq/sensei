@@ -4,12 +4,9 @@ import ScrTriage from './ScrTriage.svelte';
 import ScrApprovals from './ScrApprovals.svelte';
 import ScrRoleSurfaces from './ScrRoleSurfaces.svelte';
 import ScrIdentity from './ScrIdentity.svelte';
-import ScrIncidents from './ScrIncidents.svelte';
-import ScrClientAudit from './ScrClientAudit.svelte';
 import ScrHealth from './ScrHealth.svelte';
 import type { TriageRow } from '$lib/triage-data';
 import type { Membership, Identity, AuditEvent, HealthRollup } from '$lib/admin-data';
-import type { Incident } from '$lib/client-data';
 import {
 	toKitTriageGroups,
 	toKitApprovals,
@@ -22,11 +19,10 @@ import {
 	toKitIdentity,
 	toKitHealth
 } from '$lib/admin-map';
-import { toKitIncidents, toKitClientAudit } from '$lib/incidents-map';
 
 // The Tier-2 dojo ORG CONSOLE screens wired to /v1: this drives each screen
 // through the SAME wire→kit mappers the org loader uses, off MOCKED wire rows
-// (TriageRow / Membership / Identity / AuditEvent / Incident / HealthRollup) —
+// (TriageRow / Membership / Identity / AuditEvent / HealthRollup) —
 // proving the whole wire → kit → screen path renders real-shaped data, and that
 // each list-primary screen degrades to an honest-empty state when the client
 // returns nothing (the DJ1 no-data / dev-404 path).
@@ -77,26 +73,9 @@ const wireAudit: AuditEvent = {
 	id: 1,
 	ts: '2026-07-23T11:22:00Z',
 	actor_id: 'u1',
-	engagement_id: 'eng-12345678',
 	action: 'publish',
 	target: 'idempotency pattern',
 	detail: {}
-};
-
-const wireIncident: Incident = {
-	id: 'i1',
-	engagement_id: 'eng-12345678',
-	client_name: null,
-	artifact_id: null,
-	title: 'Near-leak: client hostname in a shared prompt',
-	description: null,
-	severity: 'high',
-	status: 'investigating',
-	owner_id: null,
-	sla_due_at: null,
-	resolution: null,
-	opened_at: '2026-07-20T12:00:00Z',
-	resolved_at: null
 };
 
 const wireHealth: HealthRollup = { connections: 3, queue_depth: 12, publish_rate_1h: 5, error_rate_1h: 0 };
@@ -186,40 +165,6 @@ describe('ScrIdentity — wired identity mappings', () => {
 			props: { orgName: 'Acme Corp', identity: toKitIdentity([]) }
 		});
 		expect(getByText('not connected')).toBeTruthy();
-	});
-});
-
-describe('ScrIncidents — wired incidents', () => {
-	afterEach(cleanup);
-
-	it('renders an incident row from a mapped wire incident', () => {
-		const incidents = toKitIncidents([wireIncident], NOW);
-		const { getByText } = render(ScrIncidents, { props: { orgName: 'Acme Corp', incidents } });
-		expect(getByText(/Near-leak/)).toBeTruthy();
-	});
-
-	it('shows the honest-empty state with no incidents', () => {
-		const { getByText } = render(ScrIncidents, {
-			props: { orgName: 'Acme Corp', incidents: toKitIncidents([], NOW) }
-		});
-		expect(getByText('No incidents on record.')).toBeTruthy();
-	});
-});
-
-describe('ScrClientAudit — wired ledger', () => {
-	afterEach(cleanup);
-
-	it('renders a ledger row from a mapped audit event', () => {
-		const entries = toKitClientAudit([wireAudit], NOW);
-		const { getByText } = render(ScrClientAudit, { props: { orgName: 'Acme Corp', entries } });
-		expect(getByText('publish')).toBeTruthy();
-	});
-
-	it('shows the honest-empty state with no entries', () => {
-		const { getByText } = render(ScrClientAudit, {
-			props: { orgName: 'Acme Corp', entries: toKitClientAudit([], NOW) }
-		});
-		expect(getByText('The ledger is empty.')).toBeTruthy();
 	});
 });
 

@@ -204,7 +204,7 @@ async fn apply(
     pg.apply_discovered(row.id, &row.secret_service, discovered, links, not_found, watermark)
         .await
         .map_err(|e| match e {
-            ApplyError::Gone => DiscoverError::Gone,
+            ApplyError::Gone | ApplyError::Superseded => DiscoverError::Gone,
             ApplyError::Db(e) => DiscoverError::Db(e),
         })
 }

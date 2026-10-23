@@ -52,7 +52,7 @@
 ## Open questions (for Dev)
 - Member display name: join identities in `listMembers` (one query, DRY), or a dedicated `/members?embed=identity`? Which identity provider wins when a user has several?
 - Should the **Policies** tab render the tenant's real `dojo.policies` grid (attribution/retention/confidentiality per scope), or stay the read-only additive-ladder explainer with policies living on their own screen?
-- Audit **Export** format — CSV or the compliance-PDF the lead console's done-gate implies (`dojo-lead-console.md`)? Must respect universal dereference on export.
+- Audit **Export** format — CSV or a PDF? Must respect universal dereference on export.
 
 ### Resolved design (2026-07-30)
 - **Q1 identity → dedicated `GET /members?embed=identity`** (separate composition joining `dojo.identities`, WS-1). When a user has several identities, prefer the **primary/verified** one (fallback order github > sso > email).

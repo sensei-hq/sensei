@@ -394,9 +394,9 @@ describe('recordRulesAudit', () => {
 
 describe('parseNamespacePairs', () => {
 	it('splits scope:slug and drops malformed', () => {
-		expect(parseNamespacePairs('organization:acme, stack:react')).toEqual([
+		expect(parseNamespacePairs('organization:acme, repository:github.com/acme/web')).toEqual([
 			{ scope_key: 'organization', slug: 'acme' },
-			{ scope_key: 'stack', slug: 'react' }
+			{ scope_key: 'repository', slug: 'github.com/acme/web' }
 		]);
 		// slugs may contain colons (only the first splits scope from slug)
 		expect(parseNamespacePairs('workspace:acme/lumen-auth')).toEqual([
@@ -434,12 +434,12 @@ describe('resolveTenantPackRules', () => {
 		db.queue({ data: [ROW], error: null });
 		const out = await resolveTenantPackRules(db.client, 't1', [
 			{ scope_key: 'organization', slug: 'acme' },
-			{ scope_key: 'technology', slug: 'react' }
+			{ scope_key: 'repository', slug: 'github.com/acme/web' }
 		]);
 		expect(db.calls).toEqual([
 			expect.objectContaining({
 				rpc: 'tenant_pack_rules',
-				args: { p_tenant: 't1', p_namespaces: ['organization:acme', 'technology:react'] }
+				args: { p_tenant: 't1', p_namespaces: ['organization:acme', 'repository:github.com/acme/web'] }
 			})
 		]);
 		// The wire shape the daemon's PackRuleWire reads; `source` is the pack's attribution.

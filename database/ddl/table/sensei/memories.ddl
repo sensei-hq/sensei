@@ -71,7 +71,7 @@ comment on column memories.workspace_id
 comment on column memories.scope
      is 'When to surface: global (always), workspace (this workspace), stack (matching tech), task_type (matching task), module (matching code area). Legacy axis — superseded by namespace_id for governance resolution.';
 comment on column memories.namespace_id
-     is 'Governance scope instance this rule applies to (organization/workspace/technology/...). Null = unscoped (general). Resolution gathers rules across a repo''s member namespaces + always-on general/user.
+     is 'Governance scope instance this rule applies to (organization/workspace/repository). Null = unscoped (general). Resolution gathers rules across a repo''s member namespaces + always-on general/user.
 
 Governance plane: a memory positioned on a namespace (where it applies) + enforcement (how much authority it carries). namespace_id supersedes the legacy scope/scope_filter/workspace_id triple for resolution; the old columns are retained during the transition so the flat assemble_context keeps working.';
 comment on column memories.enforcement

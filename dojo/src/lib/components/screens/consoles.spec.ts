@@ -3,36 +3,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import ScrTriage from './ScrTriage.svelte';
 import ScrApprovals from './ScrApprovals.svelte';
 import ScrKnowledge from './ScrKnowledge.svelte';
-import ScrEngagements from './ScrEngagements.svelte';
-import ScrIncidents from './ScrIncidents.svelte';
-import ScrClientAudit from './ScrClientAudit.svelte';
 import {
 	triageGroupsFor,
 	candidateDetailFor,
 	approvalsFor,
-	knowledgeFor,
-	engagementsFor,
-	confidentialityFor,
-	incidentsFor,
-	clientAuditFor
+	knowledgeFor
 } from '$lib/components/kit/fixtures';
 
-// Chunk-5 maintainer (Govern) + lead (Clients) role consoles (the
-// /org/[slug]/[section] role screens). Each renders off the ported console
-// fixtures (presentational — real /v1 wiring is a later chunk). We assert the
-// triage queue groups + ranks + selects, the approvals queue rows + its empty
-// state, the knowledge library sections + prune policy, the engagements register
-// + confidentiality model, the incidents list + severity/state, and the audit
-// ledger + filter/export affordances.
+// Chunk-5 maintainer (Govern) role consoles (the /org/[slug]/[section] role
+// screens). Each renders off the ported console fixtures (presentational — real
+// /v1 wiring is a later chunk). We assert the triage queue groups + ranks +
+// selects, the approvals queue rows + its empty state, and the knowledge library
+// sections + prune policy.
 
 const groups = triageGroupsFor('acme');
 const detail = candidateDetailFor('acme');
 const approvals = approvalsFor('acme');
 const knowledge = knowledgeFor('acme');
-const engagements = engagementsFor('acme');
-const confidentiality = confidentialityFor('acme');
-const incidents = incidentsFor('acme');
-const clientAudit = clientAuditFor('acme');
 
 describe('ScrTriage — scope-grouped, confidence-ranked candidate queue', () => {
 	afterEach(cleanup);
@@ -151,91 +138,5 @@ describe('ScrKnowledge — published library + prune policy + catalog', () => {
 		expect(getByText('Idempotency key on money-moving mutations')).toBeTruthy();
 		expect(getByText('Deprecation window of two minor versions')).toBeTruthy();
 		expect(getByText('integration-test author')).toBeTruthy();
-	});
-});
-
-describe('ScrEngagements — client register + confidentiality model', () => {
-	afterEach(cleanup);
-
-	it('lists the client engagements with the kept/dropped counts', () => {
-		const { getByText } = render(ScrEngagements, {
-			props: { orgName: 'Acme Corp', engagements, confidentiality }
-		});
-		expect(getByText('Engagements')).toBeTruthy();
-		expect(getByText('Globex')).toBeTruthy();
-		expect(getByText('globex-portal · billing · since 7mo')).toBeTruthy();
-		// the lessons-kept count for Globex.
-		expect(getByText('86')).toBeTruthy();
-	});
-
-	it('shows the confidentiality model — kept, dropped, and the anonymized example', () => {
-		const { getByText } = render(ScrEngagements, {
-			props: { orgName: 'Acme Corp', engagements, confidentiality }
-		});
-		expect(getByText('What crosses the boundary')).toBeTruthy();
-		expect(getByText(confidentiality.kept[0])).toBeTruthy();
-		expect(getByText(confidentiality.dropped[0])).toBeTruthy();
-		expect(getByText(confidentiality.example.raw)).toBeTruthy();
-		expect(getByText(confidentiality.example.stripped)).toBeTruthy();
-	});
-});
-
-describe('ScrIncidents — confidentiality incidents list', () => {
-	afterEach(cleanup);
-
-	it('lists the incidents with client, severity and state', () => {
-		const { getByText } = render(ScrIncidents, { props: { orgName: 'Acme Corp', incidents } });
-		expect(getByText('Incidents')).toBeTruthy();
-		expect(getByText('Near-leak: client hostname in a shared prompt')).toBeTruthy();
-		expect(getByText('Globex · 3d')).toBeTruthy();
-		expect(getByText('high')).toBeTruthy();
-		expect(getByText('contained')).toBeTruthy();
-	});
-
-	it('shows the retention + client-read-access footer chips', () => {
-		const { getByText } = render(ScrIncidents, { props: { orgName: 'Acme Corp', incidents } });
-		expect(getByText('Retention · 1 year')).toBeTruthy();
-		expect(getByText('Client read-access · off')).toBeTruthy();
-	});
-
-	it('fires onOpen with the incident', async () => {
-		const onOpen = vi.fn();
-		const { getAllByText } = render(ScrIncidents, {
-			props: { orgName: 'Acme Corp', incidents, onOpen }
-		});
-		await fireEvent.click(getAllByText('Open')[0]);
-		expect(onOpen).toHaveBeenCalledWith(incidents[0]);
-	});
-});
-
-describe('ScrClientAudit — immutable confidentiality ledger', () => {
-	afterEach(cleanup);
-
-	it('heads the ledger with filter + export affordances', () => {
-		const { getByText } = render(ScrClientAudit, {
-			props: { orgName: 'Acme Corp', entries: clientAudit }
-		});
-		expect(getByText('Client audit trail')).toBeTruthy();
-		expect(getByText('Filter')).toBeTruthy();
-		expect(getByText('Export')).toBeTruthy();
-	});
-
-	it('lists ledger entries — held and blocked — with their timestamps', () => {
-		const { getByText, getAllByText } = render(ScrClientAudit, {
-			props: { orgName: 'Acme Corp', entries: clientAudit }
-		});
-		// "Lesson shared upstream" appears twice in the ledger (two shared lessons).
-		expect(getAllByText('Lesson shared upstream').length).toBe(2);
-		expect(getByText('Blocked contribution')).toBeTruthy();
-		expect(getByText('10:42')).toBeTruthy();
-		expect(getByText('raw source detected · held')).toBeTruthy();
-	});
-
-	it('shows the retention + client-read-access footer chips', () => {
-		const { getByText } = render(ScrClientAudit, {
-			props: { orgName: 'Acme Corp', entries: clientAudit }
-		});
-		expect(getByText('Retention · 7 years')).toBeTruthy();
-		expect(getByText('Client read-access · Globex on')).toBeTruthy();
 	});
 });

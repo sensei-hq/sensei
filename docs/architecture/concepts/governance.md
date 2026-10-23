@@ -28,10 +28,12 @@ Every governed rule is positioned on two independent axes.
 
 | Axis | Question it answers | Values |
 |------|--------------------|--------|
-| **Scope** | *Where does this apply, and how specific is it?* | `general` < `user` < `organization` < `client` < `technology` < `team` < `project` < `repository` |
+| **Scope** | *Where does this apply, and how specific is it?* | `general` < `user` < `organization` (the dōjō) < `workspace` < `repository` |
 | **Enforcement** | *How much authority does it carry?* | `advisory` < `recommended` < `required` < `mandatory` |
 
-**Scope** drives default precedence: the **most specific applicable scope wins** on conflict. A `repository` rule beats a `project` rule beats a `technology` convention. For a personal repo with no org/client/team membership, those scopes simply resolve to nothing.
+**Scope** drives default precedence: the **most specific applicable scope wins** on conflict. A `repository` rule beats a `workspace` rule beats a dōjō (`organization`) rule. For a personal repo with no dōjō, that scope simply resolves to nothing.
+
+The ladder is **dōjō → workspace → repository** (#307 R6, D25/D29/D32). There is no `team`, `client` or `technology` rung: a team is a reporting grouping, a client engagement is a dōjō plus the workspace classification `client`, and a **stack is a rule pack applied at a level** — `stack:<slug>`, adopted at each repository where the stack is detected (`sensei.adopt_stack_pack`, D33).
 
 **Enforcement** is the override brake. A `mandatory` rule (the "constitution" tier — typically org security/compliance) **cannot be overridden by a more specific scope**. A team or repo can refine a `recommended` org rule, but cannot weaken a `mandatory` one. This is why the two axes must be independent: precedence alone would let a repo silently override a security mandate just by being more specific.
 
@@ -57,22 +59,22 @@ flowchart LR
 
 ## Scopes and namespaces
 
-Rather than hard-coding an `organizations` table, a `clients` table, a `teams` table and so on, the hierarchy is **data**, expressed with two small tables. Adding a new level is an insert, not a migration.
+Rather than hard-coding an `organizations` table, a `workspaces` table and so on, the hierarchy is **data**, expressed with two small tables. Adding a new level is an insert, not a migration.
 
 - **`scopes`** — the *ladder itself*. One row per level, carrying its precedence `level` and whether it federates.
-- **`namespaces`** — *instances* of a scope. `(organization, "Sensei-HQ")`, `(project, "sensei")`, `(repository, "daemon")`, `(technology, "rust")`.
+- **`namespaces`** — *instances* of a scope. `(organization, "Sensei-HQ")`, `(workspace, "sensei")`, `(repository, "github.com/sensei-hq/sensei")` — a repository's own namespace is slugged by its `repo_key` (`sensei.repository_namespace`).
 
 ```text
 scopes
-  key        text  PK     -- 'general','user','organization','client','technology','team','project','repository'
+  key        text  PK     -- 'general','user','organization','workspace','repository'
   name       text
   level      int          -- precedence; higher = more specific = wins (general=0 … repository=70)
-  shareable  bool         -- does this scope federate to a hive-mind? (organization/client/team = true)
+  shareable  bool         -- does this scope federate to a hive-mind? (organization = true)
 
 namespaces
   id         uuid  PK
   scope_key  text  → scopes(key)
-  name       text         -- 'Sensei-HQ', 'sensei', 'daemon', 'rust'
+  name       text         -- 'Sensei-HQ', 'sensei', 'daemon'
   slug       text
   level      int  NULL    -- optional per-namespace override of scope.level
   props      jsonb        -- icons / logo url / variants / metadata
@@ -87,16 +89,14 @@ Instead, a repo is a **member of a set** of namespaces, and precedence is a plai
 ```mermaid
 flowchart TD
     REPO["repo: sensei/daemon"]
-    REPO --- N1["repository · daemon<br/>level 70"]
-    REPO --- N2["project · sensei<br/>level 60"]
-    REPO --- N3["team · platform<br/>level 50"]
-    REPO --- N4["technology · rust<br/>level 40"]
+    REPO --- N1["repository · daemon<br/>level 70<br/>(adopts stack:rust)"]
+    REPO --- N2["workspace · sensei<br/>level 60"]
     REPO --- N5["organization · Sensei-HQ<br/>level 20"]
     REPO -. implicit .- N6["user · Dev<br/>level 10"]
     REPO -. implicit .- N7["general<br/>level 0"]
 ```
 
-Membership is explicit on two axes — the REPOSITORY's own namespaces (a `repository_namespaces` join) and the namespace of each PROJECT its repository belongs to — plus the always-present `user` and `general` namespaces. `sensei.namespaces_for_folder()` is the single lift from a cwd's folder to that set. Resolution unions the rules from every member namespace and orders them by `level` — no tree-walking, multi-path falls out for free, and a repo can belong to two clients or two technology namespaces without special cases.
+Membership is explicit on two axes — the REPOSITORY's own namespaces (a `repository_namespaces` join) and the namespace of each PROJECT its repository belongs to — plus the always-present `user` and `general` namespaces. `sensei.namespaces_for_folder()` is the single lift from a cwd's folder to that set. Resolution unions the rules from every member namespace — and of every pack adopted at one — and orders them by `level`: no tree-walking, multi-path falls out for free, and a repo can belong to two organizations or carry two stacks' packs without special cases.
 
 Neither axis is a folder. Membership used to key on one, and every live row sat on a repo-root folder anyway: the grain bought nothing and let two checkouts of one repository disagree about which rules governed them.
 
@@ -118,7 +118,7 @@ memories  (additions)
 - A `battle_tested` memory elevated to a higher scope → `origin = promoted`.
 - A rule pulled down from a hive-mind → `origin = remote`, tagged with its `source_id`.
 
-The existing `scope` / `scope_filter` / `project_id` columns are migrated into `namespace_id` (`global` → general namespace, `stack` → a `technology` namespace, `project` → a `project` namespace).
+The existing `scope` / `scope_filter` / `project_id` columns are migrated into `namespace_id` (`global` → general namespace, `workspace` → a `workspace` namespace). The legacy `stack` scope has no rung: a stack's rules live in its `stack:<slug>` pack.
 
 ---
 
@@ -176,10 +176,9 @@ How does a repo know it belongs to `Sensei-HQ`, the `sensei` project, and plays 
 ```yaml
 ---
 organization: Sensei HQ
-project: sensei
-team: platform
+workspace: sensei
 role: daemon            # desktop · daemon · marketplace · gateway …
-stack: [rust, postgres]
+stack: [rust, postgres]   # each stack's pack is adopted at this repository
 icon:
   default: ./assets/daemon.svg          # repo-relative path (resolved against repo root); absolute URL also allowed
   variants: { dark: ./assets/daemon-dark.svg }
@@ -217,14 +216,14 @@ Promotion is how a local learning climbs the scope ladder and becomes shared.
 ```mermaid
 flowchart LR
     A["memory at project scope<br/>battle_tested · 0 violations"] --> B{promote?}
-    B -->|user / approver| C["re-scope to team / client / organization<br/>origin = promoted"]
+    B -->|user / approver| C["re-scope to the dōjō (organization)<br/>origin = promoted"]
     C --> D{shareable scope?}
     D -->|yes| E["push to hive-mind<br/>via knowledge_sources endpoint"]
     D -->|no| F["stays local, higher scope"]
 ```
 
 - A memory that reaches `battle_tested` at `project` scope with zero violations becomes a **promotion candidate**, surfaced in the Learnings UI.
-- Promotion re-scopes it to a higher namespace (`team`/`client`/`organization`) and sets `origin = promoted`. An approval gate guards it — the user in personal mode, an approver role in org mode (RBAC, designed here, enforced when the hive-mind lands).
+- Promotion re-scopes it to a higher namespace (the dōjō's `organization`) and sets `origin = promoted`. An approval gate guards it — the user in personal mode, an approver role in org mode (RBAC, designed here, enforced when the hive-mind lands).
 - If the target scope is `shareable`, the daemon **pushes** it to the registered hive-mind. The reverse path **pulls** applicable shared rules down as `origin = remote`, where they re-enter resolution like any other rule (the stray, never-wired `pending_share` status becomes the real signal here, and the dormant `insights`/`insight_batches` tables become the emit point).
 
 ---

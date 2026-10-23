@@ -45,13 +45,13 @@ beforeEach(() => {
 
 describe('GET rules/resolved', () => {
 	it('asks as the person for the folder’s namespaces, at the member floor', async () => {
-		const res = await GET(ev('ns=organization:acme,technology:react'));
+		const res = await GET(ev('ns=organization:acme,repository:github.com/acme/web'));
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ rules: [{ rule_id: 'r1' }] });
 		expect(mocks.resolveTenantCaller).toHaveBeenCalledWith('organization', 'acme', expect.any(Request), 0);
 		expect(mocks.resolveTenantPackRules).toHaveBeenCalledWith(SESSION, 't1', [
 			{ scope_key: 'organization', slug: 'acme' },
-			{ scope_key: 'technology', slug: 'react' }
+			{ scope_key: 'repository', slug: 'github.com/acme/web' }
 		]);
 	});
 

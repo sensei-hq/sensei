@@ -15,6 +15,104 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-10-22
+
+### Added
+
+- **A dōjō comes from GitHub, end to end** (#308 R5a, D20/D37/D39).
+  - **Claim:** an admin of a GitHub org claims the org's dōjō.
+  - **Integrations screen (Admin → Integrations):** maps each GitHub org to its
+    own dōjō or to a workspace inside a dōjō you administer. Repositories file by
+    that mapping; unmapped stays unmapped.
+  - **Connect GitHub:** re-authorization provides the screen's token. It lives
+    only in an encrypted, login-bound, HttpOnly cookie for up to an hour, and is
+    never stored or logged.
+- **The dōjō Worker deploys from the release tag, after its database**
+  (`release.yml` `deploy-worker`), and fails the release unless the live site
+  serves that commit.
+
+### Security
+
+- **A GitHub token is trusted only as the signed-in person's own GitHub
+  account.** GitHub's `/user` must match the GitHub identity linked to the
+  login before a token is sealed or used to provision. This closes a gap in
+  `/v1/you/provision`, where someone holding another person's token could join
+  that person's orgs.
+
+### Changed
+
+- **Releases are two steps:** `make bump` on develop, then `make release` on
+  main, because main is protected.
+
+## [0.18.0] — 2026-10-22
+
+### Changed
+
+- **BREAKING — the governance ladder is dōjō → workspace → repository** (R6; D25,
+  D29, D32, D33).
+  - **Retired rungs:** Team and Client.
+  - **Stacks:** each one (technology namespace) becomes a rule pack, adopted at
+    every repository where the stack is detected, so its reach is unchanged.
+  - **Precedence:** a stack's rules now rank at repository precedence, above
+    workspace.
+  - **Upgrade:** the daemon converts your database in place.
+- **BREAKING — a dōjō has no Clients section** (R7, D34). A client is just
+  another dōjō.
+  - **Removed:** Engagements, Incidents, Client audit, the confidentiality
+    ledger and their tables.
+  - **Audit trail:** readable by admins only.
+- **Releases ship from `main` by version tag.** `make bump` refuses anywhere
+  else, and `release.yml` checks that the tag is on main before anything
+  publishes.
+
+### Fixed
+
+- **A library docs URL reaches only the public internet** (CodeQL #1, SSRF).
+  Every hop is checked, including redirects, and the connection is pinned to the
+  address that was checked.
+- **CodeQL's remaining alerts are triaged.** Each was fixed or dismissed with a
+  written reason.
+- **The pre-upgrade backup handles a renamed table**, saving it under the name
+  the database still has.
+- **The release-guard tests no longer write the real repository's git config**
+  when run from the commit hook.
+- **A flaky token test no longer races another test's refresh.**
+
+## [0.17.0] — 2026-10-22
+
+### Changed
+
+- **BREAKING — sensei says workspace, everywhere** (#307 R2b, R3; D12, D16, D30,
+  D31). A project is a workspace: a group of repositories.
+  - **Daemon database:** renamed in place on upgrade, with no data lost
+    (`sensei.workspaces`, every `workspace_id`, the views, enums and stored
+    values).
+  - **API and app:** the daemon's API is now `/api/workspaces`. The desktop app
+    and the dōjō's pages, URLs and words follow.
+  - **Governance ladder:** the `project` rung is now `workspace` in both
+    databases.
+  - **README frontmatter:** a README's `project:` key is rewritten to
+    `workspace:` on the next scan.
+  - **MCP tools:** `list_workspaces`, `find_workspaces`, `use_workspace`,
+    `get_workspace_summary`, `get_workspace_conventions`, `get_user_for_workspace`.
+    The old names are gone.
+  - **CLI:** `sensei tracker … --workspace`.
+  - **Not renamed:** other systems' "project": Claude Code's, Jira's, dbd's,
+    and compilers'.
+
+### Fixed
+
+- **An unanswered hard-block in an unattended run is denied** (#312, D28). It
+  used to proceed when no one answered. Interactive sessions keep failing open.
+- **Viewer grants are audited** (#313). Every grant, team grant, revoke, viewer
+  invite and removal writes an audit row in the same transaction. A viewer
+  reads no row keyed to another person.
+- **The Viewers tab shows a viewer's workspaces again.** v0.16.0 read the wrong
+  field, so it showed none.
+- **The nightly placement floor is green again.** `@sensei/glyphs` has a
+  tsconfig, and the plugin's hooks are typed against Claude Code's declarations
+  (`make plugin-types` refreshes them).
+
 ## [0.16.0] — 2026-10-21
 
 ### Added

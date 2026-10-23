@@ -78,7 +78,6 @@ Dōjō (SaaS) is a companion track — [`Sensei Dōjō Journey Map.html`](../moc
 | Developer | in-app | discover, authenticate, bind project→org, a finding forms, share upstream, watch it travel, receive downstream |
 | Maintainer | console | queue, evaluate, decide, set distribution, publish & measure |
 | Org admin | console | stand up, connect identity, provision members, scopes & policies, monitor |
-| Client / engagement lead | console | define engagement, anonymize always, no per-item review, audit trail, incident handling |
 
 ---
 
@@ -99,7 +98,7 @@ Every spec must honour these. If a spec pushes against one, call it out.
    scores, regression notes, before/after FTR — the user verifies,
    they don't take our word for it.
 5. **Org boundary is Dōjō.** Anything that should stay inside a company
-   or a client engagement goes through the Dōjō lane, not the global
+   or a client goes through the Dōjō lane, not the global
    Collective. Personal Sensei can operate perfectly without a Dōjō —
    but when one exists, the boundary is exact.
 6. **Insight copy comes from the model, not the template.** Every
@@ -234,7 +233,6 @@ not yet built (verify against the code before relying on it — see
 | Developer | [screen/dojo-developer-flow.md](screen/dojo-developer-flow.md) | **draft** | Journey narrative wiring across in-app screens |
 | Maintainer | [screen/dojo-maintainer-console.md](screen/dojo-maintainer-console.md) | **draft** | Queue / evaluate / decide / distribute / measure |
 | Org admin | [screen/dojo-admin-console.md](screen/dojo-admin-console.md) | **draft** | Stand up / identity / members / policies / monitor |
-| Client / engagement lead | [screen/dojo-lead-console.md](screen/dojo-lead-console.md) | **draft** | Engagement + universal strip + audit trail |
 
 ### Pipeline specs — the data behind the screens
 

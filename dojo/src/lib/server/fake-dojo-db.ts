@@ -244,3 +244,75 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 		tables: state
 	};
 }
+
+/** The dōjō tables provisioning touches, with the constraints that actually
+ *  exist in the DDL — those are what make the idempotence assertions real. */
+export function provisioningTables(seed: Partial<Record<string, FakeTable>> = {}): Record<string, FakeTable> {
+	return {
+		identities: {
+			rows: [],
+			uniques: [{ columns: ['provider', 'subject'] }],
+			...seed.identities
+		},
+		tenants: {
+			rows: [],
+			uniques: [{ columns: ['key'] }],
+			...seed.tenants
+		},
+		tenant_connections: {
+			rows: [],
+			uniques: [
+				{ columns: ['provider', 'external_id'], where: (r) => r.external_id != null },
+				{
+					columns: ['provider', 'external_slug'],
+					lower: ['external_slug'],
+					where: (r) => r.external_id == null
+				}
+			],
+			...seed.tenant_connections
+		},
+		memberships: {
+			rows: [],
+			uniques: [{ columns: ['tenant_id', 'user_id'] }],
+			...seed.memberships
+		},
+		repositories: {
+			rows: [],
+			// The constraint the whole scoping argument rests on: the SAME repository
+			// legitimately exists under two tenants, so `repo_key` alone does not
+			// identify a row (§8a "the sign-in refresh must be scoped").
+			uniques: [{ columns: ['tenant_id', 'repo_key'] }],
+			...seed.repositories
+		},
+		repository_graph_branches: {
+			rows: [],
+			uniques: [{ columns: ['repository_id', 'branch'] }],
+			...seed.repository_graph_branches
+		},
+		// The per-person forge mirror (#307 A2c); its own rules are proven in
+		// database/tests/dojo/repository_roles_mirror_principal.sql.
+		'rpc:mirror_principal_repository_roles': {
+			rows: [],
+			...seed['rpc:mirror_principal_repository_roles']
+		},
+		// Leaving an org ends the membership provisioning made (#309); its own rules
+		// are proven in database/tests/dojo/membership_departure.sql.
+		'rpc:reconcile_org_memberships': {
+			rows: [],
+			...seed['rpc:reconcile_org_memberships']
+		},
+		// A forge admin signing in claims the org's dōjō (#308 R5a); first-claim-wins
+		// and the audit row are proven in database/tests/dojo/forge_unit_claim.sql.
+		'rpc:claim_forge_unit': {
+			rows: [],
+			...seed['rpc:claim_forge_unit']
+		},
+		// Where an org's repositories file (#308 R5a): read before an org dōjō is
+		// created, so an org an admin filed elsewhere as a workspace gets none.
+		forge_unit_mappings: {
+			rows: [],
+			uniques: [{ columns: ['provider', 'external_id'] }],
+			...seed.forge_unit_mappings
+		}
+	};
+}

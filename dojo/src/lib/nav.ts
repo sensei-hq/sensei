@@ -63,7 +63,9 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 		items: [
 			{ id: 'home', icon: 'buildings-2', label: 'Home', kanji: '社' },
 			{ id: 'ladder', icon: 'scale', label: 'Constitution', kanji: '則' },
-			{ id: 'workspaces', icon: 'folder', label: 'Workspaces', kanji: '場' }
+			{ id: 'workspaces', icon: 'folder', label: 'Workspaces', kanji: '場' },
+			// Every member: team totals; a lead and an admin also per person (#307 R8, D38).
+			{ id: 'teams', icon: 'users-group-rounded', label: 'Teams', kanji: '組' }
 		]
 	},
 	{
@@ -76,21 +78,14 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 		]
 	},
 	{
-		group: 'Clients',
-		role: 'lead',
-		items: [
-			{ id: 'engagements', icon: 'case-round', label: 'Engagements', kanji: '約' },
-			{ id: 'incidents', icon: 'shield-warning', label: 'Incidents', kanji: '警' },
-			{ id: 'clientaudit', icon: 'document-text', label: 'Client audit', kanji: '査' }
-		]
-	},
-	{
 		group: 'Admin',
 		role: 'admin',
 		items: [
 			{ id: 'members', icon: 'users-group-rounded', label: 'Members & Roles', kanji: '員' },
 			{ id: 'scopes', icon: 'shield-check', label: 'Scopes & policies', kanji: '守' },
 			{ id: 'identity', icon: 'key', label: 'Identity & SSO', kanji: '鍵' },
+			// A dōjō comes from a git integration (#308 R5a, D20).
+			{ id: 'integrations', icon: 'link-circle', label: 'Integrations', kanji: '繋' },
 			{ id: 'audit', icon: 'clipboard-list', label: 'Audit', kanji: '査' },
 			{ id: 'health', icon: 'pulse', label: 'Health / Monitor', kanji: '健' },
 			{ id: 'billing', icon: 'card', label: 'Plan & billing', kanji: '金' }

@@ -18,9 +18,12 @@
 import { dojoDb } from './dojo-supabase';
 import { resolvePrincipalId } from './principal-resolve';
 import { provisionWithToken } from './provisioning';
+import { githubIdentityId } from './github-identity';
+import { AdminError } from './admin-data';
 
 /** The provider session as the browser sends it, narrowed to what we read. */
 interface IncomingSession {
+	access_token?: unknown;
 	provider_token?: string | null;
 	user?: { id?: unknown; email?: unknown } | null;
 }
@@ -45,12 +48,18 @@ export async function provisionOnSignIn(
 ): Promise<void> {
 	if (!session || !PROVISIONING_EVENTS.has(event)) return;
 
-	const authUserId = typeof session.user?.id === 'string' ? session.user.id : '';
-	if (!authUserId) return; // not a session we can attribute to anyone
+	// Who this is, by Supabase's word for the access token — never the session's
+	// own `user` claim — and the GitHub account linked to that login, which is
+	// the only account whose token provisioning will use (#308 R5a review).
+	const accessToken = typeof session.access_token === 'string' ? session.access_token : '';
+	if (!accessToken) return; // not a session we can attribute to anyone
 
 	const db = dojoDb();
-	const principalId = await resolvePrincipalId(db, authUserId);
+	const { data, error } = await db.auth.getUser(accessToken);
+	if (error || !data?.user) throw new AdminError(401, 'Supabase would not vouch for this session');
+	const principalId = await resolvePrincipalId(db, data.user.id);
 	await provisionWithToken(db, principalId, session.provider_token ?? null, {
-		email: typeof session.user?.email === 'string' ? session.user.email : null
+		email: data.user.email ?? null,
+		githubId: githubIdentityId(data.user)
 	});
 }

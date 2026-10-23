@@ -17,19 +17,25 @@ import type { KitConflict, KitLadderRung, KitWorkspace, KitRule } from '../compo
  *  entered from attached (drives the "by layer" jump + the level chip). */
 export type EffectiveRule = KitRule & { level: string };
 
-/** The ladder rungs that compose a workspace's constitution, broad → specific.
+/** The repository rung's scope key — the most specific rung of the ladder, and
+ *  the one the drill-in opens on. */
+export const REPOSITORY = 'repository';
+
+/** The ladder rungs that compose a workspace's constitution, broad → specific:
+ *  dōjō → workspace → repository (D25), each carrying the packs applied at it.
  *  The daemon OWNS scoping — it resolves exactly the scopes that apply to this
  *  repo (memories + adopted packs at their adoption scope) — so the dōjō renders
  *  that ladder faithfully and never re-filters by classification. Re-filtering
  *  (the old mockup scaffold) silently dropped every composed scope whose key
- *  wasn't one of a hardcoded few (e.g. `general`, `organization`, `team`), so a
- *  real 30-rule constitution showed as one rule. The workspace rung (the daemon's
- *  scope key `workspace`) is relabelled to the workspace's own name; when the daemon
- *  composed no workspace-scoped rung, an empty one is synthesized as the most-specific anchor so the ladder always ends
- *  at the repository (honest empty, never a fabricated rule). */
+ *  wasn't one of a hardcoded few (e.g. `general`, `organization`), so a real
+ *  30-rule constitution showed as one rule. The workspace rung (the daemon's scope
+ *  key `workspace`) is relabelled to the workspace's own name. The ladder always
+ *  ends at the repository, the most specific rung: when the daemon composed no
+ *  repository-scoped rung, an empty one is synthesized as the anchor (honest empty
+ *  — no fabricated rule or pack). */
 export function previewRungs(workspace: KitWorkspace, ladder: KitLadderRung[]): KitLadderRung[] {
 	const rungs = ladder.map((r) => (r.id === 'workspace' ? { ...r, name: workspace.name } : r));
-	if (!rungs.some((r) => r.id === 'workspace')) rungs.push(workspaceAnchor(workspace));
+	if (!rungs.some((r) => r.id === REPOSITORY)) rungs.push(repositoryAnchor(workspace));
 	return rungs;
 }
 
@@ -67,14 +73,14 @@ export function lockCount(rungs: KitLadderRung[]): number {
 // ── internals ────────────────────────────────────────────────────────────────
 
 /** The most-specific "this repository" anchor rung — synthesized empty when the
- *  daemon composed no workspace-scoped rule, so the ladder always ends at the repo
- *  (honest empty, never a fabricated rule). */
-function workspaceAnchor(workspace: KitWorkspace): KitLadderRung {
+ *  daemon composed no repository-scoped rule, so the ladder always ends at the
+ *  repo (honest empty, never a fabricated rule or pack). */
+function repositoryAnchor(workspace: KitWorkspace): KitLadderRung {
 	return {
-		id: 'workspace',
-		kanji: '件',
-		scope: 'Workspace',
-		name: workspace.name,
+		id: REPOSITORY,
+		kanji: '庫',
+		scope: 'Repository',
+		name: workspace.repo,
 		caption: 'this repository · most specific',
 		rules: []
 	};

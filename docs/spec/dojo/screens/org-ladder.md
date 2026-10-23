@@ -11,9 +11,9 @@
 |---|---|---|---|---|
 | Header "Constitution" + "New rule" | `ladder.openNew` | opens RuleEditor (local `$state`) | have | no |
 | Banner 掟 | static copy | — | have | no |
-| Left rail sections (Dōjō/Workspaces/Repositories/Stacks — D25: dōjō → workspace → repository, most specific wins; no Team rung, teams are reporting only) | `ladder.groups` | **FIXTURE** `orgConstitutionFor(slug)`. Real → `rulesToSections(ConstitutionRule[])` over `dojo.shared_rules ⋈ sensei.namespaces` grouped by `scope_key`, ordered by `sensei.scopes.level`. **Code still groups Company/Teams/Stacks** (`LADDER_GROUPS`, `constitution-map.ts` maps `team` level 50) — retire the Teams group, add Workspaces/Repositories. Client and Stack under D25 — undecided. | bind→plumb | no |
+| Left rail sections (Dōjō · Workspace · Repository — D25: dōjō → workspace → repository, most specific wins; no Team rung (teams are reporting only, D13), no Client rung (D32), no Stack rung (a stack is a rule pack applied at a level, D29)) | `ladder.groups` | **FIXTURE** `orgConstitutionFor(slug)`. Real → `rulesToSections(ConstitutionRule[])` over `dojo.shared_rules ⋈ sensei.namespaces` grouped by `scope_key`, ordered by `sensei.scopes.level`. `LADDER_GROUPS` = `Dōjō · Workspace · Repository`; `constitution-map.ts` maps `organization` → Dōjō (20), `workspace` → Workspace (60), `repository` → Repository (70). | bind→plumb | no |
 | Section "N rules · M pack" caption | `s.rules.length` / `s.packs.length` | `shared_rules` per namespace / `rule_pack_adoptions` per namespace | bind→plumb | no |
-| Right: "Rule packs for this stack" + "Adopt pack" | `section.packs[]` (string[]) | **FIXTURE**. Real → `sensei.rule_pack_adoptions ⋈ rule_packs.name` for the stack namespace. "Adopt pack" = noop. | bind→plumb | no |
+| Right: "Rule packs applied here" + "Adopt pack" | `section.packs[]` (string[]) | **FIXTURE**. Real → `sensei.rule_pack_adoptions ⋈ rule_packs.name` for the section's namespace (a stack's pack `stack:<slug>` sits on each repository namespace where the stack is detected, D33). "Adopt pack" = noop. | bind→plumb | no |
 | Right: section rules (RuleRow) | `section.rules[]` | `dojo.shared_rules.title` (→ `text`); `enforcement='mandatory'` → hard ★ (`isHardRule`) | bind→plumb | no |
 | Include toggle per rule | `ladder.toggleInclude(i)` | local `$state` only; **no matching column** (`shared_rules.status` active/tombstoned is the nearest) | plumb (schema decision) | no |
 | Show / hide excluded | `ladder.toggleShowExcluded` | local `$state` | have | no |
@@ -36,7 +36,7 @@
 - Wire loader → `rulesToSections(...)` from a rules read (adapt the federation `GET /v1/.../rules` pull shape, or add a resolved-by-tenant read).
 - Wire RuleEditor Save → `POST /v1/.../rules`; wire a delete/retract path → `DELETE /v1/.../rules/[id]`.
 - "Include/exclude" per rule has no schema meaning — decide: deactivate (`status`), tombstone, or a new per-tenant "disabled" flag; currently non-persistent.
-- Per-stack "Adopt pack" → `sensei.rule_pack_adoptions` (org stack namespace) — no endpoint.
+- Per-section "Adopt pack" → `sensei.rule_pack_adoptions` (the dōjō, workspace or repository namespace) — no endpoint.
 - Rule `family` glyph vs `rule_type`/`enforcement` mapping is undefined (the kit stores only a glyph).
 - Known federation divergence to carry: republish/retract don't advance `seq` via PostgREST inline UPDATE (documented in `rules-data.ts`) — a DDL trigger follow-up.
 
@@ -44,10 +44,10 @@
 1. `POST /v1/.../rules` requires `content_hash`, `namespace_slug`, `rule_type`, `enforcement`, `content`, etc. Who computes `content_hash` and picks the namespace/`rule_type` for a **dōjō-authored** rule (vs a daemon-federated one)? Is dōjō-side authoring of `dojo.shared_rules` even intended, or is that registry only ever written by the daemon's federation publish?
 2. What does the per-rule "include/exclude" toggle mean in the schema — deactivate, tombstone, or a new per-tenant disable flag?
 3. `RULE_FAMILIES` (守/紋/理/検/技/盾) — do these map to `shared_rules.rule_type`, and is `rule_type` a free string or a fixed vocabulary? The kit persists only the glyph.
-4. Per-stack "Adopt pack" here vs personal adopt on `/you/packs` both write `rule_pack_adoptions` at different `namespace_id`s (org stack namespace vs user namespace) — confirm the split and which role may adopt at the org scope.
+4. Per-section "Adopt pack" here vs personal adopt on `/you/packs` both write `rule_pack_adoptions` at different `namespace_id`s (a dōjō/workspace/repository namespace vs the user namespace) — confirm the split and which role may adopt at the org scope.
 
 ### Resolved design (2026-07-30)
-- **Q1 → dōjō-side authoring IS intended.** maintainer/admin author org rules directly in the console via `POST /v1/…/rules`; the **Worker computes `content_hash`** server-side; the UI picks `namespace` (stack) + `rule_type`. `dojo.shared_rules` gets a dōjō-authored write path alongside daemon-federated rules.
+- **Q1 → dōjō-side authoring IS intended.** maintainer/admin author org rules directly in the console via `POST /v1/…/rules`; the **Worker computes `content_hash`** server-side; the UI picks `namespace` (the dōjō, a workspace or a repository) + `rule_type`. `dojo.shared_rules` gets a dōjō-authored write path alongside daemon-federated rules.
 - **Q2 → include/exclude = per-tenant SOFT-DISABLE flag** (non-destructive; re-includable). NOT a tombstone/delete. Needs a new per-tenant rule-disable mechanism (flag on the adoption / a disable row) — schema addition.
 - **Q3 → `rule_type` = FIXED vocabulary = the 6 RULE_FAMILIES** (守/紋/理/検/技/盾). The editor picks from these; glyph maps to type.
 - **Q4 → org-scope adoption = `maintainer`|`admin`** (same as rule-packs Q3).
@@ -62,7 +62,7 @@ above for the tables/endpoints (not restated).
 - **DB** — `dojo.shared_rules ⋈ sensei.namespaces` grouped by `scope_key`, ordered by
   `sensei.scopes.level` (`title`→`text`, `rule_type`, `enforcement='mandatory'`→hard ★, `status`
   active/tombstoned, `content_hash`, `namespace_slug`) · `sensei.rule_pack_adoptions ⋈ rule_packs`
-  (per-stack adopt) · audit → `dojo.audit_events` (tenant-scoped). **Tenant**-primary; auth boundary =
+  (per-section adopt) · audit → `dojo.audit_events` (tenant-scoped). **Tenant**-primary; auth boundary =
   the signed-in person's session resolving to an active membership in the path tenant
   (`resolveTenantCaller`).
 - **API** — loader `loadOrgLadder` (mock → real); real read = adapt the federation pull
@@ -76,8 +76,7 @@ above for the tables/endpoints (not restated).
 **Domain types** (UI-shaped; the Load layer maps wire → these):
 ```ts
 // KitConstitutionSection { id; kanji; scope; group; caption; packs?: string[]; rules?: KitRule[] }
-//   ← rulesToSections(ConstitutionRule[]) — grouped Dōjō/Workspaces/Repositories/Stacks (D25), broad→specific
-//     (code today: Company/Teams/Stacks — the Teams group is retired)
+//   ← rulesToSections(ConstitutionRule[]) — grouped Dōjō/Workspace/Repository (D25, LADDER_GROUPS), broad→specific
 // KitRule       { kanji; text; hard; level }   ← hard = isHardRule(enforcement==='mandatory')
 // RuleFamily    { kanji; label }               ← RULE_FAMILIES (守/紋/理/検/技/盾) for the editor
 // EditorTarget  { rule?: KitRule }             ← RuleEditor: absent rule ⇒ add-new
@@ -104,8 +103,8 @@ convention target singleton `orgLadderState`) — delegates all grouping/include
   ★ Non-negotiable (→ `enforcement='mandatory'`) + Save/Cancel. **Mockup-match + `md:` live here.**
 
 **Copy** (paraglide `m.<key>()` — no inline literals): `m.ladder_title()` "Constitution",
-`m.ladder_new_rule()`, the 掟 banner, "N rules · M pack" caption, "Rule packs for this stack" /
-"Adopt pack", "Show N excluded", editor labels, empty copy. Kanji (掟/社/組/技 + the family glyphs)
+`m.ladder_new_rule()`, the 掟 banner, "N rules · M pack" caption, "Rule packs applied here" /
+"Adopt pack", "Show N excluded", editor labels, empty copy. Kanji (掟/社/件/庫 + the family glyphs)
 stay `KanjiToken` brand marks. Publish **attribution is server-controlled** (`attribution_mode =
 named | anonymous`; dereference is the always-on publish transform, not an authoring choice).
 

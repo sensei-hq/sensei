@@ -1,4 +1,6 @@
-// The workspace window's Tickets screen. Spec: docs/spec/screen/workspace-tickets.md.
+// The workspace window's Tickets screen: one lane per sprint board, side by side
+// (D40), each listing its tickets first with the sprint as a filter.
+// Spec: docs/spec/screen/workspace-tickets.md, docs/spec/tracker-levels.md.
 import type { ApiResult } from '$lib/api.js';
 import { activeMinutes, compactDuration, compactTokens, durationMinutes } from '$lib/sessions-digest.js';
 import { errorFor } from '$lib/tracker-errors.js';
@@ -14,13 +16,23 @@ import type {
 
 export interface SprintsApi {
   tryListTrackers: (workspaceId: string) => Promise<ApiResult<TrackerConnection[]>>;
-  tryListSprints: (workspaceId: string) => Promise<ApiResult<SprintUsageRow[]>>;
-  tryListTrackerTasks: (workspaceId: string, sprintId?: string) => Promise<ApiResult<TrackerTaskRow[]>>;
+  tryListSprints: (workspaceId: string, trackerId: string) => Promise<ApiResult<SprintUsageRow[]>>;
+  tryListTrackerTasks: (
+    workspaceId: string,
+    trackerId: string,
+    sprintId?: string,
+  ) => Promise<ApiResult<TrackerTaskRow[]>>;
   tryGetTrackerTask: (workspaceId: string, key: string) => Promise<ApiResult<TrackerTaskDetail>>;
-  tryListUnlinkedSessions: (workspaceId: string, sprintId: string) => Promise<ApiResult<UnlinkedSession[]>>;
-  tryGetBacklog: (workspaceId: string) => Promise<ApiResult<BacklogUsage>>;
-  tryListBacklogTasks: (workspaceId: string) => Promise<ApiResult<TrackerTaskRow[]>>;
+  tryListUnlinkedSessions: (
+    workspaceId: string,
+    trackerId: string,
+    sprintId: string,
+  ) => Promise<ApiResult<UnlinkedSession[]>>;
+  tryGetBacklog: (workspaceId: string, trackerId: string) => Promise<ApiResult<BacklogUsage>>;
+  tryListBacklogTasks: (workspaceId: string, trackerId: string) => Promise<ApiResult<TrackerTaskRow[]>>;
 }
+
+const boardName = (t: TrackerConnection) => t.board_name ?? `board #${t.board_ref}`;
 
 /** Sprint-filter values besides a sprint's id: every ticket, or those in no sprint. */
 export const ALL = 'all';
@@ -80,32 +92,46 @@ export type Strip =
 
 type View = 'loading' | 'not_connected' | 'daemon_error' | 'ready';
 
-export class TicketsState {
+/** One sprint board: its tickets, filtered by one of its sprints or its Backlog. */
+export class TicketLane {
   #api: SprintsApi;
   #workspaceId: string;
   /** Bumped per filter change, so a slower earlier answer is dropped. */
   #seq = 0;
 
-  view = $state<View>('loading');
-  loadError = $state<string | null>(null);
-  boardTitle = $state('');
-  sprints = $state<SprintUsageRow[]>([]);
+  readonly tracker: TrackerConnection;
+  readonly sprints: SprintUsageRow[];
+  /** The board's tickets in no sprint and their total. */
+  readonly backlog: BacklogUsage;
   /** All tickets, one sprint's (its id), or the Backlog. */
   filter = $state<string>(ALL);
   /** Narrow the list to tickets with AI sessions. */
   aiOnly = $state(false);
   tasks = $state<TrackerTaskRow[] | null>(null);
   tasksError = $state<string | null>(null);
-  ticket = $state<TrackerTaskDetail | null>(null);
-  ticketError = $state<string | null>(null);
   unlinked = $state<UnlinkedSession[] | null>(null);
   unlinkedError = $state<string | null>(null);
-  /** The tickets in no sprint and their total; read with the sprints. */
-  backlog = $state<BacklogUsage | null>(null);
 
-  constructor(api: SprintsApi, workspaceId: string) {
+  constructor(
+    api: SprintsApi,
+    workspaceId: string,
+    tracker: TrackerConnection,
+    sprints: SprintUsageRow[],
+    backlog: BacklogUsage,
+  ) {
     this.#api = api;
     this.#workspaceId = workspaceId;
+    this.tracker = tracker;
+    this.sprints = sprints;
+    this.backlog = backlog;
+  }
+
+  get id(): string {
+    return this.tracker.id;
+  }
+
+  get title(): string {
+    return boardName(this.tracker);
   }
 
   /** The sprint the filter names, if it names one. */
@@ -115,10 +141,11 @@ export class TicketsState {
 
   /** The sprint filter's options: All tickets, each sprint newest first, Backlog. */
   get filterItems(): FilterItem[] {
-    const items: FilterItem[] = [{ value: ALL, label: 'All tickets' }];
-    items.push(...this.sprints.map((s) => ({ value: s.id, label: `${s.name} · ${s.state}` })));
-    if (this.backlog) items.push({ value: BACKLOG, label: `Backlog · ${tickets(this.backlog.tickets)}` });
-    return items;
+    return [
+      { value: ALL, label: 'All tickets' },
+      ...this.sprints.map((s) => ({ value: s.id, label: `${s.name} · ${s.state}` })),
+      { value: BACKLOG, label: `Backlog · ${tickets(this.backlog.tickets)}` },
+    ];
   }
 
   /** What the filter shows, in a word: "All tickets", a sprint's name, "Backlog". */
@@ -131,7 +158,7 @@ export class TicketsState {
   /** The chosen sprint's or the Backlog's own usage — never a sum of its tickets.
    *  All tickets has no strip. */
   get strip(): Strip | null {
-    if (this.filter === BACKLOG && this.backlog) {
+    if (this.filter === BACKLOG) {
       // No window: the backlog has no dates, so its total is all-time.
       const { tickets: n, usage } = this.backlog;
       const c = usageCells(usage);
@@ -186,87 +213,22 @@ export class TicketsState {
       : null;
   }
 
-  /** "branch · prompt ×2 · as AUTH-420": how a session names the ticket. */
-  linksText(s: TrackerTaskDetail['sessions'][number]): string {
-    const parts = s.links.map((l) => (l.mentions > 1 ? `${l.source} ×${l.mentions}` : l.source));
-    const current = this.ticket?.task.key;
-    const old = [...new Set(s.links.map((l) => l.matched_key))].filter((k) => k !== current);
-    return [...parts, ...old.map((k) => `as ${k}`)].join(' · ');
-  }
-
-  async load() {
-    this.view = 'loading';
-    const [trackers, sprints, backlog] = await Promise.all([
-      this.#api.tryListTrackers(this.#workspaceId),
-      this.#api.tryListSprints(this.#workspaceId),
-      this.#api.tryGetBacklog(this.#workspaceId),
-    ]);
-    if (!sprints.ok) {
-      const body = 'body' in sprints.error ? sprints.error.body : undefined;
-      if (sprints.error.status === 404 && body?.error === 'not_connected') {
-        this.view = 'not_connected';
-        return;
-      }
-      this.loadError = failureText(sprints.error);
-      this.view = 'daemon_error';
-      return;
-    }
-    if (!trackers.ok) {
-      this.loadError = failureText(trackers.error);
-      this.view = 'daemon_error';
-      return;
-    }
-    // A failed backlog read is the daemon's error, never "0 tickets".
-    if (!backlog.ok) {
-      this.loadError = failureText(backlog.error);
-      this.view = 'daemon_error';
-      return;
-    }
-    const t = trackers.data[0];
-    if (!t) {
-      this.view = 'not_connected';
-      return;
-    }
-    this.loadError = null;
-    this.boardTitle = t.board_name ?? `board #${t.board_ref}`;
-    this.sprints = sprints.data;
-    this.backlog = backlog.data;
-    this.view = 'ready';
-    await this.setFilter(ALL);
-  }
-
   /** Show All tickets, one sprint's (its id), or the Backlog's. */
   async setFilter(value: string) {
     const seq = ++this.#seq;
     this.filter = value;
     this.tasks = null;
     this.tasksError = null;
-    this.ticket = null;
-    this.ticketError = null;
     this.unlinked = null;
     this.unlinkedError = null;
+    const t = this.tracker.id;
     const res =
       value === BACKLOG
-        ? await this.#api.tryListBacklogTasks(this.#workspaceId)
-        : await this.#api.tryListTrackerTasks(this.#workspaceId, value === ALL ? undefined : value);
+        ? await this.#api.tryListBacklogTasks(this.#workspaceId, t)
+        : await this.#api.tryListTrackerTasks(this.#workspaceId, t, value === ALL ? undefined : value);
     if (seq !== this.#seq) return;
     if (res.ok) this.tasks = res.data;
     else this.tasksError = failureText(res.error);
-  }
-
-  async openTicket(key: string) {
-    this.ticketError = null;
-    const res = await this.#api.tryGetTrackerTask(this.#workspaceId, key);
-    if (res.ok) this.ticket = res.data;
-    else {
-      this.ticket = null;
-      this.ticketError = failureText(res.error);
-    }
-  }
-
-  closeTicket() {
-    this.ticket = null;
-    this.ticketError = null;
   }
 
   /** Show or hide the chosen sprint's unlinked sessions (a sprint only: All
@@ -279,9 +241,99 @@ export class TicketsState {
     const id = this.filter;
     if (id === ALL || id === BACKLOG) return;
     this.unlinkedError = null;
-    const res = await this.#api.tryListUnlinkedSessions(this.#workspaceId, id);
+    const res = await this.#api.tryListUnlinkedSessions(this.#workspaceId, this.tracker.id, id);
     if (id !== this.filter) return;
     if (res.ok) this.unlinked = res.data;
     else this.unlinkedError = failureText(res.error);
+  }
+}
+
+export class TicketsState {
+  #api: SprintsApi;
+  #workspaceId: string;
+
+  view = $state<View>('loading');
+  loadError = $state<string | null>(null);
+  lanes = $state<TicketLane[]>([]);
+  ticket = $state<TrackerTaskDetail | null>(null);
+  ticketError = $state<string | null>(null);
+  /** The lane a ticket was opened from: where "Back" returns. */
+  ticketLane = $state<TicketLane | null>(null);
+
+  constructor(api: SprintsApi, workspaceId: string) {
+    this.#api = api;
+    this.#workspaceId = workspaceId;
+  }
+
+  /** The board's name when there is one lane; the lanes carry their own names otherwise. */
+  get boardTitle(): string {
+    return this.lanes.length === 1 ? this.lanes[0].title : '';
+  }
+
+  /** "Back to Sprint 13", or with several lanes "Back to Team A · Sprint 13". */
+  get backLabel(): string {
+    const l = this.ticketLane;
+    if (!l) return 'Back';
+    return this.lanes.length > 1 ? `Back to ${l.title} · ${l.filterLabel}` : `Back to ${l.filterLabel}`;
+  }
+
+  /** "branch · prompt ×2 · as AUTH-420": how a session names the ticket. */
+  linksText(s: TrackerTaskDetail['sessions'][number]): string {
+    const parts = s.links.map((l) => (l.mentions > 1 ? `${l.source} ×${l.mentions}` : l.source));
+    const current = this.ticket?.task.key;
+    const old = [...new Set(s.links.map((l) => l.matched_key))].filter((k) => k !== current);
+    return [...parts, ...old.map((k) => `as ${k}`)].join(' · ');
+  }
+
+  async load() {
+    this.view = 'loading';
+    const trackers = await this.#api.tryListTrackers(this.#workspaceId);
+    if (!trackers.ok) return this.#failed(trackers.error);
+    const boards = trackers.data.filter((t) => t.level === 'sprint');
+    if (boards.length === 0) {
+      this.view = 'not_connected';
+      return;
+    }
+    const reads = await Promise.all(
+      boards.map((t) =>
+        Promise.all([
+          this.#api.tryListSprints(this.#workspaceId, t.id),
+          this.#api.tryGetBacklog(this.#workspaceId, t.id),
+        ]),
+      ),
+    );
+    const lanes: TicketLane[] = [];
+    for (const [i, [sprints, backlog]] of reads.entries()) {
+      // Any lane's read failing is the daemon's error: a lane is never silently missing,
+      // and a failed backlog read is never "0 tickets".
+      if (!sprints.ok) return this.#failed(sprints.error);
+      if (!backlog.ok) return this.#failed(backlog.error);
+      lanes.push(new TicketLane(this.#api, this.#workspaceId, boards[i], sprints.data, backlog.data));
+    }
+    this.loadError = null;
+    this.lanes = lanes;
+    this.view = 'ready';
+    await Promise.all(lanes.map((l) => l.setFilter(ALL)));
+  }
+
+  #failed(error: Parameters<typeof failureText>[0]) {
+    this.loadError = failureText(error);
+    this.view = 'daemon_error';
+  }
+
+  async openTicket(lane: TicketLane, key: string) {
+    this.ticketError = null;
+    this.ticketLane = lane;
+    const res = await this.#api.tryGetTrackerTask(this.#workspaceId, key);
+    if (res.ok) this.ticket = res.data;
+    else {
+      this.ticket = null;
+      this.ticketError = failureText(res.error);
+    }
+  }
+
+  closeTicket() {
+    this.ticket = null;
+    this.ticketError = null;
   }
 }

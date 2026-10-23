@@ -18,6 +18,7 @@ const NOW = new Date('2026-10-18T12:00:00Z');
 const row = (over: Partial<TrackerConnection> = {}): TrackerConnection => ({
   id: 't-1',
   kind: 'jira',
+  level: 'sprint',
   base_url: 'https://acme.atlassian.net',
   account: 'dev@example.com',
   external_scope: 'AUTH',
@@ -42,16 +43,16 @@ function daemon(lists: Array<ApiResult<TrackerConnection[]>>, over: Partial<Trac
       calls.push(['list', p]);
       return queue.length > 1 ? queue.shift()! : queue[0];
     },
-    tryConnectTracker: async (p, kind, body) => {
-      calls.push(['connect', { p, kind, body }]);
+    tryConnectTracker: async (p, kind, level, body) => {
+      calls.push(['connect', { p, kind, level, body }]);
       return { ok: true, data: { tracker: row({ status: 'pending', last_success_at: null }), first_sync: { pending: true } } };
     },
-    trySyncTracker: async (p) => {
-      calls.push(['sync', p]);
+    trySyncTracker: async (p, t) => {
+      calls.push(['sync', { p, t }]);
       return { ok: true, data: { counts: { sprints: 6, tasks: 142, removed: 0, links: 3, skipped_members: 0 } } };
     },
-    tryDisconnectTracker: async (p) => {
-      calls.push(['disconnect', p]);
+    tryDisconnectTracker: async (p, t) => {
+      calls.push(['disconnect', { p, t }]);
       return { ok: true, data: undefined };
     },
     ...over,
@@ -88,6 +89,7 @@ function screen(lists: Array<ApiResult<TrackerConnection[]>>, over: Partial<Trac
 }
 
 function fill(s: TrackerIntegration) {
+  s.level = 'sprint';
   s.boardUrl = 'https://acme.atlassian.net/jira/software/projects/AUTH/boards/42';
   s.email = 'dev@example.com';
   s.token = 'SENTINEL-TOKEN-XYZ';
@@ -104,8 +106,27 @@ describe('loading', () => {
     const { s } = screen([{ ok: true, data: [row()] }]);
     await s.load();
     expect(s.view).toBe('connected');
-    expect(s.cardTitle).toBe('Jira · acme.atlassian.net · project AUTH · board "AUTH Scrum" (#42)');
-    expect(s.cardStatus).toBe('connected · synced 2 min ago · 6 sprints · 142 tickets');
+    expect(s.cardTitle(s.trackers[0])).toBe('Jira · acme.atlassian.net · project AUTH · board "AUTH Scrum" (#42)');
+    expect(s.cardStatus(s.trackers[0])).toBe('connected · synced 2 min ago · 6 sprints · 142 tickets');
+    expect(s.showForm).toBe(false);
+  });
+
+  it('several boards: grouped by level, epics first, empty levels left out (D40)', async () => {
+    const { s } = screen([
+      {
+        ok: true,
+        data: [
+          row({ id: 't-1', level: 'sprint', board_ref: '42' }),
+          row({ id: 't-2', level: 'sprint', board_ref: '44' }),
+          row({ id: 't-3', level: 'epic', board_ref: '43' }),
+        ],
+      },
+    ]);
+    await s.load();
+    expect(s.groups.map((g) => [g.level, g.label, g.trackers.map((t) => t.id)])).toEqual([
+      ['epic', 'Epics', ['t-3']],
+      ['sprint', 'Sprints', ['t-1', 't-2']],
+    ]);
   });
 
   // The rule this screen exists to keep: a failed read is never "not connected".
@@ -125,10 +146,12 @@ describe('loading', () => {
 });
 
 describe('the connect form', () => {
-  it('stays disabled until board, email and token are all given', async () => {
+  it('stays disabled until level, board, email and token are all given', async () => {
     const { s } = screen([{ ok: true, data: [] }]);
     await s.load();
     expect(s.canConnect).toBe(false);
+    expect(s.level).toBe(null);
+    s.level = 'sprint';
     s.boardUrl = 'https://acme.atlassian.net/jira/software/projects/AUTH/boards/42';
     s.email = 'dev@example.com';
     expect(s.canConnect).toBe(false);
@@ -142,6 +165,7 @@ describe('the connect form', () => {
   it('accepts the Advanced site and board id instead of a board URL', async () => {
     const { s } = screen([{ ok: true, data: [] }]);
     await s.load();
+    s.level = 'sprint';
     s.advanced = true;
     s.siteUrl = 'https://acme.atlassian.net';
     s.email = 'dev@example.com';
@@ -159,6 +183,7 @@ describe('the connect form', () => {
     expect(calls.find((c) => c[0] === 'connect')![1]).toEqual({
       p: P,
       kind: 'jira',
+      level: 'sprint',
       body: {
         board_url: 'https://acme.atlassian.net/jira/software/projects/AUTH/boards/42',
         email: 'dev@example.com',
@@ -170,6 +195,7 @@ describe('the connect form', () => {
   it('sends site + board id from Advanced', async () => {
     const { s, calls } = screen([{ ok: true, data: [] }]);
     await s.load();
+    s.level = 'epic';
     s.advanced = true;
     s.siteUrl = 'https://acme.atlassian.net';
     s.boardId = '42';
@@ -221,6 +247,33 @@ describe('the connect form', () => {
   });
 });
 
+describe('adding a board beside one', () => {
+  it('Add a board opens an empty form at no level; Cancel closes it', async () => {
+    const { s } = screen([{ ok: true, data: [row()] }]);
+    await s.load();
+    s.level = 'epic';
+    s.startAdd();
+    expect([s.showForm, s.level, s.boardUrl, s.token]).toEqual([true, null, '', '']);
+    s.cancelAdd();
+    expect(s.showForm).toBe(false);
+  });
+
+  it('a second board lands beside the first, and the form closes', async () => {
+    const epic = row({ id: 't-2', level: 'epic', board_ref: '43', status: 'pending', last_success_at: null });
+    const { s } = screen([{ ok: true, data: [row()] }, { ok: true, data: [row(), epic] }], {
+      tryConnectTracker: async () => ({ ok: true, data: { tracker: epic, first_sync: { pending: true } } }),
+    });
+    await s.load();
+    s.startAdd();
+    fill(s);
+    s.level = 'epic';
+    await s.connect();
+    expect(s.showForm).toBe(false);
+    expect(s.trackers.map((t) => t.id)).toEqual(['t-1', 't-2']);
+    expect(s.statusText).toBe('Connected · first sync running…');
+  });
+});
+
 describe('the first sync', () => {
   it('polls every 2 s while pending, then shows the counts', async () => {
     const { s, clock } = screen([
@@ -257,6 +310,15 @@ describe('the first sync', () => {
     );
   });
 
+  it('polls while any board is pending', async () => {
+    const { s, clock } = screen([
+      { ok: true, data: [row(), row({ id: 't-2', status: 'pending', last_success_at: null })] },
+    ]);
+    await s.load();
+    expect(clock.pending()).toEqual([2000]);
+    s.dispose();
+  });
+
   it('a screen opened while a sync is pending polls too, and stops when closed', async () => {
     const { s, clock } = screen([{ ok: true, data: [row({ status: 'pending', last_success_at: null })] }]);
     await s.load();
@@ -272,7 +334,7 @@ describe('the connected card', () => {
       const { s } = screen([{ ok: true, data: [r] }]);
       await s.load();
       s.dispose();
-      return s.cardStatus;
+      return s.cardStatus(s.trackers[0]);
     };
     expect(await at(row({ status: 'stale', last_success_at: '2026-10-18T09:00:00Z' }))).toBe(
       'stale · last synced 3 h ago · 6 sprints · 142 tickets',
@@ -288,24 +350,29 @@ describe('the connected card', () => {
       trySyncTracker: async () => fail(409, 'busy', { error: 'busy' }),
     });
     await s.load();
-    await s.sync();
+    await s.sync('t-1');
     expect(s.alert?.text).toBe('A sync is already running.');
   });
 
-  it('Sync now: success reads the connection again', async () => {
-    const { s, calls } = screen([{ ok: true, data: [row()] }]);
+  it('Sync now: syncs that board, then reads the connections again', async () => {
+    const { s, calls } = screen([{ ok: true, data: [row(), row({ id: 't-2', board_ref: '44' })] }]);
     await s.load();
-    await s.sync();
+    const done = s.sync('t-2');
+    expect([s.busy, s.busyTracker]).toEqual(['sync', 't-2']);
+    await done;
+    expect(calls.find((c) => c[0] === 'sync')![1]).toEqual({ p: P, t: 't-2' });
     expect(calls.filter((c) => c[0] === 'list')).toHaveLength(2);
     expect(s.alert).toBe(null);
   });
 
   it('Replace token: the form returns with site, board and email filled and no token', async () => {
-    const { s } = screen([{ ok: true, data: [row()] }]);
+    const { s } = screen([{ ok: true, data: [row({ level: 'epic' })] }]);
     await s.load();
-    s.startReplace();
-    expect(s.replacing).toBe(true);
-    expect([s.advanced, s.siteUrl, s.boardId, s.email, s.token]).toEqual([
+    s.startReplace(s.trackers[0]);
+    expect(s.replacing).toBe('t-1');
+    expect(s.showForm).toBe(true);
+    expect([s.level, s.advanced, s.siteUrl, s.boardId, s.email, s.token]).toEqual([
+      'epic',
       true,
       'https://acme.atlassian.net',
       '42',
@@ -313,22 +380,23 @@ describe('the connected card', () => {
       '',
     ]);
     s.cancelReplace();
-    expect(s.replacing).toBe(false);
+    expect(s.replacing).toBe(null);
+    expect(s.showForm).toBe(false);
   });
 
   it('Disconnect asks first; Cancel does nothing; confirming removes it', async () => {
-    const { s, calls } = screen([{ ok: true, data: [row()] }]);
+    const { s, calls } = screen([{ ok: true, data: [row()] }, { ok: true, data: [] }]);
     await s.load();
-    s.askDisconnect();
-    expect(s.confirmingDisconnect).toBe(true);
+    s.askDisconnect(s.trackers[0]);
+    expect(s.confirmingDisconnect?.id).toBe('t-1');
     s.cancelDisconnect();
-    expect(s.confirmingDisconnect).toBe(false);
+    expect(s.confirmingDisconnect).toBe(null);
     expect(calls.some((c) => c[0] === 'disconnect')).toBe(false);
 
-    s.askDisconnect();
+    s.askDisconnect(s.trackers[0]);
     await s.confirmDisconnect();
-    expect(calls.some((c) => c[0] === 'disconnect')).toBe(true);
-    expect([s.view, s.confirmingDisconnect]).toEqual(['not_connected', false]);
+    expect(calls.find((c) => c[0] === 'disconnect')![1]).toEqual({ p: P, t: 't-1' });
+    expect([s.view, s.confirmingDisconnect]).toEqual(['not_connected', null]);
   });
 
   it('a failed disconnect keeps the card and says why', async () => {
@@ -336,7 +404,7 @@ describe('the connected card', () => {
       tryDisconnectTracker: async () => fail(0, 'connection refused'),
     });
     await s.load();
-    s.askDisconnect();
+    s.askDisconnect(s.trackers[0]);
     await s.confirmDisconnect();
     expect(s.view).toBe('connected');
     expect(s.alert?.text).toBe('The sensei daemon didn’t respond.');
@@ -379,6 +447,16 @@ describe('errorFor (daemon code → words)', () => {
       'The sensei daemon refused this window’s request.',
     );
     expect(words('not_connected')).toBe('This workspace has no tracker connected.');
+    expect(words('tracker_not_found')).toBe('This board is no longer connected to this workspace.');
+    expect(words('superseded')).toBe('The board’s token changed while it synced. Sync again.');
+    expect(errorFor(422, { error: 'level_required' })).toMatchObject({
+      text: 'Choose what the board serves.',
+      field: 'level',
+    });
+    expect(errorFor(422, { error: 'invalid_level' })).toMatchObject({
+      text: 'A board serves epics, sprints or tasks.',
+      field: 'level',
+    });
     expect(words('workspace_not_found')).toBe('This workspace no longer exists in sensei.');
     expect(words('unsupported_tracker')).toBe('This tracker type isn’t available in this version of sensei.');
     expect(words('board_project_mismatch')).toBe(

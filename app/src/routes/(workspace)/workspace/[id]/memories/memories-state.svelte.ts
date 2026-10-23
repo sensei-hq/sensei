@@ -68,13 +68,14 @@ export interface ScopeRung {
 }
 
 /**
- * workspace → user is the user's own scope (no governance). Anything wider enters
- * the collective's triage queue. Mirrors the promotion ladder in
+ * workspace → user is the user's own scope (no governance). The dōjō (its
+ * `organization` scope key) and the collective are wider, and enter
+ * a triage queue. Mirrors the promotion ladder in
  * docs/spec/pipeline/memory.md.
  */
 export const SCOPE_LADDER: readonly ScopeRung[] = [
     { scope: 'user', label: 'widen to user', governed: false },
-    { scope: 'org', label: 'widen to org', governed: true },
+    { scope: 'organization', label: 'widen to dōjō', governed: true },
     { scope: 'global', label: 'widen to collective', governed: true },
 ];
 

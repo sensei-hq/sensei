@@ -16,7 +16,7 @@ import { provisionWithToken } from '$lib/server/provisioning';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, email } = await resolveCaller(request, locals);
+		const { userId, email, githubId } = await resolveCaller(request, locals);
 		// System work, named (access matrix "What stays service_role", #236).
 		const db = dojoDb();
 
@@ -29,11 +29,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		// list of orgs from a caller — that would be the service trusting a client
 		// about its own entitlements, the one thing §II.5 says it must not do.
 		//
-		// Accepting a token in the body is safe against the obvious attack: a
-		// caller presenting someone ELSE'S forge token cannot annex their orgs,
-		// because `ensureIdentity` refuses to re-point a forge account that already
-		// belongs to another principal (409). And anyone holding that token could
-		// simply sign in as its owner anyway, so it grants no new capability.
+		// A token in the body is trusted only as the GitHub account linked to the
+		// caller's LOGIN (`githubId`, from Supabase Auth): provisioning reads
+		// GET /user with it and refuses (403) any other account, before a write —
+		// otherwise someone holding another account's token could provision
+		// themselves into that account's orgs (#308 R5a review).
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const fromBody =
 			typeof body.provider_token === 'string' && body.provider_token.trim()
@@ -42,7 +42,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const fromSession =
 			(locals as { session?: { provider_token?: string | null } }).session?.provider_token ?? null;
 
-		const result = await provisionWithToken(db, userId, fromBody ?? fromSession, { email });
+		const result = await provisionWithToken(db, userId, fromBody ?? fromSession, { email, githubId });
 		return Response.json(result);
 	} catch (e) {
 		if (e instanceof Response) return e;

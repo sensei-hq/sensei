@@ -31,7 +31,7 @@ output, not the source. The base bundle is therefore **seed data**, not a docume
 3. **Resolved + served** via `resolve_global_rules` → the **`get_rules` MCP tool** — the
    assistant reads the constitution through MCP, in-context, on every session.
 4. **Overridable by scope, not by editing a file** — a more specific scope
-   (org → team → workspace → stack) refines a rule through governance authoring (which
+   (dōjō → workspace → repository) refines a rule through governance authoring (which
    re-materializes), **except** the `mandatory` tier (see below), which cannot be weakened.
 
 **Enforcement tiers** map to the `sensei.enforcement` enum

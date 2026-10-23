@@ -15,11 +15,11 @@ describe('kit governance components render', () => {
 
 	it('LadderRung shows the scope identity, rule count and lock chip', () => {
 		const { getByText } = render(LadderRung, { rung: ladder[0] });
-		expect(getByText('Company')).toBeTruthy();
+		expect(getByText('Dōjō')).toBeTruthy();
 		expect(getByText('Acme Corp')).toBeTruthy();
-		expect(getByText('your employer · every workspace')).toBeTruthy();
+		expect(getByText('your dōjō · every workspace')).toBeTruthy();
 		expect(getByText('4 rules')).toBeTruthy();
-		// company rung has 3 hard rules → a "3 locked" chip.
+		// the dōjō rung has 3 hard rules → a "3 locked" chip.
 		expect(getByText('3 locked')).toBeTruthy();
 	});
 
@@ -29,10 +29,10 @@ describe('kit governance components render', () => {
 			rung: ladder[0],
 			onSelect: (id: string) => (selected = id)
 		});
-		// a rule from the company rung is visible.
+		// a rule from the dōjō rung is visible.
 		expect(getByText('Never log tokens or PII, even at debug level')).toBeTruthy();
 		await fireEvent.click(getByText('Acme Corp'));
-		expect(selected).toBe('company');
+		expect(selected).toBe('organization');
 	});
 
 	it('LadderRung with showRules=false hides the rule list', () => {
@@ -40,9 +40,22 @@ describe('kit governance components render', () => {
 		expect(queryByText('Never log tokens or PII, even at debug level')).toBeNull();
 	});
 
-	it('LadderRung tints an accent (client) rung', () => {
-		const { getByText } = render(LadderRung, { rung: ladder[1] });
-		expect(getByText('Client').className).toContain('text-accent');
+	it('LadderRung tints an accent rung', () => {
+		const { getByText } = render(LadderRung, { rung: { ...ladder[1], tone: 'accent' } });
+		expect(getByText('Workspace').className).toContain('text-accent');
+	});
+
+	it('LadderRung lists the packs applied at its rung (D29 · D33)', () => {
+		const repository = ladder.find((r) => r.id === 'repository')!;
+		const { getByText } = render(LadderRung, { rung: repository });
+		expect(getByText('TypeScript')).toBeTruthy();
+		expect(getByText('Svelte')).toBeTruthy();
+	});
+
+	it('LadderRung shows no pack row for a rung with no packs', () => {
+		const workspace = ladder.find((r) => r.id === 'workspace')!;
+		const { queryByText } = render(LadderRung, { rung: workspace });
+		expect(queryByText(/packs/)).toBeNull();
 	});
 
 	it('RuleRow shows the rule text and the ★ marker for hard rules', () => {
@@ -53,7 +66,7 @@ describe('kit governance components render', () => {
 
 	it('RuleRow shows the level chip when showLevel', () => {
 		const { getByText } = render(RuleRowHarness, { showLevel: true });
-		expect(getByText('Company')).toBeTruthy();
+		expect(getByText('Dōjō')).toBeTruthy();
 	});
 
 	it('RuleRow fires onToggle when the include checkbox is clicked', async () => {
@@ -72,7 +85,7 @@ describe('kit governance components render', () => {
 			withJump: true,
 			withEdit: true
 		});
-		await fireEvent.click(getByTitle('Jump to Company'));
+		await fireEvent.click(getByTitle('Jump to Dōjō'));
 		expect(getByTestId('jumps').textContent).toBe('1');
 		await fireEvent.click(getByLabelText('Edit rule'));
 		expect(getByTestId('edits').textContent).toBe('1');

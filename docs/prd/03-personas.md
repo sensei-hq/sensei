@@ -11,7 +11,7 @@ used below where the journey docs named them.
 
 > **Naming note (decision 10).** The grouping vocabulary — pods, swimlanes,
 > squads, teams — is deliberately left open. A person holds many *scopes*
-> (memberships in many Dōjōs, workspaces and engagements); what to call a group is
+> (memberships in many Dōjōs and workspaces); what to call a group is
 > a display concern, not a model one.
 >
 > **Not a persona:** an AI assistant is a *delivery channel*, not a person whose
@@ -70,17 +70,14 @@ used below where the journey docs named them.
 | "Good" feels like | Provisioning is fast, the org boundary is exact, and the audit trail proves confidentiality held. Payments appear only here, for the benefits of the paid tier — gating, integrations, consolidated metrics (T4, D24). |
 | Served by | M13 · T1 · T2 · T4 · T6 (grants) |
 
-### 5 · Engagement / client lead — *"the confidentiality guard"*
+### 5 · Engagement / client lead — retired (D34)
 
-> **Lead**. Guards client engagements: the lesson travels, the source never does.
-
-| | |
-|---|---|
-| Context | An agency or consultancy. Runs client engagements; the engagement concept carries the boundary. |
-| Goals | Share lessons across client work without ever leaking the source; prove confidentiality to the client. |
-| Jobs-to-be-done | Define an engagement and route correctly (T1); anonymize always — share the lesson, never the source (T1); no per-item review, trust the universal strip (T1); show the audit trail (T1); contain a near-leak fast (T1). |
-| "Good" feels like | The client sees the audit trail and trusts it; a lesson that can't be stripped doesn't leave. Confidentiality is the product, not a feature. |
-| Served by | M3 · T1 · T2 |
+> **Retired 2026-10-22** (#307 R7, D34). A client is just another dōjō — an
+> agency's people are members of the client's dōjō, and its work is that dōjō's
+> Epics, Sprints and Tasks from its integrations. There is no engagement model,
+> no incident register and no confidentiality ledger for a lead to run. What this
+> persona relied on stays for everyone: the lesson travels, the source never
+> does — the universal strip on every publish (T1), not a role's job.
 
 ---
 
@@ -107,9 +104,9 @@ used below where the journey docs named them.
 
 | | |
 |---|---|
-| Context | The client (or the workspace's sponsor) receiving a status from an engagement. May not be technical. Multi-team, multi-workspace orgs are where this shows up. |
+| Context | The client (or the workspace's sponsor) receiving a status on work done for them. May not be technical. Multi-team, multi-workspace orgs are where this shows up. |
 | Goals | Trust that the workspace is progressing and healthy without seeing other clients' work or raw internals. |
-| Jobs-to-be-done | See workspace-level progress and quality posture for *this* engagement (T3, T1 scope); understand what the team is claiming without reading code (M15/M16 through the lead's lens); know the confidentiality boundary held (T1 audit). Sees the workspace through a viewer grant (T6); cannot export. |
+| Jobs-to-be-done | See workspace-level progress and quality posture for *this* workspace (T3, T1 scope); understand what the team is claiming without reading code (M15/M16 through the lead's lens). Sees the workspace through a viewer grant (T6); cannot export. |
 | "Good" feels like | The report she sees is the lead's, narrower by scope, and never contradicts the lead. Her confidentiality is invisible — it just holds. |
 | Served by | M8 · M16 · T1 · T2 · T3 · T6 |
 

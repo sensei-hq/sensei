@@ -37,7 +37,7 @@ Kanji is 検 — *inspect*.
 | Candidate card | attribution · body · evidence · similarity to existing artifacts |
 | Similarity chip | when the candidate near-duplicates an existing artifact — offers a merge |
 | Decision row | Approve · Revise · Decline (with reason field for each) |
-| Distribution scope picker | (all-org · team X · stack Y) |
+| Distribution scope picker | (the dōjō · workspace X · repository Y — the ladder, D25) |
 | Post-publish measurement | landing telemetry: adopted / muted / pinned counts |
 
 ## Done gate

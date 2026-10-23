@@ -105,17 +105,12 @@ flowchart LR
     a4 --> a5[Monitor<br/>keep the Dōjō healthy]
 ```
 
-### Lead — client / engagement confidentiality (console)
+### Client work — no section of its own (D34)
 
-> **Lead** guards confidentiality on **client engagements**: the lesson travels,
-> the source never does.
-
-```mermaid
-flowchart LR
-    l1[Define engagement<br/>register a client, route correctly] --> l2[Anonymize, always<br/>share the lesson, never the source]
-    l2 --> l3[No per-item review<br/>trust the universal strip] --> l4[Audit trail<br/>prove confidentiality held]
-    l4 --> l5[Incident handling<br/>contain a near-leak fast]
-```
+> A client is just another dōjō (#307 R7, D34, 2026-10-22): there is no
+> engagement register, incident list or client audit. A dōjō's work is its Epics,
+> Sprints and Tasks from its integrations, and the lesson travels while the
+> source never does on every publish (DJ4), whoever's dōjō it is.
 
 ### Dōjō lifecycle — what flows through it
 
@@ -128,7 +123,7 @@ flowchart LR
 | # | Objective | Met when |
 |---|---|---|
 | DJ1 | Personal sensei works with **no** Dōjō | Every local capability functions with zero memberships |
-| DJ2 | The org boundary is exact (theme 5) | A lesson from a client engagement never leaves without anonymization + preview |
+| DJ2 | The org boundary is exact (theme 5) | A lesson from a client's dōjō never leaves without anonymization + preview |
 | DJ3 | Pull, never push | Downstream knowledge arrives by opt-in pull, never forced |
 | DJ4 | Attribution + confidentiality are automatic | One universal strip runs on every client lesson; a lesson that can't be stripped doesn't leave |
 | DJ5 | Distribution respects priority ladders, not a rigid hierarchy | Specificity wins conflicts; memberships route by precedence |

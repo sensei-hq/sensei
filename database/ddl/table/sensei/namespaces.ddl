@@ -17,11 +17,12 @@ create index if not exists namespaces_scope_key_idx
 
 comment on table namespaces is
 'Concrete instances of a scope — e.g. (organization, "Sensei HQ"),
-(workspace, "sensei"), (technology, "rust"). A repo belongs to a SET of these
-(via repository_namespaces, or for a `workspace` namespace via the workspace of the
-same name); there is no parent_id tree — precedence comes from the
-scope level (optionally overridden per namespace). Created at scan time from
-README frontmatter (organization/workspace/team) and detected stack.';
+(workspace, "sensei"), (repository, "github.com/sensei-hq/sensei"). A repo belongs
+to a SET of these (via repository_namespaces, or for a `workspace` namespace via the
+workspace of the same name); there is no parent_id tree — precedence comes from the
+scope level (optionally overridden per namespace). Created at scan time from README
+frontmatter (organization/workspace); a repository''s own namespace is made when a
+detected stack adopts its pack there (sensei.repository_namespace, #318 R6).';
 
 comment on column namespaces.id
      is 'Surrogate primary key (UUID).';

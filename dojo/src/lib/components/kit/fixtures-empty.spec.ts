@@ -5,9 +5,6 @@ import {
 	triageGroupsFor,
 	approvalsFor,
 	knowledgeFor,
-	engagementsFor,
-	incidentsFor,
-	clientAuditFor,
 	scopeOwnersFor
 } from './fixtures';
 
@@ -22,9 +19,6 @@ describe('org fixtures — an unknown slug returns empty, never Acme', () => {
 		expect(orgConstitutionFor(unknown)).toEqual([]);
 		expect(triageGroupsFor(unknown)).toEqual([]);
 		expect(approvalsFor(unknown)).toEqual([]);
-		expect(engagementsFor(unknown)).toEqual([]);
-		expect(incidentsFor(unknown)).toEqual([]);
-		expect(clientAuditFor(unknown)).toEqual([]);
 		expect(scopeOwnersFor(unknown)).toEqual([]);
 	});
 

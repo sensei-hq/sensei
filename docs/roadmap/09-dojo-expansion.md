@@ -40,6 +40,16 @@ track release pipelines and DORA metrics. The dōjō is nearly empty today; this
 | D29 | Are stack scopes governance levels? (D25 follow-up) | **No.** A stack is a tech stack's rules and packs (React, Rust, …), **applied at a level** — the dōjō, a workspace or a repository (user 2026-10-21). The ladder stays dōjō → workspace → repository. Client scopes are still to decide. |
 | D30 | How deep does R3 go in the daemon's own database? | **Everywhere, schema too** (user 2026-10-21): `sensei.projects` and every `project_id` column are renamed in place on upgrade, rehearsed twice on a copy of a real daemon database. Another system's `project` stays (R3's rule). |
 | D31 | The README frontmatter key that groups a repository into a workspace? | **Migrated in place** (user 2026-10-21): sensei reads and writes only `workspace:`, and on its next scan rewrites an existing `project:` line to `workspace:` in that README — a one-time conversion, no permanent dual-read. |
+| D32 | Is Client a governance level? | **No — retired** (user 2026-10-22). A client engagement is the dōjō it lives in plus workspace classification `client`; client-only standards are rules at that dōjō or workspace. 0 rows stored. |
+| D33 | Where does a converted stack pack apply? (Q-R6) | **At each repository where the stack is detected** (user 2026-10-22) — exactly today's reach; repository-rung namespaces are created as needed, and a new repository adopts by detection as today. |
+| D34 | Does a dōjō keep a Clients section (Engagements, Incidents, Client audit)? | **No** (user 2026-10-22). A client is just another dōjō, and there is no client rung (D32). A dōjō's work is its Epics, Sprints and Tasks, which come from its integrations. The engagement and incident model, and the confidentiality ledger built on it, are removed. |
+| D35 | How does a dōjō sign in to Azure DevOps? (R5 Q1) | **A personal access token an admin pastes** (user 2026-10-22), stored in Supabase Vault and never returned, logged or audited as a value. |
+| D36 | How does an Azure DevOps organization map? (R5 Q2) | **Organization → dōjō, project → workspace** (user 2026-10-22). |
+| D37 | What is R5's first slice? (R5 Q3) | **One complete source first** (user 2026-10-22, revised): R5a finishes GitHub end to end (adapter, claim by an org admin, the import/mapping screen, repositories filing by the mapping); R5b adds Azure DevOps only after that. GitLab and Bitbucket later. |
+| D38 | What is the lead role for, now that Clients is gone (D34)? | **A team lead** (user 2026-10-22): a lead sees the metrics of every team member, per person, across all the workspaces the lead can access. Viewers stay aggregate-only (D6); a lead is a member, not a viewer. **The team is only the teams the lead is on** (user, 2026-10-22); a lead on no team sees only themselves. |
+| D39 | How does an admin give the Integrations screen a GitHub token? (R5a) | **Re-authorize with GitHub** (user 2026-10-22): a Connect GitHub button runs GitHub OAuth again (read:org); the fresh token serves that session's reads only. It is never stored, logged or echoed. No pasted-token path. |
+| D40 | D23 in practice: what is a tracker's level, and how do several show? | **A level is a separate board** (portfolio board → epics, team boards → sprints), each its own tracker tagged with its level; **a task-level link is derived** from the change (branch/commit/PR → ticket key), never configured; **several sprint trackers show side by side**, one lane per team (user 2026-10-22). Spec: docs/spec/tracker-levels.md. |
+| D41 | The Teams view, per role (R8) | **An admin sees every team** with per-person rows; **a lead sees the teams they are on** with per-person rows; **contributors and maintainers see their own teams as aggregates only** (no per-person rows; a total shows only when **at least 3 people other than the reader** contributed — user 2026-10-22); **rates are weighted by volume** (each day's sessions/changes), sums stay sums; **a departed teammate drops out** of the lead's view (history stays readable to the repository's maintainers, D6) (user 2026-10-22). |
 
 **Viewer decisions V1–V12 (2026-10-21)** — recorded in
 [T6 Workspace Viewer](../prd/modules/04-team/06-workspace-viewer/README.md#decisions-taken-2026-10-21): the
@@ -111,11 +121,63 @@ slice builds, passes and ships on its own.
   - **R3c · MCP, plugin, skills, CLI.** Tool names (`list_workspaces`, `use_workspace`,
     `get_workspace_summary`, …), the plugin's hooks and skills that call them, both `SKILL.md` copies, and
     `sensei` CLI words.
+- **R6 · The ladder is dōjō → workspace → repository (D25, D29, D32).** *Live in v0.18.0 (2026-10-22): the daemon DB migrated as rehearsed; production in sync. Rehearsed: rule reach identical (234 repository-rule pairs, all 87 repositories); 111 stack adoptions = 111 bindings. Note: a stack pack applied at a repository ranks at repository precedence (70), above workspace (60) — reach unchanged, precedence per D29.* Today the
+  ladder still has `general · user · organization · client · technology · team · workspace · repository`.
+  - **Retire `team` and `client`** (0 namespaces locally and in production): the seed, both databases (a guarded
+    hook that FAILS, never deletes, if a namespace still sits on either), and every reader — the dōjō preview
+    rungs (`company, client, personal, stack, workspace`), the library levels (`org · team · proj · stack`),
+    `gov_scope: team` in the MCP tests.
+  - **`technology` becomes packs (D29).** 19 technology namespaces on the user's machine (typescript 38 repos,
+    svelte 14, java 10, python 10, …) are bound to repositories by detected stack. Each becomes a rule pack
+    (its rules → `rule_pack_rules`) adopted at a level through `rule_pack_adoptions` — **adopted at each repository where
+    the stack is detected (D33)** — exactly today's reach; repository-rung namespaces created as needed.
+  - The library screen's levels become **dōjō · workspace · repository**; the preview shows that ladder with
+    the packs applied at each rung.
+  - Rehearsed on copies of both databases, counts and rule reach compared before/after.
+- **R7 · A dōjō has no Clients section (D34).** *Done 2026-10-22 on branch `r7-no-clients` (not merged): the
+  dōjō app, the wire (`PublishedArtifact.engagement_id`), the dōjō schema and the PRD. The release drops the
+  tables through `apply/before/dojo_clients_retired.sql` (it reconciles without `--prune`) and the enums through
+  `apply/after/retired_types.sql`; rehearsed twice on a copy of the production dōjō — in sync, every other count
+  held. The mockups still show Clients (the user's to change). Open: `lead` now unlocks nothing a maintainer
+  lacks.* Remove the Clients nav group (Engagements,
+  Incidents, Client audit), their routes, screens and data code (`engagements-data`, `incidents-data`,
+  `client-data`/`-map`/`-view`, engagement bindings). In the database: `dojo.engagements`, `dojo.incidents`, the
+  `confidentiality_ledger` view, `is_confidentiality_action`, and `audit_events.engagement_id`, pruned through dbd
+  (pre-v1: dropping data is approved). Update the PRD passages that describe engagements as a model, and the mockups.
+  The daemon's own anonymization of what it contributes is separate, and stays.
+- **R8 · The lead sees their team's per-person metrics (D38).** *Planned 2026-10-22, after R5a.* A lead reads
+  per-person metrics (`repository_metrics` by principal, sessions, AI usage) for the members of the teams they
+  lead, across every workspace the lead can access; the read policy and the lead's console view follow. Viewers
+  stay aggregate-only (D6, pinned by #313's SQL test).
+  *Built 2026-10-22 on branch `r8-lead-team-metrics`: `dojo.leads_team_member` + a lead clause in
+  `can_read_repository_metric` (teammate's user rows, only on repositories the lead can read), the SECURITY INVOKER
+  read `dojo.team_member_metrics`, `GET /v1/t/{tenant}/team-metrics` (lead floor) and the Lead → Teams view.
+  Relay sessions stay owner-only (#249); the lead reads metric aggregates (sessions = `throughput`, AI usage =
+  `tokens_per_day`), never sessions. Pinned by `database/tests/dojo/lead_team_metrics.sql`.
+  Follow-up (user, 2026-10-22): Teams for every member — an admin sees every team with its people, a contributor
+  or maintainer their teams' totals only (`dojo.team_metric_totals`, k-anonymous: at least 3 senders other than the
+  reader, D26's floor counted without the caller); rates pooled
+  by their denominator (Σ numerator / Σ denominator); departed teammates stay excluded. Pinned by
+  `database/tests/dojo/team_metric_totals.sql`.*
+  *Done 2026-10-22: merged to develop as 21a5d1a3 (D41). Walked
+  through in the browser on the local dōjō for all five roles: the lead sees per-person rows for its team, m2 and c1
+  see the team total only when 3 others contributed, the admin sees every team, a viewer gets 403. Ships in the next
+  release. Found while walking it: #329 (the first render after a magic-link account switch uses the old session).*
+- **R9 · Trackers by level (D23, D40).** *Merged to develop 2026-10-22 (branch `r9-tracker-levels`, aad7ed90): `sensei.trackers.level`
+  (`epic | sprint | task`; old rows become sprint), several boards per workspace, one credential per site, per-board
+  routes, `sensei tracker … --level/--board`, Integrations grouped by level, Sprints lanes side by side. An
+  independent review found 6 defects (secret drain race, `--board` ambiguity across sites, lookup stopping at a
+  busy board, a re-key read as gone, stale sibling errors, detail flipping between boards); each fixed red-first. Epics and
+  milestones have no reader yet; that is T3's. The live check on a real Jira board (two boards, two levels) is the
+  user's: the local daemon has no tracker connected.*
 - **R5 · A dōjō comes from a git integration (D20).** Import from GitHub, Azure DevOps or another
   provider; when an import would make many dōjōs, or the provider's groups fit workspaces better
   (Azure), land them **as workspaces in one dōjō** — an admin creates the dōjō by giving the
   org's URL, or says which imported units are dōjōs and which are workspaces. Every dōjō starts on
-  the free tier; the plan is chosen in billing. *Needs its own design pass before code.*
+  the free tier; the plan is chosen in billing. *Designed 2026-10-22: docs/spec/dojo/git-integration-import.md (D35–D37). R5a (GitHub end to end) merged to develop 2026-10-22 (8a584e51); ships in the next release. R5b (Azure) next, after R9.*
+  *R5a (GitHub) built 2026-10-22 on branch `r5a-github-import` (not merged): the adapter interface, claim through
+  `dojo.claim_forge_unit`, `dojo.forge_unit_mappings` + `map_forge_unit`, Admin → Integrations, and registration by
+  the mapping — see the spec's "R5a as built". Production's live check waits on the merge and deploy.*
 - **R4 · The words.** PRD, specs, guides, `docs/llms`, both `SKILL.md` copies, agents, the website.
   Generic English ("the project's README", a Cargo project) stays.
 

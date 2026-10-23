@@ -1,4 +1,5 @@
-// The workspace window's Integrations screen: one issue tracker per workspace.
+// The workspace window's Integrations screen: the workspace's issue-tracker
+// boards, each at a level (D40, docs/spec/tracker-levels.md).
 // Spec: docs/spec/screen/workspace-integrations.md (daemon contract: the tracker
 // spec's R3, R4, R8, R9).
 //
@@ -7,7 +8,7 @@
 // has. And the token lives only in `token`, only until its request returns: it
 // is never stored, logged, or read back.
 import type { ApiResult } from '$lib/api.js';
-import type { TrackerConnection, TrackerSyncCounts } from '$lib/types.js';
+import type { TrackerConnection, TrackerLevel, TrackerSyncCounts } from '$lib/types.js';
 import { errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
 
 export { CREATE_TOKEN_URL, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
@@ -17,11 +18,22 @@ export interface TrackerApi {
   tryConnectTracker: (
     workspaceId: string,
     kind: string,
+    level: TrackerLevel,
     body: Record<string, unknown>,
   ) => Promise<ApiResult<{ tracker: TrackerConnection; first_sync: { pending: boolean } }>>;
-  trySyncTracker: (workspaceId: string) => Promise<ApiResult<{ counts: TrackerSyncCounts }>>;
-  tryDisconnectTracker: (workspaceId: string) => Promise<ApiResult<void>>;
+  trySyncTracker: (
+    workspaceId: string,
+    trackerId: string,
+  ) => Promise<ApiResult<{ counts: TrackerSyncCounts }>>;
+  tryDisconnectTracker: (workspaceId: string, trackerId: string) => Promise<ApiResult<void>>;
 }
+
+/** The levels a board can serve, in the order the screen lists them (D40). */
+export const LEVELS: ReadonlyArray<{ level: TrackerLevel; label: string; help: string }> = [
+  { level: 'epic', label: 'Epics', help: 'A portfolio board: its epics and milestones.' },
+  { level: 'sprint', label: 'Sprints', help: 'A team board: its sprints and tickets, one lane on the Sprints screen.' },
+  { level: 'task', label: 'Tasks', help: 'A board whose tickets are linked from branches, commits and prompts only.' },
+];
 
 /** Polling interval while a first sync is pending. */
 export const POLL_MS = 2000;
@@ -51,10 +63,12 @@ export class TrackerIntegration {
   #disposed = false;
 
   view = $state<View>('loading');
-  tracker = $state<TrackerConnection | null>(null);
+  trackers = $state<TrackerConnection[]>([]);
   /** Why the read failed, in the daemon-error view. */
   loadError = $state<string | null>(null);
 
+  /** The level the new board serves: the user's choice, never defaulted. */
+  level = $state<TrackerLevel | null>(null);
   boardUrl = $state('');
   email = $state('');
   token = $state('');
@@ -63,15 +77,21 @@ export class TrackerIntegration {
   boardId = $state('');
 
   busy = $state<null | 'connect' | 'sync' | 'disconnect'>(null);
+  /** The board a sync or disconnect is running for. */
+  busyTracker = $state<string | null>(null);
   /** The live `role="status"` line. */
   statusText = $state('');
   alert = $state<TrackerAlert | null>(null);
   /** Bumped on every new alert so the view can move focus to it. */
   alertSeq = $state(0);
-  replacing = $state(false);
-  confirmingDisconnect = $state(false);
-  /** True from a connect until its first sync settles: drives the status line. */
-  #awaitingFirstSync = false;
+  /** The form is open beside existing boards, for another one. */
+  adding = $state(false);
+  /** The board whose token is being replaced. */
+  replacing = $state<string | null>(null);
+  /** The board the disconnect dialog asks about. */
+  confirmingDisconnect = $state<TrackerConnection | null>(null);
+  /** The board connected last, until its first sync settles: drives the status line. */
+  #awaitingFirstSync: string | null = null;
 
   constructor(
     api: TrackerApi,
@@ -89,25 +109,32 @@ export class TrackerIntegration {
       });
   }
 
-  /** Board URL (or Site + Board id), email and token are all given. */
+  /** The workspace's boards by level, epics first; levels without a board left out. */
+  get groups() {
+    return LEVELS.map((l) => ({ ...l, trackers: this.trackers.filter((t) => t.level === l.level) })).filter(
+      (g) => g.trackers.length > 0,
+    );
+  }
+
+  get showForm(): boolean {
+    return this.view === 'not_connected' || this.adding || this.replacing !== null;
+  }
+
+  /** Level, board URL (or Site + Board id), email and token are all given. */
   get canConnect(): boolean {
     const given = (v: string) => v.trim().length > 0;
     const board = this.advanced ? given(this.siteUrl) && given(this.boardId) : given(this.boardUrl);
-    return board && given(this.email) && given(this.token);
+    return this.level !== null && board && given(this.email) && given(this.token);
   }
 
-  get cardTitle(): string {
-    const t = this.tracker;
-    if (!t) return '';
+  cardTitle(t: TrackerConnection): string {
     const site = t.base_url.replace(/^https:\/\//, '');
     const board = t.board_name ? `board "${t.board_name}" (#${t.board_ref})` : `board #${t.board_ref}`;
     return `Jira · ${site} · project ${t.external_scope} · ${board}`;
   }
 
   /** The status as text (R9); the dot beside it is decoration. */
-  get cardStatus(): string {
-    const t = this.tracker;
-    if (!t) return '';
+  cardStatus(t: TrackerConnection): string {
     const counts = `${t.counts.sprints} sprints · ${t.counts.tasks} tickets`;
     const since = t.last_success_at ? elapsedLabel(t.last_success_at, this.#now()) : '';
     switch (t.status) {
@@ -131,11 +158,11 @@ export class TrackerIntegration {
       return;
     }
     this.loadError = null;
-    this.#show(res.data[0] ?? null);
+    this.#show(res.data);
   }
 
   async connect() {
-    if (!this.canConnect || this.busy) return;
+    if (!this.canConnect || this.busy || this.level === null) return;
     const body: Record<string, unknown> = this.advanced
       ? { base_url: this.siteUrl.trim(), board_id: this.boardId.trim() }
       : { board_url: this.boardUrl.trim() };
@@ -144,7 +171,7 @@ export class TrackerIntegration {
     this.busy = 'connect';
     this.alert = null;
     this.statusText = 'Checking credentials and board…';
-    const res = await this.#api.tryConnectTracker(this.#workspaceId, 'jira', body);
+    const res = await this.#api.tryConnectTracker(this.#workspaceId, 'jira', this.level, body);
     // The token's only job is done, whatever the answer.
     this.token = '';
     this.busy = null;
@@ -153,17 +180,21 @@ export class TrackerIntegration {
       this.#fail(res.error);
       return;
     }
-    this.replacing = false;
-    this.#awaitingFirstSync = true;
-    this.#show(res.data.tracker);
+    this.replacing = null;
+    this.adding = false;
+    this.#awaitingFirstSync = res.data.tracker.id;
+    const others = this.trackers.filter((t) => t.id !== res.data.tracker.id);
+    this.#show([...others, res.data.tracker]);
   }
 
-  async sync() {
+  async sync(trackerId: string) {
     if (this.busy) return;
     this.busy = 'sync';
+    this.busyTracker = trackerId;
     this.alert = null;
-    const res = await this.#api.trySyncTracker(this.#workspaceId);
+    const res = await this.#api.trySyncTracker(this.#workspaceId, trackerId);
     this.busy = null;
+    this.busyTracker = null;
     if (!res.ok) {
       this.#fail(res.error);
       return;
@@ -171,47 +202,58 @@ export class TrackerIntegration {
     await this.load();
   }
 
-  /** Re-open the form for a new token, the connection's own values filled. */
-  startReplace() {
-    const t = this.tracker;
-    if (!t) return;
+  /** Open an empty form for another board. */
+  startAdd() {
+    this.#clearForm();
+    this.adding = true;
+  }
+
+  cancelAdd() {
+    this.adding = false;
+    this.#clearForm();
+  }
+
+  /** Re-open the form for a new token, the board's own values filled. */
+  startReplace(t: TrackerConnection) {
+    this.#clearForm();
+    this.level = t.level;
     this.advanced = true;
     this.siteUrl = t.base_url;
     this.boardId = t.board_ref;
-    this.boardUrl = '';
     this.email = t.account;
-    this.token = '';
-    this.alert = null;
-    this.replacing = true;
+    this.adding = false;
+    this.replacing = t.id;
   }
 
   cancelReplace() {
-    this.replacing = false;
-    this.token = '';
-    this.alert = null;
+    this.replacing = null;
+    this.#clearForm();
   }
 
-  askDisconnect() {
-    this.confirmingDisconnect = true;
+  askDisconnect(t: TrackerConnection) {
+    this.confirmingDisconnect = t;
   }
 
   cancelDisconnect() {
-    this.confirmingDisconnect = false;
+    this.confirmingDisconnect = null;
   }
 
   async confirmDisconnect() {
-    this.confirmingDisconnect = false;
+    const t = this.confirmingDisconnect;
+    this.confirmingDisconnect = null;
+    if (!t) return;
     this.busy = 'disconnect';
+    this.busyTracker = t.id;
     this.alert = null;
-    const res = await this.#api.tryDisconnectTracker(this.#workspaceId);
+    const res = await this.#api.tryDisconnectTracker(this.#workspaceId, t.id);
     this.busy = null;
+    this.busyTracker = null;
     if (!res.ok) {
       this.#fail(res.error);
       return;
     }
-    this.#stopPolling();
     this.statusText = '';
-    this.#show(null);
+    await this.load();
   }
 
   /** Stop polling; the screen is closing. */
@@ -220,28 +262,36 @@ export class TrackerIntegration {
     this.#stopPolling();
   }
 
+  #clearForm() {
+    this.level = null;
+    this.boardUrl = '';
+    this.advanced = false;
+    this.siteUrl = '';
+    this.boardId = '';
+    this.token = '';
+    this.alert = null;
+  }
+
   #fail(error: { status: number; message: string; body?: Record<string, unknown> }) {
     this.alert = errorFor(error.status, error.body ?? { error: error.message });
     this.alertSeq += 1;
   }
 
-  #show(tracker: TrackerConnection | null) {
-    this.tracker = tracker;
-    this.view = tracker ? 'connected' : 'not_connected';
+  #show(trackers: TrackerConnection[]) {
+    this.trackers = trackers;
+    this.view = trackers.length > 0 ? 'connected' : 'not_connected';
     this.#stopPolling();
-    if (!tracker) return;
-    if (tracker.status === 'pending') {
-      if (this.#awaitingFirstSync) this.statusText = 'Connected · first sync running…';
-      this.#poll();
-      return;
-    }
-    if (this.#awaitingFirstSync) {
-      this.#awaitingFirstSync = false;
+    const awaited = trackers.find((t) => t.id === this.#awaitingFirstSync);
+    if (awaited?.status === 'pending') {
+      this.statusText = 'Connected · first sync running…';
+    } else if (awaited) {
+      this.#awaitingFirstSync = null;
       this.statusText =
-        tracker.status === 'error'
-          ? `Connected, but the first sync failed: ${lastErrorText(tracker.last_error)}`
-          : `Connected · ${tracker.counts.sprints} sprints · ${tracker.counts.tasks} tickets`;
+        awaited.status === 'error'
+          ? `Connected, but the first sync failed: ${lastErrorText(awaited.last_error)}`
+          : `Connected · ${awaited.counts.sprints} sprints · ${awaited.counts.tasks} tickets`;
     }
+    if (trackers.some((t) => t.status === 'pending')) this.#poll();
   }
 
   #poll() {

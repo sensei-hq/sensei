@@ -1,10 +1,10 @@
 set search_path to sensei, extensions;
 
 -- A namespace adopting a rule pack — the bind that makes a library pack actually
--- govern. `namespace_id` is WHOEVER adopts: the org namespace at org-level, a
--- workspace namespace at workspace-level, a stack namespace at stack-level (it is a
--- concrete sensei.namespaces instance — polymorphic over the scope ladder, not a
--- workspace). Once adopted, resolution (get_rules) unions the pack's rules for any
+-- govern. `namespace_id` is WHOEVER adopts: the org namespace at the dōjō level, a
+-- workspace namespace at workspace-level, a repository's own namespace at
+-- repository-level — where a detected stack's pack is adopted (#318 R6, D33). It is
+-- a concrete sensei.namespaces instance — polymorphic over the scope ladder. Once adopted, resolution (get_rules) unions the pack's rules for any
 -- repo whose namespaces include this one, so they flow through the SessionStart /
 -- PreCompact push. Adoption is atomic (the whole pack) and pins a version.
 -- Shared plane (D-LOCAL-PACKS): the daemon resolves LOCAL adoptions directly from
@@ -25,12 +25,12 @@ create index if not exists rule_pack_adoptions_ns_idx on rule_pack_adoptions(nam
 
 comment on table rule_pack_adoptions is
 'A namespace''s adoption of a rule pack — the bind that makes a library pack govern.
-namespace_id is the adopting scope instance (org id at org-level, workspace at
-workspace-level, stack at stack-level). Resolution unions an adopted pack''s rules for
+namespace_id is the adopting scope instance (org at the dōjō level, workspace at
+workspace-level, repository at repository-level — a stack pack is adopted there). Resolution unions an adopted pack''s rules for
 every repo whose namespace set includes namespace_id. Pins a pack version; a per-
 adoption enforcement override can raise (or lower) the whole pack''s tier locally.';
 comment on column rule_pack_adoptions.namespace_id
-     is 'The adopting namespace — a concrete sensei.namespaces instance, polymorphic over the scope ladder (organization / workspace / stack / …). Org-level adoption uses the org''s namespace id.';
+     is 'The adopting namespace — a concrete sensei.namespaces instance, polymorphic over the scope ladder (organization / workspace / repository). Org-level adoption uses the org''s namespace id.';
 
 -- Dōjō (Supabase) plane: read by the security_invoker view dojo.pack_adoption as service_role
 -- (server-only; service_role bypasses RLS, and the per-caller filter lives in the route).

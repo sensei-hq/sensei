@@ -88,41 +88,45 @@ describe('ScrOrgHome — jurisdiction workspaces + needs + stats', () => {
 describe('ScrOrgLadder — dōjō authors its own constitution by scope', () => {
 	afterEach(cleanup);
 
-	it('groups the sections into Company · Teams · Stacks', () => {
-		const { getByText } = render(ScrOrgLadder, { props: { orgName: 'Acme Corp', sections } });
+	it('groups the sections into Dōjō · Workspace · Repository (D25)', () => {
+		const { getByText, queryByText } = render(ScrOrgLadder, { props: { orgName: 'Acme Corp', sections } });
 		expect(getByText('Constitution')).toBeTruthy();
-		expect(getByText('Company')).toBeTruthy();
-		expect(getByText('Teams')).toBeTruthy();
-		expect(getByText('Stacks')).toBeTruthy();
+		expect(getByText('Dōjō')).toBeTruthy();
+		expect(getByText('Workspace')).toBeTruthy();
+		expect(getByText('Repository')).toBeTruthy();
+		// the retired rungs are gone (teams are reporting only; a stack is a pack).
+		expect(queryByText('Teams')).toBeNull();
+		expect(queryByText('Stacks')).toBeNull();
 		// the section rail shows a scope by name.
-		expect(getByText('Company-wide')).toBeTruthy();
-		expect(getByText('Payments')).toBeTruthy();
+		expect(getByText('Dōjō-wide')).toBeTruthy();
+		expect(getByText('payments')).toBeTruthy();
 	});
 
-	it('shows the active (company) section rules by default', () => {
+	it('shows the active (dōjō) section rules by default', () => {
 		const { getByText } = render(ScrOrgLadder, { props: { orgName: 'Acme Corp', sections } });
-		expect(getByText('Company-wide · rules')).toBeTruthy();
+		expect(getByText('Dōjō-wide · rules')).toBeTruthy();
 		expect(getByText('No secrets in source — vault only, never .env in git')).toBeTruthy();
 	});
 
-	it('switching sections shows that section rules (and its packs for a stack)', async () => {
+	it('switching sections shows that section rules and the packs applied there', async () => {
 		const { getByText, queryByText } = render(ScrOrgLadder, {
 			props: { orgName: 'Acme Corp', sections }
 		});
-		await fireEvent.click(getByText('React · TypeScript'));
-		expect(getByText('React · TypeScript · rules')).toBeTruthy();
-		// the stack section adopts a rule pack.
-		expect(getByText('Rule packs for this stack')).toBeTruthy();
-		expect(getByText('React · TypeScript baseline')).toBeTruthy();
-		// a company rule is no longer shown.
+		await fireEvent.click(getByText('acme/web'));
+		expect(getByText('acme/web · rules')).toBeTruthy();
+		// the stack packs sit on the repository where the stack is detected (D33).
+		expect(getByText('Rule packs applied here')).toBeTruthy();
+		expect(getByText('TypeScript')).toBeTruthy();
+		expect(getByText('Svelte')).toBeTruthy();
+		// a dōjō rule is no longer shown.
 		expect(queryByText('Never log tokens or PII, even at debug level')).toBeNull();
 	});
 
-	it('shows the honest no-pack line for a stack with no pack adopted', async () => {
+	it('shows the honest no-pack line for a scope with no pack adopted', async () => {
 		const { getByText } = render(ScrOrgLadder, { props: { orgName: 'Acme Corp', sections } });
-		await fireEvent.click(getByText('Postgres'));
+		await fireEvent.click(getByText('acme/ledger'));
 		expect(
-			getByText('No pack adopted — this stack runs on its own rules and the company baseline.')
+			getByText('No pack adopted — this scope runs on its own rules and the dōjō baseline.')
 		).toBeTruthy();
 	});
 
@@ -130,7 +134,7 @@ describe('ScrOrgLadder — dōjō authors its own constitution by scope', () => 
 		const { getByText, getAllByLabelText, queryByText } = render(ScrOrgLadder, {
 			props: { orgName: 'Acme Corp', sections }
 		});
-		// four company rules, all included → four "Exclude rule" toggles.
+		// four dōjō rules, all included → four "Exclude rule" toggles.
 		const toggles = getAllByLabelText('Exclude rule');
 		expect(toggles.length).toBe(4);
 		await fireEvent.click(toggles[0]);
@@ -195,7 +199,7 @@ describe('RuleEditor — compose a rule', () => {
 	it('seeds edit mode from the passed rule', () => {
 		const rule = { kanji: '守', text: 'Never log tokens', hard: true };
 		const { getByText, getByDisplayValue } = render(RuleEditor, {
-			props: { rule, scope: 'Company-wide', scopeName: 'Acme Corp' }
+			props: { rule, scope: 'Dōjō-wide', scopeName: 'Acme Corp' }
 		});
 		expect(getByText('Edit rule')).toBeTruthy();
 		expect(getByDisplayValue('Never log tokens')).toBeTruthy();

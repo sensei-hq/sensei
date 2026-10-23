@@ -16,7 +16,27 @@ env:
 
 jobs:
   # ── Daemon binaries (4 platforms) ──────────────────────────────────────────
+  # A release ships only from main (wave 0b, user 2026-10-22): the tagged commit
+  # must be on main, or nothing below runs — no build, release, tap, database
+  # or Worker deploy. `make bump` refuses off main too; this is the server-side
+  # half, so a tag pushed by hand onto develop publishes nothing.
+  on-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: The tag is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main — a release is cut from main."
+            exit 1
+          fi
+
   build-daemon:
+    needs: on-main
     strategy:
       # NOT fail-fast. `release` needs every leg of this matrix, so a single
       # broken target blocks the release either way — but with fail-fast the
@@ -115,6 +135,7 @@ jobs:
 
   # ── Desktop app (macOS universal) ──────────────────────────────────────────
   build-app:
+    needs: on-main
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -463,3 +484,47 @@ jobs:
         # reporting success. The diff then still shows the change and this fails.
         working-directory: database
         run: dbd diff --scope dojo --exit-code
+
+  # The dōjō Worker deploys from the tag, AFTER its database (wave 0b, user
+  # 2026-10-22). It used to deploy through Cloudflare's git integration on every
+  # push to main, ahead of the `deploy-dojo` approval, so new code could run on
+  # the old schema. The build is the same as Cloudflare's builder: WORKERS_CI
+  # selects the Cloudflare adapter, every PUBLIC_* value is read at runtime
+  # ($env/dynamic), and `keep_vars` keeps the Worker's stored variables. Done
+  # when the live /version reports this tag's commit.
+  deploy-worker:
+    needs: deploy-dojo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Build the Worker
+        working-directory: dojo
+        env:
+          WORKERS_CI: "1"
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      - name: Deploy
+        working-directory: dojo
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID are not set — the dōjō Worker cannot deploy."
+            exit 1
+          fi
+          bunx wrangler deploy
+      - name: The live dōjō serves this tag
+        run: |
+          want=$(git rev-parse --short HEAD)
+          for _ in $(seq 1 30); do
+            got=$(curl -fsS https://dojo.sensei-hq.com/version | sed -n 's/.*"gitSha":"\([^"]*\)".*/\1/p')
+            [ "$got" = "$want" ] && { echo "dojo.sensei-hq.com serves $got"; exit 0; }
+            sleep 10
+          done
+          echo "::error::dojo.sensei-hq.com serves '${got:-nothing}', not $want"
+          exit 1

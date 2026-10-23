@@ -25,8 +25,8 @@ would ship a regression stops and says why.*
   never written ([roadmap/09 D2–D3](../../../../roadmap/09-dojo-expansion.md#decisions-user-2026-10-21)).
 - **Signals:** deployments from **GitHub Actions** and **Azure Pipelines** through the
   workspace's integrations, with **git tags** as the fallback (D4).
-- **Incidents:** a **production incident** is its own entity, separate from the
-  confidentiality incidents T2's lead console records (`dojo.incidents`).
+- **Incidents:** a **production incident** is its own entity. (The confidentiality
+  incidents T2's lead console once recorded in `dojo.incidents` are gone, D34.)
 - **Sync:** sensei ⇄ dōjō is two-way — release and gate state appear in sensei; the
   dōjō is the authority.
 

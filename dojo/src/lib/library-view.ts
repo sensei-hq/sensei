@@ -61,9 +61,10 @@ export function findRule(ruleId: string): LibRule | undefined {
 }
 
 /** The default level a pack applies at (its `defLevel`), used when the selection
- *  has no explicit override for it. */
+ *  has no explicit override for it; a pack not in the catalog defaults to the
+ *  dōjō, the broadest level. */
 export function defaultLevel(packId: string): LibLevelId {
-	return ALL_PACKS.find((p) => p.id === packId)?.defLevel ?? 'org';
+	return ALL_PACKS.find((p) => p.id === packId)?.defLevel ?? 'dojo';
 }
 
 // ── per-rule / per-pack resolution ───────────────────────────────────────────
@@ -133,7 +134,7 @@ export function isPackFullyChosen(sel: LibrarySelection, pack: LibPack): boolean
 
 // ── level metadata (for the pills) ───────────────────────────────────────────
 
-/** The human label for a level id (`org` → "Org"), falling back to the id. */
+/** The human label for a level id (`dojo` → "Dōjō"), falling back to the id. */
 export function levelLabel(level: LibLevelId): string {
 	return LIB_LEVELS.find((l) => l.id === level)?.label ?? level;
 }

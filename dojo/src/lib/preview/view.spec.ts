@@ -45,25 +45,49 @@ describe('previewRungs — the ladder for a workspace', () => {
 
 	it('renders EVERY scope the daemon composed — never drops one the old scaffold omitted', () => {
 		// The regression: the daemon federates rules at governance scopes the mockup
-		// scaffold never listed (general · organization · team). previewRungs must
+		// scaffold never listed (general · organization). previewRungs must
 		// render them all, or a real 30-rule constitution shows as one rule.
 		const composed: KitLadderRung[] = [
 			{ id: 'general', kanji: '全', scope: 'General', name: 'General', caption: '', rules: [
 				{ kanji: '守', text: 'g1', hard: true }, { kanji: '守', text: 'g2', hard: false }] },
-			{ id: 'organization', kanji: '社', scope: 'Company', name: 'Acme', caption: '', rules: [
+			{ id: 'organization', kanji: '社', scope: 'Dōjō', name: 'Acme', caption: '', rules: [
 				{ kanji: '守', text: 'o1', hard: false }] },
 			{ id: 'workspace', kanji: '件', scope: 'Workspace', name: 'x', caption: '', rules: [
 				{ kanji: '守', text: 'p1', hard: false }] }
 		];
 		const ids = previewRungs(personal, composed).map((r) => r.id);
-		expect(ids).toEqual(['general', 'organization', 'workspace']);
+		// …ending at the synthesized repository anchor (none was composed).
+		expect(ids).toEqual(['general', 'organization', 'workspace', 'repository']);
 	});
 
-	it('synthesizes an empty workspace anchor when the daemon composed no workspace rung', () => {
-		// the kit fixture ladder is company / client / personal / stack — no workspace.
+	it('is the dōjō → workspace → repository ladder, with no retired rung (D25 · D29 · D32)', () => {
+		const ids = previewRungs(company, ladder).map((r) => r.id);
+		expect(ids).toEqual(['organization', 'workspace', 'repository']);
+		for (const retired of ['team', 'client', 'technology', 'stack', 'company']) {
+			expect(ids).not.toContain(retired);
+		}
+	});
+
+	it('carries the packs applied at each rung — the stack packs sit on the repository (D33)', () => {
+		const rungs = previewRungs(company, ladder);
+		expect(rungs.find((r) => r.id === 'repository')?.packs).toEqual(['TypeScript', 'Svelte']);
+		expect(rungs.find((r) => r.id === 'organization')?.packs).toEqual(['OWASP baseline']);
+		expect(rungs.find((r) => r.id === 'workspace')?.packs).toBeUndefined();
+	});
+
+	it('synthesizes an empty repository anchor when the daemon composed no repository rung', () => {
+		const rungs = previewRungs(client, ladder.filter((r) => r.id !== 'repository'));
+		expect(rungs.map((r) => r.id)).toEqual(['organization', 'workspace', 'repository']);
+		const anchor = rungs.at(-1)!;
+		expect(anchor.scope).toBe('Repository');
+		expect(anchor.name).toBe('globex/portal'); // this repository
+		expect(anchor.rules).toEqual([]); // the anchor is honest-empty
+		expect(anchor.packs).toBeUndefined(); // and adopts no fabricated pack
+	});
+
+	it('reuses a composed repository rung — never duplicated by the anchor', () => {
 		const rungs = previewRungs(client, ladder);
-		expect(rungs.map((r) => r.id)).toEqual(['company', 'client', 'personal', 'stack', 'workspace']);
-		expect(rungs.at(-1)?.rules).toEqual([]); // the anchor is honest-empty
+		expect(rungs.filter((r) => r.id === 'repository').length).toBe(1);
 	});
 });
 
@@ -120,8 +144,8 @@ describe('effectiveRules — the consolidated constitution', () => {
 describe('lockCount — the non-negotiable (★) rules across the ladder', () => {
 	it('counts the hard rules across every composed rung', () => {
 		const rungs = previewRungs(company, ladder);
-		// The fixture ladder carries 4 hard rules: company (3) + client (1);
-		// personal / stack / the synth workspace anchor add none.
+		// The fixture ladder carries 4 hard rules: dōjō (3) + workspace (1);
+		// the repository rung adds none.
 		expect(lockCount(rungs)).toBe(4);
 	});
 

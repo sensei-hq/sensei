@@ -397,8 +397,8 @@ pub(crate) struct MemoryBody {
     // ── Governance plane (optional) ──────────────────────────────────────
     /// Explicit namespace this rule applies to (wins over gov_scope/folder).
     pub namespace_id: Option<String>,
-    /// Governance scope key (general/user/organization/client/technology/team/
-    /// workspace/repository); resolved against `folder`'s namespace memberships.
+    /// Governance scope key (general/user/organization/workspace/repository);
+    /// resolved against `folder`'s namespace memberships.
     pub gov_scope: Option<String>,
     /// Repo abs_path used to resolve `gov_scope` to a namespace.
     pub folder: Option<String>,

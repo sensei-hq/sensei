@@ -13,24 +13,7 @@ import {
 	fetchGithubRepoPermissions,
 	permissionOf
 } from './forge-github';
-
-/** A fetch stub that answers by URL substring and records the calls. */
-function fakeFetch(routes: Record<string, { status?: number; body: unknown }>) {
-	const calls: { url: string; init?: RequestInit }[] = [];
-	const fn = (async (url: string | URL | Request, init?: RequestInit) => {
-		const u = String(url);
-		calls.push({ url: u, init });
-		const key = Object.keys(routes).find((k) => u.includes(k));
-		const route = key ? routes[key] : undefined;
-		const status = route?.status ?? (route ? 200 : 404);
-		return {
-			ok: status >= 200 && status < 300,
-			status,
-			json: async () => route?.body ?? null
-		} as Response;
-	}) as unknown as typeof fetch;
-	return { fn, calls };
-}
+import { fakeFetch } from './fake-forge-fetch';
 
 const USER_OK = { id: 4242, login: 'devuser', name: 'Dev User', email: 'j@example.com' };
 

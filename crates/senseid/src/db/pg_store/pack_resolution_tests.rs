@@ -305,3 +305,110 @@ async fn resolve_local_checker_rules_returns_only_checker_backed_rules() {
         .await
         .unwrap();
 }
+
+/// **A STACK IS A PACK APPLIED AT THE REPOSITORY** (#318 R6, D29/D33). The scan
+/// adopts a detected stack's `stack:<slug>` pack at the repository's own
+/// namespace, made on first use; the pack's rules then resolve for every folder
+/// of that repository at the `repository` rung — the reach the retired
+/// `technology` binding had. Adopting twice changes nothing.
+///
+/// Mutations that must break this: slug the repository namespace by name;
+/// adopt at a namespace the folder does not reach; tag the rule with the
+/// pack's area instead of the rung it was adopted at.
+#[tokio::test]
+async fn a_stack_pack_adopted_at_a_repository_governs_its_folders() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+    let pool = pg.pool();
+    let uniq = uuid::Uuid::new_v4().simple().to_string();
+    let suffix = format!("r6-stack-{}", &uniq[..8]);
+    let fid = super::tests::create_test_folder(&pg, &suffix).await;
+    let rid = pg
+        .repository_id_for_folder(&fid)
+        .await
+        .unwrap()
+        .expect("the test folder carries a repository");
+    let stack = format!("r6zig{}", &uniq[..8]);
+
+    let pack = pg.adopt_stack_pack(&rid, &stack, "Zig").await.unwrap();
+    assert_eq!(pg.adopt_stack_pack(&rid, &stack, "Zig").await.unwrap(), pack, "one pack per stack");
+    sqlx_core::query::query(
+        "INSERT INTO sensei.rule_pack_rules (pack_id, ordinal, statement, body, enforcement)
+         VALUES ($1, 0, 'R6 zig rule', 'R6: no hidden allocations', 'required')",
+    )
+    .bind(pack)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let raws = pg.resolve_local_pack_raws(Some(&fid)).await.unwrap();
+    let mine: Vec<_> = raws.iter().filter(|r| r.title == "R6 zig rule").collect();
+    assert_eq!(mine.len(), 1, "the stack pack's rule reaches the repository's folder once");
+    assert_eq!(mine[0].scope, "repository", "at the rung it was adopted at");
+    assert_eq!(mine[0].enforcement, "required");
+
+    let repo_slug = format!("test/{suffix}");
+    assert!(
+        pg.folder_namespace_pairs(&fid)
+            .await
+            .unwrap()
+            .contains(&("repository".to_string(), repo_slug.clone())),
+        "the repository's own namespace is slugged by its repo_key and bound to it"
+    );
+    let ns = pg.namespace_for_folder_scope(&fid, "repository").await.unwrap();
+    assert!(ns.is_some(), "the repository rung resolves for the folder");
+
+    sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE id = $1")
+        .bind(pack)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx_core::query::query(
+        "DELETE FROM sensei.namespaces WHERE scope_key = 'repository' AND slug = $1",
+    )
+    .bind(&repo_slug)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// **THE REPOSITORY RUNG IS MADE ON FIRST USE** (#318 R6, D33). A rule or a
+/// stance asked for at `repository` scope lands on the repository's own
+/// namespace even before any stack made it — its identity is the repository's,
+/// so there is nothing to declare first. A folder with no repository has no
+/// repository rung: `None`, never an invented namespace.
+#[tokio::test]
+async fn the_repository_rung_resolves_on_first_use() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+    let uniq = uuid::Uuid::new_v4().simple().to_string();
+    let suffix = format!("r6-first-{}", &uniq[..8]);
+    let fid = super::tests::create_test_folder(&pg, &suffix).await;
+
+    let first = pg.namespace_for_folder_scope(&fid, "repository").await.unwrap();
+    assert!(first.is_some(), "the repository rung resolves without a prior stack");
+    assert_eq!(
+        pg.namespace_for_folder_scope(&fid, "repository").await.unwrap(),
+        first,
+        "the same namespace every time"
+    );
+
+    let loose =
+        super::tests::create_test_folder_unattributed(&pg, &format!("r6-loose-{}", &uniq[..8]))
+            .await;
+    assert_eq!(
+        pg.namespace_for_folder_scope(&loose, "repository").await.unwrap(),
+        None,
+        "no repository, no repository rung"
+    );
+
+    sqlx_core::query::query(
+        "DELETE FROM sensei.namespaces WHERE scope_key = 'repository' AND slug = $1",
+    )
+    .bind(format!("test/{suffix}"))
+    .execute(pg.pool())
+    .await
+    .unwrap();
+}

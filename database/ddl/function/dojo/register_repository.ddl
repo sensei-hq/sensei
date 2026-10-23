@@ -17,6 +17,16 @@ set search_path to dojo, extensions;
 -- hosts); this refuses a key whose path does not carry that org, so a direct
 -- call cannot file someone else's repository under the caller's tenant.
 -- Idempotent: a second registration returns the existing row.
+--
+-- THE UNIT'S MAPPING DECIDES FIRST (#308 R5a). When an admin has mapped the
+-- org (dojo.forge_unit_mappings), its repositories file into the mapped dōjō —
+-- and, mapped as a workspace, into that workspace — for members of that dōjō,
+-- and into no other dōjō (not_a_member for anyone outside it). An org with no
+-- mapping files by its connection, as provisioning made it.
+--
+-- The returned workspace_id is the mapping's: the caller does not re-file a
+-- repository its unit's mapping already placed.
+drop function if exists dojo.register_repository(text, dojo.forge_provider, text, text, text);
 create or replace function dojo.register_repository(
     p_repo_key   text,
     p_provider   dojo.forge_provider,
@@ -24,7 +34,7 @@ create or replace function dojo.register_repository(
     p_name       text,
     p_remote_url text
 )
-    returns table (tenant_id uuid, tenant_key text, repository_id uuid, reason text)
+    returns table (tenant_id uuid, tenant_key text, repository_id uuid, reason text, workspace_id uuid)
     language plpgsql
     volatile
     security definer
@@ -36,6 +46,9 @@ declare
     v_hits uuid[];
     v_mine uuid[];
     v_id   uuid;
+    v_map_tenants uuid[];
+    v_map_ws      uuid;
+    v_target      uuid;
 begin
     if v_key = '' or v_org = ''
        or not (v_org = any (string_to_array(v_key, '/'))
@@ -44,34 +57,62 @@ begin
             using errcode = 'invalid_parameter_value';
     end if;
 
-    select array_agg(distinct c.tenant_id) into v_hits
-      from dojo.tenant_connections c
-     where c.provider = p_provider
-       and lower(c.external_slug) = v_org;
-    if v_hits is null then
-        return query select null::uuid, null::text, null::uuid, 'no_connection'::text;
-        return;
-    end if;
+    select array_agg(m.tenant_id), (array_agg(m.workspace_id))[1] into v_map_tenants, v_map_ws
+      from dojo.forge_unit_mappings m
+     where m.provider = p_provider
+       and lower(m.external_slug) = v_org;
 
-    select array_agg(h) into v_mine from unnest(v_hits) h where dojo.is_member(h);
-    if v_mine is null then
-        return query select null::uuid, null::text, null::uuid, 'not_a_member'::text;
-        return;
-    end if;
-    if cardinality(v_mine) > 1 then
-        return query select null::uuid, null::text, null::uuid, 'ambiguous'::text;
-        return;
+    if v_map_tenants is not null then
+        -- Two units have held the same name (renamed upstream, name re-taken):
+        -- which one this remote means is unknowable.
+        if cardinality(v_map_tenants) > 1 then
+            return query select null::uuid, null::text, null::uuid, 'ambiguous'::text, null::uuid;
+            return;
+        end if;
+        if not dojo.is_member(v_map_tenants[1]) then
+            return query select null::uuid, null::text, null::uuid, 'not_a_member'::text, null::uuid;
+            return;
+        end if;
+        v_target := v_map_tenants[1];
+    else
+        select array_agg(distinct c.tenant_id) into v_hits
+          from dojo.tenant_connections c
+         where c.provider = p_provider
+           and lower(c.external_slug) = v_org;
+        if v_hits is null then
+            return query select null::uuid, null::text, null::uuid, 'no_connection'::text, null::uuid;
+            return;
+        end if;
+
+        select array_agg(h) into v_mine from unnest(v_hits) h where dojo.is_member(h);
+        if v_mine is null then
+            return query select null::uuid, null::text, null::uuid, 'not_a_member'::text, null::uuid;
+            return;
+        end if;
+        if cardinality(v_mine) > 1 then
+            return query select null::uuid, null::text, null::uuid, 'ambiguous'::text, null::uuid;
+            return;
+        end if;
+        v_target := v_mine[1];
+        v_map_ws := null;
     end if;
 
     insert into dojo.repositories as r (tenant_id, repo_key, name, remote_url, provider)
-    values (v_mine[1], v_key, p_name, p_remote_url, p_provider)
+    values (v_target, v_key, p_name, p_remote_url, p_provider)
     on conflict on constraint repositories_tenant_id_repo_key_key do nothing
     returning r.id into v_id;
     if v_id is null then
-        select r.id into v_id from dojo.repositories r where r.tenant_id = v_mine[1] and r.repo_key = v_key;
+        select r.id into v_id from dojo.repositories r where r.tenant_id = v_target and r.repo_key = v_key;
     end if;
 
-    return query select v_mine[1], t.key, v_id, null::text from dojo.tenants t where t.id = v_mine[1];
+    if v_map_ws is not null then
+        insert into dojo.repositories_in_workspaces as riw (workspace_id, repository_id, tenant_id)
+        values (v_map_ws, v_id, v_target)
+        on conflict on constraint repositories_in_workspaces_repository_id_tenant_id_key
+            do update set workspace_id = excluded.workspace_id;
+    end if;
+
+    return query select v_target, t.key, v_id, null::text, v_map_ws from dojo.tenants t where t.id = v_target;
 end;
 $$;
 
@@ -79,7 +120,8 @@ revoke all on function dojo.register_repository(text, dojo.forge_provider, text,
 grant execute on function dojo.register_repository(text, dojo.forge_provider, text, text, text) to authenticated;
 
 comment on function dojo.register_repository(text, dojo.forge_provider, text, text, text) is
-'Register one repository under the ONE tenant of the caller''s its forge org is
-connected to, or say why not (no_connection | not_a_member | ambiguous). Reads
-every tenant''s connections; returns only a reason, never another tenant''s id.
-Refuses a key whose path does not carry the org (#236).';
+'Register one repository under the dōjō its forge unit is mapped to (and into the
+mapped workspace), or — with no mapping — the ONE tenant of the caller''s its org
+is connected to; or say why not (no_connection | not_a_member | ambiguous). Reads
+every tenant''s connections and mappings; returns only a reason, never another
+tenant''s id. Refuses a key whose path does not carry the org (#236, #308 R5a).';

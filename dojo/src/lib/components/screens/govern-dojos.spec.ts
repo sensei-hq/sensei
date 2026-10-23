@@ -7,6 +7,7 @@ import ScrContributions from './ScrContributions.svelte';
 import {
 	stance,
 	ladder,
+	personalLadder,
 	rulePacks,
 	dojos,
 	contributionsMine,
@@ -24,21 +25,23 @@ describe('ScrConstitution — stance dials + personal ladder', () => {
 	afterEach(cleanup);
 
 	it('renders a stance dial per axis and the personal-constitution rungs', () => {
-		const { getByText, getAllByText } = render(ScrConstitution, { props: { stance, ladder } });
+		const { getByText, getAllByText } = render(ScrConstitution, { props: { stance, ladder: personalLadder } });
 		expect(getByText('Your constitution')).toBeTruthy();
 		// one dial per stance axis (autonomy · sharing · review).
 		expect(getByText('autonomy')).toBeTruthy();
 		expect(getByText('sharing')).toBeTruthy();
 		expect(getByText('review')).toBeTruthy();
-		// the effective (personal + stack) rungs render — not the org-scoped ones.
+		// your personal rung renders — the rules that stay yours, in sensei (D25).
 		expect(getAllByText('Personal').length).toBeGreaterThan(0);
-		expect(getAllByText('Stack').length).toBeGreaterThan(0);
 	});
 
-	it('omits the org-scoped rungs (company · client)', () => {
-		const { queryByText } = render(ScrConstitution, { props: { stance, ladder } });
-		expect(queryByText('Company')).toBeNull();
-		expect(queryByText('Client')).toBeNull();
+	it('omits the dōjō ladder rungs (dōjō · workspace · repository) from a full composed ladder', () => {
+		const { queryByText, getAllByText } = render(ScrConstitution, {
+			props: { stance, ladder: [...personalLadder, ...ladder] }
+		});
+		expect(getAllByText('Personal').length).toBeGreaterThan(0);
+		expect(queryByText('Dōjō')).toBeNull();
+		expect(queryByText('Repository')).toBeNull();
 	});
 
 	it('fires onStance when a dial dot is picked', async () => {

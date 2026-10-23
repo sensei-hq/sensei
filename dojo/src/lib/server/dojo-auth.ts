@@ -8,6 +8,7 @@
 // (#236 step 4). SSO identity-mapping is a follow-up.
 
 import { dojoDb, roleToAccess, accessLabel, ACCESS, type AccessLevel } from './dojo-supabase';
+import { githubIdentityId } from './github-identity';
 import { resolvePrincipalId } from './principal-resolve';
 import { AdminError } from './admin-data';
 
@@ -29,6 +30,9 @@ export type Caller = {
 	/** The verified Supabase JWT — what `userDb` reads with, so RLS rather than
 	 *  route code limits the rows (#236 step 3). */
 	accessToken?: string;
+	/** The Supabase login id behind the session — what a sealed forge token is
+	 *  bound to (#308 R5a). */
+	authUserId?: string;
 };
 
 /** Resolve the `{origin}/{org}` tenant id, or throw 404/500. */
@@ -88,6 +92,8 @@ export async function resolveCaller(
 	authUserId: string;
 	email: string | null;
 	accessToken: string;
+	/** The GitHub account linked to this login, or null (github-identity.ts). */
+	githubId: string | null;
 }> {
 	const token = tokenFrom(request, locals);
 	if (!token) throw apiError(401, 'unauthenticated');
@@ -112,7 +118,13 @@ export async function resolveCaller(
 
 	// No database client: a caller is an identity. A session reads as itself
 	// through callerDb; system work names dojoDb() (#236).
-	return { userId, authUserId, email: userData.user.email ?? null, accessToken: token };
+	return {
+		userId,
+		authUserId,
+		email: userData.user.email ?? null,
+		accessToken: token,
+		githubId: githubIdentityId(userData.user)
+	};
 }
 
 /** A best-effort human name off the Supabase user, for a principal created on
@@ -140,7 +152,7 @@ export async function resolveTenantAccess(
 	floor: AccessLevel
 ): Promise<Caller> {
 	// Same JWT-plane identity step as a user-wide caller, then tenant + role.
-	const { userId, accessToken } = await resolveCaller(request, locals);
+	const { userId, authUserId, accessToken } = await resolveCaller(request, locals);
 	// Resolving the caller's tenant and role is auth itself — system work.
 	const db = dojoDb();
 
@@ -170,7 +182,8 @@ export async function resolveTenantAccess(
 		role: mem.role,
 		access,
 		membershipId: mem.id as string,
-		accessToken
+		accessToken,
+		authUserId
 	};
 }
 

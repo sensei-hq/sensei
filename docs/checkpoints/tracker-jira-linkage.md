@@ -36,7 +36,7 @@ self-managed hosts).
 
 ## Desktop app connect screen (user, 2026-10-16)
 
-Project window section 繋 Integrations: `docs/spec/screen/project-integrations.md`
+Project window section 繋 Integrations: `docs/spec/screen/workspace-integrations.md`
 (plan F6). Form: Board URL, Atlassian account email (required: Jira Cloud tokens are
 `email:token`), API token. The project key is derived from the board. Reviewed for UX
 (a11y, dialog, recovery actions) and conformance (every daemon code mapped;
@@ -139,6 +139,11 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   (cycle time = last end − first start). Tickets screen: Cycle column and a Time line
   on the detail; CLI `usage` gains claude / you / session time / cycle time. The new
   columns carry inline comments only until the deploy-ordering bug is fixed (backlog).
+- **Merged develop's R9 (D40, several boards by level) 2026-10-23:** the backlog moved per
+  board (`GET …/trackers/{tracker}/backlog`, `…/tasks?backlog=true`; CLI `--board`). The
+  Tickets screen keeps tickets first inside D40's lanes: one lane per sprint board, side by
+  side, each with its own sprint filter, Backlog, AI-only switch and Cycle column (user's
+  choice). Develop's Sprints screen and `workspace-sprints.md` are superseded by Tickets.
 - **Next:** F5 live verification once Claude Code transcript consent is on.
 
 ## Gate for `/sensei:build`

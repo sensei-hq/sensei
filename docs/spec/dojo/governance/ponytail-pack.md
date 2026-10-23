@@ -27,7 +27,7 @@ reference one via `rule_pack_rules.skill_ref`. The two compose without a new pac
 ## Adoption
 
 A pack governs nothing until a namespace adopts it (`dojo.rule_pack_adoptions`). Adopt at a
-personal/project/org/stack namespace to have these principles resolve into `get_rules` and
+user, dōjō (`organization`), workspace or repository namespace to have these principles resolve into `get_rules` and
 the SessionStart / PreCompact push. The pack default is `recommended`; an adoption may raise
 the tier (never-weaken) for a namespace that wants it enforced harder.
 

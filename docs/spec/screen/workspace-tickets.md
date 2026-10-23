@@ -9,12 +9,30 @@
 - `tickets-state.svelte.ts` (state, words, actions) and `TicketsScreen.svelte` (template)
 - the sidebar entry `{ id: 'tickets', kanji: '札', label: 'Tickets' }` in
   `workspace-sidebar-view.ts` `SECTIONS`, after `impact` and before `integrations`
-- `app/src/lib/api.ts` wrappers: `tryListSprints`, `tryListTrackerTasks`,
-  `tryGetTrackerTask`, `tryListUnlinkedSessions`
+- `app/src/lib/api.ts` wrappers: `tryListTrackers`, `tryListSprints`, `tryListTrackerTasks`,
+  `tryGetBacklog`, `tryListBacklogTasks`, `tryGetTrackerTask`, `tryListUnlinkedSessions`
 
 **Daemon contract:** [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md)
-R7 (usage), R8 (`GET …/sprints`, `…/tracker-tasks[?sprint=]`, `…/tracker-tasks/{key}`,
-`…/sessions/unlinked?sprint=`). No new daemon route.
+R7 (usage), R8 (per board: `GET …/trackers/{tracker}/sprints`, `…/tasks[?sprint=|?backlog=true]`,
+`…/backlog`, `…/sessions/unlinked?sprint=`; workspace-wide: `…/tracker-tasks/{key}`).
+
+## Lanes side by side (D40, 2026-10-22; tickets first, merged 2026-10-23)
+
+This section overrides the single-board text below (spec `docs/spec/tracker-levels.md`, Q3).
+
+- The screen reads `GET …/trackers` and shows **one lane per `level = sprint` board**, side by side
+  (`section[data-lane=<tracker id>]`, labelled "<board> tickets"), in the order the daemon lists them.
+  Epic and task boards have no lane.
+- Each lane is the tickets-first list below — its own sprint filter (All tickets / that board's
+  sprints / that board's Backlog), AI-only switch, count line, usage strip and ticket table — read
+  from that board's routes.
+- With one lane the header title is the board's name and the lane has no heading; with several, the
+  header says "Tickets" and each lane is headed by its board.
+- A ticket opens over the lanes; **Back** names where it returns: "Back to Sprint 13", or with several
+  lanes "Back to Mobile Scrum · Sprint 13".
+- **No sprint board** (none, or only epic/task boards) is the not-connected state: "This workspace has
+  no sprint board connected." with the link to Integrations. **Any lane's read failing** (its sprints
+  or its backlog) is the daemon-error state; a lane is never silently missing.
 
 ## Purpose
 

@@ -1,4 +1,4 @@
-// GET /v1/t/{origin}/{org}/rules/resolved?ns=organization:acme,technology:react
+// GET /v1/t/{origin}/{org}/rules/resolved?ns=organization:acme,repository:github.com/acme/web
 //
 // The full-resolve leg for rule packs (Option A). The daemon can't query the
 // Dōjō DB (Fork 1), so at get_rules time it asks the Worker for the rules of

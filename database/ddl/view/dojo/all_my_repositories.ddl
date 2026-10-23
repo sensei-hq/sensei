@@ -252,8 +252,8 @@ axes as (
              --     `openOrRefreshSeat` never refuses at a cap. Entitlement is
              --     already answered above by the subscription terms.
              --   * `dojo.seats.namespace_id` points at `sensei.namespaces`, which
-             --     is the GOVERNANCE LADDER (general·user·organization·client·
-             --     technology·team·workspace·repository) — the structure that
+             --     is the GOVERNANCE LADDER (general·user·organization·workspace·
+             --     repository) — the structure that
              --     decides WHICH RULES APPLY to a repo. Three of its four
              --     referents are rule packs, adoptions and shared rules; seats is
              --     the odd one out, billing against a rule scope.
@@ -300,8 +300,7 @@ axes as (
          --
          -- ADMIN ONLY on org-private, not lead: what would be changed is the
          -- organisation's POLICY, and `dojo.member_role` assigns policy, identity
-         -- and provisioning to `admin` — a lead guards confidentiality on client
-         -- engagements. Every seeded remedy for an org-authority refusal reads "ask
+         -- and provisioning to `admin`, not to a lead. Every seeded remedy for an org-authority refusal reads "ask
          -- an admin"; letting a lead flip it would make that copy a lie.
          , case when mr.forge_visibility is null                          then false
                 when mr.origin = 'personal'

@@ -419,10 +419,6 @@ pub struct PublishedArtifact {
     /// Discovery-path key of the destination tenant Dōjō
     /// (`"<origin>/<org>[/<dojo>]"`).
     pub tenant_key: String,
-    /// Set when the artifact came from client work under an engagement (such
-    /// artifacts must be `dereferenced`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engagement_id: Option<String>,
     pub kind: ArtifactKind,
     pub title: String,
     pub body: String,
@@ -535,7 +531,6 @@ mod tests {
         PublishedArtifact {
             signature: artifact_signature(kind, &title, &body, None, &payload),
             tenant_key: "github/sensei-hq".into(),
-            engagement_id: None,
             kind,
             title,
             body,
@@ -635,6 +630,19 @@ mod tests {
             let back: PublishedArtifact = serde_json::from_str(&json).unwrap();
             assert_eq!(back, artifact, "envelope round-trip mismatch for {kind:?}");
         }
+    }
+
+    /// A dōjō has no engagements (D34): the snapshot carries none, and one an
+    /// older dōjō still sends on a pull is ignored rather than refused.
+    #[test]
+    fn published_artifact_carries_no_engagement() {
+        let artifact = sample_artifact(ArtifactKind::Principle);
+        let mut value = serde_json::to_value(&artifact).unwrap();
+        assert!(value.get("engagement_id").is_none());
+        value["engagement_id"] = serde_json::json!("e1");
+        let back: PublishedArtifact = serde_json::from_value(value).unwrap();
+        assert_eq!(back, artifact);
+        assert!(serde_json::to_value(&back).unwrap().get("engagement_id").is_none());
     }
 
     #[test]

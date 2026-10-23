@@ -1,6 +1,6 @@
 // Unit tests for the shared audit writer (`audit.ts`). Exercises:
 //   • recordAudit — the row it inserts (tenant + actor + action + target +
-//     engagement_id + detail, with the right defaults).
+//     detail, with the right defaults; no engagement column — D34).
 //   • the fire-and-forget contract — a failed insert logs but does NOT throw.
 import { describe, it, expect, vi } from 'vitest';
 import { recordAudit, type DojoClient } from './audit';
@@ -30,21 +30,18 @@ describe('recordAudit', () => {
 			actor_id: 'actor-1',
 			action: 'role_changed',
 			target: 'u9',
-			engagement_id: null,
 			detail: {}
 		});
 	});
 
-	it('forwards detail + engagementId when supplied', async () => {
+	it('forwards detail when supplied', async () => {
 		const { db, captured } = makeDb();
 		await recordAudit(db, 't1', 'actor-1', {
-			action: 'incident_opened',
-			target: 'i5',
-			detail: { severity: 'high' },
-			engagementId: 'e2'
+			action: 'policy_edited',
+			target: 'k',
+			detail: { retention_days: 30 }
 		});
-		expect(captured.row?.detail).toEqual({ severity: 'high' });
-		expect(captured.row?.engagement_id).toBe('e2');
+		expect(captured.row?.detail).toEqual({ retention_days: 30 });
 	});
 
 	it('is fire-and-forget — a failed insert logs but never throws', async () => {

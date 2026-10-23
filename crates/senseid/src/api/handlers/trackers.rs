@@ -18,7 +18,7 @@ use crate::tracker::sync::SyncError;
 use crate::tracker::usage::{
     sprint_usages, ticket_usage_by_repo, ticket_usages, unlinked_in_sprint,
 };
-use crate::tracker::{TrackerError, TrackerKind, ValidateError, adapter_for_kind};
+use crate::tracker::{TrackerError, TrackerKind, TrackerLevel, ValidateError, adapter_for_kind};
 
 /// One-second waits a first sync spends on a running sync before leaving it to the tick.
 const FIRST_SYNC_BUSY_RETRIES: u32 = 15 * 60;
@@ -66,6 +66,7 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
     Ok(serde_json::json!({
         "id": row.id,
         "kind": row.kind,
+        "level": row.level,
         "base_url": row.base_url,
         "account": row.account,
         "external_scope": row.external_scope,
@@ -87,28 +88,41 @@ pub(crate) async fn list_trackers(
         Ok(p) => p,
         Err(r) => return r.into_response(),
     };
-    match state.pg.tracker_for_workspace(workspace).await {
-        Ok(None) => Json(serde_json::json!([])).into_response(),
-        Ok(Some(row)) => match view(&state, &row).await {
-            Ok(v) => Json(serde_json::json!([v])).into_response(),
-            Err(r) => r.into_response(),
-        },
-        Err(_) => internal().into_response(),
+    let rows = match state.pg.trackers_for_workspace(workspace).await {
+        Ok(rows) => rows,
+        Err(_) => return internal().into_response(),
+    };
+    let mut views = Vec::with_capacity(rows.len());
+    for row in &rows {
+        match view(&state, row).await {
+            Ok(v) => views.push(v),
+            Err(r) => return r.into_response(),
+        }
     }
+    Json(views).into_response()
 }
 
-/// `POST /api/workspaces/{id}/trackers/{kind}/connect`
+/// `POST /api/workspaces/{id}/trackers` — `{kind, level, …adapter fields}`.
 pub(crate) async fn connect_tracker(
     State(state): State<AppState>,
-    Path((id, kind)): Path<(String, String)>,
+    Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
     let workspace = match known_workspace(&state, &id).await {
         Ok(p) => p,
         Err(r) => return r.into_response(),
     };
-    let Some(adapter) = TrackerKind::parse(&kind).and_then(adapter_for_kind) else {
+    let field = |k: &str| body.get(k).and_then(|v| v.as_str());
+    let Some(adapter) = field("kind").and_then(TrackerKind::parse).and_then(adapter_for_kind)
+    else {
         return fail(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_tracker").into_response();
+    };
+    let level = match field("level").map(TrackerLevel::parse) {
+        Some(Some(level)) => level,
+        Some(None) => {
+            return fail(StatusCode::UNPROCESSABLE_ENTITY, "invalid_level").into_response();
+        }
+        None => return fail(StatusCode::UNPROCESSABLE_ENTITY, "level_required").into_response(),
     };
     let params = match adapter.connect_params(&body) {
         Ok(p) => p,
@@ -131,6 +145,7 @@ pub(crate) async fn connect_tracker(
         adapter,
         transport.as_ref(),
         workspace,
+        level,
         params,
     )
     .await
@@ -142,23 +157,11 @@ pub(crate) async fn connect_tracker(
         Ok(Some(row)) => row,
         _ => return internal().into_response(),
     };
-    // The first sync runs in the background: connect never waits on a sync.
-    let (pg, first) = (state.pg.clone(), row.clone());
-    tokio::spawn(async move {
-        // A sync already running (e.g. on the old credential of a re-connect) is
-        // waited out, bounded, rather than dropping the first sync.
-        for _ in 0..FIRST_SYNC_BUSY_RETRIES {
-            match sync_stored(&pg, &rt, &first).await {
-                Err(SyncError::Busy) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
-                Err(e) => {
-                    tracing::warn!(tracker_id = %first.id, "tracker first sync: {e:?}");
-                    return;
-                }
-                Ok(_) => return,
-            }
-        }
-        tracing::warn!(tracker_id = %first.id, "tracker first sync: still busy; the scheduled sync will run it");
-    });
+    // The first sync runs in the background: connect never waits on a sync. The
+    // site's other boards moved to this token, so they sync again too.
+    for id in std::iter::once(row.id).chain(connected.rekeyed.iter().copied()) {
+        spawn_first_sync(state.pg.clone(), rt.clone(), id);
+    }
     match view(&state, &row).await {
         Ok(v) => (
             StatusCode::CREATED,
@@ -167,6 +170,50 @@ pub(crate) async fn connect_tracker(
             .into_response(),
         Err(r) => r.into_response(),
     }
+}
+
+/// Sync a just-connected (or just re-keyed) board in the background. A sync
+/// already running (e.g. on the old credential) is waited out, bounded, rather
+/// than dropping the first sync.
+fn spawn_first_sync(
+    pg: crate::db::pg_store::PgStore,
+    rt: std::sync::Arc<crate::tracker::runtime::TrackerRuntime>,
+    id: uuid::Uuid,
+) {
+    tokio::spawn(async move {
+        for _ in 0..FIRST_SYNC_BUSY_RETRIES {
+            match sync_current(&pg, &rt, id).await {
+                Err(SyncError::Busy) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                Err(e) => {
+                    tracing::warn!(tracker_id = %id, "tracker first sync: {e:?}");
+                    return;
+                }
+                Ok(_) => return,
+            }
+        }
+        tracing::warn!(tracker_id = %id, "tracker first sync: still busy; the scheduled sync will run it");
+    });
+}
+
+/// Times a sync re-reads its row after the credential changed under it.
+const SUPERSEDED_RETRIES: u32 = 3;
+
+/// Sync the tracker on the credential its row names now: a sync superseded by a
+/// re-key re-reads the row and runs again, a bounded number of times.
+async fn sync_current(
+    pg: &crate::db::pg_store::PgStore,
+    rt: &crate::tracker::runtime::TrackerRuntime,
+    id: uuid::Uuid,
+) -> Result<crate::db::pg_store::trackers::ApplyCounts, SyncError> {
+    let mut outcome = Err(SyncError::Superseded);
+    for _ in 0..SUPERSEDED_RETRIES {
+        let row = pg.tracker_by_id(id).await.map_err(SyncError::Db)?.ok_or(SyncError::Gone)?;
+        outcome = sync_stored(pg, rt, &row).await;
+        if outcome != Err(SyncError::Superseded) {
+            break;
+        }
+    }
+    outcome
 }
 
 fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
@@ -204,44 +251,40 @@ fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
     }
 }
 
-/// `DELETE /api/workspaces/{id}/trackers`
+/// `DELETE /api/workspaces/{id}/trackers/{tracker}`
 pub(crate) async fn disconnect_tracker(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path((id, tracker)): Path<(String, String)>,
 ) -> Response {
-    let workspace = match known_workspace(&state, &id).await {
-        Ok(p) => p,
+    let row = match known_tracker(&state, &id, &tracker).await {
+        Ok(row) => row,
         Err(r) => return r.into_response(),
     };
-    match disconnect(&state.pg, state.trackers.secrets.clone(), workspace).await {
+    match disconnect(&state.pg, state.trackers.secrets.clone(), row.workspace_id, row.id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => fail(StatusCode::NOT_FOUND, "not_connected").into_response(),
+        Ok(false) => fail(StatusCode::NOT_FOUND, "tracker_not_found").into_response(),
         Err(_) => internal().into_response(),
     }
 }
 
-/// `POST /api/workspaces/{id}/trackers/sync`
+/// `POST /api/workspaces/{id}/trackers/{tracker}/sync`
 pub(crate) async fn sync_tracker(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path((id, tracker)): Path<(String, String)>,
 ) -> Response {
-    let workspace = match known_workspace(&state, &id).await {
-        Ok(p) => p,
+    let row = match known_tracker(&state, &id, &tracker).await {
+        Ok(row) => row,
         Err(r) => return r.into_response(),
     };
-    let row = match state.pg.tracker_for_workspace(workspace).await {
-        Ok(Some(row)) => row,
-        Ok(None) => return fail(StatusCode::NOT_FOUND, "not_connected").into_response(),
-        Err(_) => return internal().into_response(),
-    };
-    match sync_stored(&state.pg, &state.trackers, &row).await {
+    match sync_current(&state.pg, &state.trackers, row.id).await {
         Ok(c) => Json(serde_json::json!({"counts": {
             "sprints": c.sprints, "tasks": c.tasks, "removed": c.removed,
             "links": c.links, "skipped_members": c.skipped_members,
         }}))
         .into_response(),
         Err(SyncError::Busy) => fail(StatusCode::CONFLICT, "busy").into_response(),
-        Err(SyncError::Gone) => fail(StatusCode::NOT_FOUND, "not_connected").into_response(),
+        Err(SyncError::Gone) => fail(StatusCode::NOT_FOUND, "tracker_not_found").into_response(),
+        Err(SyncError::Superseded) => fail(StatusCode::CONFLICT, "superseded").into_response(),
         Err(SyncError::Failed(e)) => fail(StatusCode::BAD_GATEWAY, e.code()).into_response(),
         Err(SyncError::Db(_)) => internal().into_response(),
     }
@@ -264,16 +307,11 @@ pub(crate) async fn get_tracker_task(
         },
         Err(_) => return internal().into_response(),
     };
-    // The ticket exists, so the workspace has a tracker.
-    let tracker = match tracker_of(&state, workspace).await {
-        Ok(t) => t,
-        Err(r) => return r.into_response(),
-    };
-    let usage = match ticket_usages(&state.pg, tracker.id, Some(&[task.id])).await {
+    let usage = match ticket_usages(&state.pg, task.tracker_id, Some(&[task.id])).await {
         Ok(mut u) => u.remove(&task.id).unwrap_or_default(),
         Err(_) => return internal().into_response(),
     };
-    let by_repo = match ticket_usage_by_repo(&state.pg, tracker.id, task.id).await {
+    let by_repo = match ticket_usage_by_repo(&state.pg, task.tracker_id, task.id).await {
         Ok(r) => r,
         Err(_) => return internal().into_response(),
     };
@@ -295,7 +333,7 @@ pub(crate) async fn get_tracker_task(
         .collect();
     Json(serde_json::json!({
         "task": {
-            "key": task.key, "summary": task.summary, "issue_type": task.issue_type,
+            "tracker_id": task.tracker_id, "key": task.key, "summary": task.summary, "issue_type": task.issue_type,
             "status": task.status, "removed": task.removed,
         },
         "usage": usage,
@@ -305,69 +343,99 @@ pub(crate) async fn get_tracker_task(
     .into_response()
 }
 
-/// Longest a lookup waits on discovery before answering.
+/// Longest a lookup waits on discovery, across all of the workspace's boards, before answering.
 const LOOKUP_DISCOVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// R11 lookup: a key in the board's shape that sensei has not synced is fetched
-/// once before answering. Anything else stays `task_not_found`, with no request.
+/// R11 lookup: a key in the shape of one of the workspace's boards that sensei
+/// has not synced is fetched once before answering, from each board in level
+/// order until one has it, all within one [`LOOKUP_DISCOVERY`]. A board that is
+/// busy or failing does not stop the others: a found ticket wins, then a board
+/// that answered it has no such ticket, then the first failure.
 async fn discover_on_miss(
     state: &AppState,
     workspace: uuid::Uuid,
     key: &str,
 ) -> Result<crate::db::pg_store::trackers::TaskDetail, ApiErr> {
+    let trackers = state.pg.trackers_for_workspace(workspace).await.map_err(|_| internal())?;
+    let until = tokio::time::Instant::now() + LOOKUP_DISCOVERY;
+    let (mut not_on_board, mut failure) = (None, None);
+    for tracker in &trackers {
+        match discover_on(state, workspace, tracker, key, until).await {
+            Ok(Discovered::Task(task)) => return Ok(task),
+            Ok(Discovered::NotOnBoard(miss)) => {
+                not_on_board.get_or_insert(miss);
+            }
+            Ok(Discovered::Nothing) => {}
+            Err(e) => {
+                failure.get_or_insert(e);
+            }
+        }
+    }
+    Err(not_on_board.or(failure).unwrap_or_else(|| fail(StatusCode::NOT_FOUND, "task_not_found")))
+}
+
+/// What asking one board for a missing key found.
+enum Discovered {
+    Task(crate::db::pg_store::trackers::TaskDetail),
+    /// The key has this board's shape, and the board answered it has no such ticket.
+    NotOnBoard(ApiErr),
+    /// The key is not in this board's shape, or the board was not asked.
+    Nothing,
+}
+
+async fn discover_on(
+    state: &AppState,
+    workspace: uuid::Uuid,
+    tracker: &TrackerRow,
+    key: &str,
+    until: tokio::time::Instant,
+) -> Result<Discovered, ApiErr> {
     use crate::tracker::discover::{DiscoverError, Scope};
-    let not_found = || fail(StatusCode::NOT_FOUND, "task_not_found");
-    let tracker = match state.pg.tracker_for_workspace(workspace).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return Err(not_found()),
-        Err(_) => return Err(internal()),
-    };
     let keys = [key.to_string()];
     let run = crate::tracker::runtime::discover_stored(
         &state.pg,
         &state.trackers,
-        &tracker,
+        tracker,
         Scope::Keys(&keys),
     );
-    match tokio::time::timeout(LOOKUP_DISCOVERY, run).await {
+    match tokio::time::timeout_at(until, run).await {
         Err(_) => Err(fail(StatusCode::BAD_GATEWAY, TrackerError::Transport.code())),
         Ok(Ok(out)) if !out.inserted.is_empty() => {
             match state.pg.tracker_task_detail(workspace, key).await {
-                Ok(Some(task)) => Ok(task),
-                Ok(None) => Err(not_found()),
+                Ok(Some(task)) => Ok(Discovered::Task(task)),
+                Ok(None) => Ok(Discovered::Nothing),
                 Err(_) => Err(internal()),
             }
         }
-        Ok(Ok(out)) => match out.not_on_board.first() {
-            Some(k) => Err((
+        Ok(Ok(out)) => Ok(match out.not_on_board.first() {
+            Some(k) => Discovered::NotOnBoard((
                 StatusCode::NOT_FOUND,
                 Json(
                     serde_json::json!({"error": "task_not_on_board", "key": k, "board_ref": tracker.board_ref}),
                 ),
             )),
-            None => Err(not_found()),
-        },
+            None => Discovered::Nothing,
+        }),
         Ok(Err(DiscoverError::Busy)) => Err(fail(StatusCode::CONFLICT, "busy")),
         Ok(Err(DiscoverError::Failed(e))) => Err(fail(StatusCode::BAD_GATEWAY, e.code())),
         Ok(Err(DiscoverError::Db(_))) => Err(internal()),
         // Paused after a recent failure, or re-connected meanwhile: answer from what is stored.
-        Ok(Err(DiscoverError::Paused | DiscoverError::Gone)) => Err(not_found()),
+        Ok(Err(DiscoverError::Paused | DiscoverError::Gone)) => Ok(Discovered::Nothing),
     }
 }
 
-/// The workspace's tracker, or the response to return (404 `not_connected`).
-async fn tracker_of(state: &AppState, workspace: uuid::Uuid) -> Result<TrackerRow, ApiErr> {
-    match state.pg.tracker_for_workspace(workspace).await {
-        Ok(Some(row)) => Ok(row),
-        Ok(None) => Err(fail(StatusCode::NOT_FOUND, "not_connected")),
+/// One of the workspace's trackers, or the response to return: 404
+/// `workspace_not_found`, or 404 `tracker_not_found` for an id that is not a
+/// tracker of this workspace.
+async fn known_tracker(state: &AppState, id: &str, tracker: &str) -> Result<TrackerRow, ApiErr> {
+    let workspace = known_workspace(state, id).await?;
+    let not_found = || fail(StatusCode::NOT_FOUND, "tracker_not_found");
+    let tracker: uuid::Uuid = tracker.parse().map_err(|_| not_found())?;
+    match state.pg.tracker_by_id(tracker).await {
+        Ok(Some(row)) if row.workspace_id == workspace => Ok(row),
+        Ok(_) => Err(not_found()),
         Err(_) => Err(internal()),
     }
-}
-
-/// The workspace's tracker for a read route: the workspace must exist and be connected.
-async fn connected(state: &AppState, id: &str) -> Result<TrackerRow, ApiErr> {
-    let workspace = known_workspace(state, id).await?;
-    tracker_of(state, workspace).await
 }
 
 /// `?sprint=` as one of the tracker's sprints (404 `sprint_not_found` otherwise).
@@ -392,9 +460,12 @@ pub(crate) struct SprintQuery {
     include_removed: bool,
 }
 
-/// `GET /api/workspaces/{id}/backlog`
-pub(crate) async fn get_backlog(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    let tracker = match connected(&state, &id).await {
+/// `GET /api/workspaces/{id}/trackers/{tracker}/backlog` — the board's tickets in no sprint.
+pub(crate) async fn get_backlog(
+    State(state): State<AppState>,
+    Path((id, tracker)): Path<(String, String)>,
+) -> Response {
+    let tracker = match known_tracker(&state, &id, &tracker).await {
         Ok(t) => t,
         Err(r) => return r.into_response(),
     };
@@ -404,12 +475,12 @@ pub(crate) async fn get_backlog(State(state): State<AppState>, Path(id): Path<St
     }
 }
 
-/// `GET /api/workspaces/{id}/sprints`
+/// `GET /api/workspaces/{id}/trackers/{tracker}/sprints` — one Sprints lane (D40).
 pub(crate) async fn list_sprints(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path((id, tracker)): Path<(String, String)>,
 ) -> Response {
-    let tracker = match connected(&state, &id).await {
+    let tracker = match known_tracker(&state, &id, &tracker).await {
         Ok(t) => t,
         Err(r) => return r.into_response(),
     };
@@ -445,13 +516,13 @@ pub(crate) async fn list_sprints(
     Json(rows).into_response()
 }
 
-/// `GET /api/workspaces/{id}/tracker-tasks?sprint=&include_removed=`
+/// `GET /api/workspaces/{id}/trackers/{tracker}/tasks?sprint=|backlog=true/// `GET /api/workspaces/{id}/trackers/{tracker}/tasks?sprint=&include_removed=`include_removed=`
 pub(crate) async fn list_tracker_tasks(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path((id, tracker)): Path<(String, String)>,
     axum::extract::Query(q): axum::extract::Query<SprintQuery>,
 ) -> Response {
-    let tracker = match connected(&state, &id).await {
+    let tracker = match known_tracker(&state, &id, &tracker).await {
         Ok(t) => t,
         Err(r) => return r.into_response(),
     };
@@ -497,13 +568,13 @@ pub(crate) async fn list_tracker_tasks(
     Json(rows).into_response()
 }
 
-/// `GET /api/workspaces/{id}/sessions/unlinked?sprint=`
+/// `GET /api/workspaces/{id}/trackers/{tracker}/sessions/unlinked?sprint=`
 pub(crate) async fn list_unlinked_sessions(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path((id, tracker)): Path<(String, String)>,
     axum::extract::Query(q): axum::extract::Query<SprintQuery>,
 ) -> Response {
-    let tracker = match connected(&state, &id).await {
+    let tracker = match known_tracker(&state, &id, &tracker).await {
         Ok(t) => t,
         Err(r) => return r.into_response(),
     };
@@ -601,22 +672,28 @@ mod tests {
     }
 
     fn connect_body(site: &str) -> Value {
+        board_body(site, "42", "sprint")
+    }
+
+    fn board_body(site: &str, board: &str, level: &str) -> Value {
         json!({
-            "board_url": format!("https://{site}/jira/software/projects/AUTH/boards/42"),
+            "kind": "jira",
+            "level": level,
+            "board_url": format!("https://{site}/jira/software/projects/AUTH/boards/{board}"),
             "email": "dev@example.com",
             "api_token": SENTINEL,
         })
     }
 
     async fn connect(h: &Harness, p: uuid::Uuid, site: &str) -> (StatusCode, String) {
-        call(
-            h,
-            "POST",
-            &format!("/api/workspaces/{p}/trackers/jira/connect"),
-            Some(connect_body(site)),
-            None,
-        )
-        .await
+        call(h, "POST", &format!("/api/workspaces/{p}/trackers"), Some(connect_body(site)), None)
+            .await
+    }
+
+    /// The workspace's first tracker, as `GET …/trackers` lists it.
+    async fn tracker(h: &Harness, p: uuid::Uuid) -> String {
+        let (_, body) = call(h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
+        json(&body)[0]["id"].as_str().unwrap().to_string()
     }
 
     /// Poll `GET …/trackers` until the status leaves `pending` (≤ 3 s).
@@ -671,26 +748,29 @@ mod tests {
     async fn connect_refusals_carry_fixed_codes() {
         let h = harness().await;
         let p = workspace(&h).await;
-        let uri = format!("/api/workspaces/{p}/trackers/jira/connect");
-        let (st, b) = call(
-            &h,
-            "POST",
-            &format!("/api/workspaces/{p}/trackers/gitlab/connect"),
-            Some(connect_body(&site())),
-            None,
-        )
-        .await;
-        assert_eq!(
-            (st, json(&b)["error"].clone()),
-            (StatusCode::UNPROCESSABLE_ENTITY, json!("unsupported_tracker"))
-        );
-        let bad_url = json!({"board_url": "https://evil.example/boards/42", "email": "e@x.io", "api_token": "t"});
+        let uri = format!("/api/workspaces/{p}/trackers");
+        let mut gitlab = connect_body(&site());
+        gitlab["kind"] = json!("gitlab");
+        let mut no_level = connect_body(&site());
+        no_level.as_object_mut().unwrap().remove("level");
+        for (body, code) in [
+            (gitlab, "unsupported_tracker"),
+            (board_body(&site(), "42", "portfolio"), "invalid_level"),
+            (no_level, "level_required"),
+        ] {
+            let (st, b) = call(&h, "POST", &uri, Some(body), None).await;
+            assert_eq!(
+                (st, json(&b)["error"].clone()),
+                (StatusCode::UNPROCESSABLE_ENTITY, json!(code))
+            );
+        }
+        let bad_url = json!({"kind": "jira", "level": "sprint", "board_url": "https://evil.example/boards/42", "email": "dev@example.com", "api_token": "t"});
         let (st, b) = call(&h, "POST", &uri, Some(bad_url), None).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
             (StatusCode::UNPROCESSABLE_ENTITY, json!("invalid_base_url"))
         );
-        let no_email = json!({"board_url": format!("https://{}/jira/software/projects/AUTH/boards/42", site()), "api_token": "t"});
+        let no_email = json!({"kind": "jira", "level": "sprint", "board_url": format!("https://{}/jira/software/projects/AUTH/boards/42", site()), "api_token": "t"});
         let (st, b) = call(&h, "POST", &uri, Some(no_email), None).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
@@ -769,22 +849,26 @@ mod tests {
         let p = workspace(&h).await;
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
-        let uri = format!("/api/workspaces/{p}/trackers/sync");
+        let ghost = uuid::Uuid::new_v4();
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/{ghost}/sync"), None, None)
+                .await;
         assert_eq!(
-            call(&h, "POST", &uri, None, None).await.0,
-            StatusCode::NOT_FOUND,
-            "no tracker yet"
+            (st, json(&b)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("tracker_not_found")),
+            "no such tracker"
         );
         connect(&h, p, &s).await;
         settled(&h, p).await;
+        let id = tracker(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{id}/sync");
         let (st, b) = call(&h, "POST", &uri, None, None).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         assert_eq!(
             json(&b)["counts"],
             json!({"sprints": 2, "tasks": 3, "removed": 0, "links": 0, "skipped_members": 0})
         );
-        let id = h.state.pg.tracker_for_workspace(p).await.unwrap().unwrap().id;
-        let _held = h.rt.locks.try_lock(id).unwrap();
+        let _held = h.rt.locks.try_lock(id.parse().unwrap()).unwrap();
         let (st, b) = call(&h, "POST", &uri, None, None).await;
         assert_eq!((st, json(&b)["error"].clone()), (StatusCode::CONFLICT, json!("busy")));
     }
@@ -801,8 +885,9 @@ mod tests {
             &format!("https://{s}"),
             FakeBoard::standard().fail("/rest/agile/1.0/board/42/sprint", TrackerError::Forbidden),
         );
+        let id = tracker(&h, p).await;
         let (st, b) =
-            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/sync"), None, None).await;
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/{id}/sync"), None, None).await;
         assert_eq!((st, json(&b)["error"].clone()), (StatusCode::BAD_GATEWAY, json!("forbidden")));
         let listed =
             json(&call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await.1);
@@ -820,10 +905,22 @@ mod tests {
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         connect(&h, p, &s).await;
         settled(&h, p).await;
-        let uri = format!("/api/workspaces/{p}/trackers");
+        let list = format!("/api/workspaces/{p}/trackers");
+        let uri = format!("{list}/{}", tracker(&h, p).await);
+        let foreign =
+            format!("/api/workspaces/{}/trackers/{}", workspace(&h).await, tracker(&h, p).await);
+        assert_eq!(
+            call(&h, "DELETE", &foreign, None, None).await.0,
+            StatusCode::NOT_FOUND,
+            "another workspace cannot remove it"
+        );
         assert_eq!(call(&h, "DELETE", &uri, None, None).await.0, StatusCode::NO_CONTENT);
-        assert_eq!(call(&h, "GET", &uri, None, None).await.1, "[]");
-        assert_eq!(call(&h, "DELETE", &uri, None, None).await.0, StatusCode::NOT_FOUND);
+        assert_eq!(call(&h, "GET", &list, None, None).await.1, "[]");
+        let (st, b) = call(&h, "DELETE", &uri, None, None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("tracker_not_found"))
+        );
     }
 
     #[tokio::test]
@@ -857,8 +954,11 @@ mod tests {
         let mut bodies = vec![connect(&h, p, &s).await.1];
         settled(&h, p).await;
         bodies.push(call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await.1);
+        let id = tracker(&h, p).await;
         bodies.push(
-            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/sync"), None, None).await.1,
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/{id}/sync"), None, None)
+                .await
+                .1,
         );
         bodies.push(connect(&h, workspace(&h).await, &s).await.1); // 409
         *h.store.fail_set.lock().unwrap() = true;
@@ -866,8 +966,8 @@ mod tests {
         for b in bodies {
             assert!(!b.contains(SENTINEL), "token leaked: {b}");
         }
-        let row = h.state.pg.tracker_for_workspace(p).await.unwrap().unwrap();
-        assert!(!format!("{row:?}").contains(SENTINEL));
+        let rows = h.state.pg.trackers_for_workspace(p).await.unwrap();
+        assert!(!format!("{rows:?}").contains(SENTINEL));
     }
 
     #[tokio::test]
@@ -878,18 +978,14 @@ mod tests {
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
         assert_eq!(connect(&h, p1, &s).await.0, StatusCode::CREATED);
         let shouted = json!({
+            "kind": "jira",
+            "level": "sprint",
             "board_url": format!("https://{}/jira/software/projects/AUTH/boards/042?selectedIssue=AUTH-1", s.to_uppercase()),
             "email": "dev@example.com",
             "api_token": SENTINEL,
         });
-        let (st, b) = call(
-            &h,
-            "POST",
-            &format!("/api/workspaces/{p2}/trackers/jira/connect"),
-            Some(shouted),
-            None,
-        )
-        .await;
+        let (st, b) =
+            call(&h, "POST", &format!("/api/workspaces/{p2}/trackers"), Some(shouted), None).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
             (StatusCode::CONFLICT, json!("board_already_connected"))
@@ -905,7 +1001,7 @@ mod tests {
         connect(&h, p, &s).await;
         settled(&h, p).await;
         // A sync is running when the user re-connects.
-        let id = h.state.pg.tracker_for_workspace(p).await.unwrap().unwrap().id;
+        let id = tracker(&h, p).await.parse().unwrap();
         let held = h.rt.locks.try_lock(id).unwrap();
         assert_eq!(connect(&h, p, &s).await.0, StatusCode::CREATED);
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -953,8 +1049,9 @@ mod tests {
                 json!({"startAt": 2, "total": 3, "issues": [{"id": "10003", "key": "PLAT-9", "fields": {}}]}),
             ),
         );
+        let id = tracker(&h, p).await;
         let (st, b) =
-            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/sync"), None, None).await;
+            call(&h, "POST", &format!("/api/workspaces/{p}/trackers/{id}/sync"), None, None).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         let (st, b) =
             call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/AUTH-3"), None, None).await;
@@ -993,9 +1090,10 @@ mod tests {
             let h = &h;
             async move { call(h, "GET", &uri, None, None).await }
         };
+        let ghost = uuid::Uuid::new_v4();
         assert_eq!(
-            json(&get(format!("/api/workspaces/{p}/sprints")).await.1)["error"],
-            json!("not_connected")
+            json(&get(format!("/api/workspaces/{p}/trackers/{ghost}/sprints")).await.1)["error"],
+            json!("tracker_not_found")
         );
         let s = site();
         h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
@@ -1003,8 +1101,9 @@ mod tests {
         let sess = session_with(&h.state.pg, Some(repo), &["fix/AUTH-2"], &[]).await;
         connect(&h, p, &s).await;
         settled(&h, p).await;
+        let t = format!("/api/workspaces/{p}/trackers/{}", tracker(&h, p).await);
 
-        let (st, b) = get(format!("/api/workspaces/{p}/sprints")).await;
+        let (st, b) = get(format!("{t}/sprints")).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         let sprints = json(&b);
         assert_eq!(sprints.as_array().map(Vec::len), Some(2), "{b}");
@@ -1017,7 +1116,7 @@ mod tests {
         }
         let s101 = sprints[0]["id"].as_str().unwrap().to_string();
 
-        let (st, b) = get(format!("/api/workspaces/{p}/tracker-tasks")).await;
+        let (st, b) = get(format!("{t}/tasks")).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         let tasks = json(&b);
         assert_eq!(tasks.as_array().map(Vec::len), Some(3));
@@ -1030,10 +1129,10 @@ mod tests {
         assert_eq!(none["usage"]["sessions"], json!(0));
         assert!(none["usage"]["active_secs"].is_null());
 
-        let (_, b) = get(format!("/api/workspaces/{p}/tracker-tasks?sprint={s101}")).await;
+        let (_, b) = get(format!("{t}/tasks?sprint={s101}")).await;
         assert_eq!(json(&b).as_array().map(Vec::len), Some(2), "{b}");
         let unknown = uuid::Uuid::new_v4();
-        let (st, b) = get(format!("/api/workspaces/{p}/tracker-tasks?sprint={unknown}")).await;
+        let (st, b) = get(format!("{t}/tasks?sprint={unknown}")).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
             (StatusCode::NOT_FOUND, json!("sprint_not_found"))
@@ -1046,30 +1145,24 @@ mod tests {
         assert_eq!(detail["by_repo"].as_array().map(Vec::len), Some(1));
         assert_eq!(detail["by_repo"][0]["usage"]["sessions"], json!(1));
 
-        let (st, b) = get(format!("/api/workspaces/{p}/sessions/unlinked")).await;
+        let (st, b) = get(format!("{t}/sessions/unlinked")).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
             (StatusCode::UNPROCESSABLE_ENTITY, json!("sprint_required"))
         );
-        let (st, b) = get(format!("/api/workspaces/{p}/sessions/unlinked?sprint={s101}")).await;
+        let (st, b) = get(format!("{t}/sessions/unlinked?sprint={s101}")).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         assert!(
             !json(&b).as_array().unwrap().iter().any(|s| s["id"] == json!(sess)),
             "a linked session is not unlinked"
         );
-        let (st, b) = get(format!("/api/workspaces/{p}/sessions/unlinked?sprint={unknown}")).await;
+        let (st, b) = get(format!("{t}/sessions/unlinked?sprint={unknown}")).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
             (StatusCode::NOT_FOUND, json!("sprint_not_found"))
         );
-        let foreign = call(
-            &h,
-            "GET",
-            &format!("/api/workspaces/{p}/sprints"),
-            None,
-            Some("https://evil.com"),
-        )
-        .await;
+        let foreign =
+            call(&h, "GET", &format!("{t}/sprints"), None, Some("https://evil.com")).await;
         assert_eq!(foreign.0, StatusCode::FORBIDDEN);
     }
 
@@ -1133,9 +1226,10 @@ mod tests {
             let h = &h;
             async move { call(h, "GET", &uri, None, None).await }
         };
+        let ghost = uuid::Uuid::new_v4();
         assert_eq!(
-            json(&get(format!("/api/workspaces/{p}/backlog")).await.1)["error"],
-            json!("not_connected")
+            json(&get(format!("/api/workspaces/{p}/trackers/{ghost}/backlog")).await.1)["error"],
+            json!("tracker_not_found")
         );
         let s = site();
         h.factory.serve(
@@ -1152,30 +1246,110 @@ mod tests {
         session_with(&h.state.pg, Some(repo), &["fix/AUTH-4"], &[]).await;
         connect(&h, p, &s).await;
         settled(&h, p).await;
+        let t = format!("/api/workspaces/{p}/trackers/{}", tracker(&h, p).await);
 
-        let (st, b) = get(format!("/api/workspaces/{p}/backlog")).await;
+        let (st, b) = get(format!("{t}/backlog")).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         assert_eq!(json(&b)["tickets"], json!(1));
         assert_eq!(json(&b)["usage"]["sessions"], json!(1));
 
-        let (st, b) = get(format!("/api/workspaces/{p}/tracker-tasks?backlog=true")).await;
+        let (st, b) = get(format!("{t}/tasks?backlog=true")).await;
         assert_eq!(st, StatusCode::OK, "{b}");
         let keys: Vec<Value> =
             json(&b).as_array().unwrap().iter().map(|t| t["key"].clone()).collect();
         assert_eq!(keys, vec![json!("AUTH-4")]);
 
-        let sprint = h
-            .state
-            .pg
-            .tracker_sprints(h.state.pg.tracker_for_workspace(p).await.unwrap().unwrap().id)
-            .await
-            .unwrap()[0]
-            .id;
-        let (st, b) =
-            get(format!("/api/workspaces/{p}/tracker-tasks?sprint={sprint}&backlog=true")).await;
+        let sprint = json(&get(format!("{t}/sprints")).await.1)[0]["id"].clone();
+        let sprint = sprint.as_str().unwrap();
+        let (st, b) = get(format!("{t}/tasks?sprint={sprint}&backlog=true")).await;
         assert_eq!(
             (st, json(&b)["error"].clone()),
             (StatusCode::UNPROCESSABLE_ENTITY, json!("sprint_or_backlog"))
         );
+    }
+
+    #[tokio::test]
+    async fn a_workspace_lists_its_boards_by_level_and_each_has_its_own_sprints() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().with(
+                "/rest/agile/1.0/board/43",
+                0,
+                json!({"id": 43, "name": "Portfolio", "location": {"projectKey": "AUTH"}}),
+            ),
+        );
+        let uri = format!("/api/workspaces/{p}/trackers");
+        let (st, b) = call(&h, "POST", &uri, Some(board_body(&s, "42", "sprint")), None).await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        let (st, b) = call(&h, "POST", &uri, Some(board_body(&s, "43", "epic")), None).await;
+        assert_eq!(st, StatusCode::CREATED, "{b}");
+        assert_eq!(json(&b)["tracker"]["level"], json!("epic"));
+
+        let listed = json(&call(&h, "GET", &uri, None, None).await.1);
+        let boards: Vec<(Value, Value)> = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| (t["level"].clone(), t["board_ref"].clone()))
+            .collect();
+        assert_eq!(boards, [(json!("epic"), json!("43")), (json!("sprint"), json!("42"))]);
+
+        let sprint_board = listed[1]["id"].as_str().unwrap();
+        let ghost = workspace(&h).await;
+        let (st, b) = call(
+            &h,
+            "GET",
+            &format!("/api/workspaces/{ghost}/trackers/{sprint_board}/sprints"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("tracker_not_found")),
+            "a tracker is read through its own workspace only"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lookup_asks_the_next_board_when_one_is_busy() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().with_board(43, "Portfolio").with_jql(
+                "key in (AUTH-900)",
+                json!([{"id": "10900", "key": "AUTH-900", "fields": {"summary": "New"}}]),
+            ),
+        );
+        let uri = format!("/api/workspaces/{p}/trackers");
+        for (board, level) in [("42", "sprint"), ("43", "epic")] {
+            let (st, b) = call(&h, "POST", &uri, Some(board_body(&s, board, level)), None).await;
+            assert_eq!(st, StatusCode::CREATED, "{b}");
+        }
+        let mut listed = json!(null);
+        for _ in 0..300 {
+            listed = json(&call(&h, "GET", &uri, None, None).await.1);
+            if listed
+                .as_array()
+                .is_some_and(|l| l.iter().all(|t| t["status"] == json!("connected")))
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let (epic, sprint) = (listed[0]["id"].as_str().unwrap(), listed[1]["id"].as_str().unwrap());
+        assert_eq!(listed[0]["level"], json!("epic"), "{listed}");
+        // The epic board, asked first, is mid-sync.
+        let _held = h.rt.locks.try_lock(epic.parse().unwrap()).unwrap();
+        let (st, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/AUTH-900"), None, None)
+                .await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert_eq!(json(&b)["task"]["tracker_id"], json!(sprint));
     }
 }

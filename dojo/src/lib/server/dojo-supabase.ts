@@ -6,7 +6,7 @@
 //
 // Prerequisites (one-time, Supabase dashboard):
 //   - Settings → API → Exposed schemas: add `dojo` (and `sensei`), so PostgREST
-//     can read `dojo.tenants` / `memberships` / `engagements` / ….
+//     can read `dojo.tenants` / `memberships` / `workspaces` / ….
 //   - Worker env: SUPABASE_SERVICE_ROLE_KEY (private) + PUBLIC_SUPABASE_URL.
 
 import { createClient } from '@supabase/supabase-js';
@@ -26,6 +26,13 @@ function buildClient(url: string, key: string) {
 
 let client: ReturnType<typeof buildClient> | null = null;
 
+/** The server's secret key: Supabase's new **secret** key (`sb_secret_…`) or the
+ *  legacy service_role key — either env name (SUPABASE_SECRET_KEY is the new
+ *  convention). Empty when neither is set; callers fail closed on that. */
+export function serverSecret(): string {
+	return priv.SUPABASE_SERVICE_ROLE_KEY || priv.SUPABASE_SECRET_KEY || '';
+}
+
 /** Service-role client scoped to the `dojo` schema. Bypasses RLS — authorization
  *  is the caller's responsibility (`dojo-auth.ts`). */
 export function dojoDb(): ReturnType<typeof buildClient> {
@@ -34,7 +41,7 @@ export function dojoDb(): ReturnType<typeof buildClient> {
 	// The server key: Supabase's new **secret** key (`sb_secret_…`) or the legacy
 	// service_role key — both bypass RLS and drop into createClient the same way.
 	// Accept either env name (SUPABASE_SECRET_KEY is the new convention).
-	const key = priv.SUPABASE_SERVICE_ROLE_KEY || priv.SUPABASE_SECRET_KEY;
+	const key = serverSecret();
 	if (!url || !key) {
 		throw new Error(
 			'dojo API: PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY) must be set'

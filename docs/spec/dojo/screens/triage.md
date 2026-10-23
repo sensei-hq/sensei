@@ -61,7 +61,7 @@
 - **Q2 impact → a REAL impact/safety field on `dojo.artifacts`** (`normal | high | safety`) that drives the 2-sig second-approval routing — not the `confidence ≥0.90` proxy. Needs a classifier (analyzer/`derive_signals`) to set it + the column.
 - **Build (endpoints exist):** wire Approve/Revise/Decline → `decideTriage(signature,…)` (Approve = distribution-scope picker; Decline = reason — via `@rokkit/forms` so a click can't post an invalid decide; server 400s otherwise) → `invalidateAll`. Real conflict count needs a resolution-ladder read.
 - **Depends on:** the new detail endpoint + the `dojo.artifacts.impact` field/classifier + the decide wiring + a ladder-conflict read.
-- Approve needs a `distribution_scope` payload — what does the picker offer (own scope only, or promote up the ladder like the mockup's Company/Team/Stack)?
+- Approve needs a `distribution_scope` payload — what does the picker offer (own scope only, or promote up the ladder — the mockup's Company/Team/Stack is now the dōjō → workspace → repository ladder, D25)?
 
 ## Components & state (three-layer, per `sensei:ui-state-pattern`)
 
