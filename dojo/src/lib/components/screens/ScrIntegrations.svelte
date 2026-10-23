@@ -12,10 +12,9 @@
 	// and for each: what its dōjō is (claimed, or who can claim it), where its
 	// repositories file, and only the acts this person may take — claim its dōjō,
 	// make it its own dōjō, or file it as a workspace of this one. Presentational:
-	// the state holds the list and the acts. Azure DevOps (#308 R5b) sits beside
-	// GitHub when the page gives its state: an organization URL and a pasted PAT,
-	// validated before it is stored; the organization joins this dōjō and each
-	// project becomes a workspace.
+	// the state holds the list and the acts. Azure DevOps (#308 R5b, D42) sits
+	// beside GitHub when the page gives its state: a Microsoft Entra connect, then
+	// the organizations to import — each joins this dōjō, its projects workspaces.
 	let { orgName, state, azure }: { orgName: string; state: IntegrationsState; azure?: AzureConnectState } = $props();
 </script>
 
@@ -26,7 +25,7 @@
 				kanji="繋"
 				eyebrow={orgName + ' · admin'}
 				title="Integrations"
-				description="A dōjō comes from a git integration. See the GitHub organizations you belong to, claim an organization's dōjō if you administer it on GitHub, or file an organization's repositories as a workspace of this dōjō. An Azure DevOps organization joins this dōjō with a read-only token, each project a workspace."
+				description="A dōjō comes from a git integration. See the GitHub organizations you belong to, claim an organization's dōjō if you administer it on GitHub, or file an organization's repositories as a workspace of this dōjō. Connect Azure DevOps through Microsoft to bring an organization into this dōjō, each project a workspace."
 			/>
 		</div>
 	{/snippet}

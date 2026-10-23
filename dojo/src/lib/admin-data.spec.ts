@@ -26,7 +26,7 @@ import {
 	claimIntegrationUnit,
 	mapIntegrationUnit,
 	listAzureConnections,
-	connectAzure,
+	startAzureConnect,
 	syncAzure,
 	removeAzureToken
 } from '$lib/admin-data';
@@ -264,16 +264,16 @@ describe('the dōjō`s integrations (#308 R5a)', () => {
 		expect(headersOf(calls[0].init).Authorization).toBe('Bearer jwt');
 	});
 
-	it('Azure DevOps: GET the connections, POST connect (the one body that carries the token), sync, DELETE the token', async () => {
-		const { fn, calls } = fakeFetch(200, { connections: [], scopes: [] });
+	it('Azure DevOps: GET the connections, POST start (no body carries a token), sync, DELETE the grant', async () => {
+		const { fn, calls } = fakeFetch(200, { connections: [], scopes: [], configured: true });
 		await listAzureConnections('organization/acme', { fetch: fn, accessToken: 'jwt' });
-		await connectAzure('organization/acme', 'https://dev.azure.com/example-org', 'ztestpat', { fetch: fn });
+		await startAzureConnect('organization/acme', { fetch: fn });
 		await syncAzure('organization/acme', 'org-1', { fetch: fn });
 		await removeAzureToken('organization/acme', 'org-1', { fetch: fn });
 		const base = `${dojoApiUrl}/v1/t/organization/acme/integrations/azure_devops`;
 		expect(calls.map((c) => [c.init?.method ?? 'GET', c.url, c.init?.body])).toEqual([
 			['GET', base, undefined],
-			['POST', `${base}/connect`, JSON.stringify({ organization_url: 'https://dev.azure.com/example-org', token: 'ztestpat' })],
+			['POST', `${base}/connect`, JSON.stringify({})],
 			['POST', `${base}/sync`, JSON.stringify({ organization_id: 'org-1' })],
 			['DELETE', `${base}/token`, JSON.stringify({ organization_id: 'org-1' })]
 		]);

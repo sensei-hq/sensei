@@ -1,8 +1,8 @@
-// Importing an Azure DevOps organization (#308 R5b, D35/D36): the organization
+// Importing an Azure DevOps organization (#308 R5b, D36/D42): the organization
 // becomes a dōjō (or joins the org dōjō whose screen asked) and each project a
-// workspace in it; the PAT is stored in Vault only after it lists the
-// organization and proves the admin. A failing token is refused and nothing is
-// written. The database functions hold their own rules (forge_token_vault.sql,
+// workspace in it; the Entra refresh token is stored in Vault only after the
+// grant names the organization and proves the admin. A failing grant is refused
+// and nothing is written. The database functions hold their own rules (forge_token_vault.sql,
 // forge_unit_claim.sql, forge_unit_mapping.sql, azure_project_filing.sql); this
 // proves the server's half — what it reads, what it refuses, what it asks.
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -10,13 +10,19 @@ import { fakeDojoDb, resetFakeIds, provisioningTables, type FakeTable } from './
 import { AdminError } from './admin-data';
 import { ForgeReadError } from './forge-github';
 import type { AzureAdapter, AzureProject } from './forge-azure';
-import { importAzureOrganization, syncAzureOrganization, connectRequest, listAzureConnections, removeAzureToken } from './azure-import';
+import { importAzureOrganization, syncAzureOrganization, importRequest, listAzureConnections, removeAzureToken } from './azure-import';
+import { fakeFetch } from './fake-forge-fetch';
 
 const ME = 'p-me';
 const HERE = 't-here';
 const ORG = 'example-org';
 const ORG_ID = 'org-guid-1';
-const PAT = 'ztestpatAZDO0000';
+const ACCESS = 'ztest-access-0000';
+const REFRESH = 'ztest-refresh-0000';
+const GRANT = { accessToken: ACCESS, refreshToken: REFRESH };
+const ME_OID = '55c8c7b6-7ace-43bc-918f-304dfa2b6317';
+const CFG = { clientId: 'client-id-0000', clientSecret: 'client-secret-0000' };
+const TOKEN_URL = 'https://login.microsoftonline.com/organizations/oauth2/v2.0/token';
 const ME_AZ = 'az-user-1';
 
 const P1: AzureProject = { id: 'proj-1', name: 'Mobile Apps' };
@@ -40,10 +46,11 @@ function fakeAzure(o: Opts = {}) {
 		provider: 'azure_devops',
 		organization: ORG,
 		connection: async (token) => {
-			asked.push(`connection:${token === PAT}`);
+			asked.push(`connection:${token === ACCESS}`);
 			if (o.reject) throw new ForgeReadError(o.reject, 'Azure DevOps read failed');
 			return { orgId: ORG_ID, user: { id: ME_AZ, descriptor: 'aad.me', displayName: 'Example Admin', active: o.active ?? true } };
 		},
+		owner: async () => ({ objectId: ME_OID, displayName: 'Example Admin' }),
 		listUnits: async () => ({ units: [], complete: true }),
 		proveAdmin: async (_t, unit) => {
 			asked.push(`prove:${unit.id}`);
@@ -81,7 +88,8 @@ function db(seed: Partial<Record<string, FakeTable>> = {}) {
 		workspaces: { rows: [], ...seed.workspaces },
 		'rpc:set_forge_token': { rows: [], ...seed['rpc:set_forge_token'] },
 		'rpc:remove_forge_token': { rows: [], ...seed['rpc:remove_forge_token'] },
-		'rpc:forge_token': { rows: [PAT as never], ...seed['rpc:forge_token'] },
+		'rpc:forge_token': { rows: [REFRESH as never], ...seed['rpc:forge_token'] },
+		'rpc:rotate_forge_token': { rows: [], ...seed['rpc:rotate_forge_token'] },
 		'rpc:mark_forge_token_rejected': { rows: [], ...seed['rpc:mark_forge_token_rejected'] },
 		'rpc:map_forge_unit': { rows: [{ mapping_id: 'fm-1', tenant_id: HERE, workspace_id: 'w-1' }], ...seed['rpc:map_forge_unit'] },
 		'rpc:reconcile_unit_members': { rows: [1 as never], ...seed['rpc:reconcile_unit_members'] }
@@ -98,7 +106,7 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 		// and map_forge_unit answers that it filed there.
 		const d = db({ 'rpc:map_forge_unit': { rows: [{ mapping_id: 'fm-1', tenant_id: 'tena-2', workspace_id: 'w-1' }] } });
 		const { a } = fakeAzure();
-		const out = await importAzureOrganization(d as never, ME, { as: 'own' }, PAT, a);
+		const out = await importAzureOrganization(d as never, ME, { as: 'own' }, GRANT, a);
 
 		const org = d.tables.tenants.rows.find((t) => t.origin === 'organization' && t.id !== HERE);
 		expect(org).toMatchObject({ key: 'organization/example-org', name: ORG });
@@ -118,7 +126,7 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 		);
 		// The Azure account is recorded as this person's — what a member read keys on.
 		expect(d.tables.identities.rows).toEqual([
-			expect.objectContaining({ principal_id: ME, provider: 'azure_devops', subject: ME_AZ })
+			expect.objectContaining({ principal_id: ME, provider: 'azure_devops', subject: ME_OID })
 		]);
 
 		const calls = d.rpcCalls;
@@ -131,7 +139,7 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 			p_principal: ME,
 			p_provider: 'azure_devops',
 			p_external_id: ORG_ID,
-			p_token: PAT,
+			p_token: REFRESH,
 			p_expires_at: null
 		});
 		const maps = calls.filter((c) => c.fn === 'map_forge_unit').map((c) => c.args);
@@ -156,14 +164,15 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 			projects: { total: 2, mapped: 2, elsewhere: 0, complete: true },
 			members: { complete: true, listed: 2, ended: 1 }
 		});
-		// The answer never carries the token.
-		expect(JSON.stringify(out)).not.toContain(PAT);
+		// The answer never carries a token.
+		expect(JSON.stringify(out)).not.toContain(ACCESS);
+		expect(JSON.stringify(out)).not.toContain(REFRESH);
 	});
 
-	it('the token is stored only after it lists the organization and proves the admin', async () => {
+	it('the refresh token is stored only after the grant names the organization and proves the admin', async () => {
 		const d = db();
 		const { a, asked } = fakeAzure();
-		await importAzureOrganization(d as never, ME, { as: 'own' }, PAT, a);
+		await importAzureOrganization(d as never, ME, { as: 'own' }, GRANT, a);
 		expect(asked.slice(0, 3)).toEqual(['connection:true', `prove:${ORG_ID}`, 'projects']);
 		const order = writes(d);
 		expect(order.indexOf('set_forge_token')).toBeGreaterThan(order.indexOf('claim_forge_unit'));
@@ -171,7 +180,7 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 
 	it('refuses a member who is not a Project Collection Administrator — and writes nothing', async () => {
 		const d = db();
-		const err = await importAzureOrganization(d as never, ME, { as: 'own' }, PAT, fakeAzure({ admin: false }).a).catch((e) => e);
+		const err = await importAzureOrganization(d as never, ME, { as: 'own' }, GRANT, fakeAzure({ admin: false }).a).catch((e) => e);
 		expect(err).toBeInstanceOf(AdminError);
 		expect(err.status).toBe(403);
 		expect(d.rpcCalls).toEqual([]);
@@ -180,16 +189,16 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 		expect(d.tables.tenants.rows).toHaveLength(2);
 	});
 
-	it('refuses a token whose owner is not in the organization — and writes nothing', async () => {
+	it('refuses a grant whose owner is not in the organization — and writes nothing', async () => {
 		const d = db();
-		const err = await importAzureOrganization(d as never, ME, { as: 'own' }, PAT, fakeAzure({ active: false }).a).catch((e) => e);
+		const err = await importAzureOrganization(d as never, ME, { as: 'own' }, GRANT, fakeAzure({ active: false }).a).catch((e) => e);
 		expect(err.status).toBe(403);
 		expect(d.rpcCalls).toEqual([]);
 	});
 
-	it('a token Azure rejects is refused (the forge status kept) and never stored', async () => {
+	it('a grant Azure refuses is refused (the forge status kept) and never stored', async () => {
 		const d = db();
-		const err = await importAzureOrganization(d as never, ME, { as: 'own' }, PAT, fakeAzure({ reject: 401 }).a).catch((e) => e);
+		const err = await importAzureOrganization(d as never, ME, { as: 'own' }, GRANT, fakeAzure({ reject: 401 }).a).catch((e) => e);
 		expect(err).toBeInstanceOf(ForgeReadError);
 		expect(err.forgeStatus).toBe(401);
 		expect(d.rpcCalls).toEqual([]);
@@ -208,7 +217,7 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 				rows: [{ id: 'c-az', tenant_id: 't-az', provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG }]
 			}
 		});
-		const out = await importAzureOrganization(d as never, ME, { as: 'own' }, PAT, fakeAzure().a);
+		const out = await importAzureOrganization(d as never, ME, { as: 'own' }, GRANT, fakeAzure().a);
 		expect(out.dojo).toEqual({ key: 'organization/example-org', created: false });
 		expect(d.tables.memberships.rows).toContainEqual(expect.objectContaining({ tenant_id: 't-az', user_id: ME, role: 'admin' }));
 	});
@@ -217,7 +226,7 @@ describe('importAzureOrganization — from the personal dōjō (how an Azure org
 describe('importAzureOrganization — from an organization dōjō\'s Integrations', () => {
 	it('connects the organization to THIS dōjō: one dōjō, known to GitHub and Azure', async () => {
 		const d = db();
-		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure().a);
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure().a);
 		expect(d.tables.tenant_connections.rows).toEqual([
 			expect.objectContaining({ tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG, connected_by: ME })
 		]);
@@ -226,13 +235,22 @@ describe('importAzureOrganization — from an organization dōjō\'s Integration
 		expect(out.dojo).toEqual({ key: 'organization/here', created: false });
 	});
 
+	it('re-checks that the person still administers this dōjō before connecting it (403, nothing written)', async () => {
+		const d = db();
+		const err = await importAzureOrganization(d as never, 'p-stranger', { as: 'this', tenantId: HERE }, GRANT, fakeAzure().a).catch((e) => e);
+		expect(err).toBeInstanceOf(AdminError);
+		expect(err.status).toBe(403);
+		expect(writes(d)).toEqual([]);
+		expect(d.tables.tenant_connections.rows).toEqual([]);
+	});
+
 	it('refuses an organization another dōjō is connected to (409), before storing anything', async () => {
 		const d = db({
 			tenant_connections: {
 				rows: [{ id: 'c-az', tenant_id: 't-other', provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG }]
 			}
 		});
-		const err = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure().a).catch((e) => e);
+		const err = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure().a).catch((e) => e);
 		expect(err.status).toBe(409);
 		expect(writes(d)).toEqual([]);
 	});
@@ -251,7 +269,7 @@ describe('importAzureOrganization — from an organization dōjō\'s Integration
 			d as never,
 			ME,
 			{ as: 'this', tenantId: HERE },
-			PAT,
+			GRANT,
 			fakeAzure({ projects: [P1, P2, P3, { id: 'proj-4', name: 'Mobile Apps!' }] }).a
 		);
 		const maps = d.rpcCalls.filter((c) => c.fn === 'map_forge_unit').map((c) => c.args);
@@ -266,34 +284,28 @@ describe('importAzureOrganization — from an organization dōjō\'s Integration
 
 	it('counts a project the database kept in another dōjō (a re-map that raced the import)', async () => {
 		const d = db({ 'rpc:map_forge_unit': { rows: [{ mapping_id: 'fm-9', tenant_id: 't-other', workspace_id: 'w-away' }] } });
-		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure({ projects: [P1] }).a);
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure({ projects: [P1] }).a);
 		expect(d.rpcCalls.find((c) => c.fn === 'map_forge_unit')?.args.p_keep_elsewhere).toBe(true);
 		expect(out.projects).toEqual({ total: 1, mapped: 0, elsewhere: 1, complete: true });
 	});
 
 	it('says when the project read was not complete', async () => {
 		const d = db();
-		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure({ complete: false }).a);
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure({ complete: false }).a);
 		expect(out.projects.complete).toBe(false);
 	});
 });
 
-describe('connectRequest', () => {
-	it('reads the organization URL and the token, trimmed', async () => {
-		const req = new Request('http://x/', {
-			method: 'POST',
-			body: JSON.stringify({ organization_url: ' https://dev.azure.com/example-org ', token: ` ${PAT} ` })
-		});
-		expect(await connectRequest(req)).toEqual({ organization: ORG, token: PAT });
+describe('importRequest', () => {
+	it('reads the organization by name, lowercased', async () => {
+		const req = new Request('http://x/', { method: 'POST', body: JSON.stringify({ organization: ' Example-Org ' }) });
+		expect(await importRequest(req)).toEqual({ organization: ORG });
 	});
 
-	it('is a 400 without either, naming neither value', async () => {
-		for (const body of [{}, { organization_url: 'https://dev.azure.com/example-org' }, { token: PAT }, { organization_url: 'https://example.com/x', token: PAT }]) {
-			const err = await connectRequest(new Request('http://x/', { method: 'POST', body: JSON.stringify(body) })).catch((e) => e);
-			expect(err).toBeInstanceOf(AdminError);
-			expect(err.status).toBe(400);
-			expect(String(err.message)).not.toContain(PAT);
-		}
+	it('is a 400 without one — and a body carries no token', async () => {
+		const err = await importRequest(new Request('http://x/', { method: 'POST', body: JSON.stringify({ token: ACCESS }) })).catch((e) => e);
+		expect(err).toBeInstanceOf(AdminError);
+		expect(err.status).toBe(400);
 	});
 });
 
@@ -342,50 +354,70 @@ describe('removeAzureToken', () => {
 	});
 });
 
-describe('syncAzureOrganization — re-read with the stored token', () => {
-	const connected = () =>
+describe('syncAzureOrganization — re-read with the stored grant (D42)', () => {
+	const connected = (seed: Partial<Record<string, FakeTable>> = {}) =>
 		db({
 			tenant_connections: {
 				rows: [{ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG, token_secret_id: 'sec-1', token_state: 'ok' }]
-			}
+			},
+			...seed
 		});
+	const entra = (over: { status?: number; body?: unknown } = {}) =>
+		fakeFetch({ [TOKEN_URL]: { status: over.status, body: over.body ?? { access_token: ACCESS, refresh_token: 'ztest-refresh-0001', scope: '' } } });
 
-	it('reads the token from Vault, re-proves the admin and files the projects — without storing the token again', async () => {
+	it('refreshes the stored grant, stores the rotated refresh token, re-proves the admin and files the projects', async () => {
 		const d = connected();
 		const { a, asked } = fakeAzure();
-		const out = await syncAzureOrganization(d as never, ME, HERE, ORG_ID, (org) => {
-			expect(org).toBe(ORG);
-			return a;
+		const token = entra();
+		const out = await syncAzureOrganization(d as never, ME, HERE, ORG_ID, {
+			cfg: CFG,
+			fetchImpl: token.fn,
+			adapterFor: (org) => {
+				expect(org).toBe(ORG);
+				return a;
+			}
 		});
+		expect(new URLSearchParams(String(token.calls[0].init?.body)).get('refresh_token')).toBe(REFRESH);
+		expect(d.rpcCalls.slice(0, 2)).toEqual([
+			{ fn: 'forge_token', args: { p_provider: 'azure_devops', p_external_id: ORG_ID } },
+			{ fn: 'rotate_forge_token', args: { p_provider: 'azure_devops', p_external_id: ORG_ID, p_token: 'ztest-refresh-0001' } }
+		]);
 		expect(asked).toContain(`prove:${ORG_ID}`);
-		expect(d.rpcCalls[0]).toEqual({ fn: 'forge_token', args: { p_provider: 'azure_devops', p_external_id: ORG_ID } });
 		expect(writes(d)).not.toContain('set_forge_token');
 		expect(out.projects).toEqual({ total: 2, mapped: 2, elsewhere: 0, complete: true });
 		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1 });
-		expect(JSON.stringify(out)).not.toContain(PAT);
+		expect(JSON.stringify(out)).not.toContain('ztest-refresh');
 	});
 
-	it('marks a token Azure rejects as needing a new one, and stops (409)', async () => {
+	it('a grant Entra refuses (invalid_grant) marks the connection and stops: 409 reconnect, nothing read or rotated', async () => {
 		const d = connected();
-		const err = await syncAzureOrganization(d as never, ME, HERE, ORG_ID, () => fakeAzure({ reject: 401 }).a).catch((e) => e);
+		const { a, asked } = fakeAzure();
+		const err = await syncAzureOrganization(d as never, ME, HERE, ORG_ID, {
+			cfg: CFG,
+			fetchImpl: entra({ status: 400, body: { error: 'invalid_grant' } }).fn,
+			adapterFor: () => a
+		}).catch((e) => e);
 		expect(err).toBeInstanceOf(AdminError);
 		expect(err.status).toBe(409);
+		expect(err.message).toMatch(/reconnect Azure DevOps/i);
 		expect(d.rpcCalls.map((c) => c.fn)).toEqual(['forge_token', 'mark_forge_token_rejected']);
+		expect(asked).toEqual([]);
 	});
 
-	it('keeps an outage an outage: no mark, the read error thrown', async () => {
+	it('keeps an outage an outage: no mark, the error thrown', async () => {
 		const d = connected();
-		const err = await syncAzureOrganization(d as never, ME, HERE, ORG_ID, () => fakeAzure({ reject: 503 }).a).catch((e) => e);
-		expect(err).toBeInstanceOf(ForgeReadError);
+		const err = await syncAzureOrganization(d as never, ME, HERE, ORG_ID, {
+			cfg: CFG,
+			fetchImpl: entra({ status: 503, body: { error: 'temporarily_unavailable' } }).fn,
+			adapterFor: () => fakeAzure().a
+		}).catch((e) => e);
+		expect(err.status).toBe(502);
 		expect(writes(d)).toEqual(['forge_token']);
 	});
 
-	it('keeps the database\'s refusal of a token already marked (409) or missing (404)', async () => {
-		const marked = db({
-			tenant_connections: { rows: [{ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG }] },
-			'rpc:forge_token': { rows: [], error: { code: '55000', message: 'the stored token was rejected; an admin must replace it' } }
-		});
-		const err = await syncAzureOrganization(marked as never, ME, HERE, ORG_ID, () => fakeAzure().a).catch((e) => e);
+	it("keeps the database's refusal of a grant already marked (409)", async () => {
+		const marked = connected({ 'rpc:forge_token': { rows: [], error: { code: '55000', message: 'the stored token was rejected; an admin must replace it' } } });
+		const err = await syncAzureOrganization(marked as never, ME, HERE, ORG_ID, { cfg: CFG, fetchImpl: entra().fn, adapterFor: () => fakeAzure().a }).catch((e) => e);
 		expect(err.status).toBe(409);
 	});
 
@@ -393,13 +425,13 @@ describe('syncAzureOrganization — re-read with the stored token', () => {
 		const d = db({
 			tenant_connections: { rows: [{ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: 'org-guid-OLD', external_slug: ORG, token_secret_id: 's' }] }
 		});
-		const err = await syncAzureOrganization(d as never, ME, HERE, 'org-guid-OLD', () => fakeAzure().a).catch((e) => e);
+		const err = await syncAzureOrganization(d as never, ME, HERE, 'org-guid-OLD', { cfg: CFG, fetchImpl: entra().fn, adapterFor: () => fakeAzure().a }).catch((e) => e);
 		expect(err.status).toBe(409);
 		expect(writes(d)).not.toContain('map_forge_unit');
 	});
 
 	it('is a 404 for an organization this dōjō is not connected to', async () => {
-		const err = await syncAzureOrganization(db() as never, ME, HERE, ORG_ID, () => fakeAzure().a).catch((e) => e);
+		const err = await syncAzureOrganization(db() as never, ME, HERE, ORG_ID, { cfg: CFG, fetchImpl: entra().fn, adapterFor: () => fakeAzure().a }).catch((e) => e);
 		expect(err.status).toBe(404);
 	});
 });
@@ -407,7 +439,7 @@ describe('syncAzureOrganization — re-read with the stored token', () => {
 describe('members — #309\'s rule, read from the organization\'s side', () => {
 	it('a complete read ends the provisioned members it no longer lists (the database decides who)', async () => {
 		const d = db();
-		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure().a);
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure().a);
 		const call = d.rpcCalls.find((c) => c.fn === 'reconcile_unit_members');
 		expect(call?.args).toEqual({
 			p_tenant: HERE,
@@ -421,14 +453,14 @@ describe('members — #309\'s rule, read from the organization\'s side', () => {
 
 	it('a partial read ends nobody — and says so', async () => {
 		const d = db();
-		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure({ membersComplete: false }).a);
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure({ membersComplete: false }).a);
 		expect(d.rpcCalls.map((c) => c.fn)).not.toContain('reconcile_unit_members');
 		expect(out.members).toEqual({ complete: false, listed: 2, ended: 0 });
 	});
 
 	it('a failed member read ends nobody and is reported — the import itself stands', async () => {
 		const d = db();
-		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure({ membersFail: 503 }).a);
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure({ membersFail: 503 }).a);
 		expect(d.rpcCalls.map((c) => c.fn)).not.toContain('reconcile_unit_members');
 		expect(d.rpcCalls.map((c) => c.fn)).toContain('set_forge_token');
 		expect(out.members).toEqual({ error: 'Azure DevOps could not list the members (503); nobody was ended' });
@@ -436,19 +468,20 @@ describe('members — #309\'s rule, read from the organization\'s side', () => {
 
 	it('a read that lists nobody is not a complete answer — nobody is ended', async () => {
 		const d = db();
-		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, PAT, fakeAzure({ members: [] }).a);
+		const out = await importAzureOrganization(d as never, ME, { as: 'this', tenantId: HERE }, GRANT, fakeAzure({ members: [] }).a);
 		expect(d.rpcCalls.map((c) => c.fn)).not.toContain('reconcile_unit_members');
 		expect(out.members).toEqual({ complete: false, listed: 0, ended: 0 });
 	});
 
-	it('sync reads the members too, with the stored token', async () => {
+	it('sync reads the members too, with the stored grant', async () => {
 		const d = db({
 			tenant_connections: {
 				rows: [{ id: 'c-az', tenant_id: HERE, provider: 'azure_devops', external_id: ORG_ID, external_slug: ORG, token_secret_id: 's', token_state: 'ok' }]
 			}
 		});
 		const { a, asked } = fakeAzure();
-		const out = await syncAzureOrganization(d as never, ME, HERE, ORG_ID, () => a);
+		const token = fakeFetch({ [TOKEN_URL]: { body: { access_token: ACCESS, refresh_token: REFRESH, scope: '' } } });
+		const out = await syncAzureOrganization(d as never, ME, HERE, ORG_ID, { cfg: CFG, fetchImpl: token.fn, adapterFor: () => a });
 		expect(asked).toContain('members');
 		expect(out.members).toEqual({ complete: true, listed: 2, ended: 1 });
 	});

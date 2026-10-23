@@ -1,28 +1,32 @@
-// Importing an Azure DevOps organization into the dōjō (#308 R5b, D35/D36).
+// Importing an Azure DevOps organization into the dōjō (#308 R5b, D36/D42).
 //
-// An organization admin pastes the organization's URL and a personal access
-// token. The token is VALIDATED FIRST — it must name the organization (its
-// owner active there) and prove its owner a Project Collection Administrator —
-// and only then is anything written. A failing token is refused and never
-// stored. Then:
+// An organization admin connects Azure DevOps through Microsoft Entra
+// (azure-connect.ts) and picks an organization. The grant is VALIDATED FIRST —
+// its owner is active in the organization and a Project Collection
+// Administrator, and the projects can be read — and only then is anything
+// written. Then:
 //   * the organization → a dōjō: from the PERSONAL dōjō, its own dōjō is made
 //     (or joined, as a proven admin) — how an Azure organization's dōjō is first
 //     created; from an ORGANIZATION dōjō's Integrations, it connects to that
 //     dōjō (one organization known to GitHub and Azure). Claimed through
 //     dojo.claim_forge_unit, provider azure_devops;
-//   * the token → Supabase Vault (dojo.set_forge_token); the connection keeps
-//     only the secret's id and the token's state;
+//   * the owner's Azure identity is recorded by their Microsoft Entra object id
+//     (D43/D45) — what a Microsoft sign-in (R5c) will also see;
+//   * the REFRESH token → Supabase Vault (dojo.set_forge_token); the connection
+//     keeps only the secret's id and the token's state. Access tokens are used
+//     for one request and never stored;
 //   * each project → a workspace in that dōjō (dojo.map_forge_unit, keyed by the
 //     project's stable id, named `{org}/{project}` — what
-//     dojo.register_repository matches an Azure repository's project against).
+//     dojo.register_repository matches an Azure repository's project against);
+//   * the members are read and #309's rule applied (followMembers).
 //
 // System work (the server's service-role client): it reads every tenant's
 // connections and writes through the SECURITY DEFINER functions that hold the
-// rules. The token is used for this request's reads and the Vault write only —
-// never returned, logged or put in an error.
+// rules. No token is ever returned, logged or put in an error.
 import { AdminError, slugify, type DojoClient } from './admin-data';
 import { refusalStatus } from './db-refusal';
-import { azureOrgFromUrl, type AzureAdapter, type AzureConnection, type AzureProject } from './forge-azure';
+import { AzureGrantRejected, refreshGrant, type AzureEntraConfig } from './azure-entra';
+import type { AzureAdapter, AzureConnection, AzureProject } from './forge-azure';
 import { ForgeReadError } from './forge-github';
 import type { AzureConnectionView, AzureImportResult, AzureMembersRead, AzureSyncResult } from '../azure-view';
 
@@ -39,17 +43,24 @@ function fail(error: { code?: string; message: string } | null): void {
 	if (error) throw new AdminError(refusalStatus(error), error.message);
 }
 
+/** A connected grant for one request: the access token to read with, and the
+ *  refresh token to keep. */
+export interface AzureGrantTokens {
+	accessToken: string;
+	refreshToken: string;
+}
+
 /**
- * Validate the token against the organization — the token's owner is active in
- * it and is a Project Collection Administrator — and read its projects. Reads
- * only: nothing is written before this returns. A token Azure rejects throws its
- * ForgeReadError (the route answers "Azure DevOps did not accept that token").
+ * Validate the grant against the organization — its owner is active in it and
+ * is a Project Collection Administrator — and read its projects. Reads only:
+ * nothing is written before this returns. A read Azure refuses throws its
+ * ForgeReadError.
  */
 async function validate(adapter: AzureAdapter, token: string) {
 	const conn: AzureConnection = await adapter.connection(token);
 	const org = adapter.organization;
 	if (!conn.user.active) {
-		throw new AdminError(403, `this token's account is not a member of ${org} on Azure DevOps`);
+		throw new AdminError(403, `your Azure DevOps account is not a member of ${org}`);
 	}
 	const unit = { id: conn.orgId, login: org };
 	if (!(await adapter.proveAdmin(token, unit))) {
@@ -57,6 +68,21 @@ async function validate(adapter: AzureAdapter, token: string) {
 	}
 	const read = await adapter.listProjects(token, unit);
 	return { conn, unit, read };
+}
+
+/** A 403 unless the person is an ACTIVE admin of the dōjō. */
+async function requireActiveAdmin(db: DojoClient, principalId: string, tenantId: string): Promise<void> {
+	const { data, error } = await db
+		.from('memberships')
+		.select('role, disabled_at')
+		.eq('tenant_id', tenantId)
+		.eq('user_id', principalId)
+		.maybeSingle();
+	fail(error);
+	const m = data as { role: string; disabled_at: string | null } | null;
+	if (!m || m.disabled_at || m.role !== 'admin') {
+		throw new AdminError(403, 'only an admin of this dōjō can connect an Azure DevOps organization to it');
+	}
 }
 
 /** The organization dōjō whose screen asked, connected to the Azure
@@ -227,7 +253,7 @@ async function followMembers(
 }
 
 /**
- * Import one Azure DevOps organization with an admin's PAT: validate, then make
+ * Import one Azure DevOps organization with an admin's Entra grant: validate, then make
  * or connect its dōjō, claim it, store the token in Vault and file its projects
  * as workspaces. See the module header.
  */
@@ -235,14 +261,20 @@ export async function importAzureOrganization(
 	db: DojoClient,
 	principalId: string,
 	target: AzureImportTarget,
-	token: string,
+	grant: AzureGrantTokens,
 	adapter: AzureAdapter
 ): Promise<AzureImportResult> {
-	const { conn, unit, read } = await validate(adapter, token);
+	const token = grant.accessToken;
+	const { unit, read } = await validate(adapter, token);
+	const owner = await adapter.owner(token);
+	// The connect was started from this dōjō's admin screen minutes ago; the
+	// import is a separate request, so the admin floor is checked again here.
+	if (target.as === 'this') await requireActiveAdmin(db, principalId, target.tenantId);
 
-	// The token's owner, as this person: one Azure account is one person (a 409
-	// if another already holds it) — what a member read is matched against.
-	await ensureForgeIdentity(db, principalId, PROVIDER, { id: conn.user.id, name: conn.user.displayName, email: null });
+	// The grant's owner, as this person, by Microsoft Entra object id (D43/D45):
+	// one Azure account is one person (a 409 if another already holds it) — what
+	// a member read is matched against, and what a Microsoft sign-in will see.
+	await ensureForgeIdentity(db, principalId, PROVIDER, { id: owner.objectId, name: owner.displayName, email: null });
 
 	let dojo: { id: string; key: string; created: boolean };
 	if (target.as === 'own') {
@@ -259,7 +291,7 @@ export async function importAzureOrganization(
 		p_principal: principalId,
 		p_provider: PROVIDER,
 		p_external_id: unit.id,
-		p_token: token,
+		p_token: grant.refreshToken,
 		p_expires_at: null
 	});
 	fail(stored.error);
@@ -274,44 +306,58 @@ export async function importAzureOrganization(
 	};
 }
 
+/** What reading with a stored grant needs: the app registration, and fetch. */
+export interface AzureStoredGrantDeps {
+	cfg: AzureEntraConfig;
+	fetchImpl?: typeof fetch;
+}
+
 /**
- * Re-read one of this dōjō's Azure organizations with its STORED token: re-prove
- * the admin and file its projects (new ones get workspaces; renamed ones keep
- * theirs). The token is read from Vault for this request only.
- *
- * A token Azure rejects (401) marks the connection needs_new_token and stops
- * (409) — reads stay stopped until an admin pastes a new one. Any other failed
- * read is thrown as it is: an outage is not a dead token.
+ * A fresh access token from a connection's STORED grant (#308 R5b, D42): the
+ * refresh token is read from Vault, refreshed with Entra, and the rotated one
+ * stored back in place (dojo.rotate_forge_token, unaudited). An `invalid_grant`
+ * — revoked, expired, consent withdrawn — marks the connection needs_new_token
+ * and is a 409 "reconnect": reads stop and no membership is ended (#309). A
+ * connection already marked is refused by the database (409).
+ */
+export async function accessFromStoredGrant(db: DojoClient, orgId: string, deps: AzureStoredGrantDeps): Promise<string> {
+	const stored = await db.rpc('forge_token', { p_provider: PROVIDER, p_external_id: orgId }).single();
+	fail(stored.error);
+	if (typeof stored.data !== 'string' || !stored.data) throw new AdminError(500, 'no grant could be read for this connection');
+	let tokens;
+	try {
+		tokens = await refreshGrant(deps.cfg, stored.data, deps.fetchImpl ?? fetch);
+	} catch (e) {
+		if (e instanceof AzureGrantRejected) {
+			const marked = await db.rpc('mark_forge_token_rejected', { p_provider: PROVIDER, p_external_id: orgId });
+			fail(marked.error);
+		}
+		throw e;
+	}
+	const rotated = await db.rpc('rotate_forge_token', { p_provider: PROVIDER, p_external_id: orgId, p_token: tokens.refreshToken });
+	fail(rotated.error);
+	return tokens.accessToken;
+}
+
+/**
+ * Re-read one of this dōjō's Azure organizations with its STORED grant: re-prove
+ * the admin, file its projects (new ones get workspaces; renamed ones keep
+ * theirs), and follow its members.
  */
 export async function syncAzureOrganization(
 	db: DojoClient,
 	principalId: string,
 	tenantId: string,
 	orgId: string,
-	adapterFor: (organization: string) => AzureAdapter
+	deps: AzureStoredGrantDeps & { adapterFor: (organization: string) => AzureAdapter }
 ): Promise<AzureSyncResult> {
 	const org = await azureConnectionOf(db, tenantId, orgId);
-	const stored = await db.rpc('forge_token', { p_provider: PROVIDER, p_external_id: org.id }).single();
-	fail(stored.error);
-	const token = stored.data;
-	if (typeof token !== 'string' || !token) throw new AdminError(500, `no token could be read for ${org.name}`);
-
-	const adapter = adapterFor(org.name);
-	let checked: Awaited<ReturnType<typeof validate>>;
-	try {
-		checked = await validate(adapter, token);
-	} catch (e) {
-		if (e instanceof ForgeReadError && e.forgeStatus === 401) {
-			const marked = await db.rpc('mark_forge_token_rejected', { p_provider: PROVIDER, p_external_id: org.id });
-			fail(marked.error);
-			throw new AdminError(409, `Azure DevOps no longer accepts the stored token for ${org.name}; paste a new one`);
-		}
-		throw e;
-	}
+	const token = await accessFromStoredGrant(db, org.id, deps);
+	const adapter = deps.adapterFor(org.name);
+	const checked = await validate(adapter, token);
 	if (checked.unit.id !== org.id) {
 		throw new AdminError(409, `${org.name} now names a different Azure DevOps organization; nothing was changed`);
 	}
-
 	const filed = await mapProjects(db, principalId, tenantId, org.name, checked.read.projects);
 	const members = await followMembers(db, tenantId, adapter, token, checked.unit);
 	return {
@@ -370,15 +416,12 @@ async function bodyOf(request: Request): Promise<Record<string, unknown>> {
 	return ((await request.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;
 }
 
-/** A connect request: the organization (from its URL) and the token. A 400
- *  without either; the message never repeats the token. */
-export async function connectRequest(request: Request): Promise<{ organization: string; token: string }> {
+/** An import request: the organization (by the name the organization list gave). */
+export async function importRequest(request: Request): Promise<{ organization: string }> {
 	const body = await bodyOf(request);
-	const url = typeof body.organization_url === 'string' ? body.organization_url : '';
-	const token = typeof body.token === 'string' ? body.token.trim() : '';
-	if (!url.trim()) throw new AdminError(400, 'which organization? (organization_url)');
-	if (!token) throw new AdminError(400, 'a personal access token is needed (token)');
-	return { organization: azureOrgFromUrl(url), token };
+	const organization = typeof body.organization === 'string' ? body.organization.trim().toLowerCase() : '';
+	if (!organization) throw new AdminError(400, 'which organization? (organization)');
+	return { organization };
 }
 
 /** A request naming one of this dōjō's Azure organizations by its id. */

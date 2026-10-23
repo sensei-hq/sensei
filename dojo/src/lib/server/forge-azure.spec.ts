@@ -1,5 +1,5 @@
 // The Azure DevOps adapter (#308 R5b, D35/D36): an organization and its projects
-// behind the one forge interface, read with the admin's pasted PAT.
+// behind the one forge interface, read with the admin's pasted ACCESS.
 //
 // Fail closed, as forge-github is: a read that could not be made THROWS, a
 // partial member read says `complete: false`, and nothing here may reach a host
@@ -8,14 +8,14 @@
 import { describe, it, expect } from 'vitest';
 import { AdminError } from './admin-data';
 import { ForgeReadError } from './forge-github';
-import { azureAdapter, azureOrgFromUrl, listAzureOrganizations, readAzureConnection, AZURE_REQUIRED_SCOPES } from './forge-azure';
+import { azureAdapter, listAzureOrganizations, readAzureConnection, AZURE_REQUIRED_SCOPES } from './forge-azure';
 import { fakeFetch, type FakeRoute } from './fake-forge-fetch';
 import * as F from './forge-azure.fixtures';
 
 // An Entra access token for the Azure DevOps resource (#308 R5b, D42) — a JWT, opaque here.
-const PAT = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJ6dGVzdCI6InRva2VuIn0.c2lnbmF0dXJl';
+const ACCESS = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJ6dGVzdCI6InRva2VuIn0.c2lnbmF0dXJl';
 const UNIT = { id: F.ORG_ID, login: F.ORG };
-const basic = `Bearer ${PAT}`;
+const basic = `Bearer ${ACCESS}`;
 
 function adminRoutes(over: Record<string, FakeRoute> = {}): Record<string, FakeRoute> {
 	// A test's own routes win over these (a later spread replaces a value in place).
@@ -26,37 +26,6 @@ function adminRoutes(over: Record<string, FakeRoute> = {}): Record<string, FakeR
 		...over
 	};
 }
-
-describe('azureOrgFromUrl', () => {
-	it('reads the organization from both URL forms', () => {
-		expect(azureOrgFromUrl('https://dev.azure.com/example-org')).toBe('example-org');
-		expect(azureOrgFromUrl('https://dev.azure.com/Example-Org/Some%20Project/_git/api')).toBe('example-org');
-		expect(azureOrgFromUrl('  https://example-org.visualstudio.com/  ')).toBe('example-org');
-		expect(azureOrgFromUrl('dev.azure.com/example-org')).toBe('example-org');
-	});
-
-	it('refuses anything that is not an Azure DevOps organization URL', () => {
-		for (const bad of [
-			'',
-			'http://dev.azure.com/example-org',
-			'https://dev.azure.com/',
-			'https://dev.azure.com.attacker.net/example-org',
-			'https://attacker.net/dev.azure.com/example-org',
-			'https://evil.dev.azure.com/example-org',
-			'https://dev.azure.com/..',
-			'https://dev.azure.com/a%2Fb',
-			'https://dev.azure.com/-leading-hyphen',
-			'https://dev.azure.com/' + 'a'.repeat(51),
-			'https://vs-ssh.visualstudio.com/example-org',
-			'https://a.b.visualstudio.com/',
-			// userinfo in the URL (built in two parts: the leak guard reads `x@host` as an email)
-			'https://user:pw' + '@dev.azure.com/example-org',
-			'https://dev.azure.com:8443/example-org'
-		]) {
-			expect(() => azureOrgFromUrl(bad), bad).toThrow(AdminError);
-		}
-	});
-});
 
 describe('the Azure adapter, before any request', () => {
 	it('refuses an organization name that could change the URL', () => {
@@ -88,12 +57,12 @@ describe('the Azure adapter, before any request', () => {
 describe('readAzureConnection', () => {
 	it('reads the organization id and the token owner, with the bearer token, from the org host only', async () => {
 		const { fn, calls } = fakeFetch({ '/_apis/connectionData': { body: F.connectionData() } });
-		expect(await readAzureConnection(F.ORG, PAT, fn)).toEqual({
+		expect(await readAzureConnection(F.ORG, ACCESS, fn)).toEqual({
 			orgId: F.ORG_ID,
 			user: { id: F.ME_ID, descriptor: F.ME_DESCRIPTOR, displayName: 'Example Admin', active: true }
 		});
 		expect(calls[0].url).toBe('https://dev.azure.com/example-org/_apis/connectionData');
-		expect(calls[0].url).not.toContain(PAT);
+		expect(calls[0].url).not.toContain(ACCESS);
 		const init = calls[0].init as RequestInit;
 		expect((init.headers as Record<string, string>).Authorization).toBe(basic);
 		// A redirect is Azure's answer to a bad token (a sign-in page) — never followed.
@@ -102,43 +71,64 @@ describe('readAzureConnection', () => {
 
 	it('throws on a rejected token, keeping the forge status, and never names the token', async () => {
 		const { fn } = fakeFetch({ '/_apis/connectionData': { status: 401, body: {} } });
-		const err = await readAzureConnection(F.ORG, PAT, fn).catch((e) => e);
+		const err = await readAzureConnection(F.ORG, ACCESS, fn).catch((e) => e);
 		expect(err).toBeInstanceOf(ForgeReadError);
 		expect(err.forgeStatus).toBe(401);
-		expect(String(err.message)).not.toContain(PAT);
+		expect(String(err.message)).not.toContain(ACCESS);
 	});
 
 	it('throws on the 203 sign-in page Azure answers a bad token with, and on any non-JSON answer', async () => {
 		const page = fakeFetch({ '/_apis/connectionData': { status: 203, body: '<html>', headers: { 'content-type': 'text/html' } } });
-		await expect(readAzureConnection(F.ORG, PAT, page.fn)).rejects.toBeInstanceOf(ForgeReadError);
+		await expect(readAzureConnection(F.ORG, ACCESS, page.fn)).rejects.toBeInstanceOf(ForgeReadError);
 		const html = fakeFetch({ '/_apis/connectionData': { body: '<html>', headers: { 'content-type': 'text/html' } } });
-		await expect(readAzureConnection(F.ORG, PAT, html.fn)).rejects.toBeInstanceOf(ForgeReadError);
+		await expect(readAzureConnection(F.ORG, ACCESS, html.fn)).rejects.toBeInstanceOf(ForgeReadError);
 		const redirect = fakeFetch({ '/_apis/connectionData': { status: 302, body: null } });
-		await expect(readAzureConnection(F.ORG, PAT, redirect.fn)).rejects.toBeInstanceOf(ForgeReadError);
+		await expect(readAzureConnection(F.ORG, ACCESS, redirect.fn)).rejects.toBeInstanceOf(ForgeReadError);
 	});
 
 	it('throws when the answer has no organization id or no user id — never a guessed one', async () => {
 		const noOrg = fakeFetch({ '/_apis/connectionData': { body: F.connectionData({ instanceId: undefined }) } });
-		await expect(readAzureConnection(F.ORG, PAT, noOrg.fn)).rejects.toBeInstanceOf(AdminError);
+		await expect(readAzureConnection(F.ORG, ACCESS, noOrg.fn)).rejects.toBeInstanceOf(AdminError);
 		const noUser = fakeFetch({ '/_apis/connectionData': { body: F.connectionData({}, { id: undefined }) } });
-		await expect(readAzureConnection(F.ORG, PAT, noUser.fn)).rejects.toBeInstanceOf(AdminError);
+		await expect(readAzureConnection(F.ORG, ACCESS, noUser.fn)).rejects.toBeInstanceOf(AdminError);
 	});
 });
 
 describe('connection', () => {
 	it('is the adapter\'s organization read: its stable id and the token owner', async () => {
 		const { fn, calls } = fakeFetch({ '/_apis/connectionData': { body: F.connectionData() } });
-		const conn = await azureAdapter(F.ORG, fn).connection(PAT);
+		const conn = await azureAdapter(F.ORG, fn).connection(ACCESS);
 		expect(conn.orgId).toBe(F.ORG_ID);
 		expect(conn.user.id).toBe(F.ME_ID);
 		expect(calls[0].url).toBe('https://dev.azure.com/example-org/_apis/connectionData');
 	});
 });
 
+describe('owner — the token owner by their Microsoft Entra object id (D45)', () => {
+	it('reads the Graph user behind the token and keys it on originId', async () => {
+		const { fn, calls } = fakeFetch({
+			'/_apis/connectionData': { body: F.connectionData() },
+			[`/_apis/graph/users/${F.ME_DESCRIPTOR}`]: { body: F.graphUser() }
+		});
+		expect(await azureAdapter(F.ORG, fn).owner(ACCESS)).toEqual({ objectId: F.ME_OID, displayName: 'Example Admin' });
+		expect(calls[1].url).toBe(`https://vssps.dev.azure.com/example-org/_apis/graph/users/${F.ME_DESCRIPTOR}?api-version=7.1-preview.1`);
+	});
+
+	it('refuses an owner who is not a Microsoft Entra user, or has no object id', async () => {
+		for (const user of [F.graphUser({ origin: 'msa' }), F.graphUser({ originId: undefined }), F.graphUser({ originId: 'not-a-guid' })]) {
+			const { fn } = fakeFetch({
+				'/_apis/connectionData': { body: F.connectionData() },
+				[`/_apis/graph/users/${F.ME_DESCRIPTOR}`]: { body: user }
+			});
+			await expect(azureAdapter(F.ORG, fn).owner(ACCESS)).rejects.toBeInstanceOf(AdminError);
+		}
+	});
+});
+
 describe('listUnits', () => {
 	it('is the bound organization, by its stable id, with the person proven an admin', async () => {
 		const { fn } = fakeFetch(adminRoutes({ [`Memberships/${F.ME_DESCRIPTOR}`]: { body: F.memberships(F.ME_DESCRIPTOR, [F.PCA_DESCRIPTOR]) } }));
-		expect(await azureAdapter(F.ORG, fn).listUnits(PAT)).toEqual({
+		expect(await azureAdapter(F.ORG, fn).listUnits(ACCESS)).toEqual({
 			units: [{ id: F.ORG_ID, login: F.ORG, role: 'admin' }],
 			complete: true
 		});
@@ -146,20 +136,20 @@ describe('listUnits', () => {
 
 	it('names a member a member', async () => {
 		const { fn } = fakeFetch(adminRoutes({ [`Memberships/${F.ME_DESCRIPTOR}`]: { body: F.memberships(F.ME_DESCRIPTOR, [F.OTHER_GROUP]) }, [`Memberships/${F.OTHER_GROUP}`]: { body: F.memberships(F.OTHER_GROUP, []) } }));
-		const read = await azureAdapter(F.ORG, fn).listUnits(PAT);
+		const read = await azureAdapter(F.ORG, fn).listUnits(ACCESS);
 		expect(read.units[0].role).toBe('member');
 	});
 
 	it('is empty — a positive answer — when the token owner is not active in the organization', async () => {
 		const { fn } = fakeFetch({ '/_apis/connectionData': { body: F.connectionData({}, { isActive: false }) } });
-		expect(await azureAdapter(F.ORG, fn).listUnits(PAT)).toEqual({ units: [], complete: true });
+		expect(await azureAdapter(F.ORG, fn).listUnits(ACCESS)).toEqual({ units: [], complete: true });
 	});
 });
 
 describe('proveAdmin (Project Collection Administrators, via the Graph API)', () => {
 	it('is true for a direct member, finding the group across pages of groups', async () => {
 		const { fn, calls } = fakeFetch(adminRoutes({ [`Memberships/${F.ME_DESCRIPTOR}`]: { body: F.memberships(F.ME_DESCRIPTOR, [F.PCA_DESCRIPTOR]) } }));
-		expect(await azureAdapter(F.ORG, fn).proveAdmin(PAT, UNIT)).toBe(true);
+		expect(await azureAdapter(F.ORG, fn).proveAdmin(ACCESS, UNIT)).toBe(true);
 		const hosts = new Set(calls.map((c) => new URL(c.url).host));
 		expect([...hosts].sort()).toEqual(['dev.azure.com', 'vssps.dev.azure.com']);
 		expect(calls.some((c) => c.url.includes('continuationToken=groups-2'))).toBe(true);
@@ -174,7 +164,7 @@ describe('proveAdmin (Project Collection Administrators, via the Graph API)', ()
 				[`Memberships/${F.NESTED_GROUP}`]: { body: F.memberships(F.NESTED_GROUP, [F.PCA_DESCRIPTOR]) }
 			})
 		);
-		expect(await azureAdapter(F.ORG, fn).proveAdmin(PAT, UNIT)).toBe(true);
+		expect(await azureAdapter(F.ORG, fn).proveAdmin(ACCESS, UNIT)).toBe(true);
 	});
 
 	it('is false for a member of no admin group', async () => {
@@ -184,12 +174,12 @@ describe('proveAdmin (Project Collection Administrators, via the Graph API)', ()
 				[`Memberships/${F.OTHER_GROUP}`]: { body: F.memberships(F.OTHER_GROUP, []) }
 			})
 		);
-		expect(await azureAdapter(F.ORG, fn).proveAdmin(PAT, UNIT)).toBe(false);
+		expect(await azureAdapter(F.ORG, fn).proveAdmin(ACCESS, UNIT)).toBe(false);
 	});
 
 	it('is false when the name now belongs to another organization (a different stable id)', async () => {
 		const { fn } = fakeFetch(adminRoutes({ [`Memberships/${F.ME_DESCRIPTOR}`]: { body: F.memberships(F.ME_DESCRIPTOR, [F.PCA_DESCRIPTOR]) } }));
-		expect(await azureAdapter(F.ORG, fn).proveAdmin(PAT, { id: 'another-org-id', login: F.ORG })).toBe(false);
+		expect(await azureAdapter(F.ORG, fn).proveAdmin(ACCESS, { id: 'another-org-id', login: F.ORG })).toBe(false);
 	});
 
 	it('throws — never false — when the admin group cannot be found or a read fails', async () => {
@@ -197,9 +187,9 @@ describe('proveAdmin (Project Collection Administrators, via the Graph API)', ()
 			'/_apis/connectionData': { body: F.connectionData() },
 			'/_apis/graph/groups': { body: F.groupsPage1 }
 		});
-		await expect(azureAdapter(F.ORG, noGroup.fn).proveAdmin(PAT, UNIT)).rejects.toBeInstanceOf(AdminError);
+		await expect(azureAdapter(F.ORG, noGroup.fn).proveAdmin(ACCESS, UNIT)).rejects.toBeInstanceOf(AdminError);
 		const failed = fakeFetch(adminRoutes({ [`Memberships/${F.ME_DESCRIPTOR}`]: { status: 500, body: {} } }));
-		await expect(azureAdapter(F.ORG, failed.fn).proveAdmin(PAT, UNIT)).rejects.toBeInstanceOf(ForgeReadError);
+		await expect(azureAdapter(F.ORG, failed.fn).proveAdmin(ACCESS, UNIT)).rejects.toBeInstanceOf(ForgeReadError);
 	});
 
 	it('takes the collection\'s own admin group, never a project group of the same name (#308 R5b review)', async () => {
@@ -220,13 +210,13 @@ describe('proveAdmin (Project Collection Administrators, via the Graph API)', ()
 			})
 		);
 		// Membership of the impostor group proves nothing.
-		expect(await azureAdapter(F.ORG, proven.fn).proveAdmin(PAT, UNIT)).toBe(false);
+		expect(await azureAdapter(F.ORG, proven.fn).proveAdmin(ACCESS, UNIT)).toBe(false);
 
 		const onlyImpostor = fakeFetch(adminRoutes({ '/_apis/graph/groups': { body: { count: 1, value: [impostor] } } }));
-		await expect(azureAdapter(F.ORG, onlyImpostor.fn).proveAdmin(PAT, UNIT)).rejects.toBeInstanceOf(AdminError);
+		await expect(azureAdapter(F.ORG, onlyImpostor.fn).proveAdmin(ACCESS, UNIT)).rejects.toBeInstanceOf(AdminError);
 
 		const twice = fakeFetch(adminRoutes({ '/_apis/graph/groups': { body: { count: 2, value: [...F.groupsPage2.value, ...F.groupsPage2.value] } } }));
-		await expect(azureAdapter(F.ORG, twice.fn).proveAdmin(PAT, UNIT)).rejects.toBeInstanceOf(AdminError);
+		await expect(azureAdapter(F.ORG, twice.fn).proveAdmin(ACCESS, UNIT)).rejects.toBeInstanceOf(AdminError);
 	});
 
 	it('throws on a membership graph too deep or cyclic to finish, rather than guessing', async () => {
@@ -237,12 +227,12 @@ describe('proveAdmin (Project Collection Administrators, via the Graph API)', ()
 				'Memberships/vssgp.g': { body: F.memberships('vssgp.g', []) }
 			})
 		);
-		await expect(azureAdapter(F.ORG, fn).proveAdmin(PAT, UNIT)).rejects.toBeInstanceOf(AdminError);
+		await expect(azureAdapter(F.ORG, fn).proveAdmin(ACCESS, UNIT)).rejects.toBeInstanceOf(AdminError);
 	});
 
 	it('refuses a descriptor from Azure that could change the URL', async () => {
 		const { fn } = fakeFetch(adminRoutes({ [`Memberships/${F.ME_DESCRIPTOR}`]: { body: F.memberships(F.ME_DESCRIPTOR, ['../../evil']) } }));
-		await expect(azureAdapter(F.ORG, fn).proveAdmin(PAT, UNIT)).rejects.toBeInstanceOf(AdminError);
+		await expect(azureAdapter(F.ORG, fn).proveAdmin(ACCESS, UNIT)).rejects.toBeInstanceOf(AdminError);
 	});
 });
 
@@ -252,12 +242,14 @@ describe('listMembers (user entitlements, paged by continuation token)', () => {
 			'continuationToken=page-2': { body: F.entitlementsPage2 },
 			'/_apis/userentitlements': { body: F.entitlementsPage1 }
 		});
-		const read = await azureAdapter(F.ORG, fn).listMembers(PAT, UNIT);
+		const read = await azureAdapter(F.ORG, fn).listMembers(ACCESS, UNIT);
+		// Keyed by the Microsoft Entra object id (D43/D45) — what a Microsoft sign-in
+		// (R5c) will also see — never by email.
 		expect(read).toEqual({
 			members: [
-				{ id: F.ME_ID, login: 'admin@example.com' },
-				{ id: '7c5a4b1e-0000-4000-8000-000000000002', login: 'dev@example.com' },
-				{ id: '7c5a4b1e-0000-4000-8000-000000000003', login: 'ops@example.com' }
+				{ id: F.ME_OID, login: 'admin@example.com' },
+				{ id: 'a0e10000-0000-4000-8000-000000000002', login: 'dev@example.com' },
+				{ id: 'a0e10000-0000-4000-8000-000000000003', login: 'ops@example.com' }
 			],
 			complete: true
 		});
@@ -268,7 +260,7 @@ describe('listMembers (user entitlements, paged by continuation token)', () => {
 		const { fn } = fakeFetch({
 			'/_apis/userentitlements': { body: { items: F.entitlementsPage2.members, continuationToken: null } }
 		});
-		const read = await azureAdapter(F.ORG, fn).listMembers(PAT, UNIT);
+		const read = await azureAdapter(F.ORG, fn).listMembers(ACCESS, UNIT);
 		expect(read.members.map((m) => m.login)).toEqual(['ops@example.com']);
 	});
 
@@ -277,25 +269,28 @@ describe('listMembers (user entitlements, paged by continuation token)', () => {
 			'continuationToken=page-2': { body: F.entitlementsPage2 },
 			'/_apis/userentitlements': { body: { ...F.entitlementsPage1, continuationToken: ['page-2'] } }
 		});
-		const read = await azureAdapter(F.ORG, fn).listMembers(PAT, UNIT);
+		const read = await azureAdapter(F.ORG, fn).listMembers(ACCESS, UNIT);
 		expect(calls).toHaveLength(2);
 		expect(read.members).toHaveLength(3);
 		expect(read.complete).toBe(true);
 		const last = fakeFetch({ '/_apis/userentitlements': { body: { ...F.entitlementsPage2, continuationToken: [] } } });
-		expect((await azureAdapter(F.ORG, last.fn).listMembers(PAT, UNIT)).complete).toBe(true);
+		expect((await azureAdapter(F.ORG, last.fn).listMembers(ACCESS, UNIT)).complete).toBe(true);
 	});
 
 	it('a continuation token it cannot read is never taken for the last page — it throws (#308 R5b review)', async () => {
 		for (const token of [{ next: 'page-2' }, ['a', 'b'], [7], 42]) {
 			const { fn } = fakeFetch({ '/_apis/userentitlements': { body: { ...F.entitlementsPage1, continuationToken: token } } });
-			await expect(azureAdapter(F.ORG, fn).listMembers(PAT, UNIT), JSON.stringify(token)).rejects.toBeInstanceOf(AdminError);
+			await expect(azureAdapter(F.ORG, fn).listMembers(ACCESS, UNIT), JSON.stringify(token)).rejects.toBeInstanceOf(AdminError);
 		}
 	});
 
-	it('is incomplete when an entry cannot be named', async () => {
+	it('is incomplete when an Entra entry carries no object id, or an entry cannot be named', async () => {
+		const noOid = { members: [...F.entitlementsPage2.members, { id: 'x', user: { principalName: 'x@example.com', origin: 'aad' } }], continuationToken: null };
+		const a = fakeFetch({ '/_apis/userentitlements': { body: noOid } });
+		expect((await azureAdapter(F.ORG, a.fn).listMembers(ACCESS, UNIT)).complete).toBe(false);
 		const page = { members: [...F.entitlementsPage2.members, { user: { principalName: 'x@example.com' } }], continuationToken: null };
 		const { fn } = fakeFetch({ '/_apis/userentitlements': { body: page } });
-		expect((await azureAdapter(F.ORG, fn).listMembers(PAT, UNIT)).complete).toBe(false);
+		expect((await azureAdapter(F.ORG, fn).listMembers(ACCESS, UNIT)).complete).toBe(false);
 	});
 
 	it('throws on a failed page, a shape it cannot read, or a token that repeats — never a short list', async () => {
@@ -303,11 +298,11 @@ describe('listMembers (user entitlements, paged by continuation token)', () => {
 			'continuationToken=page-2': { status: 503, body: {} },
 			'/_apis/userentitlements': { body: F.entitlementsPage1 }
 		});
-		await expect(azureAdapter(F.ORG, failed.fn).listMembers(PAT, UNIT)).rejects.toBeInstanceOf(ForgeReadError);
+		await expect(azureAdapter(F.ORG, failed.fn).listMembers(ACCESS, UNIT)).rejects.toBeInstanceOf(ForgeReadError);
 		const shape = fakeFetch({ '/_apis/userentitlements': { body: { totalCount: 3 } } });
-		await expect(azureAdapter(F.ORG, shape.fn).listMembers(PAT, UNIT)).rejects.toBeInstanceOf(AdminError);
+		await expect(azureAdapter(F.ORG, shape.fn).listMembers(ACCESS, UNIT)).rejects.toBeInstanceOf(AdminError);
 		const loop = fakeFetch({ '/_apis/userentitlements': { body: { ...F.entitlementsPage1, continuationToken: 'same' } } });
-		await expect(azureAdapter(F.ORG, loop.fn).listMembers(PAT, UNIT)).rejects.toBeInstanceOf(AdminError);
+		await expect(azureAdapter(F.ORG, loop.fn).listMembers(ACCESS, UNIT)).rejects.toBeInstanceOf(AdminError);
 	});
 });
 
@@ -317,7 +312,7 @@ describe('listProjects', () => {
 			'$skip=100': { body: F.projects(3, 100) },
 			'/_apis/projects': { body: F.projects(100) }
 		});
-		const read = await azureAdapter(F.ORG, fn).listProjects(PAT, UNIT);
+		const read = await azureAdapter(F.ORG, fn).listProjects(ACCESS, UNIT);
 		expect(read.complete).toBe(true);
 		expect(read.projects).toHaveLength(103);
 		expect(read.projects[102]).toEqual({ id: '6ce954b1-ce1f-45d1-b94d-000000000102', name: 'Project 102' });
@@ -328,9 +323,9 @@ describe('listProjects', () => {
 	it('is incomplete when a project has no id or name, and throws on a failed read', async () => {
 		const page = { count: 1, value: [{ name: 'No Id' }] };
 		const partial = fakeFetch({ '/_apis/projects': { body: page } });
-		expect((await azureAdapter(F.ORG, partial.fn).listProjects(PAT, UNIT)).complete).toBe(false);
+		expect((await azureAdapter(F.ORG, partial.fn).listProjects(ACCESS, UNIT)).complete).toBe(false);
 		const failed = fakeFetch({ '/_apis/projects': { status: 401, body: {} } });
-		await expect(azureAdapter(F.ORG, failed.fn).listProjects(PAT, UNIT)).rejects.toMatchObject({ forgeStatus: 401 });
+		await expect(azureAdapter(F.ORG, failed.fn).listProjects(ACCESS, UNIT)).rejects.toMatchObject({ forgeStatus: 401 });
 	});
 });
 
@@ -349,7 +344,7 @@ describe('listAzureOrganizations (Profiles + Accounts, vso.profile)', () => {
 
 	it('lists the organizations the token\'s owner belongs to, by name — and says when one could not be read', async () => {
 		const { fn, calls } = fakeFetch({ '/_apis/profile/profiles/me': { body: me }, '/_apis/accounts': { body: accounts } });
-		expect(await listAzureOrganizations(PAT, fn)).toEqual({
+		expect(await listAzureOrganizations(ACCESS, fn)).toEqual({
 			organizations: [
 				{ id: '6affcbef-fe5d-44c6-8a29-439b79aaa118', name: 'example-org' },
 				{ id: 'bf83696f-383b-4980-95b5-1f1127640a8a', name: 'second-org' }
@@ -365,10 +360,10 @@ describe('listAzureOrganizations (Profiles + Accounts, vso.profile)', () => {
 
 	it('throws on a failed read or a profile with no id — never an empty list', async () => {
 		const failed = fakeFetch({ '/_apis/profile/profiles/me': { status: 401, body: {} } });
-		await expect(listAzureOrganizations(PAT, failed.fn)).rejects.toBeInstanceOf(ForgeReadError);
+		await expect(listAzureOrganizations(ACCESS, failed.fn)).rejects.toBeInstanceOf(ForgeReadError);
 		const noId = fakeFetch({ '/_apis/profile/profiles/me': { body: { displayName: 'x' } } });
-		await expect(listAzureOrganizations(PAT, noId.fn)).rejects.toBeInstanceOf(AdminError);
+		await expect(listAzureOrganizations(ACCESS, noId.fn)).rejects.toBeInstanceOf(AdminError);
 		const notList = fakeFetch({ '/_apis/profile/profiles/me': { body: me }, '/_apis/accounts': { body: { count: 0 } } });
-		await expect(listAzureOrganizations(PAT, notList.fn)).rejects.toBeInstanceOf(AdminError);
+		await expect(listAzureOrganizations(ACCESS, notList.fn)).rejects.toBeInstanceOf(AdminError);
 	});
 });

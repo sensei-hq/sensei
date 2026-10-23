@@ -190,10 +190,10 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 	});
 
 	it('offers the Azure DevOps import when the page gives it — how an Azure organization\'s dōjō is first made (#308 R5b)', () => {
-		const azure = new AzureConnectState({ connect: vi.fn() });
+		const azure = new AzureConnectState({ start: vi.fn(), navigate: vi.fn(), organizations: vi.fn(), importOrg: vi.fn() });
 		const { getByRole, getByText } = render(ScrMyDojos, { props: { dojos, azure } });
 		expect(getByRole('button', { name: 'Connect Azure DevOps' })).toBeTruthy();
-		expect(getByText(/You must be a Project Collection Administrator/)).toBeTruthy();
+		expect(getByText(/work or school account/)).toBeTruthy();
 		cleanup();
 		const without = render(ScrMyDojos, { props: { dojos } });
 		expect(without.queryByRole('button', { name: 'Connect Azure DevOps' })).toBeNull();

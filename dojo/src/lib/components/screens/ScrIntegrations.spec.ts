@@ -107,9 +107,10 @@ describe('ScrIntegrations', () => {
 
 	it('offers Connect Azure DevOps beside GitHub when the page gives it (#308 R5b)', async () => {
 		const { state } = setup();
-		const azure = new AzureConnectState({ connect: vi.fn() });
-		const { getByRole, getByLabelText } = render(ScrIntegrations, { props: { orgName: 'Here', state, azure } });
+		const azure = new AzureConnectState({ start: vi.fn(), navigate: vi.fn(), organizations: vi.fn(), importOrg: vi.fn() });
+		const { getByRole, queryByLabelText } = render(ScrIntegrations, { props: { orgName: 'Here', state, azure } });
 		expect(getByRole('button', { name: 'Connect Azure DevOps' })).toBeTruthy();
-		expect((getByLabelText('Personal access token') as HTMLInputElement).type).toBe('password');
+		// No token field: Microsoft hands the grant to the server.
+		expect(queryByLabelText(/token/i)).toBeNull();
 	});
 });

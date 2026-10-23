@@ -81,8 +81,8 @@
 		{:else}
 			<EmptyState kanji="空" title="No dōjōs yet.">
 				A dōjō comes from your GitHub or Azure DevOps organizations, or an invite — each organization you belong
-				to has one, and you have a personal one. Sync from GitHub, or import an Azure DevOps organization you
-				administer, to set them up. Working solo needs none of them.
+				to has one, and you have a personal one. Sync from GitHub, or connect Azure DevOps and import an
+				organization you administer, to set them up. Working solo needs none of them.
 			</EmptyState>
 		{/if}
 		{#if azure}

@@ -51,35 +51,6 @@ const MAX_PROJECT_PAGES = 50;
 /** The read scopes the Entra connect asks for — one list, the screen’s (azure-view.ts). */
 export { AZURE_REQUIRED_SCOPES } from '../azure-view';
 
-/**
- * The organization an Azure DevOps URL names — `https://dev.azure.com/{org}…`
- * or `https://{org}.visualstudio.com…` — lowercased, or a 400. Only https, the
- * exact hosts, no credentials and no port: the name goes into API URLs.
- */
-export function azureOrgFromUrl(input: string): string {
-	const raw = (typeof input === 'string' ? input : '').trim();
-	const bad = () => new AdminError(400, 'that is not an Azure DevOps organization URL (https://dev.azure.com/your-organization)');
-	if (!raw) throw bad();
-	let url: URL;
-	try {
-		url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
-	} catch {
-		throw bad();
-	}
-	if (url.protocol !== 'https:' || url.username || url.password || url.port) throw bad();
-	const host = url.hostname.toLowerCase();
-	let org: string | undefined;
-	if (host === 'dev.azure.com') {
-		org = url.pathname.split('/').filter(Boolean)[0];
-	} else if (host.endsWith('.visualstudio.com')) {
-		const label = host.slice(0, -'.visualstudio.com'.length);
-		if (!label.includes('.') && label !== 'vs-ssh' && label !== 'app') org = label;
-	}
-	const name = (org ?? '').toLowerCase();
-	if (!ORG_NAME.test(name)) throw bad();
-	return name;
-}
-
 /** The org name, checked, or a 400 — before it is put in any URL. */
 function orgName(org: string): string {
 	const name = (typeof org === 'string' ? org : '').trim().toLowerCase();
@@ -142,7 +113,7 @@ export interface AzureOrganization {
 /**
  * The organizations the token's owner belongs to — the Profiles API's `me`, then
  * the Accounts API by that member id (both need `vso.profile` and an Entra
- * token, which a PAT could not give —
+ * token —
  * https://learn.microsoft.com/en-us/rest/api/azure/devops/profile/profiles/get?view=azure-devops-rest-7.1,
  * https://learn.microsoft.com/en-us/rest/api/azure/devops/account/accounts/list?view=azure-devops-rest-7.1).
  * An account whose name could not be an organization's is skipped and the read
@@ -171,6 +142,41 @@ export async function listAzureOrganizations(token: string, fetchImpl: typeof fe
 		organizations.push({ id, name });
 	}
 	return { organizations, complete };
+}
+
+/** A Microsoft Entra object id (a GUID), lowercased, or null. */
+function entraObjectId(v: unknown): string | null {
+	const id = (nonEmpty(v) ?? '').toLowerCase();
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ? id : null;
+}
+
+/** The token's owner as the dōjō records them (D45): their Microsoft Entra
+ *  object id — the stable id a Microsoft sign-in (R5c) will also see. */
+export interface AzureOwner {
+	objectId: string;
+	displayName: string | null;
+}
+
+/**
+ * The token's owner, by Microsoft Entra object id: connectionData names the
+ * owner's Graph descriptor; Graph Users - Get answers `origin` and `originId`
+ * (https://learn.microsoft.com/en-us/rest/api/azure/devops/graph/users/get?view=azure-devops-rest-7.1).
+ * An owner who is not an Entra (`aad`) user, or has no object id, is refused:
+ * an Entra connect always yields one, so its absence is a read we cannot key.
+ */
+async function readAzureOwner(name: string, token: string, fetchImpl: typeof fetch): Promise<AzureOwner> {
+	const conn = await readAzureConnection(name, token, fetchImpl);
+	if (!DESCRIPTOR.test(conn.user.descriptor)) throw new AdminError(502, 'Azure DevOps returned a descriptor this cannot address');
+	const { body } = await azureGet(
+		`https://vssps.dev.azure.com/${name}/_apis/graph/users/${encodeURIComponent(conn.user.descriptor)}?api-version=7.1-preview.1`,
+		token,
+		fetchImpl
+	);
+	const objectId = (nonEmpty(body.origin) ?? '').toLowerCase() === 'aad' ? entraObjectId(body.originId) : null;
+	if (!objectId) {
+		throw new AdminError(422, 'this Azure DevOps account is not a Microsoft Entra work or school account — personal Microsoft accounts cannot connect');
+	}
+	return { objectId, displayName: nonEmpty(body.displayName) ?? conn.user.displayName };
 }
 
 /** The token's owner as Azure names them in one organization. */
@@ -337,12 +343,14 @@ const NOT_A_MEMBER = new Set(['deleted', 'disabled', 'pendingdisabled']);
 /**
  * Every member of the organization — its user entitlements, page by page.
  * https://learn.microsoft.com/en-us/rest/api/azure/devops/memberentitlementmanagement/user-entitlements/search-user-entitlements?view=azure-devops-rest-7.1
- * The reference names the page `items`; the service answers `members` — both are
- * read. A page carries `continuationToken`, null on the last one. A member is
- * keyed by `id` ("matches the Id of the Identity" — the token owner's
- * connectionData id). An entry with no id is skipped and the read marked
- * incomplete; a failed page, an unreadable page, a repeated token or more than
- * MAX_ENTITLEMENT_PAGES pages THROW.
+ * The reference names the page `items` and `members` — both are read. A page
+ * carries `continuationToken`, absent on the last one. A member is keyed by
+ * their Microsoft Entra OBJECT ID — `user.originId` when `user.origin` is `aad`
+ * (GraphUser: "the unique identifier from the system of origin") — the id a
+ * Microsoft sign-in (R5c) also records, so identities never need re-keying
+ * (D43: never by email). An Entra entry without one is skipped and the read
+ * marked incomplete; a failed page, an unreadable page, a repeated token or more
+ * than MAX_ENTITLEMENT_PAGES pages THROW.
  */
 async function listAzureMembers(name: string, token: string, fetchImpl: typeof fetch): Promise<ForgeMembersRead> {
 	const members: ForgeMember[] = [];
@@ -358,9 +366,18 @@ async function listAzureMembers(name: string, token: string, fetchImpl: typeof f
 			const user = (entry?.user ?? {}) as Record<string, unknown>;
 			const access = (entry?.accessLevel ?? {}) as Record<string, unknown>;
 			if (NOT_A_MEMBER.has((nonEmpty(access.status) ?? '').toLowerCase())) continue;
-			const id = nonEmpty(entry?.id);
+			const origin = (nonEmpty(user.origin) ?? '').toLowerCase();
 			const login = nonEmpty(user.principalName) ?? nonEmpty(user.mailAddress);
-			if (!id || !login) {
+			if (!origin || !login) {
+				complete = false;
+				continue;
+			}
+			// Only a Microsoft Entra user carries the stable id a dōjō identity is
+			// keyed on (D43/D45). Anyone else (a GitHub-backed Azure DevOps user)
+			// can be matched by no identity either way: not listed, and not a gap.
+			if (origin !== 'aad') continue;
+			const id = entraObjectId(user.originId);
+			if (!id) {
 				complete = false;
 				continue;
 			}
@@ -423,6 +440,8 @@ export interface AzureAdapter extends ForgeAdapter {
 	organization: string;
 	/** The organization's stable id and the token's owner, read now. */
 	connection(token: string): Promise<AzureConnection>;
+	/** The token's owner by their Microsoft Entra object id (D45). */
+	owner(token: string): Promise<AzureOwner>;
 	listProjects(token: string, unit: ForgeUnitRef): Promise<AzureProjectsRead>;
 }
 
@@ -437,6 +456,10 @@ export function azureAdapter(organization: string, fetchImpl: typeof fetch = fet
 		provider: 'azure_devops',
 		organization: name,
 		connection: (token: string) => readAzureConnection(name, token, fetchImpl),
+		owner: (token: string) => {
+			checkToken(token);
+			return readAzureOwner(name, token, fetchImpl);
+		},
 		/** The organization, when the token's owner is active in it — with their
 		 *  standing proven now. Empty (a positive answer) when they are not. */
 		listUnits: async (token: string): Promise<ForgeUnitsRead> => {

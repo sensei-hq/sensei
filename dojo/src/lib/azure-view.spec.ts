@@ -2,7 +2,7 @@
 // words the screen says about a connection, an import and the scopes a token
 // needs. Pure.
 import { describe, it, expect } from 'vitest';
-import { AZURE_REQUIRED_SCOPES, importLine, syncLine, tokenLine, type AzureConnectionView } from './azure-view';
+import { AZURE_REQUIRED_SCOPES, connectNotice, importLine, syncLine, tokenLine, writeScopesLine, type AzureConnectionView } from './azure-view';
 
 const conn = (over: Partial<AzureConnectionView> = {}): AzureConnectionView => ({
 	id: 'org-1',
@@ -21,10 +21,10 @@ describe('AZURE_REQUIRED_SCOPES', () => {
 
 describe('tokenLine', () => {
 	it('says whether the stored token works, needs replacing, or is missing — and its expiry when known', () => {
-		expect(tokenLine(conn())).toBe('Token stored · expiry not reported by Azure DevOps');
-		expect(tokenLine(conn({ tokenExpiresAt: '2026-12-31T00:00:00Z' }))).toBe('Token stored · expires 2026-12-31');
-		expect(tokenLine(conn({ token: 'needs_new_token' }))).toBe('Azure DevOps no longer accepts the stored token — paste a new one');
-		expect(tokenLine(conn({ token: 'none' }))).toBe('No token stored — paste one to sync');
+		expect(tokenLine(conn())).toBe('Connected through Microsoft Entra');
+		expect(tokenLine(conn({ tokenExpiresAt: '2026-12-31T00:00:00Z' }))).toBe('Connected through Microsoft Entra · expires 2026-12-31');
+		expect(tokenLine(conn({ token: 'needs_new_token' }))).toBe('Microsoft no longer accepts this connection — reconnect Azure DevOps');
+		expect(tokenLine(conn({ token: 'none' }))).toBe('Not connected — connect Azure DevOps to sync');
 	});
 });
 
@@ -62,5 +62,25 @@ describe('importLine / syncLine', () => {
 				members: { error: 'Azure DevOps could not list the members (503); nobody was ended' }
 			})
 		).toBe('example-org synced · no projects to file · Azure DevOps could not list the members (503); nobody was ended');
+	});
+});
+
+describe('connectNotice', () => {
+	it("says what the connect came to, from the callback's query — and nothing for anything else", () => {
+		expect(connectNotice(new URLSearchParams('azure=connected'))).toEqual({ ok: true, text: 'Connected to Azure DevOps — pick the organizations to import' });
+		expect(connectNotice(new URLSearchParams('azure_error=denied'))).toEqual({ ok: false, text: 'The Microsoft sign-in was cancelled or consent was declined' });
+		expect(connectNotice(new URLSearchParams('azure_error=not_configured'))?.text).toMatch(/not configured/);
+		expect(connectNotice(new URLSearchParams('azure_error=expired'))?.text).toMatch(/expired/);
+		expect(connectNotice(new URLSearchParams('azure_error=<script>'))).toBeNull();
+		expect(connectNotice(new URLSearchParams(''))).toBeNull();
+	});
+});
+
+describe('writeScopesLine', () => {
+	it('names the extra scopes a consent carries, or nothing', () => {
+		expect(writeScopesLine([])).toBeNull();
+		expect(writeScopesLine(['vso.code_write', 'vso.project_manage'])).toBe(
+			'This Microsoft consent also grants vso.code_write, vso.project_manage. The dōjō only reads — a Microsoft Entra admin can remove these from the app’s permissions.'
+		);
 	});
 });

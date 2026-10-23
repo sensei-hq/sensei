@@ -1,8 +1,10 @@
-// Azure DevOps on Admin → Integrations and in the personal dōjō (#308 R5b) as
-// the screen shows it: the wire shapes of /v1/t/{tenant}/integrations/azure_devops
-// [/connect|/sync|/token] and /v1/you/integrations/azure_devops/connect (the
-// server builds them in $lib/server/azure-import.ts), the read-only scopes a PAT
-// needs, and the words each line says. Pure, so a client module may import it.
+// Azure DevOps on Admin → Integrations and in the personal dōjō (#308 R5b, D42)
+// as the screen shows it: the wire shapes of the connect flow
+// (/v1/t/{tenant}/integrations/azure_devops[/connect|/sync|/token],
+// /v1/you/integrations/azure_devops/connect, /v1/integrations/azure_devops/
+// {organizations,import} — the server builds them in $lib/server/azure-*.ts),
+// the read scopes the Microsoft Entra connect asks for, and the words each line
+// says. Pure, so a client module may import it.
 
 /**
  * The Azure DevOps scopes the dōjō asks Microsoft Entra for — read only
@@ -36,6 +38,20 @@ export interface AzureConnectionView {
 export interface AzureStatusView {
 	connections: AzureConnectionView[];
 	scopes: readonly AzureScope[];
+	/** Whether this server has the app registration configured. */
+	configured: boolean;
+}
+
+/** POST /v1/integrations/azure_devops/organizations — what the pending connect
+ *  can import. */
+export interface AzureGrantView {
+	organizations: { id: string; name: string }[];
+	/** Whether every organization could be read. */
+	complete: boolean;
+	/** Granted scopes beyond the read ones (the warning). */
+	writeScopes: string[];
+	/** Where an import goes: this organization dōjō, or its own dōjō. */
+	target: 'this' | 'own';
 }
 
 /** How an organization's projects filed. */
@@ -70,13 +86,35 @@ export interface AzureSyncResult {
 	members: AzureMembersRead;
 }
 
-/** The stored token's state, and its expiry when Azure reported one. */
+/** The stored grant's state, and its expiry when one is known. */
 export function tokenLine(c: AzureConnectionView): string {
-	if (c.token === 'none') return 'No token stored — paste one to sync';
-	if (c.token === 'needs_new_token') return 'Azure DevOps no longer accepts the stored token — paste a new one';
-	return c.tokenExpiresAt
-		? `Token stored · expires ${c.tokenExpiresAt.slice(0, 10)}`
-		: 'Token stored · expiry not reported by Azure DevOps';
+	if (c.token === 'none') return 'Not connected — connect Azure DevOps to sync';
+	if (c.token === 'needs_new_token') return 'Microsoft no longer accepts this connection — reconnect Azure DevOps';
+	return c.tokenExpiresAt ? `Connected through Microsoft Entra · expires ${c.tokenExpiresAt.slice(0, 10)}` : 'Connected through Microsoft Entra';
+}
+
+const CONNECT_ERRORS: Record<string, string> = {
+	denied: 'The Microsoft sign-in was cancelled or consent was declined',
+	expired: 'The connect expired or was started in another session — connect again',
+	state: 'The connect could not be verified — connect again',
+	entra: 'Microsoft would not complete the connect — try again, or ask an Entra admin to allow the app',
+	signin: 'Sign in to the dōjō first, then connect Azure DevOps',
+	not_configured: 'Azure DevOps is not configured on this dōjō',
+	too_many: 'Too many attempts — try again in a few minutes'
+};
+
+/** What the connect came to, from the callback's redirect query — or null. Only
+ *  known codes are said; anything else in the URL is ignored. */
+export function connectNotice(q: URLSearchParams): { ok: boolean; text: string } | null {
+	if (q.get('azure') === 'connected') return { ok: true, text: 'Connected to Azure DevOps — pick the organizations to import' };
+	const code = q.get('azure_error');
+	return code && Object.hasOwn(CONNECT_ERRORS, code) ? { ok: false, text: CONNECT_ERRORS[code] } : null;
+}
+
+/** The write-scope warning, or null when the consent carries read scopes only. */
+export function writeScopesLine(scopes: string[]): string | null {
+	if (!scopes.length) return null;
+	return `This Microsoft consent also grants ${scopes.join(', ')}. The dōjō only reads — a Microsoft Entra admin can remove these from the app’s permissions.`;
 }
 
 function filedParts(p: AzureProjectsFiled): string[] {

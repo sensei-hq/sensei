@@ -10,7 +10,9 @@ import {
 	createInvite,
 	acceptInvite,
 	provisionFromForge,
-	importAzureAsOwnDojo
+	startAzureConnectAsOwn,
+	listAzureGrantOrganizations,
+	importAzureOrganization
 } from '$lib/client-data';
 
 // A fake fetch that records the call and returns a canned response. Mirrors the
@@ -111,13 +113,16 @@ describe('listWorkspaces / listUserWorkspaces — tenant vs user-wide reads', ()
 		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ token: 'tok' });
 	});
 
-	it('importAzureAsOwnDojo POSTs the organization URL and token to the personal import', async () => {
-		const result = { dojo: { key: 'organization/example-org', created: true } };
-		const { fn, calls } = fakeFetch(200, result);
-		expect(await importAzureAsOwnDojo('https://dev.azure.com/example-org', 'ztestpat', { fetch: fn, accessToken: 'jwt' })).toEqual(result);
-		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/you/integrations/azure_devops/connect`);
-		expect(calls[0].init?.method).toBe('POST');
-		expect(calls[0].init?.body).toBe(JSON.stringify({ organization_url: 'https://dev.azure.com/example-org', token: 'ztestpat' }));
+	it('Azure DevOps: start from the personal dōjō, list the pending grant\'s organizations, import one — no body carries a token', async () => {
+		const { fn, calls } = fakeFetch(200, { url: 'https://login.microsoftonline.com/x' });
+		await startAzureConnectAsOwn({ fetch: fn, accessToken: 'jwt' });
+		await listAzureGrantOrganizations({ fetch: fn });
+		await importAzureOrganization('example-org', { fetch: fn });
+		expect(calls.map((c) => [c.init?.method, c.url, c.init?.body])).toEqual([
+			['POST', `${dojoApiUrl}/v1/you/integrations/azure_devops/connect`, JSON.stringify({})],
+			['POST', `${dojoApiUrl}/v1/integrations/azure_devops/organizations`, JSON.stringify({})],
+			['POST', `${dojoApiUrl}/v1/integrations/azure_devops/import`, JSON.stringify({ organization: 'example-org' })]
+		]);
 	});
 
 	it('provisionFromForge POSTs to /v1/you/provision and returns the pass result', async () => {

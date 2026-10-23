@@ -57,9 +57,9 @@ export interface ForgeAdapter {
  * The adapter for one provider. `fetchImpl` is injected for tests.
  *
  * Only GitHub is answered here. Azure DevOps' adapter is bound to ONE named
- * organization (`azureAdapter(org)` in forge-azure.ts — an org-scoped PAT cannot
- * list its owner's organizations), so it is built by the Azure routes, which have
- * the organization; asked for by provider alone it is a 501, like GitLab and
+ * organization (`azureAdapter(org)` in forge-azure.ts — the person picks it from
+ * the organizations their Entra connect can see), so it is built by the Azure
+ * routes, which have the organization; asked for by provider alone it is a 501, like GitLab and
  * Bitbucket. Answering any of them with the GitHub adapter would send one forge's
  * token to another's API and read the answer as truth.
  */

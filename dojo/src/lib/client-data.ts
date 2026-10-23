@@ -12,7 +12,7 @@ import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from '
 import type { RelayConstitution } from './constitution-map';
 import type { ContributionRow, DownstreamRow } from './contributions-map';
 import type { DojoCallOpts } from './dojo-api';
-import type { AzureImportResult } from './azure-view';
+import type { AzureGrantView, AzureImportResult } from './azure-view';
 
 // Re-export the shared error under the client name so screens
 // `instanceof` against a local symbol without reaching into the shared module.
@@ -257,16 +257,28 @@ export async function provisionFromForge(opts: DojoCallOpts = {}): Promise<Provi
 	return sendJson(youUrl('/provision'), 'POST', {}, opts);
 }
 
-/** `POST /v1/you/integrations/azure_devops/connect` — the personal dōjō's import
- *  of an Azure DevOps organization as its own dōjō (#308 R5b). The one request
- *  that carries the PAT; the server validates it before storing it, and never
- *  sends it back. */
-export async function importAzureAsOwnDojo(
-	organizationUrl: string,
-	token: string,
-	opts: DojoCallOpts = {}
-): Promise<AzureImportResult> {
-	return sendJson(youUrl('/integrations/azure_devops/connect'), 'POST', { organization_url: organizationUrl, token }, opts);
+// Azure DevOps through Microsoft Entra (#308 R5b, D42). No request carries a
+// token: Microsoft hands it to the server, which keeps it sealed or in Vault.
+
+const azureUrl = (path: string) => `${dojoApiUrl}/v1/integrations/azure_devops${path}`;
+
+/** `POST /v1/you/integrations/azure_devops/connect` — the personal dōjō starts a
+ *  connect whose organizations become their own dōjōs: the URL to send the
+ *  person to. */
+export async function startAzureConnectAsOwn(opts: DojoCallOpts = {}): Promise<{ url: string }> {
+	return sendJson(youUrl('/integrations/azure_devops/connect'), 'POST', {}, opts);
+}
+
+/** `POST /v1/integrations/azure_devops/organizations` — what the pending connect
+ *  can import (a 428 when there is none). */
+export async function listAzureGrantOrganizations(opts: DojoCallOpts = {}): Promise<AzureGrantView> {
+	return sendJson(azureUrl('/organizations'), 'POST', {}, opts);
+}
+
+/** `POST /v1/integrations/azure_devops/import` — import one organization of the
+ *  pending connect, where the connect was started. */
+export async function importAzureOrganization(organization: string, opts: DojoCallOpts = {}): Promise<AzureImportResult> {
+	return sendJson(azureUrl('/import'), 'POST', { organization }, opts);
 }
 
 /** `POST /v1/t/{tenant}/invites` — an admin issues a magic-link invite (F3b).

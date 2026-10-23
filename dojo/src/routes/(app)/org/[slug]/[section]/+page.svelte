@@ -30,11 +30,11 @@
 		claimIntegrationUnit,
 		mapIntegrationUnit,
 		listAzureConnections,
-		connectAzure,
+		startAzureConnect,
 		syncAzure,
 		removeAzureToken
 	} from '$lib/admin-data';
-	import { createInvite } from '$lib/client-data';
+	import { createInvite, importAzureOrganization, listAzureGrantOrganizations } from '$lib/client-data';
 	import { OrgSectionState } from '$lib/org-section-state.svelte';
 	import { InviteState } from '$lib/invite-state.svelte';
 	import { TeamDraft } from '$lib/teams-state.svelte';
@@ -101,12 +101,15 @@
 		map: (unitId, target) => mapIntegrationUnit(tk(), 'github', unitId, target, opts()),
 		connect: () => connectGithub(kavach, providers, page.url.href)
 	});
-	// Azure DevOps (#308 R5b): the organization URL and a pasted PAT, sent once to
-	// the server, which validates it before storing it in Vault; then this dōjō's
-	// Azure organizations, each with its token state, Sync and Remove token.
+	// Azure DevOps (#308 R5b, D42): connect through Microsoft Entra, import the
+	// organizations into this dōjō; then this dōjō's Azure organizations, each
+	// with its state, Sync and Remove. No token passes through here.
 	const azure = new AzureConnectState({
+		start: () => startAzureConnect(tk(), opts()),
+		navigate: (url) => window.location.assign(url),
+		organizations: () => listAzureGrantOrganizations(opts()),
+		importOrg: (organization) => importAzureOrganization(organization, opts()),
 		status: () => listAzureConnections(tk(), opts()),
-		connect: (organizationUrl, token) => connectAzure(tk(), organizationUrl, token, opts()),
 		sync: (organizationId) => syncAzure(tk(), organizationId, opts()),
 		removeToken: (organizationId) => removeAzureToken(tk(), organizationId, opts())
 	});
@@ -120,6 +123,7 @@
 			integrations.reset();
 			void integrations.load();
 			azure.reset();
+			azure.notice(page.url.searchParams);
 			void azure.load();
 		});
 	});
