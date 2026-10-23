@@ -77,7 +77,9 @@ describe('the teams routes', () => {
 	it('GET lists, POST creates (201), and each write runs as the caller on this dōjō', async () => {
 		mocks.listTeams.mockResolvedValue([{ id: 'tm1', name: 'Payments', members: [] }]);
 		expect(await (await list.GET(ev())).json()).toEqual({ teams: [{ id: 'tm1', name: 'Payments', members: [] }] });
-		expect(mocks.listTeams).toHaveBeenCalledWith(USER, 't1');
+		// Read as the caller; named through the service client — a non-admin member
+		// may read the team's ids but not the identities (access matrix).
+		expect(mocks.listTeams).toHaveBeenCalledWith(USER, 't1', { client: 'service' });
 		expect((await list.POST(ev({}, { name: 'Platform' }))).status).toBe(201);
 		expect(mocks.createTeam).toHaveBeenCalledWith(USER, 't1', 'Platform');
 		expect((await one.PATCH(ev({ teamId: 'tm1' }, { name: 'Core' }))).status).toBe(204);
