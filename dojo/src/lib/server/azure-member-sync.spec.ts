@@ -28,20 +28,25 @@ const conn = (n: number, over: Record<string, unknown> = {}) => ({
 	...over
 });
 
-function adapterFor(fail: Record<string, unknown> = {}) {
+function adapterFor(fail: Record<string, unknown> = {}, notAdmin: string[] = []) {
 	const read: string[] = [];
+	const proved: string[] = [];
 	const make = (org: string): AzureAdapter =>
 		({
 			provider: 'azure_devops',
 			organization: org,
 			connection: async () => ({ orgId: org.replace('org-name-', 'org-'), user: { id: 'u', descriptor: 'aad.x', displayName: null, active: true } }),
+			proveAdmin: async () => {
+				proved.push(org);
+				return !notAdmin.includes(org);
+			},
 			listMembers: async () => {
 				read.push(org);
 				if (fail[org]) throw fail[org];
 				return { members: [{ id: 'a0e10000-0000-4000-8000-000000000001', login: 'dev@example.com' }], complete: true };
 			}
 		}) as unknown as AzureAdapter;
-	return { make, read };
+	return { make, read, proved };
 }
 
 function db(rows: Record<string, unknown>[]) {
@@ -108,6 +113,19 @@ describe('runAzureMemberSync', () => {
 		expect(out.read).toBe(MEMBER_SYNC_BATCH);
 		// Never-read first, then oldest.
 		expect(a.read.slice(0, 4)).toEqual(['org-name-1', 'org-name-2', 'org-name-3', 'org-name-4']);
+	});
+
+	it('re-proves the grant owner a Project Collection Administrator first — a demoted owner ends nobody (#308 R5b review)', async () => {
+		// A demoted owner may still read user entitlements but see only part of the
+		// organization: a "complete" read from them would end everyone they cannot see.
+		const d = db([conn(1), conn(2)]);
+		const a = adapterFor({}, ['org-name-1']);
+		const out = await runAzureMemberSync(d as never, { cfg: CFG, fetchImpl: entra().fn, adapterFor: a.make, now: NOW });
+		expect(a.proved).toEqual(['org-name-1', 'org-name-2']);
+		expect(a.read).toEqual(['org-name-2']);
+		expect(out.results[0]).toEqual({ organization: 'org-name-1', error: 'only a Project Collection Administrator of org-name-1 can connect it' });
+		expect(d.rpcCalls.filter((c) => c.fn === 'reconcile_unit_members').map((c) => c.args.p_unit)).toEqual(['org-2']);
+		expect(d.tables.tenant_connections.rows.find((r) => r.id === 'c-1')?.members_read_error).toMatch(/Project Collection Administrator/);
 	});
 
 	it('a failed read of the connections is an error — never "nothing to do"', async () => {

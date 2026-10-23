@@ -17,7 +17,7 @@
 // (src/worker-entry.js) through /v1/internal/azure/member-sync.
 import { AdminError, type DojoClient } from './admin-data';
 import { refusalStatus } from './db-refusal';
-import { accessFromStoredGrant, followMembers, type AzureMembersRead, type AzureStoredGrantDeps } from './azure-import';
+import { accessFromStoredGrant, followMembers, proveGrant, type AzureMembersRead, type AzureStoredGrantDeps } from './azure-import';
 import type { AzureAdapter } from './forge-azure';
 
 /** Connections read per run. */
@@ -50,7 +50,9 @@ async function record(db: DojoClient, orgId: string, nowIso: string, error: stri
 async function readOne(db: DojoClient, c: ConnRow, deps: MemberSyncDeps): Promise<MemberSyncResult> {
 	const token = await accessFromStoredGrant(db, c.external_id, deps);
 	const adapter = deps.adapterFor(c.external_slug);
-	const conn = await adapter.connection(token);
+	// The same proof Sync and import run (proveGrant): a grant whose owner is no
+	// longer a Project Collection Administrator throws here — recorded, nobody ended.
+	const { conn } = await proveGrant(adapter, token);
 	if (conn.orgId !== c.external_id) {
 		return { organization: c.external_slug, error: `${c.external_slug} now names a different Azure DevOps organization; nobody was ended` };
 	}

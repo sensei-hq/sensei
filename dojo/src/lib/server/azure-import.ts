@@ -57,6 +57,20 @@ export interface AzureGrantTokens {
  * ForgeReadError.
  */
 async function validate(adapter: AzureAdapter, token: string) {
+	const { conn, unit } = await proveGrant(adapter, token);
+	const read = await adapter.listProjects(token, unit);
+	return { conn, unit, read };
+}
+
+/**
+ * Prove the grant still speaks for an admin of the organization: its owner is
+ * active in it and a Project Collection Administrator — now. Every path that
+ * writes or ENDS anything from a grant runs it first (import, Sync, the
+ * scheduled member read): a demoted owner may still read user entitlements but
+ * see only part of the organization, and a "complete" read from them would end
+ * everyone they cannot see (#308 R5b review).
+ */
+export async function proveGrant(adapter: AzureAdapter, token: string) {
 	const conn: AzureConnection = await adapter.connection(token);
 	const org = adapter.organization;
 	if (!conn.user.active) {
@@ -64,10 +78,9 @@ async function validate(adapter: AzureAdapter, token: string) {
 	}
 	const unit = { id: conn.orgId, login: org };
 	if (!(await adapter.proveAdmin(token, unit))) {
-		throw new AdminError(403, `only a Project Collection Administrator of ${org} can import it`);
+		throw new AdminError(403, `only a Project Collection Administrator of ${org} can connect it`);
 	}
-	const read = await adapter.listProjects(token, unit);
-	return { conn, unit, read };
+	return { conn, unit };
 }
 
 /** A 403 unless the person is an ACTIVE admin of the dōjō. */
