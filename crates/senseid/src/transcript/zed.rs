@@ -137,6 +137,7 @@ impl TranscriptAdapter for ZedAdapter {
             events: session.map(|s| s.events).unwrap_or_default(),
             model: extract_model(content),
             tokens: extract_tokens(content),
+            messages: Vec::new(),
         }
     }
 }

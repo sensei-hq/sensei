@@ -899,6 +899,31 @@ Common queries:
   SELECT * FROM task_executions WHERE status = 'failed' AND started_at > now() - interval '1h\''''
 }
 
+Table "activity"."transcript_messages" {
+  "source" text [pk, not null]
+  "session_id" text [pk, not null]
+  "message_id" text [pk, not null, note: 'message.id, or line:<n> for a usage record that carries none.']
+  "turn_index" int [note: 'The transcript turn the response falls in; NULL before the first human prompt.']
+  "sent_at" timestamptz
+  "model" text [not null]
+  "speed" text
+  "inference_geo" text
+  "service_tier" text
+  "input" bigint [not null, note: 'Fresh input tokens only (usage.input_tokens).']
+  "cache_write_5m" bigint [not null, note: 'Cache writes to the 5-minute cache; holds the whole cache write when the split is unknown.']
+  "cache_write_1h" bigint [not null]
+  "cache_split_known" boolean [not null, note: 'false when the record gave only cache_creation_input_tokens, so cache_write_5m holds the total.']
+  "cache_read" bigint [not null]
+  "output" bigint [not null, note: 'Output tokens, thinking included.']
+  "thinking" bigint [note: 'The thinking part of output (output_tokens_details.thinking_tokens); never added to output.']
+
+  indexes {
+    session_id [name: 'transcript_messages_session_idx']
+  }
+
+  Note: 'One row per API response in a transcript, usage counted once; priced at read by activity.message_api_cost.'
+}
+
 Table "activity"."transcript_turns" {
   "id" uuid [pk, not null, default: `gen_random_uuid()`]
   "source" text [not null]
@@ -1386,6 +1411,34 @@ genuinely new computation still needs a compiled TaskKind + handler (task_name m
 a variant — no string dispatch), so a blocked metric is not seeded until its handler
 ships. Values live in sensei.workspace_metrics; all roll-ups and the health score are
 views over that one store.'''
+}
+
+Table "sensei"."model_prices" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "model" text [not null, note: 'The API model id without a date suffix (claude-opus-5-5); a message\'s model matches after its -YYYYMMDD is stripped.']
+  "speed" text [not null, default: 'standard', note: 'standard or fast; fast rows exist only for models the price list prices fast.']
+  "prompt_over" int [not null, default: 0, note: 'The row applies to a request whose prompt (input + cache reads + cache writes) is over this many tokens; the highest matching band wins. 0 = every request.']
+  "effective_from" date [note: 'First day the price applied; NULL = since before any known change.']
+  "effective_to" date [note: 'First day it no longer applied; NULL = still current.']
+  "input" numeric [not null]
+  "cache_write_5m" numeric [not null]
+  "cache_write_1h" numeric [not null]
+  "cache_read" numeric [not null]
+  "output" numeric [not null]
+  "us_multiplier" numeric [not null, default: 1, note: 'Applied to every category when the request ran with inference_geo = us.']
+  "source" text [not null, note: 'Where the row came from: the pricing page URL.']
+  "retrieved_on" date [not null, note: 'The day the source was read.']
+  "modified_at" timestamptz [not null, default: `now()`]
+
+  indexes {
+    (model, speed, prompt_over, effective_from) [unique, name: 'model_prices_key', note: 'unique constraint\nnulls not distinct']
+  }
+
+  checks {
+    `effective_to IS NULL OR effective_from IS NULL OR effective_from < effective_to` [name: 'model_prices_period']
+  }
+
+  Note: 'Published API list prices per model, USD per million tokens, by speed, prompt band and period.'
 }
 
 Table "sensei"."narration_cache" {
@@ -1898,6 +1951,23 @@ Table "staging"."metrics" {
   "effective_until" date
   "retire_reason" text
   "modified_at" timestamptz [not null, default: `now()`]
+}
+
+Table "staging"."model_prices" {
+  "model" text
+  "speed" text
+  "prompt_over" int
+  "effective_from" date
+  "effective_to" date
+  "input" numeric
+  "cache_write_5m" numeric
+  "cache_write_1h" numeric
+  "cache_read" numeric
+  "output" numeric
+  "us_multiplier" numeric
+  "source" text
+  "retrieved_on" date
+  "modified_at" timestamptz
 }
 
 Table "staging"."models" {
@@ -2751,6 +2821,8 @@ Table "activity"."sessions" {
   "metered_cost" numeric [note: 'Metered cost in whole currency units, where the source knows it (OpenCode). 0.0 is a REAL reading on a subscription plan — distinct from NULL, "not reported". Subscription cost is user-configured; see crate::cost.']
   "list_cost_usd" numeric [note: 'The session\'s cost at list price in US dollars, as Claude Code\'s /cost totals it, reported by the sensei plugin\'s usage mod (SessionMeasure, #238). The largest total any measure reported: it only grows within a session, and a dead-lettered measure may be drained late. NOT billed spend: on a subscription the plan fee is what is paid (crate::cost), and metered_cost holds a source\'s billed figure. NULL when no measure carried a cost.']
   "duration" interval [note: 'Gap-aware active work time (excludes idle gaps > threshold). The full\nwall-clock span is started_at..completed_at; per-turn/segment detail lives in\nactivity.turns.']
+  "claude_time" interval
+  "user_time" interval
   "module" text [note: 'Primary code module touched. For per-module FTR.']
   "summary" text [note: 'Brief summary of what happened in this session. Populated at checkpoint time by the assistant.']
   "provider" text [note: 'Inference provider that ran this session (e.g. anthropic, openai, copilot_chat, ollama). Captured from the transcript at synthesis (#75); NULL for live hook-captured sessions whose model the hook stream doesn\'t carry. Powers effectiveness-by-model.']

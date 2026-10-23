@@ -34,6 +34,9 @@ const usage = (over: Partial<TrackerUsage> = {}): TrackerUsage => ({
   tokens_reasoning_n: 0,
   metered_cost: null,
   metered_cost_n: 0,
+  api_cost: null,
+  api_cost_n: 0,
+  api_cost_partial: 0,
   claude_secs: null,
   claude_n: 0,
   user_secs: null,
@@ -329,7 +332,11 @@ describe('ticket rows', () => {
       wall: '—',
       cycle: '—',
     });
-    expect(usageCells(usage({ metered_cost: 1.5, metered_cost_n: 1 })).cost).toBe('$1.50');
+    // The cost cell is the API cost (session API cost C5), not a source's own figure.
+    expect(usageCells(usage({ metered_cost: 1.5, metered_cost_n: 1 })).cost).toBe('—');
+    expect(usageCells(usage({ api_cost: 1.2449, api_cost_n: 2 })).cost).toBe('$1.24');
+    expect(usageCells(usage({ api_cost: 1.2449, api_cost_n: 2, api_cost_partial: 1 })).cost).toBe('$1.24+');
+    expect(usageCells(usage({ api_cost: 0.004, api_cost_n: 1 })).cost).toBe('<$0.01');
     expect(usageCells(usage()).sessions).toBe('0 (0/0)');
   });
 
@@ -371,6 +378,18 @@ describe('ticket rows', () => {
     l.aiOnly = true;
     expect(l.visibleTasks.map((t) => t.key)).toEqual(['AUTH-2']);
     expect(l.countLine).toBe('1 of 3 tickets has AI sessions');
+  });
+
+  it('says when some AI work could not be priced, so the cost is a lower bound', async () => {
+    const { l } = await ready({
+      tryListTrackerTasks: async () =>
+        ok([task({ key: 'AUTH-3', usage: usage({ sessions: 1, api_cost: 2, api_cost_n: 1, api_cost_partial: 1 }) })]),
+    });
+    expect(l.costNote).toBe(
+      'Some AI work could not be priced (subagents or a model with no price), so its API cost is a lower bound.',
+    );
+    const plain = await ready();
+    expect(plain.l.costNote).toBe(null);
   });
 
   it('notes shared sessions', async () => {

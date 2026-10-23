@@ -61,6 +61,82 @@ impl PgStore {
         Ok(n)
     }
 
+    /// Replace a session's API messages (spec session-api-cost C2) in one
+    /// transaction, so a re-read never leaves old and new rows side by side.
+    pub async fn upsert_transcript_messages(
+        &self,
+        source: &str,
+        session_id: &str,
+        messages: &[crate::transcript::TranscriptMessage],
+    ) -> Result<(), String> {
+        let col = |f: fn(&crate::transcript::TranscriptMessage) -> i64| {
+            messages.iter().map(f).collect::<Vec<i64>>()
+        };
+        let text = |f: fn(&crate::transcript::TranscriptMessage) -> Option<String>| {
+            messages.iter().map(f).collect::<Vec<Option<String>>>()
+        };
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query(
+            "DELETE FROM activity.transcript_messages WHERE source = $1 AND session_id = $2",
+        )
+        .bind(source)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_messages
+                 (source, session_id, message_id, turn_index, sent_at, model, speed, inference_geo,
+                  service_tier, input, cache_write_5m, cache_write_1h, cache_split_known,
+                  cache_read, output, thinking)
+             SELECT $1, $2, m.id, m.turn, to_timestamp(m.at_ms / 1000.0), m.model, m.speed, m.geo,
+                    m.tier, m.input, m.w5, m.w1, m.known, m.cr, m.out, m.thinking
+               FROM unnest($3::text[], $4::int[], $5::bigint[], $6::text[], $7::text[], $8::text[],
+                           $9::text[], $10::bigint[], $11::bigint[], $12::bigint[], $13::bool[],
+                           $14::bigint[], $15::bigint[], $16::bigint[])
+                 AS m(id, turn, at_ms, model, speed, geo, tier, input, w5, w1, known, cr, out, thinking)",
+        )
+        .bind(source)
+        .bind(session_id)
+        .bind(messages.iter().map(|m| m.message_id.clone()).collect::<Vec<_>>())
+        .bind(messages.iter().map(|m| m.turn_index).collect::<Vec<_>>())
+        .bind(messages.iter().map(|m| m.at).collect::<Vec<_>>())
+        .bind(messages.iter().map(|m| m.model.clone()).collect::<Vec<_>>())
+        .bind(text(|m| m.speed.clone()))
+        .bind(text(|m| m.inference_geo.clone()))
+        .bind(text(|m| m.service_tier.clone()))
+        .bind(col(|m| m.input))
+        .bind(col(|m| m.cache_write_5m))
+        .bind(col(|m| m.cache_write_1h))
+        .bind(messages.iter().map(|m| m.cache_split_known).collect::<Vec<_>>())
+        .bind(col(|m| m.cache_read))
+        .bind(col(|m| m.output))
+        .bind(messages.iter().map(|m| m.thinking).collect::<Vec<_>>())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())
+    }
+
+    /// Spec session-api-cost C6: the first time it runs, clear the Claude
+    /// transcripts' ingest watermarks so each is read again — its turns' tokens
+    /// counted once per message and its message rows written. `true` when it
+    /// cleared them; `false` once done (`transcripts.messages_v1` is set).
+    pub async fn reset_claude_watermarks_once(&self) -> Result<bool, String> {
+        const DONE: &str = "transcripts.messages_v1";
+        if self.get_config(DONE).await?.is_some() {
+            return Ok(false);
+        }
+        sqlx_core::query::query(
+            "DELETE FROM activity.capture_watermarks WHERE source = 'claude_code'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        self.set_config(DONE, &chrono::Utc::now().to_rfc3339()).await?;
+        Ok(true)
+    }
+
     /// Last-ingested mtime (ns) for a transcript file, or None if never seen.
     pub async fn get_capture_watermark(
         &self,

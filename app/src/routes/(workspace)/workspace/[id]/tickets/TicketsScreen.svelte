@@ -26,7 +26,7 @@
     <span class="text-ink-mute">active AI time <span class="text-ink">{c.active}</span></span>
     <span class="text-ink-mute">fresh tokens <span class="text-ink">{c.fresh}</span></span>
     <span class="text-ink-mute">out tokens <span class="text-ink">{c.out}</span></span>
-    <span class="text-ink-mute">cost <span class="text-ink">{c.cost}</span></span>
+    <span class="text-ink-mute">API cost <span class="text-ink">{c.cost}</span></span>
   </div>
 {/snippet}
 
@@ -200,7 +200,7 @@
                   <div class="min-w-[52rem]">
                     <div aria-hidden="true" class="{COLS} border-b border-paper-edge px-2 pb-1 text-xs text-ink-mute">
                       <span>Ticket</span><span>Sprint</span><span>Status</span><span>Sessions (branch/prompt)</span>
-                      <span>Active AI time</span><span>Cycle time</span><span>Fresh tokens</span><span>Out tokens</span><span>Cost</span>
+                      <span>Active AI time</span><span>Cycle time</span><span>Fresh tokens</span><span>Out tokens</span><span>API cost</span>
                     </div>
                     <ul class="m-0 list-none p-0">
                       {#each lane.visibleTasks as t (t.key)}
@@ -223,7 +223,7 @@
                             <span><span class="sr-only">cycle time </span><span data-cell="cycle">{c.cycle}</span></span>
                             <span><span class="sr-only">fresh tokens </span><span data-cell="fresh">{c.fresh}</span></span>
                             <span><span class="sr-only">out tokens </span><span data-cell="out">{c.out}</span></span>
-                            <span><span class="sr-only">cost </span><span data-cell="cost">{c.cost}</span></span>
+                            <span><span class="sr-only">API cost </span><span data-cell="cost">{c.cost}</span></span>
                           </button>
                         </li>
                       {/each}
@@ -232,6 +232,9 @@
                 </div>
                 {#if lane.sharedNote}
                   <p class="m-0 text-xs text-ink-soft">{lane.sharedNote}</p>
+                {/if}
+                {#if lane.costNote}
+                  <p class="m-0 text-xs text-ink-soft">{lane.costNote}</p>
                 {/if}
               {/if}
               </section>

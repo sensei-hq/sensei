@@ -36,6 +36,9 @@ const usage = (over: Partial<TrackerUsage> = {}): TrackerUsage => ({
   tokens_reasoning_n: 0,
   metered_cost: null,
   metered_cost_n: 0,
+  api_cost: null,
+  api_cost_n: 0,
+  api_cost_partial: 0,
   claude_secs: null,
   claude_n: 0,
   user_secs: null,
@@ -217,10 +220,11 @@ describe('ready', () => {
   });
 
   it('shows unknown numbers as —, never 0', async () => {
-    const { q } = await open();
+    const { q, m } = await open();
     const row = q('[data-ticket="AUTH-2"]')!;
     expect(row.querySelector('[data-cell="fresh"]')!.textContent!.trim()).toBe('—');
     expect(row.querySelector('[data-cell="cost"]')!.textContent!.trim()).toBe('—');
+    expect(m.container.textContent).toMatch(/API cost/);
     expect(row.querySelector('[data-cell="active"]')!.textContent!.trim()).toBe('10m');
     expect(row.querySelector('[data-cell="cycle"]')!.textContent!.trim()).toBe('—');
   });

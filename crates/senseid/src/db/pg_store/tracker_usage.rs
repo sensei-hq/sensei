@@ -118,8 +118,12 @@ impl PgStore {
                     'wall_secs', sum(extract(epoch FROM s.completed_at - s.started_at))::float8,
                     'wall_n', count(s.completed_at),
                     'first_at', min(s.started_at),
-                    'last_at', max(s.completed_at))
+                    'last_at', max(s.completed_at),
+                    'api_cost', sum(ac.api_cost)::float8,
+                    'api_cost_n', count(ac.session_id),
+                    'api_cost_partial', count(*) FILTER (WHERE ac.unpriced > 0 OR ac.hook_only_turns > 0))
                FROM m JOIN activity.sessions s ON s.id = m.sid
+               LEFT JOIN activity.session_api_cost ac ON ac.session_id = s.client_session_id
               GROUP BY m.g",
         )
         .bind(tracker_id)

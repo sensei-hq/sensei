@@ -2206,6 +2206,11 @@ export interface TrackerUsage {
   /** The first session's start and the last ended one's end (ISO): the cycle time's span. */
   first_at: string | null;
   last_at: string | null;
+  /** API cost at list prices (session-api-cost C5), over `api_cost_n` sessions;
+   *  `api_cost_partial` of them had work that could not be priced (a lower bound). */
+  api_cost: number | null;
+  api_cost_n: number;
+  api_cost_partial: number;
 }
 
 /** One sprint as `GET …/sprints` returns it. Without a window the count and the

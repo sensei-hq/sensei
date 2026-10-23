@@ -205,6 +205,15 @@ fn cycle_secs(usage: &Value) -> Option<f64> {
     Some((at("last_at")? - at("first_at")?).num_seconds() as f64)
 }
 
+/// The usage's API cost at list prices (session-api-cost C5): "1.24", "1.24+"
+/// when some of its work could not be priced (a lower bound), "<0.01" for a
+/// fraction of a cent; blank when nothing was priced.
+fn api_cost(usage: &Value) -> String {
+    let Some(c) = usage["api_cost"].as_f64() else { return String::new() };
+    let partial = if usage["api_cost_partial"].as_i64().unwrap_or(0) > 0 { "+" } else { "" };
+    if c > 0.0 && c < 0.005 { format!("<0.01{partial}") } else { format!("{c:.2}{partial}") }
+}
+
 /// The usage table's header.
 pub const USAGE_HEADER: [&str; 12] = [
     "key",
@@ -218,7 +227,7 @@ pub const USAGE_HEADER: [&str; 12] = [
     "fresh tokens",
     "cache-read",
     "out tokens",
-    "cost",
+    "api cost",
 ];
 
 /// One usage row's cells, in [`USAGE_HEADER`] order. Unknown values are blank, never `0`.
@@ -241,7 +250,7 @@ pub fn usage_cells(label: &str, summary: &str, usage: &Value) -> Vec<String> {
         count(&usage["tokens_fresh"]),
         count(&usage["cache_read"]),
         count(&usage["tokens_out"]),
-        usage["metered_cost"].as_f64().map(|c| format!("{c:.2}")).unwrap_or_default(),
+        api_cost(usage),
     ]
 }
 
@@ -1051,8 +1060,15 @@ mod tests {
             vec!["AUTH-2", "Login", "3 (3/1)", "0:03", "", "", "", "", "15", "", "40", ""]
         );
         assert!(USAGE_HEADER.contains(&"active AI time"), "never just \"hours\"");
-        let priced = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0}, "metered_cost": 1.5, "metered_cost_n": 1});
-        assert_eq!(usage_cells("K-1", "", &priced)[11], "1.50");
+        // The cost column is the API cost (session API cost C5); "+" when only
+        // partly priced; a source's own metered figure is not shown.
+        assert_eq!(USAGE_HEADER[11], "api cost");
+        let metered = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0}, "metered_cost": 1.5, "metered_cost_n": 1});
+        assert_eq!(usage_cells("K-1", "", &metered)[11], "");
+        let priced = json!({"sessions": 2, "by_source": {"branch": 2, "prompt": 0}, "api_cost": 1.2449, "api_cost_n": 2, "api_cost_partial": 0});
+        assert_eq!(usage_cells("K-1", "", &priced)[11], "1.24");
+        let partial = json!({"sessions": 2, "by_source": {"branch": 2, "prompt": 0}, "api_cost": 1.2449, "api_cost_n": 2, "api_cost_partial": 1});
+        assert_eq!(usage_cells("K-1", "", &partial)[11], "1.24+");
     }
 
     #[test]

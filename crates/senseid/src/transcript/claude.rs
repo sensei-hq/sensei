@@ -6,8 +6,8 @@
 
 use super::{
     MAX_LINE_BYTES, MAX_TRANSCRIPT_BYTES, MAX_TURN_CHARS, ParsedTranscript, SessionTokens,
-    SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn, TurnFacts, UnitRef,
-    human_prompt_text, merge_facts, parse_timestamp, turn_attrs,
+    SynthEvent, SynthSession, TranscriptAdapter, TranscriptMessage, TranscriptTurn, TurnFacts,
+    UnitRef, human_prompt_text, merge_facts, parse_timestamp, turn_attrs,
 };
 use std::path::{Path, PathBuf};
 
@@ -123,6 +123,7 @@ impl TranscriptAdapter for ClaudeAdapter {
             events: session.map(|s| s.events).unwrap_or_default(),
             model: claude_model_of(lines()?).map(|m| ("anthropic".to_string(), m)),
             tokens: claude_tokens_of(lines()?),
+            messages: claude_messages_of(lines()?),
         };
         (!failed.get()).then_some(parsed)
     }
@@ -135,19 +136,21 @@ impl TranscriptAdapter for ClaudeAdapter {
             events: session.map(|s| s.events).unwrap_or_default(),
             model: claude_model(content).map(|m| ("anthropic".to_string(), m)),
             tokens: claude_tokens(content),
+            messages: claude_messages(content),
         }
     }
 }
 
 /// Session-total token usage across a Claude transcript's assistant records, kept
-/// SPLIT (fresh input / cache write / cache read / output). `None` when no record
-/// carries usage (honest-empty). Pure.
+/// SPLIT (fresh input / cache write / cache read / output), each response counted
+/// once by `message.id`. `None` when no record carries usage (honest-empty). Pure.
 pub fn claude_tokens(content: &str) -> Option<SessionTokens> {
     claude_tokens_of(content.lines())
 }
 
 fn claude_tokens_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Option<SessionTokens> {
     let (mut fresh, mut cw, mut cr, mut tout, mut seen) = (0i64, 0i64, 0i64, 0i64, false);
+    let mut counted = std::collections::HashSet::new();
     for raw in lines {
         let line = raw.as_ref().trim();
         if line.is_empty() || line.len() > MAX_LINE_BYTES {
@@ -162,6 +165,11 @@ fn claude_tokens_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Option<Ses
         let Some(u) = v.get("message").and_then(|m| m.get("usage")) else {
             continue;
         };
+        if let Some(id) = v["message"].get("id").and_then(|x| x.as_str())
+            && !counted.insert(id.to_string())
+        {
+            continue;
+        }
         let g = |k: &str| u.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
         let line_in =
             g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens");
@@ -182,6 +190,81 @@ fn claude_tokens_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Option<Ses
         reasoning: None, // Claude does not separate reasoning tokens
         cost: None,      // no metered cost in the transcript
     })
+}
+
+/// One row per API response (spec session-api-cost C2): a response written on
+/// several records is one row (the last record's usage); a usage record with no
+/// `message.id` is its own row; `<synthetic>` and model-less records are none.
+/// Pure.
+pub fn claude_messages(content: &str) -> Vec<TranscriptMessage> {
+    claude_messages_of(content.lines())
+}
+
+fn claude_messages_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Vec<TranscriptMessage> {
+    let mut out: Vec<TranscriptMessage> = Vec::new();
+    let mut at_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut turn: Option<i32> = None;
+    for (n, raw) in lines.enumerate() {
+        let line = raw.as_ref().trim();
+        if line.is_empty() || line.len() > MAX_LINE_BYTES {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("user") if human_prompt_text(&v).is_some() => turn = Some(turn.unwrap_or(0) + 1),
+            Some("assistant") => {
+                let m = &v["message"];
+                let (Some(u), Some(model)) =
+                    (m.get("usage"), m.get("model").and_then(|x| x.as_str()))
+                else {
+                    continue;
+                };
+                if model == "<synthetic>" {
+                    continue;
+                }
+                let n_of = |x: &serde_json::Value| x.as_i64().unwrap_or(0);
+                let s_of = |x: &serde_json::Value| x.as_str().map(str::to_string);
+                let split = u.get("cache_creation").filter(|c| {
+                    c.get("ephemeral_5m_input_tokens").is_some()
+                        || c.get("ephemeral_1h_input_tokens").is_some()
+                });
+                let total_write = n_of(&u["cache_creation_input_tokens"]);
+                let id = m
+                    .get("id")
+                    .and_then(|x| x.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("line:{n}"));
+                let row = TranscriptMessage {
+                    message_id: id.clone(),
+                    turn_index: turn,
+                    at: parse_timestamp(&v).map(|t| t.timestamp_millis()),
+                    model: model.to_string(),
+                    speed: s_of(&u["speed"]),
+                    inference_geo: s_of(&u["inference_geo"]),
+                    service_tier: s_of(&u["service_tier"]),
+                    input: n_of(&u["input_tokens"]),
+                    cache_write_5m: split
+                        .map_or(total_write, |c| n_of(&c["ephemeral_5m_input_tokens"])),
+                    cache_write_1h: split.map_or(0, |c| n_of(&c["ephemeral_1h_input_tokens"])),
+                    cache_split_known: split.is_some(),
+                    cache_read: n_of(&u["cache_read_input_tokens"]),
+                    output: n_of(&u["output_tokens"]),
+                    thinking: u["output_tokens_details"]["thinking_tokens"].as_i64(),
+                };
+                match at_index.get(&id) {
+                    Some(&i) => out[i] = row,
+                    None => {
+                        at_index.insert(id, out.len());
+                        out.push(row);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The model that ran a Claude transcript: the most frequent `message.model`
@@ -716,5 +799,101 @@ mod tests {
         assert_eq!(got.total_input(), 165);
         // no usage anywhere ⇒ honest-None, never a fabricated (0,0)
         assert_eq!(claude_tokens("{\"type\":\"user\",\"message\":{\"content\":\"hi\"}}"), None);
+    }
+
+    // ── Session API cost C1/C2 (docs/spec/daemon/session-api-cost.md) ──
+
+    /// One API response written on three lines (one per content block), each
+    /// repeating the response's usage — Claude Code's format — after a prompt.
+    const SPLIT_MESSAGE: &str = concat!(
+        r#"{"type":"user","timestamp":"2026-10-20T10:00:00.000Z","message":{"role":"user","content":"go"}}"#,
+        "\n",
+        r#"{"type":"assistant","timestamp":"2026-10-20T10:00:05.000Z","message":{"id":"msg_A","model":"claude-opus-5-5","role":"assistant","#,
+        r#""usage":{"input_tokens":2,"cache_creation_input_tokens":725,"cache_read_input_tokens":26784,"output_tokens":313,"#,
+        r#""cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":725},"#,
+        r#""output_tokens_details":{"thinking_tokens":60},"speed":"standard","inference_geo":"global","service_tier":"standard"},"#,
+        r#""content":[{"type":"thinking","thinking":"hmm"}]}}"#,
+        "\n",
+        r#"{"type":"assistant","timestamp":"2026-10-20T10:00:05.000Z","message":{"id":"msg_A","model":"claude-opus-5-5","role":"assistant","#,
+        r#""usage":{"input_tokens":2,"cache_creation_input_tokens":725,"cache_read_input_tokens":26784,"output_tokens":313,"#,
+        r#""cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":725},"#,
+        r#""output_tokens_details":{"thinking_tokens":60},"speed":"standard","inference_geo":"global","service_tier":"standard"},"#,
+        r#""content":[{"type":"text","text":"on it"}]}}"#,
+        "\n",
+        r#"{"type":"assistant","timestamp":"2026-10-20T10:00:05.000Z","message":{"id":"msg_A","model":"claude-opus-5-5","role":"assistant","#,
+        r#""usage":{"input_tokens":2,"cache_creation_input_tokens":725,"cache_read_input_tokens":26784,"output_tokens":313,"#,
+        r#""cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":725},"#,
+        r#""output_tokens_details":{"thinking_tokens":60},"speed":"standard","inference_geo":"global","service_tier":"standard"},"#,
+        r#""content":[{"type":"tool_use","name":"Edit","input":{}}]}}"#,
+        "\n",
+    );
+
+    #[test]
+    fn a_response_written_on_several_lines_counts_once() {
+        let turns = parse_claude_transcript(SPLIT_MESSAGE);
+        let f = &turns[0].facts;
+        assert_eq!(
+            (f.tokens_in, f.cache_write, f.cache_read, f.tokens_out),
+            (Some(2), Some(725), Some(26784), Some(313)),
+            "the turn counts msg_A once, not three times"
+        );
+        let t = claude_tokens(SPLIT_MESSAGE).unwrap();
+        assert_eq!(
+            (t.input, t.cache_write, t.cache_read, t.output),
+            (2, Some(725), Some(26784), 313)
+        );
+        assert_eq!(claude_messages(SPLIT_MESSAGE).len(), 1);
+    }
+
+    #[test]
+    fn a_message_row_keeps_what_its_price_needs() {
+        let m = &claude_messages(SPLIT_MESSAGE)[0];
+        assert_eq!(m.message_id, "msg_A");
+        assert_eq!(m.turn_index, Some(1));
+        assert_eq!(m.model, "claude-opus-5-5");
+        assert_eq!(
+            m.at,
+            Some(
+                chrono::DateTime::parse_from_rfc3339("2026-10-20T10:00:05Z")
+                    .unwrap()
+                    .timestamp_millis()
+            )
+        );
+        assert_eq!((m.input, m.cache_read, m.output), (2, 26784, 313));
+        assert_eq!((m.cache_write_5m, m.cache_write_1h, m.cache_split_known), (0, 725, true));
+        assert_eq!(m.thinking, Some(60), "a breakdown of output, never added to it");
+        assert_eq!(
+            (m.speed.as_deref(), m.inference_geo.as_deref(), m.service_tier.as_deref()),
+            (Some("standard"), Some("global"), Some("standard"))
+        );
+    }
+
+    #[test]
+    fn an_unsplit_cache_write_is_marked_unknown_and_lines_without_an_id_count_each() {
+        let c = concat!(
+            r#"{"type":"assistant","timestamp":"2026-10-20T09:59:00.000Z","message":{"id":"msg_0","model":"claude-haiku-4-5-20251001","#,
+            r#""usage":{"input_tokens":1,"cache_creation_input_tokens":40,"output_tokens":3}}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-10-20T10:00:00.000Z","message":{"role":"user","content":"go"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"input_tokens":5,"output_tokens":7}}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"input_tokens":5,"output_tokens":7}}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"msg_s","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}}}"#,
+            "\n",
+        );
+        let ms = claude_messages(c);
+        assert_eq!(ms.len(), 3, "msg_0 + two id-less lines; <synthetic> is not a message");
+        let first = &ms[0];
+        assert_eq!(first.turn_index, None, "before the first prompt");
+        assert_eq!(first.model, "claude-haiku-4-5-20251001");
+        assert_eq!(
+            (first.cache_write_5m, first.cache_write_1h, first.cache_split_known),
+            (40, 0, false)
+        );
+        assert_eq!(first.thinking, None, "no breakdown is unknown, not 0");
+        assert_ne!(ms[1].message_id, ms[2].message_id, "each id-less line is its own message");
+        assert_eq!(parse_claude_transcript(c)[0].facts.tokens_out, Some(14));
     }
 }

@@ -58,6 +58,15 @@ function failureText(error: { status: number; message: string; body?: Record<str
   return errorFor(error.status, error.body ?? { error: error.message }).text;
 }
 
+/** The API cost at list prices: "$1.24", "$1.24+" when some work could not be
+ *  priced (a lower bound), "<$0.01" for a fraction of a cent, "—" when nothing was. */
+function apiCost(u: TrackerUsage): string {
+  if (u.api_cost == null) return '—';
+  const plus = u.api_cost_partial > 0 ? '+' : '';
+  const shown = u.api_cost > 0 && u.api_cost < 0.005 ? '<$0.01' : `$${u.api_cost.toFixed(2)}`;
+  return shown + plus;
+}
+
 /** One usage object as table cells. Unknown is "—", never 0. */
 export function usageCells(u: TrackerUsage): UsageCells {
   return {
@@ -65,7 +74,7 @@ export function usageCells(u: TrackerUsage): UsageCells {
     active: compactDuration(activeMinutes(u.active_secs)),
     fresh: compactTokens(u.tokens_fresh),
     out: compactTokens(u.tokens_out),
-    cost: u.metered_cost == null ? '—' : `$${u.metered_cost.toFixed(2)}`,
+    cost: apiCost(u),
     claude: compactDuration(activeMinutes(u.claude_secs)),
     you: compactDuration(activeMinutes(u.user_secs)),
     wall: compactDuration(activeMinutes(u.wall_secs)),
@@ -205,6 +214,13 @@ export class TicketLane {
   /** A ticket's current sprint, or "Backlog" when no sprint lists it. */
   sprintOf(t: TrackerTaskRow): string {
     return t.current_sprint?.name ?? 'Backlog';
+  }
+
+  /** Said when any listed ticket's API cost leaves work unpriced. */
+  get costNote(): string | null {
+    return this.tasks?.some((t) => t.usage.api_cost_partial > 0)
+      ? 'Some AI work could not be priced (subagents or a model with no price), so its API cost is a lower bound.'
+      : null;
   }
 
   get sharedNote(): string | null {

@@ -46,6 +46,12 @@ pub struct Usage {
     /// The first session's start and the last ended one's end: the cycle time's span.
     pub first_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The sessions' API cost at list prices (session-api-cost C5), over the
+    /// `api_cost_n` sessions that had messages; `api_cost_partial` of them had
+    /// work that could not be priced, so the sum is a lower bound.
+    pub api_cost: Option<f64>,
+    pub api_cost_n: i64,
+    pub api_cost_partial: i64,
 }
 
 /// A sprint's session window `[from, to)`, or why it has no usage.
@@ -428,6 +434,82 @@ mod tests {
         );
         assert_eq!(u.first_at, Some(at(10, 5, 10)));
         assert_eq!(u.last_at, Some(at(10, 7, 17) + chrono::Duration::minutes(20)));
+    }
+
+    /// Session API cost C5: a ticket's API cost sums its sessions' priced
+    /// messages, says how many sessions it summed, and how many were only
+    /// partly priced — never a $0 for what could not be priced.
+    #[tokio::test]
+    async fn ticket_usage_reports_api_cost_and_what_was_only_partly_priced() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let model = format!("_test-usage-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+        sqlx_core::query::query(
+            "INSERT INTO sensei.model_prices (model, effective_from, input, cache_write_5m,
+                    cache_write_1h, cache_read, output, source, retrieved_on)
+             VALUES ($1, '2026-01-01', 4, 5, 8, 0.2, 20, 'test', '2026-10-23')",
+        )
+        .bind(&model)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let client = |s: uuid::Uuid| {
+            let pg = &pg;
+            async move {
+                sqlx_core::query_as::query_as::<_, (String,)>(
+                    "SELECT client_session_id FROM activity.sessions WHERE id = $1",
+                )
+                .bind(s)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap()
+                .0
+            }
+        };
+        let m = |id: &str, model: &str, out: i64| crate::transcript::TranscriptMessage {
+            message_id: id.into(),
+            turn_index: Some(1),
+            at: Some(at(10, 20, 10).timestamp_millis()),
+            model: model.into(),
+            speed: Some("standard".into()),
+            inference_geo: Some("global".into()),
+            service_tier: None,
+            input: 0,
+            cache_write_5m: 0,
+            cache_write_1h: 0,
+            cache_split_known: true,
+            cache_read: 0,
+            output: out,
+            thinking: None,
+        };
+        let a = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        let b = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await; // no messages: not in the sum
+        pg.upsert_transcript_messages(
+            "claude_code",
+            &client(a).await,
+            &[m("a1", &model, 1_000_000)],
+        )
+        .await
+        .unwrap();
+        pg.upsert_transcript_messages(
+            "claude_code",
+            &client(b).await,
+            &[m("b1", &model, 500_000), m("b2", "_test-no-price", 1_000_000)],
+        )
+        .await
+        .unwrap();
+        sync(&pg, t, &FakeBoard::standard()).await;
+        let auth2 = task_id(&pg, t, "10002").await;
+        let u = ticket_usages(&pg, t, Some(&[auth2])).await.unwrap().remove(&auth2).unwrap();
+        assert_eq!(u.sessions, 3);
+        assert_eq!((u.api_cost, u.api_cost_n, u.api_cost_partial), (Some(30.0), 2, 1));
+        sqlx_core::query::query("DELETE FROM sensei.model_prices WHERE model = $1")
+            .bind(&model)
+            .execute(pg.pool())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
