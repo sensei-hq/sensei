@@ -82,6 +82,14 @@ describe('tracker wrappers', () => {
     expect(fetch.mock.calls.every((c) => (c[1]?.method ?? 'GET') === 'GET')).toBe(true);
   });
 
+  it('the backlog reads hit the board’s …/backlog and …/tasks?backlog=true', async () => {
+    const fetch = stub(200, { tickets: 0, usage: {} });
+    expect((await api().tryGetBacklog(P, 't-1')).ok).toBe(true);
+    expect((await api().tryListBacklogTasks(P, 't-1')).ok).toBe(true);
+    const base = `http://127.0.0.1:7744/api/workspaces/${P}/trackers/t-1`;
+    expect(fetch.mock.calls.map((c) => c[0])).toEqual([`${base}/backlog`, `${base}/tasks?backlog=true`]);
+  });
+
   it('a refusal carries the code as the message and the body beside it', async () => {
     const owner = { error: 'board_already_connected', workspace: { id: 'p2', name: 'other' } };
     stub(409, owner);

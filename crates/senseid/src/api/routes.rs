@@ -59,6 +59,7 @@ fn tracker_routes() -> Router<AppState> {
             "/api/workspaces/{id}/trackers/{tracker}/sessions/unlinked",
             get(trackers::list_unlinked_sessions),
         )
+        .route("/api/workspaces/{id}/trackers/{tracker}/backlog", get(trackers::get_backlog))
         .route("/api/workspaces/{id}/tracker-tasks/{key}", get(trackers::get_tracker_task))
         .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
 }

@@ -378,6 +378,7 @@ fn parse_copilot_merged(content: &str) -> ParsedTranscript {
                 events: session.as_ref().map_or_else(Vec::new, |s| s.events.clone()),
                 model: extract_jsonl_model(inner),
                 tokens,
+                messages: Vec::new(),
             }
         }
         "sqlite" => {
@@ -414,7 +415,14 @@ fn parse_copilot_merged(content: &str) -> ParsedTranscript {
             } else {
                 Vec::new()
             };
-            ParsedTranscript { turns, cwds: Vec::new(), events, model: None, tokens: None }
+            ParsedTranscript {
+                turns,
+                cwds: Vec::new(),
+                events,
+                model: None,
+                tokens: None,
+                messages: Vec::new(),
+            }
         }
         _ => ParsedTranscript::default(),
     }

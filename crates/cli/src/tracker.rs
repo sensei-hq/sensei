@@ -50,6 +50,9 @@ pub enum TrackerCmd {
         /// A sprint id or exact name
         #[arg(long, conflicts_with = "key")]
         sprint: Option<String>,
+        /// The tickets in no sprint
+        #[arg(long, conflicts_with_all = ["sprint", "key"])]
+        backlog: bool,
         /// One ticket key (current or former), e.g. AUTH-420
         key: Option<String>,
         /// One row per repository (with a ticket key)
@@ -172,7 +175,7 @@ pub fn resolve_sprint(sprints: &Value, input: &str) -> Result<String, String> {
     resolve_named(sprints, input, "sprint")
 }
 
-/// Active AI time as `h:mm`; blank when no session had a duration.
+/// A time (active AI time, its split, session or cycle time) as `h:mm`; blank when unknown.
 pub fn active_time(secs: Option<f64>) -> String {
     secs.map(|s| {
         let minutes = (s.max(0.0) / 60.0).floor() as u64;
@@ -181,16 +184,50 @@ pub fn active_time(secs: Option<f64>) -> String {
     .unwrap_or_default()
 }
 
+/// The `sensei tracker sprints` line for the backlog (`GET …/backlog`).
+pub fn backlog_row(backlog: &Value) -> Vec<String> {
+    // No window, so no "sessions in window" or "unlinked": those need dates.
+    vec![
+        "Backlog".into(),
+        "no sprint".into(),
+        String::new(),
+        String::new(),
+        backlog["tickets"].to_string(),
+        String::new(),
+        backlog["usage"]["sessions"].to_string(),
+        String::new(),
+    ]
+}
+
+/// The span from `first_at` to `last_at` in seconds; `None` while either is unknown.
+fn cycle_secs(usage: &Value) -> Option<f64> {
+    let at = |k: &str| usage[k].as_str().and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok());
+    Some((at("last_at")? - at("first_at")?).num_seconds() as f64)
+}
+
+/// The usage's API cost at list prices (session-api-cost C5): "1.24", "1.24+"
+/// when some of its work could not be priced (a lower bound), "<0.01" for a
+/// fraction of a cent; blank when nothing was priced.
+fn api_cost(usage: &Value) -> String {
+    let Some(c) = usage["api_cost"].as_f64() else { return String::new() };
+    let partial = if usage["api_cost_partial"].as_i64().unwrap_or(0) > 0 { "+" } else { "" };
+    if c > 0.0 && c < 0.005 { format!("<0.01{partial}") } else { format!("{c:.2}{partial}") }
+}
+
 /// The usage table's header.
-pub const USAGE_HEADER: [&str; 8] = [
+pub const USAGE_HEADER: [&str; 12] = [
     "key",
     "summary",
     "sessions (branch/prompt)",
     "active AI time",
+    "claude",
+    "you",
+    "session time",
+    "cycle time",
     "fresh tokens",
     "cache-read",
     "out tokens",
-    "cost",
+    "api cost",
 ];
 
 /// One usage row's cells, in [`USAGE_HEADER`] order. Unknown values are blank, never `0`.
@@ -206,10 +243,14 @@ pub fn usage_cells(label: &str, summary: &str, usage: &Value) -> Vec<String> {
             usage["by_source"]["prompt"].as_i64().unwrap_or(0)
         ),
         active_time(usage["active_secs"].as_f64()),
+        active_time(usage["claude_secs"].as_f64()),
+        active_time(usage["user_secs"].as_f64()),
+        active_time(usage["wall_secs"].as_f64()),
+        active_time(cycle_secs(usage)),
         count(&usage["tokens_fresh"]),
         count(&usage["cache_read"]),
         count(&usage["tokens_out"]),
-        usage["metered_cost"].as_f64().map(|c| format!("{c:.2}")).unwrap_or_default(),
+        api_cost(usage),
     ]
 }
 
@@ -504,6 +545,11 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                     ]
                 })
                 .collect();
+            let mut rows = rows;
+            rows.push(backlog_row(&get_json(
+                &client,
+                &format!("{}/backlog", tracker_uri(&id, board.as_deref())?),
+            )?));
             println!(
                 "{}",
                 table(
@@ -522,7 +568,7 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             );
             Ok(())
         }
-        TrackerCmd::Usage { workspace, board, sprint, key, by_repo } => {
+        TrackerCmd::Usage { workspace, board, sprint, backlog, key, by_repo } => {
             let id = workspace_id(&workspace)?;
             let mut rows = Vec::new();
             let mut footer = Vec::new();
@@ -547,6 +593,11 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                 let tracker = tracker_uri(&id, board.as_deref())?;
                 let mut uri = format!("{tracker}/tasks");
                 let mut sprint_row = None;
+                let mut backlog_total = None;
+                if backlog {
+                    uri = format!("{uri}?backlog=true");
+                    backlog_total = Some(get_json(&client, &format!("{tracker}/backlog"))?);
+                }
                 if let Some(sprint) = sprint {
                     let sprints = get_json(&client, &format!("{tracker}/sprints"))?;
                     let sid = resolve_sprint(&sprints, &sprint)?;
@@ -574,6 +625,10 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                         "{} tickets without AI sessions not shown.",
                         list.len() - worked.len()
                     ));
+                }
+                if let Some(b) = backlog_total {
+                    // The backlog's own total: each session once, never a sum of tickets.
+                    rows.push(usage_cells("backlog total", "", &b["usage"]));
                 }
                 if let Some(s) = sprint_row {
                     match s["reason"].as_str() {
@@ -939,6 +994,7 @@ mod tests {
                 workspace: "p".into(),
                 board: None,
                 sprint: None,
+                backlog: false,
                 key: Some("AUTH-1".into()),
                 by_repo: true
             }
@@ -949,6 +1005,7 @@ mod tests {
                 workspace: "p".into(),
                 board: Some("42".into()),
                 sprint: Some("Sprint 2".into()),
+                backlog: false,
                 key: None,
                 by_repo: false
             }
@@ -1000,10 +1057,60 @@ mod tests {
         });
         assert_eq!(
             usage_cells("AUTH-2", "Login", &usage),
-            vec!["AUTH-2", "Login", "3 (3/1)", "0:03", "15", "", "40", ""]
+            vec!["AUTH-2", "Login", "3 (3/1)", "0:03", "", "", "", "", "15", "", "40", ""]
         );
         assert!(USAGE_HEADER.contains(&"active AI time"), "never just \"hours\"");
-        let priced = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0}, "metered_cost": 1.5, "metered_cost_n": 1});
-        assert_eq!(usage_cells("K-1", "", &priced)[7], "1.50");
+        // The cost column is the API cost (session API cost C5); "+" when only
+        // partly priced; a source's own metered figure is not shown.
+        assert_eq!(USAGE_HEADER[11], "api cost");
+        let metered = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0}, "metered_cost": 1.5, "metered_cost_n": 1});
+        assert_eq!(usage_cells("K-1", "", &metered)[11], "");
+        let priced = json!({"sessions": 2, "by_source": {"branch": 2, "prompt": 0}, "api_cost": 1.2449, "api_cost_n": 2, "api_cost_partial": 0});
+        assert_eq!(usage_cells("K-1", "", &priced)[11], "1.24");
+        let partial = json!({"sessions": 2, "by_source": {"branch": 2, "prompt": 0}, "api_cost": 1.2449, "api_cost_n": 2, "api_cost_partial": 1});
+        assert_eq!(usage_cells("K-1", "", &partial)[11], "1.24+");
+    }
+
+    #[test]
+    fn usage_cells_split_active_time_and_span_the_cycle() {
+        let usage = json!({
+            "sessions": 2, "by_source": {"branch": 2, "prompt": 0},
+            "active_secs": 2400.0, "active_n": 2,
+            "claude_secs": 1800.0, "claude_n": 2, "user_secs": 600.0, "user_n": 2,
+            "wall_secs": 3000.0, "wall_n": 2,
+            "first_at": "2026-10-05T10:00:00Z", "last_at": "2026-10-07T17:20:00Z"
+        });
+        assert_eq!(
+            USAGE_HEADER[3..8],
+            ["active AI time", "claude", "you", "session time", "cycle time"]
+        );
+        assert_eq!(
+            usage_cells("AUTH-2", "", &usage)[3..8],
+            ["0:40", "0:30", "0:10", "0:50", "55:20"]
+        );
+        let open = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0},
+                          "first_at": "2026-10-05T10:00:00Z", "last_at": null});
+        assert_eq!(usage_cells("AUTH-2", "", &open)[7], "", "no session ended: no cycle time");
+    }
+
+    #[test]
+    fn backlog_is_its_own_usage_scope_and_a_sprints_line() {
+        assert_eq!(
+            parse(&["usage", "--workspace", "p", "--board", "42", "--backlog"]).unwrap(),
+            TrackerCmd::Usage {
+                workspace: "p".into(),
+                board: Some("42".into()),
+                sprint: None,
+                backlog: true,
+                key: None,
+                by_repo: false
+            }
+        );
+        assert!(parse(&["usage", "--workspace", "p", "--backlog", "--sprint", "s"]).is_err());
+        assert!(parse(&["usage", "--workspace", "p", "--backlog", "AUTH-1"]).is_err());
+        assert_eq!(
+            backlog_row(&json!({"tickets": 2, "usage": {"sessions": 1}})),
+            vec!["Backlog", "no sprint", "", "", "2", "", "1", ""]
+        );
     }
 }

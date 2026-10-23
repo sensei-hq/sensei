@@ -35,6 +35,23 @@ pub struct Usage {
     pub tokens_reasoning_n: i64,
     pub metered_cost: Option<f64>,
     pub metered_cost_n: i64,
+    /// Active time's split (R12): Claude working, and you.
+    pub claude_secs: Option<f64>,
+    pub claude_n: i64,
+    pub user_secs: Option<f64>,
+    pub user_n: i64,
+    /// Each ended session's clock time, idle inside it included.
+    pub wall_secs: Option<f64>,
+    pub wall_n: i64,
+    /// The first session's start and the last ended one's end: the cycle time's span.
+    pub first_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The sessions' API cost at list prices (session-api-cost C5), over the
+    /// `api_cost_n` sessions that had messages; `api_cost_partial` of them had
+    /// work that could not be priced, so the sum is a lower bound.
+    pub api_cost: Option<f64>,
+    pub api_cost_n: i64,
+    pub api_cost_partial: i64,
 }
 
 /// A sprint's session window `[from, to)`, or why it has no usage.
@@ -181,6 +198,40 @@ pub async fn sprint_usages(
         .collect())
 }
 
+/// The backlog's ticket count and its all-time usage (R7 backlog usage).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct BacklogUsage {
+    pub tickets: i64,
+    pub usage: Usage,
+}
+
+/// The backlog: the tracker's live tickets no live sprint lists, and the usage of
+/// the distinct candidate sessions linked to any of them.
+pub async fn backlog_usage(pg: &PgStore, tracker_id: uuid::Uuid) -> Result<BacklogUsage, String> {
+    use crate::db::pg_store::tracker_usage::TaskScope;
+    let tickets: Vec<uuid::Uuid> = pg
+        .tracker_task_rows(tracker_id, TaskScope::Backlog, false)
+        .await?
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    let pairs = pg.ticket_sessions(tracker_id, Some(&tickets)).await?;
+    // One group: a session linked to two backlog tickets counts once.
+    let members: Vec<(String, uuid::Uuid)> =
+        pairs.iter().map(|p| (BACKLOG_GROUP.into(), p.session_id)).collect();
+    let targets: Vec<(String, uuid::Uuid)> =
+        tickets.iter().map(|t| (BACKLOG_GROUP.into(), *t)).collect();
+    let usage = pg
+        .usage_grouped(tracker_id, &members, &targets)
+        .await?
+        .remove(BACKLOG_GROUP)
+        // No linked session is a genuinely empty set: zero sessions, null sums.
+        .unwrap_or_default();
+    Ok(BacklogUsage { tickets: tickets.len() as i64, usage })
+}
+
+const BACKLOG_GROUP: &str = "backlog";
+
 /// The sprint's `unlinked` sessions; `None` for a sprint the tracker doesn't have,
 /// `Some([])` for one without a window.
 pub async fn unlinked_in_sprint(
@@ -267,6 +318,7 @@ mod tests {
 
     // ── Against the database (fake board, seeded sessions) ──────────────────
 
+    use crate::db::pg_store::tracker_usage::TaskScope;
     use crate::tracker::connect::tests::{connected_tracker, workspace};
     use crate::tracker::jira::JiraAdapter;
     use crate::tracker::sync::{SYNC_DEADLINE, TrackerLocks, sync_tracker};
@@ -323,6 +375,164 @@ mod tests {
         .execute(pg.pool())
         .await
         .unwrap();
+    }
+
+    /// R7/R12: the time a ticket took — the split, each session's clock time,
+    /// and the span from the first session's start to the last one's end.
+    #[tokio::test]
+    async fn ticket_usage_reports_the_split_session_time_and_span() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let a = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        let b = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        let c = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        // Mon 10:00–10:30 and Wed 17:00–17:20; c started Tue, never ended, never analysed.
+        for (s, started, ended, claude, you) in [
+            (
+                a,
+                at(10, 5, 10),
+                Some(at(10, 5, 10) + chrono::Duration::minutes(30)),
+                Some(1200.0),
+                Some(300.0),
+            ),
+            (
+                b,
+                at(10, 7, 17),
+                Some(at(10, 7, 17) + chrono::Duration::minutes(20)),
+                Some(600.0),
+                Some(300.0),
+            ),
+            (c, at(10, 6, 9), None, None, None),
+        ] {
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET started_at = $2, completed_at = $3,
+                        claude_time = make_interval(secs => $4::float8),
+                        user_time = make_interval(secs => $5::float8),
+                        duration = make_interval(secs => $4::float8 + $5::float8)
+                  WHERE id = $1",
+            )
+            .bind(s)
+            .bind(started)
+            .bind(ended)
+            .bind(claude)
+            .bind(you)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        sync(&pg, t, &FakeBoard::standard()).await;
+        let auth2 = task_id(&pg, t, "10002").await;
+        let u = ticket_usages(&pg, t, Some(&[auth2])).await.unwrap().remove(&auth2).unwrap();
+        assert_eq!((u.claude_secs, u.claude_n), (Some(1800.0), 2));
+        assert_eq!((u.user_secs, u.user_n), (Some(600.0), 2));
+        assert_eq!((u.active_secs, u.active_n), (Some(2400.0), 2), "Claude + you");
+        assert_eq!(
+            (u.wall_secs, u.wall_n),
+            (Some(3000.0), 2),
+            "an unended session has no clock time"
+        );
+        assert_eq!(u.first_at, Some(at(10, 5, 10)));
+        assert_eq!(u.last_at, Some(at(10, 7, 17) + chrono::Duration::minutes(20)));
+    }
+
+    /// Session API cost C5: a ticket's API cost sums its sessions' priced
+    /// messages, says how many sessions it summed, and how many were only
+    /// partly priced — never a $0 for what could not be priced.
+    #[tokio::test]
+    async fn ticket_usage_reports_api_cost_and_what_was_only_partly_priced() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        // The whole uuid: an all-digit 8-character slice would read as a date suffix.
+        let model = format!("_test-usage-{}", uuid::Uuid::new_v4().simple());
+        sqlx_core::query::query(
+            "INSERT INTO sensei.model_prices (model, effective_from, input, cache_write_5m,
+                    cache_write_1h, cache_read, output, source, retrieved_on)
+             VALUES ($1, '2026-01-01', 4, 5, 8, 0.2, 20, 'test', '2026-10-23')",
+        )
+        .bind(&model)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let client = |s: uuid::Uuid| {
+            let pg = &pg;
+            async move {
+                sqlx_core::query_as::query_as::<_, (String,)>(
+                    "SELECT client_session_id FROM activity.sessions WHERE id = $1",
+                )
+                .bind(s)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap()
+                .0
+            }
+        };
+        let m = |id: &str, model: &str, out: i64| crate::transcript::TranscriptMessage {
+            message_id: id.into(),
+            turn_index: Some(1),
+            at: Some(at(10, 20, 10).timestamp_millis()),
+            model: model.into(),
+            speed: Some("standard".into()),
+            inference_geo: Some("global".into()),
+            service_tier: None,
+            input: 0,
+            cache_write_5m: 0,
+            cache_write_1h: 0,
+            cache_split_known: true,
+            cache_read: 0,
+            output: out,
+            thinking: None,
+        };
+        let a = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        let b = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await; // no messages: not in the sum
+        pg.upsert_transcript_messages(
+            "claude_code",
+            &client(a).await,
+            &[m("a1", &model, 1_000_000)],
+        )
+        .await
+        .unwrap();
+        pg.upsert_transcript_messages(
+            "claude_code",
+            &client(b).await,
+            &[m("b1", &model, 500_000), m("b2", "_test-no-price", 1_000_000)],
+        )
+        .await
+        .unwrap();
+        sync(&pg, t, &FakeBoard::standard()).await;
+        let auth2 = task_id(&pg, t, "10002").await;
+        let u = ticket_usages(&pg, t, Some(&[auth2])).await.unwrap().remove(&auth2).unwrap();
+        assert_eq!(u.sessions, 3);
+        assert_eq!((u.api_cost, u.api_cost_n, u.api_cost_partial), (Some(30.0), 2, 1));
+        sqlx_core::query::query("DELETE FROM sensei.model_prices WHERE model = $1")
+            .bind(&model)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_ticket_with_no_ended_session_has_no_last_at() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let a = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        sqlx_core::query::query("UPDATE activity.sessions SET completed_at = NULL WHERE id = $1")
+            .bind(a)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        sync(&pg, t, &FakeBoard::standard()).await;
+        let auth2 = task_id(&pg, t, "10002").await;
+        let u = ticket_usages(&pg, t, Some(&[auth2])).await.unwrap().remove(&auth2).unwrap();
+        assert!(u.first_at.is_some());
+        assert_eq!(
+            (u.last_at, u.wall_secs, u.wall_n),
+            (None, None, 0),
+            "no end: null, never a guess"
+        );
     }
 
     #[tokio::test]
@@ -525,12 +735,15 @@ mod tests {
         let keys = |rows: Vec<crate::db::pg_store::tracker_usage::TaskListRow>| {
             rows.into_iter().map(|r| r.key).collect::<Vec<_>>()
         };
-        assert_eq!(keys(pg.tracker_task_rows(t, Some(s100), false).await.unwrap()), vec!["AUTH-1"]);
         assert_eq!(
-            keys(pg.tracker_task_rows(t, Some(s101), false).await.unwrap()),
+            keys(pg.tracker_task_rows(t, TaskScope::Sprint(s100), false).await.unwrap()),
+            vec!["AUTH-1"]
+        );
+        assert_eq!(
+            keys(pg.tracker_task_rows(t, TaskScope::Sprint(s101), false).await.unwrap()),
             vec!["AUTH-1", "AUTH-2", "AUTH-3"]
         );
-        let all = pg.tracker_task_rows(t, None, false).await.unwrap();
+        let all = pg.tracker_task_rows(t, TaskScope::All, false).await.unwrap();
         let auth1 = all.iter().find(|r| r.key == "AUTH-1").unwrap();
         assert_eq!(auth1.current_sprint, Some((s101, "Sprint 2".to_string())));
         let mut listed: Vec<_> = auth1.sprints.iter().map(|(id, _)| *id).collect();
@@ -547,10 +760,99 @@ mod tests {
         );
         sync(&pg, t, &without_3).await;
         assert_eq!(
-            keys(pg.tracker_task_rows(t, None, false).await.unwrap()),
+            keys(pg.tracker_task_rows(t, TaskScope::All, false).await.unwrap()),
             vec!["AUTH-1", "AUTH-2"]
         );
-        let with_removed = pg.tracker_task_rows(t, None, true).await.unwrap();
+        let with_removed = pg.tracker_task_rows(t, TaskScope::All, true).await.unwrap();
         assert!(with_removed.iter().any(|r| r.key == "AUTH-3" && r.removed));
+    }
+
+    /// The standard board plus AUTH-4 (no sprint) and AUTH-5 (only in future
+    /// sprint 102); `with_102 = false` is the same board after 102 is deleted.
+    fn with_backlog(with_102: bool, with_4: bool) -> FakeBoard {
+        let mut issues = vec![json!({"id": "10003", "key": "AUTH-3", "fields": {}})];
+        if with_4 {
+            issues
+                .push(json!({"id": "10004", "key": "AUTH-4", "fields": {"summary": "no sprint"}}));
+        }
+        issues.push(json!({"id": "10005", "key": "AUTH-5", "fields": {}}));
+        let total = 2 + issues.len();
+        let mut sprints = vec![
+            json!({"id": 100, "name": "Sprint 1", "state": "closed",
+                   "startDate": "2026-09-01T00:00:00.000Z", "endDate": "2026-09-15T00:00:00.000Z"}),
+            json!({"id": 101, "name": "Sprint 2", "state": "active", "startDate": "2026-10-01T00:00:00.000Z"}),
+        ];
+        if with_102 {
+            sprints.push(json!({"id": 102, "name": "Sprint 3", "state": "future"}));
+        }
+        FakeBoard::standard()
+            .with(
+                "/rest/agile/1.0/board/42/issue",
+                2,
+                json!({"startAt": 2, "total": total, "issues": issues}),
+            )
+            .with("/rest/agile/1.0/board/42/sprint", 0, json!({"isLast": true, "values": sprints}))
+            .with(
+                "/rest/agile/1.0/board/42/sprint/102/issue",
+                0,
+                json!({"total": 1, "issues": [
+                {"id": "10005", "key": "AUTH-5", "fields": {}}]}),
+            )
+    }
+
+    #[tokio::test]
+    async fn the_backlog_is_the_tickets_no_live_sprint_lists() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, _p) = connected_tracker(&pg).await;
+        let keys = |rows: Vec<crate::db::pg_store::tracker_usage::TaskListRow>| {
+            rows.into_iter().map(|r| r.key).collect::<Vec<_>>()
+        };
+        sync(&pg, t, &with_backlog(true, true)).await;
+        assert_eq!(
+            keys(pg.tracker_task_rows(t, TaskScope::Backlog, false).await.unwrap()),
+            vec!["AUTH-4"],
+            "AUTH-1 is in a closed sprint, AUTH-5 in a future one: neither is backlog"
+        );
+        // Sprint 102 is deleted in Jira: its ticket falls back to the backlog.
+        sync(&pg, t, &with_backlog(false, true)).await;
+        assert_eq!(
+            keys(pg.tracker_task_rows(t, TaskScope::Backlog, false).await.unwrap()),
+            vec!["AUTH-4", "AUTH-5"]
+        );
+        // AUTH-4 leaves the board: a removed ticket shows only when asked for.
+        sync(&pg, t, &with_backlog(false, false)).await;
+        assert_eq!(
+            keys(pg.tracker_task_rows(t, TaskScope::Backlog, false).await.unwrap()),
+            vec!["AUTH-5"]
+        );
+        assert_eq!(
+            keys(pg.tracker_task_rows(t, TaskScope::Backlog, true).await.unwrap()),
+            vec!["AUTH-4", "AUTH-5"]
+        );
+    }
+
+    #[tokio::test]
+    async fn backlog_usage_counts_each_session_once() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let both = session_with(&pg, Some(r), &["fix/AUTH-4"], &["and AUTH-5"]).await;
+        let sprint_only = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        measured(&pg, both, at(10, 5, 9), Some(600), Some(10)).await;
+        measured(&pg, sprint_only, at(10, 5, 10), Some(60), Some(1)).await;
+        sync(&pg, t, &with_backlog(false, true)).await;
+        let b = backlog_usage(&pg, t).await.unwrap();
+        assert_eq!(b.tickets, 2, "AUTH-4 and AUTH-5");
+        assert_eq!(
+            (b.usage.sessions, b.usage.shared),
+            (1, 1),
+            "one session, linked to two backlog tickets"
+        );
+        assert_eq!(b.usage.by_source, BySource { branch: 1, prompt: 1 });
+        assert_eq!(
+            (b.usage.active_secs, b.usage.tokens_fresh),
+            (Some(600.0), Some(10)),
+            "the sprint ticket's session is not counted"
+        );
     }
 }

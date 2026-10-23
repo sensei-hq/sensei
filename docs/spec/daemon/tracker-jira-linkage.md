@@ -455,6 +455,9 @@ known-key prefix set changes) is deferred — backlog.*
 | `by_source.branch`, `by_source.prompt` | sessions in `S` with ≥1 link of that source (to the ticket, for ticket usage; to any sprint member, for `linked_sprint`) — may sum past `sessions` |
 | `shared` | sessions in `S` linked to ≥2 distinct tasks of this tracker |
 | `active_secs`, `active_n` | `Σ extract(epoch from duration)` over sessions with `duration IS NOT NULL`; `active_n` = that count |
+| `claude_secs`, `claude_n` / `user_secs`, `user_n` | the same rule over `claude_time` / `user_time` (R12): active time split into Claude working and you interacting |
+| `wall_secs`, `wall_n` | `Σ (completed_at − started_at)` over sessions with `completed_at IS NOT NULL` — each session's clock time, idle inside it included |
+| `first_at`, `last_at` | `min(started_at)` over `S`; `max(completed_at)` over sessions that have one (`null` when none has). The **cycle time** shown is `last_at − first_at`: from the first session's start to the last one's end, the gaps between sessions included |
 | `tokens_fresh`, `cache_read`, `cache_write`, `tokens_out`, `tokens_reasoning` | each `Σ field` over sessions where **that field** IS NOT NULL, each with `<field>_n` |
 | `metered_cost`, `metered_cost_n` | same rule |
 
@@ -467,6 +470,12 @@ project. The read-time intersection means removing a repo from the project takes
 effect immediately, without waiting for the next relink. Also returns `by_repo:
 [{repository_id, name, usage}]` (each session has exactly one repo anchor, so these
 parts sum to the total).
+
+**Backlog usage:** the **backlog** is the tracker's non-removed tickets that no
+non-removed sprint lists (a ticket left only in a closed sprint is that sprint's, not
+the backlog's). `S` = distinct candidate sessions (R1) with a link to any backlog
+ticket; usage as above, `by_source` counting links to backlog tickets. No window: the
+backlog has no dates, so its usage is all-time.
 
 **Sprint usage:**
 - `state = 'future'` → `usage: null, reason: "not_started"`. A non-future sprint without a `start_at`, or a closed one with neither `complete_at` nor `end_at`, has no window → `reason: "no_dates"` (never a `0`).
@@ -501,7 +510,8 @@ sit behind one guard layer built from **existing** code:
 | `DELETE /api/workspaces/{id}/trackers/{tracker}` | R3 disconnect of that board; 204; 404 `tracker_not_found` for an id that is not one of the workspace's trackers. The secret survives while another board of the workspace on the same site still uses it. |
 | `POST /api/workspaces/{id}/trackers/{tracker}/sync` | R5 now, for that board. 200 `{counts:{sprints, tasks, removed, links, skipped_members}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 `tracker_not_found` for an id that is not one of the workspace's trackers. |
 | `GET /api/workspaces/{id}/trackers/{tracker}/sprints` | the board's sprints (one Sprints lane, D40), newest first (`start_at` desc, NULL last, then `seq` desc): `[{id, name, state, start_at, end_at, complete_at, tasks, candidates_in_window, linked_sprint, linked_other, unlinked, reason}]` — `tasks` = tickets the sprint lists; each part a usage object; without a window the count and parts are `null` and `reason` says why (`not_started`, `no_dates`). Removed sprints excluded. 404 `tracker_not_found` for an id that is not one of the workspace's trackers. |
-| `GET /api/workspaces/{id}/trackers/{tracker}/tasks?sprint={uuid}&include_removed=bool` | the sprint's tickets (or all the board's tickets without `sprint`): `[{key, summary, issue_type, status, current_sprint, sprints:[{id, name}], removed, usage}]`. `sprint` filters to its members; unknown sprint → 404 `sprint_not_found`. A ticket with no linked sessions has a zero-session usage object (sums `null`, counts `0`). |
+| `GET /api/workspaces/{id}/trackers/{tracker}/backlog` | `{tickets, usage}` — the board's backlog ticket count and its usage (R7 backlog usage). 404 `tracker_not_found` for an id that is not one of the workspace's trackers. |
+| `GET /api/workspaces/{id}/trackers/{tracker}/tasks?sprint={uuid}&backlog=bool&include_removed=bool` | the sprint's tickets, the backlog's (`backlog=true`), or all the board's tickets without either — both given → 422 `sprint_or_backlog`: `[{key, summary, issue_type, status, current_sprint, sprints:[{id, name}], removed, usage}]`. `sprint` filters to its members; unknown sprint → 404 `sprint_not_found`. A ticket with no linked sessions has a zero-session usage object (sums `null`, counts `0`). |
 | `GET /api/workspaces/{id}/tracker-tasks/{key}` | Workspace-wide, across its boards. `{task:{tracker_id, key, …}, usage, by_repo:[{repository_id, name, usage}], sessions:[{id, started_at, links:[{source, matched_key, mentions}]}]}`; `key` matched case-insensitively against current keys **and aliases**; sessions are the ticket's current candidates (R1), as for usage; 404 `task_not_found` if absent or the workspace has no tracker. A miss runs R11 discovery on each board in level order until one has it: 404 `task_not_on_board` (+ `key`, `board_ref` of the first board that answered it does not have it). |
 | `GET /api/workspaces/{id}/trackers/{tracker}/sessions/unlinked?sprint={uuid}` | the sprint's `unlinked` sessions `[{id, started_at, task}]`, oldest first; no `sprint` → 422 `sprint_required`; unknown → 404 `sprint_not_found`; a sprint without a window → `[]`. |
 
@@ -513,7 +523,7 @@ Error codes the routes return (body `{error: <code>}`, extra fields where noted)
 | 403 | `forbidden` (the account can't read the board, at connect); `forbidden_caller` (the local-caller guard: foreign `Origin` or non-loopback `Host`) |
 | 404 | `workspace_not_found`; `tracker_not_found` (a tracker id that is not one of the workspace's boards); `board_not_found` (+ `base_url`, `board_ref`); `task_not_found` (no ticket with that key or alias); `task_not_on_board` (+ `key`, `board_ref`; R11); `sprint_not_found` |
 | 409 | `board_already_connected` (+ `workspace {id, name}`); `busy` |
-| 422 | `unsupported_tracker`; `level_required`; `invalid_level`; `invalid_base_url`; `email_required`; `token_required`; `board_project_mismatch`; `sprint_required` |
+| 422 | `unsupported_tracker`; `level_required`; `invalid_level`; `invalid_base_url`; `email_required`; `token_required`; `board_project_mismatch`; `sprint_required`; `sprint_or_backlog` |
 | 500 | `credential_store`; `internal` (database error) |
 | 502 | a `tracker_error` code from the provider (connect validation or sync): `rate_limited`, `transport`, `http_error`, `redirect`, `decode`, `not_found`, `token_missing`, … |
 
@@ -545,7 +555,7 @@ enabled; a missing row is a 500 (the row is seeded and test-enforced).
   error. Table: key · summary · sessions (branch/prompt) · **"active AI time"** `h:mm` ·
   fresh / cache-read / out tokens · cost (blank when unknown, not `0`), then for a
   sprint the `unlinked` count. `--by-repo` adds one row per repository.
-- `<p>`: a uuid, or an exact project name from `GET /api/projects`; 0 or >1 matches
+- `<p>`: a uuid, or an exact workspace name from `GET /api/workspaces`; 0 or >1 matches
   → error listing the candidates. `<s>`: uuid or exact sprint name; same rule.
 
 ### R11 · On-demand ticket discovery (`tracker/discover.rs`)
@@ -617,6 +627,31 @@ replace) supersedes any discovered link.
 negative cache → 404 `task_not_found` (no network call). Busy → 409 `busy`; a
 provider failure → 502 with its code.
 
+### R12 · Active time split (`tasks/handlers/analyze.rs`)
+
+The analyzer already derives `sessions.duration` (active time) from the session's hook
+events: the gaps between consecutive events, each counted when `0 < gap ≤ 30 min`.
+R12 attributes each counted gap to **who the session was waiting on** when it began,
+by the event that opened it:
+
+| Event opening the gap | Gap is |
+|---|---|
+| `UserPromptSubmit` | Claude's (it is working on the prompt) |
+| `PreToolUse`, `PostToolUse`, `SubagentStop`, `PreCompact` and any other event inside a turn | Claude's, unless a `Notification` came after the turn's latest tool event |
+| `Notification` | yours (Claude is waiting for an approval or an answer) |
+| `Stop`, `SessionStart`, `SessionEnd`, or any event before the first prompt | yours (reading, analysing, typing the next prompt) |
+
+- Stored on `activity.sessions` as `claude_time interval` and `user_time interval`
+  beside `duration`, and `duration = claude_time + user_time` for every session the
+  analyzer writes.
+- A session with **no hook events** (transcript only) gets `NULL` in all three. Before
+  R12 it got `0`, a fabricated zero.
+- Sessions analysed before R12 (`duration IS NOT NULL AND claude_time IS NULL`) are
+  picked up again by the enrichment pass, once, so their split is filled without a
+  data migration.
+- Time outside Claude Code (editing in the IDE with no session open) is not seen and
+  not counted.
+
 ### Out of scope
 
 Any adapter other than Jira (GitLab is next — below); write-back to any tracker; Dōjō UI / rollup / upload (F-3); ADO / GitHub Issues; task-type
@@ -625,7 +660,7 @@ Jira Server/DC; assignee or any per-person figure; discovery from live session h
 (R11 triggers on transcript ingest and lookup only); daemon-wide route auth/CORS
 (backlog). The desktop **connection** and **sprints** screens are in scope:
 [`screen/workspace-integrations.md`](../screen/workspace-integrations.md),
-[`screen/workspace-sprints.md`](../screen/workspace-sprints.md).
+[`screen/workspace-tickets.md`](../screen/workspace-tickets.md).
 
 ## Future adapters (not built in this slice)
 
@@ -677,6 +712,7 @@ Unattended (CI):
    j. Sprint usage against seeded DB rows: `candidates_in_window` equals an independent `count(*)` written in the test; a session linked only to another tracker's task lands in `unlinked`; a future sprint → `not_started`; an active sprint past `end_at` includes a session started after `end_at`.
    k. Project hierarchy (seeded DB, fake transport, fake `SecretStore`): a project with 3 repos; sessions in each repo on `fix/AUTH-420-x` → AUTH-420 usage `sessions = 3`, `by_repo` has 3 entries summing to the total. Removing one repo from the project → AUTH-420 drops to 2 immediately (no resync). `GET …/sprints` returns the board's sprints; `GET …/tracker-tasks?sprint=S` returns exactly S's tickets; a ticket carried from S1 to S2 appears under both, with `current_sprint` = S2. Connecting the same board from a second project → 409 `board_already_connected`, including when typed as `https://ACME.atlassian.net/jira/software`. Re-connecting the first project to a different board removes the old board's sprints and tickets, creates a new tracker id, and tombstones only the old secret (after one tick the new one is still readable). A tick run while a connect is paused between `keychain_set` and step 3 does not delete the new secret (grace period). Two interleaved re-connects of one project leave exactly one live secret, and every other keyring entry they wrote has a tombstone. Re-connecting to the same board with the same email: the live token is never deleted, even when the commit is made to fail (fake store returns the old token). Re-connect from `e1` to `e2` with a fake store whose delete fails → a tombstone for `(old service, e1)` remains for the tick. Deleting the project removes its tracker and writes a tombstone; the next tick deletes the secret and the tombstone. A keyring delete that fails leaves the tombstone in place.
    l. **Seam test:** a test-only `FakeAdapter` (non-Jira key format `#12` scoped by `repo_key`, its own sprint shape) runs through the coordinator (sync, relink, usage) with no change to coordinator code. `repositories.repo_key` is seeded through the production `normalize_repo_key` from remotes like `git@gitlab.com:Group/Sub/Repo.git`, and the fake's `scope` comes from `https://gitlab.com/Group/Sub/Repo`. Two sessions in different repos both saying `#12` link to different tasks. A third repo with no matching scope gives 0 links, and a session with NULL `repo_key` gives 0 links.
+   n. **Backlog:** a ticket no sprint lists, and one listed only by a sprint Jira deleted, are backlog; a ticket in a closed sprint is not; a removed ticket is excluded unless `include_removed`. `GET …/backlog` counts a session linked to two backlog tickets once (`sessions = 1`) and reports the ticket count; `?sprint=X&backlog=true` → 422 `sprint_or_backlog`.
    m. **Discovery (R11):** `unknown_keys` with known `{P-1}`: `P-900` → `[P-900]`; `P-1`, `UTF-8`, `Q-5` (prefix the board doesn't use), `P-9x;DROP` → none beyond the valid `P-9`; a prompt naming `P-900` twice → once. A session ingested after the watermark naming `P-900` → one board-scoped request with `key in (P-900)`, the task inserted, the session linked, the watermark advanced; nothing marked removed, no other link touched. A session with no unknown key → no request. A key the board lacks → a `tracker_unknown_keys` row, and a second discovery within 6 h makes no request. A 400 batch (fake) → one request per key; the bad key negative-cached, the good ones inserted. Lock held → skipped, watermark unchanged. A provider failure → nothing applied, no `last_error`, watermark unchanged, a second trigger within 5 min makes no request. A full sync after discovery: the discovered task stays (it is on the board), its links are recomputed, and its negative-cache row (if any) is gone. `GET …/tracker-tasks/P-900` before any ingest → discovers, 200; `…/P-404` → 404 `task_not_on_board`; `…/UTF-8` → 404 `task_not_found` with no request. Ingest wiring: `ingest_capture` writing turns for a candidate session enqueues exactly one `TrackerDiscover` per tracker while one is pending.
 2. `rg -n 'Method::|\.request\(|client\.(post|put|patch|delete)\(' crates/senseid/src/tracker/` → no output (the HTTP client is GET-only; `SecretStore::delete` is a keyring call, not an HTTP verb).
 2a. `rg -n -i '\b(select|insert|update|delete)\b.*\b(from|into|set|where)\b' crates/senseid/src/tracker` → no hits **outside `#[cfg(test)]` modules** (test fixtures may seed rows, as `check-sql-in-layer` allows; `make check-sql-in-layer` only matches `sqlx_core::query*` call sites, so SQL text in a `const` would slip past it).

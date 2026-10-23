@@ -106,7 +106,7 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   (`/project/[id]/sprints`): sprint list (active selected), the sprint's own usage split
   (linked / other / not linked) or why it has none, its tickets with sessions, active AI
   time, tokens and cost, a ticket's per-repo breakdown and sessions (old keys shown "as
-  <key>"), unlinked sessions on demand. Spec `docs/spec/screen/workspace-sprints.md`; the
+  <key>"), unlinked sessions on demand. Spec `docs/spec/screen/workspace-tickets.md`; the
   tracker error words moved to `$lib/tracker-errors.ts` (second consumer). 27 new tests;
   app 1864/1864, svelte-check 0; checked live on the real board.
 - **F8 on-demand discovery (R11)** ✅ (asked for 2026-10-19) a ticket first named in a
@@ -118,6 +118,32 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   board"; 404 `task_not_on_board`. The full and discovery applies share their SQL helpers.
   Found by the tests: the shared candidate fragment's `tr` alias shadowed an outer `tr`.
   C33/C34 still need a live check on the tenant.
+- **F9 backlog** ✅ (asked for 2026-10-21) tickets no live sprint lists: `GET …/backlog`
+  ({tickets, usage}, each session once), `?backlog=true` on the ticket list (422 with
+  `sprint=`), a Backlog row on the Sprints screen, `usage --backlog` and a backlog line in
+  `sensei tracker sprints`. One ticket query serves all/sprint/backlog (`TaskScope`).
+  Live: 199 backlog tickets on board 333, P057542601-782/783 among them.
+- **Live discovery check (2026-10-21):** lookup fetched P057542601-782 in 1.6 s; a Claude
+  Code session naming P057542601-783 had it inserted and linked 0.7 s after ingest.
+- **Branch split (2026-10-22):** PR #274 merged F1–F8 to develop; F9 and F10 continue on
+  `feature/jira_ticket_linkage_1`, rebased onto the workspace rename (R3).
+- **F10 tickets first** ✅ (asked for 2026-10-21) the Sprints screen became 札 Tickets
+  (`/workspace/[id]/tickets`): every ticket by default, a filterable sprint Select (All
+  tickets, each sprint, Backlog), an "Only tickets with AI sessions" switch, a count line,
+  a Sprint column; the usage strip shows only for a sprint or the Backlog. App-only.
+- **F11 cycle time and the active-time split** ✅ (asked for 2026-10-22, branch
+  `feature/jira_cycle_time`) R12: active time split into Claude's and yours
+  (`sessions.claude_time`, `user_time`; Claude + you = `duration`); a session with no
+  hook events now stores NULL, not 0; sessions analysed before R12 are re-picked once.
+  R7 adds `claude_*`, `user_*`, `wall_*` (session clock time), `first_at`/`last_at`
+  (cycle time = last end − first start). Tickets screen: Cycle column and a Time line
+  on the detail; CLI `usage` gains claude / you / session time / cycle time. The new
+  columns carry inline comments only until the deploy-ordering bug is fixed (backlog).
+- **Merged develop's R9 (D40, several boards by level) 2026-10-23:** the backlog moved per
+  board (`GET …/trackers/{tracker}/backlog`, `…/tasks?backlog=true`; CLI `--board`). The
+  Tickets screen keeps tickets first inside D40's lanes: one lane per sprint board, side by
+  side, each with its own sprint filter, Backlog, AI-only switch and Cycle column (user's
+  choice). Develop's Sprints screen and `workspace-sprints.md` are superseded by Tickets.
 - **Next:** F5 live verification once Claude Code transcript consent is on.
 
 ## Gate for `/sensei:build`

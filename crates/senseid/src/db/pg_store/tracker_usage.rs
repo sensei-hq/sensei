@@ -44,6 +44,16 @@ pub struct TaskListRow {
     pub sprints: Vec<(uuid::Uuid, String)>,
 }
 
+/// Which tickets a list covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskScope {
+    All,
+    /// The tickets this sprint lists.
+    Sprint(uuid::Uuid),
+    /// The tickets no non-removed sprint lists (R7 backlog).
+    Backlog,
+}
+
 /// Which part of a sprint's window a candidate session falls in (R7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Part {
@@ -100,8 +110,20 @@ impl PgStore {
                     'tokens_out', sum(s.tokens_out)::bigint, 'tokens_out_n', count(s.tokens_out),
                     'tokens_reasoning', sum(s.tokens_reasoning)::bigint,
                     'tokens_reasoning_n', count(s.tokens_reasoning),
-                    'metered_cost', sum(s.metered_cost)::float8, 'metered_cost_n', count(s.metered_cost))
+                    'metered_cost', sum(s.metered_cost)::float8, 'metered_cost_n', count(s.metered_cost),
+                    'claude_secs', sum(extract(epoch FROM s.claude_time))::float8,
+                    'claude_n', count(s.claude_time),
+                    'user_secs', sum(extract(epoch FROM s.user_time))::float8,
+                    'user_n', count(s.user_time),
+                    'wall_secs', sum(extract(epoch FROM s.completed_at - s.started_at))::float8,
+                    'wall_n', count(s.completed_at),
+                    'first_at', min(s.started_at),
+                    'last_at', max(s.completed_at),
+                    'api_cost', sum(ac.api_cost)::float8,
+                    'api_cost_n', count(ac.session_id),
+                    'api_cost_partial', count(*) FILTER (WHERE ac.unpriced > 0 OR ac.hook_only_turns > 0))
                FROM m JOIN activity.sessions s ON s.id = m.sid
+               LEFT JOIN activity.session_api_cost ac ON ac.session_id = s.client_session_id
               GROUP BY m.g",
         )
         .bind(tracker_id)
@@ -252,9 +274,14 @@ impl PgStore {
     pub async fn tracker_task_rows(
         &self,
         tracker_id: uuid::Uuid,
-        sprint: Option<uuid::Uuid>,
+        scope: TaskScope,
         include_removed: bool,
     ) -> Result<Vec<TaskListRow>, String> {
+        let (sprint, backlog) = match scope {
+            TaskScope::All => (None, false),
+            TaskScope::Sprint(id) => (Some(id), false),
+            TaskScope::Backlog => (None, true),
+        };
         type Row = (
             uuid::Uuid,
             String,
@@ -279,6 +306,9 @@ impl PgStore {
               WHERE t.tracker_id = $1 AND ($3 OR t.removed_at IS NULL)
                 AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM sensei.tracker_task_sprints x
                                                   WHERE x.task_id = t.id AND x.sprint_id = $2))
+                AND (NOT $4 OR NOT EXISTS (SELECT 1 FROM sensei.tracker_task_sprints x
+                                             JOIN sensei.sprints s ON s.id = x.sprint_id AND s.removed_at IS NULL
+                                            WHERE x.task_id = t.id))
               GROUP BY t.id, cur.id, cur.name
               ORDER BY regexp_replace(t.key, '[0-9]+$', ''),
                        nullif(substring(t.key FROM '([0-9]+)$'), '')::numeric NULLS FIRST, t.key",
@@ -286,6 +316,7 @@ impl PgStore {
         .bind(tracker_id)
         .bind(sprint)
         .bind(include_removed)
+        .bind(backlog)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

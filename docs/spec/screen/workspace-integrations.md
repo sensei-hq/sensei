@@ -145,8 +145,8 @@ failure, focus moves to the alert.
 - Requests carry the app's own Origin, which the daemon's tracker guard allows
   through the reused `ALLOWED_ORIGINS` (`tauri://localhost`, dev
   `http://localhost:5173` and `http://127.0.0.1:5173`).
-- The screen shows no ticket/sprint usage; that is the Sprints screen's
-  ([`workspace-sprints.md`](workspace-sprints.md)).
+- The screen shows no ticket/sprint usage; that is the Tickets screen's
+  ([`workspace-tickets.md`](workspace-tickets.md)).
 
 ## Done gate
 
