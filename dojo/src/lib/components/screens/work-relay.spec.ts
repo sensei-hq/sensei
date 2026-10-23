@@ -47,6 +47,14 @@ describe('ScrWorkspaces — the full workspace list', () => {
 describe('ScrWorkspacePreview — the resolved-constitution drill-in', () => {
 	afterEach(cleanup);
 
+	it('a failed constitution read is an error, not "resolves in your editor" (#106)', () => {
+		const { getByRole, queryByText } = render(ScrWorkspacePreview, {
+			props: { workspace: workspaces[0], ladder: [], conflicts: [], error: 'forbidden' }
+		});
+		expect(getByRole('alert').textContent).toContain("Could not load this workspace's constitution — forbidden");
+		expect(queryByText("This workspace's constitution resolves in your editor.")).toBeNull();
+	});
+
 	const company = workspaces[0]; // lumen-auth (company)
 	const personal = workspaces[2]; // personal-site (personal)
 

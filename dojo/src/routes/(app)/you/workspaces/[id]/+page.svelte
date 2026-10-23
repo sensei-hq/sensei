@@ -21,5 +21,6 @@
 	workspace={data.workspace}
 	ladder={data.ladder}
 	conflicts={data.conflicts}
+	error={data.constitutionError}
 	onBack={back}
 />

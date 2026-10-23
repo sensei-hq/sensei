@@ -6,13 +6,8 @@ import { join } from 'path';
 // kit's mockup fixtures renders an invented org, person, ladder or invoice as if
 // it were theirs. Fixtures stay for specs and component harnesses only.
 //
-// A ratchet: the loaders below still read fixtures and are being moved to their
-// `/v1` reads or to a stated absence, one per change. The list only shrinks, and
-// a new importer fails at once.
-const STILL_ON_FIXTURES = [
-	'routes/(app)/org/[slug]/workspaces/[id]/+page.ts'
-];
-
+// Every view now reads its `/v1` data or states what is absent; this keeps it so.
+// Fixture modules are `kit/fixtures`, `*.fixtures` and `*.mock`.
 function sources(dir: string): string[] {
 	return readdirSync(dir).flatMap((name) => {
 		const p = join(dir, name);
@@ -23,12 +18,12 @@ function sources(dir: string): string[] {
 }
 
 describe('fixtures in views (#106)', () => {
-	it('only the loaders still being moved import the kit fixtures', () => {
+	it('no view imports a fixture or mock module', () => {
 		const importers = sources('src')
-			.filter((f) => !f.endsWith('kit/fixtures.ts'))
-			.filter((f) => /from\s+['"][^'"]*kit\/fixtures['"]/.test(readFileSync(f, 'utf8')))
+			.filter((f) => !/(kit\/fixtures|\.fixtures|\.mock)\.ts$/.test(f))
+			.filter((f) => /from\s+['"][^'"]*(kit\/fixtures|\.fixtures|\.mock)['"]/.test(readFileSync(f, 'utf8')))
 			.map((f) => f.replace(/^src\//, ''))
 			.sort();
-		expect(importers).toEqual(STILL_ON_FIXTURES);
+		expect(importers).toEqual([]);
 	});
 });
