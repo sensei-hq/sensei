@@ -231,9 +231,12 @@ async function mapProjects(
  * Follow the organization's member list (#309's rule, from the organization's
  * side): read every member with the token; a COMPLETE read that lists anyone
  * hands their forge ids to dojo.reconcile_unit_members, which ends the
- * provisioned memberships of people it no longer lists and restores those who
- * came back. A partial read, an empty one or a failed one ends nobody — the
- * failure is said in the answer, and the import or sync that asked still stands.
+ * provisioned memberships of people it no longer lists, restores those who
+ * came back, keeps the list as the connection's member set and joins the listed
+ * people who already signed in (#308 R5c — what a Microsoft sign-in provisions
+ * from). A partial read, an empty one or a failed one ends, joins and keeps
+ * nothing — the failure is said in the answer, and the import or sync that
+ * asked still stands.
  */
 export async function followMembers(
 	db: DojoClient,
@@ -250,7 +253,7 @@ export async function followMembers(
 		return { error: `Azure DevOps could not list the members${status}; nobody was ended` };
 	}
 	const listed = read.members.length;
-	if (!read.complete || listed === 0) return { complete: false, listed, ended: 0 };
+	if (!read.complete || listed === 0) return { complete: false, listed, ended: 0, joined: 0 };
 	const { data, error } = await db
 		.rpc('reconcile_unit_members', {
 			p_tenant: tenantId,
@@ -261,8 +264,11 @@ export async function followMembers(
 		})
 		.single();
 	fail(error);
-	if (typeof data !== 'number') throw new AdminError(500, 'reconcile_unit_members did not say how many memberships it ended');
-	return { complete: true, listed, ended: data };
+	const row = data as { ended?: unknown; joined?: unknown } | null;
+	if (typeof row?.ended !== 'number' || typeof row.joined !== 'number') {
+		throw new AdminError(500, 'reconcile_unit_members did not say how many memberships it ended and joined');
+	}
+	return { complete: true, listed, ended: row.ended, joined: row.joined };
 }
 
 /**

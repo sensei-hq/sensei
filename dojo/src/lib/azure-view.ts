@@ -67,9 +67,10 @@ export interface AzureProjectsFiled {
 }
 
 /** What the member read came to (#309's rule): a complete read ended the
- *  provisioned members it no longer lists; a partial one ended nobody; a failed
+ *  provisioned members it no longer lists and joined the listed people who had
+ *  already signed in (#308 R5c); a partial one ended and joined nobody; a failed
  *  one is said, and ended nobody. */
-export type AzureMembersRead = { complete: boolean; listed: number; ended: number } | { error: string };
+export type AzureMembersRead = { complete: boolean; listed: number; ended: number; joined: number } | { error: string };
 
 /** What an import came to. Never carries the token. */
 export interface AzureImportResult {
@@ -132,6 +133,7 @@ function memberParts(m: AzureMembersRead): string[] {
 	if ('error' in m) return [m.error];
 	if (!m.complete) return ['the member list was incomplete, so nobody was ended'];
 	const parts = [`${m.listed} ${m.listed === 1 ? 'member' : 'members'} read`];
+	if (m.joined) parts.push(`${m.joined} who had signed in now ${m.joined === 1 ? 'a member' : 'members'}`);
 	if (m.ended) parts.push(`${m.ended} who left the organization no longer ${m.ended === 1 ? 'a member' : 'members'}`);
 	return parts;
 }

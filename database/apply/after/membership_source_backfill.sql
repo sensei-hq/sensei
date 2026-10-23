@@ -2,12 +2,15 @@
 -- dojo.memberships (or its columns) is absent (the daemon's own database).
 --
 -- WHO WRITES source = 'provisioned' (read from the code, #308 R5b review 2):
--- only dojo/src/lib/server/provisioning.ts ensureMembership. Its callers pass
+-- dojo/src/lib/server/provisioning.ts ensureMembership. Its callers pass
 --   * github_oauth — GitHub org provisioning (ensureOrgTenant), and the person's
 --     personal dōjō on a GitHub sign-in;
 --   * azure_devops — the Azure DevOps import (ensureOrgTenant), which since
---     #308 R5b also writes source_provider / source_unit itself;
+--     #308 R5b also writes source_provider / source_unit itself, and a
+--     Microsoft sign-in (#308 R5c), which writes them too;
 --   * sso — ONLY the personal dōjō of a sign-in with no forge token.
+-- Since #308 R5c, dojo.reconcile_unit_members also provisions (azure_devops),
+-- always with source_provider / source_unit — so nothing here touches its rows.
 -- device_code never reaches it: admin-added and invited rows (admin-data.ts
 -- addMember, invites-data.ts) are 'invited'.
 do $$

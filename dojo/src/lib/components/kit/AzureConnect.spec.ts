@@ -14,7 +14,7 @@ const IMPORTED: AzureImportResult = {
 	dojo: { key: 'organization/example-org', created: true },
 	organization: { id: 'org-1', name: 'example-org' },
 	projects: { total: 2, mapped: 2, elsewhere: 0, complete: true },
-	members: { complete: true, listed: 3, ended: 0 }
+	members: { complete: true, listed: 3, ended: 0, joined: 0 }
 };
 const CONN: AzureConnectionView = { id: 'org-1', name: 'example-org', verifiedAt: null, token: 'ok', tokenExpiresAt: null };
 const DEAD: AzureConnectionView = { id: 'org-2', name: 'other-org', verifiedAt: null, token: 'needs_new_token', tokenExpiresAt: null };

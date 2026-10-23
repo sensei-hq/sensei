@@ -17,10 +17,21 @@ set search_path to dojo, extensions;
 -- of that kind, personal dōjōs and dōjōs not connected to p_provider are never
 -- touched.
 --
+-- The complete read is also KEPT and FOLLOWED (#308 R5c, D45), when p_unit is
+-- connected to p_tenant:
+--   * the connection's member set (dojo.connection_members) becomes this list —
+--     what a sign-in that cannot read the forge (Microsoft) provisions from;
+--   * every listed person who already holds an identity of that kind (signed in
+--     earlier) and has no membership in the dōjō at all is provisioned:
+--     contributor (a member read proves no admin standing — the forge-read role
+--     rule), employer, from this forge and unit. An existing membership, active
+--     or ended, invited or another forge's, always wins.
+--
 -- A NULL or empty list is refused: only a complete read may end anything (#309),
--- and an organization read with a member's token always lists that member.
--- service_role only: the server calls it after a complete forge read, never on a
--- failed or partial one.
+-- and an organization read with a member's token always lists that member. The
+-- refusal leaves the stored set as it was. Returns how many memberships it ended
+-- and how many it joined. service_role only: the server calls it after a
+-- complete forge read, never on a failed or partial one.
 drop function if exists dojo.reconcile_unit_members(uuid, dojo.forge_provider, dojo.auth_method, text[]);
 create or replace function dojo.reconcile_unit_members(
     p_tenant   uuid,
@@ -29,14 +40,16 @@ create or replace function dojo.reconcile_unit_members(
     p_auth     dojo.auth_method,
     p_subjects text[]
 )
-    returns integer
+    returns table (ended integer, joined integer)
     language plpgsql
     volatile
     security definer
     set search_path = dojo, pg_temp
 as $$
 declare
-    v_ended integer;
+    v_ended  integer;
+    v_joined integer := 0;
+    v_conn   uuid;
 begin
     if p_subjects is null or cardinality(p_subjects) = 0 then
         raise exception 'a complete member list is needed to end a membership'
@@ -48,7 +61,8 @@ begin
          where t.id = p_tenant and t.origin = 'organization'
            and exists (select 1 from dojo.tenant_connections c where c.tenant_id = t.id and c.provider = p_provider)
     ) then
-        return 0;
+        return query select 0, 0;
+        return;
     end if;
 
     update dojo.memberships m
@@ -72,7 +86,29 @@ begin
        and exists (select 1 from dojo.identities i
                     where i.principal_id = m.user_id and i.provider = p_auth and i.subject = any (p_subjects));
 
-    return v_ended;
+    select c.id into v_conn
+      from dojo.tenant_connections c
+     where c.tenant_id = p_tenant and c.provider = p_provider and c.external_id = p_unit;
+
+    if v_conn is not null then
+        delete from dojo.connection_members where connection_id = v_conn;
+        insert into dojo.connection_members (connection_id, subject, read_at)
+        select distinct v_conn, s, now() from unnest(p_subjects) as s;
+
+        insert into dojo.memberships
+            (tenant_id, user_id, role, kind, authenticated_via, source, source_provider, source_unit)
+        select distinct p_tenant, i.principal_id, 'contributor'::dojo.member_role, 'employer'::dojo.membership_kind,
+               p_auth, 'provisioned'::dojo.membership_source, p_provider, p_unit
+          from dojo.identities i
+         where i.provider = p_auth
+           and i.subject = any (p_subjects)
+           and not exists (select 1 from dojo.memberships m
+                            where m.tenant_id = p_tenant and m.user_id = i.principal_id)
+        on conflict (tenant_id, user_id) do nothing;
+        get diagnostics v_joined = row_count;
+    end if;
+
+    return query select v_ended, v_joined;
 end;
 $$;
 
@@ -82,4 +118,6 @@ grant execute on function dojo.reconcile_unit_members(uuid, dojo.forge_provider,
 comment on function dojo.reconcile_unit_members(uuid, dojo.forge_provider, text, dojo.auth_method, text[]) is
 'End the memberships one forge unit provisioned in an organization dōjō whose person a complete
 member read of that unit no longer lists, and restore those that ended by leaving and are
-listed again (#308 R5b, #309). Refuses an empty list. service_role only.';
+listed again (#308 R5b, #309). Keep the list as the connection''s member set and provision the
+listed people who hold the identity but have no membership (#308 R5c). Refuses an empty list.
+Returns (ended, joined). service_role only.';
