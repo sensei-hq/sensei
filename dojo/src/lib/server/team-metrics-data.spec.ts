@@ -1,16 +1,21 @@
-// The lead's team view (#307 R8, D38): the teams the caller is ON, each member
-// with their per-person metric totals over a window. The database decides whose
-// numbers come back (dojo.team_member_metrics runs as the caller, under
-// repository_metrics' policy); this module only asks and shapes. A lead on no team
-// sees no team. A failed read is an error, never an empty view.
+// The Teams view (#307 R8, D38): every member reads their teams' totals; a lead
+// also reads the people on their teams, an admin every team and its people. The
+// database decides whose numbers come back — dojo.team_member_metrics runs as the
+// caller (repository_metrics' policy), dojo.team_metric_totals answers only
+// totals over at least k people — this module picks whom to ask and shapes. A
+// failed read is an error, never an empty view.
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { fakeDojoDb, type FakeTable } from './fake-dojo-db';
 import { readTeamMetrics, windowSince } from './team-metrics-data';
 import { AdminError, type DojoClient } from './admin-data';
+import { K_ANONYMITY_MIN_CONTRIBUTORS } from './artifacts-data';
 import { TEAM_METRIC_KEYS } from '$lib/team-metrics';
 
 const T = 'tenant-t';
 const TODAY = new Date('2026-10-22T09:00:00Z');
+const opts = { days: 7, today: TODAY };
 
 function db(over: Record<string, FakeTable> = {}) {
 	const f = fakeDojoDb({
@@ -42,15 +47,23 @@ function db(over: Record<string, FakeTable> = {}) {
 		},
 		'rpc:team_member_metrics': {
 			rows: [
-				{ principal_id: 'mo', metric_key: 'throughput', total: 12, mean: 3, days: 4, repositories: 2, last_on: '2026-10-21' },
-				{ principal_id: 'mo', metric_key: 'ftr', total: 3.2, mean: 0.8, days: 4, repositories: 2, last_on: '2026-10-21' },
-				{ principal_id: 'lena', metric_key: 'throughput', total: 5, mean: 5, days: 1, repositories: 1, last_on: '2026-10-20' }
+				{ principal_id: 'mo', metric_key: 'throughput', total: 12, weighted: null, days: 4, repositories: 2, last_on: '2026-10-21' },
+				{ principal_id: 'mo', metric_key: 'ftr', total: 3.2, weighted: 0.75, days: 4, repositories: 2, last_on: '2026-10-21' },
+				{ principal_id: 'lena', metric_key: 'throughput', total: 5, weighted: null, days: 1, repositories: 1, last_on: '2026-10-20' }
+			]
+		},
+		'rpc:team_metric_totals': {
+			rows: [
+				{ team_id: 'tmC', metric_key: 'throughput', total: 30, weighted: null, contributors: 3 },
+				{ team_id: 'tmC', metric_key: 'ftr', total: '2.1', weighted: '0.7', contributors: 3 }
 			]
 		},
 		...over
 	});
 	return f as unknown as DojoClient & typeof f;
 }
+
+const lead = { tenantId: T, userId: 'lena', role: 'lead' };
 
 describe('windowSince', () => {
 	it('is the first day of a window ending today, as a date', () => {
@@ -59,82 +72,108 @@ describe('windowSince', () => {
 	});
 });
 
-describe('readTeamMetrics', () => {
-	it("lists only the teams the caller is on, by name, each member with the numbers the database returned", async () => {
-		const d = db();
-		const view = await readTeamMetrics(d, d, { tenantId: T, userId: 'lena' }, { days: 7, today: TODAY });
-		expect(view.since).toBe('2026-10-16');
-		expect(view.days).toBe(7);
-		expect(view.teams.map((t) => t.name)).toEqual(['Core', 'Payments']);
+describe('readTeamMetrics — a lead', () => {
+	it('lists only the teams the lead is on, each with its totals and its people', async () => {
+		const view = await readTeamMetrics(db(), db(), lead, opts);
+		expect(view).toMatchObject({ since: '2026-10-16', days: 7, per_person: true, k_min: 3 });
+		expect(view.teams.map((t) => [t.name, t.member_count])).toEqual([
+			['Core', 3],
+			['Payments', 2]
+		]);
+		expect(view.teams[0].totals).toEqual({
+			throughput: { total: 30, weighted: null, contributors: 3 },
+			ftr: { total: 2.1, weighted: 0.7, contributors: 3 }
+		});
+		expect(view.teams[1].totals).toEqual({});
 		const payments = view.teams[1];
 		expect(payments.members.map((m) => [m.principal_id, m.display_name, m.you])).toEqual([
 			['lena', 'Lena', true],
 			['mo', 'Mo', false]
 		]);
-		expect(payments.members[1].metrics).toEqual({
-			throughput: { total: 12, mean: 3, days: 4, repositories: 2, last_on: '2026-10-21' },
-			ftr: { total: 3.2, mean: 0.8, days: 4, repositories: 2, last_on: '2026-10-21' }
+		expect(payments.members[1].metrics.ftr).toEqual({
+			total: 3.2,
+			weighted: 0.75,
+			days: 4,
+			repositories: 2,
+			last_on: '2026-10-21'
 		});
-		// mia is on Core; the database returned nothing readable for her.
 		expect(view.teams[0].members.find((m) => m.principal_id === 'mia')?.metrics).toEqual({});
 	});
 
-	it('asks the database once, as the caller, for every teammate and the shown metrics since the window start', async () => {
+	it('asks for the people on its teams only — never someone on a team it is not on', async () => {
 		const d = db();
-		await readTeamMetrics(d, d, { tenantId: T, userId: 'lena' }, { days: 7, today: TODAY });
-		expect(d.rpcCalls).toEqual([
-			{
-				fn: 'team_member_metrics',
-				args: {
-					p_tenant: T,
-					p_principals: ['lena', 'mo', 'mia'],
-					p_keys: [...TEAM_METRIC_KEYS],
-					p_since: '2026-10-16'
-				}
-			}
-		]);
+		await readTeamMetrics(d, d, lead, opts);
+		const perPerson = d.rpcCalls.find((c) => c.fn === 'team_member_metrics');
+		expect(perPerson?.args).toEqual({
+			p_tenant: T,
+			p_principals: ['lena', 'mo', 'mia'],
+			p_keys: [...TEAM_METRIC_KEYS],
+			p_since: '2026-10-16'
+		});
+		expect(d.rpcCalls.find((c) => c.fn === 'team_metric_totals')?.args).toEqual({
+			p_tenant: T,
+			p_keys: [...TEAM_METRIC_KEYS],
+			p_since: '2026-10-16'
+		});
 	});
 
-	it("never asks about someone on a team the caller is not on", async () => {
+	it('on no team: no team, and the database is not asked', async () => {
 		const d = db();
-		await readTeamMetrics(d, d, { tenantId: T, userId: 'lena' }, { days: 7, today: TODAY });
-		expect(d.rpcCalls[0].args.p_principals).not.toContain('ned');
-	});
-
-	it('a caller on no team sees no team and the database is not asked', async () => {
-		const d = db();
-		const view = await readTeamMetrics(d, d, { tenantId: T, userId: 'zed' }, { days: 7, today: TODAY });
+		const view = await readTeamMetrics(d, d, { ...lead, userId: 'zed' }, opts);
 		expect(view.teams).toEqual([]);
 		expect(d.rpcCalls).toEqual([]);
 	});
+});
 
+describe('readTeamMetrics — an admin', () => {
+	it('lists every team of the dōjō with its people', async () => {
+		const d = db();
+		const view = await readTeamMetrics(d, d, { tenantId: T, userId: 'zed', role: 'admin' }, opts);
+		expect(view.per_person).toBe(true);
+		expect(view.teams.map((t) => t.name)).toEqual(['Core', 'Payments', 'Search']);
+		expect(d.rpcCalls.find((c) => c.fn === 'team_member_metrics')?.args.p_principals).toEqual([
+			'lena',
+			'mo',
+			'mia',
+			'ned'
+		]);
+	});
+});
+
+describe('readTeamMetrics — below lead', () => {
+	for (const role of ['contributor', 'maintainer']) {
+		it(`a ${role} gets their teams' totals and no person`, async () => {
+			const d = db();
+			const view = await readTeamMetrics(d, d, { tenantId: T, userId: 'mo', role }, opts);
+			expect(view.per_person).toBe(false);
+			expect(view.teams.map((t) => t.name)).toEqual(['Core', 'Payments']);
+			expect(view.teams.every((t) => t.members.length === 0)).toBe(true);
+			expect(view.teams[0].totals.throughput).toEqual({ total: 30, weighted: null, contributors: 3 });
+			expect(d.rpcCalls.map((c) => c.fn)).toEqual(['team_metric_totals']);
+		});
+	}
+});
+
+describe('readTeamMetrics — failures', () => {
 	it('a failed read is an error, never an empty view', async () => {
-		const failing = db({ 'rpc:team_member_metrics': { rows: [], error: { message: 'boom' } } });
-		await expect(readTeamMetrics(failing, failing, { tenantId: T, userId: 'lena' }, { days: 7, today: TODAY })).rejects.toThrow(
-			AdminError
-		);
-		const noTeams = db({ teams: { rows: [], error: { message: 'boom' } } });
-		await expect(readTeamMetrics(noTeams, noTeams, { tenantId: T, userId: 'lena' }, { days: 7, today: TODAY })).rejects.toThrow(
-			AdminError
-		);
+		for (const broken of ['rpc:team_member_metrics', 'rpc:team_metric_totals', 'teams']) {
+			const d = db({ [broken]: { rows: [], error: { message: 'boom' } } });
+			await expect(readTeamMetrics(d, d, lead, opts)).rejects.toThrow(AdminError);
+		}
 	});
 
-	it("names teammates through the name client, not the caller's (who may not read identities)", async () => {
+	it("names teammates through the name client, not the caller's", async () => {
 		const caller = db({ identities: { rows: [] } });
-		const names = db();
-		const view = await readTeamMetrics(caller, names, { tenantId: T, userId: 'lena' }, { days: 7, today: TODAY });
+		const view = await readTeamMetrics(caller, db(), lead, opts);
 		expect(view.teams[1].members.map((m) => m.display_name)).toEqual(['Lena', 'Mo']);
 		expect(caller.tables.identities.reads).toBe(0);
 	});
+});
 
-	it('a number the database sends as text is read as a number', async () => {
-		const d = db({
-			'rpc:team_member_metrics': {
-				rows: [{ principal_id: 'mo', metric_key: 'ftr', total: '1.5', mean: '0.75', days: 2, repositories: 1, last_on: '2026-10-21' }]
-			}
-		});
-		const view = await readTeamMetrics(d, d, { tenantId: T, userId: 'lena' }, { days: 7, today: TODAY });
-		const mo = view.teams[1].members[1];
-		expect(mo.metrics.ftr).toEqual({ total: 1.5, mean: 0.75, days: 2, repositories: 1, last_on: '2026-10-21' });
+describe('the k-anonymity floor', () => {
+	it('is one number: the database function returns the knowledge gate’s floor', () => {
+		const ddl = readFileSync(resolve(process.cwd(), '../database/ddl/function/dojo/k_anonymity_min.ddl'), 'utf8');
+		const body = ddl.match(/as \$\$\s*select (\d+);\s*\$\$/);
+		expect(Number(body?.[1])).toBe(K_ANONYMITY_MIN_CONTRIBUTORS);
 	});
 });

@@ -1,17 +1,21 @@
-// The lead's team view (#307 R8, D38): the teams the caller is ON, each member
-// with their per-person metrics over a window.
+// The Teams view (#307 R8, D38): every member reads their teams' totals; a lead
+// also reads the people on the teams they are on, an admin every team and its
+// people.
 //
 // Who sees whose numbers is the DATABASE's decision, not this module's:
-// dojo.team_member_metrics runs as the caller (SECURITY INVOKER), so
-// repository_metrics' policy (can_read_repository_metric) decides which rows
-// count — a lead their teammates' rows on repositories the lead can read, anyone
-// else only their own. This module picks whom to ask about (the caller's
-// teammates — a lead on no team asks about no one) and shapes the answer.
-// Fails closed: a failed read is an error, never an empty view.
+//   * dojo.team_member_metrics runs as the caller (SECURITY INVOKER), so
+//     repository_metrics' policy decides which per-person rows count;
+//   * dojo.team_metric_totals answers team totals over the caller's teams (every
+//     team for an admin), on repositories the caller can read, and only where at
+//     least k_anonymity_min() people sent the metric.
+// This module picks which teams to list and whether to ask per person (lead and
+// admin), and shapes the answer. Fails closed: a failed read is an error, never an
+// empty view.
 import { AdminError, type DojoClient } from './admin-data';
+import { K_ANONYMITY_MIN_CONTRIBUTORS } from './artifacts-data';
 import { listTeams } from './teams-data';
 import { callFn } from './tenant-rows';
-import { TEAM_METRIC_KEYS, type TeamMetricAgg, type TeamMetricsWire } from '$lib/team-metrics';
+import { TEAM_METRIC_KEYS, type TeamMetricAgg, type TeamMetricsWire, type TeamTotal } from '$lib/team-metrics';
 
 /** The first day of a `days`-long window ending `today` (UTC), as `YYYY-MM-DD`. */
 export function windowSince(today: Date, days: number): string {
@@ -19,73 +23,119 @@ export function windowSince(today: Date, days: number): string {
 	return start.toISOString().slice(0, 10);
 }
 
-interface MetricRow {
+type Num = number | string;
+
+interface PersonRow {
 	principal_id: string;
 	metric_key: string;
-	total: number | string;
-	mean: number | string;
+	total: Num;
+	weighted: Num | null;
 	days: number;
 	repositories: number;
 	last_on: string;
 }
 
+interface TotalRow {
+	team_id: string;
+	metric_key: string;
+	total: Num;
+	weighted: Num | null;
+	contributors: number;
+}
+
 /** A numeric the database sent as text (Postgres `numeric` over PostgREST) is a
  *  number here; anything that is not one is a fault, not a zero. */
-function num(v: number | string): number {
+function num(v: Num): number {
 	const n = typeof v === 'number' ? v : Number(v);
 	if (!Number.isFinite(n)) throw new AdminError(500, `team metrics: not a number: ${String(v)}`);
 	return n;
 }
+
+const numOrNull = (v: Num | null): number | null => (v === null ? null : num(v));
+
+/** Group rows into `Map<owner, Record<metric, value>>`. */
+function byKey<R extends { metric_key: string }, V>(rows: R[], owner: (r: R) => string, value: (r: R) => V) {
+	const out = new Map<string, Record<string, V>>();
+	for (const r of rows) {
+		const mine = out.get(owner(r)) ?? {};
+		mine[r.metric_key] = value(r);
+		out.set(owner(r), mine);
+	}
+	return out;
+}
+
+/** Lead and admin read per person; below that, totals only. */
+const PER_PERSON_ROLES = new Set(['lead', 'admin']);
 
 /** `db` is the caller's client — every read that decides access runs as them.
  *  `nameDb` names the teammates the caller already read (see listTeams). */
 export async function readTeamMetrics(
 	db: DojoClient,
 	nameDb: DojoClient,
-	caller: { tenantId: string; userId: string },
+	caller: { tenantId: string; userId: string; role: string },
 	opts: { days: number; today: Date }
 ): Promise<TeamMetricsWire> {
 	const since = windowSince(opts.today, opts.days);
-	const teams = (await listTeams(db, caller.tenantId, nameDb)).filter((t) =>
-		t.members.some((m) => m.principal_id === caller.userId)
-	);
-	const people = [...new Set(teams.flatMap((t) => t.members.map((m) => m.principal_id)))];
-	if (people.length === 0) return { since, days: opts.days, teams: [] };
+	const perPerson = PER_PERSON_ROLES.has(caller.role);
+	const base = { since, days: opts.days, per_person: perPerson, k_min: K_ANONYMITY_MIN_CONTRIBUTORS };
 
-	const rows =
-		(await callFn<MetricRow[] | null>(db, 'team_member_metrics', {
+	const all = await listTeams(db, caller.tenantId, nameDb);
+	const teams =
+		caller.role === 'admin' ? all : all.filter((t) => t.members.some((m) => m.principal_id === caller.userId));
+	if (teams.length === 0) return { ...base, teams: [] };
+
+	const keys = [...TEAM_METRIC_KEYS];
+	const totalRows =
+		(await callFn<TotalRow[] | null>(db, 'team_metric_totals', {
 			p_tenant: caller.tenantId,
-			p_principals: people,
-			p_keys: [...TEAM_METRIC_KEYS],
+			p_keys: keys,
 			p_since: since
 		})) ?? [];
+	const totals = byKey(
+		totalRows,
+		(r) => r.team_id,
+		(r): TeamTotal => ({ total: num(r.total), weighted: numOrNull(r.weighted), contributors: r.contributors })
+	);
 
-	const byPerson = new Map<string, Record<string, TeamMetricAgg>>();
-	for (const r of rows) {
-		const mine = byPerson.get(r.principal_id) ?? {};
-		mine[r.metric_key] = {
-			total: num(r.total),
-			mean: num(r.mean),
-			days: r.days,
-			repositories: r.repositories,
-			last_on: r.last_on
-		};
-		byPerson.set(r.principal_id, mine);
+	let people = new Map<string, Record<string, TeamMetricAgg>>();
+	const ids = [...new Set(teams.flatMap((t) => t.members.map((m) => m.principal_id)))];
+	if (perPerson && ids.length > 0) {
+		const rows =
+			(await callFn<PersonRow[] | null>(db, 'team_member_metrics', {
+				p_tenant: caller.tenantId,
+				p_principals: ids,
+				p_keys: keys,
+				p_since: since
+			})) ?? [];
+		people = byKey(
+			rows,
+			(r) => r.principal_id,
+			(r): TeamMetricAgg => ({
+				total: num(r.total),
+				weighted: numOrNull(r.weighted),
+				days: r.days,
+				repositories: r.repositories,
+				last_on: r.last_on
+			})
+		);
 	}
 
 	return {
-		since,
-		days: opts.days,
+		...base,
 		teams: teams.map((t) => ({
 			id: t.id,
 			name: t.name,
-			members: t.members.map((m) => ({
-				principal_id: m.principal_id,
-				display_name: m.display_name,
-				email: m.email,
-				you: m.principal_id === caller.userId,
-				metrics: byPerson.get(m.principal_id) ?? {}
-			}))
+			member_count: t.members.length,
+			totals: totals.get(t.id) ?? {},
+			members: perPerson
+				? t.members.map((m) => ({
+						principal_id: m.principal_id,
+						display_name: m.display_name,
+						email: m.email,
+						you: m.principal_id === caller.userId,
+						metrics: people.get(m.principal_id) ?? {}
+					}))
+				: []
 		}))
 	};
 }

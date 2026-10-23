@@ -1,7 +1,8 @@
-// Route test for the lead's team view (#307 R8, D38): the LEAD floor (a
-// contributor or maintainer is refused before anything is read); the reads run as
-// the caller, the names through the service client; a bad window is a 400; a
-// refusal keeps its status. Store mocked.
+// Route test for the Teams view (#307 R8, D38): the MEMBER floor (a viewer, who is
+// no member, is refused before anything is read — the role decides what comes
+// back, per person or totals only); the reads run as the caller, the names
+// through the service client; a bad window is a 400; a refusal keeps its status.
+// Store mocked.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 class AdminError extends Error {
@@ -54,14 +55,14 @@ beforeEach(() => {
 });
 
 describe('GET /v1/t/{origin}/{org}/team-metrics', () => {
-	it('asks for the lead floor', async () => {
+	it('asks for the member floor', async () => {
 		await route.GET(ev());
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3);
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(0);
 	});
 
 	it('below the floor nothing is read', async () => {
 		mocks.resolveTenantAccess.mockRejectedValue(
-			new Response(JSON.stringify({ error: 'lead role required' }), { status: 403 })
+			new Response(JSON.stringify({ error: 'not a member of this dōjō' }), { status: 403 })
 		);
 		expect((await route.GET(ev())).status).toBe(403);
 		expect(mocks.readTeamMetrics).not.toHaveBeenCalled();
@@ -73,7 +74,7 @@ describe('GET /v1/t/{origin}/{org}/team-metrics', () => {
 		const [db, nameDb, caller, opts] = mocks.readTeamMetrics.mock.calls[0];
 		expect(db).toEqual({ client: 'user', token: 'jwt-L' });
 		expect(nameDb).toEqual({ client: 'service' });
-		expect(caller).toMatchObject({ tenantId: 't1', userId: 'lena' });
+		expect(caller).toMatchObject({ tenantId: 't1', userId: 'lena', role: 'lead' });
 		expect(opts.days).toBe(7);
 		expect(opts.today).toBeInstanceOf(Date);
 	});

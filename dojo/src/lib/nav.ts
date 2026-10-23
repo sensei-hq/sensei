@@ -63,7 +63,9 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 		items: [
 			{ id: 'home', icon: 'buildings-2', label: 'Home', kanji: '社' },
 			{ id: 'ladder', icon: 'scale', label: 'Constitution', kanji: '則' },
-			{ id: 'workspaces', icon: 'folder', label: 'Workspaces', kanji: '場' }
+			{ id: 'workspaces', icon: 'folder', label: 'Workspaces', kanji: '場' },
+			// Every member: team totals; a lead and an admin also per person (#307 R8, D38).
+			{ id: 'teams', icon: 'users-group-rounded', label: 'Teams', kanji: '組' }
 		]
 	},
 	{
@@ -74,12 +76,6 @@ export const NAV_ORG_BASE: OrgNavGroup[] = [
 			{ id: 'approvals', icon: 'clipboard-check', label: 'Approvals', kanji: '印' },
 			{ id: 'knowledge', icon: 'book-2', label: 'Knowledge', kanji: '書' }
 		]
-	},
-	{
-		// A team lead reads their teammates' numbers, per person (#307 R8, D38).
-		group: 'Lead',
-		role: 'lead',
-		items: [{ id: 'teams', icon: 'users-group-rounded', label: 'Teams', kanji: '組' }]
 	},
 	{
 		group: 'Admin',
