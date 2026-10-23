@@ -153,6 +153,15 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 				return { data: hit, error: null };
 			}
 			const hits = t.rows.filter((r) => matches(r, filters));
+			if (sort) {
+				const { column, ascending, nullsFirst } = sort;
+				hits.sort((a, b) => {
+					const x = a[column];
+					const y = b[column];
+					if (x == null || y == null) return x == null && y == null ? 0 : (x == null) === nullsFirst ? -1 : 1;
+					return (String(x) < String(y) ? -1 : String(x) > String(y) ? 1 : 0) * (ascending ? 1 : -1);
+				});
+			}
 			// Slice AFTER filtering, matching PostgREST: the range applies to the
 			// result set, not to the table.
 			//
@@ -171,6 +180,8 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 		 *  so paginated reads are testable: without it a page loop is untestable
 		 *  and the 1000-row cap it exists to defeat stays a code-reading exercise. */
 		let range: { from: number; to: number } | null = null;
+		/** `.order(column, { ascending, nullsFirst })` — applied before the range, as PostgREST does. */
+		let sort: { column: string; ascending: boolean; nullsFirst: boolean } | null = null;
 
 		/** `.select(cols, { count: 'exact', head: true })` — answer the row count. */
 		let counted = false;
@@ -180,7 +191,11 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 				counted = opts?.count === 'exact';
 				return api;
 			},
-			order: () => api,
+			order: (column: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) => {
+				const ascending = opts?.ascending ?? true;
+				sort = { column, ascending, nullsFirst: opts?.nullsFirst ?? !ascending };
+				return api;
+			},
 			range: (from: number, to: number) => {
 				range = { from, to };
 				return api;

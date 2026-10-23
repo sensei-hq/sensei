@@ -42,7 +42,17 @@
 	// deploy. Set workers_dev:false to serve only from the custom domain.
 	"workers_dev": true,
 	"preview_urls": true,
-	"main": ".svelte-kit/cloudflare/_worker.js",
+	// The entry wraps SvelteKit's generated worker (.svelte-kit/cloudflare/_worker.js)
+	// to add the cron trigger's `scheduled` handler (#308 R5b, D44). The adapter
+	// writes its worker per wrangler.sveltekit.jsonc, which must name the same
+	// assets directory as this file.
+	"main": "worker-entry.js",
+	// The scheduled Azure DevOps member read (D44): every 6 hours, at :17.
+	// Needs the Worker secret DOJO_CRON_SECRET (and the Azure app registration's
+	// AZURE_DEVOPS_CLIENT_ID / AZURE_DEVOPS_CLIENT_SECRET).
+	"triggers": {
+		"crons": ["17 */6 * * *"]
+	},
 	"assets": {
 		"binding": "ASSETS",
 		"directory": ".svelte-kit/cloudflare"

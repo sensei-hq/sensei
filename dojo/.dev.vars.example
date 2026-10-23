@@ -33,3 +33,9 @@ PUBLIC_VAPID_KEY=
 # Missing → 503 "Azure DevOps is not configured on this dōjō".
 AZURE_DEVOPS_CLIENT_ID=
 AZURE_DEVOPS_CLIENT_SECRET=
+
+# The scheduled Azure DevOps member read (#308 R5b, D44) — the server secret the
+# Worker's cron presents to /v1/internal/azure/member-sync (a long random string).
+# Prod = `wrangler secret put DOJO_CRON_SECRET`. Missing → the cron run fails
+# loudly (Cron Events) and the endpoint answers 503; it is never open.
+DOJO_CRON_SECRET=

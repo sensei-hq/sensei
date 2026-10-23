@@ -222,7 +222,7 @@ async function mapProjects(
  * came back. A partial read, an empty one or a failed one ends nobody — the
  * failure is said in the answer, and the import or sync that asked still stands.
  */
-async function followMembers(
+export async function followMembers(
 	db: DojoClient,
 	tenantId: string,
 	adapter: AzureAdapter,

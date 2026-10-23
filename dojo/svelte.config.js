@@ -16,7 +16,10 @@ import adapterCloudflare from '@sveltejs/adapter-cloudflare';
 //     is NOT static — kavach SSR auth (hooks.server.ts, /auth/session, /data)
 //     runs in the Worker.
 const onCloudflare = Boolean(process.env.WORKERS_CI) || Boolean(process.env.CF_PAGES);
-const adapter = onCloudflare ? adapterCloudflare() : adapterAuto();
+// The adapter builds against its own wrangler config: it writes SvelteKit's
+// worker to that config's `main`, while the deployed wrangler.jsonc's `main` is
+// worker-entry.js — the wrapper adding the cron's `scheduled` handler (#308 R5b, D44).
+const adapter = onCloudflare ? adapterCloudflare({ config: 'wrangler.sveltekit.jsonc' }) : adapterAuto();
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
