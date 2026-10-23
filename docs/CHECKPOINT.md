@@ -37,7 +37,4 @@ main → the user approves deploy-dojo.
   one reconcile late). #331: after v0.20.0, count production's `personal/*-2` tenants (counts only); merging
   them is the user's call.
 - Wave 11: the website from the user's mocks.
-
-**Known-broken / pending:**
-- qlty is out of billing minutes.
-- Keychain approval is needed after every daemon reinstall (#283 until #282).
+- Known: qlty is out of billing minutes; a daemon reinstall needs keychain approval (#283 until #282).
