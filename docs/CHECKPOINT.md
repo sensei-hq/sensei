@@ -9,6 +9,8 @@
   and every finding was fixed with a failing test first.
 - #330 Terms of Service and Privacy Policy pages. The user approved the wording.
 - #328 heal defect fixed (0 of 936 live folders were stranded).
+- #329 fixed: a magic-link switch never shows the previous account. #331 fixed: one personal dōjō per
+  person, however many sign-in passes race. Both were verified live on the local dōjō.
 
 **v0.20.0 rehearsal (2026-10-23): passed.**
 - The copy: the 2026-10-21 production dump, brought to v0.19.0 by that tag's reconcile, deploy and diff.
@@ -31,8 +33,9 @@ main → the user approves deploy-dojo.
 - R9: two Jira boards at two levels.
 
 **Remaining:**
-- #314 (production push: the user's steps); #312 live on an unattended run; #329 (stale session after a
-  magic-link switch); dbd#103 (a column comment lands one reconcile late).
+- #314 (production push: the user's steps); #312 live on an unattended run; dbd#103 (a column comment lands
+  one reconcile late). #331: after v0.20.0, count production's `personal/*-2` tenants (counts only); merging
+  them is the user's call.
 - Wave 11: the website from the user's mocks.
 
 **Known-broken / pending:**
