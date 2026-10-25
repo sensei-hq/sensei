@@ -34,6 +34,8 @@ const STALE_AFTER_SECS: u64 = 2 * 60 * 60;
 
 static SEQ: AtomicU32 = AtomicU32::new(0);
 static SWEPT: OnceLock<()> = OnceLock::new();
+/// Whether the template matches the DDL tree — checked once per run (#142).
+static CURRENT: OnceLock<Result<(), String>> = OnceLock::new();
 
 thread_local! {
     static OWN: RefCell<Option<Owned>> = const { RefCell::new(None) };
@@ -60,6 +62,9 @@ pub(super) async fn url() -> Result<String, String> {
     let base = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
         format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT)
     });
+    let template = database_of(&base).ok_or_else(|| format!("no database in {base}"))?;
+    let admin_url = with_database(&base, "postgres");
+    CURRENT.get_or_init(|| check_template(&admin_url, &template)).clone()?;
     if std::env::var_os("SENSEI_TEST_SHARED_DB").is_some() {
         return Ok(base);
     }
@@ -67,8 +72,6 @@ pub(super) async fn url() -> Result<String, String> {
         return Ok(with_database(&base, &name));
     }
 
-    let template = database_of(&base).ok_or_else(|| format!("no database in {base}"))?;
-    let admin_url = with_database(&base, "postgres");
     SWEPT.get_or_init(|| {
         if let Err(e) = sweep_stale(&admin_url) {
             eprintln!("test_db: stale-clone sweep failed: {e}");
@@ -158,6 +161,61 @@ fn pid_alive(pid: u32) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
+}
+
+/// The template against the DDL tree it must match: the fingerprint
+/// `scripts/test-template-fingerprint.sh` prints now, against the one it
+/// stamped on the template when it was built. Read from the shared catalog, so
+/// nothing connects to the template (a session there would block every clone).
+fn check_template(admin_url: &str, template: &str) -> Result<(), String> {
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../scripts/test-template-fingerprint.sh");
+    let out = std::process::Command::new(&script)
+        .output()
+        .map_err(|e| format!("test_db: running {}: {e}", script.display()))?;
+    if !out.status.success() {
+        return Err(format!(
+            "test_db: {} failed: {}",
+            script.display(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let current = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let (admin_url, template) = (admin_url.to_string(), template.to_string());
+    let stamp = std::thread::spawn(move || -> Result<Option<String>, String> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+        rt.block_on(async {
+            let mut c = PgConnection::connect(&admin_url).await.map_err(|e| e.to_string())?;
+            let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+                "SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = $1",
+            )
+            .bind(&template)
+            .fetch_optional(&mut c)
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(row.and_then(|(d,)| d))
+        })
+    })
+    .join()
+    .map_err(|_| "test_db: template check panicked".to_string())??;
+    template_is_current(stamp.as_deref(), &current)
+}
+
+/// Whether a template's stamp names the current DDL fingerprint.
+fn template_is_current(stamp: Option<&str>, current: &str) -> Result<(), String> {
+    match stamp.and_then(|s| s.strip_prefix("ddl-fingerprint:")) {
+        Some(stamped) if stamped == current => Ok(()),
+        Some(stamped) => Err(format!(
+            "sensei_test is behind the DDL tree (stamped {stamped}, tree is {current}): \
+             run `make test-template` (#142)"
+        )),
+        None => Err("sensei_test carries no DDL fingerprint, so it may be behind the DDL tree: \
+             run `make test-template` (#142)"
+            .to_string()),
+    }
 }
 
 /// Run statements against the maintenance database from synchronous code — a
@@ -255,5 +313,21 @@ mod tests {
         let old = format!("{PREFIX}1700000000_{}_0", std::process::id());
         assert!(is_orphan(&old), "older than the cutoff");
         assert!(!is_orphan("sensei_test"));
+    }
+
+    /// #142: a template behind the DDL tree fails the run up front, saying so,
+    /// instead of every test failing inside a query on a missing view or seed.
+    #[test]
+    fn a_template_stamped_for_another_tree_is_refused_by_name() {
+        assert!(template_is_current(Some("ddl-fingerprint:abc"), "abc").is_ok());
+        let behind = template_is_current(Some("ddl-fingerprint:old"), "new").unwrap_err();
+        assert!(
+            behind.contains("behind the DDL tree") && behind.contains("make test-template"),
+            "{behind}"
+        );
+        let unstamped = template_is_current(None, "new").unwrap_err();
+        assert!(unstamped.contains("make test-template"), "{unstamped}");
+        let foreign = template_is_current(Some("some other comment"), "new").unwrap_err();
+        assert!(foreign.contains("make test-template"), "{foreign}");
     }
 }

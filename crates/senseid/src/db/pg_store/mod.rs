@@ -712,8 +712,9 @@ impl PgStore {
     pub async fn test_store() -> Self {
         Self::connect_test().await.unwrap_or_else(|e| {
             panic!(
-                "sensei_test is unreachable, or Postgres's connection budget is exhausted \
-                 (the suite's pools plus the daemon's against max_connections, #204): {e}"
+                "could not open this test's database: {e} — a refused or timed-out \
+                 connection usually means the suite's pools plus the daemon's exhausted \
+                 Postgres's max_connections (#204)"
             )
         })
     }
