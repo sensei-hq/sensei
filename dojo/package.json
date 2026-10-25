@@ -27,14 +27,15 @@
 		"@unocss/extractor-svelte": "^66.6.8",
 		"@unocss/reset": "^66.6.8",
 		"@unocss/vite": "^66.6.8",
-		"@vitest/coverage-v8": "^3.2.4",
+		"@vitest/coverage-v8": "^4",
 		"jsdom": "^25.0.1",
 		"svelte": "^5.55.4",
 		"svelte-check": "^4.4.6",
 		"typescript": "^6.0.2",
 		"unocss": "^66.6.8",
 		"vite": "^8.0.8",
-		"vitest": "^3.2.4"
+		"vitest": "^4",
+		"wrangler": "^4.152.0"
 	},
 	"dependencies": {
 		"@block65/webcrypto-web-push": "1.0.2",
