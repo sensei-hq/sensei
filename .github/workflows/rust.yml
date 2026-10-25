@@ -55,8 +55,13 @@ jobs:
       - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2
         with:
           tool: cargo-audit
+      # Every lockfile: the daemon workspace, the desktop app's Tauri workspace
+      # (shipped), and the session-report tool. One ignore file serves all three.
       - name: cargo audit
-        run: cargo audit
+        run: |
+          cargo audit
+          cargo audit --file app/src-tauri/Cargo.lock
+          cargo audit --file tools/session-report/Cargo.lock
 
       # Not Rust, but this is the workflow's fast no-infrastructure gate and the
       # check is a static read of `database/`. It guards the failure that the
