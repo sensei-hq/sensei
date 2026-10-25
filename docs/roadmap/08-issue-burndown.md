@@ -202,7 +202,7 @@ The settings screen lists them as repositories.
 
 ## Wave 4 — CI and test reliability (07-quality D1/D2, F)
 
-- **Pool and isolation:** ~~#204~~ **closed 2026-10-25** (5656955c): 198 tests that passed silently on a failed DB connect now fail; test threads are capped at 16 so the budget fits `max_connections` (checked by a test; peak 78 → 69, suite 328s → 184s). Next: #183 (isolation).
+- **Pool and isolation:** ~~#204~~ **closed 2026-10-25** (5656955c): 198 tests that passed silently on a failed DB connect now fail; test threads are capped at 16 so the budget fits `max_connections` (checked by a test; peak 78 → 69, suite 328s → 184s). #183: **a database per test is in** (ec62fb14; user decision 2026-10-25). It exposed and fixed two tests that relied on siblings' rows. Suite 184s → 443s; next, pre-create clones and retire the five gates.
 - **Preflight:** #142, test DB behind the DDL tree.
 - **Dependency cluster:** #172, #195, #120.
   - Bumps: quick-xml, h2, yanked crates; JS: vite, esbuild, vitest 4, undici and others.

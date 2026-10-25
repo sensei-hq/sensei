@@ -25,7 +25,7 @@
 
 **#298 fixed on branch `fix/298-stored-pairing-keys`** (live: 6–8.4s → 0.58s, output identical). The live DB is converged with the fixed dbd. It is blocked on **dbd 0.27.6**: dbd#104 (a new generated column was added plain), fixed on dbd develop c506dfb0. Then bump the 4 dbd pins, merge the branch, and run `deploy_upgrade --ignored`. dbd#105 is filed (promoting a column a view reads).
 
-**Closed this run: #106, #335, #201, #204.** #204: no DB test passes by skipping a failed connect (198 converted); test threads capped at 16 so the budget fits (5656955c). **Next (wave 4): #183**, test isolation (database-wide operations racing sibling fixtures, as the heal test did).
+**Closed this run: #106, #335, #201, #204.** **#183 in progress:** a database per test is in (ec62fb14, user decision); `make test-template` rebuilds the template. The suite went from 184s to 443s. Next: pre-create clones on a background thread, then retire the five gates (they now only serialise).
 
 **Next command:** the user says go on dbd 0.27.6; approves `deploy-dojo` (both v0.20.0 and v0.20.1 runs are waiting) and says go on a kavach release (minor: 1.3.0). Then: check the Worker's `/version`; count #331 production duplicates; bump the dōjō to the new kavach and drop `app.html`'s guard.
 
