@@ -17,6 +17,11 @@ create table if not exists assistant_events (
 , tool_kind        text
 , call_info        text
 , enriched_at      timestamptz
+, tool_use_id      text              generated always as (payload->>'tool_use_id') stored
+, duration_ms      bigint            generated always as (
+                     case when jsonb_typeof(payload->'duration_ms') = 'number'
+                          then (payload->>'duration_ms')::numeric::bigint end
+                   ) stored
 );
 
 create index if not exists assistant_events_session_id_idx
@@ -40,6 +45,11 @@ create index if not exists assistant_events_unenriched_idx
 -- column) filter by repository + day.
 create index if not exists assistant_events_repository_id_idx
     on assistant_events(repository_id, created_at desc) where repository_id is not null;
+
+-- `session_tool_calls` pairs each request with its response per session on the
+-- stored `tool_use_id`, earliest event first (#298).
+create index if not exists assistant_events_tool_use_idx
+    on assistant_events(session_id, tool_use_id, id) where tool_use_id is not null;
 
 comment on table assistant_events is
 'Raw assistant event log — one row per hook/event invocation, from any
@@ -70,3 +80,7 @@ comment on column assistant_events.created_at
      is 'Server-side timestamp when this row was inserted.';
 comment on column assistant_events.repository_id
      is 'Derived attributes (populated by the EnrichAssistantEvents worker from tool_name + payload->tool_input + cwd — a base-insert + post-update split so the hot capture path is never blocked and the derivation is re-runnable/backfillable). All nullable; `enriched_at` NULL marks a row the worker has not processed yet.';
+comment on column assistant_events.tool_use_id
+     is 'The engine''s tool-call id, stored from payload->>''tool_use_id'' at write: the key session_tool_calls pairs a request with its response on, so a read never opens the payload (#298).';
+comment on column assistant_events.duration_ms
+     is 'The engine''s measured duration of a tool call, stored from payload->''duration_ms'' at write; NULL when absent or not a number (#298).';

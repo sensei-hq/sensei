@@ -17,12 +17,16 @@ set search_path to sensei, activity, extensions;
 -- the failure event INSTEAD of PostToolUse when a call fails, so pairing only
 -- PostToolUse left every failed call looking in flight forever (#238).
 --
+-- Both keys are the table's stored columns, written with the event: reading
+-- them out of `payload` here opened every PostToolUse's tool response and made
+-- workspace Instruments take 11–28s to open (#298).
+--
 -- `duration_ms` is the ENGINE's measure from the PostToolUse payload, not the
 -- gap between the two hooks' timestamps (which included hook-process delay and,
 -- on a mis-paired row, another call's time).
 create or replace view session_tool_calls as
 with pre as (
-  select distinct on (session_id, coalesce(payload->>'tool_use_id', id::text))
+  select distinct on (session_id, coalesce(tool_use_id, id::text))
       session_id
     , family
     , tool_name
@@ -30,30 +34,30 @@ with pre as (
     , ts                         as pre_ts
     , created_at                 as pre_at
     , payload                    as request
-    , payload->>'tool_use_id'    as tool_use_id
+    , tool_use_id
     from activity.assistant_events
    where event_type = 'PreToolUse'
      and tool_name is not null
      and session_id <> ''
-   order by session_id, coalesce(payload->>'tool_use_id', id::text), id
+   order by session_id, coalesce(tool_use_id, id::text), id
 ),
 post as (
-  select distinct on (session_id, payload->>'tool_use_id')
+  select distinct on (session_id, tool_use_id)
       session_id
-    , payload->>'tool_use_id'                     as tool_use_id
+    , tool_use_id
     , id                                          as post_id
     , ts                                          as post_ts
     , created_at                                  as post_at
     , payload                                     as response
     , success
-    , (payload->>'duration_ms')::numeric::bigint  as duration_ms
+    , duration_ms
     , payload->>'agent_id'                        as agent_id
     , payload->>'agent_type'                      as agent_type
     from activity.assistant_events
    where event_type in ('PostToolUse', 'PostToolUseFailure')
      and session_id <> ''
-     and payload ? 'tool_use_id'
-   order by session_id, payload->>'tool_use_id', id
+     and tool_use_id is not null
+   order by session_id, tool_use_id, id
 )
 select
     pre.session_id
