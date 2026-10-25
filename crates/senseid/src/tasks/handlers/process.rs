@@ -3,7 +3,7 @@
 use super::super::executor::TaskContext;
 
 use super::super::Task;
-use super::helpers::{is_binary_ext, is_probably_binary};
+use super::helpers::classify_unscannable;
 use crate::db::pg_store::NodeRow;
 use std::path::Path;
 
@@ -348,12 +348,14 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
     // Skip files we can't parse as source text. Returning Ok (not Err) is
     // critical: a failed ProcessFile task would block its folder's
-    // post-processing barrier, leaving the folder stuck at 'discovered'. Binary
-    // (by extension) and non-UTF8 (by content sniff) files are skipped so
-    // indexing always completes.
+    // post-processing barrier, leaving the folder stuck at 'discovered'. The
+    // rule is the scan's own (`classify_unscannable`): the watcher enqueues this
+    // task straight from a file change, past the scan, so a second, narrower
+    // test here would parse what the scan refuses — a file past the parse
+    // bounds (#178) among them.
     let fpath = std::path::Path::new(abs_path);
     let ext = fpath.extension().and_then(|e| e.to_str()).unwrap_or("");
-    if is_binary_ext(ext) || is_probably_binary(fpath) {
+    if classify_unscannable(fpath, ext).is_some() {
         return Ok(0);
     }
 
@@ -2547,6 +2549,36 @@ mod tests {
         ctx.pg().remove_watch_root(&rid).await.ok();
     }
 
+    /// The watcher enqueues `ProcessFile` straight from a file change, past the
+    /// scan's classification, so the parse gate must apply the SAME rule: a file
+    /// past the parse bounds is never handed to a parser (#178). The source is
+    /// valid rust — without the gate it parses and its row advances.
+    #[tokio::test]
+    async fn process_file_refuses_a_file_past_the_parse_bounds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        let file = root.join("repo/src/lib.rs");
+        std::fs::write(&file, format!("pub fn a() {{}}\n// {}\n", "x".repeat(20_000))).unwrap();
+
+        let ctx = make_ctx().await;
+        let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "oversized").await;
+
+        let abs = file.to_string_lossy().to_string();
+        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &abs);
+        assert_eq!(process_file(&ctx, &task).await.unwrap(), 0);
+
+        let (parsed,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+            "SELECT parsed_at FROM sensei.files WHERE folder_id = $1 AND file_path = 'src/lib.rs'",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(parsed, None, "an oversized file is never handed to a parser");
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
     #[tokio::test]
     async fn process_file_success_advances_scan_state_and_keeps_folder_status() {
         // The version-rescan sweep deletes every `files` row; this test's own
@@ -3048,6 +3080,33 @@ mod tests {
         let after = ctx.pg().list_scan_state(&fid).await.unwrap();
         assert_eq!(after.len(), 1);
         assert!(after.iter().all(|(p, _)| p != "a.rs"), "a.rs dropped, b.rs kept");
+    }
+
+    /// Every skip reason the indexer can record is a label the PG enum takes.
+    /// A variant added in Rust without its `scan_skip_reason` value would fail
+    /// the scan's insert at runtime, on the first file that met it (#178).
+    #[tokio::test]
+    async fn every_skip_reason_is_a_label_the_database_accepts() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path().to_string_lossy().to_string();
+        let root_id =
+            ctx.pg().add_watch_root(&repo_path, "reasons", &serde_json::json!([])).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            ctx.pg(),
+            &root_id,
+            "reasons-repo",
+            &repo_path,
+        )
+        .await
+        .unwrap();
+        for reason in crate::classifiers::ScanSkipReason::ALL {
+            let file = format!("{}.txt", reason.as_db());
+            ctx.pg()
+                .upsert_scan_state_skipped(&fid, &file, 1, "h", reason)
+                .await
+                .unwrap_or_else(|e| panic!("{} is not a scan_skip_reason: {e}", reason.as_db()));
+        }
     }
 
     /// A skipped file must be fingerprinted WITH its reason, and re-indexing it

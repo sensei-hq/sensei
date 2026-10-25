@@ -4,8 +4,8 @@ use super::super::executor::TaskContext;
 use crate::classifiers::ScanSkipReason;
 
 /// Check if a file extension indicates a binary (non-text) file. This is a
-/// fast first pass; `is_probably_binary` (content sniff) is the robust net for
-/// anything not on this list.
+/// fast first pass; `sniff_content` is the robust net for anything not on this
+/// list.
 ///
 /// Thin wrapper over `classifiers::file_classifier()` — the extension list
 /// itself lives in the classifier module so a single edit adds a new binary
@@ -46,17 +46,10 @@ pub(crate) fn file_fingerprint(path: &std::path::Path) -> Option<(i64, String)> 
     Some((mtime, hash))
 }
 
-/// Content sniff: read the head of a file and decide whether it is binary or
-/// non-UTF8 (and therefore not parseable as source text). Catches binaries
-/// whose extension isn't on the allowlist, plus latin-1/cp1252 text. A null
-/// byte is a strong binary signal; otherwise we require the bytes to be valid
-/// UTF-8 (tolerating a multi-byte char split at the read boundary).
-pub(crate) fn is_probably_binary(path: &std::path::Path) -> bool {
-    sniff_content(path).is_some()
-}
-
-/// The content-sniff half of [`classify_unscannable`], kept separate so
-/// [`is_probably_binary`] and the reason-returning path share ONE implementation.
+/// The content-sniff half of [`classify_unscannable`]: read the head of a file
+/// and decide whether it is binary or non-UTF8 (and therefore not parseable as
+/// source text). Catches binaries whose extension isn't on the allowlist, plus
+/// latin-1/cp1252 text.
 ///
 /// `None` means the head of the file reads as UTF-8 source text. Otherwise it
 /// distinguishes the two failure modes, because they differ in actionability: a
@@ -285,7 +278,36 @@ pub(crate) fn classify_unscannable(path: &std::path::Path, ext: &str) -> Option<
     if is_binary_ext(ext) {
         return Some(ScanSkipReason::UnsupportedFormat);
     }
-    sniff_content(path)
+    sniff_content(path).or_else(|| exceeds_parse_bounds(path).then_some(ScanSkipReason::Oversized))
+}
+
+/// The largest file the indexer parses, in bytes (#178).
+const MAX_PARSE_BYTES: u64 = 2 * 1024 * 1024;
+
+/// The longest line the indexer parses, in bytes (#178).
+const MAX_LINE_BYTES: usize = 10_000;
+
+/// Whether a file is past what the indexer will hand a parser: larger than
+/// [`MAX_PARSE_BYTES`], or holding a line longer than [`MAX_LINE_BYTES`].
+///
+/// The bounds were measured, not guessed (2026-10-25, 61,345 tracked source
+/// files under the watch roots): hand-written code reached 267 KB and a
+/// 1,632-char line; the 137 files past either bound were bundles, data loads
+/// and generated tables. A parse that overflows the stack is not a panic — it
+/// aborts the daemon — so the bound is a rule about the input, not its name.
+///
+/// The size comes from the metadata, so a 100 MB data load is never read; a
+/// file under the size bound is read whole, as its fingerprint already is. An
+/// unreadable file is not called oversized: the content sniff has already
+/// answered for it.
+fn exceeds_parse_bounds(path: &std::path::Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(m) if m.len() > MAX_PARSE_BYTES => return true,
+        Ok(_) => {}
+        Err(_) => return false,
+    }
+    std::fs::read(path)
+        .is_ok_and(|bytes| bytes.split(|&b| b == b'\n').any(|line| line.len() > MAX_LINE_BYTES))
 }
 
 #[cfg(test)]
@@ -331,29 +353,33 @@ mod tests {
             bytes.extend_from_slice(&(c as u16).to_le_bytes());
         }
         std::fs::write(&sql, &bytes).unwrap();
-        assert!(!is_probably_binary(&sql), "a BOM explains the nulls");
+        assert!(!sniff_content_skips(&sql), "a BOM explains the nulls");
         assert_eq!(classify_unscannable(&sql, "sql"), None, "it is indexable");
     }
 
+    fn sniff_content_skips(path: &std::path::Path) -> bool {
+        sniff_content(path).is_some()
+    }
+
     #[test]
-    fn is_probably_binary_detects_content() {
+    fn sniff_content_detects_content() {
         let dir = tempfile::tempdir().unwrap();
         let text = dir.path().join("a.txt");
         std::fs::write(&text, "fn main() { println!(\"hi\"); }\n").unwrap();
-        assert!(!is_probably_binary(&text), "valid UTF-8 text is not binary");
+        assert!(!sniff_content_skips(&text), "valid UTF-8 text is not binary");
 
         let nul = dir.path().join("b.bin");
         std::fs::write(&nul, [0x00u8, 0x01, 0x02, b'a', b'b']).unwrap();
-        assert!(is_probably_binary(&nul), "null bytes => binary");
+        assert!(sniff_content_skips(&nul), "null bytes => binary");
 
         let latin1 = dir.path().join("c.htm");
         // 0xE9 ('é' in latin-1) is invalid as a standalone UTF-8 byte.
         std::fs::write(&latin1, [b'<', b'p', b'>', 0xE9, 0xE9, 0xE9, b'<', b'/', b'p', b'>'])
             .unwrap();
-        assert!(is_probably_binary(&latin1), "non-UTF8 text => skip");
+        assert!(sniff_content_skips(&latin1), "non-UTF8 text => skip");
 
         let missing = dir.path().join("nope");
-        assert!(is_probably_binary(&missing), "unreadable => skip");
+        assert!(sniff_content_skips(&missing), "unreadable => skip");
     }
 
     /// The reason matters, not just the yes/no: an unreadable-encoding file is
@@ -412,6 +438,40 @@ mod tests {
         );
     }
 
+    /// **A FILE PAST THE PARSE BOUNDS IS REFUSED BY RULE, NOT BY NAME** (#178).
+    ///
+    /// A parse that overflows the stack aborts the daemon — no unwind, no file
+    /// name. Exclude globs catch bundles by what they are CALLED; this catches
+    /// them by what they ARE: past `MAX_PARSE_BYTES`, or holding a line past
+    /// `MAX_LINE_BYTES` (measured 2026-10-25 over 61,345 tracked source files:
+    /// hand-written code tops out at 267 KB and a 1,632-char line; the files
+    /// past either bound are bundles, data loads and generated tables).
+    ///
+    /// MUTATION: drop either test from `exceeds_parse_bounds` — its file goes
+    /// back to being parsed.
+    #[test]
+    fn a_file_past_the_parse_bounds_is_skipped_as_oversized() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let big = dir.path().join("big.rs");
+        let body = "fn a() {}\n".repeat(MAX_PARSE_BYTES as usize / 10 + 1);
+        assert!(body.len() as u64 > MAX_PARSE_BYTES);
+        std::fs::write(&big, &body).unwrap();
+        assert_eq!(classify_unscannable(&big, "rs"), Some(ScanSkipReason::Oversized));
+
+        let long = dir.path().join("bundle.js");
+        std::fs::write(&long, format!("// head\nvar a={};\n", "1+".repeat(MAX_LINE_BYTES)))
+            .unwrap();
+        assert_eq!(classify_unscannable(&long, "js"), Some(ScanSkipReason::Oversized));
+
+        // At the bounds, not past them: indexable.
+        let edge = dir.path().join("edge.js");
+        let line = "x".repeat(MAX_LINE_BYTES);
+        std::fs::write(&edge, format!("{line}\n{line}")).unwrap();
+        assert_eq!(classify_unscannable(&edge, "js"), None, "a line AT the bound is allowed");
+        assert!(!ScanSkipReason::Oversized.is_actionable(), "nothing for the user to fix");
+    }
+
     /// Only the reasons a user can act on should be surfaced; the rest are
     /// expected and would just be noise.
     #[test]
@@ -434,6 +494,7 @@ mod tests {
         assert_eq!(ScanSkipReason::ExcludedByConfig.as_db(), "excluded_by_config");
         assert_eq!(ScanSkipReason::Vendored.as_db(), "vendored");
         assert_eq!(ScanSkipReason::Generated.as_db(), "generated");
+        assert_eq!(ScanSkipReason::Oversized.as_db(), "oversized");
         assert!(!ScanSkipReason::Vendored.is_actionable());
         assert!(!ScanSkipReason::Generated.is_actionable());
     }

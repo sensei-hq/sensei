@@ -20,6 +20,8 @@ set search_path to sensei, extensions;
 --   excluded_by_config — the user asked for this; ignore quietly.
 --   vendored           — `.gitattributes` says the repository does not own it.
 --   generated          — a tool wrote it (`.gitattributes` or its own header).
+--   oversized          — past the parse bounds (size, or longest line); a parse
+--                        that overflows the stack aborts the daemon (#178).
 create type scan_skip_reason
     as enum (
       'unsupported_format'
@@ -29,4 +31,5 @@ create type scan_skip_reason
     , 'excluded_by_config'
     , 'vendored'
     , 'generated'
+    , 'oversized'
     );

@@ -512,6 +512,7 @@ Enum "sensei"."scan_skip_reason" {
   "excluded_by_config"
   "vendored"
   "generated"
+  "oversized"
 }
 
 Enum "sensei"."schema_naming" {

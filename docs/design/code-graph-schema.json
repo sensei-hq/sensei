@@ -834,7 +834,10 @@
         "binary_content",
         "invalid_utf8",
         "parse_error",
-        "excluded_by_config"
+        "excluded_by_config",
+        "vendored",
+        "generated",
+        "oversized"
       ]
     },
     "declared_type_schemaObjects": {
