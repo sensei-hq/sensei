@@ -1,38 +1,33 @@
-# Checkpoint — 2026-10-23
+# Checkpoint — 2026-10-25
 
-**Slice:** dōjō expansion (docs/roadmap/09-dojo-expansion.md) inside the issue burndown
-(docs/roadmap/08-issue-burndown.md). Released: **v0.20.0** and **v0.20.1** (2026-10-23).
+**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md), wave 4. Released v0.20.0 (dōjō deployed;
+Worker `/version` = 0.20.0 `fcf5d87`) and v0.20.1 (daemon only).
 
-**In v0.20.0:**
-- R8 lead team metrics (D38, D41); R9 trackers by level (D23, D40); #323 Jira linkage F9–F11 + API cost (user).
-- R5b Azure DevOps through Entra (D42–D44) and R5c sign in with Microsoft (D45). Each had two security reviews,
-  and every finding was fixed with a failing test first.
-- #330 Terms of Service and Privacy Policy pages. The user approved the wording.
-- #328 heal defect fixed (0 of 936 live folders were stranded).
-- Sign-in fixes, verified live on the local dōjō: #329 (a magic-link switch never shows the previous
-  account), #331 (one personal dōjō per person, however many passes race), #297 (/signin shows Supabase's error).
+**Closed this run:** #106, #335, #201, #204, #183, #142, #298.
+- #183: a database per test, all 15 gates removed; suite ~300–390s.
+- #142: the suite refuses a template behind the DDL tree; run `make test-template` after a schema change.
+- #298: Instruments 6–8.4s → 0.58s, on dbd 0.27.6.
 
-**v0.20.0 rehearsal (2026-10-23): passed** on the 2026-10-21 production dump: two dōjō deploys; pass 2 changed nothing, `dbd diff` clean, row counts unchanged.
+**Releases today (user go, 2026-10-25):**
+- **dbd 0.27.6** (crates.io; PR #106 merged to main): a new generated column is added generated; a
+  generated CASE compares with its live form (dbd#104). dbd#105 filed (promoting a column a view reads).
+  After the tag, three RustSec advisories (rustls-webpki, webpki-roots, ctutils) were fixed on dbd
+  develop (784db3d2); the v0.27.6 lockfile still pins them for `cargo install --locked` →
+  **0.27.7 recommended** (needs a go).
+- **kavach 1.3.0** (npm, all 14 packages; PR #56 merged): sync once per session change (#54) and the
+  built-in landing guard (#55). Dependency advisories 93 → 1 (dev-only undici in wrangler); the CI
+  gate now audits what ships (`scripts/audit-shipped.mjs`, user decision); lockfile written by the
+  pinned bun (Cloudflare and CI read it). DeepSource is red on kavach main (findings on its dashboard).
+- **dōjō on kavach 1.3.0** (c86ebc81): its own landing guard removed; verified live (one session POST,
+  the previous account never shown).
 
-**v0.20.1** fixes v0.20.0's daemon upgrade. The schema deploy ran `apply` before `reconcile`, so `comment on column trackers.level` failed. Verified live: the daemon logged "schema deployed for this version 0.20.1", and `dbd diff` reports the live DB in sync.
+**Open:**
+- v0.20.1's `deploy-dojo` is still waiting; it would change nothing (v0.20.1 is daemon-only). Approve or reject.
+- #331: count production's duplicate personal dōjōs (counts only). Needs a production connection:
+  `psql "$PROD" -Atc "select count(*) from dojo.tenants where origin='personal' and key ~ '-[0-9]+$'"`.
+- qlty is out of minutes (dbd, sensei).
 
-**Kavach #54 and #55 fixed** on jerrythomas/kavach `develop` (1644470, 3654e64): sync once per session change, and the landing guard built into kavach (`pendingLanding`, on by default). Verified live on the dōjō with the dōjō's own guard removed: one session POST, and the page hidden until the new session's reload. The dōjō upgrade waits in worktree `kavach-landing` until kavach is published.
+**Next (wave 4):** the dependency cluster #172/#195/#120. sensei's `Cargo.lock` has open RustSec
+advisories (quick-xml, h2, quinn-proto, ctutils, …), and no workflow runs `cargo audit`.
 
-**On develop since v0.20.1:**
-- #294: each daemon sign-in in flight keeps its own verifier, and the dōjō forwards a flow id. Live check after the release: two back-to-back `sensei auth renew` runs.
-- #304: app writes return `ApiResult`, and post/put/del are gone. Stays open until a click-through in the Tauri app.
-- **#334 closed** (91e2eb52): `caller_guard` covers the whole router (Host must be loopback; a write needs the app's Origin or none), and CORS answers only the app's origins. Verified live on a throwaway daemon (`--instance probe334`, since deleted).
-
-**#298 fixed on branch `fix/298-stored-pairing-keys`** (live: 6–8.4s → 0.58s, output identical). The live DB is converged with the fixed dbd. It is blocked on **dbd 0.27.6**: dbd#104 (a new generated column was added plain), fixed on dbd develop c506dfb0. Then bump the 4 dbd pins, merge the branch, and run `deploy_upgrade --ignored`. dbd#105 is filed (promoting a column a view reads).
-
-**Closed this run: #106, #335, #201, #204, #183.** #183: a database per test, with all 15 gates removed (289885e7). Suite 392s, all green; `make test-template` rebuilds the template after a schema change. **Next (wave 4):** #142 (preflight: test DB behind the DDL tree), then the dependency cluster #172/#195/#120.
-
-**Next command:** the user says go on dbd 0.27.6; approves `deploy-dojo` (both v0.20.0 and v0.20.1 runs are waiting) and says go on a kavach release (minor: 1.3.0). Then: check the Worker's `/version`; count #331 production duplicates; bump the dōjō to the new kavach and drop `app.html`'s guard.
-
-**Live checks after v0.20.0:** R5b connect and import; R5c oid/tid match; the negative `xms_edov` test, which blocks enabling Microsoft sign-in in production. These need the Worker secrets (`AZURE_DEVOPS_CLIENT_ID`, `AZURE_DEVOPS_CLIENT_SECRET`, `DOJO_CRON_SECRET`), the redirect URI, the `vso.*` permissions and the `email` and `xms_edov` claims. R9: two Jira boards at two levels.
-
-**Remaining:**
-- #314 (production push: the user's steps); #312 live on an unattended run; dbd#103 (a column comment lands
-  one reconcile late). #331: after v0.20.0, count production's `personal/*-2` tenants (counts only); merging
-  them is the user's call.
-- Wave 11: the website from the user's mocks. Known: qlty is out of billing minutes; a daemon reinstall needs keychain approval (#283 until #282).
+**Next command:** `cargo audit` on sensei; bump the affected crates; add `cargo audit` to rust.yml.
