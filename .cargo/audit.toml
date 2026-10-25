@@ -1,0 +1,29 @@
+# `cargo audit` configuration (#172, #120).
+#
+# The bar for an ignore, as in sensei-hq/dbd: the crate is in Cargo.lock but
+# never compiled into anything sensei ships — `cargo tree --target all -i
+# <crate>` prints nothing, or prints only targets sensei does not build — and a
+# build produces no artifact for it. Anything that fails that bar is fixed, not
+# listed. Each entry records the check that proved it; #120 tracks them.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 — Marvin Attack (timing sidechannel) in `rsa`.
+    #
+    # Reached only via `sqlx-mysql`, which sensei never enables (sqlx is built
+    # for postgres): `cargo tree --target all -i rsa` and `-i sqlx-mysql` print
+    # nothing, and target/ holds no `rsa` artifact. No fixed release exists.
+    # Re-check on each sqlx bump.
+    "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2026-0194, RUSTSEC-2026-0195 — quick-xml 0.37.5 (quadratic
+    # duplicate-attribute check; unbounded namespace declarations).
+    #
+    # Reached only via notify-rust → tauri-winrt-notification, a Windows-only
+    # dependency; sensei builds and ships macOS and Linux only (release.yml's
+    # build-daemon matrix). sensei's OWN quick-xml is 0.41 (fixed). Remove these
+    # the day a Windows target ships, or when tauri-winrt-notification moves to
+    # quick-xml >= 0.41.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
