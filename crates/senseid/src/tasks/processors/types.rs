@@ -28,12 +28,6 @@ pub struct FileProcessResult {
     /// IR parse result — rich data for ir_functions/ir_classes tables.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ir: Option<crate::ir::IRParsedFile>,
-    /// FQN producer output (Phase 3). When `Some` (Rust files with a resolvable
-    /// crate context), `process_file` emits FQN nodes + resolved node→node edges
-    /// via the SCIP/LSIF path instead of the bare-name path. Internal — not
-    /// serialized to the wire.
-    #[serde(skip)]
-    pub fqn: Option<crate::languages::fqn::FqnFileOutput>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,7 +78,6 @@ impl FileProcessResult {
             sections: vec![],
             rationales: vec![],
             ir: None,
-            fqn: None,
         }
     }
 }
