@@ -73,36 +73,13 @@ pub(super) async fn url() -> Result<String, String> {
         }
     });
 
-    let name = format!(
-        "{PREFIX}{}_{}_{}",
-        now_secs(),
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    );
-    let mut admin =
-        PgConnection::connect(&admin_url).await.map_err(|e| format!("test_db admin: {e}"))?;
-    let create = format!("CREATE DATABASE \"{name}\" TEMPLATE \"{template}\" STRATEGY FILE_COPY");
-    // A template must have no other session; one that is momentarily connected
-    // (a migration, a psql) clears in moments, so wait it out — boundedly.
-    let mut attempt = 0;
-    loop {
-        match admin.execute(create.as_str()).await {
-            Ok(_) => break,
-            Err(e) if e.to_string().contains("being accessed by other users") && attempt < 50 => {
-                attempt += 1;
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-            Err(e) => return Err(format!("test_db: {create}: {e}")),
-        }
-    }
-    let _ = admin.close().await;
-
+    let name = make_clone(&mut None, &admin_url, &template).await?;
     OWN.with(|o| *o.borrow_mut() = Some(Owned { name: name.clone(), admin_url }));
     Ok(with_database(&base, &name))
 }
 
-/// Drop every clone a crashed run left behind — by the age in its name, so a
-/// concurrent run's live clones are never touched.
+/// Drop every clone no live run owns — a finished run's unused ready clones,
+/// a crashed run's — so a concurrent run's live clones are never touched.
 fn sweep_stale(admin_url: &str) -> Result<(), String> {
     let admin_url = admin_url.to_string();
     std::thread::spawn(move || -> Result<(), String> {
@@ -115,9 +92,8 @@ fn sweep_stale(admin_url: &str) -> Result<(), String> {
             .fetch_all(&mut c)
             .await
             .map_err(|e| e.to_string())?;
-            let cutoff = now_secs().saturating_sub(STALE_AFTER_SECS);
             for (name,) in names {
-                if created_at(&name).is_some_and(|t| t < cutoff) {
+                if is_orphan(&name) {
                     let _ = c.execute(format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)").as_str()).await;
                 }
             }
@@ -126,6 +102,60 @@ fn sweep_stale(admin_url: &str) -> Result<(), String> {
     })
     .join()
     .map_err(|_| "sweep thread panicked".to_string())?
+}
+
+/// One clone of `template`, on a (re)used maintenance connection.
+async fn make_clone(
+    admin: &mut Option<PgConnection>,
+    admin_url: &str,
+    template: &str,
+) -> Result<String, String> {
+    if admin.is_none() {
+        *admin = Some(
+            PgConnection::connect(admin_url).await.map_err(|e| format!("test_db admin: {e}"))?,
+        );
+    }
+    let conn = admin.as_mut().expect("just connected");
+    let name = format!(
+        "{PREFIX}{}_{}_{}",
+        now_secs(),
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let create = format!("CREATE DATABASE \"{name}\" TEMPLATE \"{template}\" STRATEGY FILE_COPY");
+    // A template must have no other session; one that is momentarily connected
+    // (a migration, a psql) clears in moments, so wait it out — boundedly.
+    let mut attempt = 0;
+    loop {
+        match conn.execute(create.as_str()).await {
+            Ok(_) => return Ok(name),
+            Err(e) if e.to_string().contains("being accessed by other users") && attempt < 50 => {
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            Err(e) => return Err(format!("test_db: {create}: {e}")),
+        }
+    }
+}
+
+/// Whether no live run owns `name`: its process has exited, or it is older
+/// than any test could be.
+fn is_orphan(name: &str) -> bool {
+    let Some(created) = created_at(name) else { return false };
+    let pid = name
+        .strip_prefix(PREFIX)
+        .and_then(|rest| rest.split('_').nth(1))
+        .and_then(|p| p.parse::<u32>().ok());
+    created < now_secs().saturating_sub(STALE_AFTER_SECS) || pid.is_some_and(|p| !pid_alive(p))
+}
+
+/// Whether a process with this pid exists (`kill -0`).
+fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// Run statements against the maintenance database from synchronous code — a
@@ -208,5 +238,20 @@ mod tests {
         assert_eq!(created_at(&format!("{PREFIX}1700000000_42_7")), Some(1_700_000_000));
         assert_eq!(created_at("sensei_test"), None, "the template is never a clone");
         assert_eq!(created_at(&format!("{PREFIX}notanumber_1_1")), None);
+    }
+
+    /// A clone whose process has exited is an orphan at once — up to a pool's
+    /// worth of ready clones outlive every run, and waiting two hours for them
+    /// would leave them in every listing.
+    #[test]
+    fn a_clone_of_an_exited_process_is_an_orphan_and_a_live_ones_is_not() {
+        let mine = format!("{PREFIX}{}_{}_0", now_secs(), std::process::id());
+        assert!(!is_orphan(&mine), "this process is alive");
+        // pid 0 is never a test process; i32::MAX is beyond any real pid.
+        let gone = format!("{PREFIX}{}_{}_0", now_secs(), i32::MAX);
+        assert!(is_orphan(&gone), "no process has that pid");
+        let old = format!("{PREFIX}1700000000_{}_0", std::process::id());
+        assert!(is_orphan(&old), "older than the cutoff");
+        assert!(!is_orphan("sensei_test"));
     }
 }
