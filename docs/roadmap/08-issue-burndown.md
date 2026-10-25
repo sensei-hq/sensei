@@ -204,10 +204,10 @@ The settings screen lists them as repositories.
 
 - **Pool and isolation:** ~~#204~~ **closed 2026-10-25** (5656955c): 198 tests that passed silently on a failed DB connect now fail; test threads are capped at 16 so the budget fits `max_connections` (checked by a test; peak 78 → 69, suite 328s → 184s). ~~#183~~ **closed 2026-10-25**: a database per test (user decision); it exposed two tests relying on siblings' rows, and all 15 gates are removed. Suite 3,838 green, 184s → 392s.
 - **Preflight:** ~~#142~~ **closed 2026-10-25** (8e20c3b5): the suite refuses a template behind the DDL tree, by its stamped fingerprint; `make test-template` provisions exactly as CI does.
-- **Dependency cluster:** #172, #195, #120.
-  - Bumps: quick-xml, h2, yanked crates; JS: vite, esbuild, vitest 4, undici and others.
-  - Add `cargo audit`.
-  - Re-check Dependabot: it reports 0 alerts while the lockfiles are vulnerable.
+- **Dependency cluster:** ~~#172~~ ~~#195~~ **closed 2026-10-25**, #120 updated. Rust 16 → 0 actionable
+  advisories, the Tauri lockfile 10 → 0, the JS trees' critical/high cleared (one dev-only undici under the
+  dōjō's wrangler). `cargo audit` gates rust.yml over all three lockfiles (develop run 40246283950 green);
+  exceptions in `.cargo/audit.toml`, each with its proof.
 
 ## Wave 5 — production-readiness defects that need real work
 
@@ -215,7 +215,10 @@ The settings screen lists them as repositories.
   origin guard covered only tracker routes and CORS allowed every origin. Now `caller_guard` on the whole router
   (loopback `Host` always; an app `Origin` or none for writes) and CORS for the app's origins only. Live on a
   throwaway daemon: the original repro → 403 with nothing added; the app's origin and the CLI still write.
-- #178 (B1): bound the parse stack.
+- #178 (B1): **landed 2026-10-25** (2e5c6c1f): a file over 2 MiB or with a line over 10,000 bytes is skipped
+  as `oversized` (new enum value), by the one classifier the scan and `process_file` share. Live DB
+  reconciled; over the 61,349-file corpus it refuses exactly the 137 measured. Closes on the released
+  daemon's first `oversized` rows.
 - #188 (B2): surface watchdog abandonment. Measured 300–1,800 a day in early October.
 - ~~C1~~: `public.logs` size — #180, closed.
 - #125: 68 orphaned transcript turn sets.
