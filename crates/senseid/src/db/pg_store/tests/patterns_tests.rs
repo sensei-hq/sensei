@@ -160,7 +160,6 @@ async fn pattern_upsert_merges_across_folders_in_same_workspace() {
 #[tokio::test]
 async fn correction_upsert_is_idempotent_by_signature() {
     // Prunes by keep-set, which deletes every OTHER test's corrections.
-    let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.enter();
     let s = pg_store().await;
     let p = uuid::Uuid::new_v4();
     let sig = format!("corr-test-{}", uuid::Uuid::new_v4());

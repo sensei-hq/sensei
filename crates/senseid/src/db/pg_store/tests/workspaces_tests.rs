@@ -467,10 +467,6 @@ async fn get_or_create_adopts_folder_bearing_workspace_no_duplicate() {
 /// (here a session) are reassigned, never orphaned; a re-run is a no-op.
 #[tokio::test]
 async fn heal_duplicate_name_workspaces_prunes_empty_dupe_idempotently() {
-    // heal_duplicate_name_workspaces is a GLOBAL sweep — it prunes every
-    // folderless duplicate in the table, not just this test's. Ungated, a
-    // concurrent test's sweep runs inside this one's setup window.
-    let _gate = REPAIR_SWEEP_GATE.enter();
     let s = PgStore::test_store().await;
     let name = format!("_test:dupheal:{}", uuid::Uuid::new_v4());
 
@@ -549,13 +545,6 @@ async fn heal_duplicate_name_workspaces_prunes_empty_dupe_idempotently() {
 /// path, not name) — and must NOT be merged.
 #[tokio::test]
 async fn heal_leaves_two_folder_bearing_same_name_workspaces() {
-    // Gated for the same reason as the sweep tests above, and this one is the
-    // proof: it failed once in CI with "second folder-bearing workspace must
-    // survive". The window is between creating the second workspace and attaching
-    // its folder — at that instant the workspace IS a folderless duplicate, so
-    // another test's global sweep legitimately prunes it, and the assert then
-    // fails describing a bug that does not exist.
-    let _gate = REPAIR_SWEEP_GATE.enter();
     let s = PgStore::test_store().await;
     let name = format!("_test:dupneg:{}", uuid::Uuid::new_v4());
 

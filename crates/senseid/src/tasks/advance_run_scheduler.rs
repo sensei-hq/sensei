@@ -137,11 +137,6 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 #[cfg(test)]
-// `resume_test_guard()` is a blocking `std::sync::Mutex` held across awaits on
-// purpose — see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups here. These are current-thread test runtimes, one per test, so
-// blocking the thread costs nothing and cannot deadlock the runtime.
-#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
 
@@ -178,7 +173,6 @@ mod tests {
         // DB-guarded: with a test DB, a tick over N active runs enqueues N ticks.
         // `tick` calls the global `resume_due_runs`, so hold the shared resume
         // lock to serialize with the other resume-race tests.
-        let _guard = crate::runs::resume_test_guard();
         let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
@@ -232,7 +226,6 @@ mod tests {
         //
         // `tick` calls the global `resume_due_runs`, so hold the shared resume
         // lock to serialize with the other resume-race tests.
-        let _guard = crate::runs::resume_test_guard();
         let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
@@ -279,7 +272,6 @@ mod tests {
         // resume_due with an empty set and nothing to log. Serialize with the
         // pg_store resume test on the shared lock (production has a single
         // scheduler, so there is no such race there).
-        let _guard = crate::runs::resume_test_guard();
 
         let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);

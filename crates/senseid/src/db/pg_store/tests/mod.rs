@@ -1,7 +1,7 @@
 use super::graph_seed::SeedGraph;
 use super::*;
 use crate::languages::fqn::ReceiverHint;
-use crate::tasks::test_support::{SCHEDULE_EDIT_GATE, TEST_SCHEDULE_PREFIX, test_schedule_name};
+use crate::tasks::test_support::{TEST_SCHEDULE_PREFIX, test_schedule_name};
 use sqlx_core::query_as::query_as;
 
 // Every test here connects via `PgStore::connect_test()` — the tiny floorless
@@ -35,7 +35,7 @@ mod workspaces_tests;
 
 // Fixtures one group defines and others reuse.
 use dojo_tests::{seed_sync_fixture, seed_sync_fixture_at};
-use libraries_tests::{REPAIR_SWEEP_GATE, clear_test_session, session_row_folder};
+use libraries_tests::{clear_test_session, session_row_folder};
 use metric_rows_tests::seed_metric;
 
 async fn pg_store() -> PgStore {

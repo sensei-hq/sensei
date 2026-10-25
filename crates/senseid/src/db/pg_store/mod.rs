@@ -613,31 +613,18 @@ mod node_tests;
 #[cfg(test)]
 mod pack_resolution_tests;
 #[cfg(test)]
-// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
-// see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups across per-test runtimes. One allow per test module, not per site.
-#[allow(clippy::await_holding_lock)]
 mod playbook_tests;
 #[cfg(test)]
 mod pruner_tests;
 #[cfg(test)]
 mod resolution_tests;
 #[cfg(test)]
-// `resume_test_guard()` is a blocking `std::sync::Mutex` held across awaits on
-// purpose — see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups here. These are current-thread test runtimes, one per test, so
-// blocking the thread costs nothing and cannot deadlock the runtime.
-#[allow(clippy::await_holding_lock)]
 mod run_tests;
 #[cfg(test)]
 mod schema_store_tests;
 #[cfg(test)]
 mod structure_tests;
 #[cfg(test)]
-// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
-// see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups across per-test runtimes. One allow per test module, not per site.
-#[allow(clippy::await_holding_lock)]
 pub(crate) mod tests;
 #[cfg(test)]
 mod tool_calls_tests;

@@ -582,10 +582,6 @@ pub fn create_degraded_router(db_url: String, error: String) -> Router {
 }
 
 #[cfg(test)]
-// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
-// see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups across per-test runtimes. One allow per test module, not per site.
-#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::api::state::SharedState;
@@ -3227,7 +3223,6 @@ mod tests {
     #[tokio::test]
     async fn transcript_consent_is_listed_per_source_and_set_one_at_a_time() {
         let (app, state) = test_app().await;
-        let _gate = crate::transcript::consent::CONSENT_KEYS.enter();
         crate::transcript::consent::set(&state.pg, "zed", false).await.unwrap();
 
         let (status, body) = req(app.clone(), "GET", "/api/transcripts/consent", None).await;
@@ -3815,8 +3810,6 @@ mod tests {
     #[tokio::test]
     async fn collective_preferences_put_then_get_roundtrip() {
         let (app, state) = test_app().await;
-        // Serialize with the pg_store singleton test (shared one-row table).
-        let _guard = crate::collective::preferences::test_lock().enter();
 
         // PUT a known-valid body → 200; the response echoes the saved shape.
         let put = app.clone().oneshot(
@@ -5162,11 +5155,6 @@ mod tests {
     ///   run_completion 0.8 · memory_promotion 0.5 · unused_tools 0 · time_to_useful_result.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn metrics_pipeline_end_to_end() {
-        // Seeds corrections and asserts on `memory_promotion`, whose denominator
-        // counts them. A sibling test prunes that table by keep-set (table-wide
-        // by design), which silently deleted these rows mid-run and turned
-        // 2/4 into 2/2. Share the lock rather than pretend it can be scoped.
-        let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.enter();
         use crate::tasks::executor::spawn_workers;
         use crate::tasks::handlers::metrics::HEALTH_TASK_NAME;
         use crate::tasks::test_support::{

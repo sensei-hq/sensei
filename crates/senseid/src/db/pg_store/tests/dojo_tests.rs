@@ -210,7 +210,6 @@ async fn dojo_membership_crud_and_workspace_binding_roundtrip() {
 async fn collective_preferences_defaults_and_upsert_roundtrip() {
     let pg = PgStore::test_store().await;
     use crate::collective::preferences::{self, CollectivePreferences};
-    let _guard = preferences::test_lock().enter();
 
     // Clean slate — the singleton row may linger from a prior run.
     sqlx_core::query::query("DELETE FROM sensei.collective_preferences")

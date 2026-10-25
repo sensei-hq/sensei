@@ -686,7 +686,6 @@ async fn a_user_edit_survives_the_seed_import() {
     // otherwise has the last word: an edit that does not bump `modified_at` is
     // silently reverted by the next `dbd deploy` and the user never learns why.
     // Asserted through the REAL procedure, because the guard lives in SQL.
-    let _gate = SCHEDULE_EDIT_GATE.enter();
     let s = pg_store().await;
     // The datafile's own claim, read from staging rather than hard-coded, so this
     // still tests the guard after someone edits schedules.jsonl.

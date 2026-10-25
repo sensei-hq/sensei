@@ -2,10 +2,10 @@
 //!
 //! Every DB test used to share `sensei_test`, so a database-wide operation in
 //! one test — a heal, a prune, a rescan sweep — destroyed a sibling's fixture
-//! mid-flight, and the failure surfaced in an unrelated module. Five gates
-//! (`CORRECTIONS_TABLE_LOCK`, `ACTIVITY_PRUNE_GATE`, `MEMBERSHIP_COUNT_LOCK`,
-//! `VERSION_KEY_LOCK`, `SCAN_STATE_SWEEP_GATE`) were each added after someone
-//! first debugged a confusing failure.
+//! mid-flight, and the failure surfaced in an unrelated module. Fifteen test
+//! gates — blocking mutexes held across a test's whole span — were each added
+//! after someone first debugged a confusing failure; they are gone, because
+//! a test's database is now its own.
 //!
 //! Now the first [`PgStore::connect_test`](super::PgStore::connect_test) on a
 //! test's thread clones `sensei_test` (`STRATEGY FILE_COPY`, ~0.2s) into a
@@ -15,7 +15,9 @@
 //! at the start of the next.
 //!
 //! `sensei_test` itself becomes the TEMPLATE: converged by `dbd`, written by no
-//! test. Set `SENSEI_TEST_SHARED_DB=1` to run against it directly instead.
+//! test. Set `SENSEI_TEST_SHARED_DB=1` to run against it directly instead — for
+//! one test at a time: with no gates left, a whole suite on one database
+//! collides again.
 
 use std::cell::RefCell;
 use std::sync::OnceLock;

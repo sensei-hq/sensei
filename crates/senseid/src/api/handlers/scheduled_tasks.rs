@@ -545,12 +545,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn a_rejected_patch_is_a_400_and_writes_nothing() {
-        // `log_prune` is a SEEDED row, shared with every other test that edits
-        // one. "Nothing changed between these two reads" is only a statement
-        // about THIS patch while no sibling is writing the same row.
-        let _gate = crate::tasks::test_support::SCHEDULE_EDIT_GATE.enter();
         let state = state().await;
         let before = state.pg.load_schedule("log_prune").await.unwrap().unwrap();
         let (status, _) = patch_scheduled(
@@ -566,10 +561,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn patching_a_worker_persists_the_edit_and_returns_the_new_state() {
-        // Edits the same SEEDED row as the test above, so it takes the gate too.
-        let _gate = crate::tasks::test_support::SCHEDULE_EDIT_GATE.enter();
         let state = state().await;
 
         let body = patch_scheduled(

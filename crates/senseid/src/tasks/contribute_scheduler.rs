@@ -194,10 +194,6 @@ pub fn spawn(pg: Arc<PgStore>, gateway: Arc<gateway::Gateway>) {
 }
 
 #[cfg(test)]
-// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
-// see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups across per-test runtimes. One allow per test module, not per site.
-#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
 
@@ -236,7 +232,6 @@ mod tests {
         use crate::dojo::contribute::NoLlm;
 
         let pg = PgStore::test_store().await;
-        let _guard = preferences::test_lock().enter();
 
         // Clean slate for the FIXTURE, not just for the watermark below. Step 3
         // of the prepare picks the OLDEST approved batch IN THE DATABASE, so

@@ -966,9 +966,7 @@ mod tests {
     ///
     /// MUTATION: drop the token step from `repair_sessions` — tokens stay NULL.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn the_repair_pass_sets_session_tokens_from_their_turns() {
-        let _tokens = crate::tasks::test_support::SESSION_TOKENS_SWEEP_GATE.sweeping();
         let pg = crate::db::pg_store::PgStore::test_store().await;
         let sid = format!("_test-repair-tokens-{}", uuid::Uuid::new_v4());
         sqlx_core::query::query("INSERT INTO activity.sessions (client_session_id) VALUES ($1)")
@@ -1051,10 +1049,8 @@ mod tests {
     /// Mutation that must break this: drop the consent check in
     /// `run_ingest_capture`.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn a_queued_ingest_reads_nothing_once_consent_is_withdrawn() {
         let ctx = crate::tasks::test_support::make_ctx().await;
-        let _gate = consent::CONSENT_KEYS.enter();
         let dir = std::env::temp_dir().join(format!("sensei-consent-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("proj")).unwrap();
         let file = dir.join("proj").join(format!("_test-consent-{}.jsonl", uuid::Uuid::new_v4()));
@@ -1095,9 +1091,7 @@ mod tests {
 "#;
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn backfill_ingests_then_skips_unchanged() {
-        let _watermarks = crate::tasks::test_support::WATERMARK_SWEEP_GATE.using();
         let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
         let sid = format!("_test-tx-{}", uuid::Uuid::new_v4());
         // temp transcript: <root>/proj/<sid>.jsonl (mirrors ~/.claude layout)
