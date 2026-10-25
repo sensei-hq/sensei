@@ -253,9 +253,7 @@ async fn a_failed_call_is_paired_with_its_failure() {
 /// Mutation that must break this: derive `duration_ms` with a bare cast again.
 #[tokio::test]
 async fn a_malformed_duration_reads_as_unknown_and_never_breaks_the_timeline() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let session = format!("_test-replay-baddur-{}", uuid::Uuid::new_v4());
     let id = format!("toolu_baddur_{session}");
     seed(
@@ -287,9 +285,7 @@ async fn a_malformed_duration_reads_as_unknown_and_never_breaks_the_timeline() {
 /// `payload->>'duration_ms'` in the view again, or drop the stored columns.
 #[tokio::test]
 async fn the_timeline_pairs_on_stored_keys_not_on_the_payload() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let stored: Vec<(String,)> = sqlx_core::query_as::query_as(
         "select attname::text from pg_attribute
           where attrelid = 'activity.assistant_events'::regclass
