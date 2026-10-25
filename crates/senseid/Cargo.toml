@@ -75,7 +75,7 @@ sqlparser = { version = "0.57", features = ["visitor"] }
 # `bundled` compiles SQLite from source (no system-sqlite linkage risk); ruzstd is
 # a pure-Rust zstd decompressor (no C toolchain).
 rusqlite = { version = "0.32", features = ["bundled"] }
-ruzstd = "0.7"
+ruzstd = "0.9"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -87,7 +87,7 @@ serde_yaml = "0.9"
 # Streaming reader; no allocation on the parse tree, just the tokens we care
 # about. Chosen over serde-based XML crates because pom.xml uses same-name
 # repeated child elements that trip serde's typed deserializers.
-quick-xml = "0.36"
+quick-xml = "0.41"
 
 # File watching
 notify = "8"

@@ -59,7 +59,11 @@ where
     F: FnMut(&XmlPath<'_>, XmlEvent<'_>),
 {
     let mut reader = Reader::from_str(content);
-    reader.config_mut().trim_text(true);
+    // Not trimmed per event: quick-xml reports an entity reference as its own
+    // event, so `Fish &amp; Chips` arrives as `Fish `, `&`, ` Chips`, and a
+    // per-event trim would glue it into `Fish&Chips`. Leaves are trimmed once,
+    // whole, when they close.
+    reader.config_mut().trim_text(false);
     let mut buf: Vec<u8> = Vec::new();
     let mut path: Vec<String> = Vec::new();
     let mut current_text: Option<String> = None;
@@ -75,7 +79,8 @@ where
                 visit(&XmlPath(&path), XmlEvent::Enter(&attrs));
             }
             Ok(Event::End(_)) => {
-                if let Some(text) = current_text.take() {
+                // Whitespace-only text is the indentation between elements.
+                if let Some(text) = current_text.take().filter(|t| !t.trim().is_empty()) {
                     visit(&XmlPath(&path), XmlEvent::Leaf(text.trim()));
                 }
                 visit(&XmlPath(&path), XmlEvent::Exit);
@@ -90,17 +95,13 @@ where
                 path.pop();
             }
             Ok(Event::Text(e)) => {
-                if let Ok(txt) = e.unescape() {
-                    let s = txt.into_owned();
-                    if !s.trim().is_empty() {
-                        current_text = Some(match current_text.take() {
-                            Some(mut prev) => {
-                                prev.push_str(&s);
-                                prev
-                            }
-                            None => s,
-                        });
-                    }
+                if let Ok(txt) = e.decode() {
+                    current_text.get_or_insert_with(String::new).push_str(&txt);
+                }
+            }
+            Ok(Event::GeneralRef(r)) => {
+                if let Some(resolved) = resolve_reference(&r) {
+                    current_text.get_or_insert_with(String::new).push_str(&resolved);
                 }
             }
             Ok(Event::CData(e)) => {
@@ -145,6 +146,18 @@ fn local_name(name: QName<'_>) -> String {
     }
 }
 
+/// The text a reference in element content stands for: a character reference
+/// (`&#233;`) or one of the five predefined entities (`&amp;`). An unknown named
+/// entity (one a DTD would declare) resolves to nothing — this reader takes no
+/// DTD — and so contributes no text rather than a guess.
+fn resolve_reference(r: &quick_xml::events::BytesRef<'_>) -> Option<String> {
+    if let Ok(Some(ch)) = r.resolve_char_ref() {
+        return Some(ch.to_string());
+    }
+    let name = r.decode().ok()?;
+    quick_xml::escape::resolve_predefined_entity(&name).map(str::to_string)
+}
+
 /// Collect `(name, value)` attribute pairs off an element start event.
 /// Malformed / non-utf8 attributes are dropped rather than surfaced — this
 /// path is best-effort for real-world manifests, not a validating parser.
@@ -153,7 +166,7 @@ fn collect_attrs(e: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String)>
         .flatten()
         .filter_map(|a| {
             let name = local_name(a.key);
-            let value = a.unescape_value().ok()?.into_owned();
+            let value = a.normalized_value(quick_xml::XmlVersion::Implicit1_0).ok()?.into_owned();
             Some((name, value))
         })
         .collect()
@@ -168,6 +181,32 @@ pub fn attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Entity and character references read as the text they stand for, in
+    /// element text and in attribute values alike. quick-xml 0.38+ reports a
+    /// reference as its own event between text fragments; dropping it would turn
+    /// `Fish &amp; Chips` into `Fish  Chips`.
+    #[test]
+    fn references_in_text_and_attributes_read_as_their_text() {
+        let mut leaves: Vec<String> = Vec::new();
+        walk_leaves(
+            r#"<p><name>Fish &amp; Chips</name><v>&lt;1.0&gt;</v><c>caf&#233;</c></p>"#,
+            |_, t| leaves.push(t.to_string()),
+        )
+        .unwrap();
+        assert_eq!(leaves, ["Fish & Chips", "<1.0>", "café"]);
+
+        let mut seen = None;
+        walk(r#"<p><dep id="a&amp;b"/></p>"#, |path, ev| {
+            if let XmlEvent::Enter(attrs) = ev
+                && path.ends_with(&["dep"])
+            {
+                seen = attr(attrs, "id").map(str::to_string);
+            }
+        })
+        .unwrap();
+        assert_eq!(seen.as_deref(), Some("a&b"));
+    }
 
     #[test]
     fn walk_leaves_reports_leaf_text_with_full_path() {
