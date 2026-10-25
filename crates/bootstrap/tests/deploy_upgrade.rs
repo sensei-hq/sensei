@@ -325,7 +325,10 @@ async fn a_generated_column_this_release_adds_is_generated_for_the_rows_already_
     sensei_bootstrap::database::deploy_to(&db.url(), v1.path(), backups.path())
         .await
         .expect("v1 deploys");
-    psql(&db.0, r#"insert into app.events values (1, '{"key":"k1","ms":12}'), (2, '{"ms":"n/a"}')"#);
+    psql(
+        &db.0,
+        r#"insert into app.events values (1, '{"key":"k1","ms":12}'), (2, '{"ms":"n/a"}')"#,
+    );
 
     for pass in ["v2 adds the generated columns", "v2 again changes nothing"] {
         sensei_bootstrap::database::deploy_to(&db.url(), v2.path(), backups.path())
@@ -343,7 +346,10 @@ async fn a_generated_column_this_release_adds_is_generated_for_the_rows_already_
         "both columns are generated, not plain"
     );
     assert_eq!(
-        psql(&db.0, "select string_agg(concat_ws(':', id, key, ms), ',' order by id) from app.event_keys"),
+        psql(
+            &db.0,
+            "select string_agg(concat_ws(':', id, key, ms), ',' order by id) from app.event_keys"
+        ),
         "1:k1:12,2",
         "computed for the rows already there; a non-number is NULL"
     );
