@@ -77,9 +77,7 @@ async fn drop_metric(pg: &PgStore, id: &uuid::Uuid) {
 /// `.bind(commit_sha)` lines in `upsert_workspace_metric_repo`.
 #[tokio::test]
 async fn every_dimension_of_a_metric_row_reaches_its_own_column() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let uniq = uuid::Uuid::new_v4();
     let metric_id = own_metric(&pg, &uniq).await;
     let (pid, fid) = crate::tasks::test_support::seed_metrics_workspace_folder(&pg, &uniq).await;
@@ -152,9 +150,7 @@ async fn every_dimension_of_a_metric_row_reaches_its_own_column() {
 /// target list.
 #[tokio::test]
 async fn re_writing_one_key_updates_the_row_rather_than_adding_another() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let uniq = uuid::Uuid::new_v4();
     let metric_id = own_metric(&pg, &uniq).await;
     let (pid, fid) = crate::tasks::test_support::seed_metrics_workspace_folder(&pg, &uniq).await;

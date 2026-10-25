@@ -81,9 +81,7 @@ mod tests {
     /// (unclassified-only filter + upsert idempotency).
     #[tokio::test]
     async fn classify_pending_fills_unopened_then_excludes_on_rerun() {
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let sid = format!("_test-classify-pending-{}", uuid::Uuid::new_v4());
         let now = chrono::Utc::now().timestamp_millis();
 

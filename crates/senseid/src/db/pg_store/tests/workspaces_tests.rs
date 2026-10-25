@@ -411,9 +411,7 @@ async fn workspace_get_nonexistent() {
 /// phantom).
 #[tokio::test]
 async fn get_or_create_workspace_by_name_is_idempotent() {
-    let Ok(s) = PgStore::connect_test().await else {
-        return;
-    };
+    let s = PgStore::test_store().await;
     let name = format!("_test:dupname:{}", uuid::Uuid::new_v4());
 
     let (id1, created1) = s.get_or_create_workspace_by_name(&name).await.unwrap();
@@ -437,9 +435,7 @@ async fn get_or_create_workspace_by_name_is_idempotent() {
 /// creation path adopts THAT one (not a fresh row) — no second "sensei".
 #[tokio::test]
 async fn get_or_create_adopts_folder_bearing_workspace_no_duplicate() {
-    let Ok(s) = PgStore::connect_test().await else {
-        return;
-    };
+    let s = PgStore::test_store().await;
     let name = format!("_test:dupname:{}", uuid::Uuid::new_v4());
 
     let keep = s.create_workspace(&name, None, None).await.unwrap();
@@ -475,9 +471,7 @@ async fn heal_duplicate_name_workspaces_prunes_empty_dupe_idempotently() {
     // folderless duplicate in the table, not just this test's. Ungated, a
     // concurrent test's sweep runs inside this one's setup window.
     let _gate = REPAIR_SWEEP_GATE.enter();
-    let Ok(s) = PgStore::connect_test().await else {
-        return;
-    };
+    let s = PgStore::test_store().await;
     let name = format!("_test:dupheal:{}", uuid::Uuid::new_v4());
 
     // Survivor: folder-bearing workspace.
@@ -562,9 +556,7 @@ async fn heal_leaves_two_folder_bearing_same_name_workspaces() {
     // another test's global sweep legitimately prunes it, and the assert then
     // fails describing a bug that does not exist.
     let _gate = REPAIR_SWEEP_GATE.enter();
-    let Ok(s) = PgStore::connect_test().await else {
-        return;
-    };
+    let s = PgStore::test_store().await;
     let name = format!("_test:dupneg:{}", uuid::Uuid::new_v4());
 
     let a = s.create_workspace(&name, None, None).await.unwrap();

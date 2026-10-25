@@ -13,9 +13,7 @@ static LEARNED_RULES_LOCK: crate::tasks::test_support::TestGate =
 
 #[tokio::test]
 async fn playbook_rules_load_and_run_roundtrip() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
 
     let rules = pg.list_playbook_rules().await.unwrap();
     assert!(rules.iter().any(|r| r.playbook == "spec_driven"));
@@ -67,9 +65,7 @@ async fn playbook_rules_load_and_run_roundtrip() {
 
 #[tokio::test]
 async fn get_playbook_tone() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
 
     let pb = pg.get_playbook("debug_flow").await.unwrap().unwrap();
     assert_eq!(pb["name"], "debug_flow");
@@ -85,9 +81,7 @@ async fn get_playbook_tone() {
 /// `tests` module inline since that helper isn't visible here.
 #[tokio::test]
 async fn session_confirmed_run_gate() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
 
     pg.execute_raw(
             "INSERT INTO sensei.folders_to_watch(id, path, name, status) \
@@ -142,9 +136,7 @@ async fn session_confirmed_run_gate() {
 /// `session_confirmed_run_gate` folder/session setup above.
 #[tokio::test]
 async fn attribution_and_stats_roundtrip() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
 
     pg.execute_raw(
             "INSERT INTO sensei.folders_to_watch(id, path, name, status) \
@@ -208,9 +200,7 @@ async fn attribution_and_stats_roundtrip() {
 #[tokio::test]
 async fn apply_learn_plan_reweights_and_upserts() {
     let _guard = LEARNED_RULES_LOCK.enter();
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     pg.execute_raw("delete from sensei.playbook_rules where source='learned'").await.ok(); // clean slate — shared test DB
     let rules = pg.list_playbook_rules().await.unwrap();
     let debug = rules.iter().find(|r| r.playbook == "debug_flow").unwrap();
@@ -247,9 +237,7 @@ async fn apply_learn_plan_reweights_and_upserts() {
 #[tokio::test]
 async fn accept_flips_proposal_enabled() {
     let _guard = LEARNED_RULES_LOCK.enter();
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     pg.execute_raw("delete from sensei.playbook_rules where source='learned'").await.ok(); // clean slate — shared test DB
     use crate::playbook::{Intent, LearnPlan, LearnedRule, Lifecycle, Risk};
     pg.apply_learn_plan(&LearnPlan {
@@ -287,9 +275,7 @@ async fn accept_flips_proposal_enabled() {
 
 #[tokio::test]
 async fn find_duplicates_scoped_surfaces_same_folder_pairs() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let u = uuid::Uuid::new_v4();
     let _pid = pg.create_workspace(&format!("_dupproj_{u}"), None, None).await.unwrap();
     pg.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000002','/_dup','_dup','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
@@ -323,9 +309,7 @@ async fn find_duplicates_scoped_surfaces_same_folder_pairs() {
 
 #[tokio::test]
 async fn patterns_for_symbol_matches_by_file_and_is_honest_empty() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let u = uuid::Uuid::new_v4();
     let pid = pg.create_workspace(&format!("_pfsproj_{u}"), None, None).await.unwrap();
     pg.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000003','/_pfs','_pfs','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
@@ -349,9 +333,7 @@ async fn patterns_for_symbol_matches_by_file_and_is_honest_empty() {
 
 #[tokio::test]
 async fn playbook_combo_trust_is_workspace_scoped() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let (proj_a, _) = pg.get_or_create_workspace_by_name("_test:trust_a").await.unwrap();
     let (proj_b, _) = pg.get_or_create_workspace_by_name("_test:trust_b").await.unwrap();
     pg.execute_raw("delete from sensei.playbook_run where feature = 'trust-test'").await.ok();
@@ -386,9 +368,7 @@ async fn playbook_combo_trust_is_workspace_scoped() {
 
 #[tokio::test]
 async fn model_stats_groups_by_classified_by() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let rows = pg.playbook_model_stats().await.unwrap();
     // shape check: each row has classified_by + n + ftr_rate keys (may be empty on a fresh DB)
     if let Some(r) = rows.first() {

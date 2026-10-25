@@ -179,9 +179,7 @@ mod tests {
         // `tick` calls the global `resume_due_runs`, so hold the shared resume
         // lock to serialize with the other resume-race tests.
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         use crate::runs::NewRun;
@@ -235,9 +233,7 @@ mod tests {
         // `tick` calls the global `resume_due_runs`, so hold the shared resume
         // lock to serialize with the other resume-race tests.
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         use crate::runs::NewRun;
@@ -285,9 +281,7 @@ mod tests {
         // scheduler, so there is no such race there).
         let _guard = crate::runs::resume_test_guard();
 
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         use crate::runs::NewRun;

@@ -263,9 +263,7 @@ mod tests {
     #[tokio::test]
     async fn tick_marks_a_stale_running_run_stalled() {
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap(); // running
@@ -289,9 +287,7 @@ mod tests {
     #[tokio::test]
     async fn tick_keeps_a_running_run_with_recent_progress_untouched() {
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();
@@ -325,9 +321,7 @@ mod tests {
     #[tokio::test]
     async fn tick_recovers_a_stalled_run_under_the_cap() {
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();
@@ -366,9 +360,7 @@ mod tests {
     #[tokio::test]
     async fn tick_crashes_a_stalled_run_at_the_cap() {
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();
@@ -392,9 +384,7 @@ mod tests {
     #[tokio::test]
     async fn tick_leaves_a_fresh_running_run_untouched() {
         let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();

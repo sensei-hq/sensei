@@ -369,7 +369,7 @@ mod tests {
     #[tokio::test]
     async fn tick_notifies_a_real_bump_and_dedupes() {
         let _guard = TICK_LOCK.enter();
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
         tick(&s, &q, &Stub(Some("1.2.0".into())), &no_vulns()).await; // minor bump
@@ -388,7 +388,7 @@ mod tests {
     #[tokio::test]
     async fn tick_is_fail_closed_on_range_pin_and_no_latest() {
         let _guard = TICK_LOCK.enter();
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let q = TaskQueue::new();
         // A range pin already accepts the latest → Unknown → no notice.
         let (pid, lid) = seed_pin(&s, "^1.0.0").await;
@@ -407,7 +407,7 @@ mod tests {
 
     #[tokio::test]
     async fn docs_applied_marker_round_trips() {
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let lib = format!("_fmark_{}", uuid::Uuid::new_v4());
         let lid = s.upsert_library(&lib, "cargo", Some("1.0.0"), None, None, None).await.unwrap();
         assert_eq!(s.get_library_docs_applied(&lid).await.unwrap(), None, "unset → None");
@@ -421,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn pending_update_dedup_is_security_aware() {
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
         // A NON-security notify for to_version 2.0.0.
         let based_on = serde_json::json!({ "library_update": {
@@ -453,7 +453,7 @@ mod tests {
 
     #[tokio::test]
     async fn pins_include_base_url_and_source_type() {
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let (_pid, lid) = seed_pin(&s, "1.0.0").await;
         // Give the seeded library a resolvable source pointer.
         s.update_library_source(&lid, "llms.txt", Some("https://x/llms.txt")).await.unwrap();
@@ -488,7 +488,7 @@ mod tests {
     #[tokio::test]
     async fn patch_bump_enqueues_reindex_not_a_rec() {
         let _guard = TICK_LOCK.enter();
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
         set_pin_source(&s, &lid).await;
@@ -515,7 +515,7 @@ mod tests {
     #[tokio::test]
     async fn patch_already_applied_writes_auto_applied_audit() {
         let _guard = TICK_LOCK.enter();
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
         set_pin_source(&s, &lid).await;
@@ -536,7 +536,7 @@ mod tests {
     #[tokio::test]
     async fn patch_without_source_falls_back_to_notify() {
         let _guard = TICK_LOCK.enter();
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await; // no source set
         tick(&s, &q, &Stub(Some("1.0.5".into())), &no_vulns()).await;
@@ -556,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn security_bump_flags_high_urgency_refreshes_and_never_touches_pin() {
         let _guard = TICK_LOCK.enter();
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await; // pin at 1.0.0
         set_pin_source(&s, &lid).await;
@@ -595,7 +595,7 @@ mod tests {
     #[tokio::test]
     async fn security_flag_not_suppressed_by_prior_notify() {
         let _guard = TICK_LOCK.enter();
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
         set_pin_source(&s, &lid).await;
@@ -626,7 +626,7 @@ mod tests {
     #[tokio::test]
     async fn low_severity_advisory_does_not_escalate() {
         let _guard = TICK_LOCK.enter();
-        let Ok(s) = PgStore::connect_test().await else { return };
+        let s = PgStore::test_store().await;
         let q = TaskQueue::new();
         let (pid, lid) = seed_pin(&s, "1.0.0").await;
         set_pin_source(&s, &lid).await;

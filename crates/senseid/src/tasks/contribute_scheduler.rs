@@ -235,9 +235,7 @@ mod tests {
         use crate::db::pg_store::{InsertMemory, NewDojoMembership};
         use crate::dojo::contribute::NoLlm;
 
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let _guard = preferences::test_lock().enter();
 
         // Clean slate for the FIXTURE, not just for the watermark below. Step 3

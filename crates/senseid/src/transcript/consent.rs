@@ -92,9 +92,7 @@ mod tests {
     /// is no. Mutation that must break this: treat a missing key as off.
     #[tokio::test]
     async fn everything_is_consented_until_someone_says_no() {
-        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
-            return;
-        };
+        let pg = crate::db::pg_store::PgStore::test_store().await;
         let _gate = CONSENT_KEYS.enter();
         for (s, _) in SOURCES {
             sqlx_core::query::query("DELETE FROM sensei.config WHERE key = $1")

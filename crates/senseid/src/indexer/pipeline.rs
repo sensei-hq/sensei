@@ -1177,10 +1177,7 @@ mod parse_task {
     /// call rebuilds — the two Arcs no longer point at one allocation.
     #[tokio::test]
     async fn the_world_is_built_once_per_repo_and_shared() {
-        let Ok(pg) = PgStore::connect_test().await else {
-            println!("no database — skipping");
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let folder = uuid::Uuid::new_v4();
         TellFile::forget(&folder);
 
@@ -1211,10 +1208,7 @@ mod parse_task {
     /// Breaking mutation: populate `scanned` in `shared`.
     #[tokio::test]
     async fn the_shared_world_never_carries_scanned() {
-        let Ok(pg) = PgStore::connect_test().await else {
-            println!("no database — skipping");
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let folder = uuid::Uuid::new_v4();
         TellFile::forget(&folder);
         let world = TellFile::shared(&pg, &folder).await.expect("a world is built");
@@ -1257,10 +1251,7 @@ mod parse_task {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
         let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
-        let Ok(pg) = PgStore::connect_test().await else {
-            println!("no database — skipping");
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join("src")).unwrap();
@@ -1467,9 +1458,7 @@ mod corpus {
     /// it.
     #[tokio::test]
     async fn every_stage_reaches_the_progress_stream() {
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
@@ -1520,9 +1509,7 @@ mod corpus {
     /// the shape of wrong answer R4 ranks below no answer.
     #[tokio::test]
     async fn a_scan_that_could_not_see_everything_says_so() {
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
@@ -1796,9 +1783,7 @@ mod corpus {
     /// call from `write_one_repo`.
     #[tokio::test]
     async fn a_scanned_repository_records_its_workspace_in_the_junction() {
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let tmp = tempfile::tempdir().unwrap();
         // A name unique to this run: a shared `sensei_test` carries other runs'
         // workspaces, and a fixed name would let a previous run's junction row

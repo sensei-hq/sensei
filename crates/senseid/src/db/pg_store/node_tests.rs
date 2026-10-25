@@ -34,9 +34,7 @@ type StoredNode =
 /// `.bind(line_end)` lines, or bind a literal `false` for `is_exported`.
 #[tokio::test]
 async fn every_column_a_node_write_touches_survives_the_round_trip() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let uniq = uuid::Uuid::new_v4();
     let root = format!("/_test/nodes/{uniq}");
     let root_id = pg.add_watch_root(&root, "node-wt", &serde_json::json!([])).await.unwrap();
@@ -111,9 +109,7 @@ async fn every_column_a_node_write_touches_survives_the_round_trip() {
 /// drop `line_start` from the conflict target.
 #[tokio::test]
 async fn re_writing_one_identity_keeps_the_same_node_and_moves_the_rest() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let uniq = uuid::Uuid::new_v4();
     let root = format!("/_test/nodes-stable/{uniq}");
     let root_id = pg.add_watch_root(&root, "node-wt2", &serde_json::json!([])).await.unwrap();
@@ -212,9 +208,7 @@ async fn cleanup(pg: &PgStore, folder_id: &uuid::Uuid, root_id: &uuid::Uuid) {
 /// bare `now()`.
 #[tokio::test]
 async fn re_minting_an_unchanged_library_node_does_not_move_it() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let uniq = uuid::Uuid::new_v4();
     let root = format!("/_test/libnodes/{uniq}");
     let root_id = pg.add_watch_root(&root, "lib-wt", &serde_json::json!([])).await.unwrap();

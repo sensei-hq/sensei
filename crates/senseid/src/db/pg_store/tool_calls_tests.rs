@@ -42,9 +42,7 @@ async fn seed(pg: &PgStore, rows: &[(String, &'static str, i64, serde_json::Valu
 /// duration from the hook timestamps instead of the engine's `duration_ms`.
 #[tokio::test]
 async fn each_call_is_paired_with_its_own_response_and_the_engines_duration() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let session = format!("_test-replay-{}", uuid::Uuid::new_v4());
     let (a, b) = (format!("toolu_a_{session}"), format!("toolu_b_{session}"));
     // A starts first and finishes LAST; B overtakes it. Order pairing would put
@@ -111,9 +109,7 @@ async fn each_call_is_paired_with_its_own_response_and_the_engines_duration() {
 /// back to order pairing when the id is missing.
 #[tokio::test]
 async fn a_duplicated_capture_is_one_call_and_a_missing_id_is_unpaired() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let session = format!("_test-replay-dup-{}", uuid::Uuid::new_v4());
     let id = format!("toolu_dup_{session}");
     let pre = serde_json::json!({ "tool_use_id": id, "tool_input": {} });
@@ -150,9 +146,7 @@ async fn a_duplicated_capture_is_one_call_and_a_missing_id_is_unpaired() {
 /// `response_id`.
 #[tokio::test]
 async fn a_verdict_shows_on_its_own_call_in_the_replay_timeline() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let session = format!("_test-replay-verdict-{}", uuid::Uuid::new_v4());
     let (a, b) = (format!("toolu_va_{session}"), format!("toolu_vb_{session}"));
     seed(
@@ -217,9 +211,7 @@ async fn a_verdict_shows_on_its_own_call_in_the_replay_timeline() {
 /// Mutation that must break this: pair only `event_type = 'PostToolUse'`.
 #[tokio::test]
 async fn a_failed_call_is_paired_with_its_failure() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let session = format!("_test-replay-fail-{}", uuid::Uuid::new_v4());
     let id = format!("toolu_fail_{session}");
     let rows = [

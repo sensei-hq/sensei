@@ -23,6 +23,14 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+/// The most connections one test's pool may hold ([`PgStore::connect_test`]).
+///
+/// One factor of the suite's connection budget (#204): test threads × this,
+/// plus the daemon's [`sensei_bootstrap::DB_POOL_MAX_CONNECTIONS`], must stay
+/// under Postgres's `max_connections`. `.cargo/config.toml` caps the threads,
+/// and `the_test_suite_fits_postgres_connection_budget` checks the sum.
+pub(crate) const TEST_POOL_MAX_CONNECTIONS: u32 = 4;
+
 /// Definition details for [`PgStore::upsert_node_by_fqn`] — the fields a
 /// DEFINITION fills on a node a reference may have created as a stub. Passing
 /// `None` for the `def` argument means "this mention is a REFERENCE": get-or-create
@@ -703,7 +711,24 @@ impl PgStore {
         let url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
             format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT)
         });
-        Self::connect_with(&url, 0, 4).await
+        Self::connect_with(&url, 0, TEST_POOL_MAX_CONNECTIONS).await
+    }
+
+    /// The test database, or a failed test (#204).
+    ///
+    /// For a test that needs `sensei_test`: every place the suite runs has the
+    /// database, so a connect failure is a fault to report, never a reason to
+    /// pass having run nothing. Its most likely cause on a dev machine is the
+    /// connection budget — the suite's pools plus the daemon's against
+    /// Postgres's `max_connections` — so the message says so.
+    #[cfg(test)]
+    pub async fn test_store() -> Self {
+        Self::connect_test().await.unwrap_or_else(|e| {
+            panic!(
+                "sensei_test is unreachable, or Postgres's connection budget is exhausted \
+                 (the suite's pools plus the daemon's against max_connections, #204): {e}"
+            )
+        })
     }
 
     /// Get a reference to the connection pool.
@@ -1200,10 +1225,7 @@ mod pool_lifecycle_tests {
     /// not assumed.
     #[tokio::test]
     async fn closing_the_store_closes_the_pool_and_is_idempotent() {
-        let Ok(pg) = PgStore::connect_test().await else {
-            println!("no database — skipping");
-            return;
-        };
+        let pg = PgStore::test_store().await;
 
         // A live pool first, so a closed one afterwards means `close` did it
         // rather than the connection never having worked.

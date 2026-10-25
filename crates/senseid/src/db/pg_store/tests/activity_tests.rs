@@ -880,9 +880,7 @@ async fn cleanup_logs(pg: &PgStore, marker: &str) {
 
 #[tokio::test]
 async fn query_logs_no_filter_newest_first_and_capped() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
     seed_logs(&pg, &marker).await;
 
@@ -909,9 +907,7 @@ async fn query_logs_no_filter_newest_first_and_capped() {
 
 #[tokio::test]
 async fn query_logs_level_and_source_and_module_filters() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
     seed_logs(&pg, &marker).await;
 
@@ -940,9 +936,7 @@ async fn query_logs_level_and_source_and_module_filters() {
 
 #[tokio::test]
 async fn query_logs_since_excludes_older_rows() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
     seed_logs(&pg, &marker).await;
 
@@ -962,9 +956,7 @@ async fn query_logs_since_excludes_older_rows() {
 
 #[tokio::test]
 async fn query_logs_limit_is_honored() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
     seed_logs(&pg, &marker).await;
 
@@ -979,9 +971,7 @@ async fn query_logs_limit_is_honored() {
 
 #[tokio::test]
 async fn query_logs_empty_result_is_empty_array() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     // A source that never exists → empty Vec, not an error.
     let none =
         pg.query_logs(None, Some("_test:logs:does-not-exist"), None, None, 200).await.unwrap();

@@ -562,7 +562,7 @@ mod forge_token_state_tests {
         // The default must not flatter. A stored token nobody has verified is
         // `unknown`; calling it `active` would make the very first check decide
         // `Refresh` on a credential whose standing has never been established.
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let slot = format!("ztest-fts-{}", uuid::Uuid::new_v4());
         seed(&pg, &slot).await;
         let row = pg.forge_token_rows().await.unwrap().into_iter().find(|r| r.session_slot == slot);
@@ -579,7 +579,7 @@ mod forge_token_state_tests {
         // deadline standing. Overwriting with NULL would downgrade a known
         // expiry to `unknown` and turn every later run into a Verify — the token
         // would then be re-probed forever instead of refreshed on time.
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let slot = format!("ztest-fts-{}", uuid::Uuid::new_v4());
         seed(&pg, &slot).await;
 
@@ -606,7 +606,7 @@ mod forge_token_state_tests {
     async fn marking_dead_is_recorded_and_the_expiry_is_kept_as_evidence() {
         // The expiry is WHY it is dead. Clearing it on death would discard the
         // reason and leave the UI unable to say more than "not working".
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let slot = format!("ztest-fts-{}", uuid::Uuid::new_v4());
         seed(&pg, &slot).await;
         pg.set_forge_token_state(&slot, "active", Some(1_700_000_000)).await.unwrap();
@@ -661,7 +661,7 @@ mod forge_token_observe_tests {
     async fn a_successful_call_records_active_and_the_deadline_it_carried() {
         // The point of observing: sign-in reads /user/orgs anyway, so the token
         // gets its expiry immediately instead of up to a scheduling interval later.
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let slot = format!("ztest-obs-{}", uuid::Uuid::new_v4());
         seed(&pg, &slot).await;
         observe(&pg, &slot, Some(200), Some("2026-08-30 12:00:00 UTC")).await;
@@ -673,7 +673,7 @@ mod forge_token_observe_tests {
     async fn a_401_on_an_ordinary_call_marks_the_token_dead() {
         // A token that dies between checks is caught by the next thing that uses
         // it, rather than waiting for the scheduled probe.
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let slot = format!("ztest-obs-{}", uuid::Uuid::new_v4());
         seed(&pg, &slot).await;
         observe(&pg, &slot, Some(401), None).await;
@@ -687,7 +687,7 @@ mod forge_token_observe_tests {
         // standing we did not learn would be a fabrication — and `checked_at`
         // must stay untouched so "asked and learned nothing" is distinguishable
         // from "never asked".
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let slot = format!("ztest-obs-{}", uuid::Uuid::new_v4());
         seed(&pg, &slot).await;
         observe(&pg, &slot, Some(200), Some("2026-08-30 12:00:00 UTC")).await;
@@ -735,7 +735,7 @@ mod session_slot_of_github_account_tests {
 
     #[tokio::test]
     async fn names_the_slot_of_the_identity_that_holds_the_account() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (label, id) = (format!("ztest-ssga-{}", uuid::Uuid::new_v4()), fresh_id());
         seed(&pg, &label, Some(&label), id).await;
         assert_eq!(pg.session_slot_of_github_account(id).await.unwrap(), Some(label.clone()));
@@ -744,13 +744,13 @@ mod session_slot_of_github_account_tests {
 
     #[tokio::test]
     async fn an_account_no_identity_holds_has_no_slot() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         assert_eq!(pg.session_slot_of_github_account(fresh_id()).await.unwrap(), None);
     }
 
     #[tokio::test]
     async fn a_holder_that_never_signed_in_here_has_no_slot() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (label, id) = (format!("ztest-ssga-{}", uuid::Uuid::new_v4()), fresh_id());
         seed(&pg, &label, None, id).await;
         assert_eq!(pg.session_slot_of_github_account(id).await.unwrap(), None);
@@ -792,7 +792,7 @@ mod personas_owning_email_tests {
 
     #[tokio::test]
     async fn finds_the_owner_case_insensitively_and_ignores_removed_aliases() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let tag = uuid::Uuid::new_v4();
         let (owner, former) = (format!("ztest-poe-a-{tag}"), format!("ztest-poe-b-{tag}"));
         let email = format!("ztest-{tag}@example.com");

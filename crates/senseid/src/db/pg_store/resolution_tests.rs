@@ -52,9 +52,7 @@ async fn set_verdict(pg: &PgStore, edge: &uuid::Uuid, via: Option<&str>, reason:
 /// `'missed'`.
 #[tokio::test]
 async fn an_edge_nobody_asked_about_is_not_reported_as_a_miss() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let tag = uuid::Uuid::new_v4();
     let (workspace_id, folder_id) = fixture(&pg, &tag).await;
 
@@ -132,9 +130,7 @@ async fn an_edge_nobody_asked_about_is_not_reported_as_a_miss() {
 /// two packages merge into one row).
 #[tokio::test]
 async fn placement_is_decomposed_by_the_package_the_edge_was_written_in() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let tag = uuid::Uuid::new_v4();
     let (workspace_id, folder_id) = fixture(&pg, &tag).await;
     let def = |p: &'static str| FqnDef {
@@ -203,9 +199,7 @@ async fn placement_is_decomposed_by_the_package_the_edge_was_written_in() {
 /// or drop rows whose source language is NULL.
 #[tokio::test]
 async fn language_follows_the_source_and_an_unattributable_edge_still_appears() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let tag = uuid::Uuid::new_v4();
     let (workspace_id, folder_id) = fixture(&pg, &tag).await;
     let def = |p: &'static str| FqnDef {

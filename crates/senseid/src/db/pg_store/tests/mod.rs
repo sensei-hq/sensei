@@ -118,3 +118,78 @@ async fn create_test_workspace_and_folder(s: &PgStore, suffix: &str) -> (uuid::U
     s.set_folder_workspace(&fid, &pid, "root", None).await.unwrap();
     (pid, fid)
 }
+
+/// #204: a test that needs `sensei_test` and cannot connect FAILS; it never
+/// passes by returning early.
+///
+/// 198 tests opened with `let Ok(pg) = PgStore::connect_test().await else {
+/// return };`. Every place these tests run has the database (rust.yml
+/// provisions it; nothing else runs them), so the early return only ever hid a
+/// failure: when the suite exhausts Postgres's connection budget — the
+/// subject of #204 — those tests report a pass having run nothing.
+#[test]
+fn no_test_passes_by_skipping_a_failed_test_db_connect() {
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                rust_files(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rust_files(&src, &mut files);
+    // Spelled at runtime so this test's own text never matches itself.
+    let opener = format!("{}::connect_test().await else", "PgStore");
+    let mut skips = Vec::new();
+    for f in &files {
+        let text = std::fs::read_to_string(f).unwrap();
+        for (i, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("let Ok(") && line.contains(&opener) {
+                skips.push(format!("{}:{}", f.strip_prefix(&src).unwrap().display(), i + 1));
+            }
+        }
+    }
+    assert!(skips.is_empty(), "{} tests skip on a failed connect: {skips:#?}", skips.len());
+}
+
+/// #204: the suite cannot exhaust Postgres's connection budget, whatever the
+/// machine's core count.
+///
+/// `cargo test` runs one thread per core by default and each test's pool holds
+/// up to `TEST_POOL_MAX_CONNECTIONS`; with the daemon's pool on top, a big
+/// enough machine overran `max_connections` and the suite hung or — before
+/// `test_store` — passed tests that never ran. `.cargo/config.toml` caps the
+/// threads; this checks the cap against the server the tests actually use,
+/// leaving room for psql and other admin sessions.
+#[tokio::test]
+async fn the_test_suite_fits_postgres_connection_budget() {
+    let config = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.cargo/config.toml"),
+    )
+    .expect(".cargo/config.toml");
+    let threads: u32 = config
+        .lines()
+        .find(|l| l.trim_start().starts_with("RUST_TEST_THREADS"))
+        .and_then(|l| l.split('"').nth(1))
+        .and_then(|v| v.parse().ok())
+        .expect(".cargo/config.toml must cap RUST_TEST_THREADS");
+
+    let pg = PgStore::test_store().await;
+    let (max,): (String,) =
+        sqlx_core::query_as::query_as("SHOW max_connections").fetch_one(pg.pool()).await.unwrap();
+    let max: u32 = max.parse().unwrap();
+
+    const ADMIN_HEADROOM: u32 = 10;
+    let worst =
+        threads * super::TEST_POOL_MAX_CONNECTIONS + sensei_bootstrap::DB_POOL_MAX_CONNECTIONS;
+    assert!(
+        worst + ADMIN_HEADROOM <= max,
+        "{threads} threads × {} + daemon {} = {worst}, + {ADMIN_HEADROOM} headroom > max_connections {max}",
+        super::TEST_POOL_MAX_CONNECTIONS,
+        sensei_bootstrap::DB_POOL_MAX_CONNECTIONS
+    );
+}

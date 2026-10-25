@@ -901,7 +901,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_by_lib_id_preserves_ecosystem_and_creates_no_phantom() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let name = format!("_fidxlib_{}", uuid::Uuid::new_v4());
         // A cargo library, exactly as the dependency-extraction path creates it.
         let real_id = pg
@@ -925,7 +925,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_non_uuid_folder_path_first_indexes_by_name() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let name = format!("_fidxnew_{}", uuid::Uuid::new_v4());
         // Not a uuid → genuinely-new library first-index (upsert by name).
         let id = resolve_index_library_id(
@@ -943,7 +943,7 @@ mod tests {
 
     #[tokio::test]
     async fn stamp_docs_applied_only_on_nonempty_index() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let lib = format!("_fstamp_{}", uuid::Uuid::new_v4());
         let lid = pg.upsert_library(&lib, "cargo", Some("1.0.0"), None, None, None).await.unwrap();
         pg.set_library_latest_cache(&lid, "1.2.4", 10).await.unwrap();
@@ -965,7 +965,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_unknown_uuid_fails_closed() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let ghost = uuid::Uuid::new_v4();
         let name = format!("_fidxghost_{}", uuid::Uuid::new_v4());
         // A uuid that no longer resolves → error, never a fabricated fallback row.

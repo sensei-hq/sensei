@@ -282,9 +282,7 @@ async fn memories_table_exists() {
 
 #[tokio::test]
 async fn knowledge_source_crud_roundtrip() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let id = pg
         .create_knowledge_source(&NewKnowledgeSource {
             kind: "hive_mind".into(),

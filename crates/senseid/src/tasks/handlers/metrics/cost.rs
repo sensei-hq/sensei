@@ -124,7 +124,7 @@ mod tests {
         // The honest-empty case that matters most: an unconfigured user must not
         // see a cost of 0.00, which reads as "free" rather than "unknown".
         let _guard = SUBSCRIPTION_KEY.lock().await;
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let before = pg.get_config(SUBSCRIPTION_CONFIG_KEY).await.unwrap();
         pg.set_config(SUBSCRIPTION_CONFIG_KEY, "").await.unwrap();
 
@@ -161,7 +161,7 @@ mod tests {
     #[tokio::test]
     async fn a_configured_plan_counts_delivered_results_through_the_window_query() {
         let _guard = SUBSCRIPTION_KEY.lock().await;
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) =
             crate::tasks::test_support::seed_metrics_workspace_folder(&pg, &uniq).await;

@@ -1766,9 +1766,7 @@ mod nothing_generalised_is_nothing_shareable {
     async fn the_preview_shows_the_example_and_holds_what_the_publish_would_hold() {
         use crate::db::pg_store::{InsertMemory, NewDojoMembership};
 
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let (workspace, tenant) = ("_test:dojo:preview_example", "github/acme-preview");
         sqlx_core::query::query("DELETE FROM sensei.workspaces WHERE name = $1")
             .bind(workspace)

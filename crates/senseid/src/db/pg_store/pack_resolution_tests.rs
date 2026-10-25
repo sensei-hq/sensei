@@ -10,9 +10,7 @@ use super::*;
 
 #[tokio::test]
 async fn adopted_pack_rules_resolve_with_never_weaken() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let pool = pg.pool();
 
     // Clean any leftovers from a prior aborted run (slug is globally unique;
@@ -138,9 +136,7 @@ async fn default_constitution_import_adopts_offline_but_not_stack_templates() {
     // AUTO-ADOPTED at the general namespace, so a fresh install resolves it
     // offline. The stack-templates pack is seeded but NOT adopted (opt-in per
     // stack) — it is simply absent from rule_pack_adoptions.jsonl.
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let pool = pg.pool();
 
     // The always-on 'general' scope (seeded by import_scopes in prod); provide it
@@ -252,9 +248,7 @@ async fn resolve_local_checker_rules_returns_only_checker_backed_rules() {
     // D-CHECKER: resolve_local_checker_rules surfaces ONLY adopted rules with
     // verification='checker' + a checker_ref — a 'review' rule in the same pack
     // must not appear. Uses a general adoption so a random folder resolves it.
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let pool = pg.pool();
     sqlx_core::query::query("DELETE FROM sensei.rule_packs WHERE slug = 'checker-resolve-test'")
         .execute(pool)
@@ -317,9 +311,7 @@ async fn resolve_local_checker_rules_returns_only_checker_backed_rules() {
 /// pack's area instead of the rung it was adopted at.
 #[tokio::test]
 async fn a_stack_pack_adopted_at_a_repository_governs_its_folders() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let pool = pg.pool();
     let uniq = uuid::Uuid::new_v4().simple().to_string();
     let suffix = format!("r6-stack-{}", &uniq[..8]);
@@ -380,9 +372,7 @@ async fn a_stack_pack_adopted_at_a_repository_governs_its_folders() {
 /// repository rung: `None`, never an invented namespace.
 #[tokio::test]
 async fn the_repository_rung_resolves_on_first_use() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let uniq = uuid::Uuid::new_v4().simple().to_string();
     let suffix = format!("r6-first-{}", &uniq[..8]);
     let fid = super::tests::create_test_folder(&pg, &suffix).await;
