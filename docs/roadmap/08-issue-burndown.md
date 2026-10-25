@@ -197,7 +197,7 @@ The settings screen lists them as repositories.
 - **Code health:**
   - #199: `has_key` part done via #285. Left: Linux roundtrip tests in CI, and a decision on headless Linux
     (an encrypted-file store, or stop publishing Linux daemon artifacts).
-  - #201: 6 `languages::fqn` call sites.
+  - ~~#201~~ **Closed 2026-10-25** (1bda2c18): one fqn minter. All six v1 call sites were on code that cannot run; the path and its encoder are deleted (−1,642 lines), guarded by a source-scan test. Live: 0 of 50,251 nodes v1-shaped.
   - #139: rokkit material/frosted focus guard (upstream rokkit).
 
 ## Wave 4 — CI and test reliability (07-quality D1/D2, F)

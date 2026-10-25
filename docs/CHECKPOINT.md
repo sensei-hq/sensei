@@ -25,7 +25,7 @@
 
 **#298 fixed on branch `fix/298-stored-pairing-keys`** (live: 6–8.4s → 0.58s, output identical). The live DB is converged with the fixed dbd. It is blocked on **dbd 0.27.6**: dbd#104 (a new generated column was added plain), fixed on dbd develop c506dfb0. Then bump the 4 dbd pins, merge the branch, and run `deploy_upgrade --ignored`. dbd#105 is filed (promoting a column a view reads).
 
-**#106 and #335 closed** (no view reads fixtures; every org screen shows a failed read). **Next (wave 3, code health): #201**, the 6 `languages::fqn` call sites.
+**#106, #335 and #201 closed.** #201: the unreachable v1 fqn path and its encoder are deleted (1bda2c18). A flaky heal test was fixed on the way (0d7e4daa). **Next (wave 4): #204**: DB pool cap and test threads, then #183 isolation.
 
 **Next command:** the user says go on dbd 0.27.6; approves `deploy-dojo` (both v0.20.0 and v0.20.1 runs are waiting) and says go on a kavach release (minor: 1.3.0). Then: check the Worker's `/version`; count #331 production duplicates; bump the dōjō to the new kavach and drop `app.html`'s guard.
 
