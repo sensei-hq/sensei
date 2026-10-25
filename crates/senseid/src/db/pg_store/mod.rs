@@ -537,6 +537,7 @@ mod git_history;
 mod governance;
 mod graph;
 mod graph_push;
+mod test_db;
 pub use graph_push::GraphCheckout;
 mod indexer;
 /// Named outside this module because the MCP handler picks the direction and
@@ -708,9 +709,8 @@ impl PgStore {
     /// that surfaces. Override with `TEST_DATABASE_URL` for ad-hoc targets (e.g. a
     /// forked snapshot for debugging).
     pub async fn connect_test() -> Result<Self, String> {
-        let url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-            format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT)
-        });
+        // Its own clone of `sensei_test`, one per test (#183) — see `test_db`.
+        let url = test_db::url().await?;
         Self::connect_with(&url, 0, TEST_POOL_MAX_CONNECTIONS).await
     }
 

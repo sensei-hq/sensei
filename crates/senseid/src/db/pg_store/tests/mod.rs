@@ -193,3 +193,46 @@ async fn the_test_suite_fits_postgres_connection_budget() {
         sensei_bootstrap::DB_POOL_MAX_CONNECTIONS
     );
 }
+
+/// #183: isolation BY CONSTRUCTION — a test's writes are invisible to every
+/// other test.
+///
+/// Every DB test shared one `sensei_test`, so a database-wide operation in one
+/// test (a heal, a prune, a rescan sweep) destroyed a sibling's fixture
+/// mid-flight. Five gates were added after five confusing failures, each by
+/// convention. Each test now gets its own database, cloned from `sensei_test`.
+///
+/// Libtest runs each test on its own thread, so "another test" is modelled as
+/// another thread: a row written there must not be visible here.
+#[tokio::test]
+async fn a_tests_rows_are_invisible_to_every_other_test() {
+    let here = PgStore::test_store().await;
+    let marker = format!("/_test/isolation/{}", uuid::Uuid::new_v4());
+    let elsewhere = marker.clone();
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(
+            async move {
+                let other = PgStore::test_store().await;
+                other
+                    .add_watch_root(&elsewhere, "isolation", &serde_json::json!([]))
+                    .await
+                    .unwrap();
+            },
+        )
+    })
+    .join()
+    .unwrap();
+
+    let roots = here.list_watch_roots().await.unwrap();
+    assert!(
+        roots.iter().all(|r| r["path"] != marker.as_str()),
+        "another test's row is visible here: the tests share a database"
+    );
+
+    // And this test's own connections all see ONE database: a second
+    // connect within the same test is the same database, not a fresh clone.
+    let again = PgStore::test_store().await;
+    here.add_watch_root(&marker, "isolation-here", &serde_json::json!([])).await.unwrap();
+    let seen = again.list_watch_roots().await.unwrap();
+    assert!(seen.iter().any(|r| r["path"] == marker.as_str()), "one test, one database");
+}
