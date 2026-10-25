@@ -8,8 +8,7 @@
 		PhasePill,
 		LadderRung,
 		RuleRow,
-		ConflictCard
-	} from '$lib/components/kit';
+		ConflictCard, LoadError } from '$lib/components/kit';
 	import type { KitConflict, KitLadderRung, KitWorkspace } from '$lib/components/kit/types';
 	import { createWorkspacePreview, type PreviewView } from '$lib/preview/state.svelte';
 	import { untrack } from 'svelte';
@@ -26,11 +25,14 @@
 		workspace,
 		ladder,
 		conflicts,
+		error = null,
 		onBack
 	}: {
 		workspace: KitWorkspace;
 		ladder: KitLadderRung[];
 		conflicts: KitConflict[];
+		/** A failed constitution read — shown instead of the empty state (#106). */
+		error?: string | null;
 		onBack?: () => void;
 	} = $props();
 
@@ -69,7 +71,9 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
-		{#if ladder.length === 0}
+		{#if error}
+			<LoadError what="this workspace's constitution" {error} />
+		{:else if ladder.length === 0}
 			<!-- Honest-empty: the composed constitution is resolved by the daemon in the
 			     editor and NOT yet federated to the dōjō (F4). We render the real workspace
 			     header above + this truthful state, never a fabricated ladder/conflicts. -->

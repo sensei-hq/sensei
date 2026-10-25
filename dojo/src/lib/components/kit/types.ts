@@ -584,16 +584,17 @@ export interface KitBillingInvoice {
 /** Plan & billing state for an org (dojo2-data `billing`). Free where public or
  *  personal; seats bill per active contributor. */
 export interface KitBilling {
-	/** The current plan label (e.g. "Team · private"). */
-	plan: string;
-	/** The monthly price per active contributor. */
-	perSeat: number;
-	/** Billable active contributors. */
-	seatsActive: number;
-	/** Read-only members (always free). */
-	seatsReadonly: number;
-	/** The next renewal date (e.g. "Aug 1"). */
-	renews: string;
+	/** The current plan label (e.g. "Team"); null with no billing account. */
+	plan: string | null;
+	/** The monthly price per active contributor; null until a price is set
+	 *  (no payment provider is wired, D-BILLING). */
+	perSeat: number | null;
+	/** Billable active contributors; null when nothing was loaded. */
+	seatsActive: number | null;
+	/** Read-only members (always free); null when not counted. */
+	seatsReadonly: number | null;
+	/** The next renewal date (e.g. "Aug 1"); null without a billing period. */
+	renews: string | null;
 	tiers: KitBillingTier[];
 	relayRows: KitBillingRelayRow[];
 	invoices: KitBillingInvoice[];

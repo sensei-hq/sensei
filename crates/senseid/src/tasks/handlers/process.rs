@@ -695,162 +695,25 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // line_start) so call edges can be sourced from the caller node — not the
         // file. Keyed on line because same-named methods across impl blocks are
         // legal in Rust.
-        // The Rust FQN path (result.fqn) get-or-creates each symbol node keyed on
-        // its canonical FQN — so a definition and every reference to it share one
-        // node — via `upsert_node_by_fqn`. Every other language keeps the line-based
-        // bare-name path (`upsert_node_ex`). `fqn_ids` maps fqn→id for edge sourcing.
         let mut sym_ids: std::collections::HashMap<(String, i32), uuid::Uuid> =
             std::collections::HashMap::new();
-        let mut fqn_ids: std::collections::HashMap<String, uuid::Uuid> =
-            std::collections::HashMap::new();
-        // The `nodes.language` column for every FQN node is the FILE's language
-        // (derived from its extension) — NOT the fqn's grouping lang and NOT a
-        // hardcoded "rust". Keeps the same-language fallback (0.8) honest across
-        // the migrated languages.
-        let file_lang = crate::languages::language_for_path(&result.rel_path);
-        // The fqn LANGUAGE SEGMENT for this file's own nodes. Hoisted above both
-        // users — the module container below and the import-edge resolution
-        // further down — because an import must be looked up under the same
-        // segment the module node was written with, and a second copy of this
-        // derivation would drift from it silently.
-        let fqn_lang = fqn_lang_of(result.fqn.as_ref(), file_lang);
-        if let Some(fqn_out) = &result.fqn {
-            // D5c: a `module` container per file (nested under the file). Top-level
-            // items nest under it (or the file node at the crate root); methods nest
-            // under their TYPE node — so the graph is file → module → type → method.
-            let mut top_parent = file_node_id;
-            if !fqn_out.module.is_empty() {
-                // The module container's fqn language matches the file's defs (the
-                // first fqn's leading segment), so a Python/TS module node isn't
-                // mislabelled as rust.
-                //
-                // When the parse yields a module path but NO top-level defs there is
-                // no leading segment to copy, so fall back to the FILE's language
-                // rather than a hardcoded "rust" — that fallback minted
-                // `rust·<pkg>·lib/components/Foo` for a .svelte file, which is both
-                // wrong (it corrupts the same-language scoring the `language` column
-                // feeds) and unstable: the fqn flipped as soon as defs reappeared.
-                // Only `adopt_node_by_identity` keeps such a flip from wedging the
-                // file forever, so don't rely on it — emit a stable value here.
-                // `fqn_lang` is hoisted above this block — the import resolver
-                // below must look up modules under the SAME segment this writes.
-                let mfqn =
-                    crate::languages::fqn::item(fqn_lang, &fqn_out.package, "", &fqn_out.module);
-                let mname = fqn_out.module.rsplit("::").next().unwrap_or(&fqn_out.module);
-                let mid = ctx
-                    .pg()
-                    .upsert_node_by_fqn(
-                        &folder_id,
-                        &mfqn,
-                        "module",
-                        mname,
-                        file_lang,
-                        Some(crate::db::pg_store::FqnDef {
-                            file_path: &result.rel_path,
-                            signature: None,
-                            line_start: None,
-                            line_end: None,
-                            is_exported: false,
-                            parent_id: Some(&file_node_id),
-                        }),
-                    )
-                    .await
-                    .map_err(|e| format!("upsert module node {mfqn}: {e}"))?;
-                fqn_ids.insert(mfqn, mid);
-                top_parent = mid;
-            }
-            for d in &fqn_out.defs {
-                let kind = crate::types::NodeKind::from_symbol_kind(&d.kind);
-                // Structural parent: a method → its enclosing type node (get-or-create
-                // — a stub if the type is defined in another file); a top-level item →
-                // the module container (or the file at crate root).
-                let parent_id: uuid::Uuid = match &d.parent_fqn {
-                    Some(pf) => match fqn_ids.get(pf) {
-                        Some(id) => *id,
-                        None => ctx
-                            .pg()
-                            .upsert_node_by_fqn(
-                                &folder_id,
-                                pf,
-                                "class",
-                                pf.rsplit('·').next().unwrap_or(pf),
-                                file_lang,
-                                None,
-                            )
-                            .await
-                            .map_err(|e| format!("upsert fqn parent {pf}: {e}"))?,
-                    },
-                    None => top_parent,
-                };
-                let id = ctx
-                    .pg()
-                    .upsert_node_by_fqn(
-                        &folder_id,
-                        &d.fqn,
-                        kind.as_str(),
-                        &d.name,
-                        file_lang,
-                        Some(crate::db::pg_store::FqnDef {
-                            file_path: &result.rel_path,
-                            signature: d.signature.as_deref(),
-                            line_start: Some(d.line_start as i32),
-                            line_end: Some(d.line_end as i32),
-                            is_exported: d.is_exported,
-                            parent_id: Some(&parent_id),
-                        }),
-                    )
-                    .await
-                    .map_err(|e| format!("upsert fqn def {}: {e}", d.fqn))?;
-                // The declared return type — the one hop of the transitive
-                // receiver chain nothing else can answer, and the reason
-                // `ctx.pg().m()` could never name which `m`. Written through a
-                // second statement rather than folded into the upsert because
-                // `props` is deliberately absent from that DO UPDATE set-list,
-                // which is what lets a value written on a reference-minted stub
-                // survive the definition merging into the same row.
-                //
-                // UNCONDITIONAL for the kinds that can have one: a function
-                // that LOST its return type between scans reports `None` here,
-                // and only a write clears the previous scan's value. Skipping
-                // would leave the resolver chasing a type the function no
-                // longer returns.
-                //
-                // The fn/method gate is a CORRECTNESS gate, not a cheap one: no
-                // other kind is ever given a return type by any producer, so a
-                // write for one could only ever clear a key nothing set. It
-                // buys little traffic — measured on the live index, function +
-                // method are 108,438 of the 136,583 definitions (79%), so this
-                // statement runs for four definitions in five. What keeps a
-                // re-scan cheap is `set_node_return_type` itself skipping the
-                // write when the stored value is already identical.
-                if matches!(kind, crate::types::NodeKind::Function | crate::types::NodeKind::Method)
-                {
-                    ctx.pg()
-                        .set_node_return_type(&id, d.return_type.as_deref().unwrap_or(""))
-                        .await
-                        .map_err(|e| format!("set return type {}: {e}", d.fqn))?;
-                }
-                fqn_ids.insert(d.fqn.clone(), id);
-            }
-        } else {
-            for sym in &result.symbols {
-                let id = ctx
-                    .pg()
-                    .upsert_node(&NodeRow {
-                        folder_id: &folder_id,
-                        kind: &sym.kind,
-                        name: &sym.name,
-                        file_path: &result.rel_path,
-                        parent_id: Some(&file_node_id),
-                        signature: sym.signature.as_deref(),
-                        line_start: Some(sym.line as i32),
-                        line_end: Some(sym.line_end as i32),
-                        is_exported: sym.is_exported,
-                    })
-                    .await
-                    .map_err(|e| format!("upsert symbol node {}: {e}", sym.name))?;
-                sym_ids.insert((sym.name.clone(), sym.line as i32), id);
-            }
+        for sym in &result.symbols {
+            let id = ctx
+                .pg()
+                .upsert_node(&NodeRow {
+                    folder_id: &folder_id,
+                    kind: &sym.kind,
+                    name: &sym.name,
+                    file_path: &result.rel_path,
+                    parent_id: Some(&file_node_id),
+                    signature: sym.signature.as_deref(),
+                    line_start: Some(sym.line as i32),
+                    line_end: Some(sym.line_end as i32),
+                    is_exported: sym.is_exported,
+                })
+                .await
+                .map_err(|e| format!("upsert symbol node {}: {e}", sym.name))?;
+            sym_ids.insert((sym.name.clone(), sym.line as i32), id);
         }
 
         // D5b: nested doc `section` nodes (file → H1 → H2 → H3). Identity is the
@@ -956,7 +819,6 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // survives.
         let kept: Vec<uuid::Uuid> = std::iter::once(file_node_id)
             .chain(sym_ids.values().copied())
-            .chain(fqn_ids.values().copied())
             .chain(section_ids.iter().copied())
             .chain(rationale_ids.iter().copied())
             .collect();
@@ -979,114 +841,6 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             .await
             .map_err(|e| format!("delete_edges_from_sources: {e}"))?;
 
-        // Import edges. A LOCAL specifier resolves to the target's module node
-        // AT EMIT, exactly as a call edge resolves to its target — which is the
-        // whole reason calls reach 65% while imports sat at 0 of 162,690.
-        //
-        // Order-independent, so this needs no barrier and no second pass: on a
-        // total candidate miss `upsert_node_by_fqn(.., None)` creates a STUB
-        // keyed on the same fqn, and when the target file is processed later the
-        // module upsert above hits that same `(folder_id, fqn)` and ENRICHES the
-        // row in place, keeping its id.
-        //
-        // LOOKUP FIRST, create only after every candidate misses — the rule
-        // `import_target.rs` states as the reason it must not be trusted as the
-        // authority on locality. Get-or-creating on candidate 1 would satisfy
-        // candidate 1 forever and hide the real target at candidate 2.
-        //
-        // An EXTERNAL target stays unresolved here (it keeps `target_name`, which
-        // is the useful fact for a dependency question); minting `lib_symbol`
-        // nodes for those is a separate slice.
-        let import_pkg = result.fqn.as_ref().map(|f| f.package.as_str()).unwrap_or("");
-        let import_module = result.fqn.as_ref().map(|f| f.module.as_str()).unwrap_or("");
-        for import in &result.unresolved_imports {
-            let class = crate::languages::import_target::classify_import(import);
-            let candidates = crate::languages::import_target::local_import_candidates(
-                fqn_lang,
-                import_pkg,
-                import_module,
-                import,
-                &class,
-            );
-            let mut target: Option<uuid::Uuid> = None;
-            for cand in &candidates {
-                if let Some(id) = ctx
-                    .pg()
-                    .node_id_by_fqn(&folder_id, cand)
-                    .await
-                    .map_err(|e| format!("node_id_by_fqn({cand}): {e}"))?
-                {
-                    target = Some(id);
-                    break;
-                }
-            }
-            // Every candidate missed. What that MEANS depends on whether the
-            // specifier was ever placeable locally, and `import_anchor` is the
-            // declared owner of that question — not a re-classification here.
-            //
-            // LOCAL: stub a module on the FIRST candidate, the fqn the target's
-            // own module node would carry, so a later definition enriches this
-            // very row. That is what keeps resolution order-independent.
-            //
-            // EXTERNAL: mint a lib node. 109,944 of 110,785 unresolved imports
-            // (99.2%) name nothing local — `node:fs`, `java.util.List` — and
-            // those are complete facts about a dependency, not failed lookups.
-            // The probe above is what earns this: the miss is evidence, since
-            // a dotted specifier now has a real candidate to miss.
-            //
-            // Stubbing a MODULE here would be wrong and was briefly possible:
-            // once dotted specifiers gained a candidate, `candidates.first()`
-            // for `java.util.List` became `java·java.util·List`, so the old
-            // code would have written a module named `List` for a JDK class.
-            if target.is_none() {
-                let anchor = crate::languages::import_target::import_anchor(import_module, import);
-                use crate::languages::import_target::ImportAnchor;
-                match anchor {
-                    ImportAnchor::External { package } if !package.is_empty() => {
-                        // Keyed on the PACKAGE, so every importer of `node:fs`
-                        // shares one node and the graph can answer "who depends
-                        // on this".
-                        let lib_fqn = crate::languages::fqn::lib(&package, import, "");
-                        target = Some(
-                            ctx.pg()
-                                .upsert_lib_node_by_fqn(&folder_id, &lib_fqn, import, &package, file_lang)
-                                .await
-                                .map_err(|e| format!("mint lib import {lib_fqn}: {e}"))?,
-                        );
-                    }
-                    // Local, or external with no derivable package: fall back to
-                    // the module stub only when there is a candidate to hang it
-                    // on. No candidate means nothing to name, and inventing one
-                    // is the fabrication the rules forbid.
-                    _ => {
-                        if let Some(first) = candidates.first() {
-                            let leaf = first.rsplit('·').next().unwrap_or(first);
-                            let leaf = leaf.rsplit('/').next().unwrap_or(leaf);
-                            target = Some(
-                                ctx.pg()
-                                    .upsert_node_by_fqn(
-                                        &folder_id, first, "module", leaf, file_lang, None,
-                                    )
-                                    .await
-                                    .map_err(|e| format!("upsert import stub {first}: {e}"))?,
-                            );
-                        }
-                    }
-                }
-            }
-            match target {
-                Some(t) => ctx
-                    .pg()
-                    .insert_edge(&folder_id, &file_node_id, Some(&t), None, None, "imports")
-                    .await
-                    .map_err(|e| format!("insert_edge (imports, resolved): {e}"))?,
-                None => ctx
-                    .pg()
-                    .insert_edge(&folder_id, &file_node_id, None, Some(import), None, "imports")
-                    .await
-                    .map_err(|e| format!("insert_edge (imports): {e}"))?,
-            };
-        }
 
         // Call edges. The FQN path emits RESOLVED node→node edges AT EMIT: the
         // target is get-or-created by FQN (a stub if its definition isn't indexed
@@ -1095,135 +849,15 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // keeps an honest bare-name edge (target_name only) — the `dyn`/residual
         // tail. Phase 7.1 retired the resolve_edges fallback, so these stay
         // unresolved rather than being bare-name-matched to an arbitrary node.
-        if let Some(fqn_out) = &result.fqn {
-            let file_lang = crate::languages::language_for_path(&result.rel_path);
-            for r in &fqn_out.refs {
-                let source = fqn_ids.get(&r.caller_fqn).copied().unwrap_or(file_node_id);
-                // The SAME ladder inheritance uses, now literally the same
-                // code. This block and the inheritance one below were the two
-                // copies the churn audit identified as the slice's only real
-                // duplication.
-                let target = match &r.target_fqn {
-                    Some(tf) if r.is_lib => crate::graph_facts::TargetRef::Lib {
-                        fqn: tf.clone(),
-                        name: r.target_name.clone(),
-                        package: crate::graph_facts::lib_package_of(tf).unwrap_or("").to_string(),
-                    },
-                    Some(tf) => crate::graph_facts::TargetRef::Internal {
-                        fqn: tf.clone(),
-                        name: r.target_name.clone(),
-                        // A call target is a FUNCTION, where a supertype is a
-                        // class. The stub kind differs per caller, which is why
-                        // it belongs on the policy rather than in the persister.
-                        on_miss: crate::graph_facts::OnMiss::CreateStub { kind: "function" },
-                    },
-                    None => crate::graph_facts::TargetRef::Unresolvable {
-                        name: r.target_name.clone(),
-                    },
-                };
-                // A RESOLVED call stamps no props — it already names its
-                // target, and recording the receiver beside it would be a
-                // second answer to a settled question. An UNRESOLVED one
-                // carries whatever the producer saw of its receiver, because
-                // that is the only surviving trace of it: measured, an
-                // unresolved `calls` edge stores the bare member name and
-                // NOTHING else (target_file NULL and props `{}` on all 161,612
-                // of them), so `ctx.pg().m()` and `whatever.m()` persist
-                // identically and no later pass can tell them apart.
-                let props = match (&r.target_fqn, &r.receiver) {
-                    (None, Some(hint)) => hint.to_props(),
-                    _ => serde_json::json!({}),
-                };
-                ctx.pg()
-                    .persist_edge_fact(
-                        &folder_id,
-                        &crate::graph_facts::EdgeFact {
-                            source_id: source,
-                            target,
-                            kind: "calls",
-                            props,
-                        },
-                        &fqn_ids,
-                        file_lang,
-                    )
-                    .await
-                    .map_err(|e| format!("persist call fact: {e}"))?;
-            }
-
-            // Inheritance. The SAME three-branch ladder the call emit above
-            // uses, deliberately: external → a `lib·` node, internal →
-            // stub-then-enrich, unresolvable → target_name only.
-            //
-            // The stub is not laziness. Measured over the corpus, 404 of 406
-            // java relations (99.5%) have their parent type in a DIFFERENT
-            // file, so a probe-only resolver would leave about half of them
-            // unresolved on a cold index and never heal — trading the 7,905
-            // mislabelled edges for a fresh pile of unresolved ones. A stub
-            // created here is ENRICHED when the real definition is indexed,
-            // whichever order the files arrive in.
-            //
-            // There is deliberately NO bare-name fallback. The one available
-            // resolver, `sole_definition_id_by_name`, is kind- and
-            // language-agnostic (it exists for doc mentions), so a miss would
-            // resolve confidently WRONG: a repo defining its own `BaseModel`
-            // would capture every subclass of `pydantic.BaseModel`. An
-            // unresolved parent is worse than nothing only if you think a
-            // wrong answer is better than no answer.
-            for rel in &fqn_out.relations {
-                let source = match fqn_ids.get(&rel.child_fqn) {
-                    Some(id) => *id,
-                    // The child is declared in THIS file, so a miss means the
-                    // def emit skipped it; anchoring on the file keeps the fact
-                    // rather than dropping it.
-                    None => file_node_id,
-                };
-                // One fact, one policy. The three-branch ladder that used to
-                // live here is now `persist_edge_fact`, shared with the call
-                // arm — it was the SAME ladder written twice, which is the
-                // duplication this slice exists to collapse.
-                let target = match &rel.parent_fqn {
-                    Some(pf) if rel.is_lib => crate::graph_facts::TargetRef::Lib {
-                        fqn: pf.clone(),
-                        name: rel.parent_name.clone(),
-                        package: crate::graph_facts::lib_package_of(pf).unwrap_or("").to_string(),
-                    },
-                    Some(pf) => crate::graph_facts::TargetRef::Internal {
-                        fqn: pf.clone(),
-                        name: rel.parent_name.clone(),
-                        // A supertype is a TYPE, and the stub says so, so a
-                        // later enrich need not correct it.
-                        on_miss: crate::graph_facts::OnMiss::CreateStub { kind: "class" },
-                    },
-                    None => crate::graph_facts::TargetRef::Unresolvable {
-                        name: rel.parent_name.clone(),
-                    },
-                };
-                ctx.pg()
-                    .persist_edge_fact(
-                        &folder_id,
-                        &crate::graph_facts::EdgeFact {
-                            source_id: source,
-                            target,
-                            kind: rel.relation.edge_kind(),
-                            props: serde_json::json!({ "relation": rel.relation.as_str() }),
-                        },
-                        &fqn_ids,
-                        file_lang,
-                    )
-                    .await
-                    .map_err(|e| format!("persist inheritance fact: {e}"))?;
-            }
-        } else {
-            for call in &result.unresolved_calls {
-                let source = sym_ids
-                    .get(&(call.caller_name.clone(), call.caller_line as i32))
-                    .copied()
-                    .unwrap_or(file_node_id);
-                ctx.pg()
-                    .insert_edge(&folder_id, &source, None, Some(&call.callee_name), None, "calls")
-                    .await
-                    .map_err(|e| format!("insert_edge (calls): {e}"))?;
-            }
+        for call in &result.unresolved_calls {
+            let source = sym_ids
+                .get(&(call.caller_name.clone(), call.caller_line as i32))
+                .copied()
+                .unwrap_or(file_node_id);
+            ctx.pg()
+                .insert_edge(&folder_id, &source, None, Some(&call.callee_name), None, "calls")
+                .await
+                .map_err(|e| format!("insert_edge (calls): {e}"))?;
         }
 
         // No containment edge here. This used to emit `extends` per parent ref,
@@ -1349,50 +983,6 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     }
 
     Ok(symbols_count as u32)
-}
-
-/// Mark a folder `failed` and return the fatal error (D6c-trigger / D6a): a DB
-/// write for one of its files failed, so the folder must not advance to
-/// `indexed` (the fail-closed barrier D6d checks this status) and boot-reconcile
-/// / bounded-retry re-drives it. Marking the status is best-effort — if THAT
-/// write also fails we still surface the original fatal error, never swallow it.
-/// The fqn LANGUAGE SEGMENT a file's own nodes must be written under.
-///
-/// Every fqn this file emits — the module container, its defs, and the module
-/// anchor its refs name as caller — has to agree on this segment, because an
-/// import is looked up under the same segment the module node was written with.
-/// Extracted into one function precisely because a second copy of the
-/// derivation would drift from it silently.
-///
-/// Order matters. The PRODUCER's own output wins over the file extension, since
-/// the producer is what actually wrote the fqns:
-///
-/// 1. A top-level def's leading segment.
-/// 2. Failing that, a ref's `caller_fqn` leading segment. A file can produce
-///    REFS AND NO DEFS — a vitest/jest suite is entirely expression statements —
-///    and its refs are anchored on the producer's module fqn. Consulting
-///    `file_lang` here instead wrote `javascript·<pkg>·<mod>` for a `.js` file
-///    whose producer had written `typescript·<pkg>·<mod>` (the TS and JS adapters
-///    share one producer, which hardcodes the typescript segment), so the module
-///    node and the edge's caller disagreed and the lookup missed.
-/// 3. Failing that, the file's own language.
-/// 4. Failing that, `rust` — the historical default, kept so a file that yields
-///    no fqn output at all behaves as before.
-fn fqn_lang_of<'a>(
-    fqn_out: Option<&'a crate::languages::fqn::FqnFileOutput>,
-    file_lang: Option<&'a str>,
-) -> &'a str {
-    fqn_out
-        .and_then(|f| {
-            f.defs
-                .first()
-                .map(|d| d.fqn.as_str())
-                .or_else(|| f.refs.first().map(|r| r.caller_fqn.as_str()))
-        })
-        .and_then(|f| f.split('·').next())
-        .filter(|seg| !seg.is_empty())
-        .or(file_lang)
-        .unwrap_or("rust")
 }
 
 async fn fail_folder(
@@ -1543,69 +1133,6 @@ mod tests {
 
     /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
     use crate::tasks::test_support::make_ctx;
-
-    /// A file that produces REFS AND NO DEFS still writes its module container
-    /// under the segment its own producer used.
-    ///
-    /// The TS and JS adapters share one producer, which hardcodes the
-    /// `typescript` segment. A `.js` vitest suite is entirely expression
-    /// statements, so it emits refs and no top-level defs — and `fqn_lang`
-    /// consulted the FILE's language next, yielding `javascript`. The module
-    /// container was then written `javascript·<pkg>·<mod>` while every ref named
-    /// `typescript·<pkg>·<mod>` as its caller, so the fqn→id lookup missed and
-    /// the edge sourced from the file node instead of the module.
-    ///
-    /// Breaking mutation: drop the `.or_else(|| f.refs.first() …)` arm — the
-    /// refs-only case falls through to `file_lang` and returns "javascript".
-    #[test]
-    fn fqn_lang_prefers_the_producers_own_segment_over_the_file_extension() {
-        use crate::languages::fqn::{FqnDefinition, FqnFileOutput, FqnReference};
-        use crate::types::SymbolKind;
-
-        let a_ref = |caller: &str| FqnReference {
-            caller_fqn: caller.to_string(),
-            caller_line: 1,
-            target_fqn: None,
-            target_name: "x".to_string(),
-            is_lib: false,
-            receiver: None,
-        };
-
-        // REFS, NO DEFS — the case this fixes.
-        let refs_only =
-            FqnFileOutput { refs: vec![a_ref("typescript·app·e2e/spec")], ..Default::default() };
-        assert_eq!(
-            fqn_lang_of(Some(&refs_only), Some("javascript")),
-            "typescript",
-            "a refs-only file follows its producer's anchor, not its extension"
-        );
-
-        // A def still outranks a ref.
-        let with_def = FqnFileOutput {
-            defs: vec![FqnDefinition {
-                fqn: "python·app·mod·f".to_string(),
-                name: "f".to_string(),
-                kind: SymbolKind::Function,
-                line_start: 1,
-                line_end: 1,
-                is_exported: false,
-                signature: None,
-                docstring: None,
-                parent_type: None,
-                parent_fqn: None,
-                return_type: None,
-            }],
-            refs: vec![a_ref("typescript·app·mod")],
-            ..Default::default()
-        };
-        assert_eq!(fqn_lang_of(Some(&with_def), Some("javascript")), "python");
-
-        // Neither ⇒ the file's language, then the historical default.
-        let empty = FqnFileOutput::default();
-        assert_eq!(fqn_lang_of(Some(&empty), Some("javascript")), "javascript");
-        assert_eq!(fqn_lang_of(None, Some("svelte")), "svelte");
-        assert_eq!(fqn_lang_of(None, None), "rust");
-    }
 
     #[tokio::test]
     async fn process_folder_creates_module_node() {
@@ -1828,11 +1355,9 @@ mod tests {
     ///
     /// Mutation that must break this: drop the `is_current` check.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_file_edited_after_its_compile_waits_for_a_fresh_one() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("moved");
@@ -1903,11 +1428,9 @@ mod tests {
     ///
     /// Breaking mutation: restore the `for pref in &result.parent_refs` emit.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_type_with_methods_emits_no_extends_edge_but_keeps_its_parent_link() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("cont");
@@ -1973,11 +1496,9 @@ mod tests {
     /// Internal arm — `calls/in-file` stops firing while every other call test
     /// stays green.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn every_call_emit_arm_fires() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         const ARMS: [&str; 3] = ["calls/lib", "calls/stub", "calls/in-file"];
 
         let ctx = make_ctx().await;
@@ -2044,11 +1565,9 @@ mod tests {
     /// Breaking mutation: delete any one arm's `bump` call, or collapse two
     /// branches into one — the missing arm is named in the failure.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn every_inheritance_emit_arm_fires() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // Kind-agnostic: the persister serves every edge kind. Only inheritance
         // is migrated in this increment, so attribution is unambiguous; when
         // calls migrate too, this test must scope by kind or it will pass on
@@ -2126,11 +1645,9 @@ mod tests {
     /// exist yet; (2) drop the props stamp — the discriminant is NULL and a rust
     /// trait impl becomes indistinguishable from java `implements`.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_trait_impl_persists_as_an_implements_edge_before_its_trait_exists() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("inh");
@@ -2219,11 +1736,9 @@ mod tests {
     /// `PRODUCTION_LANGUAGES`. Each fails with that language's node names
     /// printed.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn kotlin_and_c_symbols_reach_the_db_with_fqns() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("mixed");
@@ -2290,11 +1805,9 @@ mod tests {
     /// Breaking mutation: revert either arm to the unconditional
     /// `insert_edge(.., None, Some(x), .., "references")`.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn doc_references_resolve_to_files_and_unambiguous_symbols() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("docref");
@@ -2399,11 +1912,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn external_calls_link_to_lib_nodes() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // Phase 4: a call into a dependency links to a first-class external node
         // grouped (props.package + parent_id) under a per-package `package`
         // container, and the dependency is queryable per repo. No external call dropped.
@@ -2482,11 +1993,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_flags_test_file_nodes_is_test() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // Every node in a test file gets is_test=true (UI filters tests out);
         // production-file nodes stay is_test=false.
         let ctx = make_ctx().await;
@@ -2545,11 +2054,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_ts_emits_fqn_nodes() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // THE END-TO-END PROOF OF THE TYPESCRIPT CUTOVER. A `.ts` file with a
         // package.json goes in and nodes come out — through
         // `crate::indexer::lang`, because TypeScript is in PRODUCTION_LANGUAGES
@@ -2678,11 +2185,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn graph_scan_end_to_end() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // 7.5: scan the committed fixture repo through the real handler chain and
         // assert the WHOLE graph at once — code + doc-section + rationale nodes,
         // resolved edges (dup-factor 1.0), deterministic communities, the folder
@@ -2900,11 +2405,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn processing_order_invariant() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // 7.4: processing the same files in DIFFERENT orders yields an identical
         // graph — the node set (by natural key), per-kind edge counts, and the
         // deterministic community_id per node all match. This is the convergence
@@ -2998,11 +2501,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_fatal_db_write_marks_folder_failed_and_skips_scan_state() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D6c-trigger: a fatal DB-write failure (simulated via the test fault
         // seam) propagates as Err, marks the folder `failed` (so the fail-closed
         // barrier D6d won't mark it indexed), and does NOT advance the file's
@@ -3047,11 +2548,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_success_advances_scan_state_and_keeps_folder_status() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // The success counterpart: a fully-written file advances its `files` row and
         // does NOT spuriously mark the folder failed (it stays `indexing` for the
         // barrier to flip to `indexed`).
@@ -3085,11 +2584,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_fatal_on_one_file_does_not_block_a_sibling() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // The fatal path is per-file: a sibling file still indexes (its `files` row
         // is written) even though another file in the same folder failed fatally.
         // The folder ends `failed` (fail-closed), but the healthy file's work is
@@ -3148,11 +2645,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_reindex_keeps_surviving_node_and_prunes_removed() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D3 end-to-end: re-indexing a file KEEPS a surviving symbol's node id
         // (and its community_id — proving upsert-then-prune, not delete-then-
         // insert) and PRUNES a symbol removed from the source.
@@ -3216,11 +2711,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn doc_decomposes_into_nested_sections() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D5b: a design doc decomposes into nested `section` nodes (file → H1 → H2
         // → H3 via parent_id, level in props), keyed on the heading PATH so a
         // re-index reconciles the set (no duplicate headings). Line-independent
@@ -3332,11 +2825,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn doc_duplicate_sibling_headings_are_distinct_sections() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D5b review fix: two identical-text siblings under the same parent must be
         // DISTINCT section nodes — else the second's upsert collides onto the first
         // (same heading-path + parent_id) and silently clobbers it. The Nth (N>1)
@@ -3402,11 +2893,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn doc_rationale_comment_emits_rationale_node() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D5b: a NOTE/WHY/HACK/TODO/IMPORTANT marker in a doc becomes a `rationale`
         // node parented to the file, with the marker in props. Re-indexing the
         // unchanged doc is idempotent (no duplicate rationale).
@@ -3464,11 +2953,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_persists_is_exported_from_visibility() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // A `pub` symbol is exported; a private one is not. The parser computes
         // is_exported from the visibility modifier; process_file must PERSIST it
         // (via upsert_node_ex) — it was previously dropped, so every symbol read
@@ -3501,11 +2988,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_reindex_reconciles_a_removed_out_edge() {
         // The version-rescan sweep deletes every `files` row; this test's own
         // must survive from the seed to its last assertion.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D3 per-file out-edge reconcile (end-to-end): a SURVIVING symbol whose
         // call is removed on re-edit drops its stale edge — the surviving node
         // isn't deleted, so the edge doesn't cascade; delete_edges_from_sources

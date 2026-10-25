@@ -189,19 +189,20 @@ The settings screen lists them as repositories.
   - #299 S3 done on develop (99cddc18): a run names its workspace by slug + constitution; per-recipient classification removed. Closes with the live sync evidence (#301).
   - ~~#302~~ **Closed 2026-10-21**: one keychain item per identity (`credentials.<slot>`, 17302c40); the migration was seen live after one approval (old items gone, `credentials.<slot>` present).
   - **#301 (user, 2026-10-20): sign in → sync must just work.** Auto-elect a connected identity's repositories (opt-out, not opt-in); keep the subscription gate for private org repos (decided); surface an unreadable credential first (#283, #295); Team-ID signing (#282); workspaces from sync (#299); sign-in in the system browser with an account guard (#300, decided). Live: the first pass that reached the dōjō today mapped 22, allowed 0. Fixed so far: personal tenants get their owner's forge connection (f111fe41) — all 34 personal repos were `no_connection`; a user's repositories are elected by default, opt-out holds (2d92a632; local: 31 of the user's repos sync). Released in **v0.15.0** with #299 S1/S2 and #300 (1a132009, 5d776bee); the dōjō production reshape is deployed and `dbd diff` is clean (run 39496401704). Live proof waits on keychain approval + one dōjō sign-in + a sync pass.
-  - #298: workspace Instruments takes 11–28s to open — `mcp-tool-stats` pairs every tool call in the DB through `session_tool_calls` (measured; filter pushdown reaches only half the view).
+  - #298: workspace Instruments took 6–28s to open. **Fixed on `fix/298-stored-pairing-keys`**: tool calls pair on `tool_use_id`/`duration_ms` stored as generated columns, not read out of every payload. Live: 0.58s, output identical. Merges after dbd-core moves to a release with sensei-hq/dbd#104 (found here; fixed on dbd develop, c506dfb0). dbd#105 filed.
   - #297: the dōjō sign-in page drops Supabase's `#error` fragment (the user saw a blank form after a linking failure).
-  - #106: last fixture imports, plus a vitest guard.
+  - ~~#106~~ **Closed 2026-10-23**: no view reads a fixture or mock module (guard spec, mutation-probed). Your constitution, Plan & billing, the org constitution (`…/rules`), scopes, the triage detail and the org workspace preview now show real data or a stated absence; live-checked on the local dōjō.
+  - ~~#335~~ **Closed 2026-10-23**: every org screen shows a failed read (`LoadError`, role=alert) in place of its body; a spec checks that each loader error reaches the page. Live with injected 500s.
   - #191: kavach 1.2.0.
 - **Code health:**
   - #199: `has_key` part done via #285. Left: Linux roundtrip tests in CI, and a decision on headless Linux
     (an encrypted-file store, or stop publishing Linux daemon artifacts).
-  - #201: 6 `languages::fqn` call sites.
+  - ~~#201~~ **Closed 2026-10-25** (1bda2c18): one fqn minter. All six v1 call sites were on code that cannot run; the path and its encoder are deleted (−1,642 lines), guarded by a source-scan test. Live: 0 of 50,251 nodes v1-shaped.
   - #139: rokkit material/frosted focus guard (upstream rokkit).
 
 ## Wave 4 — CI and test reliability (07-quality D1/D2, F)
 
-- **Pool and isolation:** #204 (pool cap and test threads), then #183 (isolation). Both are needed before CI can be trusted.
+- **Pool and isolation:** ~~#204~~ **closed 2026-10-25** (5656955c): 198 tests that passed silently on a failed DB connect now fail; test threads are capped at 16 so the budget fits `max_connections` (checked by a test; peak 78 → 69, suite 328s → 184s). ~~#183~~ **closed 2026-10-25**: a database per test (user decision); it exposed two tests relying on siblings' rows, and all 15 gates are removed. Suite 3,838 green, 184s → 392s.
 - **Preflight:** #142, test DB behind the DDL tree.
 - **Dependency cluster:** #172, #195, #120.
   - Bumps: quick-xml, h2, yanked crates; JS: vite, esbuild, vitest 4, undici and others.

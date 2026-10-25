@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-10-17
+updated: 2026-10-25
 ---
 
 # Decisions
@@ -9,6 +9,19 @@ updated: 2026-10-17
 > The anti-rework memory — never re-derive a settled choice.
 > The **design journey** (approaches tried, what worked, what didn't) lives in
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
+
+---
+
+## 2026-10-25 — A database per test (#183)
+
+Every Rust DB test shared one `sensei_test`. A database-wide operation in one test (a heal, a prune, a rescan
+sweep) destroyed a sibling's fixture mid-flight, and the failure surfaced in an unrelated module. Five gates
+had been added after five confusing failures, and two tests were found passing only on rows other tests left
+behind.
+
+| Decision | Locked answer | Why / rejected |
+|---|---|---|
+| **Each test gets its own database (user, 2026-10-25)** | The first `PgStore::connect_test` on a test's thread clones `sensei_test` (`CREATE DATABASE … TEMPLATE … STRATEGY FILE_COPY`); later connects on that thread reuse it; it is dropped when the thread exits, and clones over two hours old are swept at the next run's start. `sensei_test` is the TEMPLATE, written by no test; `make test-template` rebuilds it. `SENSEI_TEST_SHARED_DB=1` runs against it directly. | Isolation by construction instead of a gate added after each collision. Cost: every clone forces a checkpoint, so clones serialise (~0.15s each on a 16 MB template) and the suite runs slower than the shared 184s. Rejected: keep sharing and gate each collision (five gates and counting, each found by debugging); per-test schemas (every table is schema-qualified); per-test transactions (the code under test commits through its own pool). |
 
 ---
 

@@ -341,7 +341,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_naming_an_unsynced_key_gets_the_ticket_and_its_link() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p, repo) = synced(&pg).await;
         let earlier = session_with(&pg, Some(repo), &["fix/AUTH-2"], &[]).await;
         sync_tracker(
@@ -392,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_with_only_known_keys_asks_nothing() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p, repo) = synced(&pg).await;
         session_with(&pg, Some(repo), &["fix/AUTH-2"], &["UTF-8 and Q-5 and AUTH-3"]).await;
         let board = FakeBoard::standard();
@@ -408,7 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_key_the_board_lacks_is_asked_once_within_the_ttl() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p, repo) = synced(&pg).await;
         session_with(&pg, Some(repo), &[], &["see AUTH-404"]).await;
         let board = FakeBoard::standard();
@@ -425,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_rejected_batch_is_asked_one_key_at_a_time() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p, repo) = synced(&pg).await;
         let s = session_with(&pg, Some(repo), &[], &["AUTH-404 and AUTH-900"]).await;
         let board = FakeBoard::standard()
@@ -446,7 +446,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_held_lock_skips_and_keeps_the_watermark() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p, repo) = synced(&pg).await;
         session_with(&pg, Some(repo), &["AUTH-900"], &[]).await;
         let board = FakeBoard::standard()
@@ -470,7 +470,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failure_applies_nothing_records_nothing_and_pauses() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p, repo) = synced(&pg).await;
         session_with(&pg, Some(repo), &["AUTH-900"], &[]).await;
         let watermark = pg.tracker_by_id(t).await.unwrap().unwrap().discovered_through;
@@ -494,7 +494,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_next_full_sync_keeps_what_was_discovered_and_clears_the_cache() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p, repo) = synced(&pg).await;
         let s = session_with(&pg, Some(repo), &["AUTH-900"], &["and AUTH-404"]).await;
         let board = FakeBoard::standard().with_jql(
@@ -528,7 +528,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_lookup_fetches_one_key_and_links_every_session_naming_it() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p, repo) = synced(&pg).await;
         let old = session_with(&pg, Some(repo), &["AUTH-900"], &[]).await;
         // The old session predates the watermark: ingest-path discovery would not see it.
@@ -550,7 +550,7 @@ mod tests {
 
     #[tokio::test]
     async fn ingest_queues_one_discovery_per_tracker_while_one_is_pending() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let repo = repo_in(&pg, p).await;
         let s = session_with(&pg, Some(repo), &["AUTH-900"], &[]).await;

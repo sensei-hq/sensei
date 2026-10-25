@@ -2,13 +2,8 @@ use super::*;
 
 // ── Activity pruner tests (#74) ────────────────────────────────────
 
-#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
-    // DATABASE-WIDE: `prune_activity` deletes every eligible session's children,
-    // and this test makes its own session eligible on purpose. See
-    // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
-    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     let suffix = format!("prune_keep_unanalyzed_{}", uuid::Uuid::new_v4());
     let (_pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
@@ -57,14 +52,8 @@ async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
         .ok();
 }
 
-#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
-    // DATABASE-WIDE: `prune_activity` deletes every eligible session's children,
-    // and this test makes its own session eligible on purpose. See
-    // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
-    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
-    let _watermarks = crate::tasks::test_support::WATERMARK_SWEEP_GATE.using();
     let s = pg_store().await;
     let suffix = format!("prune_del_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
@@ -229,13 +218,8 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
 ///      → KEPT (fails if the guard keys on cadence='day' instead of
 ///      `capture_source`, or drops the `scope='user'` filter).
 ///  (d) 90d, past the backstop, uncaptured → PRUNED via the backstop arm.
-#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn prune_activity_captures_before_reclaim_repo_grain() {
-    // DATABASE-WIDE: `prune_activity` deletes every eligible session's children,
-    // and this test makes its own session eligible on purpose. See
-    // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
-    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     let suffix = format!("prune_cbr_repo_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
@@ -445,13 +429,8 @@ async fn vacuum_activity_runs_via_simple_protocol() {
     s.vacuum_activity().await.expect("VACUUM (ANALYZE) on activity tables succeeds");
 }
 
-#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn prune_activity_prunes_orphan_events_by_ts() {
-    // DATABASE-WIDE: `prune_activity` deletes every eligible session's children,
-    // and this test makes its own session eligible on purpose. See
-    // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
-    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     // Insert an assistant_event with no matching session and old ts.
     let old_ts: i64 = (chrono::Utc::now() - chrono::Duration::days(90)).timestamp() * 1000;
@@ -487,13 +466,8 @@ async fn prune_activity_prunes_orphan_events_by_ts() {
     assert_eq!(orphaned.0, 0);
 }
 
-#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn prune_activity_prunes_orphans_despite_a_null_client_session_id() {
-    // DATABASE-WIDE: `prune_activity` deletes every eligible session's children,
-    // and this test makes its own session eligible on purpose. See
-    // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
-    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     // Regression: step (6) of prune_activity used `session_id NOT IN (SELECT
     // client_session_id FROM activity.sessions)`. `client_session_id` is
     // NULLABLE, and under three-valued logic ONE NULL in the subquery makes
@@ -880,9 +854,7 @@ async fn cleanup_logs(pg: &PgStore, marker: &str) {
 
 #[tokio::test]
 async fn query_logs_no_filter_newest_first_and_capped() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
     seed_logs(&pg, &marker).await;
 
@@ -909,9 +881,7 @@ async fn query_logs_no_filter_newest_first_and_capped() {
 
 #[tokio::test]
 async fn query_logs_level_and_source_and_module_filters() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
     seed_logs(&pg, &marker).await;
 
@@ -940,9 +910,7 @@ async fn query_logs_level_and_source_and_module_filters() {
 
 #[tokio::test]
 async fn query_logs_since_excludes_older_rows() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
     seed_logs(&pg, &marker).await;
 
@@ -962,9 +930,7 @@ async fn query_logs_since_excludes_older_rows() {
 
 #[tokio::test]
 async fn query_logs_limit_is_honored() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let marker = format!("_test:logs:{}", uuid::Uuid::new_v4());
     seed_logs(&pg, &marker).await;
 
@@ -979,9 +945,7 @@ async fn query_logs_limit_is_honored() {
 
 #[tokio::test]
 async fn query_logs_empty_result_is_empty_array() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     // A source that never exists → empty Vec, not an error.
     let none =
         pg.query_logs(None, Some("_test:logs:does-not-exist"), None, None, 200).await.unwrap();
@@ -992,12 +956,8 @@ async fn query_logs_empty_result_is_empty_array() {
 /// is one row. It was a plain INSERT, and each `dbd import` appended the staging
 /// file again — the live DB held 167,932 duplicate events (26%), tool calls
 /// stored 12 times, which skewed every count over them (found via #278).
-#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn importing_the_same_staged_event_twice_keeps_one_row() {
-    // The event belongs to no session, so a concurrent `prune_activity` (which
-    // is database-wide) would delete it mid-test — the gate serialises them.
-    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     let session = format!("import-idem-{}", uuid::Uuid::new_v4());
     sqlx_core::query::query(

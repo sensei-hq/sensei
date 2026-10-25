@@ -31,6 +31,7 @@ import type { BillableUserWire, BillingAccountWire, SeatUsageWire } from './bill
 import type { ForgeProvider } from './forge-providers';
 import type { IntegrationUnitsView, MapTarget } from './integrations-view';
 import type { AzureStatusView, AzureSyncResult } from './azure-view';
+import type { ConstitutionRule } from './constitution-map';
 
 // Re-export the shared error under the admin name so admin screens `instanceof`
 // against a local symbol without reaching into the shared module directly.
@@ -377,6 +378,25 @@ export type {
 	SeatUsageWire as BillingUsage,
 	BillingAccountWire as BillingAccount
 } from './billing-view';
+
+/** A rule the dōjō has published, as `GET …/rules` returns it
+ *  (`dojo_protocol::PulledRule`, the display subset). */
+export interface TenantRuleWire extends ConstitutionRule {
+	id: string;
+	/** `tombstoned` once retracted. */
+	status: string;
+}
+
+/** `GET …/rules` — the dōjō's published rules, without the retracted ones
+ *  (member+). The daemon pulls the same route by cursor; from 0 it is the whole
+ *  set (#106). */
+export async function listTenantRules(
+	tenantKey: string,
+	opts: DojoCallOpts = {}
+): Promise<TenantRuleWire[]> {
+	const page = await getJson<{ rules: TenantRuleWire[] }>(adminUrl(tenantKey, '/rules'), opts);
+	return page.rules.filter((r) => r.status !== 'tombstoned');
+}
 
 /** `GET …/billing` envelope. */
 export interface BillingResponse {

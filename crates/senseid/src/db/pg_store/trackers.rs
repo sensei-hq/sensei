@@ -1263,7 +1263,7 @@ mod schema_tests {
 
     #[tokio::test]
     async fn a_workspace_holds_several_boards_and_a_board_defaults_to_the_sprint_level() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg, "several").await;
         let (s1, s2) = (unique("a"), unique("b"));
         let base = format!("https://t{}.atlassian.net", uuid::Uuid::new_v4().simple());
@@ -1282,7 +1282,7 @@ mod schema_tests {
 
     #[tokio::test]
     async fn a_ticket_on_two_boards_is_read_from_the_narrower_board_whichever_synced_last() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg, "two-copies").await;
         let (s1, s2) = (unique("epic"), unique("sprint"));
         let base = format!("https://t{}.atlassian.net", uuid::Uuid::new_v4().simple());
@@ -1314,7 +1314,7 @@ mod schema_tests {
 
     #[tokio::test]
     async fn a_board_belongs_to_at_most_one_workspace() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (p1, p2) = (workspace(&pg, "board-a").await, workspace(&pg, "board-b").await);
         let (s1, s2) = (unique("a"), unique("b"));
         let base = format!("https://t{}.atlassian.net", uuid::Uuid::new_v4().simple());
@@ -1330,7 +1330,7 @@ mod schema_tests {
 
     #[tokio::test]
     async fn deleting_a_tracker_tombstones_its_secret_immediately() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg, "delete").await;
         let s = unique("del");
         let t = insert_tracker(&pg, p, "https://d.atlassian.net", "7", &s).await.unwrap();
@@ -1342,7 +1342,7 @@ mod schema_tests {
 
     #[tokio::test]
     async fn deleting_the_workspace_cascades_and_still_tombstones_the_secret() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg, "cascade").await;
         let s = unique("cascade");
         insert_tracker(&pg, p, "https://c.atlassian.net", "8", &s).await.unwrap();
@@ -1355,7 +1355,7 @@ mod schema_tests {
 
     #[tokio::test]
     async fn swapping_the_secret_tombstones_the_old_one_not_the_new_one() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg, "swap").await;
         let (old, new) = (unique("old"), unique("new"));
         let t = insert_tracker(&pg, p, "https://s.atlassian.net", "9", &old).await.unwrap();
@@ -1374,7 +1374,7 @@ mod schema_tests {
 
     #[tokio::test]
     async fn updating_other_columns_writes_no_tombstone() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg, "noop").await;
         let s = unique("noop");
         let t = insert_tracker(&pg, p, "https://n.atlassian.net", "10", &s).await.unwrap();
@@ -1389,7 +1389,7 @@ mod schema_tests {
 
     #[tokio::test]
     async fn sprints_tasks_and_memberships_are_keyed_and_cascade() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg, "children").await;
         let s = unique("children");
         let t = insert_tracker(&pg, p, "https://k.atlassian.net", "11", &s).await.unwrap();

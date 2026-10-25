@@ -569,7 +569,8 @@ fn both_callee_paths_report_the_same_shape() {
 /// two cannot drift apart again — a literal would pin today's spelling and let
 /// the encoder move out from under it, which IS the bug.
 ///
-/// Mutation that must break this test: mint with `languages::fqn::item`.
+/// Mutation that must break this test: mint the key with a four-segment join
+/// (what the deleted v1 `languages::fqn::item` did).
 #[test]
 fn the_receiver_chase_probes_the_identity_the_walk_minted() {
     use crate::indexer::facts::Language;

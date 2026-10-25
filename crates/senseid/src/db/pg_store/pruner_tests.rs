@@ -167,9 +167,7 @@ async fn cleanup(pg: &PgStore, c: &Corpus) {
 /// workspace prune, or match `starts_with(abs_path, $1)` without the slash.
 #[tokio::test]
 async fn pruning_a_repository_root_removes_everything_it_owned_and_nothing_beside_it() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let c = seed(&pg).await;
 
     let report = pg.prune_repository_root(&format!("{}/a/", c.root)).await.unwrap();
@@ -199,9 +197,7 @@ async fn pruning_a_repository_root_removes_everything_it_owned_and_nothing_besid
 /// pointed at, without the `NOT EXISTS` guard.
 #[tokio::test]
 async fn a_repository_another_checkout_still_uses_survives() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let c = seed(&pg).await;
 
     let report = pg.prune_repository_root(&format!("{}/shared", c.root)).await.unwrap();
@@ -219,9 +215,7 @@ async fn a_repository_another_checkout_still_uses_survives() {
 /// UI may offer to remove something a scan already pruned.
 #[tokio::test]
 async fn pruning_nothing_reports_nothing() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let report = pg
         .prune_repository_root(&format!("/_test/prune/{}/none", uuid::Uuid::new_v4()))
         .await
@@ -237,9 +231,7 @@ async fn pruning_nothing_reports_nothing() {
 /// Mutation that must break this: restore the `LIKE` predicate.
 #[tokio::test]
 async fn the_enclosing_root_is_matched_literally_not_as_a_like_pattern() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     // NOT under `/_test`: the shared fixture registers a root there, which
     // legitimately encloses anything beneath it.
     let base = format!("/_encl_test/{}", uuid::Uuid::new_v4());
@@ -267,9 +259,7 @@ async fn the_enclosing_root_is_matched_literally_not_as_a_like_pattern() {
 /// Mutation that must break this: drop the status filter.
 #[tokio::test]
 async fn a_paused_root_is_not_a_root_to_sync() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let root = format!("/_test/paused/{}", uuid::Uuid::new_v4());
     let id = pg.add_watch_root(&root, "paused", &serde_json::json!([])).await.unwrap();
     let ids = |rows: Vec<serde_json::Value>| -> Vec<String> {
@@ -299,9 +289,7 @@ async fn a_paused_root_is_not_a_root_to_sync() {
 /// Mutation that must break this: prune workspaces without the id scope.
 #[tokio::test]
 async fn a_prune_leaves_an_unrelated_empty_workspace_alone() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let c = seed(&pg).await;
     let bystander = pg
         .create_workspace(&format!("_test:prune:bystander:{}", uuid::Uuid::new_v4()), None, None)

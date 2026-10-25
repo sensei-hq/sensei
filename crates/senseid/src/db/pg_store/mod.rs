@@ -23,6 +23,14 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+/// The most connections one test's pool may hold ([`PgStore::connect_test`]).
+///
+/// One factor of the suite's connection budget (#204): test threads × this,
+/// plus the daemon's [`sensei_bootstrap::DB_POOL_MAX_CONNECTIONS`], must stay
+/// under Postgres's `max_connections`. `.cargo/config.toml` caps the threads,
+/// and `the_test_suite_fits_postgres_connection_budget` checks the sum.
+pub(crate) const TEST_POOL_MAX_CONNECTIONS: u32 = 4;
+
 /// Definition details for [`PgStore::upsert_node_by_fqn`] — the fields a
 /// DEFINITION fills on a node a reference may have created as a stub. Passing
 /// `None` for the `def` argument means "this mention is a REFERENCE": get-or-create
@@ -529,6 +537,7 @@ mod git_history;
 mod governance;
 mod graph;
 mod graph_push;
+mod test_db;
 pub use graph_push::GraphCheckout;
 mod indexer;
 /// Named outside this module because the MCP handler picks the direction and
@@ -604,31 +613,18 @@ mod node_tests;
 #[cfg(test)]
 mod pack_resolution_tests;
 #[cfg(test)]
-// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
-// see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups across per-test runtimes. One allow per test module, not per site.
-#[allow(clippy::await_holding_lock)]
 mod playbook_tests;
 #[cfg(test)]
 mod pruner_tests;
 #[cfg(test)]
 mod resolution_tests;
 #[cfg(test)]
-// `resume_test_guard()` is a blocking `std::sync::Mutex` held across awaits on
-// purpose — see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups here. These are current-thread test runtimes, one per test, so
-// blocking the thread costs nothing and cannot deadlock the runtime.
-#[allow(clippy::await_holding_lock)]
 mod run_tests;
 #[cfg(test)]
 mod schema_store_tests;
 #[cfg(test)]
 mod structure_tests;
 #[cfg(test)]
-// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
-// see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups across per-test runtimes. One allow per test module, not per site.
-#[allow(clippy::await_holding_lock)]
 pub(crate) mod tests;
 #[cfg(test)]
 mod tool_calls_tests;
@@ -700,10 +696,27 @@ impl PgStore {
     /// that surfaces. Override with `TEST_DATABASE_URL` for ad-hoc targets (e.g. a
     /// forked snapshot for debugging).
     pub async fn connect_test() -> Result<Self, String> {
-        let url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-            format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT)
-        });
-        Self::connect_with(&url, 0, 4).await
+        // Its own clone of `sensei_test`, one per test (#183) — see `test_db`.
+        let url = test_db::url().await?;
+        Self::connect_with(&url, 0, TEST_POOL_MAX_CONNECTIONS).await
+    }
+
+    /// The test database, or a failed test (#204).
+    ///
+    /// For a test that needs `sensei_test`: every place the suite runs has the
+    /// database, so a connect failure is a fault to report, never a reason to
+    /// pass having run nothing. Its most likely cause on a dev machine is the
+    /// connection budget — the suite's pools plus the daemon's against
+    /// Postgres's `max_connections` — so the message says so.
+    #[cfg(test)]
+    pub async fn test_store() -> Self {
+        Self::connect_test().await.unwrap_or_else(|e| {
+            panic!(
+                "could not open this test's database: {e} — a refused or timed-out \
+                 connection usually means the suite's pools plus the daemon's exhausted \
+                 Postgres's max_connections (#204)"
+            )
+        })
     }
 
     /// Get a reference to the connection pool.
@@ -1200,10 +1213,7 @@ mod pool_lifecycle_tests {
     /// not assumed.
     #[tokio::test]
     async fn closing_the_store_closes_the_pool_and_is_idempotent() {
-        let Ok(pg) = PgStore::connect_test().await else {
-            println!("no database — skipping");
-            return;
-        };
+        let pg = PgStore::test_store().await;
 
         // A live pool first, so a closed one afterwards means `close` did it
         // rather than the connection never having worked.

@@ -352,7 +352,7 @@ mod tests {
     /// models query, or break any of the four statements.
     #[tokio::test]
     async fn the_four_catalog_queries_return_the_seeded_gateway_config() {
-        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else { return };
+        let pg = crate::db::pg_store::PgStore::test_store().await;
         let cfg = load_gateway_config(&pg).await.expect("the catalog queries plan and run");
         let Some(cfg) = cfg else {
             panic!("the deployed schema seeds active fallback chains, so this cannot be None");

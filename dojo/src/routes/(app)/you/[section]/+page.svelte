@@ -77,7 +77,7 @@
 		onOpenWorkspace={openWorkspace}
 	/>
 {:else if data.section === 'rules'}
-	<ScrConstitution stance={data.stance} ladder={data.ladder} onGoPacks={goPacks} />
+	<ScrConstitution onGoPacks={goPacks} />
 {:else if data.section === 'packs'}
 	<ScrRulePacks packs={data.rulePacks} error={you.actionError} onToggle={onPackToggle} />
 {:else if data.section === 'sharing'}

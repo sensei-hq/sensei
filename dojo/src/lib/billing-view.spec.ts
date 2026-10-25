@@ -11,6 +11,9 @@ describe('monthlyTotal — active contributors × per-seat', () => {
 
 	it('is zero when there are no billable seats', () => {
 		expect(monthlyTotal({ seatsActive: 0, perSeat: 12 })).toBe(0);
+		// No price set, or no seat count: there is no total to show (#106).
+		expect(monthlyTotal({ seatsActive: 34, perSeat: null })).toBeNull();
+		expect(monthlyTotal({ seatsActive: null, perSeat: 12 })).toBeNull();
 	});
 });
 

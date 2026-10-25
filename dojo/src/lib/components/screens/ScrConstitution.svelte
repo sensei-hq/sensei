@@ -9,8 +9,10 @@
 	// grid, then your effective standing constitution: your personal rung — the
 	// rules that stay yours, in sensei, on every workspace you touch (D25). A "Rule packs →" link routes
 	// to the adoptable bundles. Presentational: the page supplies the stance +
-	// ladder (kit fixtures this chunk); the dials forward `onStance(id, value)`
-	// and the packs link fires `onGoPacks` — real /v1 wiring lands later.
+	// ladder; the dials forward `onStance(id, value)` and the packs link fires
+	// `onGoPacks`. The dōjō holds neither (D25 — sensei keeps them on your
+	// machine), so the personal page passes none, and the screen says where they
+	// live instead of showing someone's (#106).
 	let {
 		stance = [],
 		ladder = [],
@@ -40,25 +42,33 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
+		{#if stance.length === 0 && rungs.length === 0}
+			<p class="text-ink-mute text-sm">
+				Your stance and your personal rules are kept by sensei on your machine, not by the dōjō.
+				Set them in sensei; the dōjō shows the rules of the dōjōs you belong to.
+			</p>
+		{/if}
 		<div class="grid gap-4 grid-cols-1 md:grid-cols-3">
 			{#each stance as dial (dial.id)}
 				<StanceDial {dial} onChange={onStance} />
 			{/each}
 		</div>
 
-		<div>
-			<div class="flex items-center gap-2 mb-3">
-				<Icon name="scale" size={17} toneClass="text-accent" />
-				<span class="text-ink text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
-					Your effective constitution
-				</span>
-				<span class="mono text-ink-mute text-xs">— personal · every workspace you touch</span>
+		{#if rungs.length > 0}
+			<div>
+				<div class="flex items-center gap-2 mb-3">
+					<Icon name="scale" size={17} toneClass="text-accent" />
+					<span class="text-ink text-xs font-semibold uppercase" style="letter-spacing: 0.18em">
+						Your effective constitution
+					</span>
+					<span class="mono text-ink-mute text-xs">— personal · every workspace you touch</span>
+				</div>
+				<div class="flex flex-col gap-3">
+					{#each rungs as rung (rung.id)}
+						<LadderRung {rung} />
+					{/each}
+				</div>
 			</div>
-			<div class="flex flex-col gap-3">
-				{#each rungs as rung (rung.id)}
-					<LadderRung {rung} />
-				{/each}
-			</div>
-		</div>
+		{/if}
 	</div>
 </Screen>

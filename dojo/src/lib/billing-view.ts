@@ -37,10 +37,10 @@ export interface BillingAccountWire {
 	period_end: string | null;
 }
 
-/** The live monthly total — active (billable) contributors × the per-seat price
- *  (mockup `b.seatsActive * b.perSeat`). */
-export function monthlyTotal(b: Pick<KitBilling, 'seatsActive' | 'perSeat'>): number {
-	return b.seatsActive * b.perSeat;
+/** The live monthly total — active (billable) contributors × the per-seat price;
+ *  null when either is unknown (no price is set before a payment provider). */
+export function monthlyTotal(b: Pick<KitBilling, 'seatsActive' | 'perSeat'>): number | null {
+	return b.seatsActive === null || b.perSeat === null ? null : b.seatsActive * b.perSeat;
 }
 
 /** The token tone for a relay free-vs-paid chip. */

@@ -34,18 +34,25 @@ describe('ScrWorkspaces — the full workspace list', () => {
 	});
 
 	it('shows an ERROR state (distinct from empty) when the read failed', () => {
-		const { getByText, queryByText } = render(ScrWorkspaces, {
+		const { getByRole, queryByText } = render(ScrWorkspaces, {
 			props: { workspaces: [], error: 'could not reach the dojo service' }
 		});
 		// The failure surfaces — never the honest-empty state masking a read error.
-		expect(getByText("Couldn't load your workspaces.")).toBeTruthy();
-		expect(getByText(/could not reach the dojo service/)).toBeTruthy();
+		expect(getByRole('alert').textContent).toContain('could not reach the dojo service');
 		expect(queryByText('No workspaces yet.')).toBeNull();
 	});
 });
 
 describe('ScrWorkspacePreview — the resolved-constitution drill-in', () => {
 	afterEach(cleanup);
+
+	it('a failed constitution read is an error, not "resolves in your editor" (#106)', () => {
+		const { getByRole, queryByText } = render(ScrWorkspacePreview, {
+			props: { workspace: workspaces[0], ladder: [], conflicts: [], error: 'forbidden' }
+		});
+		expect(getByRole('alert').textContent).toContain("Could not load this workspace's constitution — forbidden");
+		expect(queryByText("This workspace's constitution resolves in your editor.")).toBeNull();
+	});
 
 	const company = workspaces[0]; // lumen-auth (company)
 	const personal = workspaces[2]; // personal-site (personal)

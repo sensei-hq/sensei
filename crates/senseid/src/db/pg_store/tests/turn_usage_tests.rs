@@ -169,9 +169,7 @@ async fn drop_session(s: &PgStore, sid: &str) {
 /// over `turn_usage`, so a subagent's hook-only turn is counted and a turn both
 /// sources saw is counted once.
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
 async fn a_sessions_tokens_are_the_sum_of_its_turns() {
-    let _tokens = crate::tasks::test_support::SESSION_TOKENS_SWEEP_GATE.using();
     let s = pg_store().await;
     let sid = format!("tu-sum-{}", uuid::Uuid::new_v4());
     session(&s, &sid, None).await;
@@ -202,9 +200,7 @@ async fn a_session_without_turn_rows_keeps_its_totals() {
 /// tokens, nearly all cache). The integer columns would make its refresh fail on
 /// every attempt — a poison pill — so the token columns are bigint.
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
 async fn a_session_over_two_billion_tokens_is_stored_exactly() {
-    let _tokens = crate::tasks::test_support::SESSION_TOKENS_SWEEP_GATE.sweeping();
     let s = pg_store().await;
     let sid = format!("tu-big-{}", uuid::Uuid::new_v4());
     session(&s, &sid, None).await;
@@ -230,9 +226,7 @@ async fn a_session_over_two_billion_tokens_is_stored_exactly() {
 /// The backfill's repair pass brings every session to its turn sums, and only
 /// the sessions that differ — so a second pass changes nothing.
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
 async fn refreshing_all_sessions_touches_only_those_that_differ() {
-    let _tokens = crate::tasks::test_support::SESSION_TOKENS_SWEEP_GATE.sweeping();
     let s = pg_store().await;
     let a = format!("tu-all-a-{}", uuid::Uuid::new_v4());
     let b = format!("tu-all-b-{}", uuid::Uuid::new_v4());

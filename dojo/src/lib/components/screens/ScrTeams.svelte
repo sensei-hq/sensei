@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Screen } from '@sensei/ui';
-	import { SectionHead, ListSection, Avatar, EmptyState, Banner } from '$lib/components/kit';
+	import { SectionHead, ListSection, Avatar, EmptyState, Banner, LoadError } from '$lib/components/kit';
 	import type { TeamMetricsView, TeamMetricCell } from '$lib/team-metrics-view';
 
 	// The Teams view (#307 R8, D38; mockup dojo2 ScrTeams / TeamDetail "By
@@ -45,7 +45,7 @@
 	{/snippet}
 	<div class="flex flex-col p-4 gap-4 md:p-8 md:gap-6">
 		{#if error}
-			<p role="alert" class="text-sm text-danger m-0">Could not load your teams — {error}</p>
+			<LoadError what="your teams" {error} />
 		{:else if view && view.teams.length === 0}
 			<EmptyState kanji="組" title="You are on no team yet.">
 				An admin puts people on teams under Members &amp; Roles → Teams.

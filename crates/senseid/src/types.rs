@@ -1,41 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-// ── Symbol kinds ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum SymbolKind {
-    Function,
-    Class,
-    Struct,
-    Type,
-    Interface,
-    Enum,
-    Const,
-    Method,
-    Component,
-    Hook,
-    Unknown,
-}
-
-impl std::fmt::Display for SymbolKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SymbolKind::Function => write!(f, "function"),
-            SymbolKind::Class => write!(f, "class"),
-            SymbolKind::Struct => write!(f, "struct"),
-            SymbolKind::Type => write!(f, "type"),
-            SymbolKind::Interface => write!(f, "interface"),
-            SymbolKind::Enum => write!(f, "enum"),
-            SymbolKind::Const => write!(f, "const"),
-            SymbolKind::Method => write!(f, "method"),
-            SymbolKind::Component => write!(f, "component"),
-            SymbolKind::Hook => write!(f, "hook"),
-            SymbolKind::Unknown => write!(f, "unknown"),
-        }
-    }
-}
-
 // ── Node kinds for unified hierarchy ─────────────────────────────────────────
 
 /// All node kinds in the unified hierarchy_nodes table.
@@ -109,23 +73,6 @@ impl NodeKind {
     #[allow(dead_code)]
     pub fn is_type_like(&self) -> bool {
         matches!(self, Self::Class | Self::Struct | Self::Interface | Self::Enum | Self::Type)
-    }
-
-    /// Convert from SymbolKind (adapter output) to NodeKind (graph storage).
-    pub fn from_symbol_kind(sk: &SymbolKind) -> Self {
-        match sk {
-            SymbolKind::Function => Self::Function,
-            SymbolKind::Method => Self::Method,
-            SymbolKind::Class => Self::Class,
-            SymbolKind::Struct => Self::Struct,
-            SymbolKind::Interface => Self::Interface,
-            SymbolKind::Enum => Self::Enum,
-            SymbolKind::Const => Self::Const,
-            SymbolKind::Type => Self::Type,
-            SymbolKind::Component => Self::Component,
-            SymbolKind::Hook => Self::Hook,
-            SymbolKind::Unknown => Self::Function,
-        }
     }
 
     /// Every node kind, in declaration order. Backs the schema-consistency
@@ -368,18 +315,6 @@ pub struct PackageInfo {
     /// so excluded from the global Libraries view (#63).
     #[serde(default)]
     pub private: bool,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn symbol_kind_display() {
-        assert_eq!(SymbolKind::Function.to_string(), "function");
-        assert_eq!(SymbolKind::Class.to_string(), "class");
-        assert_eq!(SymbolKind::Method.to_string(), "method");
-    }
 }
 
 #[cfg(test)]

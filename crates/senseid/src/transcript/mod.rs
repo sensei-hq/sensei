@@ -966,12 +966,8 @@ mod tests {
     ///
     /// MUTATION: drop the token step from `repair_sessions` — tokens stay NULL.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn the_repair_pass_sets_session_tokens_from_their_turns() {
-        let _tokens = crate::tasks::test_support::SESSION_TOKENS_SWEEP_GATE.sweeping();
-        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
-            return;
-        };
+        let pg = crate::db::pg_store::PgStore::test_store().await;
         let sid = format!("_test-repair-tokens-{}", uuid::Uuid::new_v4());
         sqlx_core::query::query("INSERT INTO activity.sessions (client_session_id) VALUES ($1)")
             .bind(&sid)
@@ -1040,9 +1036,7 @@ mod tests {
     /// A failed read must fail the task, which retries.
     #[tokio::test]
     async fn a_failed_read_fails_the_ingest_instead_of_skipping_it() {
-        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
-            return;
-        };
+        let pg = crate::db::pg_store::PgStore::test_store().await;
         pg.close().await;
         let got = ingest_one(&pg, &GoneTranscript, "/gone.jsonl").await;
         assert!(got.is_err(), "a read that failed was reported as {:?}", got.map(|o| o.skipped));
@@ -1055,10 +1049,8 @@ mod tests {
     /// Mutation that must break this: drop the consent check in
     /// `run_ingest_capture`.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn a_queued_ingest_reads_nothing_once_consent_is_withdrawn() {
         let ctx = crate::tasks::test_support::make_ctx().await;
-        let _gate = consent::CONSENT_KEYS.enter();
         let dir = std::env::temp_dir().join(format!("sensei-consent-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("proj")).unwrap();
         let file = dir.join("proj").join(format!("_test-consent-{}.jsonl", uuid::Uuid::new_v4()));
@@ -1099,9 +1091,7 @@ mod tests {
 "#;
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn backfill_ingests_then_skips_unchanged() {
-        let _watermarks = crate::tasks::test_support::WATERMARK_SWEEP_GATE.using();
         let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
         let sid = format!("_test-tx-{}", uuid::Uuid::new_v4());
         // temp transcript: <root>/proj/<sid>.jsonl (mirrors ~/.claude layout)
