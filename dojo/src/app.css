@@ -58,17 +58,3 @@ body {
 	background: var(--paper-soft);
 	color: var(--ink);
 }
-
-/* #329: while a magic-link landing's new session is not yet the server's, the
-   page would render the previous account's data. Hide it; say why. */
-html[data-auth-pending] body {
-	visibility: hidden;
-}
-html[data-auth-pending]::after {
-	content: 'Signing you in…';
-	position: fixed;
-	inset: 0;
-	display: grid;
-	place-items: center;
-	visibility: visible;
-}

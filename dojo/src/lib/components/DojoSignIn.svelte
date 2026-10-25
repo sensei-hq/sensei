@@ -3,7 +3,7 @@
 	import { AuthProvider } from '@kavach/ui';
 	import { providers } from '$kavach/providers';
 	import { onMount } from 'svelte';
-	import { signinErrorFrom } from '$lib/auth-landing';
+	import { signinErrorFrom } from '$lib/signin-error';
 
 	let selfHost = $state(false);
 	let selfHostUrl = $state('dojo.acme.internal');

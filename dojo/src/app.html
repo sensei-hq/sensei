@@ -9,12 +9,6 @@
 		<link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
 		<meta name="theme-color" content="#E8552B" />
 		%sveltekit.head%
-		<script>
-			// #329: a magic-link landing carries the new session in the fragment, which
-			// the server never sees. Hide the page until the root layout has synced it
-			// (src/lib/auth-landing.ts); the pattern below is AUTH_LANDING_FRAGMENT.
-			if (/(^#|&)access_token=/.test(location.hash)) document.documentElement.setAttribute('data-auth-pending', '');
-		</script>
 	</head>
 	<body data-sveltekit-preload-data="hover" data-mode="light" data-style="zen-sumi" data-density="comfortable">
 		<script>
