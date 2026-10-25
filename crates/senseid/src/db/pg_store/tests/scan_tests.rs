@@ -494,8 +494,11 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     let crate_abs = format!("{repo_abs}/crates/dojo-mind");
     let phantom_pid =
         s.create_workspace(&format!("_test:heal_phantom_{uniq}"), None, None).await.unwrap();
-    let crate_fid =
-        s.upsert_repo_kind(&root_id, "standalone", "dojo-mind", &crate_abs).await.unwrap();
+    // Built as `git` and turned `standalone` only once its node and `files` rows
+    // exist: the heal is database-wide and other tests run it, and a phantom
+    // that is heal-eligible mid-setup had its rows dropped under `seed_node`
+    // (nodes_file_id_fkey).
+    let crate_fid = s.upsert_repo_kind(&root_id, "git", "dojo-mind", &crate_abs).await.unwrap();
     crate::tasks::test_support::give_folder_a_repository(
         &s,
         &crate_fid,
@@ -515,10 +518,16 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     // 1/1,816, `sensei/marketplace` 1/77 — enough to make a content-based
     // duplicate check report six false positives out of seven.
     s.upsert_scan_state(&crate_fid, "src/store.rs", 1, &format!("hash-{uniq}")).await.unwrap();
+    let phantom =
+        s.upsert_repo_kind(&root_id, "standalone", "dojo-mind", &crate_abs).await.unwrap();
+    assert_eq!(phantom, crate_fid, "the same folder, now mis-scoped as standalone");
 
-    // Heal.
-    let healed = s.heal_nested_standalone_roots().await.unwrap();
-    assert!(healed >= 1, "the nested standalone root should be re-absorbed");
+    // Heal. The heal is database-wide and two other tests here run it too, so
+    // its count is not this test's to assert: a concurrent heal can re-absorb
+    // this phantom first and leave this call 0. What this test owns is its own
+    // folder's end state, asserted below — and that fails if the heal does
+    // nothing.
+    s.heal_nested_standalone_roots().await.unwrap();
 
     // The nested root is now a folder of the repo's workspace, parented to the repo.
     let (kind, pid, parent): (String, Option<uuid::Uuid>, Option<uuid::Uuid>) =
