@@ -22,10 +22,12 @@ dangled in the code graph; the `indexer::resolve` ratchet went 1,304 → 1,045 a
 **Watch roots:** the live DB watches only sensei on purpose until the indexer covers JS/TS/Java/.NET;
 then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.
 
+**Released 2026-10-26:** dbd 0.27.7 (user go). dbd#107 fixed and closed; the real cause was a dropped
+comment on an ADD COLUMN, not line breaks. sensei pins it (af77da72). v0.20.2's `deploy-dojo` succeeded.
+
 **Open (the user's):**
-- Approve `deploy-dojo` for v0.20.2 (no-op) and the v0.20.1 one still pending (also a no-op).
-- dbd 0.27.7 (lockfile advisories; could carry dbd#107). Needs a go.
-- #331: production count (counts only):
+- Reject the stale v0.20.1 `deploy-dojo` (v0.20.2 already deployed over it).
+- #331: production count (counts only), run by the user, since there is no prod connection here:
   `psql "$PROD" -Atc "select count(*) from dojo.tenants where origin='personal' and key ~ '-[0-9]+$'"`.
 
 **Known:** the dōjō Workers build fails intermittently on PR/develop commits (it passed on main). The
