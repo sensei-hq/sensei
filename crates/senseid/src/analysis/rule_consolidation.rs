@@ -81,15 +81,15 @@ pub async fn consolidate_global_rules(
 
     let version = pg.next_ruleset_version(SCOPE).await?;
     let id = pg
-        .insert_consolidated_ruleset(
-            SCOPE,
+        .insert_consolidated_ruleset(&crate::db::pg_store::ConsolidatedRulesetRow {
+            scope: SCOPE,
             version,
-            &content,
-            &serde_json::json!([]),
-            resp.model.as_deref(),
-            &hash,
-            "proposed",
-        )
+            content: &content,
+            conflicts: &serde_json::json!([]),
+            model: resp.model.as_deref(),
+            source_hash: &hash,
+            status: "proposed",
+        })
         .await?;
     Ok(ConsolidationOutcome::Created { id, version, model: resp.model, content })
 }

@@ -10,7 +10,6 @@
 /// Every `pg_store` function that still takes five or more positional
 /// parameters, as `file::name`. Convert one to a typed row, then delete its line.
 const STILL_POSITIONAL: &[&str] = &[
-    "config.rs::upsert_workflow_state",
     "dojo.rs::outbox_mark_sent",
     "dojo.rs::outbox_mark_state",
     "dojo.rs::upsert_federated_memory",
@@ -22,8 +21,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "folders.rs::upsert_subfolder_kind",
     "folders.rs::write_scan_state",
     "governance.rs::assemble_context",
-    "governance.rs::insert_check_run",
-    "governance.rs::insert_consolidated_ruleset",
     "governance.rs::upsert_stance",
     "graph.rs::callee_row",
     "graph.rs::insert_edge",
@@ -339,5 +336,115 @@ async fn an_assistant_tool_row_lands_field_for_field() {
             Some("desc".into()),
             None
         )
+    );
+}
+
+#[tokio::test]
+async fn a_check_run_row_lands_field_for_field() {
+    use crate::db::pg_store::CheckRunRow;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161", "t161", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161", "/_t161/repo").await.unwrap();
+    s.insert_check_run(&CheckRunRow {
+        folder_id: &folder,
+        rule_statement: "stmt",
+        checker_ref: "cref",
+        command: "cmd",
+        verdict: "fail",
+        exit_code: Some(3),
+        output_tail: "tail",
+    })
+    .await
+    .unwrap();
+    let got: (String, String, String, String, Option<i32>, String) = sqlx_core::query_as::query_as(
+        "SELECT rule_statement, checker_ref, command, verdict::text, exit_code, output_tail
+           FROM sensei.rule_check_runs WHERE folder_id = $1",
+    )
+    .bind(folder)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        ("stmt".into(), "cref".into(), "cmd".into(), "fail".into(), Some(3), "tail".into())
+    );
+}
+
+#[tokio::test]
+async fn a_consolidated_ruleset_row_lands_field_for_field() {
+    use crate::db::pg_store::ConsolidatedRulesetRow;
+    let s = super::pg_store().await;
+    let conflicts = serde_json::json!([{ "a": 1 }]);
+    let id = s
+        .insert_consolidated_ruleset(&ConsolidatedRulesetRow {
+            scope: "scope-161",
+            version: 7,
+            content: "body",
+            conflicts: &conflicts,
+            model: Some("mdl"),
+            source_hash: "hash",
+            status: "proposed",
+        })
+        .await
+        .unwrap();
+    let got: (String, i32, String, serde_json::Value, Option<String>, String, String) =
+        sqlx_core::query_as::query_as(
+            "SELECT scope, version, content, conflicts, model, source_hash, status
+               FROM sensei.consolidated_rulesets WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        got,
+        (
+            "scope-161".into(),
+            7,
+            "body".into(),
+            conflicts,
+            Some("mdl".into()),
+            "hash".into(),
+            "proposed".into()
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_workflow_state_patch_lands_field_for_field() {
+    use crate::db::pg_store::WorkflowStatePatch;
+    let s = super::pg_store().await;
+    s.upsert_workflow_state(
+        "ws-161",
+        &WorkflowStatePatch {
+            phase: Some("build"),
+            plan: Some("plan.md"),
+            task: Some("task"),
+            issue: Some(161),
+            checkpoint: Some("ckpt"),
+            rules_hash: Some("rh"),
+        },
+    )
+    .await
+    .unwrap();
+    type State = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<i32>,
+        Option<String>,
+        Option<String>,
+    );
+    let got: State = sqlx_core::query_as::query_as(
+        "SELECT active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash
+           FROM sensei.workflow_state WHERE workspace = 'ws-161'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    let want = |s: &str| Some(s.to_string());
+    assert_eq!(
+        got,
+        (want("build"), want("plan.md"), want("task"), Some(161), want("ckpt"), want("rh"))
     );
 }

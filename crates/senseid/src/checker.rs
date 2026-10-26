@@ -95,15 +95,15 @@ pub async fn run_checkers(
         let run = match pg.workspace_command_for(folder_id, &checker_ref).await? {
             Some(command) => {
                 let (verdict, exit_code, out) = run_command(&command, cwd).await;
-                pg.insert_check_run(
+                pg.insert_check_run(&crate::db::pg_store::CheckRunRow {
                     folder_id,
-                    &rule_statement,
-                    &checker_ref,
-                    &command,
+                    rule_statement: &rule_statement,
+                    checker_ref: &checker_ref,
+                    command: &command,
                     verdict,
                     exit_code,
-                    &out,
-                )
+                    output_tail: &out,
+                })
                 .await?;
                 CheckRun {
                     rule_statement,
@@ -114,15 +114,15 @@ pub async fn run_checkers(
                 }
             }
             None => {
-                pg.insert_check_run(
+                pg.insert_check_run(&crate::db::pg_store::CheckRunRow {
                     folder_id,
-                    &rule_statement,
-                    &checker_ref,
-                    "",
-                    "skipped",
-                    None,
-                    "no command discovered for this repo",
-                )
+                    rule_statement: &rule_statement,
+                    checker_ref: &checker_ref,
+                    command: "",
+                    verdict: "skipped",
+                    exit_code: None,
+                    output_tail: "no command discovered for this repo",
+                })
                 .await?;
                 CheckRun {
                     rule_statement,

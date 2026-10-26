@@ -1,5 +1,29 @@
 use super::*;
 
+/// One checker run, as [`PgStore::insert_check_run`] appends it (D-CHECKER).
+pub struct CheckRunRow<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    pub rule_statement: &'a str,
+    pub checker_ref: &'a str,
+    pub command: &'a str,
+    /// A `sensei.check_verdict` label.
+    pub verdict: &'a str,
+    pub exit_code: Option<i32>,
+    pub output_tail: &'a str,
+}
+
+/// One consolidated ruleset version, as [`PgStore::insert_consolidated_ruleset`]
+/// writes it.
+pub struct ConsolidatedRulesetRow<'a> {
+    pub scope: &'a str,
+    pub version: i32,
+    pub content: &'a str,
+    pub conflicts: &'a serde_json::Value,
+    pub model: Option<&'a str>,
+    pub source_hash: &'a str,
+    pub status: &'a str,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// Assemble a blended context blob: workspace-scoped + stack-scoped + global memories.
@@ -186,17 +210,16 @@ impl PgStore {
     }
 
     /// Append a checker run to `rule_check_runs` (D-CHECKER).
-    #[allow(clippy::too_many_arguments)]
-    pub async fn insert_check_run(
-        &self,
-        folder_id: &uuid::Uuid,
-        rule_statement: &str,
-        checker_ref: &str,
-        command: &str,
-        verdict: &str,
-        exit_code: Option<i32>,
-        output_tail: &str,
-    ) -> Result<(), String> {
+    pub async fn insert_check_run(&self, row: &CheckRunRow<'_>) -> Result<(), String> {
+        let &CheckRunRow {
+            folder_id,
+            rule_statement,
+            checker_ref,
+            command,
+            verdict,
+            exit_code,
+            output_tail,
+        } = row;
         sqlx_core::query::query(
             "INSERT INTO sensei.rule_check_runs
                 (folder_id, rule_statement, checker_ref, command, verdict, exit_code, output_tail)
@@ -390,17 +413,19 @@ impl PgStore {
     }
 
     /// Insert a new consolidated ruleset version.
-    #[allow(clippy::too_many_arguments)]
     pub async fn insert_consolidated_ruleset(
         &self,
-        scope: &str,
-        version: i32,
-        content: &str,
-        conflicts: &serde_json::Value,
-        model: Option<&str>,
-        source_hash: &str,
-        status: &str,
+        row: &ConsolidatedRulesetRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &ConsolidatedRulesetRow {
+            scope,
+            version,
+            content,
+            conflicts,
+            model,
+            source_hash,
+            status,
+        } = row;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.consolidated_rulesets
                 (scope, version, content, conflicts, model, source_hash, status)
