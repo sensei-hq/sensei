@@ -279,6 +279,11 @@ The settings screen lists them as repositories.
 - **v0.21.0 released 2026-10-26** (user go): carries the demo prep, #123's fixes, #161, #338, #190 (dbd
   0.27.8: table comments converge, design.yaml read through dbd incl. workspace designs) and Tokens without
   cache reads (user: cache reads counted apart; 64.3B → 1.44B over 90 days). `deploy-dojo` awaits approval.
+- #341 (user, 2026-10-26): the Libraries screens show a library's own docs, skills and agents from its
+  `sensei.library.json`, for a scanned library (dbd) and a dependency (rokkit). Self-scan ingest already works
+  (dbd 1/1/43, rokkit 5/3/94); missing: the UI, `/api/libs` hides manifest-only libraries, a package name
+  resolves to an empty row, dependency discovery (node_modules / cargo / site), and half the manifest fields.
+  Slice 1 (show what is stored) is quick and demo-worthy; then the parser, then dependencies. PRD updated.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
   signing, notarization, and a first-start Permissions step. Needs the user's Apple Developer account.

@@ -127,7 +127,7 @@ above surface (per-capability statuses live in the [capability map](README.md)):
 | Traceability | Partial | requirement/doc ↔ code linkage in progress |
 | Upgrades | Partial | dōjō distribution back, opt-in accept |
 | Sessions | Done | assistant-session digest |
-| Libraries | Done | docs + code indexed and wrapped |
+| Libraries | Partial | docs + code indexed and wrapped; a library's own docs/skills/agents (`sensei.library.json`) are ingested on self-scan but not shown, nor found for dependencies (#341) |
 | Atlas | Partial | code + architecture graph |
 | Instruments | Partial | playground / replay / health in flight |
 | Logs | Done | activity + diagnostics |

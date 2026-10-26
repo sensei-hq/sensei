@@ -23,6 +23,49 @@ correctly, for this workspace's version*.
 > library API lives in `api/handlers/libraries.rs` (not `mcp/library_pages.rs`). See
 > gap `G-LIB-WRAP`.
 
+## Library-provided content (`sensei.library.json`)
+
+A library can ship a **`sensei.library.json`** manifest at its root (spec:
+[`docs/spec/library-manifest.md`](../../../../spec/library-manifest.md)) declaring what
+it provides for assistants: its **llm docs** (`llms.index`, `llms.path`), **skills**
+(`skills[{name, focus, path, url}]`) and **agents** (`agents[...]`). dbd and rokkit
+ship one. What the library's authors wrote outranks anything sensei generates.
+
+**Requirement.** Wherever sensei meets a library that ships the manifest, its docs,
+skills and agents are ingested and shown:
+
+1. **Discovered both ways:**
+   - when the library's own repository is **scanned** (dbd under a watch root);
+   - when a watched repository **depends** on it (rokkit in `app/package.json`). The
+     manifest is read from the installed package (`node_modules/<pkg>/`, the cargo
+     registry or git checkout), else from the library's site
+     (`/.well-known/sensei.library.json`, then `/sensei.library.json`).
+2. **Read whole.** Every manifest field is read: `llms` (the docs come from
+   `llms.path`, never a hard-coded folder), `site`, `repo`, `ref`, `documents`,
+   `install`, and each skill's and agent's `url`. The version the docs describe
+   (`documents`) is recorded beside the lockfile pin.
+3. **Shown in the Libraries screens** (Observatory and workspace): each library lists
+   its **docs**, **skills** and **agents** (name and focus, with the body on open)
+   and says where they came from (the manifest, a version). A library known only from
+   its manifest is listed, and its package names (`@rokkit/ui`, `dbd-core`) resolve to
+   it rather than to an empty row of their own.
+4. **Kept current.** A new version of the library (lockfile bump, new tag) re-reads
+   its manifest.
+
+> **Status (2026-10-26).**
+> - **Built:** the self-scan ingests a scanned library's manifest (dbd: 1 skill,
+>   1 agent, 43 pages); the MCP tools serve them by library name.
+> - **Not built:**
+>   - dependency discovery (`find_manifests` skips `node_modules`/`target`; no
+>     registry, checkout or site probe);
+>   - the UI (no screen calls `/api/libs/{name}/skills|agents|docs`);
+>   - `/api/libs` hides manifest-only libraries (dbd and rokkit are absent from it);
+>   - a package name resolves to its own empty row (`library_id_for`);
+>   - the parser drops `llms`, `site`, `repo`, `ref`, `documents`, `install` and
+>     `url`, and the docs path is hard-coded to `docs/llms`.
+>
+> Tracked in the roadmap (`08-issue-burndown.md`) as #341.
+
 ## In scope / out of scope
 
 - In: detection of unmanaged dependencies + wrap-me workflow; doc ingestion from
@@ -78,6 +121,7 @@ correctly, for this workspace's version*.
 | Wrap-me card | unmanaged dependency with real usage | "kavach is imported in 12 files — wrap it?" |
 | Version-pin chip | lockfile-resolved version per workspace | "rokkit 1.4.2 (superseded 1.3.x)" |
 | Generated skills | how-to / convention / migration | "migrate kavach v0→v1" |
+| Provided docs, skills, agents | what the library's own `sensei.library.json` ships | dbd → skill `dbd`, agent `dbd-pattern-verifier`, 43 doc pages |
 | Upgrade drift | call-site signature changes across versions | Traceability items on bump |
 
 ## Done gate
