@@ -1015,7 +1015,7 @@ fn restart_daemon(port: u16) {
     let _ = std::process::Command::new(&bin).arg("stop").status();
     std::thread::sleep(std::time::Duration::from_millis(500));
     match std::process::Command::new(&bin).args(["start", "--port", &port.to_string()]).status() {
-        Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+        Ok(s) => std::process::exit(sensei_bootstrap::util::exit_code(s)),
         Err(e) => {
             eprintln!("Failed to run {SENSEID_BIN}: {e}. Install: {}", cfg().brew_install_script());
             std::process::exit(1);
@@ -1047,7 +1047,7 @@ fn daemon_cmd(cmd: &str, port: Option<u16>) {
         args.push(p.to_string());
     }
     match std::process::Command::new(&bin).args(&args).status() {
-        Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+        Ok(s) => std::process::exit(sensei_bootstrap::util::exit_code(s)),
         Err(e) => {
             eprintln!("Failed to run {SENSEID_BIN}: {e}. Install: {}", cfg().brew_install_script());
             std::process::exit(1);
