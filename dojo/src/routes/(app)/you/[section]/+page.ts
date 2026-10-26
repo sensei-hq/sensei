@@ -7,6 +7,7 @@ import {
 	listContributions,
 	listLibraryPacks,
 	listMyRepos,
+	getMyMetrics,
 	getMicrosoftLink,
 	ClientApiError,
 	type MyRepoWire
@@ -15,6 +16,7 @@ import { toKitWorkspaces } from '$lib/workspaces-map';
 import { toKitContributions, toKitDownstreams } from '$lib/contributions-map';
 import { toKitRulePacks } from '$lib/rulepacks-map';
 import { microsoftNotice as noticeFor } from '$lib/azure-view';
+import { toMyMetricsView, type MyMetricsView } from '$lib/my-metrics-view';
 import type { KitWorkspace, KitContribution, KitDownstream, KitRulePack } from '$lib/components/kit/types';
 
 // The personal-zone section loader — the non-inbox destinations (workspaces ·
@@ -84,6 +86,19 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		}
 	}
 
+	// My metrics — the caller's own series. A failure is carried SEPARATELY from an
+	// empty month, like the Sharing read above: "nothing sent" and "could not ask"
+	// are different answers.
+	let metricsView: MyMetricsView | null = null;
+	let metricsError: string | null = null;
+	if (section === 'metrics') {
+		try {
+			metricsView = toMyMetricsView(await getMyMetrics({ fetch, accessToken }));
+		} catch (e) {
+			metricsError = e instanceof Error ? e.message : 'the request failed';
+		}
+	}
+
 	// Whether the Microsoft account is linked (#308 R5c) — said on My dōjōs only
 	// when it could not be. A failed check is said too, never read as "linked".
 	let microsoftNotice: string | null = null;
@@ -100,6 +115,8 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		microsoftNotice,
 		repos,
 		reposError,
+		metricsView,
+		metricsError,
 		title: labelForSection(section, 'you'),
 		// Rule packs — real global library read (browse); honest-empty on failure.
 		rulePacks,

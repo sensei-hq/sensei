@@ -4,7 +4,9 @@
 -- user-scoped rows from `since` on, one row per metric and day, pooled across
 -- the repositories they work in the way dojo.team_member_metrics pools a
 -- period — `total` sums, `weighted` is Σ(value × denominator) / Σ denominator,
--- and null when a row lacks a positive denominator (never an unweighted mean).
+-- and null when a row lacks a positive denominator (never an unweighted mean);
+-- `denominator` is the day's Σ denominator, null with it, so a reader can pool a
+-- rate across days the same way.
 --
 -- | row                                       | in the caller's series? |
 -- |-------------------------------------------|-------------------------|
@@ -65,13 +67,14 @@ declare
 begin
     select string_agg(
              (current_date - computed_on) || 'd=' || total || '/'
-             || coalesce(round(weighted, 4)::text, 'null') || '/' || repositories,
+             || coalesce(round(weighted, 4)::text, 'null') || '/'
+             || coalesce(denominator::text, 'null') || '/' || repositories,
              ',' order by computed_on)
       into got
       from dojo.my_metric_series(current_date - 7)
      where metric_key = (select key from dojo.metric_catalogue order by key limit 1);
-    if got is distinct from '1d=1.5/0.6667/2,0d=3/null/1' then
-        raise exception 'my_metric_series returned [%], expected [1d=1.5/0.6667/2,0d=3/null/1]', got;
+    if got is distinct from '1d=1.5/0.6667/6/2,0d=3/null/null/1' then
+        raise exception 'my_metric_series returned [%], expected [1d=1.5/0.6667/6/2,0d=3/null/null/1]', got;
     end if;
 end $$;
 

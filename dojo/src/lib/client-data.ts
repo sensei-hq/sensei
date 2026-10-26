@@ -9,6 +9,7 @@
 // cleanly under SSR/prerender and unit tests without a live backend.
 
 import { DojoApiError, authHeaders, dojoApiUrl, encodeTenant, parseJson } from './dojo-api';
+import type { MyMetricsWire } from './my-metrics';
 import type { RelayConstitution } from './constitution-map';
 import type { ContributionRow, DownstreamRow } from './contributions-map';
 import type { DojoCallOpts } from './dojo-api';
@@ -160,6 +161,14 @@ export interface MyRepoWire {
 	reason_actor: string | null;
 	last_synced_at: string | null;
 	metric_rows: number | null;
+}
+
+/** `GET /v1/you/metrics` — the caller's own series, day by day, over the last
+ *  `days` (the server's default when absent). Read as the caller; a failure
+ *  throws, so the screen can say it rather than show an empty month. */
+export async function getMyMetrics(opts: DojoCallOpts & { days?: number } = {}): Promise<MyMetricsWire> {
+	const query = opts.days === undefined ? '' : `?days=${opts.days}`;
+	return getJson<MyMetricsWire>(youUrl(`/metrics${query}`), opts);
 }
 
 /** `GET /v1/you/repositories` — every repository the caller can see, with the
