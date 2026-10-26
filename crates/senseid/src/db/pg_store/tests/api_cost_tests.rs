@@ -266,7 +266,10 @@ async fn the_message_rewrite_resets_claude_watermarks_once() {
     assert_eq!(s.get_capture_watermark("claude_code", &file).await.unwrap(), None);
     s.set_capture_watermark("claude_code", &file, None, 2, 0).await.unwrap();
     assert!(!s.reset_claude_watermarks_once().await.unwrap(), "second call is a no-op");
-    assert_eq!(s.get_capture_watermark("claude_code", &file).await.unwrap(), Some(2));
+    assert_eq!(
+        s.get_capture_watermark("claude_code", &file).await.unwrap().map(|w| w.mtime_ns),
+        Some(2)
+    );
     sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE file_path = $1")
         .bind(&file)
         .execute(s.pool())

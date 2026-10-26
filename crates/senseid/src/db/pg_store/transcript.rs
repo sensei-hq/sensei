@@ -137,16 +137,22 @@ impl PgStore {
         Ok(true)
     }
 
-    /// Last-ingested mtime (ns) for a transcript file, or None if never seen.
+    /// How far ingest has read a transcript file, or `None` if never seen.
     pub async fn get_capture_watermark(
         &self,
         source: &str,
         file_path: &str,
-    ) -> Result<Option<i64>, String> {
-        let row: Option<(i64,)> = sqlx_core::query_as::query_as(
-            "SELECT last_mtime_ns FROM activity.capture_watermarks WHERE source = $1 AND file_path = $2"
-        ).bind(source).bind(file_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(row.map(|r| r.0))
+    ) -> Result<Option<CaptureWatermark>, String> {
+        let row: Option<(i64, bool)> = sqlx_core::query_as::query_as(
+            "SELECT last_mtime_ns, untracked FROM activity.capture_watermarks
+              WHERE source = $1 AND file_path = $2",
+        )
+        .bind(source)
+        .bind(file_path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(mtime_ns, untracked)| CaptureWatermark { mtime_ns, untracked }))
     }
 
     /// Advance the ingest cursor for a transcript file (idempotent upsert).
@@ -160,12 +166,13 @@ impl PgStore {
     ) -> Result<(), String> {
         sqlx_core::query::query(
             "INSERT INTO activity.capture_watermarks
-                (source, file_path, session_id, last_mtime_ns, turns_ingested, updated_at)
-             VALUES($1, $2, $3, $4, $5, now())
+                (source, file_path, session_id, last_mtime_ns, turns_ingested, untracked, updated_at)
+             VALUES($1, $2, $3, $4, $5, false, now())
              ON CONFLICT(source, file_path) DO UPDATE SET
                session_id     = EXCLUDED.session_id,
                last_mtime_ns  = EXCLUDED.last_mtime_ns,
                turns_ingested = EXCLUDED.turns_ingested,
+               untracked      = false,
                updated_at     = now()",
         )
         .bind(source)
@@ -177,6 +184,63 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Ignore a transcript whose session belongs to no tracked folder (#125):
+    /// drop the turns and messages an earlier pass kept for it, and record that
+    /// it was read at `mtime_ns` and ignored, so it is not read again until it
+    /// changes or a new repository is registered (which clears the mark — see
+    /// `sensei.forget_untracked_transcripts`). One transaction: a crash cannot
+    /// leave the mark without the cleanup, or the cleanup without the mark.
+    pub async fn ignore_untracked_transcript(
+        &self,
+        source: &str,
+        file_path: &str,
+        session_id: &str,
+        mtime_ns: i64,
+    ) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        for table in ["activity.transcript_turns", "activity.transcript_messages"] {
+            sqlx_core::query::query(&format!(
+                "DELETE FROM {table} WHERE source = $1 AND session_id = $2"
+            ))
+            .bind(source)
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("ignore_untracked_transcript {table}: {e}"))?;
+        }
+        sqlx_core::query::query(
+            "INSERT INTO activity.capture_watermarks
+                (source, file_path, session_id, last_mtime_ns, turns_ingested, untracked, updated_at)
+             VALUES($1, $2, $3, $4, 0, true, now())
+             ON CONFLICT(source, file_path) DO UPDATE SET
+               session_id     = EXCLUDED.session_id,
+               last_mtime_ns  = EXCLUDED.last_mtime_ns,
+               turns_ingested = 0,
+               untracked      = true,
+               updated_at     = now()",
+        )
+        .bind(source)
+        .bind(file_path)
+        .bind(session_id)
+        .bind(mtime_ns)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("ignore_untracked_transcript watermark: {e}"))?;
+        tx.commit().await.map_err(|e| e.to_string())
+    }
+
+    /// Whether a session row exists for this client session id.
+    pub async fn session_exists(&self, client_session_id: &str) -> Result<bool, String> {
+        let (exists,): (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS (SELECT 1 FROM activity.sessions WHERE client_session_id = $1)",
+        )
+        .bind(client_session_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("session_exists: {e}"))?;
+        Ok(exists)
     }
 
     /// All transcript turns for a session (by client `session_id`), ordered by
@@ -223,4 +287,13 @@ impl PgStore {
     }
 
     // ── Historical-bootstrap import (#75) ────────────────────────────────────
+}
+
+/// A transcript file's ingest cursor — see [`PgStore::get_capture_watermark`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptureWatermark {
+    /// The source mtime (ns) the file was last read at.
+    pub mtime_ns: i64,
+    /// It was read then and ignored: its session belongs to no tracked folder.
+    pub untracked: bool,
 }

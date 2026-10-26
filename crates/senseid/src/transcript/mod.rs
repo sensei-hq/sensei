@@ -523,7 +523,12 @@ async fn ingest_one(
     // reported a skip — a success — so the session's tokens were never written
     // and nothing said why (#280). A failed read fails the task, which retries.
     let prev = pg.get_capture_watermark(adapter.source(), key).await?;
-    let prose_fresh = matches!(prev, Some(prev) if prev >= stamp);
+    // Read before and ignored as untracked (#125), and unchanged since: there is
+    // nothing new to decide until the file changes or a repository is registered.
+    if matches!(prev, Some(w) if w.untracked && w.mtime_ns >= stamp) {
+        return Ok(IngestOutcome::skipped());
+    }
+    let prose_fresh = matches!(prev, Some(w) if !w.untracked && w.mtime_ns >= stamp);
     let needs_synth = !pg.session_has_events(&session_id).await?;
     // A session captured before token-capture existed still needs its model + token
     // usage backfilled from the transcript — force a metadata refresh for it even
@@ -541,6 +546,16 @@ async fn ingest_one(
     let Some(parsed) = adapter.parse_file(key) else {
         return Ok(IngestOutcome::skipped());
     };
+    // Ingestion is scoped to the folders under the watch roots (#125, user
+    // decision 2026-10-25). A session is in scope when it has a row (hooks
+    // attributed it) or one of its cwds is a tracked folder (synthesis will).
+    // Hook EVENTS are not attribution: hooks record them for any cwd. Out of
+    // scope, the transcript is ignored — its turns are not kept, so no turn set
+    // is left without its session.
+    if !pg.session_exists(&session_id).await? && tracked_folder(pg, &parsed.cwds).await?.is_none() {
+        pg.ignore_untracked_transcript(adapter.source(), key, &session_id, stamp).await?;
+        return Ok(IngestOutcome::skipped());
+    }
     // 1. prose turns (#73) — only when stale.
     let mut turns = 0u32;
     if !prose_fresh {
@@ -626,6 +641,27 @@ async fn set_session_metadata(
     }
 }
 
+/// The tracked folder a session's cwds belong to: the first cwd that IS a
+/// folder, else the first whose nearest tracked ANCESTOR is one — so a
+/// subdirectory cwd, or one under a renamed path (both lookups are
+/// alias-aware), still resolves. `None` when no cwd is under a tracked folder.
+async fn tracked_folder(
+    pg: &crate::db::pg_store::PgStore,
+    cwds: &[String],
+) -> Result<Option<(String, uuid::Uuid, Option<uuid::Uuid>)>, String> {
+    for cwd in cwds {
+        if let Some((folder_id, workspace_id)) = pg.get_folder_ids_by_path(cwd).await? {
+            return Ok(Some((cwd.clone(), folder_id, workspace_id)));
+        }
+    }
+    for cwd in cwds {
+        if let Some((folder_id, workspace_id)) = pg.find_folder_for_path(cwd).await? {
+            return Ok(Some((cwd.clone(), folder_id, workspace_id)));
+        }
+    }
+    Ok(None)
+}
+
 /// Historical-bootstrap (#75): if this session has no events yet (not
 /// live-captured / not already imported), reconstruct it from the transcript —
 /// resolve the workspace from a cwd, create the session, and synthesize its event
@@ -655,21 +691,13 @@ async fn synthesize_session(
     // exact folder, fall back to the nearest tracked ANCESTOR — so a subdirectory
     // cwd (or a subdir of a renamed repo covered by a single root alias) still
     // attributes to the right workspace instead of being dropped.
-    let mut resolved = None;
-    for cwd in &parsed.cwds {
-        if let Ok(Some((folder_id, workspace_id))) = pg.get_folder_ids_by_path(cwd).await {
-            resolved = Some((cwd.clone(), folder_id, workspace_id));
-            break;
+    let resolved = match tracked_folder(pg, &parsed.cwds).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, session = %session_id, "synthesize_session: folder lookup failed");
+            return None;
         }
-    }
-    if resolved.is_none() {
-        for cwd in &parsed.cwds {
-            if let Ok(Some((folder_id, workspace_id))) = pg.find_folder_for_path(cwd).await {
-                resolved = Some((cwd.clone(), folder_id, workspace_id));
-                break;
-            }
-        }
-    }
+    };
     let Some((cwd, folder_id, workspace_id)) = resolved else {
         tracing::debug!(session = %session_id, "synthesize_session: no tracked folder for cwds — skipping");
         return None;
@@ -1053,8 +1081,15 @@ mod tests {
         let ctx = crate::tasks::test_support::make_ctx().await;
         let dir = std::env::temp_dir().join(format!("sensei-consent-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("proj")).unwrap();
-        let file = dir.join("proj").join(format!("_test-consent-{}.jsonl", uuid::Uuid::new_v4()));
+        let sid = format!("_test-consent-{}", uuid::Uuid::new_v4());
+        let file = dir.join("proj").join(format!("{sid}.jsonl"));
         std::fs::write(&file, SAMPLE).unwrap();
+        // An attributed session, so only consent decides whether it is read (#125).
+        sqlx_core::query::query("INSERT INTO activity.sessions (client_session_id) VALUES ($1)")
+            .bind(&sid)
+            .execute(ctx.pg().pool())
+            .await
+            .unwrap();
         let task =
             Task::for_capture(TaskKind::IngestCapture, "claude_code", &file.to_string_lossy());
 
@@ -1090,6 +1125,123 @@ mod tests {
 {"type":"assistant","timestamp":"2026-06-22T10:01:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Wired."}]}}
 "#;
 
+    /// The Claude adapter, counting how often a transcript is parsed.
+    struct CountingClaude {
+        inner: claude::ClaudeAdapter,
+        parses: std::sync::atomic::AtomicUsize,
+    }
+    impl TranscriptAdapter for CountingClaude {
+        fn source(&self) -> &'static str {
+            self.inner.source()
+        }
+        fn family(&self) -> &'static str {
+            self.inner.family()
+        }
+        fn units(&self) -> Vec<UnitRef> {
+            self.inner.units()
+        }
+        fn stamp_for(&self, key: &str) -> Option<i64> {
+            self.inner.stamp_for(key)
+        }
+        fn session_id_for(&self, key: &str) -> Option<String> {
+            self.inner.session_id_for(key)
+        }
+        fn load_content(&self, key: &str) -> Option<String> {
+            self.inner.load_content(key)
+        }
+        fn parse(&self, content: &str) -> ParsedTranscript {
+            self.inner.parse(content)
+        }
+        fn parse_file(&self, key: &str) -> Option<ParsedTranscript> {
+            self.parses.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.parse_file(key)
+        }
+    }
+
+    /// #125 (user decision, 2026-10-25): ingestion is scoped to the folders under
+    /// the watch roots. A transcript whose session has no row and none of whose
+    /// cwds is a tracked folder is IGNORED: its turns are not kept (an orphan set
+    /// already written is removed), the skip is recorded at the transcript's stamp
+    /// so it is not re-parsed every pass, and nothing else changes.
+    ///
+    /// Hook events are not attribution: hooks record events for any cwd, and a
+    /// session in an untracked repository has thousands of them and no row —
+    /// which is how 53 of the 54 traceable orphan turn sets came to exist.
+    #[tokio::test]
+    async fn a_transcript_from_an_untracked_folder_is_ignored_and_not_reparsed() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let sid = format!("_test-untracked-{}", uuid::Uuid::new_v4());
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("proj")).unwrap();
+        let file = root.path().join("proj").join(format!("{sid}.jsonl"));
+        let cwd = format!("/nowhere/untracked-{}", uuid::Uuid::new_v4());
+        let head = format!(
+            r#"{{"type":"user","cwd":"{cwd}","timestamp":"2026-06-22T09:59:00.000Z","message":{{"role":"user","content":[{{"type":"tool_result","content":"ok"}}]}}}}"#
+        );
+        std::fs::write(&file, format!("{head}{SAMPLE}")).unwrap();
+        let key = file.to_string_lossy().to_string();
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &sid,
+            assistant_family: "claude",
+            event_type: "Stop",
+            tool_name: None,
+            cwd: Some(&cwd),
+            ts: 1,
+            success: None,
+            payload: &serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        // An orphan set written before this rule.
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_turns (source, session_id, family, turn_index, started_at)
+             VALUES ('claude_code', $1, 'claude', 1, now())",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let ad = CountingClaude {
+            inner: claude::ClaudeAdapter::new(root.path().to_path_buf()),
+            parses: Default::default(),
+        };
+        let first = ingest_one(&pg, &ad, &key).await.unwrap();
+        assert!(first.skipped, "an untracked transcript is ignored");
+        let turns: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM activity.transcript_turns WHERE session_id = $1",
+        )
+        .bind(&sid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(turns.0, 0, "its turns are not kept, the old orphan set included");
+        let mark: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT untracked FROM activity.capture_watermarks WHERE source = 'claude_code' AND file_path = $1",
+        )
+        .bind(&key)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!(mark.0, "the skip is recorded as untracked");
+
+        ingest_one(&pg, &ad, &key).await.unwrap();
+        assert_eq!(
+            ad.parses.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "an unchanged untracked transcript is not parsed again"
+        );
+
+        // Widen the roots: a repository at the transcript's cwd is registered.
+        // That alone re-opens the skip — no ingest code is told — and the next
+        // pass reads the transcript again and keeps its turns.
+        let rid = pg.add_watch_root("/nowhere", "nowhere", &serde_json::json!([])).await.unwrap();
+        pg.upsert_repo_kind(&rid, "git", "untracked", &cwd).await.unwrap();
+        let attributed = ingest_one(&pg, &ad, &key).await.unwrap();
+        assert_eq!(attributed.turns, 2, "a transcript its new repository owns is ingested");
+        assert_eq!(ad.parses.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
     #[tokio::test]
     async fn backfill_ingests_then_skips_unchanged() {
         let pg = crate::db::pg_store::PgStore::connect_test().await.unwrap();
@@ -1100,8 +1252,14 @@ mod tests {
         std::fs::create_dir_all(&proj).unwrap();
         std::fs::write(proj.join(format!("{sid}.jsonl")), SAMPLE).unwrap();
 
-        // pre-existing event ⇒ session already captured, so this test isolates
-        // the PROSE cursor-skip path (synthesis is a dedup no-op).
+        // pre-existing event and session row ⇒ session already captured (as a
+        // hook-attributed session is), so this test isolates the PROSE
+        // cursor-skip path (synthesis is a dedup no-op).
+        sqlx_core::query::query("INSERT INTO activity.sessions (client_session_id) VALUES ($1)")
+            .bind(&sid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
         pg.insert_hook_event(&HookEventRow {
             session_id: &sid,
             assistant_family: "claude",
