@@ -54,6 +54,14 @@ one is missing; `sensei doctor --fix` installs the missing ones. The daemon
 also installs missing engines in the background at startup. Neither installs
 rustup or Node.js itself — install those first.
 
+### Watchdog
+
+A background task that runs past its time limit is abandoned by the watchdog. It
+stops; it does not fail loudly. `sensei doctor` shows the last 7 days of these
+under **Watchdog**: a count per day and task kind, and the tasks abandoned most
+often, by path. They are a warning. The doctor exits non-zero only when the
+daemon cannot answer. The same figures are at `GET /api/tasks/abandoned?days=N`.
+
 ## Prerequisites (development)
 
 - Rust stable + cargo
