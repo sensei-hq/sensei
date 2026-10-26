@@ -536,7 +536,11 @@ async fn ingest_one(
     // sets their metadata) and for sessions already attempted (skip the re-read,
     // even a token-less source), keyed on the `meta_synced_at` marker.
     let needs_meta = pg.session_needs_meta_backfill(&session_id).await?;
-    if prose_fresh && !needs_synth && !needs_meta {
+    // Fresh means nothing to do only for a session in scope. One with no row
+    // may be an orphan written before the scope rule (#125); it is read once
+    // more, so the scope gate below can ignore it and record the skip.
+    let has_row = pg.session_exists(&session_id).await?;
+    if prose_fresh && !needs_synth && !needs_meta && has_row {
         return Ok(IngestOutcome::skipped());
     }
     // Adapter owns the read + its own oversize/format guards (returns None to skip).
@@ -552,7 +556,7 @@ async fn ingest_one(
     // Hook EVENTS are not attribution: hooks record them for any cwd. Out of
     // scope, the transcript is ignored — its turns are not kept, so no turn set
     // is left without its session.
-    if !pg.session_exists(&session_id).await? && tracked_folder(pg, &parsed.cwds).await?.is_none() {
+    if !has_row && tracked_folder(pg, &parsed.cwds).await?.is_none() {
         pg.ignore_untracked_transcript(adapter.source(), key, &session_id, stamp).await?;
         return Ok(IngestOutcome::skipped());
     }
@@ -1240,6 +1244,72 @@ mod tests {
         let attributed = ingest_one(&pg, &ad, &key).await.unwrap();
         assert_eq!(attributed.turns, 2, "a transcript its new repository owns is ingested");
         assert_eq!(ad.parses.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    /// #125, found on the released daemon: an orphan whose transcript had
+    /// ALREADY been ingested before the scope rule — fresh watermark, hook
+    /// events, no session row — was skipped as "fresh" before the scope gate
+    /// ran, so it stayed orphaned until its file changed (4 left on live data,
+    /// none of them changing). Fresh is not a reason to keep a turn set that has
+    /// no session: such a transcript is read once more and ignored.
+    #[tokio::test]
+    async fn an_already_ingested_orphan_is_ignored_though_its_file_is_unchanged() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let sid = format!("_test-fresh-orphan-{}", uuid::Uuid::new_v4());
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("proj")).unwrap();
+        let file = root.path().join("proj").join(format!("{sid}.jsonl"));
+        let cwd = format!("/nowhere/fresh-orphan-{}", uuid::Uuid::new_v4());
+        let head = format!(
+            r#"{{"type":"user","cwd":"{cwd}","timestamp":"2026-06-22T09:59:00.000Z","message":{{"role":"user","content":[{{"type":"tool_result","content":"ok"}}]}}}}"#
+        );
+        std::fs::write(&file, format!("{head}{SAMPLE}")).unwrap();
+        let key = file.to_string_lossy().to_string();
+        let ad = claude::ClaudeAdapter::new(root.path().to_path_buf());
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &sid,
+            assistant_family: "claude",
+            event_type: "Stop",
+            tool_name: None,
+            cwd: Some(&cwd),
+            ts: 1,
+            success: None,
+            payload: &serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        // Ingested before the rule: its turns and a watermark at the file's stamp.
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_turns (source, session_id, family, turn_index, started_at)
+             VALUES ('claude_code', $1, 'claude', 1, now())",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let stamp = ad.stamp_for(&key).unwrap();
+        pg.set_capture_watermark("claude_code", &key, Some(&sid), stamp, 1).await.unwrap();
+        // Its metadata pass is done too, so nothing else asks for a re-read.
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET meta_synced_at = now() WHERE client_session_id = $1",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let got = ingest_one(&pg, &ad, &key).await.unwrap();
+        assert!(got.skipped);
+        let turns: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM activity.transcript_turns WHERE session_id = $1",
+        )
+        .bind(&sid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(turns.0, 0, "the orphan set is dropped although the file did not change");
+        let w = pg.get_capture_watermark("claude_code", &key).await.unwrap().unwrap();
+        assert!(w.untracked, "and the skip is recorded, so the next pass does not read it");
     }
 
     #[tokio::test]
