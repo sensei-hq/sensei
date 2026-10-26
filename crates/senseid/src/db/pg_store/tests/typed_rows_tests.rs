@@ -197,3 +197,147 @@ fn the_scanner_counts_positional_parameters() {
                fn b<T: Into<String>>(mut self, p: T, q: fn(i32) -> i32, r: HashMap<K, V>) {}\n";
     assert_eq!(positional_counts(src), vec![("a".to_string(), 2), ("b".to_string(), 3)]);
 }
+
+// ── Each typed row lands field for field (#161) ────────────────────
+//
+// A row moves the field list out of the signature; the binds still map fields
+// to columns by position. Every field gets a distinct value here, so a swapped
+// bind reads back in the wrong column.
+
+#[tokio::test]
+async fn an_mcp_server_row_lands_field_for_field() {
+    use crate::db::pg_store::McpServerRow;
+    let s = super::pg_store().await;
+    let args = serde_json::json!(["--a"]);
+    let env = serde_json::json!({ "K": "v" });
+    let row = McpServerRow {
+        acp_family: "claude",
+        mcp_key: "probe-key",
+        workspace_id: None,
+        config_source: "/cfg/mcp.json",
+        command: "probe-cmd",
+        args: &args,
+        env: &env,
+    };
+    let id = s.upsert_mcp_server(&row).await.unwrap();
+    let got: (
+        String,
+        String,
+        String,
+        Option<uuid::Uuid>,
+        String,
+        String,
+        serde_json::Value,
+        serde_json::Value,
+    ) = sqlx_core::query_as::query_as(
+        "SELECT acp_family, mcp_key, scope, workspace_id, config_source, command, args, env
+               FROM sensei.mcp_servers WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            "claude".into(),
+            "probe-key".into(),
+            "user".into(),
+            None,
+            "/cfg/mcp.json".into(),
+            "probe-cmd".into(),
+            args.clone(),
+            env.clone()
+        )
+    );
+    // A re-scan updates the same row in place.
+    let again = s.upsert_mcp_server(&McpServerRow { command: "probe-cmd-2", ..row }).await.unwrap();
+    assert_eq!(again, id);
+}
+
+#[tokio::test]
+async fn an_mcp_manifest_row_lands_field_for_field() {
+    use crate::db::pg_store::{McpManifestRow, McpServerRow};
+    let s = super::pg_store().await;
+    let (args, env) = (serde_json::json!([]), serde_json::json!({}));
+    let id = s
+        .upsert_mcp_server(&McpServerRow {
+            acp_family: "claude",
+            mcp_key: "manifest-key",
+            workspace_id: None,
+            config_source: "/cfg",
+            command: "c",
+            args: &args,
+            env: &env,
+        })
+        .await
+        .unwrap();
+    let tools = serde_json::json!([{ "name": "t1" }]);
+    s.upsert_mcp_tool_manifest(&McpManifestRow {
+        server_id: &id,
+        tools: &tools,
+        tool_count: 3,
+        protocol_version: Some("pv"),
+        server_name: Some("sn"),
+        server_version: Some("sv"),
+        error: Some("err"),
+    })
+    .await
+    .unwrap();
+    type Manifest =
+        (serde_json::Value, i32, Option<String>, Option<String>, Option<String>, Option<String>);
+    let read = async || -> Manifest {
+        sqlx_core::query_as::query_as(
+            "SELECT tools, tool_count, protocol_version, server_name, server_version, error
+               FROM sensei.mcp_tool_manifests WHERE server_id = $1",
+        )
+        .bind(id)
+        .fetch_one(s.pool())
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        read().await,
+        (tools, 3, Some("pv".into()), Some("sn".into()), Some("sv".into()), Some("err".into()))
+    );
+    let none = serde_json::json!([]);
+    s.upsert_mcp_tool_manifest(&McpManifestRow::failed(&id, &none, "down")).await.unwrap();
+    assert_eq!(read().await, (none, 0, None, None, None, Some("down".into())));
+}
+
+#[tokio::test]
+async fn an_assistant_tool_row_lands_field_for_field() {
+    use crate::db::pg_store::AssistantToolRow;
+    let s = super::pg_store().await;
+    s.upsert_assistant_tool(&AssistantToolRow {
+        assistant_family: "fam",
+        source_type: "builtin",
+        source_key: "skey",
+        tool_name: "tname",
+        invoked_name: "iname",
+        description: Some("desc"),
+        server_id: None,
+    })
+    .await
+    .unwrap();
+    let got: (String, String, String, String, String, Option<String>, Option<uuid::Uuid>) =
+        sqlx_core::query_as::query_as(
+            "SELECT assistant_family, source_type, source_key, tool_name, invoked_name, description, server_id
+               FROM sensei.assistant_tools WHERE tool_name = 'tname'",
+        )
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        got,
+        (
+            "fam".into(),
+            "builtin".into(),
+            "skey".into(),
+            "tname".into(),
+            "iname".into(),
+            Some("desc".into()),
+            None
+        )
+    );
+}
