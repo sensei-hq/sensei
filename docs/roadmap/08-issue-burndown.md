@@ -206,7 +206,7 @@ The settings screen lists them as repositories.
 - **Preflight:** ~~#142~~ **closed 2026-10-25** (8e20c3b5): the suite refuses a template behind the DDL tree, by its stamped fingerprint; `make test-template` provisions exactly as CI does.
 - **Dependency cluster:** ~~#172~~ ~~#195~~ **closed 2026-10-25**, #120 updated. Rust 16 → 0 actionable
   advisories, the Tauri lockfile 10 → 0, the JS trees' critical/high cleared (one dev-only undici under the
-  dōjō's wrangler). `cargo audit` gates rust.yml over all three lockfiles (develop run 40246283950 green);
+  dōjō's wrangler). `cargo audit` gates rust.yml over all three lockfiles (develop run 40244782241 green);
   exceptions in `.cargo/audit.toml`, each with its proof.
 
 ## Wave 5 — production-readiness defects that need real work
@@ -219,7 +219,11 @@ The settings screen lists them as repositories.
   as `oversized` (new enum value), by the one classifier the scan and `process_file` share. Live DB
   reconciled; over the 61,349-file corpus it refuses exactly the 137 measured. Closes on the released
   daemon's first `oversized` rows.
-- #188 (B2): surface watchdog abandonment. Measured 300–1,800 a day in early October.
+- #188 (B2): **landed 2026-10-25** (d5bfdc7d): `GET /api/tasks/abandoned` (per day and kind, ten worst by
+  kind and path) and a Watchdog section in `sensei doctor`. Live: 204 in 14 days. Closes when the released
+  doctor prints it.
+- #336: `ingest_capture` abandoned 117× in 14 days on one 1.28 GB active transcript (found by #188).
+  Measure first: does a pass re-read the file whole?
 - ~~C1~~: `public.logs` size — #180, closed.
 - #125: 68 orphaned transcript turn sets.
 - #161: typed rows, remainder.
