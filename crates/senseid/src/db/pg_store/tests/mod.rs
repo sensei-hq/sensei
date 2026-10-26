@@ -31,6 +31,7 @@ mod scan_tests;
 mod stub_gc_tests;
 mod tasks_tests;
 mod turn_usage_tests;
+mod typed_rows_tests;
 mod workspaces_tests;
 
 // Fixtures one group defines and others reuse.

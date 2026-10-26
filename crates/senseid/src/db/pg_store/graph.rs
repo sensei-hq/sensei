@@ -166,6 +166,26 @@ pub struct NodeRow<'a> {
     pub is_exported: bool,
 }
 
+/// One `upsert_node_by_fqn` write, its file already resolved: what the insert
+/// writes and, on an identity collision, what the adoption searches and sets.
+/// One row for both, each destructuring it EXHAUSTIVELY (#161), so a column
+/// added here does not compile until both have placed it.
+struct FqnNodeRow<'a> {
+    folder_id: &'a uuid::Uuid,
+    fqn: &'a str,
+    kind: &'a str,
+    name: &'a str,
+    language: Option<&'a str>,
+    /// A definition (`true`) or a reference's stub (`false`).
+    resolved: bool,
+    file_id: Option<uuid::Uuid>,
+    signature: Option<&'a str>,
+    line_start: Option<i32>,
+    line_end: Option<i32>,
+    is_exported: bool,
+    parent_id: Option<&'a uuid::Uuid>,
+}
+
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
     pub async fn rank_bm25(
@@ -914,11 +934,34 @@ impl PgStore {
             })?),
             None => None,
         };
-        let signature = def.as_ref().and_then(|d| d.signature);
-        let line_start = def.as_ref().and_then(|d| d.line_start);
-        let line_end = def.as_ref().and_then(|d| d.line_end);
-        let is_exported = def.as_ref().is_some_and(|d| d.is_exported);
-        let parent_id = def.as_ref().and_then(|d| d.parent_id);
+        let node = FqnNodeRow {
+            folder_id,
+            fqn,
+            kind,
+            name,
+            language,
+            resolved,
+            file_id,
+            signature: def.as_ref().and_then(|d| d.signature),
+            line_start: def.as_ref().and_then(|d| d.line_start),
+            line_end: def.as_ref().and_then(|d| d.line_end),
+            is_exported: def.as_ref().is_some_and(|d| d.is_exported),
+            parent_id: def.as_ref().and_then(|d| d.parent_id),
+        };
+        let FqnNodeRow {
+            folder_id,
+            fqn,
+            kind,
+            name,
+            language,
+            resolved,
+            file_id,
+            signature,
+            line_start,
+            line_end,
+            is_exported,
+            parent_id,
+        } = &node;
 
         let inserted: Result<(uuid::Uuid,), sqlx_core::error::Error> = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
@@ -964,23 +1007,7 @@ impl PgStore {
                 // Adopt the existing row by re-pointing its fqn at the new value.
                 // Keyed on the identity columns so we update exactly the row that
                 // blocked us — NULLS NOT DISTINCT mirrors the index semantics.
-                match self
-                    .adopt_node_by_identity(
-                        folder_id,
-                        fqn,
-                        kind,
-                        name,
-                        language,
-                        resolved,
-                        file_id,
-                        signature,
-                        line_start,
-                        line_end,
-                        is_exported,
-                        parent_id,
-                    )
-                    .await
-                {
+                match self.adopt_node_by_identity(&node).await {
                     Ok(r) => r,
                     // ANOTHER FILE IN THIS FOLDER ALREADY OWNS THIS FQN, so the
                     // adoption cannot re-point this row at it.
@@ -1053,22 +1080,24 @@ impl PgStore {
     /// `nodes_unique_identity`. Matches on the identity columns using
     /// `IS NOT DISTINCT FROM` so NULL `parent_id`/`line_start` compare equal, the
     /// same way the index's `NULLS NOT DISTINCT` does.
-    #[allow(clippy::too_many_arguments)]
     async fn adopt_node_by_identity(
         &self,
-        folder_id: &uuid::Uuid,
-        fqn: &str,
-        kind: &str,
-        name: &str,
-        language: Option<&str>,
-        resolved: bool,
-        file_id: Option<uuid::Uuid>,
-        signature: Option<&str>,
-        line_start: Option<i32>,
-        line_end: Option<i32>,
-        is_exported: bool,
-        parent_id: Option<&uuid::Uuid>,
+        node: &FqnNodeRow<'_>,
     ) -> Result<(uuid::Uuid,), sqlx_core::error::Error> {
+        let FqnNodeRow {
+            folder_id,
+            fqn,
+            kind,
+            name,
+            language,
+            resolved,
+            file_id,
+            signature,
+            line_start,
+            line_end,
+            is_exported,
+            parent_id,
+        } = node;
         sqlx_core::query_as::query_as(
             "UPDATE sensei.nodes SET
                  fqn         = $2,
