@@ -4342,7 +4342,15 @@ mod tests {
             state.pg.add_watch_root(&abs_path, "mcp-seam", &serde_json::json!([])).await.unwrap();
         let folder_id = state
             .pg
-            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, None)
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "git",
+                name: "repo",
+                path: "repo",
+                abs_path: &abs_path,
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&state.pg, &folder_id, &pid, "repo")
@@ -4550,7 +4558,15 @@ mod tests {
         // Folder name == workspace name: get_file_tags looks up folders.name.
         let folder_id = state
             .pg
-            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, None)
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "git",
+                name: &name,
+                path: "repo",
+                abs_path: &abs_path,
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&state.pg, &folder_id, &pid, &name)
@@ -4935,8 +4951,19 @@ mod tests {
             .add_watch_root(&base, &format!("fp-{short}"), &serde_json::json!([]))
             .await
             .unwrap();
-        let fid =
-            state.pg.upsert_folder(&root, "git", &name, "repo", &under, None, None).await.unwrap();
+        let fid = state
+            .pg
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root,
+                kind: "git",
+                name: &name,
+                path: "repo",
+                abs_path: &under,
+                parent_id: None,
+                workspace_root_id: None,
+            })
+            .await
+            .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&state.pg, &fid, &pid, &name)
             .await
             .unwrap();
@@ -5077,7 +5104,15 @@ mod tests {
         // from the anchor, which is where the workspace now lives.
         let anchor = state
             .pg
-            .upsert_folder(&root, "git", &pname, "repo", &format!("{base}/repo"), None, None)
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root,
+                kind: "git",
+                name: &pname,
+                path: "repo",
+                abs_path: &format!("{base}/repo"),
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&state.pg, &anchor, &pid, &pname)
@@ -5086,15 +5121,15 @@ mod tests {
         for i in 0..40 {
             state
                 .pg
-                .upsert_folder(
-                    &root,
-                    "folder",
-                    &format!("d{i}"),
-                    &format!("repo/src/d{i}"),
-                    &format!("{base}/repo/src/d{i}"),
-                    None,
-                    None,
-                )
+                .upsert_folder(&crate::db::pg_store::FolderRow {
+                    root_id: &root,
+                    kind: "folder",
+                    name: &format!("d{i}"),
+                    path: &format!("repo/src/d{i}"),
+                    abs_path: &format!("{base}/repo/src/d{i}"),
+                    parent_id: None,
+                    workspace_root_id: None,
+                })
                 .await
                 .unwrap();
         }

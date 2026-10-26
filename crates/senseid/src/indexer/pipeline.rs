@@ -219,7 +219,18 @@ async fn write_one_repo(
         }
     };
 
-    let folder_id = match pg.upsert_folder(root_id, "git", &name, &abs, &abs, None, None).await {
+    let folder_id = match pg
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id,
+            kind: "git",
+            name: &name,
+            path: &abs,
+            abs_path: &abs,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
+    {
         Ok(id) => id,
         Err(e) => {
             out.errors.push(format!("upsert_folder(root): {e}"));
@@ -740,19 +751,19 @@ async fn write_structure(
         // workspace root is ever detected.
         let ws_root = f.workspace_root.as_ref().and_then(|w| ids.get(w.as_path())).copied();
         let id = pg
-            .upsert_folder(
+            .upsert_folder(&crate::db::pg_store::FolderRow {
                 root_id,
-                f.kind,
-                &name,
-                &rel.to_string_lossy(),
-                &f.abs_path.to_string_lossy(),
-                Some(&parent),
-                // No workspace argument: a module belongs to its repo's workspace
+                kind: f.kind,
+                name: &name,
+                path: &rel.to_string_lossy(),
+                abs_path: &f.abs_path.to_string_lossy(),
+                parent_id: Some(&parent),
+                // No repository field: a module belongs to its repo's workspace
                 // because it inherits the repo's REPOSITORY, which the upsert
                 // resolves from the anchor. The membership itself is written
                 // once, against the repository, by `scan_root`.
-                ws_root.as_ref(),
-            )
+                workspace_root_id: ws_root.as_ref(),
+            })
             .await
             .map_err(|e| format!("upsert_folder({}): {e}", rel.display()))?;
         ids.insert(f.abs_path.clone(), id);

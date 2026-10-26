@@ -1,5 +1,20 @@
 use super::*;
 
+/// One folder, as [`PgStore::upsert_folder`] writes it. Its repository is never
+/// the caller's to name: it is inherited from the repo anchor (#211).
+pub struct FolderRow<'a> {
+    pub root_id: &'a uuid::Uuid,
+    /// A `sensei.folder_kind` label; refreshed on conflict, since it is derived.
+    pub kind: &'a str,
+    pub name: &'a str,
+    pub path: &'a str,
+    pub abs_path: &'a str,
+    /// Kept on conflict when `None`.
+    pub parent_id: Option<&'a uuid::Uuid>,
+    /// The workspace root this folder is a member of; assigned on conflict.
+    pub workspace_root_id: Option<&'a uuid::Uuid>,
+}
+
 /// The `mtime` a BARRIER-seeded `files` row carries.
 ///
 /// Zero, and deliberately not a real timestamp. Stage 3's barrier (R14) writes
@@ -125,7 +140,16 @@ impl PgStore {
         name: &str,
         abs_path: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_folder(root_id, "git", name, name, abs_path, None, None).await
+        self.upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id,
+            kind: "git",
+            name,
+            path: name,
+            abs_path,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
     }
 
     /// Register a workspace root with an explicit folder kind — `git` for real
@@ -609,16 +633,9 @@ impl PgStore {
 
     // ── Nodes ─────────────────────────────────────────────────────────
 
-    pub async fn upsert_folder(
-        &self,
-        root_id: &uuid::Uuid,
-        kind: &str,
-        name: &str,
-        path: &str,
-        abs_path: &str,
-        parent_id: Option<&uuid::Uuid>,
-        workspace_root_id: Option<&uuid::Uuid>,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_folder(&self, folder: &FolderRow<'_>) -> Result<uuid::Uuid, String> {
+        let &FolderRow { root_id, kind, name, path, abs_path, parent_id, workspace_root_id } =
+            folder;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             // `kind` IS refreshed on conflict. It is DERIVED — from whether an
             // ancestor manifest declares this directory (03 S1) — so a folder

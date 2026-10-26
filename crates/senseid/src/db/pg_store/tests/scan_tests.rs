@@ -244,7 +244,15 @@ async fn folder_upsert_and_list() {
     let path = format!("/_test/folder_root_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&path, "test_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "myrepo", "myrepo", &format!("{}/myrepo", path), None, None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "myrepo",
+            path: "myrepo",
+            abs_path: &format!("{}/myrepo", path),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
     let folders = s.list_folders_by_root(&rid).await.unwrap();
@@ -272,7 +280,18 @@ async fn list_pending_folders_returns_only_non_terminal_status() {
     ] {
         let name = format!("repo_{}", suffix);
         let abs_path = format!("{}/{}", root_path, name);
-        let fid = s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None).await.unwrap();
+        let fid = s
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &rid,
+                kind: "git",
+                name: &name,
+                path: &name,
+                abs_path: &abs_path,
+                parent_id: None,
+                workspace_root_id: None,
+            })
+            .await
+            .unwrap();
         s.update_folder_status(&fid, status).await.unwrap();
     }
 
@@ -317,7 +336,15 @@ async fn update_folder_status_round_trips() {
     let root_path = format!("/_test/status_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "status_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "r",
+            path: "r",
+            abs_path: &format!("{root_path}/r"),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
 
@@ -343,7 +370,15 @@ async fn get_folder_status_reads_back_status_and_is_none_for_missing() {
     let root_path = format!("/_test/getstatus_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "getstatus_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "r",
+            path: "r",
+            abs_path: &format!("{root_path}/r"),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
 

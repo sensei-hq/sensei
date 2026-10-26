@@ -1547,7 +1547,18 @@ mod tests {
 
         // A subtree must NOT be clobbered by a root re-registration.
         let p2 = tmp.path().join("b").to_string_lossy().to_string();
-        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None).await.unwrap();
+        ctx.pg()
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "subtree",
+                name: "b",
+                path: "b",
+                abs_path: &p2,
+                parent_id: None,
+                workspace_root_id: None,
+            })
+            .await
+            .unwrap();
         ctx.pg().upsert_repo_kind(&root_id, "git", "b", &p2).await.unwrap();
         assert_eq!(ctx.pg().get_repo_by_path(&p2).await.unwrap().unwrap()["kind"], "subtree");
     }

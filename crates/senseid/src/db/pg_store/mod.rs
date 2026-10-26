@@ -562,6 +562,7 @@ mod pruner;
 mod schema_store;
 pub use call_sites::{CallSiteColumns, StoredCallSite};
 pub use config::WorkflowStatePatch;
+pub use folders::FolderRow;
 pub use governance::{CheckRunRow, ConsolidatedRulesetRow};
 /// One row of `sensei.nodes`, named rather than positional (#161).
 pub use graph::NodeRow;

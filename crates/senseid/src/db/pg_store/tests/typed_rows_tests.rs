@@ -15,7 +15,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "dojo.rs::upsert_federated_memory",
     "extensions.rs::create_extension",
     "folders.rs::upsert_file_row",
-    "folders.rs::upsert_folder",
     "folders.rs::upsert_scan_state_skipped",
     "folders.rs::upsert_subfolder",
     "folders.rs::upsert_subfolder_kind",
@@ -504,5 +503,47 @@ async fn an_edge_row_lands_on_its_target_columns() {
     assert_eq!(
         read(unresolved).await,
         (None, Some("ghost".into()), Some("g.rs".into()), "calls".into(), props)
+    );
+}
+
+#[tokio::test]
+async fn a_folder_row_lands_field_for_field() {
+    use crate::db::pg_store::FolderRow;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161f", "t161f", &serde_json::json!([])).await.unwrap();
+    let parent = s.upsert_repo_kind(&root, "git", "t161f", "/_t161f/repo").await.unwrap();
+    let id = s
+        .upsert_folder(&FolderRow {
+            root_id: &root,
+            kind: "module",
+            name: "fname",
+            path: "fpath",
+            abs_path: "/_t161f/repo/fpath",
+            parent_id: Some(&parent),
+            workspace_root_id: Some(&parent),
+        })
+        .await
+        .unwrap();
+    type Folder =
+        (uuid::Uuid, String, String, String, String, Option<uuid::Uuid>, Option<uuid::Uuid>);
+    let got: Folder = sqlx_core::query_as::query_as(
+        "SELECT root_id, kind::text, name, path, abs_path, parent_id, workspace_root_id
+           FROM sensei.folders WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            root,
+            "module".into(),
+            "fname".into(),
+            "fpath".into(),
+            "/_t161f/repo/fpath".into(),
+            Some(parent),
+            Some(parent)
+        )
     );
 }

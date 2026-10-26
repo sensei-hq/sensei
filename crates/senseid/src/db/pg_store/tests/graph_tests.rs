@@ -270,7 +270,18 @@ async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_ca
         .await
         .unwrap();
     let abs = format!("/_test/s9-app-{}", uuid::Uuid::new_v4());
-    let folder = s.upsert_folder(&rid, "git", "s9-app", &abs, &abs, None, None).await.unwrap();
+    let folder = s
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "s9-app",
+            path: &abs,
+            abs_path: &abs,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
+        .unwrap();
 
     // Unique per run, like the watch root and the folder above. It was the one
     // FIXED identifier in the test, and `delete_library` at the bottom only
@@ -545,10 +556,29 @@ async fn a_repo_relative_path_resolves_to_a_file_in_a_module_folder() {
     let base = format!("/tmp/fidfor_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&base, "fidfor", &serde_json::json!([])).await.unwrap();
 
-    let repo = s.upsert_folder(&rid, "git", "repo", &base, &base, None, None).await.unwrap();
+    let repo = s
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "repo",
+            path: &base,
+            abs_path: &base,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
+        .unwrap();
     let mod_abs = format!("{base}/crates/senseid");
     let module = s
-        .upsert_folder(&rid, "module", "senseid", "crates/senseid", &mod_abs, Some(&repo), None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "module",
+            name: "senseid",
+            path: "crates/senseid",
+            abs_path: &mod_abs,
+            parent_id: Some(&repo),
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
 
@@ -600,10 +630,29 @@ async fn a_file_two_folders_both_track_resolves_to_the_callers_own_folder() {
     let base = format!("/tmp/fidtwo_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&base, "fidtwo", &serde_json::json!([])).await.unwrap();
 
-    let outer = s.upsert_folder(&rid, "git", "outer", &base, &base, None, None).await.unwrap();
+    let outer = s
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "outer",
+            path: &base,
+            abs_path: &base,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
+        .unwrap();
     let inner_abs = format!("{base}/vendored");
     let inner = s
-        .upsert_folder(&rid, "git", "vendored", "vendored", &inner_abs, Some(&outer), None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "vendored",
+            path: "vendored",
+            abs_path: &inner_abs,
+            parent_id: Some(&outer),
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
 

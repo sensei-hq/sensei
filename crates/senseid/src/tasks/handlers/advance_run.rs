@@ -904,7 +904,15 @@ mod tests {
             .await
             .unwrap();
         let folder_id = pg
-            .upsert_folder(&root_id, "standalone", "repo", "repo", &abs, None, None)
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "standalone",
+                name: "repo",
+                path: "repo",
+                abs_path: &abs,
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(

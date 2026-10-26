@@ -644,15 +644,15 @@ mod tests {
             .await
             .unwrap();
         let g_fid = pg
-            .upsert_folder(
-                &root_id,
-                "git",
-                "monorepo",
-                "monorepo",
-                &repo.to_string_lossy(),
-                None,
-                None,
-            )
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "git",
+                name: "monorepo",
+                path: "monorepo",
+                abs_path: &repo.to_string_lossy(),
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&pg, &g_fid, &gpid, "monorepo")
@@ -664,15 +664,15 @@ mod tests {
             .await
             .unwrap();
         let s_fid = pg
-            .upsert_folder(
-                &root_id,
-                "standalone",
-                "sub",
-                "sub",
-                &nested.to_string_lossy(),
-                None,
-                None,
-            )
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "standalone",
+                name: "sub",
+                path: "sub",
+                abs_path: &nested.to_string_lossy(),
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&pg, &s_fid, &spid, "sub")
@@ -713,7 +713,15 @@ mod tests {
         // Survivor: a folder-bearing workspace.
         let survivor = pg.create_workspace(&name, None, None).await.unwrap();
         let sv_fid = pg
-            .upsert_folder(&root_id, "git", "repo", "repo", &repo.to_string_lossy(), None, None)
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "git",
+                name: "repo",
+                path: "repo",
+                abs_path: &repo.to_string_lossy(),
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&pg, &sv_fid, &survivor, "repo")
@@ -763,15 +771,15 @@ mod tests {
             .await
             .unwrap();
         let repo_fid = pg
-            .upsert_folder(
-                &root_id,
-                "git",
-                "monorepo",
-                "monorepo",
-                &repo.to_string_lossy(),
-                None,
-                None,
-            )
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "git",
+                name: "monorepo",
+                path: "monorepo",
+                abs_path: &repo.to_string_lossy(),
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&pg, &repo_fid, &gpid, "monorepo")
@@ -804,15 +812,15 @@ mod tests {
             .await
             .unwrap();
         let c_fid = pg
-            .upsert_folder(
-                &root_id,
-                "standalone",
-                "sub",
-                "sub",
-                &nested.to_string_lossy(),
-                None,
-                None,
-            )
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "standalone",
+                name: "sub",
+                path: "sub",
+                abs_path: &nested.to_string_lossy(),
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&pg, &c_fid, &spid, "sub")
@@ -825,7 +833,15 @@ mod tests {
         let extra_repo = tmp.path().join("dup");
         std::fs::create_dir_all(&extra_repo).unwrap();
         let d_fid = pg
-            .upsert_folder(&root_id, "git", "dup", "dup", &extra_repo.to_string_lossy(), None, None)
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "git",
+                name: "dup",
+                path: "dup",
+                abs_path: &extra_repo.to_string_lossy(),
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&pg, &d_fid, &survivor, "dup")
