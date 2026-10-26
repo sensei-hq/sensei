@@ -40,6 +40,36 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::api::state::AppState;
 use crate::tasks::progress::TaskEvent;
 
+/// The window `/api/tasks/abandoned` reads when none is asked for: a week.
+const ABANDONED_DEFAULT_DAYS: i32 = 7;
+
+/// How many offenders `/api/tasks/abandoned` names.
+const ABANDONED_WORST: i64 = 10;
+
+#[derive(serde::Deserialize)]
+pub struct AbandonedQuery {
+    days: Option<i32>,
+}
+
+/// `GET /api/tasks/abandoned?days=N` — the tasks the watchdog abandoned (#188),
+/// per day and kind, with the worst offenders named. A task that times out
+/// stops existing; this is where "slow" becomes visible before it is "missing".
+pub async fn abandoned(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<AbandonedQuery>,
+) -> Result<Json<crate::db::pg_store::Abandonments>, (StatusCode, Json<serde_json::Value>)> {
+    let days = q.days.unwrap_or(ABANDONED_DEFAULT_DAYS);
+    if days < 1 {
+        return Err(super::err(StatusCode::BAD_REQUEST, "days must be a positive number of days"));
+    }
+    state
+        .pg
+        .watchdog_abandonments(days, ABANDONED_WORST)
+        .await
+        .map(Json)
+        .map_err(|e| super::err(StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
 /// Roll the children of a dispatcher into the counts a follower actually wants.
 ///
 /// Pure so the aggregation is testable without a queue or a database.

@@ -564,7 +564,7 @@ pub use call_sites::{CallSiteColumns, StoredCallSite};
 /// One row of `sensei.nodes`, named rather than positional (#161).
 pub use graph::NodeRow;
 pub use library::LibraryPageRow;
-pub use logs::LogRow;
+pub use logs::{Abandonments, LogRow};
 pub use neighbourhood::NeighbourNode;
 pub use pruner::PruneReport;
 #[cfg(test)]

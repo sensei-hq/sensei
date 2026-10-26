@@ -284,6 +284,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/keychain/approve", post(crate::api::handlers::auth::approve_keychain))
         .route("/api/auth/orgs", get(crate::api::handlers::auth::orgs))
         .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
+        .route("/api/tasks/abandoned", get(crate::api::handlers::tasks::abandoned))
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
         .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))
         // Background-task visibility (#96): the sensei.schedules table — what each
@@ -612,6 +613,43 @@ mod tests {
         });
         let router = create_router(state.clone());
         (router, state)
+    }
+
+    /// #188: the watchdog's abandonments are readable as a class — per day and
+    /// kind, with the worst offenders named — and a window that is not a
+    /// positive number of days is refused, not quietly read as some default.
+    #[tokio::test]
+    async fn the_watchdog_abandonments_are_served_per_day_with_the_worst_named() {
+        let (app, state) = test_app().await;
+        let kind = crate::tasks::TaskKind::ProcessFile;
+        let message = crate::tasks::executor::watchdog_message(&kind, 3, kind.watchdog_timeout());
+        let id = state
+            .pg
+            .start_task_execution(3, None, &kind.to_string(), "/repo", "src/slow.rs", 0)
+            .await
+            .unwrap();
+        state.pg.fail_task_execution(&id, 180_000, &message).await.unwrap();
+
+        let get = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header("host", "127.0.0.1:7744")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let resp = app.clone().oneshot(get("/api/tasks/abandoned?days=7")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["days"], 7);
+        assert_eq!(body["by_day"][0]["task_kind"], "process_file", "{body}");
+        assert_eq!(body["by_day"][0]["count"], 1, "{body}");
+        assert_eq!(body["worst"][0]["path"], "src/slow.rs", "{body}");
+
+        for bad in ["/api/tasks/abandoned?days=0", "/api/tasks/abandoned?days=-3"] {
+            let status = app.clone().oneshot(get(bad)).await.unwrap().status();
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+        }
     }
 
     /// #334: the router itself refuses a write from a foreign page: the exact

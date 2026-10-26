@@ -21,6 +21,18 @@ impl TaskContext {
     }
 }
 
+/// How every watchdog abandonment's error begins. The health count (#188)
+/// selects on it, so the writer and the reader share this one string.
+pub(crate) const WATCHDOG_ABANDONED: &str = "watchdog:";
+
+/// The error recorded for a task the watchdog abandoned.
+pub(crate) fn watchdog_message(kind: &TaskKind, id: u64, cap: std::time::Duration) -> String {
+    format!(
+        "{WATCHDOG_ABANDONED} {kind} task #{id} exceeded {}s and was abandoned (worker freed; retry/backfill)",
+        cap.as_secs()
+    )
+}
+
 /// Spawn N worker threads that process tasks from the queue.
 pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
     for worker_id in 0..n {
@@ -164,12 +176,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let cap = task.kind.watchdog_timeout();
     let result = match tokio::time::timeout(cap, dispatch).await {
         Ok(r) => r,
-        Err(_) => Err(format!(
-            "watchdog: {} task #{} exceeded {}s and was abandoned (worker freed; retry/backfill)",
-            task.kind,
-            task.id,
-            cap.as_secs()
-        )),
+        Err(_) => Err(watchdog_message(&task.kind, task.id, cap)),
     };
 
     let duration_ms = start.elapsed().as_millis() as i32;
