@@ -203,16 +203,27 @@ impl PgStore {
             .await?;
             self.append_run_event(
                 &run.id,
-                crate::runs::RunEventKind::Recovered,
-                Some(phase),
-                None,
-                &serde_json::json!({ "via": "update_phase", "revived": true }),
+                &crate::db::pg_store::RunEventRow {
+                    kind: crate::runs::RunEventKind::Recovered,
+                    phase: Some(phase),
+                    feature: None,
+                    detail: &serde_json::json!({ "via": "update_phase", "revived": true }),
+                },
             )
             .await?;
         }
         let detail = serde_json::json!({ "via": "update_phase" });
         for (kind, ph) in &events {
-            self.append_run_event(&run.id, *kind, Some(ph), None, &detail).await?;
+            self.append_run_event(
+                &run.id,
+                &crate::db::pg_store::RunEventRow {
+                    kind: *kind,
+                    phase: Some(ph),
+                    feature: None,
+                    detail: &detail,
+                },
+            )
+            .await?;
         }
         self.set_run_progress(&run.id, Some(phase), run.current_feature.as_deref()).await?;
         Ok(Some(run.id))
@@ -355,11 +366,9 @@ impl PgStore {
     pub async fn append_run_event(
         &self,
         run_id: &uuid::Uuid,
-        kind: RunEventKind,
-        phase: Option<&str>,
-        feature: Option<&str>,
-        detail: &serde_json::Value,
+        event: &RunEventRow<'_>,
     ) -> Result<i64, String> {
+        let &RunEventRow { kind, phase, feature, detail } = event;
         let (id,): (i64,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.run_events(run_id, kind, phase, feature, detail)
              VALUES($1, $2::sensei.run_event_kind, $3, $4, $5) RETURNING id",

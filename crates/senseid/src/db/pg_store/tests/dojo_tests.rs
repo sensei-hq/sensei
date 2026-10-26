@@ -113,7 +113,15 @@ async fn workspace_identifiers_gathers_names_paths_repos_and_sessions() {
         .unwrap();
     // A session for the workspace, with a client_session_id.
     let csid = format!("cs-{suffix}");
-    s.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: &csid,
+        folder_id: &fid,
+        workspace_id: Some(&pid),
+        family: "claude",
+        is_end: true,
+    })
+    .await
+    .unwrap();
 
     let ids = s.workspace_identifiers(&pid).await.unwrap();
     assert_eq!(ids.workspace_name.as_deref(), Some(format!("_test:{suffix}").as_str()));

@@ -1481,7 +1481,16 @@ mod tests {
         .await
         .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
 
         // 2 prompts (one a correction) + an edit + a Stop.
         let prompt = |t: &str| serde_json::json!({ "prompt": t });
@@ -1655,7 +1664,16 @@ mod tests {
         let fid =
             crate::tasks::test_support::seed_repo_folder(pg, &root, "rw-repo", &abs).await.unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
         pg.link_workspace_repository_for_folder(&fid, &pid).await.unwrap();
         // Most live sessions carry a workspace but no folder: the file's own path
         // has to place it.
@@ -1677,7 +1695,16 @@ mod tests {
         pg.link_workspace_repository_for_folder(&lib, &pid).await.unwrap();
         // A session that does have its folder, editing by relative path.
         let csid2 = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid2 = pg.record_session_event(&csid2, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid2 = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid2,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
 
         async fn edit(pg: &crate::db::pg_store::PgStore, csid: &str, fp: &str, ts: i64) {
             let payload = serde_json::json!({ "tool_input": {"file_path": fp} });
@@ -1778,7 +1805,16 @@ mod tests {
         let fid =
             crate::tasks::test_support::seed_repo_folder(pg, &root, "bf-repo", &abs).await.unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
         sqlx_core::query::query(
             "UPDATE activity.sessions SET folder_id = NULL, analyzed_at = now() WHERE id = $1",
         )
@@ -1832,8 +1868,16 @@ mod tests {
             "duration = NULL, claude_time = NULL, user_time = NULL",
         ] {
             let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-            let sid =
-                pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+            let sid = pg
+                .record_session_event(&crate::db::pg_store::SessionEventRow {
+                    client_session_id: &csid,
+                    folder_id: &fid,
+                    workspace_id: Some(&pid),
+                    family: "claude",
+                    is_end: true,
+                })
+                .await
+                .unwrap();
             sqlx_core::query::query(&format!(
                 "UPDATE activity.sessions SET analyzed_at = now() + interval '1 day', {set} WHERE id = $1"
             ))
@@ -1890,7 +1934,16 @@ mod tests {
         .await
         .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
 
         let edit = |fp: &str| serde_json::json!({ "tool_input": {"file_path": fp} });
         let prompt = |t: &str| serde_json::json!({ "prompt": t });
@@ -2095,7 +2148,16 @@ mod tests {
         .await
         .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
 
         // A minimal enrichable session (a prompt + a Stop) so analyze_workspace
         // reaches its success path.

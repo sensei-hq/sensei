@@ -228,13 +228,7 @@ pub(crate) async fn pause_run(
     // Cadence marker so the feed shows the pause + when it resumes. Best-effort.
     let _ = state
         .pg
-        .append_run_event(
-            &run_id,
-            RunEventKind::PausedOnLimit,
-            None,
-            None,
-            &serde_json::json!({ "until": until, "reason": reason, "via": "pause_run" }),
-        )
+        .append_run_event(&run_id, &crate::db::pg_store::RunEventRow { kind: RunEventKind::PausedOnLimit, phase: None, feature: None, detail: &serde_json::json!({ "until": until, "reason": reason, "via": "pause_run" }) })
         .await;
 
     match state.pg.get_run(&run_id).await {
@@ -372,13 +366,7 @@ pub(crate) async fn update_task_status(
     if let Some(kind) = task_event_kind(new_state) {
         let _ = state
             .pg
-            .append_run_event(
-                &run_id,
-                kind,
-                None,
-                Some(&task_id),
-                &serde_json::json!({ "state": new_state.as_db_str(), "note": note, "via": "update_task_status" }),
-            )
+            .append_run_event(&run_id, &crate::db::pg_store::RunEventRow { kind, phase: None, feature: Some(&task_id), detail: &serde_json::json!({ "state": new_state.as_db_str(), "note": note, "via": "update_task_status" }) })
             .await;
     }
     Ok(Json(serde_json::json!({ "ok": true, "task_id": task_id, "state": new_state.as_db_str() })))
@@ -436,10 +424,12 @@ pub(crate) async fn report_run_outcome(
         .pg
         .append_run_event(
             &run_id,
-            kind,
-            None,
-            None,
-            &serde_json::json!({ "summary": summary, "via": "report_run_outcome" }),
+            &crate::db::pg_store::RunEventRow {
+                kind,
+                phase: None,
+                feature: None,
+                detail: &serde_json::json!({ "summary": summary, "via": "report_run_outcome" }),
+            },
         )
         .await;
 
@@ -633,10 +623,12 @@ mod tests {
             .pg
             .append_run_event(
                 &id,
-                RunEventKind::Housekeeping,
-                None,
-                None,
-                &serde_json::json!({ "tick": true }),
+                &crate::db::pg_store::RunEventRow {
+                    kind: RunEventKind::Housekeeping,
+                    phase: None,
+                    feature: None,
+                    detail: &serde_json::json!({ "tick": true }),
+                },
             )
             .await
             .unwrap();

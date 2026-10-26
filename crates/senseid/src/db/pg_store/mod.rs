@@ -1869,3 +1869,26 @@ pub struct FileFingerprint<'a> {
     /// SHA-256 hex of the file's bytes.
     pub content_hash: &'a str,
 }
+
+// Written by `sessions.rs`.
+/// One captured event's effect on its session, as
+/// [`PgStore::record_session_event`] applies it: the session is created on its
+/// first event and ended by an end event.
+pub struct SessionEventRow<'a> {
+    pub client_session_id: &'a str,
+    pub folder_id: &'a uuid::Uuid,
+    pub workspace_id: Option<&'a uuid::Uuid>,
+    /// The assistant family, e.g. `claude`.
+    pub family: &'a str,
+    /// The event ends the session.
+    pub is_end: bool,
+}
+
+// Written by `runs.rs`.
+/// One entry in a run's event log, as [`PgStore::append_run_event`] appends it.
+pub struct RunEventRow<'a> {
+    pub kind: RunEventKind,
+    pub phase: Option<&'a str>,
+    pub feature: Option<&'a str>,
+    pub detail: &'a serde_json::Value,
+}

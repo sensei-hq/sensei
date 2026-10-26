@@ -145,7 +145,15 @@ async fn session_anchors_to_repo_not_the_cwd_subfolder() {
     let sub = mk_anchor_folder(&s, &format!("{b}/repo/src"), "folder", None).await;
     let sess = "_test-p1-anchor";
     clear_test_session(&s, sess).await;
-    s.record_session_event(sess, &sub, None, "claude", false).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: sess,
+        folder_id: &sub,
+        workspace_id: None,
+        family: "claude",
+        is_end: false,
+    })
+    .await
+    .unwrap();
     let (folder_id, repo_folder_id): (Option<uuid::Uuid>, Option<uuid::Uuid>) =
         sqlx_core::query_as::query_as(
             "SELECT folder_id, repo_folder_id FROM activity.sessions WHERE client_session_id = $1",
@@ -172,7 +180,15 @@ async fn folder_prune_nulls_folder_id_but_session_and_repo_survive() {
     let sub = mk_anchor_folder(&s, &format!("{b}/repo/src"), "folder", None).await;
     let sess = "_test-p1-prune";
     clear_test_session(&s, sess).await;
-    s.record_session_event(sess, &sub, None, "claude", false).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: sess,
+        folder_id: &sub,
+        workspace_id: None,
+        family: "claude",
+        is_end: false,
+    })
+    .await
+    .unwrap();
     sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
         .bind(sub)
         .execute(&s.pool)
@@ -244,7 +260,15 @@ async fn folder_has_sessions_reflects_attached_history() {
     clear_test_session(&s, sess).await;
     let fid = create_test_folder(&s, "hashist").await;
     assert!(!s.folder_has_sessions(&fid).await.unwrap(), "no sessions yet");
-    s.record_session_event(sess, &fid, None, "claude", true).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: sess,
+        folder_id: &fid,
+        workspace_id: None,
+        family: "claude",
+        is_end: true,
+    })
+    .await
+    .unwrap();
     assert!(s.folder_has_sessions(&fid).await.unwrap(), "session attached → has history");
     // The archive gate keys on the durable anchor too (P2): null the raw folder (as a
     // prune would) and the repo still reports history via repo_folder_id — so a
@@ -269,7 +293,15 @@ async fn remap_folder_moves_sessions_aliases_old_path_and_drops_old_row() {
     clear_test_session(&s, sess).await;
     let old = create_test_folder(&s, "remap-old").await; // /_test/remap-old
     let new = create_test_folder(&s, "remap-new").await; // /_test/remap-new
-    s.record_session_event(sess, &old, None, "claude", true).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: sess,
+        folder_id: &old,
+        workspace_id: None,
+        family: "claude",
+        is_end: true,
+    })
+    .await
+    .unwrap();
 
     s.remap_folder(&old, "/_test/remap-old", &new).await.unwrap();
 
@@ -1033,14 +1065,41 @@ async fn record_session_event_folds_into_one_row_and_completes() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "sess-record").await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    let id1 = s.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
-    let id2 = s.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+    let id1 = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
+    let id2 = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
     assert_eq!(id1, id2, "same client_session_id must fold into one session row");
     assert!(
         s.get_session(&id1).await.unwrap().unwrap()["completed_at"].is_null(),
         "not completed before an end event"
     );
-    let id3 = s.record_session_event(&sid, &fid, None, "claude", true).await.unwrap();
+    let id3 = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
     assert_eq!(id3, id1, "end event updates the same row");
     assert!(
         !s.get_session(&id1).await.unwrap().unwrap()["completed_at"].is_null(),
@@ -1062,7 +1121,16 @@ async fn raise_session_list_cost_keeps_the_largest_total() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "sess-list-cost").await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    let id = s.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+    let id = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
     let read = |s: &PgStore| {
         let s = s.clone();
         async move {
@@ -1111,8 +1179,25 @@ async fn list_all_sessions_joins_workspace_and_uses_camelcase_times() {
     let pid = s.create_workspace(&proj_name, None, None).await.unwrap();
     let fid = create_test_folder(&s, "obs-sess").await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", false).await.unwrap();
-    s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+    let session_id = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: &sid,
+        folder_id: &fid,
+        workspace_id: Some(&pid),
+        family: "claude",
+        is_end: true,
+    })
+    .await
+    .unwrap();
 
     let all = s.list_all_sessions(500, None, None).await.unwrap();
     let row = all
@@ -1170,7 +1255,16 @@ async fn process_analysis_selects_unscored_then_saves_judgments_evidence_waterma
     let suffix = format!("proc_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let csid = format!("{suffix}-csid");
-    let sid = s.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
     // Make it measurable (outcome not null) — the selection base.
     sqlx_core::query::query(
             "UPDATE activity.sessions SET outcome='completed'::sensei.session_outcome, ftr=true WHERE id=$1"
@@ -1262,7 +1356,16 @@ async fn set_session_summary_refreshes_when_changed() {
         .unwrap();
     let fid = create_test_folder(&s, &format!("sum-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+    let session_id = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
 
     // Fresh session → summary NULL → the write persists (1 row).
     let n1 =
@@ -1440,7 +1543,15 @@ async fn workspaces_with_session_activity_reports_the_workspace() {
         .unwrap();
     let fid = create_test_folder(&s, &format!("act-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: &sid,
+        folder_id: &fid,
+        workspace_id: Some(&pid),
+        family: "claude",
+        is_end: true,
+    })
+    .await
+    .unwrap();
 
     let activity = s.get_workspaces_with_session_activity().await.unwrap();
     let row =
@@ -1474,7 +1585,16 @@ async fn workspace_ftr_and_quality_decode_numeric_metrics() {
         .unwrap();
     let fid = create_test_folder(&s, &format!("ftr-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+    let session_id = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
     s.update_session_metrics(&SessionMetricsRow {
         session_id: &session_id,
         turns: 3,

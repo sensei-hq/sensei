@@ -177,16 +177,26 @@ async fn append_and_list_events_newest_first() {
     let id = pg.create_run(&NewRun::default()).await.unwrap();
 
     let e1 = pg
-        .append_run_event(&id, RunEventKind::PhaseStarted, Some("P3"), None, &serde_json::json!({}))
+        .append_run_event(
+            &id,
+            &crate::db::pg_store::RunEventRow {
+                kind: RunEventKind::PhaseStarted,
+                phase: Some("P3"),
+                feature: None,
+                detail: &serde_json::json!({}),
+            },
+        )
         .await
         .unwrap();
     let e2 = pg
         .append_run_event(
             &id,
-            RunEventKind::PausedOnLimit,
-            Some("P3"),
-            Some("run-state"),
-            &serde_json::json!({ "reset_at": "2026-07-17T11:29:00Z" }),
+            &crate::db::pg_store::RunEventRow {
+                kind: RunEventKind::PausedOnLimit,
+                phase: Some("P3"),
+                feature: Some("run-state"),
+                detail: &serde_json::json!({ "reset_at": "2026-07-17T11:29:00Z" }),
+            },
         )
         .await
         .unwrap();

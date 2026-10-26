@@ -172,12 +172,9 @@ impl PgStore {
     /// client_session_id so every hook event of a session folds into one row (#31).
     pub async fn record_session_event(
         &self,
-        client_session_id: &str,
-        folder_id: &uuid::Uuid,
-        workspace_id: Option<&uuid::Uuid>,
-        family: &str,
-        is_end: bool,
+        event: &SessionEventRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &SessionEventRow { client_session_id, folder_id, workspace_id, family, is_end } = event;
         // Derive the durable repo anchor from folder_id in the SAME write (spec 2026-08-18):
         // repo_anchor_for walks folder_id's abs_path up to its owning repo, so the session
         // attaches to a repo (repo_folder_id + repo_key) no matter which subfolder the cwd
@@ -1187,7 +1184,13 @@ impl PgStore {
                 continue; // no cwd resolves (no folder, no alias) — leave orphaned
             };
             if self
-                .record_session_event(&session_id, &folder_id, workspace_id.as_ref(), &family, true)
+                .record_session_event(&crate::db::pg_store::SessionEventRow {
+                    client_session_id: &session_id,
+                    folder_id: &folder_id,
+                    workspace_id: workspace_id.as_ref(),
+                    family: &family,
+                    is_end: true,
+                })
                 .await
                 .is_ok()
             {
@@ -1270,7 +1273,13 @@ impl PgStore {
                 continue; // unresolvable — leave it rather than misattribute
             };
             if self
-                .record_session_event(&session_id, &folder_id, workspace_id.as_ref(), &family, true)
+                .record_session_event(&crate::db::pg_store::SessionEventRow {
+                    client_session_id: &session_id,
+                    folder_id: &folder_id,
+                    workspace_id: workspace_id.as_ref(),
+                    family: &family,
+                    is_end: true,
+                })
                 .await
                 .is_ok()
             {

@@ -22,8 +22,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "patterns.rs::create_recommendation",
     "personas.rs::link_persona_identity",
     "playbook.rs::playbook_combo_trust",
-    "runs.rs::append_run_event",
-    "sessions.rs::record_session_event",
     "trackers.rs::apply_tracker_snapshot",
 ];
 

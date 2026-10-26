@@ -321,13 +321,13 @@ pub(crate) async fn ingest_hook_event(
                 let is_end = matches!(f.event_type, "Stop" | "SessionEnd");
                 if let Err(e) = state
                     .pg
-                    .record_session_event(
-                        f.session_id,
-                        &folder_id,
-                        workspace_id.as_ref(),
-                        f.family,
+                    .record_session_event(&crate::db::pg_store::SessionEventRow {
+                        client_session_id: f.session_id,
+                        folder_id: &folder_id,
+                        workspace_id: workspace_id.as_ref(),
+                        family: f.family,
                         is_end,
-                    )
+                    })
                     .await
                 {
                     tracing::warn!(error = %e, event_type = f.event_type, "ingest_hook_event: record_session_event failed");

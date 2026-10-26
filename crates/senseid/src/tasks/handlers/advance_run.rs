@@ -217,10 +217,12 @@ pub async fn advance_run(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
             ctx.pg()
                 .append_run_event(
                     &run_id,
-                    RunEventKind::Housekeeping,
-                    run.current_phase.as_deref(),
-                    run.current_feature.as_deref(),
-                    &serde_json::json!({ "tick": true }),
+                    &crate::db::pg_store::RunEventRow {
+                        kind: RunEventKind::Housekeeping,
+                        phase: run.current_phase.as_deref(),
+                        feature: run.current_feature.as_deref(),
+                        detail: &serde_json::json!({ "tick": true }),
+                    },
                 )
                 .await
                 .map_err(|e| format!("append_run_event failed: {e}"))?;
@@ -310,10 +312,12 @@ async fn drive_run(ctx: &TaskContext, cfg: &DriveConfig, run: &Run) -> Result<()
     ctx.pg()
         .append_run_event(
             &run_id,
-            RunEventKind::FeatureStarted,
-            run.current_phase.as_deref(),
-            Some(&label),
-            &serde_json::json!({ "goal": label, "autonomy": stance.autonomy }),
+            &crate::db::pg_store::RunEventRow {
+                kind: RunEventKind::FeatureStarted,
+                phase: run.current_phase.as_deref(),
+                feature: Some(&label),
+                detail: &serde_json::json!({ "goal": label, "autonomy": stance.autonomy }),
+            },
         )
         .await
         .map_err(|e| format!("append_run_event(FeatureStarted) failed: {e}"))?;
@@ -555,7 +559,10 @@ async fn append(
     detail: serde_json::Value,
 ) -> Result<(), String> {
     ctx.pg()
-        .append_run_event(run_id, kind, phase, feature, &detail)
+        .append_run_event(
+            run_id,
+            &crate::db::pg_store::RunEventRow { kind, phase, feature, detail: &detail },
+        )
         .await
         .map(|_| ())
         .map_err(|e| format!("append_run_event({kind:?}) failed: {e}"))

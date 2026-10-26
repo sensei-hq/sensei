@@ -723,8 +723,15 @@ async fn synthesize_session(
         tracing::debug!(session = %session_id, "synthesize_session: no tracked folder for cwds — skipping");
         return None;
     };
-    if let Err(e) =
-        pg.record_session_event(session_id, &folder_id, workspace_id.as_ref(), family, true).await
+    if let Err(e) = pg
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: session_id,
+            folder_id: &folder_id,
+            workspace_id: workspace_id.as_ref(),
+            family,
+            is_end: true,
+        })
+        .await
     {
         tracing::warn!(error = %e, "synthesize_session: record_session_event failed");
         return None;

@@ -8,7 +8,16 @@ async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
     let suffix = format!("prune_keep_unanalyzed_{}", uuid::Uuid::new_v4());
     let (_pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let csid = format!("{}-csid", suffix);
-    let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
     // Age the session past the cutoff but leave analyzed_at NULL.
     sqlx_core::query::query(
         "UPDATE activity.sessions SET started_at = now() - interval '90 days' WHERE id = $1",
@@ -58,7 +67,16 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     let suffix = format!("prune_del_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let csid = format!("{}-csid", suffix);
-    let sid = s.record_session_event(&csid, &fid, None, "claude", true).await.unwrap();
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
     // Age to 40 days: past the 30-day retention window but INSIDE the 60-day
     // backstop, so the ONLY thing that makes it prune-eligible is the
     // capture path — its day must already exist in sensei.workspace_metrics.
@@ -278,7 +296,16 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
         age_days: i32,
     ) -> uuid::Uuid {
         let csid = format!("{suffix}-{tag}");
-        let sid = s.record_session_event(&csid, fid, None, "claude", true).await.unwrap();
+        let sid = s
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: fid,
+                workspace_id: None,
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
         sqlx_core::query::query(
             "UPDATE activity.sessions
                     SET started_at = date_trunc('day', now() - (interval '1 day' * $2)),
@@ -587,8 +614,16 @@ async fn a_session_closes_by_its_client_id_and_a_miss_is_a_miss() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "sess_client_close").await;
     let client = uuid::Uuid::new_v4();
-    let row =
-        s.record_session_event(&client.to_string(), &fid, None, "claude", false).await.unwrap();
+    let row = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &client.to_string(),
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
     assert_ne!(row, client, "the row id is not the client id — which is the whole bug");
 
     let close = |id| SessionOutcomeRow {
