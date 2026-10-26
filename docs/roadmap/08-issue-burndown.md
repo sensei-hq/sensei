@@ -242,8 +242,8 @@ The settings screen lists them as repositories.
   writers (→ 4, all readers; 9bad2aa8); readers (→ 0, 853c46a5), allows removed, exhaustive-destructure guard.
   **All acceptance met**; closes when the next release runs it.
 - #123: VS Code adapter. A5 (0c2d452b, sample tests no longer pass by skipping) and A6 (7f0d82c6, one
-  failure-rate denominator) fixed. The lower-severity list is verified (all real); #1 is fixed (04f78181, the daemon
-  reads VS Code through the installed scan). Left: items 2–7 and adjacent (a)–(d), then Track B.
+  failure-rate denominator) fixed. The lower-severity list is verified (all real); #1 (04f78181), 2–5 and adjacent
+  (a)/(b) (9917ca6a) and 7 (2ac89e21) are fixed. Left: (6), adjacent (c)/(d), then Track B.
 - ~~#338~~ **closed 2026-10-26** (be5a6677): scheduled workers ran at twice their interval (live: advance_run
   every 30s, set to 15s). Found via a flaky test.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.

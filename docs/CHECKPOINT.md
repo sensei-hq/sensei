@@ -17,12 +17,12 @@ in this release). Local daemon on 0.20.2.
   positional args), and each row is destructured exhaustively, guarded by `typed_rows_tests.rs`. The
   `too_many_arguments` allows are gone. Check: the next release's daemon runs it.
 
-**In progress — #123:** A5, A6 and lower-severity #1 fixed (VS Code discovery, 04f78181). Items 2–7 and
-adjacent (a)–(d) are verified and listed on the issue with file:line. Most are in `tools/session-report`;
-#7 is in the daemon (a `#` in the storage path).
+**In progress — #123:** A5, A6 and lower-severity items 1–5 and 7, plus adjacent (a)/(b), are fixed
+(04f78181, 9917ca6a, 2ac89e21). Left: (6) `event_count`'s three meanings, adjacent (c) stale Claude turn
+ends and (d) `#L10` fragments, then Track B.
 **Also fixed:** #338, where scheduled workers ran at twice their interval (be5a6677; advance_run 30s → 15s
 after release).
-**Next:** #123 items 2–7 plus (a)–(d), test-first each, then Track B.
+**Next:** #123 adjacent (c) (Claude turns ending at a stale `last_assistant_ms`), then (6) and (d), then Track B.
 
 **Watch roots:** the live DB watches only sensei on purpose until the indexer covers JS/TS/Java/.NET;
 then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.
