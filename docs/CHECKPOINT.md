@@ -17,7 +17,11 @@ in this release). Local daemon on 0.20.2.
   positional args), and each row is destructured exhaustively, guarded by `typed_rows_tests.rs`. The
   `too_many_arguments` allows are gone. Check: the next release's daemon runs it.
 
-**Next:** the next open wave-5 item in the burndown after #161 (#123, VS Code adapter). Read the issue first.
+**In progress — #123:** A5 (0c2d452b) and A6 (7f0d82c6) fixed. A1–A4 were done earlier.
+**Next:** #123's lower-severity list, mostly in `tools/session-report` (`units()` scan depth, the p90 vs median
+turn-length gate, `--compare` contradictions, fabricated zero-length turns, `event_count` meaning three
+things, `#` in a workspace path). Then Track B. Verify each before fixing: the original review had one false
+claim.
 
 **Watch roots:** the live DB watches only sensei on purpose until the indexer covers JS/TS/Java/.NET;
 then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.

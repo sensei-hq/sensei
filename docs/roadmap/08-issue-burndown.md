@@ -241,7 +241,8 @@ The settings screen lists them as repositories.
   (→ 23, none at six args); four more and `merge_type` deleted (→ 18); `FileFingerprint` (→ 15); session and run events (→ 13); the last
   writers (→ 4, all readers; 9bad2aa8); readers (→ 0, 853c46a5), allows removed, exhaustive-destructure guard.
   **All acceptance met**; closes when the next release runs it.
-- #123: VS Code adapter A5/A6, Track B.
+- #123: VS Code adapter. A5 (0c2d452b, sample tests no longer pass by skipping) and A6 (7f0d82c6, one
+  failure-rate denominator) fixed. Left: the lower-severity list, then Track B.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
   signing, notarization, and a first-start Permissions step. Needs the user's Apple Developer account.
