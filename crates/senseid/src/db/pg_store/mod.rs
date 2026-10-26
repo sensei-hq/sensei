@@ -1855,3 +1855,17 @@ pub struct WorkspaceIdentity<'a> {
     pub stack: &'a [String],
     pub tags: &'a [String],
 }
+
+// Written by `folders.rs`.
+/// A file as the walk saw it, as [`PgStore::upsert_file_row`] records it: its
+/// mtime gates re-indexing cheaply and its content hash is the authoritative
+/// change signal.
+pub struct FileFingerprint<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    /// Relative to the folder.
+    pub file_path: &'a str,
+    /// Epoch milliseconds.
+    pub mtime: i64,
+    /// SHA-256 hex of the file's bytes.
+    pub content_hash: &'a str,
+}

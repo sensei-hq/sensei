@@ -595,7 +595,15 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         .await?;
         let count = written.map(|w| w.symbols as u32).unwrap_or(0);
         if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath)
-            && let Err(e) = ctx.pg().upsert_scan_state(fid, &rel, mtime, &hash).await
+            && let Err(e) = ctx
+                .pg()
+                .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                    folder_id: fid,
+                    file_path: &rel,
+                    mtime,
+                    content_hash: &hash,
+                })
+                .await
         {
             return fail_folder(ctx, fid, &rel, format!("upsert_scan_state: {e}")).await;
         }
@@ -980,7 +988,15 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // so a fatal failure above leaves the `files` row unadvanced and the next scan
     // retries it. A `files` write failure is itself fatal.
     if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath)
-        && let Err(e) = ctx.pg().upsert_scan_state(&folder_id, &result.rel_path, mtime, &hash).await
+        && let Err(e) = ctx
+            .pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &folder_id,
+                file_path: &result.rel_path,
+                mtime,
+                content_hash: &hash,
+            })
+            .await
     {
         return fail_folder(ctx, &folder_id, &result.rel_path, format!("upsert_scan_state: {e}"))
             .await;
@@ -3073,8 +3089,24 @@ mod tests {
                 .await
                 .unwrap();
 
-        ctx.pg().upsert_scan_state(&fid, "a.rs", 111, "hashA").await.unwrap();
-        ctx.pg().upsert_scan_state(&fid, "b.rs", 222, "hashB").await.unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "a.rs",
+                mtime: 111,
+                content_hash: "hashA",
+            })
+            .await
+            .unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "b.rs",
+                mtime: 222,
+                content_hash: "hashB",
+            })
+            .await
+            .unwrap();
         let state = ctx.pg().list_scan_state(&fid).await.unwrap();
         assert_eq!(state.len(), 2, "two fingerprints recorded");
 
@@ -3105,7 +3137,15 @@ mod tests {
         for reason in crate::classifiers::ScanSkipReason::ALL {
             let file = format!("{}.txt", reason.as_db());
             ctx.pg()
-                .upsert_scan_state_skipped(&fid, &file, 1, "h", reason)
+                .upsert_scan_state_skipped(
+                    &crate::db::pg_store::FileFingerprint {
+                        folder_id: &fid,
+                        file_path: &file,
+                        mtime: 1,
+                        content_hash: "h",
+                    },
+                    reason,
+                )
                 .await
                 .unwrap_or_else(|e| panic!("{} is not a scan_skip_reason: {e}", reason.as_db()));
         }
@@ -3138,10 +3178,12 @@ mod tests {
         // Skipped: fingerprint + reason recorded (exercises the ::enum cast).
         ctx.pg()
             .upsert_scan_state_skipped(
-                &fid,
-                "docs/License.txt",
-                111,
-                "hashA",
+                &crate::db::pg_store::FileFingerprint {
+                    folder_id: &fid,
+                    file_path: "docs/License.txt",
+                    mtime: 111,
+                    content_hash: "hashA",
+                },
                 crate::classifiers::ScanSkipReason::InvalidUtf8,
             )
             .await
@@ -3166,7 +3208,15 @@ mod tests {
         );
 
         // User fixes the encoding → the file indexes normally → reason cleared.
-        ctx.pg().upsert_scan_state(&fid, "docs/License.txt", 222, "hashB").await.unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "docs/License.txt",
+                mtime: 222,
+                content_hash: "hashB",
+            })
+            .await
+            .unwrap();
         let cleared: Option<String> = sqlx_core::query_scalar::query_scalar(
             "SELECT skip_reason::text FROM sensei.files WHERE folder_id = $1 AND file_path = $2",
         )

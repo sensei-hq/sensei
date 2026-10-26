@@ -825,9 +825,17 @@ async fn write_structure(
 
         for (rel, _) in &plan.files {
             let Some(f) = current.get(rel) else { continue };
-            pg.upsert_file_row(&folder_id, rel, f.mtime, &f.hash, None)
-                .await
-                .map_err(|e| format!("upsert_file_row({rel}): {e}"))?;
+            pg.upsert_file_row(
+                &crate::db::pg_store::FileFingerprint {
+                    folder_id: &folder_id,
+                    file_path: rel,
+                    mtime: f.mtime,
+                    content_hash: &f.hash,
+                },
+                None,
+            )
+            .await
+            .map_err(|e| format!("upsert_file_row({rel}): {e}"))?;
             out.files += 1;
         }
 
@@ -1295,10 +1303,12 @@ mod parse_task {
         // Stage 3's barrier: the `files` row exists before the parse, which is
         // what lets node persistence fail closed on a missing one (R13).
         pg.upsert_file_row(
-            &folder_id,
-            "src/lib.rs",
-            crate::db::pg_store::folders::BARRIER_MTIME,
-            crate::db::pg_store::folders::BARRIER_HASH,
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &folder_id,
+                file_path: "src/lib.rs",
+                mtime: crate::db::pg_store::folders::BARRIER_MTIME,
+                content_hash: crate::db::pg_store::folders::BARRIER_HASH,
+            },
             None,
         )
         .await

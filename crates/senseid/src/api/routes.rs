@@ -3028,7 +3028,17 @@ mod tests {
         // one unit, which is a graph with no edge in it at all — and an endpoint
         // returning nothing proves nothing about a cache.
         for path in ["a.rs", "b.rs", "c.rs"] {
-            pg.upsert_file_row(&fid, path, 1, "seed", None).await.unwrap();
+            pg.upsert_file_row(
+                &crate::db::pg_store::FileFingerprint {
+                    folder_id: &fid,
+                    file_path: path,
+                    mtime: 1,
+                    content_hash: "seed",
+                },
+                None,
+            )
+            .await
+            .unwrap();
         }
 
         let def = |path: &'static str| crate::db::pg_store::FqnDef {
@@ -3112,7 +3122,17 @@ mod tests {
         crate::tasks::test_support::place_folder_in_workspace(pg, &fid, &mine, &format!("w-{tag}"))
             .await
             .unwrap();
-        pg.upsert_file_row(&fid, "a.rs", 1, "seed", None).await.unwrap();
+        pg.upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "a.rs",
+                mtime: 1,
+                content_hash: "seed",
+            },
+            None,
+        )
+        .await
+        .unwrap();
         let def = crate::db::pg_store::FqnDef {
             file_path: "a.rs",
             signature: None,

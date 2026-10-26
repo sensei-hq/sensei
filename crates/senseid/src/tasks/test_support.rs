@@ -929,7 +929,16 @@ pub async fn seed_file(
     folder_id: &uuid::Uuid,
     file_path: &str,
 ) -> Result<uuid::Uuid, String> {
-    pg.upsert_file_row(folder_id, file_path, 1, "seed", None).await
+    pg.upsert_file_row(
+        &crate::db::pg_store::FileFingerprint {
+            folder_id,
+            file_path,
+            mtime: 1,
+            content_hash: "seed",
+        },
+        None,
+    )
+    .await
 }
 
 /// Give a repo-root folder its `repositories` row and link it, as a scan does.

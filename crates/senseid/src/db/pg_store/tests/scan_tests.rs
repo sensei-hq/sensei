@@ -428,7 +428,14 @@ async fn watch_root_update_status() {
 async fn scan_state_upsert_and_stale() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("scan_{}", uuid::Uuid::new_v4())).await;
-    s.upsert_scan_state(&fid, "src/main.rs", 1000, "hash1").await.unwrap();
+    s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+        folder_id: &fid,
+        file_path: "src/main.rs",
+        mtime: 1000,
+        content_hash: "hash1",
+    })
+    .await
+    .unwrap();
     // Same mtime = not stale
     let stale = s.get_stale_files(&fid, &[("src/main.rs".into(), 1000)]).await.unwrap();
     assert!(stale.is_empty());
@@ -552,7 +559,14 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     // `cluster/server` 1 node against 1,970 stale rows, `cluster/scheduler`
     // 1/1,816, `sensei/marketplace` 1/77 — enough to make a content-based
     // duplicate check report six false positives out of seven.
-    s.upsert_scan_state(&crate_fid, "src/store.rs", 1, &format!("hash-{uniq}")).await.unwrap();
+    s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+        folder_id: &crate_fid,
+        file_path: "src/store.rs",
+        mtime: 1,
+        content_hash: &format!("hash-{uniq}"),
+    })
+    .await
+    .unwrap();
     let phantom =
         s.upsert_repo_kind(&root_id, "standalone", "dojo-mind", &crate_abs).await.unwrap();
     assert_eq!(phantom, crate_fid, "the same folder, now mis-scoped as standalone");

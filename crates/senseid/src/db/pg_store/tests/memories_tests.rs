@@ -1264,9 +1264,14 @@ async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_
         .await
         .unwrap();
         // The healed one holds stale `files` rows but NO content nodes.
-        s.upsert_scan_state(&healed, &format!("f{i}.rs"), 1, &format!("hash-{tag}-{i}"))
-            .await
-            .unwrap();
+        s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+            folder_id: &healed,
+            file_path: &format!("f{i}.rs"),
+            mtime: 1,
+            content_hash: &format!("hash-{tag}-{i}"),
+        })
+        .await
+        .unwrap();
     }
     // ...only the module container the heal leaves behind.
     s.upsert_dir_node(&healed, "module", "healed", "").await.unwrap();

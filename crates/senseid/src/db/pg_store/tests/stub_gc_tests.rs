@@ -652,12 +652,24 @@ async fn a_forced_rescan_reopens_parsed_files_and_leaves_skipped_ones_alone() {
     let folder = format!("force_{}", uuid::Uuid::new_v4());
     let fid = create_test_folder(&s, &folder).await;
 
-    s.upsert_file_row(&fid, "src/parsed.rs", 1, "h1", None).await.unwrap();
     s.upsert_file_row(
-        &fid,
-        "src/binary.bin",
-        1,
-        "h2",
+        &crate::db::pg_store::FileFingerprint {
+            folder_id: &fid,
+            file_path: "src/parsed.rs",
+            mtime: 1,
+            content_hash: "h1",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    s.upsert_file_row(
+        &crate::db::pg_store::FileFingerprint {
+            folder_id: &fid,
+            file_path: "src/binary.bin",
+            mtime: 1,
+            content_hash: "h2",
+        },
         Some(crate::classifiers::ScanSkipReason::BinaryContent),
     )
     .await

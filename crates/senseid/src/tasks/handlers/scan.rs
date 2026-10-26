@@ -1598,7 +1598,15 @@ mod tests {
             .await
             .unwrap();
         ctx.pg().upsert_dir_node(&fid, "module", "src", &format!("{repo_path}/src")).await.unwrap();
-        ctx.pg().upsert_scan_state(&fid, "crates/hive-mind/src/config.rs", 1, "h").await.unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "crates/hive-mind/src/config.rs",
+                mtime: 1,
+                content_hash: "h",
+            })
+            .await
+            .unwrap();
 
         // Live working-tree set: only a.rs survives.
         let live: std::collections::HashSet<String> = ["a.rs".to_string()].into_iter().collect();
@@ -1636,8 +1644,24 @@ mod tests {
         )
         .await
         .unwrap();
-        ctx.pg().upsert_scan_state(&fid, "src/kept.ts", 1, "h1").await.unwrap();
-        ctx.pg().upsert_scan_state(&fid, "docs/gone.md", 1, "h2").await.unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "src/kept.ts",
+                mtime: 1,
+                content_hash: "h1",
+            })
+            .await
+            .unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "docs/gone.md",
+                mtime: 1,
+                content_hash: "h2",
+            })
+            .await
+            .unwrap();
 
         let live: std::collections::HashSet<String> =
             ["src/kept.ts".to_string()].into_iter().collect();
@@ -1765,7 +1789,15 @@ mod tests {
             )
             .await
             .unwrap();
-        ctx.pg().upsert_scan_state(&gone_fid, "gone/config.rs", 1, "h").await.unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &gone_fid,
+                file_path: "gone/config.rs",
+                mtime: 1,
+                content_hash: "h",
+            })
+            .await
+            .unwrap();
 
         // Prune: both ghost folder rows go, the live one stays.
         let pruned = prune_vanished_folders(ctx.pg(), &root_id).await;

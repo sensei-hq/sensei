@@ -11,9 +11,6 @@
 /// parameters, as `file::name`. Convert one to a typed row, then delete its line.
 const STILL_POSITIONAL: &[&str] = &[
     "dojo.rs::upsert_federated_memory",
-    "folders.rs::upsert_file_row",
-    "folders.rs::upsert_scan_state_skipped",
-    "folders.rs::write_scan_state",
     "governance.rs::assemble_context",
     "governance.rs::upsert_stance",
     "graph.rs::semantic_search_nodes",
@@ -430,7 +427,17 @@ async fn an_edge_row_lands_on_its_target_columns() {
     let s = super::pg_store().await;
     let root = s.add_watch_root("/_t161e", "t161e", &serde_json::json!([])).await.unwrap();
     let folder = s.upsert_repo_kind(&root, "git", "t161e", "/_t161e/repo").await.unwrap();
-    s.upsert_file_row(&folder, "a.rs", 0, "h", None).await.unwrap();
+    s.upsert_file_row(
+        &crate::db::pg_store::FileFingerprint {
+            folder_id: &folder,
+            file_path: "a.rs",
+            mtime: 0,
+            content_hash: "h",
+        },
+        None,
+    )
+    .await
+    .unwrap();
     let node = |name: &'static str| NodeRow {
         folder_id: &folder,
         kind: "function",
@@ -1120,4 +1127,28 @@ async fn a_workspace_identity_lands_field_for_field() {
     .await
     .unwrap();
     assert_eq!(got, (Some("desc".into()), Some("cl".into()), serde_json::json!(["rust"]), tags));
+}
+
+#[tokio::test]
+async fn a_file_fingerprint_lands_field_for_field() {
+    use crate::db::pg_store::FileFingerprint;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161ff", "t161ff", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161ff", "/_t161ff/repo").await.unwrap();
+    let fp = FileFingerprint {
+        folder_id: &folder,
+        file_path: "src/a.rs",
+        mtime: 1234,
+        content_hash: "h-161",
+    };
+    s.upsert_file_row(&fp, Some(crate::classifiers::ScanSkipReason::Oversized)).await.unwrap();
+    type File = (i64, String, Option<String>);
+    let got: File = sqlx_core::query_as::query_as(
+        "SELECT mtime, content_hash, skip_reason::text FROM sensei.files WHERE folder_id = $1 AND file_path = 'src/a.rs'",
+    )
+    .bind(folder)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (1234, "h-161".into(), Some("oversized".into())));
 }

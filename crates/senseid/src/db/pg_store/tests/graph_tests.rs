@@ -620,7 +620,18 @@ async fn a_repo_relative_path_resolves_to_a_file_in_a_module_folder() {
         .unwrap();
 
     // The file is FOLDER-relative to the module.
-    let fid = s.upsert_file_row(&module, "src/lib.rs", 1, "h", None).await.unwrap();
+    let fid = s
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &module,
+                file_path: "src/lib.rs",
+                mtime: 1,
+                content_hash: "h",
+            },
+            None,
+        )
+        .await
+        .unwrap();
 
     // Asked for from the REPO folder, repo-relative — the v1 caller's shape.
     assert_eq!(
@@ -694,8 +705,30 @@ async fn a_file_two_folders_both_track_resolves_to_the_callers_own_folder() {
         .unwrap();
 
     // One file on disk, tracked by both folders at their own grains.
-    let outer_row = s.upsert_file_row(&outer, "vendored/src/lib.rs", 1, "h", None).await.unwrap();
-    let inner_row = s.upsert_file_row(&inner, "src/lib.rs", 1, "h", None).await.unwrap();
+    let outer_row = s
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &outer,
+                file_path: "vendored/src/lib.rs",
+                mtime: 1,
+                content_hash: "h",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let inner_row = s
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &inner,
+                file_path: "src/lib.rs",
+                mtime: 1,
+                content_hash: "h",
+            },
+            None,
+        )
+        .await
+        .unwrap();
     assert_ne!(outer_row, inner_row, "the fixture must really create two rows");
 
     assert_eq!(
@@ -789,7 +822,14 @@ async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     // denominator. This assertion is the one that catches a `decided`
     // predicate keyed on `indexed_at`, which is NOT NULL DEFAULT now() and so
     // counts every walked file the instant its row appears.
-    s.upsert_scan_state(&grand, "a.rs", 1, "h").await.unwrap();
+    s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+        folder_id: &grand,
+        file_path: "a.rs",
+        mtime: 1,
+        content_hash: "h",
+    })
+    .await
+    .unwrap();
     assert!(!complete!(grand), "a walked-but-unparsed file is discovered, not decided");
 
     // NOW decide it.
@@ -801,7 +841,14 @@ async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     // A CONTENT CHANGE un-decides it. The recorded parse described bytes that
     // no longer exist, so the file returns to `discovered` and the whole tree
     // is incomplete again — otherwise a stale parse counts as current work.
-    s.upsert_scan_state(&grand, "a.rs", 2, "DIFFERENT").await.unwrap();
+    s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+        folder_id: &grand,
+        file_path: "a.rs",
+        mtime: 2,
+        content_hash: "DIFFERENT",
+    })
+    .await
+    .unwrap();
     assert!(!complete!(grand), "a changed file needs re-parsing");
     assert!(!complete!(root), "...and that reaches the root too");
 

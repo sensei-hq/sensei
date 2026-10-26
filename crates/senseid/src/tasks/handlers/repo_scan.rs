@@ -597,7 +597,15 @@ async fn write_file_rows(
                         };
                         let row = ctx
                             .pg()
-                            .upsert_file_row(folder_id, &rel, mtime, &hash, Some(reason))
+                            .upsert_file_row(
+                                &crate::db::pg_store::FileFingerprint {
+                                    folder_id,
+                                    file_path: &rel,
+                                    mtime,
+                                    content_hash: &hash,
+                                },
+                                Some(reason),
+                            )
                             .await;
                         // A file that is skipped NOW may have been indexed before
                         // (it became vendored, generated, binary): what it put in
@@ -646,7 +654,17 @@ async fn write_file_rows(
                                 (BARRIER_MTIME, BARRIER_HASH.to_string())
                             }
                         };
-                        ctx.pg().upsert_file_row(folder_id, &rel, mtime, &hash, None).await
+                        ctx.pg()
+                            .upsert_file_row(
+                                &crate::db::pg_store::FileFingerprint {
+                                    folder_id,
+                                    file_path: &rel,
+                                    mtime,
+                                    content_hash: &hash,
+                                },
+                                None,
+                            )
+                            .await
                     }
                 }
             }
@@ -660,10 +678,12 @@ async fn write_file_rows(
                 };
                 ctx.pg()
                     .upsert_file_row(
-                        folder_id,
-                        &rel,
-                        mtime,
-                        &hash,
+                        &crate::db::pg_store::FileFingerprint {
+                            folder_id,
+                            file_path: &rel,
+                            mtime,
+                            content_hash: &hash,
+                        },
                         Some(crate::classifiers::ScanSkipReason::UnsupportedFormat),
                     )
                     .await

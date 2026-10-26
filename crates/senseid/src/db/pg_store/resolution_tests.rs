@@ -21,8 +21,28 @@ async fn fixture(pg: &PgStore, tag: &uuid::Uuid) -> (uuid::Uuid, uuid::Uuid) {
     )
     .await
     .unwrap();
-    pg.upsert_file_row(&folder_id, "a.rs", 1, "seed", None).await.unwrap();
-    pg.upsert_file_row(&folder_id, "b.ts", 1, "seed", None).await.unwrap();
+    pg.upsert_file_row(
+        &crate::db::pg_store::FileFingerprint {
+            folder_id: &folder_id,
+            file_path: "a.rs",
+            mtime: 1,
+            content_hash: "seed",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    pg.upsert_file_row(
+        &crate::db::pg_store::FileFingerprint {
+            folder_id: &folder_id,
+            file_path: "b.ts",
+            mtime: 1,
+            content_hash: "seed",
+        },
+        None,
+    )
+    .await
+    .unwrap();
     (workspace_id, folder_id)
 }
 
