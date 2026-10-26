@@ -1249,10 +1249,10 @@ mod tests {
     /// in the repo. Point SENSEI_VSCODE_SAMPLE at a `workspaceStorage`-shaped
     /// folder (one directory per workspace hash).
     #[test]
+    #[ignore = "needs SENSEI_VSCODE_SAMPLE: a VS Code workspaceStorage folder (other people's transcripts, not in the repo)"]
     fn discovers_units_in_a_real_workspace_storage_folder() {
-        let Ok(dir) = std::env::var("SENSEI_VSCODE_SAMPLE") else {
-            return;
-        };
+        let dir = std::env::var("SENSEI_VSCODE_SAMPLE")
+            .expect("run with SENSEI_VSCODE_SAMPLE set to a VS Code workspaceStorage folder");
         let adapter = VscodeAdapter::new(PathBuf::from(&dir));
         let units = adapter.units();
         // Count what is on disk and require the adapter to find ALL of it. The
@@ -1292,10 +1292,10 @@ mod tests {
     /// Skips when unset. Point SENSEI_VSCODE_SAMPLE at a `workspaceStorage`
     /// folder — the shape people actually send.
     #[test]
+    #[ignore = "needs SENSEI_VSCODE_SAMPLE: a VS Code workspaceStorage folder (other people's transcripts, not in the repo)"]
     fn parses_turns_from_real_chat_journals() {
-        let Ok(dir) = std::env::var("SENSEI_VSCODE_SAMPLE") else {
-            return;
-        };
+        let dir = std::env::var("SENSEI_VSCODE_SAMPLE")
+            .expect("run with SENSEI_VSCODE_SAMPLE set to a VS Code workspaceStorage folder");
         let adapter = VscodeAdapter::new(PathBuf::from(&dir));
         let mut with_turns = 0usize;
         let mut turns = 0usize;

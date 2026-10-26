@@ -1153,6 +1153,41 @@ mod tests {
 {"type":"assistant","timestamp":"2026-06-22T10:01:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Wired."}]}}
 "#;
 
+    /// #123 A5: a test that needs a real-data sample must not pass by skipping.
+    /// `let Ok(dir) = env::var("SENSEI_…_SAMPLE") else { return; }` reports `ok`
+    /// while executing nothing, and no Makefile or workflow sets those
+    /// variables, so A2 and A4 survived the very tests meant to catch them.
+    /// Such a test is `#[ignore]` with its reason (visible as "ignored" in every
+    /// run) and fails loudly when run without its sample.
+    #[test]
+    fn no_sample_test_passes_by_skipping() {
+        fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    rust_files(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        rust_files(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+        // Spelled at runtime so this test's own text never matches itself.
+        let skip = ["_SAMPLE\")", " else {"].concat();
+        let mut found = Vec::new();
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap();
+            for (i, line) in text.lines().enumerate() {
+                let code = line.trim_start();
+                if !code.starts_with("//") && code.contains(&skip) && code.contains("SENSEI_") {
+                    found.push(format!("{}:{}", f.display(), i + 1));
+                }
+            }
+        }
+        assert!(found.is_empty(), "sample tests that pass by skipping: {found:#?}");
+    }
+
     /// The Claude adapter, counting how often a transcript is parsed.
     struct CountingClaude {
         inner: claude::ClaudeAdapter,

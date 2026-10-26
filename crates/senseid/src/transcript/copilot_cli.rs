@@ -760,10 +760,10 @@ mod tests {
     /// data and is not in the repo. Point SENSEI_COPILOT_SAMPLE at a session
     /// directory to run it.
     #[test]
+    #[ignore = "needs SENSEI_COPILOT_SAMPLE: a Copilot CLI session-state folder (other people's transcripts, not in the repo)"]
     fn parses_a_real_copilot_session_when_one_is_available() {
-        let Ok(dir) = std::env::var("SENSEI_COPILOT_SAMPLE") else {
-            return;
-        };
+        let dir = std::env::var("SENSEI_COPILOT_SAMPLE")
+            .expect("run with SENSEI_COPILOT_SAMPLE set to a Copilot CLI session-state folder");
         let path = std::path::Path::new(&dir);
         let content = match std::fs::read_to_string(path.join("events.jsonl")) {
             Ok(c) => c,
