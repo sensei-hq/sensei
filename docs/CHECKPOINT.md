@@ -13,10 +13,11 @@ in this release). Local daemon on 0.20.2.
 - #125: on 0.20.2, 72 → 22 orphan turn sets. 5dea36e3 (develop, next release) ignores the 4 fresh orphans
   that have hook events, leaving 18 with no transcript. Check: count after the next release.
 
-**In progress — #161 (typed rows):** 38 left in `STILL_POSITIONAL` (`typed_rows_tests.rs`), none at 7+ args.
-Latest: `EdgeRow`/`EdgeTarget` (ee8fabd2, 4950eff0), `FolderRow` (0d6d67df), `TaskExecutionStart`.
-**Next:** the 14 at six args, starting with the writers (`upsert_transcript_turns`,
-`upsert_library`, `upsert_pattern`, `create_extension`, …). Each gets a round-trip test and a swapped-bind probe.
+**In progress — #161 (typed rows):** 36 left in `STILL_POSITIONAL` (`typed_rows_tests.rs`), none at 7+ args.
+Row types are declared in `pg_store/mod.rs` (user decision 2026-10-26, docs/decisions.md). Re-exporting them
+dangled in the code graph; the `indexer::resolve` ratchet went 1,304 → 1,045 and its ceiling is now 1,060.
+**Next:** the remaining 6-arg functions (`upsert_library` 32 callers, `upsert_pattern` 19, `set_session_metadata`,
+…). A new row goes in `mod.rs`, with a round-trip test and a swapped-bind probe.
 
 **Watch roots:** the live DB watches only sensei on purpose until the indexer covers JS/TS/Java/.NET;
 then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.
@@ -26,9 +27,6 @@ then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.
 - dbd 0.27.7 (lockfile advisories; could carry dbd#107). Needs a go.
 - #331: production count (counts only):
   `psql "$PROD" -Atc "select count(*) from dojo.tenants where origin='personal' and key ~ '-[0-9]+$'"`.
-
-**Develop was red on a4e7171c:** a tracker test raced its own setup; 052d9b4f fixes the test (not reproduced
-locally, 0/120). Confirm the next develop run is green.
 
 **Known:** the dōjō Workers build fails intermittently on PR/develop commits (it passed on main). The
 Cloudflare MCP needs `/mcp` auth to read build logs. qlty is out of minutes. After a DDL change, run

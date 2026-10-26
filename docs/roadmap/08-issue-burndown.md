@@ -235,7 +235,9 @@ The settings screen lists them as repositories.
   5+ are listed by name and may only shrink. 558b90fd: the three MCP writers take rows (50 → 47), with
   round-trip tests. Then check runs, consolidated rulesets and workflow state (47 → 44); `merge_function`
   deleted and `callee_row` typed (→ 42); `insert_edge_with_props` takes `EdgeRow` (→ 41); `upsert_folder` takes
-  `FolderRow` (→ 40); `insert_edge` takes `EdgeTarget` (→ 39); `TaskExecutionStart` (→ 38). Next: the 14 at six args, then the allows.
+  `FolderRow` (→ 40); `insert_edge` takes `EdgeTarget` (→ 39); `TaskExecutionStart` (→ 38); `ExtensionRow`, `TranscriptSource` (→ 36). Row types
+  now live in `pg_store/mod.rs` (user decision 2026-10-26: re-exports dangled in the code graph, ratchet
+  1,304 → 1,045, ceiling 1,060). Next: the 12 left at six args, then the allows.
 - #123: VS Code adapter A5/A6, Track B.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
