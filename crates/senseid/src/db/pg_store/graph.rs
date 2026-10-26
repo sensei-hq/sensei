@@ -1294,12 +1294,9 @@ impl PgStore {
     /// the least-bad of a bad set, and only the score can.
     pub async fn semantic_search_nodes(
         &self,
-        folder_ids: &[uuid::Uuid],
-        query_embedding: &[f32],
-        kinds: &[&str],
-        limit: i64,
-        max_distance: f64,
+        q: &NodeSearch<'_>,
     ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>, f64)>, String> {
+        let &NodeSearch { folder_ids, query_embedding, kinds, limit, max_distance } = q;
         if folder_ids.is_empty() || query_embedding.is_empty() || kinds.is_empty() {
             return Ok(Vec::new());
         }

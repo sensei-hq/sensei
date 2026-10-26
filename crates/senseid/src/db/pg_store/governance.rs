@@ -492,12 +492,9 @@ impl PgStore {
 
     pub async fn assemble_context(
         &self,
-        workspace_id: uuid::Uuid,
-        stack_ids: &[String],
-        tags: Option<&[String]>,
-        limit: i64,
-        slot: Option<(&str, Option<&str>)>,
+        q: &ContextQuery<'_>,
     ) -> Result<serde_json::Value, String> {
+        let &ContextQuery { workspace_id, stack_ids, tags, limit, slot } = q;
         let allowed = ["active", "reinforced", "battle_tested", "challenged"];
         let allowed_owned: Vec<String> = allowed.iter().map(|s| s.to_string()).collect();
         let stack_owned: Vec<String> = stack_ids.to_vec();

@@ -903,7 +903,16 @@ async fn query_logs_no_filter_newest_first_and_capped() {
 
     // Scope to this run via the `source` (running_on) filter is not enough
     // (two distinct sources), so fetch broadly and filter in-memory.
-    let all = pg.query_logs(None, None, None, None, 1000).await.unwrap();
+    let all = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: None,
+            module: None,
+            since: None,
+            limit: 1000,
+        })
+        .await
+        .unwrap();
     let mine: Vec<_> = all
         .iter()
         .filter(|r| r["source"].as_str().is_some_and(|s| s.starts_with(&marker)))
@@ -929,18 +938,44 @@ async fn query_logs_level_and_source_and_module_filters() {
     seed_logs(&pg, &marker).await;
 
     // level filter → only the warn row.
-    let warns =
-        pg.query_logs(Some("warn"), Some(&format!("{marker}-a")), None, None, 1000).await.unwrap();
+    let warns = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: Some("warn"),
+            source: Some(&format!("{marker}-a")),
+            module: None,
+            since: None,
+            limit: 1000,
+        })
+        .await
+        .unwrap();
     assert_eq!(warns.len(), 1);
     assert_eq!(warns[0]["level"], "warn");
 
     // source (running_on) filter → the two `-a` rows only.
-    let a_rows = pg.query_logs(None, Some(&format!("{marker}-a")), None, None, 1000).await.unwrap();
+    let a_rows = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: Some(&format!("{marker}-a")),
+            module: None,
+            since: None,
+            limit: 1000,
+        })
+        .await
+        .unwrap();
     assert_eq!(a_rows.len(), 2);
     assert!(a_rows.iter().all(|r| r["source"] == format!("{marker}-a")));
 
     // module column filter → only the analyzer row.
-    let ana = pg.query_logs(None, None, Some("analyzer"), None, 1000).await.unwrap();
+    let ana = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: None,
+            module: Some("analyzer"),
+            since: None,
+            limit: 1000,
+        })
+        .await
+        .unwrap();
     let mine: Vec<_> = ana
         .iter()
         .filter(|r| r["source"].as_str().is_some_and(|s| s.starts_with(&marker)))
@@ -960,7 +995,16 @@ async fn query_logs_since_excludes_older_rows() {
     // Cutoff at 1h ago excludes the two rows at base(-2h) and base+30m(-90m),
     // keeping only the base+90m(-30m) analyzer/error row.
     let since = chrono::Utc::now() - chrono::Duration::hours(1);
-    let recent = pg.query_logs(None, None, None, Some(since), 1000).await.unwrap();
+    let recent = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: None,
+            module: None,
+            since: Some(since),
+            limit: 1000,
+        })
+        .await
+        .unwrap();
     let mine: Vec<_> = recent
         .iter()
         .filter(|r| r["source"].as_str().is_some_and(|s| s.starts_with(&marker)))
@@ -978,7 +1022,16 @@ async fn query_logs_limit_is_honored() {
     seed_logs(&pg, &marker).await;
 
     // Scope to this run's sources so the global limit is deterministic.
-    let a = pg.query_logs(None, Some(&format!("{marker}-a")), None, None, 1).await.unwrap();
+    let a = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: Some(&format!("{marker}-a")),
+            module: None,
+            since: None,
+            limit: 1,
+        })
+        .await
+        .unwrap();
     assert_eq!(a.len(), 1, "limit=1 returns exactly one of the two -a rows");
     // Newest -a row is the warn/watcher one.
     assert_eq!(a[0]["level"], "warn");
@@ -990,8 +1043,16 @@ async fn query_logs_limit_is_honored() {
 async fn query_logs_empty_result_is_empty_array() {
     let pg = PgStore::test_store().await;
     // A source that never exists → empty Vec, not an error.
-    let none =
-        pg.query_logs(None, Some("_test:logs:does-not-exist"), None, None, 200).await.unwrap();
+    let none = pg
+        .query_logs(&crate::db::pg_store::LogQuery {
+            level: None,
+            source: Some("_test:logs:does-not-exist"),
+            module: None,
+            since: None,
+            limit: 200,
+        })
+        .await
+        .unwrap();
     assert!(none.is_empty());
 }
 

@@ -164,8 +164,16 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     // Permissive bound (1.0 admits everything): this test is about ORDER, and
     // `beta` is deliberately orthogonal, so a production-strength cutoff would
     // correctly drop it. The bound itself is exercised by the test below.
-    let hits =
-        s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10, 1.0).await.unwrap();
+    let hits = s
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &query,
+            kinds: &["function", "method"],
+            limit: 10,
+            max_distance: 1.0,
+        })
+        .await
+        .unwrap();
 
     let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
     assert!(
@@ -179,12 +187,43 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     );
 
     // A kind filter that matches neither node returns nothing.
-    let none = s.semantic_search_nodes(&[fid], &query, &["class"], 10, 1.0).await.unwrap();
+    let none = s
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &query,
+            kinds: &["class"],
+            limit: 10,
+            max_distance: 1.0,
+        })
+        .await
+        .unwrap();
     assert!(none.is_empty(), "kind filter should exclude functions, got {none:?}");
 
     // Empty inputs are cheap no-ops, never a query.
-    assert!(s.semantic_search_nodes(&[], &query, &["function"], 10, 1.0).await.unwrap().is_empty());
-    assert!(s.semantic_search_nodes(&[fid], &[], &["function"], 10, 1.0).await.unwrap().is_empty());
+    assert!(
+        s.semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[],
+            query_embedding: &query,
+            kinds: &["function"],
+            limit: 10,
+            max_distance: 1.0
+        })
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        s.semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &[],
+            kinds: &["function"],
+            limit: 10,
+            max_distance: 1.0
+        })
+        .await
+        .unwrap()
+        .is_empty()
+    );
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
@@ -1049,8 +1088,16 @@ async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
     let mut query = vec![0.0f32; dim];
     query[0] = 1.0;
 
-    let hits =
-        s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10, 0.45).await.unwrap();
+    let hits = s
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &query,
+            kinds: &["function", "method"],
+            limit: 10,
+            max_distance: 0.45,
+        })
+        .await
+        .unwrap();
     let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
     assert_eq!(
         names,
@@ -1072,7 +1119,13 @@ async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
     let mut orthogonal = vec![0.0f32; dim];
     orthogonal[2] = 1.0;
     let none = s
-        .semantic_search_nodes(&[fid], &orthogonal, &["function", "method"], 10, 0.45)
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &orthogonal,
+            kinds: &["function", "method"],
+            limit: 10,
+            max_distance: 0.45,
+        })
         .await
         .unwrap();
     assert!(none.is_empty(), "no node is within the bound — must return empty, got {none:?}");

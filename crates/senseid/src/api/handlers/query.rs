@@ -895,7 +895,13 @@ async fn fuse_semantic(
     let lexical = score_and_filter_lexical(term, lexical, &distances, SEM_MAX_DISTANCE);
     let sem_rows = match state
         .pg
-        .semantic_search_nodes(ids, query_vec, kinds, SEM_CANDIDATES, SEM_MAX_DISTANCE)
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: ids,
+            query_embedding: query_vec,
+            kinds,
+            limit: SEM_CANDIDATES,
+            max_distance: SEM_MAX_DISTANCE,
+        })
         .await
     {
         Ok(rows) => rows,

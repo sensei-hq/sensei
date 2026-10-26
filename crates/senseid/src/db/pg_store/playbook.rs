@@ -143,12 +143,9 @@ impl PgStore {
     /// within `workspace_id`.
     pub async fn playbook_combo_trust(
         &self,
-        lifecycle: &str,
-        intent: &str,
-        risk: &str,
-        playbook: &str,
-        workspace_id: &uuid::Uuid,
+        q: &ComboTrustQuery<'_>,
     ) -> Result<(i64, f64), String> {
+        let &ComboTrustQuery { lifecycle, intent, risk, playbook, workspace_id } = q;
         let row: (i64, f64) = sqlx_core::query_as::query_as(
             "SELECT count(*)::int8, coalesce(avg(outcome_ftr::int)::float8, 0.0)
                FROM sensei.playbook_run

@@ -413,14 +413,8 @@ impl PgStore {
     /// - `module`  → exact match on the indexed `module` column
     ///   (finer source: scanner / watcher / analyzer / scheduler / …).
     /// - `since`   → lower bound on the indexed `logged_at` timestamp.
-    pub async fn query_logs(
-        &self,
-        level: Option<&str>,
-        source: Option<&str>,
-        module: Option<&str>,
-        since: Option<chrono::DateTime<chrono::Utc>>,
-        limit: i64,
-    ) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn query_logs(&self, q: &LogQuery<'_>) -> Result<Vec<serde_json::Value>, String> {
+        let &LogQuery { level, source, module, since, limit } = q;
         type LogRow = (
             uuid::Uuid,
             String,

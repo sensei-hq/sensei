@@ -1970,3 +1970,43 @@ pub struct TrackerSnapshotApply<'a> {
     pub params_patch: &'a serde_json::Value,
     pub links: &'a [crate::tracker::Link],
 }
+
+// Read by `governance.rs`.
+/// The rules assembled into a session's context, as [`PgStore::assemble_context`] selects them.
+pub struct ContextQuery<'a> {
+    pub workspace_id: uuid::Uuid,
+    pub stack_ids: &'a [String],
+    pub tags: Option<&'a [String]>,
+    pub limit: i64,
+    pub slot: Option<(&'a str, Option<&'a str>)>,
+}
+
+// Read by `graph.rs`.
+/// A semantic search over code nodes, as [`PgStore::semantic_search_nodes`] runs it.
+pub struct NodeSearch<'a> {
+    pub folder_ids: &'a [uuid::Uuid],
+    pub query_embedding: &'a [f32],
+    pub kinds: &'a [&'a str],
+    pub limit: i64,
+    pub max_distance: f64,
+}
+
+// Read by `logs.rs`.
+/// A filter over `public.logs`, as [`PgStore::query_logs`] applies it. A `None` filter matches all.
+pub struct LogQuery<'a> {
+    pub level: Option<&'a str>,
+    pub source: Option<&'a str>,
+    pub module: Option<&'a str>,
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub limit: i64,
+}
+
+// Read by `playbook.rs`.
+/// One playbook at one (lifecycle, intent, risk) combination in a workspace, as [`PgStore::playbook_combo_trust`] scores it.
+pub struct ComboTrustQuery<'a> {
+    pub lifecycle: &'a str,
+    pub intent: &'a str,
+    pub risk: &'a str,
+    pub playbook: &'a str,
+    pub workspace_id: &'a uuid::Uuid,
+}

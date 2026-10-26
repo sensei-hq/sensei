@@ -3,18 +3,9 @@
 //! at that boundary — no compile error, no failing test, the value just stops.
 //! A typed row destructured EXHAUSTIVELY makes the same addition a compile error.
 //!
-//! This pins the functions that still take five or more positional parameters.
-//! A new one fails here; a converted one must come off the list. So the list
-//! only shrinks, and nothing reaches eight again.
-
-/// Every `pg_store` function that still takes five or more positional
-/// parameters, as `file::name`. Convert one to a typed row, then delete its line.
-const STILL_POSITIONAL: &[&str] = &[
-    "governance.rs::assemble_context",
-    "graph.rs::semantic_search_nodes",
-    "logs.rs::query_logs",
-    "playbook.rs::playbook_combo_trust",
-];
+//! Every function in `db/pg_store` now takes its fields as a typed row or query
+//! struct. This keeps it so: one that takes five or more positional parameters
+//! fails here.
 
 /// The non-test source files of `db/pg_store`.
 fn store_sources() -> Vec<(String, String)> {
@@ -111,41 +102,17 @@ fn positional_counts(src: &str) -> Vec<(String, usize)> {
     out
 }
 
-fn still_positional() -> Vec<String> {
+#[test]
+fn no_persistence_function_takes_five_positional_parameters() {
     let mut found = Vec::new();
     for (file, src) in store_sources() {
         for (name, n) in positional_counts(&src) {
             if n >= 5 {
-                found.push(format!("{file}::{name}"));
+                found.push(format!("{file}::{name} ({n})"));
             }
         }
     }
-    found.sort();
-    found.dedup();
-    found
-}
-
-#[test]
-fn no_new_persistence_function_takes_five_positional_parameters() {
-    let found = still_positional();
-    let allowed: Vec<String> = STILL_POSITIONAL.iter().map(|s| s.to_string()).collect();
-    let new: Vec<&String> = found.iter().filter(|f| !allowed.contains(f)).collect();
-    let done: Vec<&String> = allowed.iter().filter(|a| !found.contains(a)).collect();
-    assert!(new.is_empty(), "take a typed row instead (#161): {new:#?}");
-    assert!(done.is_empty(), "converted — delete from STILL_POSITIONAL: {done:#?}");
-}
-
-#[test]
-fn no_persistence_function_takes_eight_positional_parameters() {
-    let mut eight = Vec::new();
-    for (file, src) in store_sources() {
-        for (name, n) in positional_counts(&src) {
-            if n >= 8 {
-                eight.push(format!("{file}::{name} ({n})"));
-            }
-        }
-    }
-    assert!(eight.is_empty(), "take a typed row (#161): {eight:#?}");
+    assert!(found.is_empty(), "take a typed row or query struct instead (#161): {found:#?}");
 }
 
 #[test]

@@ -357,18 +357,42 @@ async fn playbook_combo_trust_is_workspace_scoped() {
              values ('trust-test','stable','bug','low','debug_flow','t', true, true, '{proj_b}')")).await.unwrap();
 
     // scoped to A: only A's 2 runs → n=2, ftr=0.5 (B's run excluded — trust is per-workspace, never global)
-    let (na, fa) =
-        pg.playbook_combo_trust("stable", "bug", "low", "debug_flow", &proj_a).await.unwrap();
+    let (na, fa) = pg
+        .playbook_combo_trust(&crate::db::pg_store::ComboTrustQuery {
+            lifecycle: "stable",
+            intent: "bug",
+            risk: "low",
+            playbook: "debug_flow",
+            workspace_id: &proj_a,
+        })
+        .await
+        .unwrap();
     assert_eq!(na, 2, "trust must count only the in-scope workspace's runs");
     assert!((fa - 0.5).abs() < 1e-9);
     // scoped to B: only B's run → n=1, ftr=1.0
-    let (nb, fb) =
-        pg.playbook_combo_trust("stable", "bug", "low", "debug_flow", &proj_b).await.unwrap();
+    let (nb, fb) = pg
+        .playbook_combo_trust(&crate::db::pg_store::ComboTrustQuery {
+            lifecycle: "stable",
+            intent: "bug",
+            risk: "low",
+            playbook: "debug_flow",
+            workspace_id: &proj_b,
+        })
+        .await
+        .unwrap();
     assert_eq!(nb, 1);
     assert!((fb - 1.0).abs() < 1e-9);
     // empty combo in A → (0, 0.0)
-    let (n0, f0) =
-        pg.playbook_combo_trust("greenfield", "ux", "high", "vibe", &proj_a).await.unwrap();
+    let (n0, f0) = pg
+        .playbook_combo_trust(&crate::db::pg_store::ComboTrustQuery {
+            lifecycle: "greenfield",
+            intent: "ux",
+            risk: "high",
+            playbook: "vibe",
+            workspace_id: &proj_a,
+        })
+        .await
+        .unwrap();
     assert_eq!(n0, 0);
     assert_eq!(f0, 0.0);
     pg.execute_raw("delete from sensei.playbook_run where feature = 'trust-test'").await.ok();
