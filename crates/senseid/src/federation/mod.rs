@@ -487,9 +487,7 @@ mod tests {
         use dojo_protocol::{PublishedRule, PullResponse, PulledRule, content_hash};
         use std::collections::HashMap;
         use std::sync::Arc;
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        }; // skip if no test DB
+        let pg = PgStore::test_store().await; // skip if no test DB
 
         // Seed the `organization` scope used by the pulled rule (sensei_test is empty;
         // production data is seeded via staging.import_scopes — we replicate the one row

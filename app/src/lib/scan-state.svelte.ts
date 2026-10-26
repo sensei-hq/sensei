@@ -6,7 +6,7 @@
 
 import { ReactiveStageContext } from './stage.svelte.js';
 import { EventManager } from './events.js';
-import { senseiApi, dataOrThrow, type ApiResult } from './api.js';
+import { senseiApi, dataOrThrow, failureReason, type ApiResult } from './api.js';
 import { appState } from './appstate.svelte.js';
 import type { ScanWorkspace, ScanWorkspaceFolder, ScanFolderEvent, ActivityEvent, StateEvent } from './types.js';
 
@@ -282,12 +282,12 @@ export class ScanState {
    *
    * Sequence (ordering is load-bearing):
    *   1. Open SSE and await the handshake. Without the await the
-   *      subsequent scanFolder POST can race the connection and the
+   *      subsequent scan POST can race the connection and the
    *      first wave of events fans out to zero subscribers.
    *   2. Hydrate already-known workspaces/folders from /api/workspaces.
    *      Covers the case where the scan finished (or partly finished)
    *      before this page was mounted.
-   *   3. Trigger scanFolder for any roots still flagged unscanned.
+   *   3. Trigger a scan of any roots still flagged unscanned.
    *   4. Start the queue-idle poller — the authoritative "done" signal.
    */
   async start(): Promise<void> {
@@ -324,14 +324,12 @@ export class ScanState {
 
       this.status = 'scanning';
 
-      // 3. Trigger scanFolder for roots that haven't produced any repos
-      //    yet. Parallel — a slow root shouldn't block siblings.
-      // A failed read throws into this.error (#288) — it read as "no roots",
-      // so nothing was scanned and the poller could call the scan done.
+      // 3. Scan the roots that haven't produced any repos yet. A failed read
+      //    (#288) or a refused scan (#304) throws into this.error — either
+      //    left nothing scanning, and the poller would have called it done.
       const roots = dataOrThrow(await api.tryGetScanRoots(), 'roots');
       this.rootCount = roots.length;
-      const pending = roots.filter((r) => !r.scanned);
-      await Promise.all(pending.map((r) => api.scanFolder(r.path)));
+      await triggerScans(api, roots);
 
       // 4. Done poller — long-running, marks status='done' on queue idle.
       this.#startDonePoller(api);
@@ -442,6 +440,21 @@ export class ScanState {
 export const scanState = new ScanState();
 
 type IndexStatus = { queue: { pending: number; running: number } };
+
+/**
+ * Start a scan of every root not yet scanned — in parallel, so a slow root does
+ * not hold up its siblings. Throws naming each root the daemon would not scan
+ * and why (#304: a refusal was ignored, and an idle queue then read as done).
+ */
+export async function triggerScans(
+  api: { tryScanFolder: (root: string) => Promise<ApiResult<unknown>> },
+  roots: Array<{ path: string; scanned: boolean }>,
+): Promise<void> {
+  const pending = roots.filter((r) => !r.scanned);
+  const results = await Promise.all(pending.map(async (r) => ({ path: r.path, res: await api.tryScanFolder(r.path) })));
+  const refused = results.flatMap(({ path, res }) => (res.ok ? [] : [`${path}: ${failureReason(res.error)}`]));
+  if (refused.length > 0) throw new Error(`The scan did not start for ${refused.join('; ')}`);
+}
 
 /**
  * One tick of the scan's done poller. Two consecutive idle reads mean done; a

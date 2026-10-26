@@ -254,9 +254,7 @@ async fn a_session_reports_its_priced_part_and_what_it_could_not_price() {
 /// C6: the one-time re-read clears the Claude watermarks once, so every Claude
 /// transcript is parsed again under C1; a second call is a no-op.
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
 async fn the_message_rewrite_resets_claude_watermarks_once() {
-    let _sweep = crate::tasks::test_support::WATERMARK_SWEEP_GATE.sweeping();
     let s = pg_store().await;
     sqlx_core::query::query("DELETE FROM sensei.config WHERE key = 'transcripts.messages_v1'")
         .execute(s.pool())
@@ -268,7 +266,10 @@ async fn the_message_rewrite_resets_claude_watermarks_once() {
     assert_eq!(s.get_capture_watermark("claude_code", &file).await.unwrap(), None);
     s.set_capture_watermark("claude_code", &file, None, 2, 0).await.unwrap();
     assert!(!s.reset_claude_watermarks_once().await.unwrap(), "second call is a no-op");
-    assert_eq!(s.get_capture_watermark("claude_code", &file).await.unwrap(), Some(2));
+    assert_eq!(
+        s.get_capture_watermark("claude_code", &file).await.unwrap().map(|w| w.mtime_ns),
+        Some(2)
+    );
     sqlx_core::query::query("DELETE FROM activity.capture_watermarks WHERE file_path = $1")
         .bind(&file)
         .execute(s.pool())

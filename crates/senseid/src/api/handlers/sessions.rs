@@ -744,12 +744,14 @@ pub(crate) async fn update_workflow_state(
         .pg
         .upsert_workflow_state(
             &workspace,
-            body["active_phase"].as_str(),
-            body["active_plan"].as_str(),
-            body["active_task"].as_str(),
-            body["active_issue"].as_i64(),
-            body["last_checkpoint"].as_str(),
-            body["rules_hash"].as_str(),
+            &crate::db::pg_store::WorkflowStatePatch {
+                phase: body["active_phase"].as_str(),
+                plan: body["active_plan"].as_str(),
+                task: body["active_task"].as_str(),
+                issue: body["active_issue"].as_i64(),
+                checkpoint: body["last_checkpoint"].as_str(),
+                rules_hash: body["rules_hash"].as_str(),
+            },
         )
         .await;
 

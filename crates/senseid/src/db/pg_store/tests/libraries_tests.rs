@@ -345,34 +345,11 @@ pub(super) async fn clear_test_session(s: &PgStore, sid: &str) {
         .unwrap();
 }
 
-/// Serialises EVERY test that invokes a global session repair — both
-/// `repair_sessions_from_transcripts` and `repair_orphaned_sessions`.
-///
-/// Both are deliberately global: they sweep every unattached session, which
-/// is what makes them converge as folders become tracked. That also means one
-/// test's repair operates on another's fixture. Two ways it bites, both
-/// observed: test B's sweep creates the session test A has just asserted does
-/// not exist yet (A fails its own precondition), and B's sweep attributes A's
-/// half-built fixture to the wrong folder before A finishes building it.
-///
-/// Any new test that calls a global repair belongs here too. Gating only the
-/// transcript pair left the two `repair_orphaned_sessions` tests racing, and
-/// leaving `heal_duplicate_name_workspaces` ungated left its two tests racing
-/// against every other test's setup — a workspace is a folderless duplicate for
-/// the instant between being created and having its folder attached, which is
-/// exactly the state the sweep is entitled to prune.
-///
-/// Blocking on purpose — see [`crate::tasks::test_support::TestGate`] for why
-/// an async mutex loses wakers across per-test runtimes.
-pub(super) static REPAIR_SWEEP_GATE: crate::tasks::test_support::TestGate =
-    crate::tasks::test_support::TestGate::new();
-
 #[tokio::test]
 async fn repair_sessions_from_transcripts_creates_the_missing_session() {
     // The gap the events-based repair cannot close: prose was ingested but no
     // session was ever synthesized (the source reconstructed no events, or no
     // cwd resolved at the time). The turns then exist and can join nothing.
-    let _gate = REPAIR_SWEEP_GATE.enter();
     let s = pg_store().await;
     let sess = "_test-repair-from-transcript";
     clear_test_session(&s, sess).await;
@@ -479,7 +456,6 @@ async fn a_task_id_lookup_is_scoped_to_the_issuing_daemon_session() {
 async fn repair_from_transcripts_leaves_an_unresolvable_cwd_alone() {
     // A wrong attribution is worse than a missing one: a cwd that resolves to
     // no tracked folder must NOT be attached to a guessed repository.
-    let _gate = REPAIR_SWEEP_GATE.enter();
     let s = pg_store().await;
     let sess = "_test-repair-tt-unresolvable";
     clear_test_session(&s, sess).await;
@@ -515,7 +491,6 @@ async fn repair_orphaned_sessions_reattaches_via_alias() {
     // A session captured under a since-renamed repo: its events survived but the
     // session row was cascade-deleted. The repair recreates the row, resolving the
     // folder from the (old) cwd via the alias.
-    let _gate = REPAIR_SWEEP_GATE.enter();
     let s = pg_store().await;
     let sess = "_test-repair-orphan-session";
     clear_test_session(&s, sess).await;
@@ -561,7 +536,6 @@ async fn repair_prefers_the_renamed_subdir_over_a_live_parent() {
     // (`/_test/shadow-parent`) AND a renamed subdir aliased to a different folder
     // (`/_test/shadow-parent/sub` → new folder). Most-specific-first must attribute
     // it to the renamed subdir's folder, not the shadowing parent.
-    let _gate = REPAIR_SWEEP_GATE.enter();
     let s = pg_store().await;
     let sess = "_test-shadow-session";
     clear_test_session(&s, sess).await;

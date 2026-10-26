@@ -8,3 +8,11 @@ coverage-senseid = "llvm-cov --package senseid"
 coverage-all     = "llvm-cov --workspace"
 # Workspace-wide HTML report — opens target/coverage/index.html
 coverage-html    = "llvm-cov --workspace --html --output-dir target/coverage"
+
+[env]
+# The test suite's Postgres connection budget (#204). Each test's pool holds up
+# to TEST_POOL_MAX_CONNECTIONS (4); one thread per core on a large machine, plus
+# the daemon's pool (24), overran max_connections (100) and the suite hung.
+# 16 × 4 + 24 = 88. `the_test_suite_fits_postgres_connection_budget` checks it.
+# An explicit RUST_TEST_THREADS or `--test-threads` still wins.
+RUST_TEST_THREADS = { value = "16", force = false }

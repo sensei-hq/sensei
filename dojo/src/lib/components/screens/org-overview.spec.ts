@@ -88,6 +88,19 @@ describe('ScrOrgHome — jurisdiction workspaces + needs + stats', () => {
 describe('ScrOrgLadder — dōjō authors its own constitution by scope', () => {
 	afterEach(cleanup);
 
+	it('with no published rules, says so (#106)', () => {
+		const { getByText } = render(ScrOrgLadder, { props: { orgName: 'sensei-hq', sections: [] } });
+		expect(getByText('This dōjō has no published rules yet.')).toBeTruthy();
+	});
+
+	it('a failed rules read is an error, not an empty constitution (#106)', () => {
+		const { getByRole, queryByText } = render(ScrOrgLadder, {
+			props: { orgName: 'sensei-hq', sections: [], error: 'forbidden' }
+		});
+		expect(getByRole('alert').textContent).toContain("Could not load the dōjō's rules — forbidden");
+		expect(queryByText('This dōjō has no published rules yet.')).toBeNull();
+	});
+
 	it('groups the sections into Dōjō · Workspace · Repository (D25)', () => {
 		const { getByText, queryByText } = render(ScrOrgLadder, { props: { orgName: 'Acme Corp', sections } });
 		expect(getByText('Constitution')).toBeTruthy();

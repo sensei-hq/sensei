@@ -35,24 +35,6 @@ pub enum OnMiss {
     },
 }
 
-/// The `<package>` segment of a `lib·<package>·<path>·<member>` fqn.
-///
-/// One owner for what `process.rs` derived twice. Returns `None` rather than
-/// `""` on a shape that carries no package: an empty package would be written
-/// into a `lib_package` node's name, and the CLAUDE.md rule against fabricating
-/// on a miss applies to a defaulted identity as much as to a defaulted value.
-pub fn lib_package_of(fqn: &str) -> Option<&str> {
-    let sep = crate::languages::fqn::SEP;
-    let mut segs = fqn.split(sep);
-    if segs.next()? != "lib" {
-        return None;
-    }
-    match segs.next() {
-        Some(p) if !p.is_empty() => Some(p),
-        _ => None,
-    }
-}
-
 /// Where an edge points, and what the persister may do about a miss.
 ///
 /// Three shapes because the emit arms have three, each with a DIFFERENT write:
@@ -135,33 +117,6 @@ pub mod arm_tally {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The package is the SECOND segment, and a package-less shape yields None.
-    ///
-    /// `process.rs` used `.nth(1).unwrap_or("")` in both copies, so a malformed
-    /// fqn produced an empty package that would be written as a `lib_package`
-    /// node's name. `None` forces the caller to decide instead.
-    ///
-    /// Breaking mutation: return `Some("")` instead of `None` for the empty
-    /// case, or take `nth(0)` instead of the second segment.
-    #[test]
-    fn lib_package_of_takes_the_second_segment_and_refuses_a_package_less_fqn() {
-        let sep = crate::languages::fqn::SEP;
-        assert_eq!(lib_package_of(&format!("lib{sep}serde{sep}ser{sep}Serialize")), Some("serde"));
-        // The real shape in the live graph, verified: lib·json·json·load.
-        assert_eq!(lib_package_of(&format!("lib{sep}json{sep}json{sep}load")), Some("json"));
-        assert_eq!(
-            lib_package_of(&format!("lib{sep}{sep}Foo")),
-            None,
-            "an empty package segment is not a package"
-        );
-        assert_eq!(lib_package_of("lib"), None, "no package segment at all");
-        assert_eq!(
-            lib_package_of(&format!("rust{sep}mycrate{sep}m{sep}Foo")),
-            None,
-            "a non-lib fqn has no lib package"
-        );
-    }
 
     /// `CreateStub` must carry its kind, and there must be exactly two variants.
     ///

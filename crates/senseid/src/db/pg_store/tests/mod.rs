@@ -1,7 +1,7 @@
 use super::graph_seed::SeedGraph;
 use super::*;
 use crate::languages::fqn::ReceiverHint;
-use crate::tasks::test_support::{SCHEDULE_EDIT_GATE, TEST_SCHEDULE_PREFIX, test_schedule_name};
+use crate::tasks::test_support::{TEST_SCHEDULE_PREFIX, test_schedule_name};
 use sqlx_core::query_as::query_as;
 
 // Every test here connects via `PgStore::connect_test()` — the tiny floorless
@@ -31,11 +31,12 @@ mod scan_tests;
 mod stub_gc_tests;
 mod tasks_tests;
 mod turn_usage_tests;
+mod typed_rows_tests;
 mod workspaces_tests;
 
 // Fixtures one group defines and others reuse.
 use dojo_tests::{seed_sync_fixture, seed_sync_fixture_at};
-use libraries_tests::{REPAIR_SWEEP_GATE, clear_test_session, session_row_folder};
+use libraries_tests::{clear_test_session, session_row_folder};
 use metric_rows_tests::seed_metric;
 
 async fn pg_store() -> PgStore {
@@ -117,4 +118,122 @@ async fn create_test_workspace_and_folder(s: &PgStore, suffix: &str) -> (uuid::U
     let fid = create_test_folder(s, suffix).await;
     s.set_folder_workspace(&fid, &pid, "root", None).await.unwrap();
     (pid, fid)
+}
+
+/// #204: a test that needs `sensei_test` and cannot connect FAILS; it never
+/// passes by returning early.
+///
+/// 198 tests opened with `let Ok(pg) = PgStore::connect_test().await else {
+/// return };`. Every place these tests run has the database (rust.yml
+/// provisions it; nothing else runs them), so the early return only ever hid a
+/// failure: when the suite exhausts Postgres's connection budget — the
+/// subject of #204 — those tests report a pass having run nothing.
+#[test]
+fn no_test_passes_by_skipping_a_failed_test_db_connect() {
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                rust_files(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rust_files(&src, &mut files);
+    // Spelled at runtime so this test's own text never matches itself.
+    let opener = format!("{}::connect_test().await else", "PgStore");
+    let mut skips = Vec::new();
+    for f in &files {
+        let text = std::fs::read_to_string(f).unwrap();
+        for (i, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("let Ok(") && line.contains(&opener) {
+                skips.push(format!("{}:{}", f.strip_prefix(&src).unwrap().display(), i + 1));
+            }
+        }
+    }
+    assert!(skips.is_empty(), "{} tests skip on a failed connect: {skips:#?}", skips.len());
+}
+
+/// #204: the suite cannot exhaust Postgres's connection budget, whatever the
+/// machine's core count.
+///
+/// `cargo test` runs one thread per core by default and each test's pool holds
+/// up to `TEST_POOL_MAX_CONNECTIONS`; with the daemon's pool on top, a big
+/// enough machine overran `max_connections` and the suite hung or — before
+/// `test_store` — passed tests that never ran. `.cargo/config.toml` caps the
+/// threads; this checks the cap against the server the tests actually use,
+/// leaving room for psql and other admin sessions.
+#[tokio::test]
+async fn the_test_suite_fits_postgres_connection_budget() {
+    let config = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.cargo/config.toml"),
+    )
+    .expect(".cargo/config.toml");
+    let threads: u32 = config
+        .lines()
+        .find(|l| l.trim_start().starts_with("RUST_TEST_THREADS"))
+        .and_then(|l| l.split('"').nth(1))
+        .and_then(|v| v.parse().ok())
+        .expect(".cargo/config.toml must cap RUST_TEST_THREADS");
+
+    let pg = PgStore::test_store().await;
+    let (max,): (String,) =
+        sqlx_core::query_as::query_as("SHOW max_connections").fetch_one(pg.pool()).await.unwrap();
+    let max: u32 = max.parse().unwrap();
+
+    const ADMIN_HEADROOM: u32 = 10;
+    let worst =
+        threads * super::TEST_POOL_MAX_CONNECTIONS + sensei_bootstrap::DB_POOL_MAX_CONNECTIONS;
+    assert!(
+        worst + ADMIN_HEADROOM <= max,
+        "{threads} threads × {} + daemon {} = {worst}, + {ADMIN_HEADROOM} headroom > max_connections {max}",
+        super::TEST_POOL_MAX_CONNECTIONS,
+        sensei_bootstrap::DB_POOL_MAX_CONNECTIONS
+    );
+}
+
+/// #183: isolation BY CONSTRUCTION — a test's writes are invisible to every
+/// other test.
+///
+/// Every DB test shared one `sensei_test`, so a database-wide operation in one
+/// test (a heal, a prune, a rescan sweep) destroyed a sibling's fixture
+/// mid-flight. Five gates were added after five confusing failures, each by
+/// convention. Each test now gets its own database, cloned from `sensei_test`.
+///
+/// Libtest runs each test on its own thread, so "another test" is modelled as
+/// another thread: a row written there must not be visible here.
+#[tokio::test]
+async fn a_tests_rows_are_invisible_to_every_other_test() {
+    let here = PgStore::test_store().await;
+    let marker = format!("/_test/isolation/{}", uuid::Uuid::new_v4());
+    let elsewhere = marker.clone();
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(
+            async move {
+                let other = PgStore::test_store().await;
+                other
+                    .add_watch_root(&elsewhere, "isolation", &serde_json::json!([]))
+                    .await
+                    .unwrap();
+            },
+        )
+    })
+    .join()
+    .unwrap();
+
+    let roots = here.list_watch_roots().await.unwrap();
+    assert!(
+        roots.iter().all(|r| r["path"] != marker.as_str()),
+        "another test's row is visible here: the tests share a database"
+    );
+
+    // And this test's own connections all see ONE database: a second
+    // connect within the same test is the same database, not a fresh clone.
+    let again = PgStore::test_store().await;
+    here.add_watch_root(&marker, "isolation-here", &serde_json::json!([])).await.unwrap();
+    let seen = again.list_watch_roots().await.unwrap();
+    assert!(seen.iter().any(|r| r["path"] == marker.as_str()), "one test, one database");
 }

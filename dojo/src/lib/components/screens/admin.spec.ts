@@ -6,6 +6,7 @@ import ScrScopes from './ScrScopes.svelte';
 import ScrIdentity from './ScrIdentity.svelte';
 import ScrHealth from './ScrHealth.svelte';
 import ScrBilling from './ScrBilling.svelte';
+import { toKitBilling } from '$lib/billing-map';
 import {
 	membersFor,
 	rolePoliciesFor,
@@ -220,6 +221,17 @@ describe('ScrHealth — signal cards, bar chart and alerts', () => {
 describe('ScrBilling — plan, tiers, relay rows and invoices', () => {
 	afterEach(cleanup);
 
+	it('with no billing account, shows no plan, price, total or invoice it does not have (#106)', () => {
+		const { getByText, queryByText } = render(ScrBilling, {
+			props: { orgName: 'Acme Corp', billing: toKitBilling({ account: null, usage: { seats_used: 3, total_active_seats: 3, billable_users: [] } }) }
+		});
+		expect(getByText('No billing account yet')).toBeTruthy();
+		expect(getByText('No invoices — no payment provider is connected.')).toBeTruthy();
+		expect(queryByText(/Renews/)).toBeNull();
+		expect(queryByText(/\$/)).toBeNull();
+		expect(queryByText('current')).toBeNull();
+	});
+
 	it('shows the plan summary with the live monthly total (seats × per-seat)', () => {
 		const { getByText, getAllByText } = render(ScrBilling, {
 			props: { orgName: 'Acme Corp', billing }
@@ -257,5 +269,14 @@ describe('ScrBilling — plan, tiers, relay rows and invoices', () => {
 		expect(getByText('Invoices')).toBeTruthy();
 		expect(getByText('Jul 1, 2026')).toBeTruthy();
 		expect(getByText('$408.00')).toBeTruthy();
+	});
+});
+
+describe('ScrScopes — with no scope owners recorded (#106)', () => {
+	afterEach(cleanup);
+
+	it('says no scope has an owner rather than rendering a blank page', () => {
+		const { getByText } = render(ScrScopes, { props: { orgName: 'sensei-hq', owners: [] } });
+		expect(getByText("No scope has an owner yet — every queue is triaged by the dōjō's maintainers.")).toBeTruthy();
 	});
 });

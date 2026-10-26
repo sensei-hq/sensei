@@ -7,31 +7,13 @@
 
     const roots = $derived(wizardState.roots.roots);
     let adding = $state(false);
+    /** Why the last add failed; the typed path stays in the box (#304). */
+    let addError = $state<string | null>(null);
 
     async function addRoot() {
-        const trimmed = wizardState.roots.newPath.trim();
-        if (!trimmed || roots.some((r) => r.path === trimmed) || adding) return;
-
+        if (adding) return;
         adding = true;
-        const api = senseiApi(appState.port);
-        const result = await api.addWatchRoot(trimmed);
-
-        if (result.ok) {
-            wizardState.roots.roots = [
-                ...roots,
-                {
-                    id: result.id,
-                    path: result.path,
-                    name: result.path.split("/").pop() ?? result.path,
-                    status: "scanning" as const,
-                    excluded: [],
-                    repos_found: 0,
-                    scanned: false,
-                    modified_at: new Date().toISOString(),
-                },
-            ];
-            wizardState.roots.newPath = "";
-        }
+        addError = await wizardState.addRoot(senseiApi(appState.port));
         adding = false;
     }
 
@@ -111,10 +93,15 @@
             placeholder="~/Developer"
             disabled={adding}
         />
-        <button class="btn-solid" onclick={addRoot} disabled={adding}>
+        <button class="btn-solid" onclick={addRoot} disabled={adding} data-testid="root-add">
             {adding ? "Adding…" : "Add"}
         </button>
     </div>
+    {#if addError}
+        <p class="text-xs text-warning m-0 -mt-4 mb-6" data-testid="root-add-error">
+            The root was not added: {addError}
+        </p>
+    {/if}
 
     <div class="flex flex-col gap-3 mb-8">
         {#each roots as r (r.id)}

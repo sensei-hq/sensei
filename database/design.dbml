@@ -512,6 +512,7 @@ Enum "sensei"."scan_skip_reason" {
   "excluded_by_config"
   "vendored"
   "generated"
+  "oversized"
 }
 
 Enum "sensei"."schema_naming" {
@@ -761,6 +762,7 @@ Table "activity"."capture_watermarks" {
   "session_id" text
   "last_mtime_ns" bigint [not null]
   "turns_ingested" int [not null, default: 0]
+  "untracked" boolean [not null, default: false, note: 'Read at last_mtime_ns and IGNORED: the session has no row and no cwd is a tracked folder (#125). Not read again until the file changes or a repository is registered.']
   "updated_at" timestamptz [not null, default: `now()`]
 
   Note: '''Resumable cursor for transcript ingest (#73): per-file mtime so re-runs skip

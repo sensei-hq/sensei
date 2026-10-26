@@ -31,9 +31,7 @@ use super::*;
 /// case falls through to `pkg || '/' || ''`, or make it return NULL.
 #[tokio::test]
 async fn a_package_root_symbol_belongs_to_its_package() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     async fn answer(pg: &PgStore, pkg: Option<&str>, module: Option<&str>) -> Option<String> {
         let (m,): (Option<String>,) =
             sqlx_core::query_as::query_as("SELECT sensei.module_of($1, $2)")
@@ -80,9 +78,7 @@ async fn a_package_root_symbol_belongs_to_its_package() {
 /// or `coalesce(max(fi.indexed_at), now())`.
 #[tokio::test]
 async fn a_workspaces_graph_version_is_none_until_a_file_is_indexed() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let tag = uuid::Uuid::new_v4();
     let root = format!("/_test/version/{tag}");
     let root_id = pg.add_watch_root(&root, "ver-wt", &serde_json::json!([])).await.unwrap();

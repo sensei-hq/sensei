@@ -4,6 +4,7 @@ import {
 	deletePolicy,
 	dojoApiUrl,
 	getHealth,
+	listTenantRules,
 	listAudit,
 	listIdentities,
 	listMembers,
@@ -300,5 +301,19 @@ describe('the dōjō`s integrations (#308 R5a)', () => {
 		const err = await listIntegrationUnits('organization/acme', 'github', { fetch: fn }).catch((e) => e);
 		expect(err).toBeInstanceOf(AdminApiError);
 		expect(err.status).toBe(428);
+	});
+});
+
+describe('listTenantRules (#106)', () => {
+	it("GETs the dōjō's rules and keeps the live ones, not the retracted", async () => {
+		const rule = (id: string, status: string) => ({
+			id, status, seq: 1, version: 1, content_hash: id, scope_key: 'organization',
+			namespace_slug: 'sensei-hq', namespace_name: 'sensei-hq', rule_type: 'rule',
+			title: 'rule ' + id, content: '', impact: null, enforcement: 'required', origin_repo: null
+		});
+		const { fn, calls } = fakeFetch(200, { rules: [rule('a', 'active'), rule('b', 'tombstoned')], cursor: 2 });
+		const rules = await listTenantRules('organization/sensei-hq', { fetch: fn });
+		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/organization/sensei-hq/rules`);
+		expect(rules.map((r) => r.title)).toEqual(['rule a']);
 	});
 });

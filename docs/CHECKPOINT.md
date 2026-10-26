@@ -1,40 +1,39 @@
-# Checkpoint — 2026-10-23
+# Checkpoint — 2026-10-25
 
-**Slice:** dōjō expansion (docs/roadmap/09-dojo-expansion.md) inside the issue burndown
-(docs/roadmap/08-issue-burndown.md). Released: v0.19.0. Next: **v0.20.0**.
+**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md). Wave 4 is closed; wave 5 is in progress.
+Released v0.20.0 (dōjō deployed, Worker `fcf5d87`) and v0.20.1 (daemon only). Develop CI green.
 
-**On develop, ships in v0.20.0:**
-- R8 lead team metrics (D38, D41); R9 trackers by level (D23, D40); #323 Jira linkage F9–F11 + API cost (user).
-- R5b Azure DevOps through Entra (D42–D44) and R5c sign in with Microsoft (D45). Each had two security reviews,
-  and every finding was fixed with a failing test first.
-- #330 Terms of Service and Privacy Policy pages. The user approved the wording.
-- #328 heal defect fixed (0 of 936 live folders were stranded).
-- Sign-in fixes, verified live on the local dōjō: #329 (a magic-link switch never shows the previous
-  account), #331 (one personal dōjō per person, however many passes race), #297 (/signin shows Supabase's error).
+**Closed this run:** #106, #335, #201, #204, #183, #142, #298, #172, #195 (#120 updated).
 
-**v0.20.0 rehearsal (2026-10-23): passed.**
-- The copy: the 2026-10-21 production dump, brought to v0.19.0 by that tag's reconcile, deploy and diff.
-- Develop's dōjō deploy ran twice. Pass 2 changed nothing, and `dbd diff` was clean after each pass.
-- Row counts were unchanged: tenants 6, memberships 5, connections 3.
-- Provenance: 3 org memberships attributed to GitHub; 2 personal ones left unattributed.
+**Landed, each closing on the next release's binary:**
+- #178 (2e5c6c1f): a file over 2 MiB, or with a line over 10,000 bytes, is skipped as `oversized`.
+  Local DB reconciled; 137 of 61,349 corpus files refused.
+  Check: `select count(*) from sensei.files where skip_reason='oversized'` > 0.
+- #188 (d5bfdc7d): `GET /api/tasks/abandoned?days=N` and a Watchdog section in `sensei doctor`.
+  Live: 204 abandonments in 14 days. Check: the released `sensei doctor` prints the section.
 
-**Next command:** once the user says go: `make bump v=minor` on develop → PR to main → `make release` on
-main → the user approves deploy-dojo.
+- #336 (e5bf2e9d): a Claude transcript is read once per ingest, not five times; 25.2 s → 5.1 s on
+  the 1.28 GB transcript. Check: a week of `/api/tasks/abandoned` with no `ingest_capture`.
 
-**Open questions (the user's):**
-- When to release.
-- A contact for export or deletion requests on the privacy page (#330), now or in a follow-up.
+- #125 (17e81b4b): ingest only sessions under the watch roots; a `sensei.folders` trigger re-opens the
+  skips when a repository is registered. Check: 0 traceable orphan turn sets (18 with no transcript stay).
+- Watch roots: the live DB watches only sensei on purpose, until the indexer covers JS/TS/Java/.NET
+  (user, 2026-10-25). Then ~/Developer + ~/Work; test/e2e use ~/Developer/sensei-hq.
 
-**Live checks after v0.20.0:**
-- R5b connect and import; R5c oid/tid match.
-- The negative `xms_edov` test, which blocks enabling Microsoft sign-in in production.
-- These need the Worker secrets `AZURE_DEVOPS_CLIENT_ID`, `AZURE_DEVOPS_CLIENT_SECRET` and `DOJO_CRON_SECRET`,
-  the connect redirect URI, the `vso.*` permissions, and the `email` and `xms_edov` claims.
-- R9: two Jira boards at two levels.
+**In progress — #161 (typed rows):** 98e2c9cf (`FqnNodeRow`), 558b90fd (MCP rows), and the check-run,
+ruleset and workflow-state rows (44 left in `typed_rows_tests.rs` `STILL_POSITIONAL`). Each conversion gets a
+round-trip test, and a swapped bind is probed.
 
-**Remaining:**
-- #314 (production push: the user's steps); #312 live on an unattended run; dbd#103 (a column comment lands
-  one reconcile late). #331: after v0.20.0, count production's `personal/*-2` tenants (counts only); merging
-  them is the user's call.
-- Wave 11: the website from the user's mocks.
-- Known: qlty is out of billing minutes; a daemon reinstall needs keychain approval (#283 until #282).
+**Next:** the four left at 7 args: `insert_edge_with_props` (19 callers), `merge_function`, `callee_row`,
+`upsert_folder` (36 callers). Then the 6-arg ones.
+
+**Open (the user's):**
+- dbd 0.27.7: the v0.27.6 lockfile pins rustls-webpki/webpki-roots/ctutils for
+  `cargo install --locked` (fixed on dbd develop, 784db3d2). Needs a go.
+- v0.20.1's `deploy-dojo` is still waiting; it would change nothing. Approve or reject.
+- #331: count production's duplicate personal dōjōs (counts only):
+  `psql "$PROD" -Atc "select count(*) from dojo.tenants where origin='personal' and key ~ '-[0-9]+$'"`.
+- A release (patch) lets #178, #188, #336 and #125 close; it's the user's call when.
+
+**Known:** DeepSource is red on kavach main; qlty is out of minutes. After a DDL change, run
+`make test-template` (#142). `update_phase` returned 404 from the released daemon.

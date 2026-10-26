@@ -11,9 +11,8 @@ import { AppState } from './appstate.svelte.js';
 const apiMock = {
   getConfig:    vi.fn().mockResolvedValue({ setup_complete: '1', active_workspace: 'proj-1' }),
   tryGetConfig: vi.fn().mockResolvedValue({ ok: true,  data: { setup_complete: '1', active_workspace: 'proj-1' } }),
-  setConfig:    vi.fn().mockResolvedValue(undefined),
   trySetConfig: vi.fn().mockResolvedValue({ ok: true,  data: undefined }),
-  deleteConfig: vi.fn().mockResolvedValue(undefined),
+  tryDeleteConfig: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
   tryListWorkspaces: vi.fn().mockResolvedValue({ ok: true, data: [] }),
 };
 
@@ -56,6 +55,7 @@ describe('AppState', () => {
     apiMock.getConfig.mockResolvedValue({ setup_complete: '1', active_workspace: 'proj-1' });
     apiMock.tryGetConfig.mockResolvedValue({ ok: true, data: { setup_complete: '1', active_workspace: 'proj-1' } });
     apiMock.trySetConfig.mockResolvedValue({ ok: true, data: undefined });
+    apiMock.tryDeleteConfig.mockResolvedValue({ ok: true, data: undefined });
     apiMock.tryListWorkspaces.mockResolvedValue({ ok: true, data: [] });
     state = new AppState();
   });
@@ -161,6 +161,15 @@ describe('AppState', () => {
     expect(state.config['new_key']).toBe('new_value');
   });
 
+  // #304: a single-key write used to go through the legacy put, which only
+  // warned — the cache kept a value the daemon never stored.
+  it('setConfig that the daemon refuses keeps the old value and throws why', async () => {
+    apiMock.trySetConfig.mockResolvedValueOnce({ ok: false, error: { status: 503, message: 'Service Unavailable' } });
+    state.config = { sidebar_max_items: '5' };
+    await expect(state.setSidebarMaxItems(8)).rejects.toThrow(/Service Unavailable/);
+    expect(state.config['sidebar_max_items']).toBe('5');
+  });
+
   // ── setActiveWorkspaceId ─────────────────────────────────────
 
   it('setActiveWorkspaceId sets workspace', async () => {
@@ -172,6 +181,16 @@ describe('AppState', () => {
     state.config = { active_workspace: 'proj-1' };
     await state.setActiveWorkspaceId(null);
     expect(state.config['active_workspace']).toBeUndefined();
+    expect(apiMock.tryDeleteConfig).toHaveBeenCalledWith('active_workspace');
+  });
+
+  // #304: the delete used to swallow every failure, so the cache said "no
+  // active workspace" while the daemon still held one.
+  it('a clear the daemon refuses keeps the active workspace and throws why', async () => {
+    apiMock.tryDeleteConfig.mockResolvedValueOnce({ ok: false, error: { status: 0, message: 'connection refused' } });
+    state.config = { active_workspace: 'proj-1' };
+    await expect(state.setActiveWorkspaceId(null)).rejects.toThrow(/connection refused/);
+    expect(state.config['active_workspace']).toBe('proj-1');
   });
 
   // ── setSidebarMaxItems ─────────────────────────────────────

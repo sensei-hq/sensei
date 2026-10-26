@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::pg_store::WorkflowStatePatch;
 
 // ── Extensions tests ───────────────────────────────────────────────
 
@@ -148,7 +149,19 @@ async fn wf_upsert_and_get() {
     let p = "_test:wf:upsert";
     s.delete_workflow_state(p).await.unwrap();
     assert!(s.get_workflow_state(p).await.unwrap().is_none());
-    s.upsert_workflow_state(p, Some("ideate"), None, None, None, None, None).await.unwrap();
+    s.upsert_workflow_state(
+        p,
+        &WorkflowStatePatch {
+            phase: Some("ideate"),
+            plan: None,
+            task: None,
+            issue: None,
+            checkpoint: None,
+            rules_hash: None,
+        },
+    )
+    .await
+    .unwrap();
     let state = s.get_workflow_state(p).await.unwrap().unwrap();
     assert_eq!(state["active_phase"], "ideate");
     assert!(state["active_task"].is_null());
@@ -162,16 +175,30 @@ async fn wf_partial_update_preserves() {
     s.delete_workflow_state(p).await.unwrap();
     s.upsert_workflow_state(
         p,
-        Some("build"),
-        Some("plan.md"),
-        Some("task 1"),
-        Some(42),
-        None,
-        Some("hash123"),
+        &WorkflowStatePatch {
+            phase: Some("build"),
+            plan: Some("plan.md"),
+            task: Some("task 1"),
+            issue: Some(42),
+            checkpoint: None,
+            rules_hash: Some("hash123"),
+        },
     )
     .await
     .unwrap();
-    s.upsert_workflow_state(p, Some("validate"), None, None, None, None, None).await.unwrap();
+    s.upsert_workflow_state(
+        p,
+        &WorkflowStatePatch {
+            phase: Some("validate"),
+            plan: None,
+            task: None,
+            issue: None,
+            checkpoint: None,
+            rules_hash: None,
+        },
+    )
+    .await
+    .unwrap();
     let state = s.get_workflow_state(p).await.unwrap().unwrap();
     assert_eq!(state["active_phase"], "validate");
     assert_eq!(state["active_plan"], "plan.md");
@@ -190,7 +217,19 @@ async fn wf_nonexistent_returns_none() {
 async fn wf_delete() {
     let s = pg_store().await;
     let p = "_test:wf:delete";
-    s.upsert_workflow_state(p, Some("ideate"), None, None, None, None, None).await.unwrap();
+    s.upsert_workflow_state(
+        p,
+        &WorkflowStatePatch {
+            phase: Some("ideate"),
+            plan: None,
+            task: None,
+            issue: None,
+            checkpoint: None,
+            rules_hash: None,
+        },
+    )
+    .await
+    .unwrap();
     s.delete_workflow_state(p).await.unwrap();
     assert!(s.get_workflow_state(p).await.unwrap().is_none());
 }
@@ -282,9 +321,7 @@ async fn memories_table_exists() {
 
 #[tokio::test]
 async fn knowledge_source_crud_roundtrip() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let id = pg
         .create_knowledge_source(&NewKnowledgeSource {
             kind: "hive_mind".into(),

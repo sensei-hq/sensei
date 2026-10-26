@@ -15,9 +15,7 @@ async fn delete_run(pg: &PgStore, id: &uuid::Uuid) {
 
 #[tokio::test]
 async fn create_get_and_defaults() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     // Minimal create — plan_ref/max_concurrency fall back to DDL defaults.
     let id = pg.create_run(&NewRun::default()).await.unwrap();
     let run = pg.get_run(&id).await.unwrap().expect("run exists");
@@ -39,9 +37,7 @@ async fn create_get_and_defaults() {
 
 #[tokio::test]
 async fn create_with_fields() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let session = uuid::Uuid::new_v4();
     let id = pg
         .create_run(&NewRun {
@@ -81,9 +77,7 @@ async fn create_with_fields() {
 async fn set_run_dojo_session_id_persists_the_cloud_join() {
     // The P1 run→relay bridge persists the cloud session id after the first
     // successful publish, so the local run joins to its relay session.
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let id = pg.create_run(&NewRun::default()).await.unwrap();
     // Fresh run has no cloud session yet.
     assert!(pg.get_run(&id).await.unwrap().unwrap().dojo_session_id.is_none());
@@ -104,10 +98,7 @@ async fn status_pause_progress_heartbeat_complete() {
     // Holds the shared resume lock: this test asserts a run STAYS paused, but
     // the global resume_due_runs (scheduler tests) would resume any paused run
     // whose paused_until has elapsed — so serialize against those callers.
-    let _guard = crate::runs::resume_test_guard();
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let id = pg.create_run(&NewRun::default()).await.unwrap();
 
     // Pause with a FAR-FUTURE resume time + reason (never "due", so the
@@ -155,9 +146,7 @@ async fn status_pause_progress_heartbeat_complete() {
 
 #[tokio::test]
 async fn list_active_runs_filters_by_status() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let active = pg.create_run(&NewRun::default()).await.unwrap(); // running
     let paused = pg.create_run(&NewRun::default()).await.unwrap();
     pg.update_run_status(&paused, RelayRunStatus::Paused, None, None).await.unwrap();
@@ -184,9 +173,7 @@ async fn list_active_runs_filters_by_status() {
 
 #[tokio::test]
 async fn append_and_list_events_newest_first() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let id = pg.create_run(&NewRun::default()).await.unwrap();
 
     let e1 = pg
@@ -225,12 +212,9 @@ async fn append_and_list_events_newest_first() {
 
 #[tokio::test]
 async fn resume_due_runs_flips_only_elapsed_pauses() {
-    // resume_due_runs is a global UPDATE; serialize with the scheduler test
-    // that also creates due-paused runs (see runs::resume_test_guard).
-    let _guard = crate::runs::resume_test_guard();
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    // resume_due_runs is a global UPDATE — safe here because this test's
+    // database is its own (#183).
+    let pg = PgStore::test_store().await;
     // Clear any stray due pauses so our set assertions are exact.
     pg.resume_due_runs().await.unwrap();
 

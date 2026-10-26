@@ -686,7 +686,6 @@ async fn a_user_edit_survives_the_seed_import() {
     // otherwise has the last word: an edit that does not bump `modified_at` is
     // silently reverted by the next `dbd deploy` and the user never learns why.
     // Asserted through the REAL procedure, because the guard lives in SQL.
-    let _gate = SCHEDULE_EDIT_GATE.enter();
     let s = pg_store().await;
     // The datafile's own claim, read from staging rather than hard-coded, so this
     // still tests the guard after someone edits schedules.jsonl.
@@ -850,4 +849,63 @@ async fn signing_out_matches_the_slot_however_the_caller_cased_the_persona() {
         !listed.contains(&hint.to_lowercase()),
         "and the cycle must stop enumerating a persona whose credentials are gone"
     );
+}
+
+// ── watchdog abandonment — the health count (#188) ────────────────
+
+/// A task the watchdog abandons stops existing: nothing reports it as a class.
+/// The count is per day and kind, and the worst offenders are named by kind
+/// AND path, because "process_file timed out" says nothing about which file.
+///
+/// The failures are written with the executor's own message, so a change to
+/// what the watchdog writes cannot leave this query matching nothing.
+#[tokio::test]
+async fn watchdog_abandonments_count_per_day_and_name_the_worst_offenders() {
+    let s = pg_store().await;
+    let fp = format!("/_test/watchdog/{}", uuid::Uuid::new_v4());
+    let file = crate::tasks::TaskKind::ProcessFile;
+    let group = crate::tasks::TaskKind::ComputeGroupMetrics;
+    let abandon = |kind: &crate::tasks::TaskKind| {
+        crate::tasks::executor::watchdog_message(kind, 7, kind.watchdog_timeout())
+    };
+
+    let fail = async |kind: &crate::tasks::TaskKind, path: &str, message: String| {
+        let id = s.start_task_execution(7, None, &kind.to_string(), &fp, path, 0).await.unwrap();
+        s.fail_task_execution(&id, 180_000, &message).await.unwrap();
+        id
+    };
+    for _ in 0..3 {
+        fail(&file, "src/huge.rs", abandon(&file)).await;
+    }
+    fail(&file, "src/other.rs", abandon(&file)).await;
+    fail(&group, "", abandon(&group)).await;
+    // A failure that is not the watchdog's is not an abandonment.
+    fail(&file, "src/broken.rs", "parse error: unexpected token".to_string()).await;
+    // One outside the window is not counted.
+    let old = fail(&file, "src/huge.rs", abandon(&file)).await;
+    sqlx_core::query::query(
+        "UPDATE activity.task_executions SET started_at = now() - interval '30 days' WHERE id = $1",
+    )
+    .bind(old)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let a = s.watchdog_abandonments(7, 10).await.unwrap();
+
+    let today = chrono::Utc::now().date_naive();
+    let on = |kind: &str| {
+        a.by_day.iter().find(|d| d.day == today && d.task_kind == kind).map(|d| d.count)
+    };
+    assert_eq!(on("process_file"), Some(4), "{:?}", a.by_day);
+    assert_eq!(on("compute_group_metrics"), Some(1), "{:?}", a.by_day);
+    assert_eq!(a.by_day.iter().map(|d| d.count).sum::<i64>(), 5, "only this window's abandonments");
+
+    let worst = &a.worst[0];
+    assert_eq!(
+        (worst.task_kind.as_str(), worst.path.as_str(), worst.count),
+        ("process_file", "src/huge.rs", 3)
+    );
+    assert!(a.worst.iter().all(|w| w.path != "src/broken.rs"), "{:?}", a.worst);
+    assert_eq!(s.watchdog_abandonments(7, 1).await.unwrap().worst.len(), 1, "the limit holds");
 }

@@ -1,5 +1,16 @@
 use super::*;
 
+/// A change to a workspace's workflow state, as [`PgStore::upsert_workflow_state`]
+/// applies it: each `Some` replaces its column, each `None` keeps the stored value.
+pub struct WorkflowStatePatch<'a> {
+    pub phase: Option<&'a str>,
+    pub plan: Option<&'a str>,
+    pub task: Option<&'a str>,
+    pub issue: Option<i64>,
+    pub checkpoint: Option<&'a str>,
+    pub rules_hash: Option<&'a str>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     pub async fn get_config(&self, key: &str) -> Result<Option<String>, String> {
@@ -100,16 +111,13 @@ impl PgStore {
 
     // ── Workflow State ────────────────────────────────────────────────
 
+    /// Set a workspace's workflow state. A `None` field keeps what is stored.
     pub async fn upsert_workflow_state(
         &self,
         workspace: &str,
-        phase: Option<&str>,
-        plan: Option<&str>,
-        task: Option<&str>,
-        issue: Option<i64>,
-        checkpoint: Option<&str>,
-        rules_hash: Option<&str>,
+        patch: &WorkflowStatePatch<'_>,
     ) -> Result<(), String> {
+        let &WorkflowStatePatch { phase, plan, task, issue, checkpoint, rules_hash } = patch;
         sqlx_core::query::query(
             "INSERT INTO sensei.workflow_state(workspace, active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at)
              VALUES($1, $2, $3, $4, $5, $6, $7, now())

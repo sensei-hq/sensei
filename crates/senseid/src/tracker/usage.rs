@@ -381,7 +381,7 @@ mod tests {
     /// and the span from the first session's start to the last one's end.
     #[tokio::test]
     async fn ticket_usage_reports_the_split_session_time_and_span() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let r = repo_in(&pg, p).await;
         let a = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
@@ -441,7 +441,7 @@ mod tests {
     /// partly priced — never a $0 for what could not be priced.
     #[tokio::test]
     async fn ticket_usage_reports_api_cost_and_what_was_only_partly_priced() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let r = repo_in(&pg, p).await;
         // The whole uuid: an all-digit 8-character slice would read as a date suffix.
@@ -515,7 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_ticket_with_no_ended_session_has_no_last_at() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let r = repo_in(&pg, p).await;
         let a = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
@@ -537,7 +537,7 @@ mod tests {
 
     #[tokio::test]
     async fn ticket_usage_sums_only_known_values() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let r = repo_in(&pg, p).await;
         let a = session_with(&pg, Some(r), &["fix/AUTH-2"], &["AUTH-2 again"]).await;
@@ -562,7 +562,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_ticket_counts_every_workspace_repo_and_drops_a_removed_repo_at_once() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let repos = [repo_in(&pg, p).await, repo_in(&pg, p).await, repo_in(&pg, p).await];
         for r in repos {
@@ -602,7 +602,7 @@ mod tests {
     /// 10-01, ends 10-15); 10001 sits in 100, 10002 + 10003 in 101.
     #[tokio::test]
     async fn a_sprint_partitions_the_candidates_in_its_window() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let r = repo_in(&pg, p).await;
         let s = |b: &'static [&'static str], pr: &'static [&'static str]| {
@@ -699,7 +699,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_sprint_without_a_window_has_no_usage_not_zero() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         let board = FakeBoard::standard()
             .with("/rest/agile/1.0/board/42/sprint", 0, json!({"isLast": true, "values": [
@@ -718,7 +718,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_ticket_list_filters_by_sprint_and_shows_carried_tickets_in_both() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         // 10001 was in closed 100 and is carried into active 101.
         let carried = FakeBoard::standard().with(
@@ -802,7 +802,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_backlog_is_the_tickets_no_live_sprint_lists() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         let keys = |rows: Vec<crate::db::pg_store::tracker_usage::TaskListRow>| {
             rows.into_iter().map(|r| r.key).collect::<Vec<_>>()
@@ -833,7 +833,7 @@ mod tests {
 
     #[tokio::test]
     async fn backlog_usage_counts_each_session_once() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let r = repo_in(&pg, p).await;
         let both = session_with(&pg, Some(r), &["fix/AUTH-4"], &["and AUTH-5"]).await;

@@ -66,13 +66,7 @@ pub async fn set(pg: &crate::db::pg_store::PgStore, source: &str, on: bool) -> R
     pg.set_config(&key(source), if on { ON } else { OFF }).await
 }
 
-/// Serialises the tests that write these config keys — they share one table.
 #[cfg(test)]
-pub(crate) static CONSENT_KEYS: crate::tasks::test_support::TestGate =
-    crate::tasks::test_support::TestGate::new();
-
-#[cfg(test)]
-#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
 
@@ -92,10 +86,7 @@ mod tests {
     /// is no. Mutation that must break this: treat a missing key as off.
     #[tokio::test]
     async fn everything_is_consented_until_someone_says_no() {
-        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else {
-            return;
-        };
-        let _gate = CONSENT_KEYS.enter();
+        let pg = crate::db::pg_store::PgStore::test_store().await;
         for (s, _) in SOURCES {
             sqlx_core::query::query("DELETE FROM sensei.config WHERE key = $1")
                 .bind(key(s))

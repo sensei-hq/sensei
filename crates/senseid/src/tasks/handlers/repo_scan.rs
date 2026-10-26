@@ -1023,9 +1023,7 @@ mod scan_tests {
     /// Mutation that must break this test: drop the `upsert_repository` +
     /// `link_folder_to_repository` pair from `process_git_folder`.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn a_repo_with_no_repository_row_still_reaches_its_workspace() {
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("fresh");
@@ -1116,11 +1114,9 @@ mod scan_tests {
     /// file rows for supported AND unsupported files, a workspace attached, and
     /// the manifest gate enqueued with the file fan-out behind it.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn scan_repo_writes_structure_and_enqueues_the_gate() {
         // This test writes `files` rows and then parses from them. Excluded
         // against the version-rescan sweep, which deletes them database-wide.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("demo");
@@ -1181,9 +1177,7 @@ mod scan_tests {
     /// its workspace packages, and Settings → Workspaces lost the roles inferred
     /// from their manifests until the next full index.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_rescan_keeps_a_manifest_folder_a_module() {
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("mono");
@@ -1249,11 +1243,9 @@ mod scan_tests {
     /// looked at, and pruning them destroys the nodes of files that are still
     /// on disk.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn an_event_scope_never_prunes_the_files_it_did_not_examine() {
         // This test writes `files` rows and then parses from them. Excluded
         // against the version-rescan sweep, which deletes them database-wide.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("demo");
@@ -1314,11 +1306,9 @@ mod scan_tests {
     /// `scope.deleted()`, and `process_git_folder` applies it. Disabling that
     /// loop left all 75 tests across three modules green.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn an_observed_delete_is_applied_even_under_an_event_scope() {
         // This test writes `files` rows and then parses from them. Excluded
         // against the version-rescan sweep, which deletes them database-wide.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("demo");
@@ -1371,11 +1361,9 @@ mod scan_tests {
     /// through `process_file` and asserts NODES EXIST — the only claim that
     /// distinguishes a working pipeline from one that silently indexes nothing.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn the_gate_fans_out_file_tasks_that_actually_index() {
         // This test writes `files` rows and then parses from them. Excluded
         // against the version-rescan sweep, which deletes them database-wide.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("demo");
@@ -1484,9 +1472,7 @@ mod scan_tests {
     /// Mutations that must break this: drop the enqueue; drop `blocked_by` on a
     /// file task.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn every_file_task_waits_on_one_compile_of_the_repository() {
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let name = format!("compiled-{}", uuid::Uuid::new_v4().simple());
@@ -1550,9 +1536,7 @@ mod scan_tests {
     /// Mutations that must break this: skip the attributes; skip the header
     /// sniff; drop the node deletion on a skip.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn vendored_and_generated_code_is_recorded_and_never_indexed() {
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let name = format!("owned-{}", uuid::Uuid::new_v4().simple());
@@ -1654,9 +1638,7 @@ mod scan_tests {
     /// A gate with nothing unparsed compiles nothing: a compile exists for the
     /// files that wait on it.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_gate_with_no_files_to_parse_compiles_nothing() {
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let name = format!("parsed-{}", uuid::Uuid::new_v4().simple());
@@ -1696,9 +1678,7 @@ mod scan_tests {
     /// Mutations that must break this: drop the enqueue; take the package from
     /// anything but the manifest (the fqns stop meeting, the import mints stubs).
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_dbd_design_lands_its_detail_on_the_walked_nodes() {
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         // A name of its own: the scan resolves the WORKSPACE by the repo's name, and
@@ -1880,9 +1860,7 @@ mod scan_tests {
     /// Mutations that must break this: drop the enqueue; skip the provider read
     /// (the convention tables are then skipped, not filed under `dbo`).
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn an_ef_core_mapping_lands_in_the_schema_store() {
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let name = format!("store-{}", uuid::Uuid::new_v4().simple());
@@ -2028,11 +2006,9 @@ public class Customer { public int Id { get; set; } public string Name { get; se
     /// `upsert_file_row(.., BARRIER_MTIME, BARRIER_HASH, None)` on the
     /// barrier-seed branch of `write_file_rows`.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_second_scan_of_an_unchanged_repo_keeps_the_parse_state() {
         // This test writes `files` rows and then parses from them. Excluded
         // against the version-rescan sweep, which deletes them database-wide.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("steady");
@@ -2108,11 +2084,9 @@ public class Customer { public int Id { get; set; } public string Name { get; se
     /// Mutation that must break this test: pass `false` instead of `task.force`
     /// to `enqueue_manifest_gate`, or drop the `t.force = force` assignment in it.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_forced_scan_reopens_files_a_previous_pass_already_parsed() {
         // This test writes `files` rows and then parses from them. Excluded
         // against the version-rescan sweep, which deletes them database-wide.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("forced");
@@ -2207,11 +2181,9 @@ public class Customer { public int Id { get; set; } public string Name { get; se
     /// Mutation that must break this test: drop `content_hash` from the upsert's
     /// `ON CONFLICT` set, or seed the barrier row from the previous hash.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_rescan_reparses_a_file_whose_content_changed() {
         // This test writes `files` rows and then parses from them. Excluded
         // against the version-rescan sweep, which deletes them database-wide.
-        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("moving");

@@ -145,7 +145,7 @@ impl TranscriptAdapter for ZedAdapter {
 /// zstd-decompress a thread BLOB to its JSON text. `None` on a malformed stream
 /// or non-UTF-8 output (logged, skipped — never panics on bad data).
 fn decompress_zstd(blob: &[u8]) -> Option<String> {
-    let mut decoder = ruzstd::StreamingDecoder::new(blob)
+    let mut decoder = ruzstd::decoding::StreamingDecoder::new(blob)
         .map_err(|e| tracing::warn!(error = %e, "zed: zstd init failed"))
         .ok()?;
     let mut out = Vec::new();

@@ -15,6 +15,52 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.20.2] — 2026-10-25
+
+### Security
+
+- **Only the desktop app may write to the daemon** (#334). Before this, any web
+  page could write to it: the origin check covered only the tracker routes, and
+  CORS allowed every origin. Now the guard covers every route, and CORS answers
+  only the app's origins.
+- **Dependency advisories cleared** (#172, #195): Rust 16 → 0 actionable, the
+  desktop app's Tauri lockfile 10 → 0, and the critical and high JS advisories in
+  the dōjō, app and website. `cargo audit` now gates CI over every lockfile; the
+  accepted exceptions are listed, with their proof, in `.cargo/audit.toml`.
+
+### Fixed
+
+- **A file too large to parse safely is skipped, not parsed** (#178). Over 2 MiB,
+  or with a line over 10,000 bytes, it is recorded as `oversized`. A parse that
+  overflows the stack had taken the whole daemon down with it.
+- **Long Claude sessions are captured within the watchdog's time limit** (#336).
+  A transcript was read five times per pass; it is now read once (25 s → 5 s on a
+  1.28 GB transcript, which had been abandoned 117 times in 14 days).
+- **Transcripts are ingested only for sessions under the watch roots** (#125).
+  Turns from untracked repositories were stored with no session to own them.
+  Registering a new repository makes the skipped transcripts eligible again, so
+  widening the watch roots brings them in.
+- **App writes report what the daemon did** (#304). A refused root, scan, toggle,
+  config or setup write is shown as an error, not as done.
+- **Each daemon sign-in keeps its own verifier** (#294), so two sign-ins in
+  flight no longer break each other.
+- **The dōjō shows a failed read as a failure** (#335, #106). Org screens,
+  constitutions, workspace previews and Plan & billing no longer show fixture
+  people, plans, prices or rules in place of an error.
+- **The dōjō runs kavach 1.3.0** (#329). Its landing guard replaces the dōjō's
+  own, so a switched account is never shown.
+
+### Added
+
+- **Watchdog abandonments are visible** (#188): `GET /api/tasks/abandoned`, and a
+  Watchdog section in `sensei doctor`, count them per day and name the worst
+  offenders.
+
+### Changed
+
+- **Tool calls pair on keys stored at write** (#298, dbd 0.27.6): Instruments
+  loads in 0.6 s instead of 6–8 s.
+
 ## [0.20.1] — 2026-10-23
 
 ### Fixed

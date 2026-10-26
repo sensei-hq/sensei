@@ -28,10 +28,14 @@ pub async fn start(
     challenge: &str,
     port: u16,
     login_hint: Option<&str>,
+    flow: &str,
 ) -> Result<String, String> {
-    let mut req = crate::federation::http_client()
-        .get(endpoint(dojo_url, "start"))
-        .query(&[("challenge", challenge), ("port", &port.to_string())]);
+    // `flow` names this sign-in (#294); dōjō sends it back on the callback.
+    let mut req = crate::federation::http_client().get(endpoint(dojo_url, "start")).query(&[
+        ("challenge", challenge),
+        ("port", &port.to_string()),
+        ("flow", flow),
+    ]);
     // Which account to suggest. Without it the browser reuses whichever GitHub
     // session it already holds, so connecting a SECOND identity quietly links
     // the first one again — a success as the wrong person.

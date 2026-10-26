@@ -49,6 +49,20 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Advisory scan over Cargo.lock (#172). Exceptions live in .cargo/audit.toml
+      # and are limited to crates no shipped target compiles; each records the
+      # check that proved it (#120). The command is a constant — no inputs.
+      - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2
+        with:
+          tool: cargo-audit
+      # Every lockfile: the daemon workspace, the desktop app's Tauri workspace
+      # (shipped), and the session-report tool. One ignore file serves all three.
+      - name: cargo audit
+        run: |
+          cargo audit
+          cargo audit --file app/src-tauri/Cargo.lock
+          cargo audit --file tools/session-report/Cargo.lock
+
       # Not Rust, but this is the workflow's fast no-infrastructure gate and the
       # check is a static read of `database/`. It guards the failure that the
       # `test` job below only catches after a full provision: a role granted to
@@ -127,7 +141,7 @@ jobs:
       # from an install. The tree had drifted four ways (v0.12.0 / v0.14.0 /
       # v0.15.0 / v0.17.0); see #197. One version, moved in one commit.
       - name: Install dbd
-        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.27.3 dbd-cli --locked
+        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.27.6 dbd-cli --locked
 
       # PROVISION FROM THE DDL TREE, not from a released bundle. A test database
       # built from a published snapshot ages out of the tree and then tests
@@ -147,6 +161,8 @@ jobs:
         run: |
           createdb -h localhost -U postgres sensei_test
           cd database && DATABASE_URL="$TEST_DATABASE_URL" dbd deploy --scope default
+          # The suite refuses a template not stamped for this tree (#142).
+          cd .. && scripts/test-template-fingerprint.sh --stamp "$TEST_DATABASE_URL"
 
       # Every literal SQL statement in the tree, PREPAREd against the schema
       # just deployed (#227). It runs BEFORE the suite because a statement

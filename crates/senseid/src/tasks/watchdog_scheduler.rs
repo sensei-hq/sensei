@@ -188,11 +188,6 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 #[cfg(test)]
-// `resume_test_guard()` is a blocking `std::sync::Mutex` held across awaits on
-// purpose — see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups here. These are current-thread test runtimes, one per test, so
-// blocking the thread costs nothing and cannot deadlock the runtime.
-#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::runs::NewRun;
@@ -262,10 +257,7 @@ mod tests {
 
     #[tokio::test]
     async fn tick_marks_a_stale_running_run_stalled() {
-        let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap(); // running
@@ -288,10 +280,7 @@ mod tests {
 
     #[tokio::test]
     async fn tick_keeps_a_running_run_with_recent_progress_untouched() {
-        let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();
@@ -324,10 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn tick_recovers_a_stalled_run_under_the_cap() {
-        let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();
@@ -365,10 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn tick_crashes_a_stalled_run_at_the_cap() {
-        let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();
@@ -391,10 +374,7 @@ mod tests {
 
     #[tokio::test]
     async fn tick_leaves_a_fresh_running_run_untouched() {
-        let _guard = crate::runs::resume_test_guard();
-        let Ok(pg) = PgStore::connect_test().await else {
-            return;
-        };
+        let pg = PgStore::test_store().await;
         let queue = TaskQueue::with_max_repos(16);
 
         let id = pg.create_run(&NewRun::default()).await.unwrap();

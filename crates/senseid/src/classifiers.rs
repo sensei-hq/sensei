@@ -296,9 +296,25 @@ pub enum ScanSkipReason {
     /// Code a tool wrote: `.gitattributes` marks it `linguist-generated`, or
     /// its head says so (`@generated`, `Code generated … DO NOT EDIT`).
     Generated,
+    /// Past the parse bounds: too large, or a line far longer than anything
+    /// hand-written. A parse that overflows the stack aborts the daemon, so the
+    /// input is bounded by rule rather than by name (#178).
+    Oversized,
 }
 
 impl ScanSkipReason {
+    /// Every variant, for the checks that each one is a label the database takes.
+    pub const ALL: [Self; 8] = [
+        Self::UnsupportedFormat,
+        Self::BinaryContent,
+        Self::InvalidUtf8,
+        Self::ParseError,
+        Self::ExcludedByConfig,
+        Self::Vendored,
+        Self::Generated,
+        Self::Oversized,
+    ];
+
     /// The `sensei.scan_skip_reason` enum label for this variant.
     pub fn as_db(self) -> &'static str {
         match self {
@@ -309,6 +325,7 @@ impl ScanSkipReason {
             Self::ExcludedByConfig => "excluded_by_config",
             Self::Vendored => "vendored",
             Self::Generated => "generated",
+            Self::Oversized => "oversized",
         }
     }
 

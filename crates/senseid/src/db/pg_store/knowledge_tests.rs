@@ -606,9 +606,7 @@ async fn get_memory_detail_includes_7d_telemetry() {
 
 #[tokio::test]
 async fn insert_memory_persists_source_id() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let src = uuid::Uuid::new_v4();
     let id = pg
         .insert_memory(&InsertMemory {
@@ -654,9 +652,7 @@ async fn insert_memory_persists_source_id() {
 /// found by dogfooding `get_rules`.
 #[tokio::test]
 async fn workspace_learned_convention_scopes_to_its_own_workspace_not_general() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let pool = pg.pool();
 
     // Two workspaces, each with its own repo folder attributed to it.
@@ -812,9 +808,7 @@ async fn workspace_learned_convention_scopes_to_its_own_workspace_not_general() 
 
 #[tokio::test]
 async fn federated_ledger_and_shareability() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     // The scopes ladder is REFERENCE data, seeded from
     // `database/import/staging/scopes.jsonl` into every database. This insert
     // only covers a bare DB that has not been imported into; on conflict it

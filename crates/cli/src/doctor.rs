@@ -77,7 +77,12 @@ pub fn run(fix: bool) -> i32 {
 
     let capture_pressure = print_capture_section(fix);
     let engines_pressure = print_engines_section(fix);
-    if terminal.status == HealthStatus::Ok && capture_pressure == 0 && engines_pressure == 0 {
+    let watchdog_pressure = print_watchdog_section();
+    if terminal.status == HealthStatus::Ok
+        && capture_pressure == 0
+        && engines_pressure == 0
+        && watchdog_pressure == 0
+    {
         0
     } else {
         1
@@ -263,6 +268,90 @@ fn print_capture_section(fix: bool) -> i32 {
     worst_fail
 }
 
+// ── Watchdog section ────────────────────────────────────────────────────────
+
+/// The window the doctor reads abandonments over.
+const WATCHDOG_DAYS: i32 = 7;
+
+/// `/api/tasks/abandoned` as the doctor reads it.
+#[derive(serde::Deserialize)]
+struct Abandonments {
+    days: i32,
+    by_day: Vec<AbandonedDay>,
+    worst: Vec<AbandonedTask>,
+}
+
+#[derive(serde::Deserialize)]
+struct AbandonedDay {
+    day: String,
+    task_kind: String,
+    count: i64,
+}
+
+#[derive(serde::Deserialize)]
+struct AbandonedTask {
+    task_kind: String,
+    path: String,
+    count: i64,
+    last_at: String,
+}
+
+/// Render the tasks the watchdog abandoned (#188). An abandonment is a warning,
+/// not a failure: it makes "slow" visible before it is "missing". Returns exit
+/// pressure 1 only when the daemon could not answer — an unread count is not a
+/// clean one.
+fn print_watchdog_section() -> i32 {
+    let cfg = SenseiConfig::from_env();
+    let url =
+        format!("http://127.0.0.1:{}/api/tasks/abandoned?days={WATCHDOG_DAYS}", cfg.daemon_port);
+    println!();
+    println!("{}", bold("Watchdog"));
+    let read = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .and_then(|c| c.get(&url).send())
+        .and_then(|r| r.error_for_status())
+        .and_then(|r| r.json::<Abandonments>());
+    match read {
+        Ok(a) => {
+            let lines = abandonment_lines(&a);
+            let glyph = if a.by_day.is_empty() { green("✓") } else { yellow("⚠") };
+            println!("  {} {}", glyph, lines[0]);
+            for line in &lines[1..] {
+                println!("    {}", dim(line));
+            }
+            0
+        }
+        Err(e) => {
+            println!("  {} {}", red("✗"), dim(&format!("cannot read abandonments: {e}")));
+            1
+        }
+    }
+}
+
+/// The watchdog section's lines: a total, one line per day (its kinds in the
+/// daemon's order, most first), then the worst offenders by kind and path.
+fn abandonment_lines(a: &Abandonments) -> Vec<String> {
+    let total: i64 = a.by_day.iter().map(|d| d.count).sum();
+    if total == 0 {
+        return vec![format!("no task abandoned in the last {} days", a.days)];
+    }
+    let mut lines = vec![format!("{total} tasks abandoned in the last {} days", a.days)];
+    for day in a.by_day.chunk_by(|x, y| x.day == y.day) {
+        let count: i64 = day.iter().map(|d| d.count).sum();
+        let kinds: Vec<String> =
+            day.iter().map(|d| format!("{} {}", d.task_kind, d.count)).collect();
+        lines.push(format!("{}  {count}  {}", day[0].day, kinds.join(" · ")));
+    }
+    lines.push("worst:".to_string());
+    for w in &a.worst {
+        let path = if w.path.is_empty() { "—" } else { &w.path };
+        let day = w.last_at.get(..10).unwrap_or(&w.last_at);
+        lines.push(format!("{}× {}  {path}  (last {day})", w.count, w.task_kind));
+    }
+    lines
+}
+
 // ── Indexing engines section ────────────────────────────────────────────────
 
 /// Render the Indexing engines section — the compilers the indexer places call
@@ -378,6 +467,43 @@ mod tests {
 
     fn status(engine: Engine, missing: Vec<Cause>) -> EngineStatus {
         EngineStatus { engine, missing }
+    }
+
+    /// #188: the doctor shows what the watchdog abandoned — a total, the
+    /// count per day split by kind, and the worst offenders by kind and path.
+    #[test]
+    fn abandonments_render_per_day_and_name_the_worst() {
+        let body = serde_json::json!({
+            "days": 7,
+            "by_day": [
+                { "day": "2026-10-25", "task_kind": "ingest_capture", "count": 3 },
+                { "day": "2026-10-25", "task_kind": "compile_projects", "count": 1 },
+                { "day": "2026-10-23", "task_kind": "compute_group_metrics", "count": 2 }
+            ],
+            "worst": [
+                { "task_kind": "ingest_capture", "path": "/t/a.jsonl", "count": 3,
+                  "last_at": "2026-10-25T14:02:00Z" },
+                { "task_kind": "compute_group_metrics", "path": "", "count": 2,
+                  "last_at": "2026-10-23T09:00:00Z" }
+            ]
+        });
+        let lines = abandonment_lines(&serde_json::from_value(body).unwrap());
+        assert_eq!(lines[0], "6 tasks abandoned in the last 7 days");
+        assert_eq!(lines[1], "2026-10-25  4  ingest_capture 3 · compile_projects 1");
+        assert_eq!(lines[2], "2026-10-23  2  compute_group_metrics 2");
+        assert_eq!(lines[3], "worst:");
+        assert_eq!(lines[4], "3× ingest_capture  /t/a.jsonl  (last 2026-10-25)");
+        assert_eq!(lines[5], "2× compute_group_metrics  —  (last 2026-10-23)");
+        assert_eq!(lines.len(), 6);
+    }
+
+    #[test]
+    fn no_abandonment_says_so() {
+        let body = serde_json::json!({ "days": 7, "by_day": [], "worst": [] });
+        assert_eq!(
+            abandonment_lines(&serde_json::from_value(body).unwrap()),
+            vec!["no task abandoned in the last 7 days"]
+        );
     }
 
     #[test]

@@ -42,7 +42,6 @@ pub fn process(
         sections,
         rationales,
         ir: None,
-        fqn: None,
     }
 }
 

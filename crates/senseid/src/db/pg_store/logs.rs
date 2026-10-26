@@ -18,6 +18,31 @@ type TaskExecutionRow = (
     Option<chrono::DateTime<chrono::Utc>>, // completed_at
 );
 
+/// Watchdog abandonments over a window — see [`PgStore::watchdog_abandonments`].
+#[derive(Debug, serde::Serialize)]
+pub struct Abandonments {
+    pub days: i32,
+    pub by_day: Vec<AbandonedDay>,
+    pub worst: Vec<AbandonedTask>,
+}
+
+/// Abandonments of one kind on one day.
+#[derive(Debug, serde::Serialize)]
+pub struct AbandonedDay {
+    pub day: chrono::NaiveDate,
+    pub task_kind: String,
+    pub count: i64,
+}
+
+/// One task (kind and path) the watchdog abandoned, and how often.
+#[derive(Debug, serde::Serialize)]
+pub struct AbandonedTask {
+    pub task_kind: String,
+    pub path: String,
+    pub count: i64,
+    pub last_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// Select list matching [`TaskExecutionRow`], field for field and in order.
 const TASK_EXECUTION_COLUMNS: &str = "task_id, parent_task_id, task_kind::text, folder_path, path, \
      status, items_processed, duration_ms, retry_number, error_message, started_at, completed_at";
@@ -595,6 +620,66 @@ impl PgStore {
             .await
             .map_err(|e| format!("child_task_executions: {e}"))?;
         Ok(rows.into_iter().map(task_execution_json).collect())
+    }
+
+    /// Watchdog abandonments in the last `days` (#188): a count per day and
+    /// kind, and the `worst` offenders by kind and path — the tasks that timed
+    /// out and stopped existing, which no other surface reports as a class.
+    ///
+    /// Read from the raw failed rows, which outlive the daily rollup (failures
+    /// are kept `tasks.execution_failed_retention_days`); the rollup's status
+    /// alone cannot tell an abandonment from any other failure.
+    pub async fn watchdog_abandonments(
+        &self,
+        days: i32,
+        worst: i64,
+    ) -> Result<Abandonments, String> {
+        let prefix = format!("{}%", crate::tasks::executor::WATCHDOG_ABANDONED);
+        let by_day: Vec<(chrono::NaiveDate, String, i64)> = sqlx_core::query_as::query_as(
+            "SELECT started_at::date, task_kind::text, count(*)
+               FROM activity.task_executions
+              WHERE status = 'failed' AND error_message LIKE $1
+                AND started_at >= now() - (interval '1 day' * $2)
+              GROUP BY 1, 2
+              ORDER BY 1 DESC, 3 DESC, 2",
+        )
+        .bind(&prefix)
+        .bind(days)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("watchdog_abandonments by day: {e}"))?;
+        let offenders: Vec<(String, String, i64, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT task_kind::text, path, count(*), max(started_at)
+                   FROM activity.task_executions
+                  WHERE status = 'failed' AND error_message LIKE $1
+                    AND started_at >= now() - (interval '1 day' * $2)
+                  GROUP BY 1, 2
+                  ORDER BY 3 DESC, 4 DESC
+                  LIMIT $3",
+            )
+            .bind(&prefix)
+            .bind(days)
+            .bind(worst)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("watchdog_abandonments worst: {e}"))?;
+        Ok(Abandonments {
+            days,
+            by_day: by_day
+                .into_iter()
+                .map(|(day, task_kind, count)| AbandonedDay { day, task_kind, count })
+                .collect(),
+            worst: offenders
+                .into_iter()
+                .map(|(task_kind, path, count, last_at)| AbandonedTask {
+                    task_kind,
+                    path,
+                    count,
+                    last_at,
+                })
+                .collect(),
+        })
     }
 
     /// Roll up task executions older than `days` into `task_execution_daily`,

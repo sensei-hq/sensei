@@ -66,10 +66,10 @@ export class AppState {
     }
   }
 
+  /** One key; the cache keeps its old value, and this throws, when the
+   *  daemon does not store it (#304). */
   async setConfig(key: string, value: string) {
-    this.config = { ...this.config, [key]: value };
-    const api = senseiApi(this.port);
-    await api.setConfig({ [key]: value });
+    await this.setConfigs({ [key]: value });
   }
 
   /**
@@ -80,14 +80,11 @@ export class AppState {
    * (raw) or any JSON-serialisable object — passed through as-is.
    */
   async setConfigs(map: Record<string, string>) {
-    // Optimistic-with-rollback. CRUCIAL: use trySetConfig (Result-returning)
-    // instead of setConfig (the helper-level swallow that returns void on
-    // every failure including 5xx and network errors). Without trySetConfig
-    // a transient daemon error silently drops the write, the next load()
-    // refetches daemon truth — which now diverges from our cache — and
-    // any downstream gate (e.g. the boot gate's setup_complete check) reads the
-    // wrong value. This was the cause of the "Enter observatory → bounced
-    // back to /setup/welcome" symptom.
+    // Optimistic-with-rollback. A write the daemon did not store must not
+    // stay in the cache: the next load() refetches daemon truth, which would
+    // diverge from it, and a downstream gate (e.g. the boot gate's
+    // setup_complete check) would read the wrong value — the cause of the
+    // "Enter observatory → bounced back to /setup/welcome" symptom.
     const prev = this.config;
     this.config = { ...prev, ...map };
     const api = senseiApi(this.port);
@@ -113,10 +110,18 @@ export class AppState {
     if (id) {
       await this.setConfig('active_workspace', id);
     } else {
-      delete this.config['active_workspace'];
-      this.config = { ...this.config };
-      const api = senseiApi(this.port);
-      await api.deleteConfig('active_workspace');
+      // Same rollback as setConfigs (#304): a clear the daemon refused keeps
+      // the active workspace in the cache, and the caller hears why.
+      const prev = this.config;
+      const { active_workspace: _cleared, ...rest } = prev;
+      this.config = rest;
+      const result = await senseiApi(this.port).tryDeleteConfig('active_workspace');
+      if (!result.ok) {
+        this.config = prev;
+        throw new Error(
+          `Daemon config delete failed (${result.error.status}): ${result.error.message}`,
+        );
+      }
     }
   }
 

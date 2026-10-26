@@ -67,6 +67,13 @@ export interface RecommendationPreview {
 /** Why a read failed, for the screen to say: the status text, else the status. */
 export const failureReason = (error: ApiError): string => error.message || `HTTP ${error.status}`;
 
+/** A failure in words for a screen: an unreachable daemon is said as such,
+ *  else the status the daemon returned. */
+export const daemonFailure = (error: ApiError): string =>
+  error.status === 0
+    ? `Could not reach the daemon — ${error.message}`
+    : `The daemon returned ${error.status} ${error.message}`;
+
 /** A read's data, or — for a caller that cannot go on without it — a throw
  *  naming what could not be read (#288). */
 export function dataOrThrow<T>(read: ApiResult<T>, what: string): T {
@@ -93,38 +100,8 @@ const personaQuery = (persona?: string) => (persona ? `?persona=${encodeURICompo
 export function senseiApi(port: number) {
   const base = apiBase(port);
 
-  // Every read is `tryGet`: the daemon's answer or an ApiResult error (#288).
-  // The write helpers below without a `try` prefix are legacy — they fold a
-  // failure into a sentinel value; new code uses the try- variants.
-  async function post<T>(path: string, body: unknown, fallback: T): Promise<T> {
-    try {
-      const res = await fetch(`${base}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) return await res.json() as T;
-      console.warn('[api] POST non-ok; using fallback', { path, status: res.status, statusText: res.statusText });
-      return fallback;
-    } catch (e) {
-      console.warn('[api] POST failed; using fallback', { path }, e);
-      return fallback;
-    }
-  }
-
-  async function put(path: string, body: unknown) {
-    try {
-      const res = await fetch(`${base}${path}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) console.warn('[api] PUT non-ok', { path, status: res.status, statusText: res.statusText });
-    } catch (e) {
-      console.warn('[api] PUT failed', { path }, e);
-    }
-  }
-
+  // Every read is `tryGet` and every write a try- helper: the daemon's answer or
+  // an ApiResult error, never a default standing in for a failure (#288, #304).
   async function tryPut(path: string, body: unknown): Promise<ApiResult<void>> {
     try {
       const res = await fetch(`${base}${path}`, {
@@ -137,10 +114,6 @@ export function senseiApi(port: number) {
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
     }
-  }
-
-  async function del(path: string) {
-    try { await fetch(`${base}${path}`, { method: 'DELETE' }); } catch { /* non-fatal */ }
   }
 
   async function tryDelete(path: string): Promise<ApiResult<void>> {
@@ -272,32 +245,30 @@ export function senseiApi(port: number) {
 
     // ── Repos (individual git repos) ────────────────────────────────────
 
-    registerRepo: (repoId: string, name: string, path: string) =>
-      post('/api/repos', { repoId, name, path }, { ok: false }),
+    // Every write is a try-write: done, or why not (#304).
+    tryRegisterRepo: (repoId: string, name: string, path: string) =>
+      tryPost<{ ok: boolean }>('/api/repos', { repoId, name, path }),
 
-    updateRepo: (repoId: string, patch: Partial<ServerWorkspace>) =>
-      put(`/api/repos/${enc(repoId)}`, patch),
+    tryUpdateRepo: (repoId: string, patch: Partial<ServerWorkspace>) =>
+      tryPut(`/api/repos/${enc(repoId)}`, patch),
 
-    deleteRepo: (repoId: string) => del(`/api/repos/${enc(repoId)}`),
+    tryDeleteRepo: (repoId: string) => tryDelete(`/api/repos/${enc(repoId)}`),
 
-    excludeRepo: (repoId: string) =>
-      post(`/api/repos/${enc(repoId)}/exclude`, {}, { ok: false }),
+    tryExcludeRepo: (repoId: string) =>
+      tryPost<{ ok: boolean }>(`/api/repos/${enc(repoId)}/exclude`, {}),
 
-    addRepoTag: (repoId: string, tag: string) =>
-      post(`/api/repos/${enc(repoId)}/tags`, { tag }, { ok: false }),
+    tryAddRepoTag: (repoId: string, tag: string) =>
+      tryPost<{ ok: boolean }>(`/api/repos/${enc(repoId)}/tags`, { tag }),
 
-    removeRepoTag: (repoId: string, tag: string) =>
-      del(`/api/repos/${enc(repoId)}/tags/${enc(tag)}`),
+    tryRemoveRepoTag: (repoId: string, tag: string) =>
+      tryDelete(`/api/repos/${enc(repoId)}/tags/${enc(tag)}`),
 
     // ── Workspaces (groups of 1+ repos) ───────────────────────────────────
 
-    createWorkspace: (workspace: object) =>
-      post<{ ok: boolean; id?: string }>('/api/workspaces', workspace, { ok: false }),
+    tryCreateWorkspace: (workspace: object) =>
+      tryPost<{ ok: boolean; id?: string }>('/api/workspaces', workspace),
 
-    updateWorkspace: (id: string, patch: object) =>
-      put(`/api/workspaces/${enc(id)}`, patch),
-
-    /** Error-propagating variant of updateWorkspace — the About-tab metadata
+    /** A workspace edit — saved, or why not (#304). The About-tab metadata
      *  form drives a saveStatus (idle/saving/saved/error) lifecycle off the
      *  Result, mirroring trySetConfig on the settings form. The daemon's
      *  PUT /api/workspaces/{id} does a partial (COALESCE) update of the editable
@@ -305,11 +276,7 @@ export function senseiApi(port: number) {
     tryUpdateWorkspace: (id: string, patch: object): Promise<ApiResult<void>> =>
       tryPut(`/api/workspaces/${enc(id)}`, patch),
 
-    deleteWorkspace: (id: string) => del(`/api/workspaces/${enc(id)}`),
-
-    /** Update a single folder. Currently only `role` is honored daemon-side. */
-    updateFolder: (id: string, patch: { role?: string | null }) =>
-      put(`/api/folders/${enc(id)}`, patch),
+    tryDeleteWorkspace: (id: string) => tryDelete(`/api/workspaces/${enc(id)}`),
 
     /** Error-propagating reads/writes for Settings · Workspaces (#271): a failed
      *  load is an error state, never an empty list, and a role save that fails
@@ -317,17 +284,18 @@ export function senseiApi(port: number) {
     // One read of the list, typed as the wire carries it: the settings and
     // setup view (`DaemonWorkspace`) and the workspaces-index view (`WorkspaceListItem`).
     tryListWorkspaces: () => tryGet<Array<DaemonWorkspace & WorkspaceListItem>>('/api/workspaces'),
+    /** Update a single folder. Currently only `role` is honored daemon-side. */
     tryUpdateFolder: (id: string, patch: { role?: string | null }) =>
       tryPut(`/api/folders/${enc(id)}`, patch),
 
-    addWorkspaceRepo: (workspaceId: string, repo: { repoId: string; role?: string }) =>
-      post(`/api/workspaces/${enc(workspaceId)}/repos`, repo, { ok: false }),
+    tryAddWorkspaceRepo: (workspaceId: string, repo: { repoId: string; role?: string }) =>
+      tryPost<{ ok: boolean }>(`/api/workspaces/${enc(workspaceId)}/repos`, repo),
 
-    removeWorkspaceRepo: (workspaceId: string, repoId: string) =>
-      del(`/api/workspaces/${enc(workspaceId)}/repos/${enc(repoId)}`),
+    tryRemoveWorkspaceRepo: (workspaceId: string, repoId: string) =>
+      tryDelete(`/api/workspaces/${enc(workspaceId)}/repos/${enc(repoId)}`),
 
-    analyzeWorkspace: (id: string) =>
-      post<SolutionAnalysis | null>(`/api/workspaces/${enc(id)}/analyze`, {}, null),
+    tryAnalyzeWorkspace: (id: string) =>
+      tryPost<SolutionAnalysis>(`/api/workspaces/${enc(id)}/analyze`, {}),
 
     // ── Workspace detail (new multi-window endpoints) ───────────────────
     /** A workspace's FTR headline (14d / prior / trend / 7d). */
@@ -442,8 +410,9 @@ export function senseiApi(port: number) {
     tryListWorkspaceServices: (id: string) =>
       tryGet<{ services: WorkspaceService[] }>(`/api/workspaces/${enc(id)}/services`),
 
-    setWorkspaceServiceScope: (id: string, serviceId: string, enabled: boolean) =>
-      put(`/api/workspaces/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
+    /** Turn a service on or off for one workspace — done, or why not (#304). */
+    trySetWorkspaceServiceScope: (id: string, serviceId: string, enabled: boolean) =>
+      tryPut(`/api/workspaces/${enc(id)}/services/${enc(serviceId)}/scope`, { enabled }),
 
     tryGetWorkspaceMemories: (id: string) =>
       tryGet<{ active: WorkspaceMemory[]; total: number }>(`/api/workspaces/${enc(id)}/memories`),
@@ -657,10 +626,8 @@ export function senseiApi(port: number) {
       ),
 
     // ── Indexing ─────────────────────────────────────────────────────────
-    indexRepo: (repoId: string, repoPath: string, force = false) =>
-      post<{ ok: boolean; queued: boolean; taskId: number }>(
-        '/api/index', { repoId, repoPath, force }, { ok: false, queued: false, taskId: -1 },
-      ),
+    tryIndexRepo: (repoId: string, repoPath: string, force = false) =>
+      tryPost<{ ok: boolean; queued: boolean; taskId: number }>('/api/index', { repoId, repoPath, force }),
 
     /** The index task queue (#288: a failure is an error — it used to read as an
      *  idle queue, which the scan's done poller took for "finished"). */
@@ -712,12 +679,12 @@ export function senseiApi(port: number) {
       return tryGet<{ total: number; libs: LibEntry[] }>(`/api/libs?${qs}`);
     },
 
-    indexLib: (libName: string, url: string, version?: string) =>
-      post('/api/libs/index', { libName, url, version }, { ok: false }),
+    tryIndexLib: (libName: string, url: string, version?: string) =>
+      tryPost<{ ok: boolean }>('/api/libs/index', { libName, url, version }),
 
     // ── Unified Query ────────────────────────────────────────────────────
-    query: (q: string, repoId?: string, workspaceId?: string) =>
-      post<Record<string, unknown>>('/api/query', { q, repoId, workspaceId }, {}),
+    tryQuery: (q: string, repoId?: string, workspaceId?: string) =>
+      tryPost<Record<string, unknown>>('/api/query', { q, repoId, workspaceId }),
 
     // ── Sessions ─────────────────────────────────────────────────────────
     /** Every captured session (#288: a failure is an error, not an empty list). */
@@ -763,11 +730,10 @@ export function senseiApi(port: number) {
       ),
 
     // ── Scan ─────────────────────────────────────────────────────────────
-    /** Add a root to the DB immediately (synchronous). Does not start scanning. */
-    addWatchRoot: (path: string) =>
-      post<{ ok: boolean; id: string; path: string }>(
-        '/api/scan/roots', { path }, { ok: false, id: '', path },
-      ),
+    /** Add a root to the DB immediately (synchronous). Does not start scanning.
+     *  The stored root, or why it was not added (#304). */
+    tryAddWatchRoot: (path: string) =>
+      tryPost<{ ok: boolean; id: string; path: string }>('/api/scan/roots', { path }),
 
     /** Remove a watch root (#247). The decision is REQUIRED: `keep` pauses it
      *  and leaves its data readable, `remove` prunes everything it held. Result-
@@ -857,10 +823,9 @@ export function senseiApi(port: number) {
         `/api/scan/roots/${enc(id)}`, { excluded },
       ),
 
-    scanFolder: (root: string, maxDepth = 3) =>
-      post<{ ok: boolean; scanning: boolean }>(
-        '/api/scan', { root, max_depth: maxDepth }, { ok: false, scanning: false },
-      ),
+    /** Start scanning a root — accepted, or why not (#304). */
+    tryScanFolder: (root: string, maxDepth = 3) =>
+      tryPost<{ ok: boolean; scanning: boolean }>('/api/scan', { root, max_depth: maxDepth }),
 
     // ── MCP Tool Proxy ────────────────────────────────────────────────
     tryMcpListTools: () => tryGet<{ tools: McpToolManifest[] }>('/api/mcp/tools'),
@@ -906,15 +871,11 @@ export function senseiApi(port: number) {
     },
 
     // ── Marketplace ──────────────────────────────────────────────────
-    marketplaceInstall: (target: string, marketplacePath: string, item?: string, scope?: string) =>
-      post('/api/marketplace/install', { target, marketplacePath, item, scope }, { ok: false }),
+    tryMarketplaceInstall: (target: string, marketplacePath: string, item?: string, scope?: string) =>
+      tryPost<{ ok: boolean }>('/api/marketplace/install', { target, marketplacePath, item, scope }),
 
     // ── Config (user preferences) ──────────────────────────────────────
-    setConfig: (config: Record<string, string>) =>
-      put('/api/config', config),
-
-    /** Error-propagating variant of setConfig — required where drift between
-     *  daemon and localStorage caches would corrupt downstream state. */
+    /** A config write — stored, or why not (#304). */
     trySetConfig: (config: Record<string, string>) =>
       tryPut('/api/config', config),
 
@@ -923,7 +884,7 @@ export function senseiApi(port: number) {
      *  empty config" (clear cache). */
     tryGetConfig: () => tryGet<Record<string, string>>('/api/config'),
 
-    deleteConfig: (key: string) => del(`/api/config/${enc(key)}`),
+    tryDeleteConfig: (key: string) => tryDelete(`/api/config/${enc(key)}`),
 
     // ── Assistants ────────────────────────────────────────────────────────
     /** Detected assistants (#288: a failure is an error, not "none detected"). */
@@ -932,32 +893,30 @@ export function senseiApi(port: number) {
     /** Assistant families the daemon detects (#288: a failure is an error). */
     tryDetectAssistantFamilies: () => tryGet<import('./types').AssistantFamily[]>('/api/assistants/families'),
 
-    configureAssistants: (assistants: string[]) =>
-      post<import('./types').AssistantConfigureResult>('/api/assistants/configure', { acps: assistants }, { configured: [], skipped: [], errors: [] }),
+    /** Configure assistants — the daemon's per-assistant result, or why the
+     *  request failed (#304: a failure was an empty result, read as success). */
+    tryConfigureAssistants: (assistants: string[]) =>
+      tryPost<import('./types').AssistantConfigureResult>('/api/assistants/configure', { acps: assistants }),
 
-    removeAssistants: (assistants: string[] = []) =>
-      post<import('./types').AssistantRemoveResult>('/api/assistants/remove', { acps: assistants }, { assistants_removed: [], errors: [] }),
+    tryRemoveAssistants: (assistants: string[] = []) =>
+      tryPost<import('./types').AssistantRemoveResult>('/api/assistants/remove', { acps: assistants }),
 
     // ── Instruments (MCP registry — setup wizard Instruments stage) ───────
     tryListInstruments: () =>
       tryGet<{ total: number; mcps: import('./setup/contracts').DaemonMcpEntry[]; stack: string[] }>('/api/instruments'),
 
     // ── Installer ───────────────────────────────────────────────────────
-    installAll: (assistants: string[], scope = 'global') =>
-      post<import('./types').InstallResult>('/api/install', { acps: assistants, scope }, {
-        hooks_installed: 0, skills_installed: 0, commands_installed: 0,
-        stale_commands_removed: 0, stale_skills_removed: 0,
-        assistants_configured: [], errors: [], marketplace_version: '',
-      }),
+    tryInstallAll: (assistants: string[], scope = 'global') =>
+      tryPost<import('./types').InstallResult>('/api/install', { acps: assistants, scope }),
 
-    installHooks: () =>
-      post<{ ok: boolean; count: number }>('/api/install/hooks', {}, { ok: false, count: 0 }),
+    tryInstallHooks: () =>
+      tryPost<{ ok: boolean; count: number }>('/api/install/hooks', {}),
 
-    installItem: (name: string, kind: string) =>
-      post<{ ok: boolean; path?: string; error?: string }>('/api/install/item', { name, kind }, { ok: false }),
+    tryInstallItem: (name: string, kind: string) =>
+      tryPost<{ ok: boolean; path?: string; error?: string }>('/api/install/item', { name, kind }),
 
-    removeItem: (name: string, kind: string) =>
-      post<{ ok: boolean }>('/api/install/item/remove', { name, kind }, { ok: false }),
+    tryRemoveItem: (name: string, kind: string) =>
+      tryPost<{ ok: boolean }>('/api/install/item/remove', { name, kind }),
 
     /** Installed skills and commands (#288: a failure is an error, not "none installed"). */
     tryGetInstalledItems: () => tryGet<import('./types').InstalledItem[]>('/api/install/installed'),
@@ -976,12 +935,8 @@ export function senseiApi(port: number) {
         { kind, enabled },
       ),
 
-    removeAll: (purge = false) =>
-      post<import('./types').RemoveResult>('/api/remove', { purge }, {
-        assistants_removed: [], plugin_removed: false, commands_removed: 0,
-        skills_removed: 0, agents_removed: 0, hooks_removed: false,
-        cache_cleared: false, workspaces_cleaned: [], errors: [],
-      }),
+    tryRemoveAll: (purge = false) =>
+      tryPost<import('./types').RemoveResult>('/api/remove', { purge }),
 
     // ── Gateway routers ──────────────────────────────────────────────────
     /** A failed read is an error, never "no routers" (#286). */
@@ -1034,7 +989,7 @@ export function senseiApi(port: number) {
         { direction },
       ),
 
-    generateImage: (body: {
+    tryGenerateImage: (body: {
       prompt: string;
       output_path?: string;
       model?: string;
@@ -1044,10 +999,9 @@ export function senseiApi(port: number) {
       style?: string;
       n?: number;
     }) =>
-      post<{ ok: boolean; paths: string[]; model?: string; router?: string }>(
+      tryPost<{ ok: boolean; paths: string[]; model?: string; router?: string }>(
         '/api/gateway/image/generate',
         body,
-        { ok: false, paths: [] },
       ),
 
     // ── On-demand local-model provisioning ───────────────────────────────
@@ -1337,27 +1291,7 @@ export function senseiApi(port: number) {
     tryGetDojoSyncState: () => tryGet<SyncStateResponse>('/api/dojo/sync-state'),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
-    stop: () => post('/stop', {}, {}),
-
-    // ── Deprecated aliases (migration: solution→workspace, workspace→repo) ──
-    /** @deprecated Use registerRepo */
-    get registerWorkspace() { return this.registerRepo; },
-    /** @deprecated Use addRepoTag */
-    get addWorkspaceTag() { return this.addRepoTag; },
-    /** @deprecated Use removeRepoTag */
-    get removeWorkspaceTag() { return this.removeRepoTag; },
-    /** @deprecated Use createWorkspace */
-    get createSolution() { return this.createWorkspace; },
-    /** @deprecated Use updateWorkspace */
-    get updateSolution() { return this.updateWorkspace; },
-    /** @deprecated Use deleteWorkspace */
-    get deleteSolution() { return this.deleteWorkspace; },
-    /** @deprecated Use addWorkspaceRepo */
-    get addSolutionRepo() { return this.addWorkspaceRepo; },
-    /** @deprecated Use removeWorkspaceRepo */
-    get removeSolutionRepo() { return this.removeWorkspaceRepo; },
-    /** @deprecated Use analyzeWorkspace */
-    get analyzeSolution() { return this.analyzeWorkspace; },
+    tryStop: () => tryPost<Record<string, unknown>>('/stop', {}),
   };
 }
 

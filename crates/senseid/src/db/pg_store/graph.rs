@@ -166,6 +166,37 @@ pub struct NodeRow<'a> {
     pub is_exported: bool,
 }
 
+/// The fields of one callee row, whichever query supplied them — see
+/// [`PgStore::callee_row`].
+pub(super) struct Callee<'a> {
+    pub name: &'a str,
+    pub kind: Option<&'a str>,
+    pub file: Option<&'a str>,
+    pub line: Option<i32>,
+    pub locality: &'a str,
+    pub edge_kind: &'a str,
+}
+
+/// One `upsert_node_by_fqn` write, its file already resolved: what the insert
+/// writes and, on an identity collision, what the adoption searches and sets.
+/// One row for both, each destructuring it EXHAUSTIVELY (#161), so a column
+/// added here does not compile until both have placed it.
+struct FqnNodeRow<'a> {
+    folder_id: &'a uuid::Uuid,
+    fqn: &'a str,
+    kind: &'a str,
+    name: &'a str,
+    language: Option<&'a str>,
+    /// A definition (`true`) or a reference's stub (`false`).
+    resolved: bool,
+    file_id: Option<uuid::Uuid>,
+    signature: Option<&'a str>,
+    line_start: Option<i32>,
+    line_end: Option<i32>,
+    is_exported: bool,
+    parent_id: Option<&'a uuid::Uuid>,
+}
+
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
     pub async fn rank_bm25(
@@ -184,35 +215,6 @@ impl PgStore {
     }
 
     // ── Graph (typed wrappers) ─────────────────────────────────────────
-
-    // The arguments ARE the columns. A struct here would restate the same
-    // names one indirection away without removing a single one; `FqnDef`
-    // above is the case where a struct earned its keep, because that call
-    // has a meaningful default.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn merge_function(
-        &self,
-        folder_id: &uuid::Uuid,
-        name: &str,
-        file_path: &str,
-        signature: Option<&str>,
-        line_start: Option<i32>,
-        line_end: Option<i32>,
-        parent_id: Option<&uuid::Uuid>,
-    ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(&NodeRow {
-            folder_id,
-            kind: "function",
-            name,
-            file_path,
-            parent_id,
-            signature,
-            line_start,
-            line_end,
-            is_exported: false,
-        })
-        .await
-    }
 
     pub async fn merge_file(
         &self,
@@ -914,11 +916,34 @@ impl PgStore {
             })?),
             None => None,
         };
-        let signature = def.as_ref().and_then(|d| d.signature);
-        let line_start = def.as_ref().and_then(|d| d.line_start);
-        let line_end = def.as_ref().and_then(|d| d.line_end);
-        let is_exported = def.as_ref().is_some_and(|d| d.is_exported);
-        let parent_id = def.as_ref().and_then(|d| d.parent_id);
+        let node = FqnNodeRow {
+            folder_id,
+            fqn,
+            kind,
+            name,
+            language,
+            resolved,
+            file_id,
+            signature: def.as_ref().and_then(|d| d.signature),
+            line_start: def.as_ref().and_then(|d| d.line_start),
+            line_end: def.as_ref().and_then(|d| d.line_end),
+            is_exported: def.as_ref().is_some_and(|d| d.is_exported),
+            parent_id: def.as_ref().and_then(|d| d.parent_id),
+        };
+        let FqnNodeRow {
+            folder_id,
+            fqn,
+            kind,
+            name,
+            language,
+            resolved,
+            file_id,
+            signature,
+            line_start,
+            line_end,
+            is_exported,
+            parent_id,
+        } = &node;
 
         let inserted: Result<(uuid::Uuid,), sqlx_core::error::Error> = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
@@ -964,23 +989,7 @@ impl PgStore {
                 // Adopt the existing row by re-pointing its fqn at the new value.
                 // Keyed on the identity columns so we update exactly the row that
                 // blocked us — NULLS NOT DISTINCT mirrors the index semantics.
-                match self
-                    .adopt_node_by_identity(
-                        folder_id,
-                        fqn,
-                        kind,
-                        name,
-                        language,
-                        resolved,
-                        file_id,
-                        signature,
-                        line_start,
-                        line_end,
-                        is_exported,
-                        parent_id,
-                    )
-                    .await
-                {
+                match self.adopt_node_by_identity(&node).await {
                     Ok(r) => r,
                     // ANOTHER FILE IN THIS FOLDER ALREADY OWNS THIS FQN, so the
                     // adoption cannot re-point this row at it.
@@ -1053,22 +1062,24 @@ impl PgStore {
     /// `nodes_unique_identity`. Matches on the identity columns using
     /// `IS NOT DISTINCT FROM` so NULL `parent_id`/`line_start` compare equal, the
     /// same way the index's `NULLS NOT DISTINCT` does.
-    #[allow(clippy::too_many_arguments)]
     async fn adopt_node_by_identity(
         &self,
-        folder_id: &uuid::Uuid,
-        fqn: &str,
-        kind: &str,
-        name: &str,
-        language: Option<&str>,
-        resolved: bool,
-        file_id: Option<uuid::Uuid>,
-        signature: Option<&str>,
-        line_start: Option<i32>,
-        line_end: Option<i32>,
-        is_exported: bool,
-        parent_id: Option<&uuid::Uuid>,
+        node: &FqnNodeRow<'_>,
     ) -> Result<(uuid::Uuid,), sqlx_core::error::Error> {
+        let FqnNodeRow {
+            folder_id,
+            fqn,
+            kind,
+            name,
+            language,
+            resolved,
+            file_id,
+            signature,
+            line_start,
+            line_end,
+            is_exported,
+            parent_id,
+        } = node;
         sqlx_core::query_as::query_as(
             "UPDATE sensei.nodes SET
                  fqn         = $2,
@@ -2628,15 +2639,8 @@ impl PgStore {
     /// the point of extracting it is that the guarantee holds whichever query
     /// supplied the fields, and a test that has to go through Postgres to check
     /// that is testing the query instead.
-    pub(super) fn callee_row(
-        name: &str,
-        kind: Option<&str>,
-        file: Option<&str>,
-        line: Option<i32>,
-        locality: &str,
-        edge_kind: &str,
-        placement: &Placement,
-    ) -> serde_json::Value {
+    pub(super) fn callee_row(callee: Callee<'_>, placement: &Placement) -> serde_json::Value {
+        let Callee { name, kind, file, line, locality, edge_kind } = callee;
         let (resolved, via, reason, placed_by) = match placement {
             Placement::Indexed { resolved_via, unresolved_reason } => {
                 (resolved_via.is_some(), resolved_via.clone(), unresolved_reason.clone(), "indexer")
@@ -2745,21 +2749,25 @@ impl PgStore {
                     // The chase found a definition, so the row describes THAT
                     // node — not the unresolved target the edge recorded.
                     Some((n, k, f, l, loc)) => Self::callee_row(
-                        n,
-                        Some(k),
-                        f.as_deref(),
-                        *l,
-                        loc,
-                        &edge_kind,
+                        Callee {
+                            name: n,
+                            kind: Some(k),
+                            file: f.as_deref(),
+                            line: *l,
+                            locality: loc,
+                            edge_kind: &edge_kind,
+                        },
                         &Placement::ReceiverChain,
                     ),
                     None => Self::callee_row(
-                        &name,
-                        kind.as_deref(),
-                        file.as_deref(),
-                        line,
-                        &locality,
-                        &edge_kind,
+                        Callee {
+                            name: &name,
+                            kind: kind.as_deref(),
+                            file: file.as_deref(),
+                            line,
+                            locality: &locality,
+                            edge_kind: &edge_kind,
+                        },
                         &Placement::Indexed { resolved_via: via, unresolved_reason: reason },
                     ),
                 }

@@ -250,15 +250,15 @@ pub async fn run_capture(pg: &PgStore) -> Result<CaptureCounts, String> {
     for adapter in all_discoverers() {
         for e in adapter.discover_mcp(&home, &roots) {
             if let Err(err) = pg
-                .upsert_mcp_server(
-                    e.acp_family.as_str(),
-                    &e.mcp_key,
-                    e.workspace_id,
-                    &e.config_source.to_string_lossy(),
-                    &e.command,
-                    &e.args,
-                    &e.env,
-                )
+                .upsert_mcp_server(&crate::db::pg_store::McpServerRow {
+                    acp_family: e.acp_family.as_str(),
+                    mcp_key: &e.mcp_key,
+                    workspace_id: e.workspace_id,
+                    config_source: &e.config_source.to_string_lossy(),
+                    command: &e.command,
+                    args: &e.args,
+                    env: &e.env,
+                })
                 .await
             {
                 tracing::error!(error = %err, key = %e.mcp_key, "tool capture: upsert_mcp_server failed");
@@ -275,8 +275,17 @@ pub async fn run_capture(pg: &PgStore) -> Result<CaptureCounts, String> {
     // 3. Built-in catalog from observed usage (invoked_name == bare name).
     let builtins = pg.distinct_builtin_tool_names().await.unwrap_or_default();
     for name in &builtins {
-        let _ =
-            pg.upsert_assistant_tool("claude", "builtin", "builtin", name, name, None, None).await;
+        let _ = pg
+            .upsert_assistant_tool(&crate::db::pg_store::AssistantToolRow {
+                assistant_family: "claude",
+                source_type: "builtin",
+                source_key: "builtin",
+                tool_name: name,
+                invoked_name: name,
+                description: None,
+                server_id: None,
+            })
+            .await;
     }
 
     // 4. Probe each server; explode its tools into the inventory via the bridge.
@@ -313,15 +322,15 @@ pub async fn run_capture(pg: &PgStore) -> Result<CaptureCounts, String> {
                 probed_ok += 1;
                 let tools_val = Value::Array(manifest.tools.clone());
                 let _ = pg
-                    .upsert_mcp_tool_manifest(
-                        &id,
-                        &tools_val,
-                        manifest.tools.len() as i32,
-                        manifest.protocol_version.as_deref(),
-                        manifest.server_name.as_deref(),
-                        manifest.server_version.as_deref(),
-                        None,
-                    )
+                    .upsert_mcp_tool_manifest(&crate::db::pg_store::McpManifestRow {
+                        server_id: &id,
+                        tools: &tools_val,
+                        tool_count: manifest.tools.len() as i32,
+                        protocol_version: manifest.protocol_version.as_deref(),
+                        server_name: manifest.server_name.as_deref(),
+                        server_version: manifest.server_version.as_deref(),
+                        error: None,
+                    })
                     .await;
                 let _ = pg.set_mcp_server_connection_state(&id, "connected").await;
 
@@ -336,15 +345,15 @@ pub async fn run_capture(pg: &PgStore) -> Result<CaptureCounts, String> {
                     if let Some(tn) = t["name"].as_str() {
                         let inv = mcp_invoked_name(&source_key, tn);
                         let _ = pg
-                            .upsert_assistant_tool(
-                                &family,
-                                "mcp",
-                                &source_key,
-                                tn,
-                                &inv,
-                                t["description"].as_str(),
-                                Some(id),
-                            )
+                            .upsert_assistant_tool(&crate::db::pg_store::AssistantToolRow {
+                                assistant_family: &family,
+                                source_type: "mcp",
+                                source_key: &source_key,
+                                tool_name: tn,
+                                invoked_name: &inv,
+                                description: t["description"].as_str(),
+                                server_id: Some(id),
+                            })
                             .await;
                     }
                 }
@@ -352,8 +361,11 @@ pub async fn run_capture(pg: &PgStore) -> Result<CaptureCounts, String> {
             crate::tasks::mcp_probe::ProbeOutcome::Error(msg) => {
                 probed_err += 1;
                 let empty = Value::Array(vec![]);
-                let _ =
-                    pg.upsert_mcp_tool_manifest(&id, &empty, 0, None, None, None, Some(&msg)).await;
+                let _ = pg
+                    .upsert_mcp_tool_manifest(&crate::db::pg_store::McpManifestRow::failed(
+                        &id, &empty, &msg,
+                    ))
+                    .await;
                 let _ = pg.set_mcp_server_connection_state(&id, "error").await;
                 tracing::warn!(server = %mcp_key, error = %msg,
                     "tool capture: probe failed; source shows usage-only (registered unknown)");

@@ -2134,6 +2134,14 @@ mod tests {
         let tag = uuid::Uuid::new_v4();
         let slot = format!("bind-slot-{tag}");
         let persona = pg.upsert_persona(&format!("bind-{tag}"), true).await.unwrap();
+        // A repository to offer: the pass reads no plan when there is nothing to
+        // offer. This fixture used to borrow one a sibling test had left in the
+        // shared `sensei_test`; with a database per test (#183) it brings its own.
+        sqlx_core::query::query("INSERT INTO sensei.repositories(repo_key, name) VALUES ($1, $1)")
+            .bind(format!("test/bind-{tag}"))
+            .execute(pg.pool())
+            .await
+            .unwrap();
         sqlx_core::query::query(
             "UPDATE sensei.personas SET session_slot = $2, verified_at = now() WHERE id = $1",
         )

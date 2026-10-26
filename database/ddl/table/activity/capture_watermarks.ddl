@@ -30,6 +30,7 @@ create table if not exists activity.capture_watermarks (
   , session_id     text
   , last_mtime_ns  bigint not null
   , turns_ingested integer not null default 0
+  , untracked      boolean not null default false
   , updated_at     timestamptz not null default now()
   , primary key (source, file_path)
 );
@@ -37,3 +38,5 @@ create table if not exists activity.capture_watermarks (
 comment on table activity.capture_watermarks is
 'Resumable cursor for transcript ingest (#73): per-file mtime so re-runs skip
 unchanged transcripts. Shared by the backfill and forward-capture workers.';
+
+comment on column activity.capture_watermarks.untracked is 'Read at last_mtime_ns and IGNORED: the session has no row and no cwd is a tracked folder (#125). Not read again until the file changes or a repository is registered.';

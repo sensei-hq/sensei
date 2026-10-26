@@ -1,5 +1,66 @@
 use super::*;
 
+/// One discovered MCP server, as [`PgStore::upsert_mcp_server`] writes it.
+pub struct McpServerRow<'a> {
+    /// `claude` | `zed` | `cursor` | `codex` | `opencode` | `other`.
+    pub acp_family: &'a str,
+    /// The key in the assistant's config, e.g. `sensei`, `postgres`.
+    pub mcp_key: &'a str,
+    /// `Some` for the assistant's project scope, `None` for user scope.
+    pub workspace_id: Option<uuid::Uuid>,
+    /// The absolute path the entry was discovered in.
+    pub config_source: &'a str,
+    pub command: &'a str,
+    /// JSON array of args, from the config.
+    pub args: &'a serde_json::Value,
+    /// JSON object of env vars, from the config.
+    pub env: &'a serde_json::Value,
+}
+
+/// One probe of an MCP server, as [`PgStore::upsert_mcp_tool_manifest`] writes it.
+pub struct McpManifestRow<'a> {
+    pub server_id: &'a uuid::Uuid,
+    pub tools: &'a serde_json::Value,
+    pub tool_count: i32,
+    pub protocol_version: Option<&'a str>,
+    pub server_name: Option<&'a str>,
+    pub server_version: Option<&'a str>,
+    /// Why the probe failed; `None` on success.
+    pub error: Option<&'a str>,
+}
+
+impl<'a> McpManifestRow<'a> {
+    /// A probe that failed: no tools, and the reason.
+    pub fn failed(
+        server_id: &'a uuid::Uuid,
+        no_tools: &'a serde_json::Value,
+        error: &'a str,
+    ) -> Self {
+        Self {
+            server_id,
+            tools: no_tools,
+            tool_count: 0,
+            protocol_version: None,
+            server_name: None,
+            server_version: None,
+            error: Some(error),
+        }
+    }
+}
+
+/// One registered tool, as [`PgStore::upsert_assistant_tool`] writes it.
+pub struct AssistantToolRow<'a> {
+    pub assistant_family: &'a str,
+    /// `builtin` | `mcp`.
+    pub source_type: &'a str,
+    pub source_key: &'a str,
+    pub tool_name: &'a str,
+    /// The name the harness records when the tool is called.
+    pub invoked_name: &'a str,
+    pub description: Option<&'a str>,
+    pub server_id: Option<uuid::Uuid>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// List every installed service, joined with the given workspace's per-scope
@@ -292,17 +353,16 @@ impl PgStore {
 
     /// Upsert a probed manifest. Uses `server_id UNIQUE` on the table so a
     /// re-probe overwrites in place.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_mcp_tool_manifest(
-        &self,
-        server_id: &uuid::Uuid,
-        tools: &serde_json::Value,
-        tool_count: i32,
-        protocol_version: Option<&str>,
-        server_name: Option<&str>,
-        server_version: Option<&str>,
-        error: Option<&str>,
-    ) -> Result<(), String> {
+    pub async fn upsert_mcp_tool_manifest(&self, row: &McpManifestRow<'_>) -> Result<(), String> {
+        let McpManifestRow {
+            server_id,
+            tools,
+            tool_count,
+            protocol_version,
+            server_name,
+            server_version,
+            error,
+        } = row;
         sqlx_core::query::query(
             "INSERT INTO sensei.mcp_tool_manifests
                 (server_id, tools, tool_count, probed_at, protocol_version, server_name, server_version, error)
@@ -353,25 +413,9 @@ impl PgStore {
     /// `command`/`args`/`env`/`config_source`/`last_seen_at` refreshed, but
     /// `enabled` is preserved (a user's manual toggle survives a re-scan).
     ///
-    /// Args:
-    /// - `acp_family`  — 'claude' | 'zed' | 'cursor' | 'codex' | 'opencode' | 'other'
-    /// - `mcp_key`     — key in the ACP config, e.g. 'sensei', 'postgres'
-    /// - `workspace_id`  — Some(uuid) for the assistant's project scope, None for user scope
-    /// - `config_source` — absolute path where discovered
-    /// - `command`     — the mcp entry's `command`
-    /// - `args`        — JSON array of args (from the config)
-    /// - `env`         — JSON object of env vars (from the config)
-    #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_mcp_server(
-        &self,
-        acp_family: &str,
-        mcp_key: &str,
-        workspace_id: Option<uuid::Uuid>,
-        config_source: &str,
-        command: &str,
-        args: &serde_json::Value,
-        env: &serde_json::Value,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_mcp_server(&self, row: &McpServerRow<'_>) -> Result<uuid::Uuid, String> {
+        let &McpServerRow { acp_family, mcp_key, workspace_id, config_source, command, args, env } =
+            row;
         let scope = if workspace_id.is_some() { "project" } else { "user" };
         // Partial unique indexes mean the ON CONFLICT target differs for
         // user vs project scope (Claude Code's mcp scope); the cleanest cross-cutting pattern is
@@ -555,17 +599,16 @@ impl PgStore {
 
     /// Upsert one registered tool (idempotent on the (family, source_type,
     /// source_key, tool_name) unique index).
-    #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_assistant_tool(
-        &self,
-        assistant_family: &str,
-        source_type: &str,
-        source_key: &str,
-        tool_name: &str,
-        invoked_name: &str,
-        description: Option<&str>,
-        server_id: Option<uuid::Uuid>,
-    ) -> Result<(), String> {
+    pub async fn upsert_assistant_tool(&self, row: &AssistantToolRow<'_>) -> Result<(), String> {
+        let &AssistantToolRow {
+            assistant_family,
+            source_type,
+            source_key,
+            tool_name,
+            invoked_name,
+            description,
+            server_id,
+        } = row;
         sqlx_core::query::query(
             "INSERT INTO sensei.assistant_tools
                 (assistant_family, source_type, source_key, tool_name, invoked_name, description, server_id)

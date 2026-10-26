@@ -185,15 +185,6 @@ pub async fn set(
     Ok(CollectivePreferences { updated_at: Some(updated_at), ..prefs })
 }
 
-/// Serializes the DB-gated tests that mutate the single `collective_preferences`
-/// row (HTTP round-trip + pg_store round-trip) so parallel test threads don't
-/// clobber each other's expected state on the shared singleton.
-#[cfg(test)]
-pub(crate) fn test_lock() -> &'static crate::tasks::test_support::TestGate {
-    static LOCK: crate::tasks::test_support::TestGate = crate::tasks::test_support::TestGate::new();
-    &LOCK
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -189,32 +189,52 @@ The settings screen lists them as repositories.
   - #299 S3 done on develop (99cddc18): a run names its workspace by slug + constitution; per-recipient classification removed. Closes with the live sync evidence (#301).
   - ~~#302~~ **Closed 2026-10-21**: one keychain item per identity (`credentials.<slot>`, 17302c40); the migration was seen live after one approval (old items gone, `credentials.<slot>` present).
   - **#301 (user, 2026-10-20): sign in → sync must just work.** Auto-elect a connected identity's repositories (opt-out, not opt-in); keep the subscription gate for private org repos (decided); surface an unreadable credential first (#283, #295); Team-ID signing (#282); workspaces from sync (#299); sign-in in the system browser with an account guard (#300, decided). Live: the first pass that reached the dōjō today mapped 22, allowed 0. Fixed so far: personal tenants get their owner's forge connection (f111fe41) — all 34 personal repos were `no_connection`; a user's repositories are elected by default, opt-out holds (2d92a632; local: 31 of the user's repos sync). Released in **v0.15.0** with #299 S1/S2 and #300 (1a132009, 5d776bee); the dōjō production reshape is deployed and `dbd diff` is clean (run 39496401704). Live proof waits on keychain approval + one dōjō sign-in + a sync pass.
-  - #298: workspace Instruments takes 11–28s to open — `mcp-tool-stats` pairs every tool call in the DB through `session_tool_calls` (measured; filter pushdown reaches only half the view).
+  - ~~#298~~ **Closed 2026-10-25** (merged c90d0fbf): tool calls pair on stored `tool_use_id`/`duration_ms`; workspace Instruments 6–8.4s → 0.58s. Needed dbd 0.27.6 (dbd#104), released and pinned.
   - #297: the dōjō sign-in page drops Supabase's `#error` fragment (the user saw a blank form after a linking failure).
-  - #106: last fixture imports, plus a vitest guard.
+  - ~~#106~~ **Closed 2026-10-23**: no view reads a fixture or mock module (guard spec, mutation-probed). Your constitution, Plan & billing, the org constitution (`…/rules`), scopes, the triage detail and the org workspace preview now show real data or a stated absence; live-checked on the local dōjō.
+  - ~~#335~~ **Closed 2026-10-23**: every org screen shows a failed read (`LoadError`, role=alert) in place of its body; a spec checks that each loader error reaches the page. Live with injected 500s.
   - #191: kavach 1.2.0.
 - **Code health:**
   - #199: `has_key` part done via #285. Left: Linux roundtrip tests in CI, and a decision on headless Linux
     (an encrypted-file store, or stop publishing Linux daemon artifacts).
-  - #201: 6 `languages::fqn` call sites.
+  - ~~#201~~ **Closed 2026-10-25** (1bda2c18): one fqn minter. All six v1 call sites were on code that cannot run; the path and its encoder are deleted (−1,642 lines), guarded by a source-scan test. Live: 0 of 50,251 nodes v1-shaped.
   - #139: rokkit material/frosted focus guard (upstream rokkit).
 
 ## Wave 4 — CI and test reliability (07-quality D1/D2, F)
 
-- **Pool and isolation:** #204 (pool cap and test threads), then #183 (isolation). Both are needed before CI can be trusted.
-- **Preflight:** #142, test DB behind the DDL tree.
-- **Dependency cluster:** #172, #195, #120.
-  - Bumps: quick-xml, h2, yanked crates; JS: vite, esbuild, vitest 4, undici and others.
-  - Add `cargo audit`.
-  - Re-check Dependabot: it reports 0 alerts while the lockfiles are vulnerable.
+- **Pool and isolation:** ~~#204~~ **closed 2026-10-25** (5656955c): 198 tests that passed silently on a failed DB connect now fail; test threads are capped at 16 so the budget fits `max_connections` (checked by a test; peak 78 → 69, suite 328s → 184s). ~~#183~~ **closed 2026-10-25**: a database per test (user decision); it exposed two tests relying on siblings' rows, and all 15 gates are removed. Suite 3,838 green, 184s → 392s.
+- **Preflight:** ~~#142~~ **closed 2026-10-25** (8e20c3b5): the suite refuses a template behind the DDL tree, by its stamped fingerprint; `make test-template` provisions exactly as CI does.
+- **Dependency cluster:** ~~#172~~ ~~#195~~ **closed 2026-10-25**, #120 updated. Rust 16 → 0 actionable
+  advisories, the Tauri lockfile 10 → 0, the JS trees' critical/high cleared (one dev-only undici under the
+  dōjō's wrangler). `cargo audit` gates rust.yml over all three lockfiles (develop run 40244782241 green);
+  exceptions in `.cargo/audit.toml`, each with its proof.
 
 ## Wave 5 — production-readiness defects that need real work
 
-- #178 (B1): bound the parse stack.
-- #188 (B2): surface watchdog abandonment. Measured 300–1,800 a day in early October.
+- ~~#334~~ **Closed 2026-10-23** (91e2eb52, ships next release): any web page could write to the daemon — the
+  origin guard covered only tracker routes and CORS allowed every origin. Now `caller_guard` on the whole router
+  (loopback `Host` always; an app `Origin` or none for writes) and CORS for the app's origins only. Live on a
+  throwaway daemon: the original repro → 403 with nothing added; the app's origin and the CLI still write.
+- #178 (B1): **landed 2026-10-25** (2e5c6c1f): a file over 2 MiB or with a line over 10,000 bytes is skipped
+  as `oversized` (new enum value), by the one classifier the scan and `process_file` share. Live DB
+  reconciled; over the 61,349-file corpus it refuses exactly the 137 measured. Closes on the released
+  daemon's first `oversized` rows.
+- #188 (B2): **landed 2026-10-25** (d5bfdc7d): `GET /api/tasks/abandoned` (per day and kind, ten worst by
+  kind and path) and a Watchdog section in `sensei doctor`. Live: 204 in 14 days. Closes when the released
+  doctor prints it.
+- #336: **landed 2026-10-25** (e5bf2e9d): `ingest_capture` was abandoned 117× in 14 days on one 1.28 GB
+  transcript. Claude's `parse_file` read the file five times, 5 s per pass. Now it reads once, 25.2 s → 5.1 s
+  on that file. Closes after a week of the released daemon with no `ingest_capture` abandonment.
 - ~~C1~~: `public.logs` size — #180, closed.
-- #125: 68 orphaned transcript turn sets.
-- #161: typed rows, remainder.
+- #125: **landed 2026-10-25** (17e81b4b). 72 orphan turn sets: 53 are from untracked folders, 1 is a Zed thread
+  with no cwd, 18 have no transcript left. Ingest is now scoped to folders under the watch roots (user
+  decision); a trigger re-opens the skips when a repository is registered. Closes when the released daemon
+  shows 0 traceable orphans.
+- #161: typed rows, remainder. **2026-10-25** (98e2c9cf): `adopt_node_by_identity` (12 args) takes `FqnNodeRow`
+  (adding a field fails the build, verified). A guard test pins the positional writers: none at 8+, and the 50 at
+  5+ are listed by name and may only shrink. 558b90fd: the three MCP writers take rows (50 → 47), with
+  round-trip tests. Then check runs, consolidated rulesets and workflow state (47 → 44). Next: the four
+  left at 7 args, then the `too_many_arguments` allows.
 - #123: VS Code adapter A5/A6, Track B.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID

@@ -116,7 +116,7 @@ mod tests {
 
     #[tokio::test]
     async fn one_failing_tracker_does_not_stop_the_others_and_fails_the_tick() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (rt, _store, factory) = fake_runtime();
         let (good, bad) = (site(), site());
         let good_id = connected(&pg, &rt, &good).await;
@@ -138,7 +138,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_secret_is_recorded_as_token_missing() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (rt, store, factory) = fake_runtime();
         let s = site();
         let id = connected(&pg, &rt, &s).await;
@@ -153,7 +153,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_tick_drains_due_tombstones() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (rt, store, _factory) = fake_runtime();
         let service = format!("{}jira.tick-{}", store.namespace, uuid::Uuid::new_v4());
         pg.write_pending_tombstone(
@@ -177,7 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn deleting_a_workspace_lets_the_next_tick_delete_its_secret() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (rt, store, _factory) = fake_runtime();
         let id = connected(&pg, &rt, &site()).await;
         let row = pg.tracker_by_id(id).await.unwrap().unwrap();
@@ -194,7 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_secret_delete_fails_the_tick() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (rt, store, _factory) = fake_runtime();
         let prefix = format!("test.tick-drain.{}.", uuid::Uuid::new_v4());
         let service = format!("{prefix}stuck");

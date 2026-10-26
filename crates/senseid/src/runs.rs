@@ -223,20 +223,6 @@ pub fn phase_transition_events(current: Option<&str>, new: &str) -> Vec<(RunEven
     }
 }
 
-/// Serializes the DB-gated tests that call a *global* run UPDATE (the pg_store
-/// CRUD test, the AdvanceRun scheduler tests, the watchdog scheduler tests) so
-/// parallel test threads don't steal each other's runs. Production has a single
-/// scheduler calling these, so there is no such race there — this is purely a
-/// test-isolation guard.
-///
-/// See [`crate::tasks::test_support::TestGate`] for why the gate blocks rather
-/// than awaiting.
-#[cfg(test)]
-pub(crate) fn resume_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    static GATE: crate::tasks::test_support::TestGate = crate::tasks::test_support::TestGate::new();
-    GATE.enter()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

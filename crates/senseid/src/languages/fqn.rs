@@ -1,22 +1,10 @@
-//! Language-agnostic FQN (fully-qualified name) grammar — the SCIP/LSIF *moniker*
-//! encoded to one stable string (plan 0.1). Every definition AND every reference
-//! computes its FQN through these builders so the two sides agree and
-//! `upsert_node_by_fqn` merges them onto one node. This module is pure and shared;
-//! only the per-language *name resolution* that feeds it (which module, which
-//! enclosing type, which trait) is language-specific.
+//! What every fqn READER shares: the separator, the external (`lib·`) marker and
+//! its SQL spelling, and the receiver hint an edge carries to the resolver.
 //!
-//! Grammar (`·` = U+00B7 MIDDLE DOT — no Rust/TS/Python identifier can contain it):
-//!   - free fn / const / type def : `<lang>·<package>·<module>·<name>`
-//!   - inherent method / assoc fn : `<lang>·<package>·<module>·<Type>·<member>`
-//!   - trait-impl method          : `<lang>·<package>·<module>·<Type>·<Trait>·<member>`
-//!     (the trait qualifier disambiguates `Display::fmt` vs `Debug::fmt` on one type)
-//!   - external lib symbol        : `lib·<package>·<path>·<member>`
-//!
-//! `module` is a single segment that may itself contain `::` (the crate-relative
-//! module chain, e.g. `api::handlers::codebase`) and may be empty (crate root);
-//! empty segments are dropped when encoding.
-
-use crate::types::SymbolKind;
+//! It builds no fqn. `indexer::fqn` is the one encoder (`define` / `refer` over a
+//! typed `Form`); this module's v1 joiners minted a second, four-segment scheme
+//! that no v2 node carries, and were deleted (#201) rather than deprecated — a
+//! second encoder that still compiles is one an author reaches for.
 
 /// FQN segment separator — U+00B7 MIDDLE DOT.
 pub const SEP: char = '·';
@@ -59,44 +47,6 @@ pub fn sql_is_not_external(column: &str) -> String {
 /// Does this FQN name something outside the repo?
 pub fn is_external(fqn: &str) -> bool {
     fqn.starts_with(LIB_PREFIX)
-}
-
-/// A definition carrying its canonical FQN — the language-agnostic shape every
-/// per-language producer emits. Phase 3 turns each into an `upsert_node_by_fqn`
-/// definition (enrich) call.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FqnDefinition {
-    pub fqn: String,
-    pub name: String,
-    pub kind: SymbolKind,
-    pub line_start: u32,
-    pub line_end: u32,
-    pub is_exported: bool,
-    pub signature: Option<String>,
-    pub docstring: Option<String>,
-    /// Enclosing type name for a method (e.g. `Widget` for `Widget::new`).
-    pub parent_type: Option<String>,
-    /// FQN of this def's STRUCTURAL parent (D5c): a method's enclosing TYPE, so
-    /// the emit path nests it under the type node (not the flat file node). `None`
-    /// for a top-level item, which nests under the file's module container.
-    pub parent_fqn: Option<String>,
-    /// The declared return type, verbatim as written (`&crate::db::PgStore`,
-    /// `Arc<PgStore>`, `Result<T, E>`). `None` for a function returning unit, or
-    /// a language/kind where the notion does not apply.
-    ///
-    /// Carried here because THIS is the pass that mints the node. The type was
-    /// already being extracted in a different pass over the same file and then
-    /// dropped, so the graph knew every function's name, signature and parent
-    /// but not what it returned — and that one absent field is what blocks
-    /// transitive receiver resolution: `ctx.pg().method()` needs the type of
-    /// `pg`'s return value to know which `method` is being called. Every other
-    /// hop in that chain is already a key we can mint.
-    ///
-    /// Kept VERBATIM on purpose. Normalising to a bare type name here would
-    /// discard the module path that says which `PgStore` is meant; unwrapping
-    /// `Arc`/`Result`/`Option` is the resolver's job, and `base_type_name`
-    /// already owns that rule.
-    pub return_type: Option<String>,
 }
 
 /// What a call site SAW of its receiver, expressed as a graph KEY.
@@ -179,105 +129,52 @@ impl ReceiverHint {
     }
 }
 
-/// A reference (call-site) resolved to a target FQN. `target_fqn = None` means the
-/// producer could not resolve the target to a concrete symbol (e.g. a method call
-/// on a receiver whose type is out of the bounded binding→type scope, plan 0.7) —
-/// deliberately NOT guessed, so it never wrong-merges. `target_name` (the bare
-/// last-segment) is kept for the language-scoped bare-name fallback during the
-/// transition.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FqnReference {
-    pub caller_fqn: String,
-    pub caller_line: u32,
-    pub target_fqn: Option<String>,
-    pub target_name: String,
-    /// True when the target resolves to an external dependency (`lib·…`).
-    pub is_lib: bool,
-    /// What the call site saw of the receiver, when it saw something nameable.
-    /// `None` for every non-member call, for an external receiver type (no
-    /// definition in this graph to read a return type from), and for a receiver
-    /// the file genuinely cannot place. Inert to target matching — the emit path
-    /// still branches on `target_fqn`/`is_lib` alone.
-    pub receiver: Option<ReceiverHint>,
-}
-
-/// One type's relation to a supertype, resolved the same way a call target is.
-///
-/// `parent_fqn = None` means the producer could not resolve the supertype and
-/// deliberately did NOT guess — the emit path stores `target_name` only, which
-/// is the truthful unresolved shape. Guessing here is how a bare name gets
-/// matched to a same-named type in another language or of another kind: a
-/// confident wrong answer, which is worse than an unresolved one.
-///
-/// `is_lib` splits the emit path exactly as it does for [`FqnReference`]: an
-/// external supertype becomes a `lib·` node (so "which of our models extend
-/// `pydantic.BaseModel`" is answerable), an internal one a graph node.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeRelation {
-    /// FQN of the subtype — the type that declares the relation.
-    pub child_fqn: String,
-    /// FQN of the supertype, or `None` when unresolvable.
-    pub parent_fqn: Option<String>,
-    /// Bare last segment of the supertype, always present.
-    pub parent_name: String,
-    /// True when the supertype resolves to an external dependency (`lib·…`).
-    pub is_lib: bool,
-    pub relation: crate::types::RelationKind,
-}
-
-/// Output of a per-language FQN producer over one file.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct FqnFileOutput {
-    pub defs: Vec<FqnDefinition>,
-    pub refs: Vec<FqnReference>,
-    /// The owning crate/package (for the D5c module container's fqn).
-    pub package: String,
-    /// This file's crate-relative module path (empty at the crate root). The emit
-    /// path materialises a `module` container node for it, nested under the file.
-    pub module: String,
-    /// Inheritance facts declared in this file. Empty for a language with no
-    /// inheritance producer yet — distinct from a language that HAS one and
-    /// found none, which is why the capability is declared separately rather
-    /// than inferred from this being empty.
-    pub relations: Vec<TypeRelation>,
-}
-
-/// Join with [`SEP`], dropping a TRAILING empty segment and keeping an interior
-/// one — the same rule, spelled the same way, as `indexer::fqn::join`.
-///
-/// IT HAS TO BE THE SAME RULE. This side mints the CANDIDATES `import_target`
-/// looks up, and the other side minted the node fqns they are looked up
-/// against; a crate-root symbol spelled two ways here is a lookup that misses
-/// every time. See `a_rust_import_candidate_is_spelled_the_way_the_walk_mints_it`,
-/// which is what notices.
-///
-/// Why an interior empty stays at all: dropping a crate-root module does not
-/// produce a broken string, it produces a valid one naming a different symbol,
-/// and it slides the NAME into the module's position — which is what every view
-/// that decomposes an fqn positionally then reads as the module (#231).
-fn encode(segments: &[&str]) -> String {
-    let segments = match segments.split_last() {
-        Some((&"", front)) => front,
-        _ => segments,
-    };
-    segments.join(&SEP.to_string())
-}
-
-/// Free function, constant, or type definition (struct/enum/trait/type alias):
-/// `<lang>·<package>·<module>·<name>`.
-pub fn item(lang: &str, package: &str, module: &str, name: &str) -> String {
-    encode(&[lang, package, module, name])
-}
-
-/// External (dependency) symbol: `lib·<package>·<path>·<member>`. `member` may be
-/// empty for a bare-crate reference.
-pub fn lib(package: &str, path: &str, member: &str) -> String {
-    encode(&["lib", package, path, member])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #201: ONE fqn minter. `indexer::fqn` is "the single encoder"; the v1
+    /// joiners here (`item`, `lib`) built a second, four-segment scheme, and a
+    /// lookup keyed on it could never match a v2 node (imports placed 2.3%
+    /// against 48.5% for references). A second encoder that still compiles is
+    /// one an author reaches for, so neither may be defined or called.
+    ///
+    /// The predicates (`is_external`, `sql_is_external`) READ an fqn and stay.
+    #[test]
+    fn no_second_fqn_minter_is_defined_or_called() {
+        fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    rust_files(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rust_files(&src, &mut files);
+        // Spelled at runtime so this test's own text never matches itself.
+        let minters = ["item", "lib", "method"];
+        let calls: Vec<String> = minters.iter().map(|m| format!("languages::fqn::{m}(")).collect();
+        let mut found = Vec::new();
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap();
+            for (i, line) in text.lines().enumerate() {
+                let code = line.split("//").next().unwrap_or("");
+                if calls.iter().any(|c| code.contains(c.as_str())) {
+                    found.push(format!("{}:{}", f.display(), i + 1));
+                }
+            }
+        }
+        assert!(found.is_empty(), "v1 minter calls: {found:#?}");
+        let own = std::fs::read_to_string(src.join("languages/fqn.rs")).unwrap();
+        for m in minters {
+            let def = format!("pub fn {m}(");
+            assert!(!own.contains(&def), "languages::fqn still defines `{def}`");
+        }
+    }
 
     /// The prefix and the builder must not be able to disagree.
     ///
@@ -289,8 +186,11 @@ mod tests {
     #[test]
     fn the_external_marker_agrees_with_the_builder() {
         assert_eq!(LIB_PREFIX, format!("lib{SEP}"), "the prefix must be `lib` + SEP");
-        assert!(is_external(&lib("serde", "de", "Deserialize")));
-        assert!(is_external(&lib("node:fs", "", "")));
+        // The builder is the one encoder, `indexer::fqn` (#201).
+        use crate::indexer::fqn::{Form, refer};
+        let lib = |package, member| refer(&Form::Lib { package, member }).unwrap().to_string();
+        assert!(is_external(&lib("serde", "Deserialize")));
+        assert!(is_external(&lib("node:fs", "")));
         assert!(sql_is_external("n.fqn").contains(LIB_PREFIX), "the SQL test uses the same prefix");
         assert_eq!(sql_is_external("n.fqn"), format!("n.fqn LIKE '{LIB_PREFIX}%'"));
         // NULL-safe: `NOT LIKE` on a NULL is NULL, not true, so the guard has to
@@ -313,11 +213,6 @@ mod tests {
         // No common identifier char equals it.
         assert_ne!(SEP, '.');
         assert_ne!(SEP, ':');
-    }
-
-    #[test]
-    fn item_free_fn() {
-        assert_eq!(item("rust", "senseid", "widget", "make"), "rust·senseid·widget·make");
     }
 
     /// The hint is written by the emit path and read by the resolver, in
@@ -343,40 +238,4 @@ mod tests {
             "another writer's props key is not a receiver hint"
         );
     }
-
-    #[test]
-    fn item_crate_root_drops_empty_module() {
-        // src/main.rs (crate root) → no module segment, no doubled separator.
-        assert_eq!(item("rust", "sensei-cli", "", "main"), "rust·sensei-cli··main");
-    }
-
-    #[test]
-    fn item_nested_module_is_one_segment() {
-        // The crate-relative module chain stays `::`-joined inside a single segment.
-        assert_eq!(
-            item("rust", "senseid", "api::handlers::codebase", "language_for_ext"),
-            "rust·senseid·api::handlers::codebase·language_for_ext"
-        );
-    }
-
-    #[test]
-    fn lib_symbol() {
-        assert_eq!(
-            lib("serde_json", "serde_json", "from_str"),
-            "lib·serde_json·serde_json·from_str"
-        );
-    }
 }
-
-/// Finders every language's producer tests need over an [`FqnFileOutput`].
-///
-/// One definition, because there were FIVE byte-identical copies of `def_fqn`
-/// and `ref_to` — typescript, java, python, rust_lang, sql — and kotlin had
-/// NEITHER, which is the gap a kotlin producer test hits first. There was no
-/// relation finder at all: the same
-/// `out.relations.iter().find(|r| r.parent_name == n)` closure was hand-written
-/// three times, in java twice and python once.
-///
-/// `#[cfg(test)]`, so none of this is reachable from a shipped path.
-#[cfg(test)]
-pub(crate) mod finders {}

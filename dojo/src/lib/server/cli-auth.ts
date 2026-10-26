@@ -43,6 +43,16 @@ export function isForwardablePort(port: unknown): port is number {
 }
 
 /**
+ * A daemon's name for one sign-in flow (#294): a random URL-safe token. Two
+ * sign-ins in flight at once (two personas, or a retry) each come back under
+ * their own id, so the daemon pairs every code with the verifier that made it.
+ * It becomes a path segment, so only `[A-Za-z0-9_-]` is accepted.
+ */
+export function isFlowId(flow: unknown): flow is string {
+	return typeof flow === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(flow);
+}
+
+/**
  * The provider authorize URL for a daemon sign-in.
  *
  * `redirect_to` points back at dōjō rather than the daemon: see the note above
@@ -61,9 +71,12 @@ export function authorizeUrl(opts: {
 	challenge: string;
 	provider?: string;
 	login?: string | null;
+	/** The daemon's flow id (#294), already checked with isFlowId. */
+	flow?: string;
 }): string {
 	const provider = opts.provider ?? 'github';
-	const redirect = `${trimSlash(opts.origin)}/v1/auth/cli/callback/${opts.port}`;
+	const flow = opts.flow ? `/${opts.flow}` : '';
+	const redirect = `${trimSlash(opts.origin)}/v1/auth/cli/callback/${opts.port}${flow}`;
 	const u = new URL(`${trimSlash(opts.supabaseUrl)}/auth/v1/authorize`);
 	u.searchParams.set('provider', provider);
 	u.searchParams.set('redirect_to', redirect);
@@ -89,9 +102,11 @@ export function authorizeUrl(opts: {
  * `?error=…&error_description=…` with no code at all, and dropping it would
  * leave the daemon waiting on a callback that already happened.
  */
-export function daemonRedirect(port: number, params: URLSearchParams): string {
+export function daemonRedirect(port: number, params: URLSearchParams, flow?: string): string {
 	const u = new URL(`http://127.0.0.1:${port}${DAEMON_CALLBACK_PATH}`);
 	for (const [k, v] of params) u.searchParams.set(k, v);
+	// The flow id came back in the path (#294); the daemon reads it as `flow`.
+	if (flow) u.searchParams.set('flow', flow);
 	return u.toString();
 }
 

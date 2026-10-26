@@ -53,9 +53,7 @@ async fn count(pg: &PgStore, table: &str, node: uuid::Uuid) -> i64 {
 /// four foreign keys to the node.
 #[tokio::test]
 async fn removing_a_node_removes_its_schema_detail() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let (root, orders) = table_node(&pg, "orders").await;
     let (_, customers) = table_node(&pg, "customers").await;
     for n in [orders, customers] {
@@ -119,9 +117,7 @@ async fn removing_a_node_removes_its_schema_detail() {
 /// Mutation that must break this: drop the cascade on `schema_refs.to_node_id`.
 #[tokio::test]
 async fn removing_the_referenced_object_removes_the_ref() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let (root, orders) = table_node(&pg, "orders").await;
     let (_, customers) = table_node(&pg, "customers").await;
     for n in [orders, customers] {
@@ -160,9 +156,7 @@ async fn removing_the_referenced_object_removes_the_ref() {
 /// `schema_columns.node_id` at `nodes` instead of `schema_entities`.
 #[tokio::test]
 async fn a_column_is_unique_within_its_object_and_needs_the_object() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let (root, orders) = table_node(&pg, "orders").await;
     let col = "INSERT INTO sensei.schema_columns (node_id, ordinal, name, sql_type) VALUES ($1, $2, 'id', 'uuid')";
     assert!(
@@ -192,9 +186,7 @@ async fn a_column_is_unique_within_its_object_and_needs_the_object() {
 /// unlisted ORM spelling is refused by the type, not discovered by a reader.
 #[tokio::test]
 async fn the_vocabularies_are_the_specs() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let labels = |ty: &'static str| {
         let pg = pg.clone();
         async move {
@@ -243,9 +235,7 @@ async fn the_vocabularies_are_the_specs() {
 /// filter.
 #[tokio::test]
 async fn a_workspace_reads_only_its_own_schema() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let tag = uuid::Uuid::new_v4();
     let mut placed = vec![];
     for name in ["mine", "theirs"] {
@@ -327,9 +317,7 @@ async fn a_workspace_reads_only_its_own_schema() {
 /// Mutation that must break this: drop the schema_entities clause from the GC.
 #[tokio::test]
 async fn a_described_stub_survives_the_orphan_gc() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let tag = uuid::Uuid::new_v4();
     let root = format!("/_test/schema-gc/{tag}");
     let root_id = pg.add_watch_root(&root, "schema-gc", &serde_json::json!([])).await.unwrap();

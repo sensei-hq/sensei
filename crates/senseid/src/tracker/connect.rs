@@ -250,7 +250,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_new_connect_stores_the_secret_and_starts_pending() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
@@ -289,7 +289,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_keyring_failure_writes_no_row_and_leaves_a_pending_tombstone() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         *store.fail_set.lock().unwrap() = true;
@@ -320,7 +320,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_board_owned_by_another_workspace_is_refused_before_any_write() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (p1, p2) = (workspace(&pg).await, workspace(&pg).await);
         let s = site();
         connect(
@@ -354,7 +354,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_failed_validation_writes_nothing() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let denied = FakeBoard::standard().fail("/rest/api/3/myself", TrackerError::Unauthorized);
@@ -378,7 +378,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn reconnecting_the_same_board_swaps_the_secret_and_resets_status() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
@@ -440,7 +440,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn connecting_another_board_adds_a_tracker_at_its_level() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
@@ -493,7 +493,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn reconnecting_a_board_at_another_level_moves_it_and_adds_nothing() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
@@ -526,7 +526,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn boards_on_one_site_share_its_newest_credential() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
@@ -565,7 +565,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn another_site_keeps_its_own_credential() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let a = connect(
@@ -598,7 +598,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn disconnecting_one_board_keeps_the_secret_its_site_still_uses() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
@@ -647,7 +647,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn connecting_a_board_rekeys_its_siblings_and_clears_their_error() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
@@ -683,7 +683,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_drain_racing_the_last_disconnect_still_deletes_the_secret() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let s = site();
@@ -734,7 +734,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn disconnect_names_a_tracker_of_its_own_workspace() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let other = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
@@ -745,7 +745,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn persisting_refuses_a_secret_whose_pending_tombstone_was_drained() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let t = crate::db::pg_store::trackers::NewTracker {
             workspace_id: p,
@@ -768,7 +768,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn disconnect_removes_the_row_and_the_secret() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let c = connect(
@@ -799,7 +799,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn draining_skips_pending_and_referenced_and_keeps_failures() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let store = Arc::new(MemoryStore::default());
         let now = chrono::Utc::now();
         let prefix = format!("{}drain.", store.namespace);
@@ -860,7 +860,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn connect_does_not_wait_for_the_tombstone_drain() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         slow_backlog(&pg, &store, 3).await;
@@ -885,7 +885,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn disconnect_does_not_wait_for_the_drain_and_succeeds_when_it_fails() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let p = workspace(&pg).await;
         let store = Arc::new(MemoryStore::default());
         let c = connect(
@@ -916,7 +916,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_failed_delete_backs_off_so_it_cannot_block_the_queue() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let store = Arc::new(MemoryStore::default());
         let prefix = format!("test.backoff.{}.", uuid::Uuid::new_v4());
         let service = format!("{prefix}stuck");

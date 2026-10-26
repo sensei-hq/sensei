@@ -32,7 +32,7 @@
 ##                  by release.yml's `update-tap`, never by `bump`. `tap-push` is
 ##                  a manual escape hatch that refuses an unrendered template.
 
-.PHONY: crates crates-debug crates-all \
+.PHONY: test-template crates crates-debug crates-all \
         install install-service install-app install-debug \
         db-backup-essential \
         app-dev app-check \
@@ -453,6 +453,23 @@ test-plugin:
 	else \
 		claude plugin validate $(SENSEI_PLUGIN) && claude plugin test $(SENSEI_PLUGIN); \
 	fi
+
+# The TEMPLATE every Rust DB test clones (#183): each test gets its own copy of
+# `sensei_test`, so `sensei_test` itself must be clean — no test writes to it.
+# Rebuilt with dbd exactly as CI provisions it (`deploy --scope default`), then the one gitignored local export
+# (import/staging/assistant_events.jsonl, the developer's own captured sessions)
+# is emptied back out: CI never has it, and 84 MB of it made every clone slower.
+# Stamped with the DDL fingerprint: the suite refuses a template stamped for
+# another tree (#142). Run after a schema change, or whenever it has been written to.
+TEST_TEMPLATE_URL ?= postgresql://localhost:5432/sensei_test
+test-template:
+	dropdb --if-exists --force -h localhost sensei_test
+	createdb -h localhost sensei_test
+	cd database && DATABASE_URL=$(TEST_TEMPLATE_URL) dbd deploy --scope default
+	psql $(TEST_TEMPLATE_URL) -qc "TRUNCATE staging.assistant_events, activity.assistant_events CASCADE"
+	psql $(TEST_TEMPLATE_URL) -qc "VACUUM FULL"
+	scripts/test-template-fingerprint.sh --stamp $(TEST_TEMPLATE_URL)
+	@psql $(TEST_TEMPLATE_URL) -Atc "SELECT 'sensei_test template: ' || pg_size_pretty(pg_database_size(current_database()))"
 
 # SQL assertions against a REAL Postgres — RLS, constraints, policy grants: the
 # things a mocked supabase-js client cannot check and therefore cannot fail on.

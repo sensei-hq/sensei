@@ -732,7 +732,7 @@ mod offered_workspace_tests {
 
     #[tokio::test]
     async fn a_repository_in_exactly_one_workspace_offers_that_workspace() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let tag = uuid::Uuid::new_v4().simple().to_string();
         let (one, two, none) = (
             format!("github.com/ztest-op/{tag}-one"),

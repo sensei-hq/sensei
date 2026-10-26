@@ -271,3 +271,86 @@ async fn a_column_this_release_adds_and_comments_on_is_added_before_its_comment_
     assert_eq!(psql(&db.0, "select col_description('app.things'::regclass, 2)"), "added by v2");
     assert_eq!(psql(&db.0, "select count(*) from app.things"), "1", "the row stays");
 }
+
+/// A design of one table and a view over it, in `dir`: v2 adds two generated
+/// columns, a CASE among them, and the view reads them — the shape of
+/// `activity.assistant_events.tool_use_id` / `duration_ms` (#298).
+fn generated_design(dir: &Path, added: bool) {
+    let ddl = dir.join("ddl");
+    std::fs::create_dir_all(ddl.join("table/app")).unwrap();
+    std::fs::create_dir_all(ddl.join("view/app")).unwrap();
+    std::fs::write(
+        dir.join("design.yaml"),
+        "project:\n  name: upgrade_fixture\nsource:\n  dialect: postgresql\nschemas:\n  - app\n",
+    )
+    .unwrap();
+    let (columns, reads) = if added {
+        (
+            ",\n  key text generated always as (payload->>'key') stored\
+             ,\n  ms bigint generated always as (\
+                case when jsonb_typeof(payload->'ms') = 'number' \
+                then (payload->>'ms')::numeric::bigint end) stored",
+            "key, ms",
+        )
+    } else {
+        ("", "payload->>'key' as key")
+    };
+    std::fs::write(
+        ddl.join("table/app/events.ddl"),
+        format!(
+            "create table if not exists app.events (\n  id int primary key,\n  payload jsonb not null{columns}\n);\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        ddl.join("view/app/event_keys.ddl"),
+        format!("create or replace view app.event_keys as select id, {reads} from app.events;\n"),
+    )
+    .unwrap();
+}
+
+/// A generated column a release adds arrives GENERATED through the daemon's own
+/// deploy, computed for the rows already there. dbd-core before 0.27.6 added a
+/// new generated column as a plain one — NULL in every row, so #298's view
+/// would have paired nothing — and reported a generated CASE as drifted forever
+/// (sensei-hq/dbd#104).
+#[tokio::test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
+async fn a_generated_column_this_release_adds_is_generated_for_the_rows_already_there() {
+    let db = Scratch::new("generated");
+    let backups = tempfile::tempdir().unwrap();
+    let (v1, v2) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    generated_design(v1.path(), false);
+    generated_design(v2.path(), true);
+    sensei_bootstrap::database::deploy_to(&db.url(), v1.path(), backups.path())
+        .await
+        .expect("v1 deploys");
+    psql(
+        &db.0,
+        r#"insert into app.events values (1, '{"key":"k1","ms":12}'), (2, '{"ms":"n/a"}')"#,
+    );
+
+    for pass in ["v2 adds the generated columns", "v2 again changes nothing"] {
+        sensei_bootstrap::database::deploy_to(&db.url(), v2.path(), backups.path())
+            .await
+            .expect(pass);
+    }
+
+    assert_eq!(
+        psql(
+            &db.0,
+            "select string_agg(attname || '=' || attgenerated::text, ',' order by attname) from pg_attribute \
+              where attrelid = 'app.events'::regclass and attname in ('key', 'ms')"
+        ),
+        "key=s,ms=s",
+        "both columns are generated, not plain"
+    );
+    assert_eq!(
+        psql(
+            &db.0,
+            "select string_agg(concat_ws(':', id, key, ms), ',' order by id) from app.event_keys"
+        ),
+        "1:k1:12,2",
+        "computed for the rows already there; a non-number is NULL"
+    );
+}

@@ -35,9 +35,7 @@ fn remote_owner_slug_extracts_lowercased_owner() {
 
 #[tokio::test]
 async fn suggest_binding_infers_from_git_owner_then_stops_once_bound() {
-    let Ok(s) = PgStore::connect_test().await else {
-        return;
-    };
+    let s = PgStore::test_store().await;
     let suffix = format!("suggestbind_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     // An owner no other test uses: the database is shared, and a test that
@@ -151,9 +149,7 @@ async fn workspace_identifiers_gathers_names_paths_repos_and_sessions() {
 
 #[tokio::test]
 async fn dojo_membership_crud_and_workspace_binding_roundtrip() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     // Service-assigned membership id (the local PK; workspaces.dojo_id → this).
     let mid = uuid::Uuid::new_v4();
     pg.create_dojo_membership(&NewDojoMembership {
@@ -212,11 +208,8 @@ async fn dojo_membership_crud_and_workspace_binding_roundtrip() {
 
 #[tokio::test]
 async fn collective_preferences_defaults_and_upsert_roundtrip() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     use crate::collective::preferences::{self, CollectivePreferences};
-    let _guard = preferences::test_lock().enter();
 
     // Clean slate — the singleton row may linger from a prior run.
     sqlx_core::query::query("DELETE FROM sensei.collective_preferences")
@@ -276,9 +269,7 @@ async fn collective_preferences_defaults_and_upsert_roundtrip() {
 
 #[tokio::test]
 async fn upsert_stance_default_and_scoped_roundtrip() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     // Unique key so parallel tests / lingering rows never collide.
     let user = format!("stance-upsert-{}@test.local", uuid::Uuid::new_v4());
 
@@ -379,9 +370,7 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
 
 #[tokio::test]
 async fn dojo_outbox_and_batch_items_roundtrip() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
 
     // A workspace + a memory to share + an APPROVED batch containing it.
     let proj = pg.create_workspace("_test:dojo:outbox", None, None).await.unwrap();
@@ -475,9 +464,7 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
 
 #[tokio::test]
 async fn generalisation_persists_the_example_and_the_share_path_carries_it() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
 
     let proj = pg.create_workspace("_test:memories:example", None, None).await.unwrap();
     let mem = pg
@@ -542,9 +529,7 @@ async fn generalisation_persists_the_example_and_the_share_path_carries_it() {
 
 #[tokio::test]
 async fn dojo_inbox_upsert_apply_and_state_roundtrip() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
 
     // A source membership (inbox rows cascade with it on delete).
     let mid = uuid::Uuid::new_v4();

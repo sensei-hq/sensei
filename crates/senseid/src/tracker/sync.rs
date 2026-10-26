@@ -303,7 +303,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_first_sync_mirrors_the_board() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         let counts = sync(&pg, t, &FakeBoard::standard()).await.unwrap();
         assert_eq!(
@@ -319,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_second_identical_sync_changes_nothing_but_last_seen() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         sync(&pg, t, &FakeBoard::standard()).await.unwrap();
         let before = rows(&pg, t).await;
@@ -329,7 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_issue_is_marked_removed_once() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         sync(&pg, t, &FakeBoard::standard()).await.unwrap();
         let without_3 = || {
@@ -358,7 +358,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_renamed_key_updates_the_same_row() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         sync(&pg, t, &FakeBoard::standard()).await.unwrap();
         let renamed = FakeBoard::standard().with(
@@ -379,7 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_page_changes_no_rows_and_records_the_error() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         sync(&pg, t, &FakeBoard::standard()).await.unwrap();
         let before = rows(&pg, t).await;
@@ -397,7 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_removed_sprint_drops_its_members_and_skipped_members_are_counted() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         // 10001 sits in closed 100 and future 102.
         let with_future = FakeBoard::standard()
@@ -431,7 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_tracker_deleted_mid_sync_is_gone() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let pg2 = pg.clone();
         let board = FakeBoard::standard().on_call(Box::new(move |_path| {
@@ -445,7 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_held_lock_is_busy() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         let locks = TrackerLocks::default();
         let _held = locks.try_lock(t).unwrap();
@@ -460,7 +460,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_db_connection_is_held_while_fetching() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         let in_use = Arc::new(std::sync::Mutex::new(Vec::new()));
         let (pg2, seen) = (pg.clone(), in_use.clone());
@@ -490,7 +490,7 @@ mod tests {
 
     #[tokio::test]
     async fn overrunning_the_deadline_is_transport() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         let slow = FakeBoard::standard().delay(Duration::from_secs(5));
         let r = sync_tracker(
@@ -534,7 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_closed_sprint_that_returns_regains_its_members() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         // Two syncs: sprint 100 is closed and its members were fetched while closed.
         sync(&pg, t, &FakeBoard::standard()).await.unwrap();
@@ -553,7 +553,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_sprint_is_marked_removed_once() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         sync(&pg, t, &FakeBoard::standard()).await.unwrap();
         sync(&pg, t, &without_sprint_100()).await.unwrap();
@@ -683,7 +683,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_coordinator_handles_a_non_jira_adapter_unchanged() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         let counts = sync_tracker(
             &pg,
@@ -737,7 +737,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_sync_whose_transport_predates_a_rekey_is_superseded_and_records_nothing() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         let stale = pg.tracker_by_id(t).await.unwrap().unwrap().secret_service;
         sqlx_core::query::query(
@@ -767,7 +767,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_sync_on_the_old_credential_does_not_record_success_after_a_reconnect() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         let board = FakeBoard::standard().on_call(reconnect_mid_sync(&pg, t));
         let r = sync(&pg, t, &board).await;
@@ -778,7 +778,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_sync_on_the_old_credential_does_not_record_its_failure_after_a_reconnect() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, _p) = connected_tracker(&pg).await;
         let board = FakeBoard::standard()
             .fail_page("/rest/agile/1.0/board/42/issue", 2, TrackerError::Unauthorized)
@@ -825,7 +825,7 @@ mod tests {
 
     #[tokio::test]
     async fn sessions_from_every_workspace_repo_link_by_branch_and_prompt() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let (r1, r2) = (repo_in(&pg, p).await, repo_in(&pg, p).await);
         let elsewhere = repo_in(&pg, crate::tracker::connect::tests::workspace(&pg).await).await;
@@ -849,7 +849,7 @@ mod tests {
 
     #[tokio::test]
     async fn relinking_is_a_full_idempotent_recompute() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let r = repo_in(&pg, p).await;
         let s = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
@@ -871,7 +871,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_removed_issue_keeps_its_links() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let s = session_with(&pg, Some(repo_in(&pg, p).await), &["fix/AUTH-3"], &[]).await;
         sync(&pg, t, &FakeBoard::standard()).await.unwrap();
@@ -886,7 +886,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_renamed_issue_links_by_its_old_and_new_keys() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let r = repo_in(&pg, p).await;
         let old = session_with(&pg, Some(r), &["fix/auth-3"], &[]).await;
@@ -918,7 +918,7 @@ mod tests {
 
     #[tokio::test]
     async fn candidates_are_read_in_chunks() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let r = repo_in(&pg, p).await;
         for _ in 0..205 {
@@ -929,7 +929,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_pruned_before_apply_is_skipped() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let live = session_with(&pg, Some(repo_in(&pg, p).await), &[], &[]).await;
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
@@ -1028,7 +1028,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_database_failure_changes_no_rows_and_is_recorded_as_db() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         session_with(&pg, Some(repo_in(&pg, p).await), &["fix/AUTH-2"], &[]).await;
         sync(&pg, t, &FakeBoard::standard()).await.unwrap();
@@ -1049,7 +1049,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_non_jira_adapter_links_by_repo_scope() {
-        let Ok(pg) = PgStore::connect_test().await else { return };
+        let pg = PgStore::test_store().await;
         let (t, p) = connected_tracker(&pg).await;
         let n = uuid::Uuid::new_v4().simple().to_string();
         // repo_key goes through the production normaliser, from an SSH remote; the

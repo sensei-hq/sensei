@@ -158,9 +158,7 @@ fn by_far(calls: &[Call], side: Side) -> Vec<(uuid::Uuid, i64, bool)> {
 /// weight by `count(*)` of edge rows instead of call sites.
 #[tokio::test]
 async fn the_callers_hop_stays_in_the_workspace_and_weighs_call_sites() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let c = seed(&pg).await;
 
     let calls = pg.neighbourhood_hop(&c.workspace, &[c.focus], Side::In).await.unwrap();
@@ -176,9 +174,7 @@ async fn the_callers_hop_stays_in_the_workspace_and_weighs_call_sites() {
 /// test, or include unplaced calls (target NULL) in the hop.
 #[tokio::test]
 async fn the_callees_hop_reaches_a_library_but_marks_it_a_leaf() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let c = seed(&pg).await;
 
     let calls = pg.neighbourhood_hop(&c.workspace, &[c.focus], Side::Out).await.unwrap();
@@ -195,9 +191,7 @@ async fn the_callees_hop_reaches_a_library_but_marks_it_a_leaf() {
 /// Mutation that must break this: drop the `workspace_ids` test from the focus read.
 #[tokio::test]
 async fn a_focus_from_another_workspace_is_a_miss() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let c = seed(&pg).await;
 
     let found = pg.neighbourhood_focus(&c.workspace, &c.focus).await.unwrap();
@@ -223,9 +217,7 @@ async fn a_focus_from_another_workspace_is_a_miss() {
 /// Mutations that must break this: swap the two counts, or count every reason.
 #[tokio::test]
 async fn the_unplaced_counts_are_kept_apart() {
-    let Ok(pg) = PgStore::connect_test().await else {
-        return;
-    };
+    let pg = PgStore::test_store().await;
     let c = seed(&pg).await;
 
     let u = pg.neighbourhood_unplaced(&c.workspace, &c.focus, "focus").await.unwrap();

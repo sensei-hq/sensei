@@ -284,6 +284,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/keychain/approve", post(crate::api::handlers::auth::approve_keychain))
         .route("/api/auth/orgs", get(crate::api::handlers::auth::orgs))
         .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
+        .route("/api/tasks/abandoned", get(crate::api::handlers::tasks::abandoned))
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
         .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))
         // Background-task visibility (#96): the sensei.schedules table — what each
@@ -537,6 +538,7 @@ pub fn create_router(state: AppState) -> Router {
         // a route group behind the local-caller guard (foreign Origin / rebound Host → 403).
         .merge(tracker_routes())
         .with_state(state)
+        .layer(axum::middleware::from_fn(crate::api::origin_guard::caller_guard))
 }
 
 /// Build the **degraded-mode** router used when the daemon can boot but
@@ -577,13 +579,10 @@ pub fn create_degraded_router(db_url: String, error: String) -> Router {
                 )
             }
         })
+        .layer(axum::middleware::from_fn(crate::api::origin_guard::caller_guard))
 }
 
 #[cfg(test)]
-// Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
-// see `crate::tasks::test_support::TestGate` for why an async mutex loses
-// wakeups across per-test runtimes. One allow per test module, not per site.
-#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::api::state::SharedState;
@@ -616,6 +615,88 @@ mod tests {
         (router, state)
     }
 
+    /// #188: the watchdog's abandonments are readable as a class — per day and
+    /// kind, with the worst offenders named — and a window that is not a
+    /// positive number of days is refused, not quietly read as some default.
+    #[tokio::test]
+    async fn the_watchdog_abandonments_are_served_per_day_with_the_worst_named() {
+        let (app, state) = test_app().await;
+        let kind = crate::tasks::TaskKind::ProcessFile;
+        let message = crate::tasks::executor::watchdog_message(&kind, 3, kind.watchdog_timeout());
+        let id = state
+            .pg
+            .start_task_execution(3, None, &kind.to_string(), "/repo", "src/slow.rs", 0)
+            .await
+            .unwrap();
+        state.pg.fail_task_execution(&id, 180_000, &message).await.unwrap();
+
+        let get = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header("host", "127.0.0.1:7744")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let resp = app.clone().oneshot(get("/api/tasks/abandoned?days=7")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["days"], 7);
+        assert_eq!(body["by_day"][0]["task_kind"], "process_file", "{body}");
+        assert_eq!(body["by_day"][0]["count"], 1, "{body}");
+        assert_eq!(body["worst"][0]["path"], "src/slow.rs", "{body}");
+
+        for bad in ["/api/tasks/abandoned?days=0", "/api/tasks/abandoned?days=-3"] {
+            let status = app.clone().oneshot(get(bad)).await.unwrap().status();
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+        }
+    }
+
+    /// #334: the router itself refuses a write from a foreign page: the exact
+    /// request that once added a watch root from `http://127.0.0.1:5180`, and a
+    /// write to a path no route serves (the guard covers every route).
+    #[tokio::test]
+    async fn the_router_refuses_writes_from_a_foreign_page() {
+        let (app, state) = test_app().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+        for uri in ["/api/scan/roots", "/api/no-such-write"] {
+            let request = Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("host", "127.0.0.1:7744")
+                .header("origin", "http://127.0.0.1:5180")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({ "path": path }).to_string()))
+                .unwrap();
+            let status = app.clone().oneshot(request).await.unwrap().status();
+            assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
+        }
+        let roots = state.pg.list_watch_roots().await.unwrap();
+        assert!(roots.iter().all(|r| r["path"] != path.as_str()), "nothing was added");
+
+        // A foreign page's preflight is not granted, so a browser never sends it.
+        let preflight = Request::builder()
+            .method("OPTIONS")
+            .uri("/api/scan/roots")
+            .header("host", "127.0.0.1:7744")
+            .header("origin", "https://evil.example")
+            .header("access-control-request-method", "POST")
+            .body(Body::empty())
+            .unwrap();
+        let answer = crate::api::server::with_cors(create_router(state.clone()))
+            .oneshot(preflight)
+            .await
+            .unwrap();
+        assert!(answer.headers().get("access-control-allow-origin").is_none());
+    }
+
+    /// A request as the CLI or the app sends it: addressed to loopback, which
+    /// `caller_guard` requires of every request (#334).
+    fn local_request() -> axum::http::request::Builder {
+        Request::builder().header("host", "127.0.0.1:7744")
+    }
+
     /// Send one request through the real router; returns `(status, json_body)`.
     async fn req(
         app: Router,
@@ -623,7 +704,7 @@ mod tests {
         uri: &str,
         body: Option<serde_json::Value>,
     ) -> (StatusCode, serde_json::Value) {
-        let builder = Request::builder().method(method).uri(uri);
+        let builder = local_request().method(method).uri(uri);
         let request = match body {
             Some(v) => builder
                 .header("content-type", "application/json")
@@ -2343,7 +2424,7 @@ mod tests {
         let (app, _) = test_app().await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/dojo/memberships")
                     .header("content-type", "application/json")
@@ -2363,7 +2444,7 @@ mod tests {
         let url = format!("http://localhost:7755/v1/t/organization/src-{}", uuid::Uuid::new_v4());
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/knowledge/sources")
                     .header("content-type", "application/json")
@@ -2389,7 +2470,7 @@ mod tests {
         let (app, _) = test_app().await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/knowledge/sources")
                     .header("content-type", "application/json")
@@ -2407,10 +2488,8 @@ mod tests {
     #[tokio::test]
     async fn health_check() {
         let (app, _) = test_app().await;
-        let resp = app
-            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            app.oneshot(local_request().uri("/health").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -2434,7 +2513,7 @@ mod tests {
         let (app, _) = test_app().await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/gateway/models/gemma2:2b/provision")
                     .body(Body::empty())
@@ -2458,7 +2537,7 @@ mod tests {
         let (app, _) = test_app().await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .uri("/api/gateway/models/provision/status")
                     .body(Body::empty())
                     .unwrap(),
@@ -3182,7 +3261,6 @@ mod tests {
     #[tokio::test]
     async fn transcript_consent_is_listed_per_source_and_set_one_at_a_time() {
         let (app, state) = test_app().await;
-        let _gate = crate::transcript::consent::CONSENT_KEYS.enter();
         crate::transcript::consent::set(&state.pg, "zed", false).await.unwrap();
 
         let (status, body) = req(app.clone(), "GET", "/api/transcripts/consent", None).await;
@@ -3221,7 +3299,7 @@ mod tests {
     async fn index_doctor_endpoint_returns_readonly_report() {
         let (app, _) = test_app().await;
         let resp = app
-            .oneshot(Request::builder().uri("/api/index/doctor").body(Body::empty()).unwrap())
+            .oneshot(local_request().uri("/api/index/doctor").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -3241,7 +3319,7 @@ mod tests {
         let (app, _) = test_app().await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/folders/remap")
                     .header("content-type", "application/json")
@@ -3301,7 +3379,7 @@ mod tests {
 
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/folders/remap")
                     .header("content-type", "application/json")
@@ -3343,7 +3421,7 @@ mod tests {
         );
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/knowledge/memories")
                     .header("content-type", "application/json")
@@ -3373,7 +3451,7 @@ mod tests {
         let resp = app
             .clone()
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/knowledge/memories")
                     .header("content-type", "application/json")
@@ -3389,7 +3467,7 @@ mod tests {
         // The read surfaces the save-time source note as evidence.
         let get = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .uri(format!("/api/knowledge/memories/{id}"))
                     .body(Body::empty())
                     .unwrap(),
@@ -3434,10 +3512,7 @@ mod tests {
         let list = app
             .clone()
             .oneshot(
-                Request::builder()
-                    .uri(format!("/api/libs/{lib}/skills"))
-                    .body(Body::empty())
-                    .unwrap(),
+                local_request().uri(format!("/api/libs/{lib}/skills")).body(Body::empty()).unwrap(),
             )
             .await
             .unwrap();
@@ -3450,7 +3525,7 @@ mod tests {
         let get = app
             .clone()
             .oneshot(
-                Request::builder()
+                local_request()
                     .uri(format!("/api/libs/{lib}/skills/styling"))
                     .body(Body::empty())
                     .unwrap(),
@@ -3465,7 +3540,7 @@ mod tests {
 
         let miss = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .uri(format!("/api/libs/{lib}/skills/nope"))
                     .body(Body::empty())
                     .unwrap(),
@@ -3484,7 +3559,7 @@ mod tests {
         let (app, _) = test_app().await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/review/risk-class")
                     .header("content-type", "application/json")
@@ -3518,7 +3593,7 @@ mod tests {
         let resp = app
             .clone()
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/repos")
                     .header("content-type", "application/json")
@@ -3531,7 +3606,7 @@ mod tests {
 
         // List
         let resp = app
-            .oneshot(Request::builder().uri("/api/repos").body(Body::empty()).unwrap())
+            .oneshot(local_request().uri("/api/repos").body(Body::empty()).unwrap())
             .await
             .unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
@@ -3553,11 +3628,7 @@ mod tests {
             .unwrap();
         let resp = app
             .oneshot(
-                Request::builder()
-                    .method("DELETE")
-                    .uri("/api/repos/x")
-                    .body(Body::empty())
-                    .unwrap(),
+                local_request().method("DELETE").uri("/api/repos/x").body(Body::empty()).unwrap(),
             )
             .await
             .unwrap();
@@ -3571,7 +3642,7 @@ mod tests {
         let resp = app
             .clone()
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/workspaces")
                     .header("content-type", "application/json")
@@ -3586,7 +3657,7 @@ mod tests {
         assert!(json["id"].is_string());
 
         let resp = app
-            .oneshot(Request::builder().uri("/api/workspaces").body(Body::empty()).unwrap())
+            .oneshot(local_request().uri("/api/workspaces").body(Body::empty()).unwrap())
             .await
             .unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
@@ -3603,7 +3674,7 @@ mod tests {
         let status = |uri: &'static str| {
             let app = app.clone();
             async move {
-                app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                app.oneshot(local_request().uri(uri).body(Body::empty()).unwrap())
                     .await
                     .unwrap()
                     .status()
@@ -3631,7 +3702,7 @@ mod tests {
         let resp = app
             .clone()
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/index")
                     .header("content-type", "application/json")
@@ -3651,7 +3722,7 @@ mod tests {
 
         // Verify queue status endpoint works
         let resp = app
-            .oneshot(Request::builder().uri("/api/index/status").body(Body::empty()).unwrap())
+            .oneshot(local_request().uri("/api/index/status").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -3722,7 +3793,7 @@ mod tests {
         let resp = app
             .clone()
             .oneshot(
-                Request::builder()
+                local_request()
                     .uri(format!("/api/graph/functions?repoId={}&q={}", proj_name, fn_name))
                     .body(Body::empty())
                     .unwrap(),
@@ -3742,7 +3813,7 @@ mod tests {
         let resp = app
             .clone()
             .oneshot(
-                Request::builder()
+                local_request()
                     .uri(format!("/api/repos/{}/summary", proj_name))
                     .body(Body::empty())
                     .unwrap(),
@@ -3764,7 +3835,7 @@ mod tests {
     async fn assistants_health_endpoint_returns_status_and_adapters() {
         let (app, _) = test_app().await;
         let resp = app
-            .oneshot(Request::builder().uri("/api/assistants/health").body(Body::empty()).unwrap())
+            .oneshot(local_request().uri("/api/assistants/health").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -3777,12 +3848,10 @@ mod tests {
     #[tokio::test]
     async fn collective_preferences_put_then_get_roundtrip() {
         let (app, state) = test_app().await;
-        // Serialize with the pg_store singleton test (shared one-row table).
-        let _guard = crate::collective::preferences::test_lock().enter();
 
         // PUT a known-valid body → 200; the response echoes the saved shape.
         let put = app.clone().oneshot(
-            Request::builder().method("PUT").uri("/api/preferences/collective")
+            local_request().method("PUT").uri("/api/preferences/collective")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::json!({
                     "destination": "global", "cadence": "weekly", "attribution_default": "anonymous",
@@ -3802,7 +3871,7 @@ mod tests {
         // GET reflects the write, with the full category shape.
         let get = app
             .oneshot(
-                Request::builder().uri("/api/preferences/collective").body(Body::empty()).unwrap(),
+                local_request().uri("/api/preferences/collective").body(Body::empty()).unwrap(),
             )
             .await
             .unwrap();
@@ -3827,7 +3896,7 @@ mod tests {
         let (app, _) = test_app().await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("PUT")
                     .uri("/api/preferences/collective")
                     .header("content-type", "application/json")
@@ -3858,7 +3927,7 @@ mod tests {
 
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/scan")
                     .header("content-type", "application/json")
@@ -3905,7 +3974,7 @@ mod tests {
         let mid = seed_memory(&state, "_test:route_archive", "rule a").await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri(format!("/api/knowledge/memories/{mid}/archive"))
                     .body(Body::empty())
@@ -3925,7 +3994,7 @@ mod tests {
         assert_eq!(state.pg.get_memory(&mid).await.unwrap().unwrap()["strength"], 1.0);
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri(format!("/api/knowledge/memories/{mid}/reinforce"))
                     .body(Body::empty())
@@ -3944,7 +4013,7 @@ mod tests {
         let mid = seed_memory(&state, "_test:route_challenge", "rule c").await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri(format!("/api/knowledge/memories/{mid}/challenge"))
                     .body(Body::empty())
@@ -3965,7 +4034,7 @@ mod tests {
         let mid = seed_memory(&state, "_test:route_dismiss", "rule d").await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri(format!("/api/knowledge/memories/{mid}/dismiss"))
                     .body(Body::empty())
@@ -3984,7 +4053,7 @@ mod tests {
         let rep = seed_memory(&state, "_test:route_merge_rep", "surviving text").await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri(format!("/api/knowledge/memories/{member}/merge"))
                     .header("content-type", "application/json")
@@ -4004,7 +4073,7 @@ mod tests {
         let (app, _) = test_app().await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/knowledge/memories/not-a-uuid/archive")
                     .body(Body::empty())
@@ -4021,7 +4090,7 @@ mod tests {
         let mid = seed_memory(&state, "_test:route_merge_nointo", "x").await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri(format!("/api/knowledge/memories/{mid}/merge"))
                     .header("content-type", "application/json")
@@ -4039,7 +4108,7 @@ mod tests {
         let mid = seed_memory(&state, "_test:route_merge_badinto", "x").await;
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri(format!("/api/knowledge/memories/{mid}/merge"))
                     .header("content-type", "application/json")
@@ -4061,7 +4130,7 @@ mod tests {
         let resp = app
             .clone()
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/knowledge/memories")
                     .header("content-type", "application/json")
@@ -4083,7 +4152,7 @@ mod tests {
         let resp = app
             .clone()
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/knowledge/memories")
                     .header("content-type", "application/json")
@@ -4104,7 +4173,7 @@ mod tests {
         // brief + feature is valid and persists both columns.
         let resp = app
             .oneshot(
-                Request::builder()
+                local_request()
                     .method("POST")
                     .uri("/api/knowledge/memories")
                     .header("content-type", "application/json")
@@ -4248,7 +4317,7 @@ mod tests {
     async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json::Value) {
         let resp = app
             .clone()
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .oneshot(local_request().uri(uri).body(Body::empty()).unwrap())
             .await
             .unwrap();
         let status = resp.status();
@@ -4438,7 +4507,7 @@ mod tests {
             sensei_mcp::HttpMethod::Put => "PUT",
             sensei_mcp::HttpMethod::Delete => "DELETE",
         };
-        let mut builder = Request::builder().method(method).uri(&uri);
+        let mut builder = local_request().method(method).uri(&uri);
         let body = match &req.body {
             Some(b) => {
                 builder = builder.header("content-type", "application/json");
@@ -5070,7 +5139,7 @@ mod tests {
         // workspace still carries all 41 folders including `kind:'folder'` rows.
         let resp = app
             .clone()
-            .oneshot(Request::builder().uri("/api/workspaces").body(Body::empty()).unwrap())
+            .oneshot(local_request().uri("/api/workspaces").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -5124,11 +5193,6 @@ mod tests {
     ///   run_completion 0.8 · memory_promotion 0.5 · unused_tools 0 · time_to_useful_result.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn metrics_pipeline_end_to_end() {
-        // Seeds corrections and asserts on `memory_promotion`, whose denominator
-        // counts them. A sibling test prunes that table by keep-set (table-wide
-        // by design), which silently deleted these rows mid-run and turned
-        // 2/4 into 2/2. Share the lock rather than pretend it can be scoped.
-        let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.enter();
         use crate::tasks::executor::spawn_workers;
         use crate::tasks::handlers::metrics::HEALTH_TASK_NAME;
         use crate::tasks::test_support::{

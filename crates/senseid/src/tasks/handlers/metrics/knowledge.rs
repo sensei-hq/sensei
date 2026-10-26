@@ -264,14 +264,7 @@ mod tests {
     }
 
     #[tokio::test]
-    // Held across awaits ON PURPOSE — TestGate is a blocking mutex because an
-    // async one loses wakers across per-test runtimes (see test_support).
-    #[allow(clippy::await_holding_lock)]
     async fn memory_promotion_positive_sums_patterns_and_corrections() {
-        // Holds for the same reason as the cross-workspace test: the correction
-        // half of this sum is deletable by any sibling's table-wide sweep.
-        let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.enter();
-
         // A positive rate that PINS both eligibility sources AND both filters:
         // numerator = 2 memories created in-window (one out-of-window memory excluded);
         // denominator = 2 eligible patterns + 2 eligible corrections = 4 (an
@@ -345,14 +338,7 @@ mod tests {
     }
 
     #[tokio::test]
-    // Held across awaits ON PURPOSE — TestGate is a blocking mutex because an
-    // async one loses wakers across per-test runtimes (see test_support).
-    #[allow(clippy::await_holding_lock)]
     async fn memory_promotion_no_eligible_writes_no_row() {
-        // Also gated: this asserts the ABSENCE of eligible items, which a
-        // sibling's correction leaking in would break just as surely.
-        let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.enter();
-
         // 0 eligible items → denominator 0 → NO row, EVEN THOUGH memories exist (a 0/0
         // would be a fabricated zero, not a measured signal). Seeds an ineligible
         // pattern (instance_count 2) + an ineligible correction (count 2) so it's the
@@ -463,19 +449,7 @@ mod tests {
     }
 
     #[tokio::test]
-    // Held across awaits ON PURPOSE — TestGate is a blocking mutex because an
-    // async one loses wakers across per-test runtimes (see test_support).
-    #[allow(clippy::await_holding_lock)]
     async fn memory_promotion_excludes_other_workspaces() {
-        // inference.corrections is a GLOBAL table and two operations on it are
-        // table-wide by design: delete_corrections_not_in(keep) removes every
-        // signature outside `keep`, and aggregate_corrections prunes to what it
-        // just recomputed. A sibling test running either one mid-test deletes
-        // THIS test's seeded correction, and the denominator silently drops from
-        // 3 to 2 — observed 2026-08-25 in a full run, and the exact failure the
-        // gate's own docs describe for metrics_pipeline_end_to_end.
-        let _serialised = crate::tasks::test_support::CORRECTIONS_TABLE_LOCK.enter();
-
         // Cross-workspace isolation (mutation-proof): a SECOND real workspace's memories,
         // patterns, and a correction that names ONLY B must NOT leak into A. A
         // correction naming A specifically IS counted for A — proving the
