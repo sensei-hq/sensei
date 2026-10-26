@@ -17,10 +17,11 @@ pub fn normalise_uri_path(path: &str) -> String {
     out
 }
 
-/// Decode `%XX` escapes, leaving everything else alone.
+/// Decode `%XX` escapes, leaving everything else alone. The result is read as
+/// UTF-8: an escape is one byte of a character, not a character.
 pub fn percent_decode(s: &str) -> String {
     let raw = s.as_bytes();
-    let mut out = String::with_capacity(s.len());
+    let mut out: Vec<u8> = Vec::with_capacity(raw.len());
     let mut i = 0;
     while i < raw.len() {
         if raw[i] == b'%'
@@ -28,14 +29,14 @@ pub fn percent_decode(s: &str) -> String {
             && let (Some(h), Some(l)) =
                 ((raw[i + 1] as char).to_digit(16), (raw[i + 2] as char).to_digit(16))
         {
-            out.push(((h * 16 + l) as u8) as char);
+            out.push((h * 16 + l) as u8);
             i += 3;
             continue;
         }
-        out.push(raw[i] as char);
+        out.push(raw[i]);
         i += 1;
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The project folder a chat session belongs to.
@@ -158,6 +159,17 @@ mod tests {
     /// shared corpus (15,021 of 67,644) end `#N-N`. Kept, the anchor became part
     /// of the file name — `main.ts#1-50` has no `.ts` — and the file's language
     /// was lost.
+    /// A URI's escapes are UTF-8 bytes, and so is a name typed raw. Pushing
+    /// each byte as its own char turned `jos%C3%A9` — and a raw `josé` — into
+    /// `josÃ©`, a folder that does not exist, so the session lost its project.
+    #[test]
+    fn a_non_ascii_name_decodes_as_utf8() {
+        assert_eq!(percent_decode("/tmp/jos%C3%A9/app"), "/tmp/josé/app");
+        assert_eq!(percent_decode("/tmp/josé/app"), "/tmp/josé/app");
+        assert_eq!(percent_decode("/%E6%97%A5%E6%9C%AC/x"), "/日本/x");
+        assert_eq!(normalise_uri_path("/c%3A/tmp/jos%C3%A9"), "c:/tmp/josé");
+    }
+
     #[test]
     fn a_line_anchor_is_not_part_of_the_file() {
         let msg = "Read [](file:///c%3A/Users/r/app/src/main.ts#1-50), lines 1 to 50";
