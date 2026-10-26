@@ -249,6 +249,22 @@ The settings screen lists them as repositories.
   fixed. Left: (6), adjacent (d), then Track B.
 - ~~#338~~ **closed 2026-10-26** (be5a6677): scheduled workers ran at twice their interval (live: advance_run
   every 30s, set to 15s). Found via a flaky test.
+- **Demo prep (user, 2026-10-26: a demo this week, sensei + dōjō, metrics and diagrams).** Done:
+  - 3f6f4199: "last 7 days", `sessions7d` and `last_session_at` key on last activity, not the start. Live
+    SQL: 7-day sessions 1 → 3, sensei's `sessions7d` 0 → 1.
+  - 00e84641: community labels take the directory most members live in (was the first member's, so the
+    largest read "function ()"). Live: the two largest gain `crates/senseid/src/indexer` and
+    `dojo/src/lib/server`; 177 of 684 "()" labels fixed, 507 have no member below the top level.
+  - 87bc0bbc, 7d22700c, eeb834ce: the dōjō's **My metrics** (`/you/metrics`): `dojo.my_metric_series`,
+    `GET /v1/you/metrics`, four cards (the Teams view's metrics) with daily lines. Seen in the browser on
+    the local dōjō: 16 sessions, 81% first-try, 55% rework share, 17.7B tokens over 30 days.
+  - Watch roots: dbd, gateway, torii added (user); indexed 10,317 / 11,800 / 8,360 nodes.
+  - Not a bug: the MCP 404 on `/api/projects` was a session's MCP process from 10-15 (pre-rename);
+    0.20.2's MCP answers. Product gap: an upgrade leaves running sessions on a stale MCP.
+  - Before the demo: a release (or install) so the daemon runs these; fresh sessions and a dōjō sync (the
+    synced session metrics end 10-18); demo from a fresh Claude session.
+  - Seen on the way: the personal loader turns a failed packs or contributions read into an empty list
+    (`you/[section]/+page.ts`), against the no-fabrication rule. "Tokens" is dominated by cache reads.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
   signing, notarization, and a first-start Permissions step. Needs the user's Apple Developer account.
