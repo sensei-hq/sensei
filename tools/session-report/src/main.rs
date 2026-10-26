@@ -1,12 +1,17 @@
-//! session-report — a retrospective from Copilot CLI transcripts.
+//! session-report — a retrospective from coding-assistant transcripts.
 //!
-//! Reads a folder of `<session-id>/events.jsonl` directories and writes a
-//! markdown retrospective: what the sessions show about pace, where friction
-//! showed up, and what is working. Every observation carries a reference — a
-//! session id and a timestamp — so it can be checked against the source.
+//! Reads a folder of GitHub Copilot CLI sessions (`<session-id>/events.jsonl`),
+//! a Claude Code `projects/` tree, or a VS Code `workspaceStorage` tree — the
+//! shape is detected, see [`Tool`] — and writes a markdown retrospective: what
+//! the sessions show about pace, where friction showed up, and what is working.
+//! Every observation carries a reference — a session id and a timestamp — so it
+//! can be checked against the source.
 //!
-//! Deliberately isolated from the daemon: no database, no network, no writes
-//! anywhere except the output file. These are other people's transcripts.
+//! Deliberately isolated from the daemon: no database. By default, no network
+//! and no writes except the report. `--facets` is the one exception: it sends
+//! each session to a model endpoint (a LOCAL ollama unless another is named)
+//! and writes the records to `facets/<name>/` beside the report. These are
+//! other people's transcripts.
 
 mod advice;
 mod claude;
@@ -122,12 +127,7 @@ fn main() {
     if sessions.is_empty() {
         // Honest failure: say what was looked for and where, rather than emit an
         // empty report that reads as "this person did nothing".
-        eprintln!(
-            "error: no sessions under {} ({scanned} scanned). Expected either a \
-             Copilot CLI folder (one directory per session, each with events.jsonl) \
-             or a Claude Code folder (a `projects/` tree).",
-            input.display()
-        );
+        eprintln!("{}", no_sessions_message(&input, scanned));
         std::process::exit(1);
     }
 
@@ -342,6 +342,18 @@ pub enum Tool {
 }
 
 impl Tool {
+    /// Every input the tool reads, in the order `detect` tries them.
+    pub const ALL: [Tool; 3] = [Tool::CopilotCli, Tool::ClaudeCode, Tool::VsCode];
+
+    /// The folder shape that is detected as this tool's.
+    pub fn expected_shape(self) -> &'static str {
+        match self {
+            Tool::CopilotCli => "one directory per session, each with events.jsonl",
+            Tool::ClaudeCode => "a `projects/` tree",
+            Tool::VsCode => "a `workspaceStorage/<hash>/chatSessions` tree",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Tool::CopilotCli => "GitHub Copilot CLI",
@@ -349,6 +361,18 @@ impl Tool {
             Tool::VsCode => "VS Code (Copilot Chat)",
         }
     }
+}
+
+/// What was looked for and where — an empty report would read as "this person
+/// did nothing", so an unrecognised folder is a failure that says what it wanted.
+fn no_sessions_message(input: &Path, scanned: usize) -> String {
+    let shapes: Vec<String> =
+        Tool::ALL.iter().map(|t| format!("{} ({})", t.label(), t.expected_shape())).collect();
+    format!(
+        "error: no sessions under {} ({scanned} scanned). Expected one of: {}.",
+        input.display(),
+        shapes.join("; ")
+    )
 }
 
 pub fn detect(root: &Path) -> Option<Tool> {
@@ -413,4 +437,29 @@ fn collect(root: &Path) -> (Vec<model::Session>, usize, usize) {
     }
     sessions.sort_by_key(|s| s.first_ms);
     (sessions, skipped, scanned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The no-sessions error is the only guide for someone whose folder was
+    /// not recognised: it named Copilot CLI and Claude Code, never VS Code.
+    #[test]
+    fn the_no_sessions_message_names_every_input_it_reads() {
+        let m = no_sessions_message(Path::new("/tmp/x"), 3);
+        for t in Tool::ALL {
+            assert!(m.contains(t.label()), "{} missing from: {m}", t.label());
+            assert!(m.contains(t.expected_shape()), "{m}");
+        }
+    }
+
+    #[test]
+    fn the_readme_names_every_input_it_reads() {
+        let readme =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).unwrap();
+        for t in Tool::ALL {
+            assert!(readme.contains(t.label()), "{} missing from README.md", t.label());
+        }
+    }
 }
