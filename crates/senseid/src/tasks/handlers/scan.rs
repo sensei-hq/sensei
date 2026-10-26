@@ -988,13 +988,14 @@ mod tests {
         std::fs::create_dir_all(&member).unwrap();
         let member_fid = ctx
             .pg()
-            .upsert_subfolder(
-                &root_id,
-                "member",
-                "crates/member",
-                &member.to_string_lossy(),
-                Some(&repo_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: "member",
+                path: "crates/member",
+                abs_path: &member.to_string_lossy(),
+                parent_id: Some(&repo_fid),
+            })
             .await
             .unwrap();
         // A duplicate of the git-root symbol → pruned (name equal, path-suffix twin).
@@ -1106,13 +1107,14 @@ mod tests {
         ctx.pg().set_folder_workspace(&repo_fid, &pid, "root", None).await.unwrap();
         let member_fid = ctx
             .pg()
-            .upsert_subfolder(
-                &root_id,
-                "member",
-                "crates/member",
-                &member.to_string_lossy(),
-                Some(&repo_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: "member",
+                path: "crates/member",
+                abs_path: &member.to_string_lossy(),
+                parent_id: Some(&repo_fid),
+            })
             .await
             .unwrap();
 
@@ -1151,7 +1153,10 @@ mod tests {
             )
             .await
             .unwrap();
-        ctx.pg().insert_edge(&member_fid, &dup, Some(&stub), None, None, "calls").await.unwrap();
+        ctx.pg()
+            .insert_edge(&member_fid, &dup, crate::db::pg_store::EdgeTarget::Node(&stub), "calls")
+            .await
+            .unwrap();
 
         // Pre-state: the GC would NOT take it, which is what makes the ordering
         // the whole defect rather than a weak predicate.
@@ -1216,13 +1221,14 @@ mod tests {
             .unwrap();
         let sub_fid = ctx
             .pg()
-            .upsert_subfolder(
-                &root_id,
-                "sub",
-                "repo/sub",
-                &root.join("repo/sub").to_string_lossy(),
-                Some(&repo_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: "sub",
+                path: "repo/sub",
+                abs_path: &root.join("repo/sub").to_string_lossy(),
+                parent_id: Some(&repo_fid),
+            })
             .await
             .unwrap();
         ctx.pg().upsert_community(&repo_fid, 1, "auth cluster", 42).await.unwrap();
@@ -1547,7 +1553,18 @@ mod tests {
 
         // A subtree must NOT be clobbered by a root re-registration.
         let p2 = tmp.path().join("b").to_string_lossy().to_string();
-        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None).await.unwrap();
+        ctx.pg()
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "subtree",
+                name: "b",
+                path: "b",
+                abs_path: &p2,
+                parent_id: None,
+                workspace_root_id: None,
+            })
+            .await
+            .unwrap();
         ctx.pg().upsert_repo_kind(&root_id, "git", "b", &p2).await.unwrap();
         assert_eq!(ctx.pg().get_repo_by_path(&p2).await.unwrap().unwrap()["kind"], "subtree");
     }
@@ -1581,7 +1598,15 @@ mod tests {
             .await
             .unwrap();
         ctx.pg().upsert_dir_node(&fid, "module", "src", &format!("{repo_path}/src")).await.unwrap();
-        ctx.pg().upsert_scan_state(&fid, "crates/hive-mind/src/config.rs", 1, "h").await.unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "crates/hive-mind/src/config.rs",
+                mtime: 1,
+                content_hash: "h",
+            })
+            .await
+            .unwrap();
 
         // Live working-tree set: only a.rs survives.
         let live: std::collections::HashSet<String> = ["a.rs".to_string()].into_iter().collect();
@@ -1619,8 +1644,24 @@ mod tests {
         )
         .await
         .unwrap();
-        ctx.pg().upsert_scan_state(&fid, "src/kept.ts", 1, "h1").await.unwrap();
-        ctx.pg().upsert_scan_state(&fid, "docs/gone.md", 1, "h2").await.unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "src/kept.ts",
+                mtime: 1,
+                content_hash: "h1",
+            })
+            .await
+            .unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "docs/gone.md",
+                mtime: 1,
+                content_hash: "h2",
+            })
+            .await
+            .unwrap();
 
         let live: std::collections::HashSet<String> =
             ["src/kept.ts".to_string()].into_iter().collect();
@@ -1684,13 +1725,14 @@ mod tests {
         std::fs::create_dir_all(&live_dir).unwrap();
         let live_fid = ctx
             .pg()
-            .upsert_subfolder(
-                &root_id,
-                "live",
-                "live",
-                &live_dir.to_string_lossy(),
-                Some(&repo_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: "live",
+                path: "live",
+                abs_path: &live_dir.to_string_lossy(),
+                parent_id: Some(&repo_fid),
+            })
             .await
             .unwrap();
         let live_node = ctx
@@ -1705,24 +1747,26 @@ mod tests {
         let gone_sub = gone_dir.join("sub"); // NOT created on disk
         let gone_fid = ctx
             .pg()
-            .upsert_subfolder(
-                &root_id,
-                "gone",
-                "gone",
-                &gone_dir.to_string_lossy(),
-                Some(&repo_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: "gone",
+                path: "gone",
+                abs_path: &gone_dir.to_string_lossy(),
+                parent_id: Some(&repo_fid),
+            })
             .await
             .unwrap();
         let sub_fid = ctx
             .pg()
-            .upsert_subfolder(
-                &root_id,
-                "sub",
-                "gone/sub",
-                &gone_sub.to_string_lossy(),
-                Some(&gone_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: "sub",
+                path: "gone/sub",
+                abs_path: &gone_sub.to_string_lossy(),
+                parent_id: Some(&gone_fid),
+            })
             .await
             .unwrap();
         let ghost_a = ctx
@@ -1737,10 +1781,23 @@ mod tests {
             .unwrap();
         let ghost_edge = ctx
             .pg()
-            .insert_edge(&gone_fid, &ghost_a, Some(&ghost_b), None, None, "references")
+            .insert_edge(
+                &gone_fid,
+                &ghost_a,
+                crate::db::pg_store::EdgeTarget::Node(&ghost_b),
+                "references",
+            )
             .await
             .unwrap();
-        ctx.pg().upsert_scan_state(&gone_fid, "gone/config.rs", 1, "h").await.unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &gone_fid,
+                file_path: "gone/config.rs",
+                mtime: 1,
+                content_hash: "h",
+            })
+            .await
+            .unwrap();
 
         // Prune: both ghost folder rows go, the live one stays.
         let pruned = prune_vanished_folders(ctx.pg(), &root_id).await;
@@ -1830,26 +1887,26 @@ mod tests {
         let live = repo.join("packages/live");
         std::fs::create_dir_all(&live).unwrap();
         ctx.pg()
-            .upsert_subfolder_kind(
-                &root_id,
-                "module",
-                "live",
-                "packages/live",
-                &live.to_string_lossy(),
-                Some(&repo_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "module",
+                name: "live",
+                path: "packages/live",
+                abs_path: &live.to_string_lossy(),
+                parent_id: Some(&repo_fid),
+            })
             .await
             .unwrap();
         let gone = repo.join("packages/gone"); // NOT created on disk
         ctx.pg()
-            .upsert_subfolder_kind(
-                &root_id,
-                "module",
-                "gone",
-                "packages/gone",
-                &gone.to_string_lossy(),
-                Some(&repo_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "module",
+                name: "gone",
+                path: "packages/gone",
+                abs_path: &gone.to_string_lossy(),
+                parent_id: Some(&repo_fid),
+            })
             .await
             .unwrap();
 
@@ -1892,7 +1949,14 @@ mod tests {
         let sub = absent_repo.join("src"); // also absent
         let sub_fid = ctx
             .pg()
-            .upsert_subfolder(&root_id, "src", "src", &sub.to_string_lossy(), Some(&repo_fid))
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: "src",
+                path: "src",
+                abs_path: &sub.to_string_lossy(),
+                parent_id: Some(&repo_fid),
+            })
             .await
             .unwrap();
         let node = ctx

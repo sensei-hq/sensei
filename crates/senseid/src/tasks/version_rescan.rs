@@ -363,7 +363,14 @@ mod tests {
 
         // A file the old binary already indexed — the row that makes the next
         // scan skip it.
-        pg.upsert_scan_state(&fid, "src/lib.rs", 1, "hash-unchanged").await.unwrap();
+        pg.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+            folder_id: &fid,
+            file_path: "src/lib.rs",
+            mtime: 1,
+            content_hash: "hash-unchanged",
+        })
+        .await
+        .unwrap();
         let before: (i64,) =
             sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.files WHERE folder_id = $1")
                 .bind(fid)

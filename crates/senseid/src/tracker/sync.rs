@@ -146,7 +146,18 @@ async fn run(
         Some(name) => serde_json::json!({ "board_name": name }),
         None => serde_json::json!({}),
     };
-    match pg.apply_tracker_snapshot(tracker_id, &secret_service, &snapshot, &patch, &links).await {
+    match pg
+        .apply_tracker_snapshot(
+            tracker_id,
+            &crate::db::pg_store::TrackerSnapshotApply {
+                secret_service: &secret_service,
+                snapshot: &snapshot,
+                params_patch: &patch,
+                links: &links,
+            },
+        )
+        .await
+    {
         Ok(counts) => Ok(counts),
         Err(ApplyError::Gone) => Err(SyncError::Gone),
         Err(ApplyError::Superseded) => Err(SyncError::Superseded),
@@ -469,12 +480,14 @@ mod tests {
             Box::pin(async move {
                 // sqlx returns a dropped connection to the pool in a spawned task;
                 // a real request yields long enough for it, so wait (bounded) for
-                // the pool to settle. A connection genuinely held never settles.
+                // the pool to settle. A connection genuinely held never settles —
+                // at any bound. Under the full parallel suite that task can take
+                // well over the 200 ms this used to allow (seen 2026-10-26: the
+                // first fetch read 1, every later one 0), so the bound is a
+                // deadline, not a count of 1 ms naps.
                 let in_use = || pool.size() as usize - pool.num_idle();
-                for _ in 0..200 {
-                    if in_use() == 0 {
-                        break;
-                    }
+                let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+                while in_use() != 0 && tokio::time::Instant::now() < deadline {
                     tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                 }
                 seen.lock().unwrap().push(in_use());
@@ -951,10 +964,12 @@ mod tests {
         let counts = pg
             .apply_tracker_snapshot(
                 t,
-                &row.secret_service,
-                &snapshot,
-                &json!({}),
-                &[to(live), to(uuid::Uuid::new_v4())],
+                &crate::db::pg_store::TrackerSnapshotApply {
+                    secret_service: &row.secret_service,
+                    snapshot: &snapshot,
+                    params_patch: &json!({}),
+                    links: &[to(live), to(uuid::Uuid::new_v4())],
+                },
             )
             .await
             .expect("no FK error");

@@ -145,7 +145,15 @@ async fn session_anchors_to_repo_not_the_cwd_subfolder() {
     let sub = mk_anchor_folder(&s, &format!("{b}/repo/src"), "folder", None).await;
     let sess = "_test-p1-anchor";
     clear_test_session(&s, sess).await;
-    s.record_session_event(sess, &sub, None, "claude", false).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: sess,
+        folder_id: &sub,
+        workspace_id: None,
+        family: "claude",
+        is_end: false,
+    })
+    .await
+    .unwrap();
     let (folder_id, repo_folder_id): (Option<uuid::Uuid>, Option<uuid::Uuid>) =
         sqlx_core::query_as::query_as(
             "SELECT folder_id, repo_folder_id FROM activity.sessions WHERE client_session_id = $1",
@@ -172,7 +180,15 @@ async fn folder_prune_nulls_folder_id_but_session_and_repo_survive() {
     let sub = mk_anchor_folder(&s, &format!("{b}/repo/src"), "folder", None).await;
     let sess = "_test-p1-prune";
     clear_test_session(&s, sess).await;
-    s.record_session_event(sess, &sub, None, "claude", false).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: sess,
+        folder_id: &sub,
+        workspace_id: None,
+        family: "claude",
+        is_end: false,
+    })
+    .await
+    .unwrap();
     sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
         .bind(sub)
         .execute(&s.pool)
@@ -244,7 +260,15 @@ async fn folder_has_sessions_reflects_attached_history() {
     clear_test_session(&s, sess).await;
     let fid = create_test_folder(&s, "hashist").await;
     assert!(!s.folder_has_sessions(&fid).await.unwrap(), "no sessions yet");
-    s.record_session_event(sess, &fid, None, "claude", true).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: sess,
+        folder_id: &fid,
+        workspace_id: None,
+        family: "claude",
+        is_end: true,
+    })
+    .await
+    .unwrap();
     assert!(s.folder_has_sessions(&fid).await.unwrap(), "session attached → has history");
     // The archive gate keys on the durable anchor too (P2): null the raw folder (as a
     // prune would) and the repo still reports history via repo_folder_id — so a
@@ -269,7 +293,15 @@ async fn remap_folder_moves_sessions_aliases_old_path_and_drops_old_row() {
     clear_test_session(&s, sess).await;
     let old = create_test_folder(&s, "remap-old").await; // /_test/remap-old
     let new = create_test_folder(&s, "remap-new").await; // /_test/remap-new
-    s.record_session_event(sess, &old, None, "claude", true).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: sess,
+        folder_id: &old,
+        workspace_id: None,
+        family: "claude",
+        is_end: true,
+    })
+    .await
+    .unwrap();
 
     s.remap_folder(&old, "/_test/remap-old", &new).await.unwrap();
 
@@ -342,18 +374,30 @@ async fn a_declared_package_resolves_to_its_parent_library() {
     let uniq = uuid::Uuid::new_v4();
     let parent = format!("_testlib_parent_{uniq}");
     let pkg = format!("@{parent}/ui");
-    let lid = s.upsert_library(&parent, "npm", Some(">=1.0"), None, None, None).await.unwrap();
+    let lid = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &parent,
+            ecosystem: "npm",
+            version: Some(">=1.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     s.replace_library_capabilities(
         &lid,
-        "manifest",
-        Some(">=1.0"),
-        &[ProvidedSkill {
-            name: "styling".into(),
-            focus: "styling".into(),
-            path: Some("p/s.md".into()),
-            body: Some("# styling".into()),
-        }],
-        &[],
+        &crate::db::pg_store::LibraryCapabilities {
+            source: "manifest",
+            version_range: Some(">=1.0"),
+            skills: &[ProvidedSkill {
+                name: "styling".into(),
+                focus: "styling".into(),
+                path: Some("p/s.md".into()),
+                body: Some("# styling".into()),
+            }],
+            agents: &[],
+        },
     )
     .await
     .unwrap();
@@ -399,7 +443,17 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
     use crate::libraries::manifest::{ProvidedAgent, ProvidedSkill};
     let s = pg_store().await;
     let lib = format!("_testlib_{}", uuid::Uuid::new_v4());
-    let lid = s.upsert_library(&lib, "npm", Some(">=1.0"), None, None, None).await.unwrap();
+    let lid = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &lib,
+            ecosystem: "npm",
+            version: Some(">=1.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     let sk = |n: &str, f: &str| ProvidedSkill {
         name: n.into(),
         focus: f.into(),
@@ -416,10 +470,12 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
     let (ns, na) = s
         .replace_library_capabilities(
             &lid,
-            "manifest",
-            Some(">=1.0"),
-            &[sk("styling", "styling"), sk("a11y", "accessibility")],
-            &[ag],
+            &crate::db::pg_store::LibraryCapabilities {
+                source: "manifest",
+                version_range: Some(">=1.0"),
+                skills: &[sk("styling", "styling"), sk("a11y", "accessibility")],
+                agents: &[ag],
+            },
         )
         .await
         .unwrap();
@@ -436,10 +492,12 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
     let (ns2, _) = s
         .replace_library_capabilities(
             &lid,
-            "manifest",
-            Some(">=1.0"),
-            &[sk("styling", "styling")],
-            &[],
+            &crate::db::pg_store::LibraryCapabilities {
+                source: "manifest",
+                version_range: Some(">=1.0"),
+                skills: &[sk("styling", "styling")],
+                agents: &[],
+            },
         )
         .await
         .unwrap();
@@ -456,10 +514,12 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
     let (ns3, _) = s
         .replace_library_capabilities(
             &lid,
-            "manifest",
-            None,
-            &[sk("styling", "styling"), bodyless],
-            &[],
+            &crate::db::pg_store::LibraryCapabilities {
+                source: "manifest",
+                version_range: None,
+                skills: &[sk("styling", "styling"), bodyless],
+                agents: &[],
+            },
         )
         .await
         .unwrap();
@@ -473,18 +533,30 @@ async fn list_workspace_library_capabilities_suggests_from_a_workspaces_deps() {
     let pid =
         s.create_workspace(&format!("_libcap_{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
     let lib = format!("_libcapdep_{}", uuid::Uuid::new_v4());
-    let lid = s.upsert_library(&lib, "npm", Some("1"), None, None, None).await.unwrap();
+    let lid = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &lib,
+            ecosystem: "npm",
+            version: Some("1"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     s.replace_library_capabilities(
         &lid,
-        "manifest",
-        Some("1"),
-        &[ProvidedSkill {
-            name: "semantic-styles-rokkit".into(),
-            focus: "styling".into(),
-            path: Some("p".into()),
-            body: Some("b".into()),
-        }],
-        &[],
+        &crate::db::pg_store::LibraryCapabilities {
+            source: "manifest",
+            version_range: Some("1"),
+            skills: &[ProvidedSkill {
+                name: "semantic-styles-rokkit".into(),
+                focus: "styling".into(),
+                path: Some("p".into()),
+                body: Some("b".into()),
+            }],
+            agents: &[],
+        },
     )
     .await
     .unwrap();
@@ -602,7 +674,14 @@ async fn a_subfolder_cannot_be_written_into_a_different_workspace_than_its_repo(
     // The caller cannot name a workspace at all. The repository says `owner`.
     let sub_path = format!("{repo_path}/src");
     let sub = s
-        .upsert_subfolder_kind(&root_id, "folder", "src", &sub_path, &sub_path, Some(&repo))
+        .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &root_id,
+            kind: "folder",
+            name: "src",
+            path: &sub_path,
+            abs_path: &sub_path,
+            parent_id: Some(&repo),
+        })
         .await
         .unwrap();
 
@@ -656,7 +735,7 @@ async fn a_subfolder_cannot_be_written_into_a_different_workspace_than_its_repo(
 /// able to fail.
 ///
 /// Breaking mutation: drop `repository_id` from the inherited CTE in
-/// `upsert_subfolder_kind` — the subfolder inherits no repository, resolves
+/// `upsert_subfolder` — the subfolder inherits no repository, resolves
 /// through nothing, and reports no workspace at all.
 ///
 /// (The ORIGINAL mutation — point `folder_workspaces` at `f.workspace_id` — is no
@@ -685,7 +764,14 @@ async fn a_folder_resolves_the_workspace_of_its_repository_not_its_own_column() 
     // repository's, which is the whole point.
     let sub_path = format!("{repo_path}/docs");
     let sub = s
-        .upsert_subfolder_kind(&root_id, "folder", "docs", &sub_path, &sub_path, Some(&repo))
+        .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &root_id,
+            kind: "folder",
+            name: "docs",
+            path: &sub_path,
+            abs_path: &sub_path,
+            parent_id: Some(&repo),
+        })
         .await
         .unwrap();
 
@@ -723,10 +809,28 @@ async fn first_party_packages_are_every_module_the_workspace_declares() {
     // Two manifest-declared packages, and one ordinary folder that is NOT one.
     for (name, path) in [("alpha", "/repo/crates/alpha"), ("beta", "/repo/crates/beta")] {
         let abs = tkey("fp", path);
-        s.upsert_subfolder_kind(&root_id, "module", name, &abs, &abs, Some(&repo)).await.unwrap();
+        s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &root_id,
+            kind: "module",
+            name,
+            path: &abs,
+            abs_path: &abs,
+            parent_id: Some(&repo),
+        })
+        .await
+        .unwrap();
     }
     let src = tkey("fp", "/repo/src");
-    s.upsert_subfolder_kind(&root_id, "folder", "src", &src, &src, Some(&repo)).await.unwrap();
+    s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+        root_id: &root_id,
+        kind: "folder",
+        name: "src",
+        path: &src,
+        abs_path: &src,
+        parent_id: Some(&repo),
+    })
+    .await
+    .unwrap();
 
     let pkgs = s.first_party_packages(&repo).await.unwrap();
 
@@ -754,9 +858,16 @@ async fn repo_root_for_path_resolves_nearest_git_ancestor_skipping_members() {
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "mono", &repo).await.unwrap();
     // A workspace member subdir (not an index owner) — must be skipped.
     let member = format!("{repo}/packages/chart");
-    s.upsert_subfolder(&root_id, "chart", "mono/packages/chart", &member, Some(&repo_fid))
-        .await
-        .ok();
+    s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+        root_id: &root_id,
+        kind: "folder",
+        name: "chart",
+        path: "mono/packages/chart",
+        abs_path: &member,
+        parent_id: Some(&repo_fid),
+    })
+    .await
+    .ok();
 
     let got = s.repo_root_for_path(&format!("{member}/src/x.ts")).await.unwrap();
     assert_eq!(
@@ -800,8 +911,17 @@ async fn scope_repo_roots_returns_repo_roots_not_structural_subfolders() {
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "app", &repo).await.unwrap();
     // A structural subfolder (kind='folder') under the repo — NOT a repo root.
     let comp = format!("{repo}/src/lib");
-    let comp_fid =
-        s.upsert_subfolder(&root_id, "lib", "app/src/lib", &comp, Some(&repo_fid)).await.unwrap();
+    let comp_fid = s
+        .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &root_id,
+            kind: "folder",
+            name: "lib",
+            path: "app/src/lib",
+            abs_path: &comp,
+            parent_id: Some(&repo_fid),
+        })
+        .await
+        .unwrap();
 
     let roots = s.scope_repo_roots(&[repo_fid, comp_fid]).await.unwrap();
     assert!(roots.contains(&repo), "the git repo root is returned");
@@ -955,14 +1075,41 @@ async fn record_session_event_folds_into_one_row_and_completes() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "sess-record").await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    let id1 = s.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
-    let id2 = s.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+    let id1 = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
+    let id2 = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
     assert_eq!(id1, id2, "same client_session_id must fold into one session row");
     assert!(
         s.get_session(&id1).await.unwrap().unwrap()["completed_at"].is_null(),
         "not completed before an end event"
     );
-    let id3 = s.record_session_event(&sid, &fid, None, "claude", true).await.unwrap();
+    let id3 = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
     assert_eq!(id3, id1, "end event updates the same row");
     assert!(
         !s.get_session(&id1).await.unwrap().unwrap()["completed_at"].is_null(),
@@ -984,7 +1131,16 @@ async fn raise_session_list_cost_keeps_the_largest_total() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "sess-list-cost").await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    let id = s.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+    let id = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: None,
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
     let read = |s: &PgStore| {
         let s = s.clone();
         async move {
@@ -1033,8 +1189,25 @@ async fn list_all_sessions_joins_workspace_and_uses_camelcase_times() {
     let pid = s.create_workspace(&proj_name, None, None).await.unwrap();
     let fid = create_test_folder(&s, "obs-sess").await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", false).await.unwrap();
-    s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+    let session_id = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: false,
+        })
+        .await
+        .unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: &sid,
+        folder_id: &fid,
+        workspace_id: Some(&pid),
+        family: "claude",
+        is_end: true,
+    })
+    .await
+    .unwrap();
 
     let all = s.list_all_sessions(500, None, None).await.unwrap();
     let row = all
@@ -1092,7 +1265,16 @@ async fn process_analysis_selects_unscored_then_saves_judgments_evidence_waterma
     let suffix = format!("proc_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let csid = format!("{suffix}-csid");
-    let sid = s.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+    let sid = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
     // Make it measurable (outcome not null) — the selection base.
     sqlx_core::query::query(
             "UPDATE activity.sessions SET outcome='completed'::sensei.session_outcome, ftr=true WHERE id=$1"
@@ -1184,7 +1366,16 @@ async fn set_session_summary_refreshes_when_changed() {
         .unwrap();
     let fid = create_test_folder(&s, &format!("sum-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+    let session_id = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
 
     // Fresh session → summary NULL → the write persists (1 row).
     let n1 =
@@ -1277,8 +1468,8 @@ async fn get_workspace_repos_excludes_subfolder_tree() {
 }
 
 #[tokio::test]
-async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
-    // D5a: upsert_subfolder_kind relabels between the two STRUCTURAL kinds
+async fn upsert_subfolder_relabels_structural_but_preserves_root() {
+    // D5a: upsert_subfolder relabels between the two STRUCTURAL kinds
     // (folder ↔ workspace_member) on conflict, but NEVER reclassifies a path
     // that is actually a nested workspace ROOT (git/standalone/subtree).
     let s = pg_store().await;
@@ -1301,15 +1492,42 @@ async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
 
     // A plain structural folder → relabel to workspace_member on re-upsert.
     let a = format!("/_test/sfk-a-{}", uuid::Uuid::new_v4());
-    s.upsert_subfolder(&rid, "a", "a", &a, None).await.unwrap();
+    s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+        root_id: &rid,
+        kind: "folder",
+        name: "a",
+        path: "a",
+        abs_path: &a,
+        parent_id: None,
+    })
+    .await
+    .unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "folder", "first upsert is a plain folder");
-    s.upsert_subfolder_kind(&rid, "module", "a", "a", &a, None).await.unwrap();
+    s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+        root_id: &rid,
+        kind: "module",
+        name: "a",
+        path: "a",
+        abs_path: &a,
+        parent_id: None,
+    })
+    .await
+    .unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "module", "relabelled folder → workspace_member");
 
     // A nested workspace root (subtree) must NOT be reclassified by a member upsert.
     let b = format!("/_test/sfk-b-{}", uuid::Uuid::new_v4());
     s.upsert_repo_kind(&rid, "subtree", "b", &b).await.unwrap();
-    s.upsert_subfolder_kind(&rid, "module", "b", "b", &b, None).await.unwrap();
+    s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+        root_id: &rid,
+        kind: "module",
+        name: "b",
+        path: "b",
+        abs_path: &b,
+        parent_id: None,
+    })
+    .await
+    .unwrap();
     assert_eq!(
         kind_at(&s, b.clone()).await,
         "subtree",
@@ -1335,7 +1553,15 @@ async fn workspaces_with_session_activity_reports_the_workspace() {
         .unwrap();
     let fid = create_test_folder(&s, &format!("act-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: &sid,
+        folder_id: &fid,
+        workspace_id: Some(&pid),
+        family: "claude",
+        is_end: true,
+    })
+    .await
+    .unwrap();
 
     let activity = s.get_workspaces_with_session_activity().await.unwrap();
     let row =
@@ -1369,7 +1595,16 @@ async fn workspace_ftr_and_quality_decode_numeric_metrics() {
         .unwrap();
     let fid = create_test_folder(&s, &format!("ftr-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-    let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
+    let session_id = s
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &sid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
     s.update_session_metrics(&SessionMetricsRow {
         session_id: &session_id,
         turns: 3,
@@ -1439,9 +1674,26 @@ async fn workspace_ftr_and_quality_decode_numeric_metrics() {
 #[tokio::test]
 async fn library_upsert_updates() {
     let s = pg_store().await;
-    let id1 = s.upsert_library("_test:react", "npm", Some("18"), None, None, None).await.unwrap();
+    let id1 = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:react",
+            ecosystem: "npm",
+            version: Some("18"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     let id2 = s
-        .upsert_library("_test:react", "npm", Some("19"), Some("UI library"), None, None)
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:react",
+            ecosystem: "npm",
+            version: Some("19"),
+            description: Some("UI library"),
+            source_type: None,
+            base_url: None,
+        })
         .await
         .unwrap();
     assert_eq!(id1, id2);
@@ -1454,8 +1706,28 @@ async fn library_upsert_updates() {
 #[tokio::test]
 async fn library_list() {
     let s = pg_store().await;
-    let id1 = s.upsert_library("_test:lib_a", "npm", None, None, None, None).await.unwrap();
-    let id2 = s.upsert_library("_test:lib_b", "cargo", None, None, None, None).await.unwrap();
+    let id1 = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:lib_a",
+            ecosystem: "npm",
+            version: None,
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
+    let id2 = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:lib_b",
+            ecosystem: "cargo",
+            version: None,
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     let all = s.list_libraries().await.unwrap();
     assert!(all.iter().any(|l| l["name"] == "_test:lib_a"));
     assert!(all.iter().any(|l| l["name"] == "_test:lib_b"));
@@ -1466,7 +1738,69 @@ async fn library_list() {
 #[tokio::test]
 async fn library_delete() {
     let s = pg_store().await;
-    let id = s.upsert_library("_test:deleteme", "npm", None, None, None, None).await.unwrap();
+    let id = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:deleteme",
+            ecosystem: "npm",
+            version: None,
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     s.delete_library(&id).await.unwrap();
     assert!(s.get_library(&id).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_session_active_in_the_window_counts_however_long_ago_it_started() {
+    // A session that started ten days ago and is still going is part of this
+    // week. Keying "the last 7 days" on the start hid the one long session that
+    // held a whole week's work.
+    let s = pg_store().await;
+    let pid = s
+        .create_workspace(&format!("_test:window-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
+    let fid = create_test_folder(&s, "window-sess").await;
+    let mut ids = Vec::new();
+    for last_active in ["1 hour", "10 days"] {
+        let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let id = s
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &sid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: false,
+            })
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET started_at = now() - interval '10 days', \
+                 completed_at = now() - $2::interval WHERE id = $1",
+        )
+        .bind(id)
+        .bind(last_active)
+        .execute(s.pool())
+        .await
+        .unwrap();
+        ids.push(id.to_string());
+    }
+    let ongoing = &ids[0];
+
+    let week = s.list_all_sessions(500, Some(7), Some(&pid)).await.unwrap();
+    let listed: Vec<&str> = week.iter().filter_map(|r| r["id"].as_str()).collect();
+    assert_eq!(listed, vec![ongoing.as_str()], "only the session active this week");
+
+    let all = s.list_workspaces_under(None).await.unwrap();
+    let ws = all.iter().find(|w| w["id"] == serde_json::json!(pid)).unwrap();
+    assert_eq!(ws["sessions7d"].as_i64(), Some(1), "the ongoing session counts this week");
+    let last =
+        chrono::DateTime::parse_from_rfc3339(ws["last_session_at"].as_str().unwrap()).unwrap();
+    assert!(
+        chrono::Utc::now().signed_duration_since(last) < chrono::Duration::days(1),
+        "last_session_at is the last activity, not the start ten days ago: {last}"
+    );
 }

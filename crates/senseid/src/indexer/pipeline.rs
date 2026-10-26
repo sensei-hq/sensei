@@ -219,7 +219,18 @@ async fn write_one_repo(
         }
     };
 
-    let folder_id = match pg.upsert_folder(root_id, "git", &name, &abs, &abs, None, None).await {
+    let folder_id = match pg
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id,
+            kind: "git",
+            name: &name,
+            path: &abs,
+            abs_path: &abs,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
+    {
         Ok(id) => id,
         Err(e) => {
             out.errors.push(format!("upsert_folder(root): {e}"));
@@ -463,13 +474,13 @@ pub(crate) async fn apply_manifest(pg: &PgStore, job: ManifestJob<'_>) -> Manife
                 continue; // the table's CHECK forbids a self-edge
             }
             if let Err(e) = pg
-                .upsert_folder_dependency(
-                    &job.folder_id,
-                    &to_id,
-                    protocol,
-                    &dep.source,
-                    Some(target),
-                )
+                .upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+                    from_folder_id: &job.folder_id,
+                    to_folder_id: &to_id,
+                    source_protocol: protocol,
+                    source_manifest: &dep.source,
+                    resolved_target: Some(target),
+                })
                 .await
             {
                 out.errors.push(format!("upsert_folder_dependency({}): {e}", dep.lib_name));
@@ -490,7 +501,14 @@ pub(crate) async fn apply_manifest(pg: &PgStore, job: ManifestJob<'_>) -> Manife
         }
         let version = scan_repo::resolve_pin(&pins, &dep.lib_name, &dep.version);
         let lib_id = match pg
-            .upsert_library(&dep.lib_name, job.ecosystem, Some(&version), None, None, None)
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &dep.lib_name,
+                ecosystem: job.ecosystem,
+                version: Some(&version),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
             .await
         {
             Ok(id) => id,
@@ -607,7 +625,14 @@ async fn ingest_library(
             a.parse_manifest(&content).version.or_else(|| workspace_inherited_version(&content))
         });
     let library_id = match pg
-        .upsert_library(&m.library, ecosystem, own_version.as_deref(), None, None, None)
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &m.library,
+            ecosystem,
+            version: own_version.as_deref(),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
         .await
     {
         Ok(id) => id,
@@ -740,19 +765,19 @@ async fn write_structure(
         // workspace root is ever detected.
         let ws_root = f.workspace_root.as_ref().and_then(|w| ids.get(w.as_path())).copied();
         let id = pg
-            .upsert_folder(
+            .upsert_folder(&crate::db::pg_store::FolderRow {
                 root_id,
-                f.kind,
-                &name,
-                &rel.to_string_lossy(),
-                &f.abs_path.to_string_lossy(),
-                Some(&parent),
-                // No workspace argument: a module belongs to its repo's workspace
+                kind: f.kind,
+                name: &name,
+                path: &rel.to_string_lossy(),
+                abs_path: &f.abs_path.to_string_lossy(),
+                parent_id: Some(&parent),
+                // No repository field: a module belongs to its repo's workspace
                 // because it inherits the repo's REPOSITORY, which the upsert
                 // resolves from the anchor. The membership itself is written
                 // once, against the repository, by `scan_root`.
-                ws_root.as_ref(),
-            )
+                workspace_root_id: ws_root.as_ref(),
+            })
             .await
             .map_err(|e| format!("upsert_folder({}): {e}", rel.display()))?;
         ids.insert(f.abs_path.clone(), id);
@@ -800,9 +825,17 @@ async fn write_structure(
 
         for (rel, _) in &plan.files {
             let Some(f) = current.get(rel) else { continue };
-            pg.upsert_file_row(&folder_id, rel, f.mtime, &f.hash, None)
-                .await
-                .map_err(|e| format!("upsert_file_row({rel}): {e}"))?;
+            pg.upsert_file_row(
+                &crate::db::pg_store::FileFingerprint {
+                    folder_id: &folder_id,
+                    file_path: rel,
+                    mtime: f.mtime,
+                    content_hash: &f.hash,
+                },
+                None,
+            )
+            .await
+            .map_err(|e| format!("upsert_file_row({rel}): {e}"))?;
             out.files += 1;
         }
 
@@ -1270,10 +1303,12 @@ mod parse_task {
         // Stage 3's barrier: the `files` row exists before the parse, which is
         // what lets node persistence fail closed on a missing one (R13).
         pg.upsert_file_row(
-            &folder_id,
-            "src/lib.rs",
-            crate::db::pg_store::folders::BARRIER_MTIME,
-            crate::db::pg_store::folders::BARRIER_HASH,
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &folder_id,
+                file_path: "src/lib.rs",
+                mtime: crate::db::pg_store::folders::BARRIER_MTIME,
+                content_hash: crate::db::pg_store::folders::BARRIER_HASH,
+            },
             None,
         )
         .await
@@ -1645,7 +1680,14 @@ mod corpus {
 
         for (name, eco, owner, repo, tag, site) in libs {
             let lib_id = pg
-                .upsert_library(name, eco, None, None, None, None)
+                .upsert_library(&crate::db::pg_store::LibraryRow {
+                    name,
+                    ecosystem: eco,
+                    version: None,
+                    description: None,
+                    source_type: None,
+                    base_url: None,
+                })
                 .await
                 .unwrap_or_else(|e| panic!("{name}: upsert_library: {e}"));
 

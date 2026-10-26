@@ -159,13 +159,13 @@ async fn push_one(
     }
     let pubresp: dojo_protocol::PublishResponse = resp.json().await.map_err(|e| e.to_string())?;
     let remote_id = uuid::Uuid::parse_str(&pubresp.id).map_err(|e| e.to_string())?;
-    pg.upsert_federated_memory(
-        &src.id,
-        &remote_id,
-        &pr.content_hash,
-        Some(&memory_id),
-        pubresp.seq,
-    )
+    pg.upsert_federated_memory(&crate::db::pg_store::FederatedMemoryRow {
+        source_id: &src.id,
+        remote_rule_id: &remote_id,
+        content_hash: &pr.content_hash,
+        memory_id: Some(&memory_id),
+        remote_seq: pubresp.seq,
+    })
     .await?;
     Ok(())
 }
@@ -254,24 +254,24 @@ async fn apply_pulled_rule(
             } else {
                 RuleOutcome::Linked // content re-sync of already-known rules = follow-up (#55-adjacent)
             };
-            pg.upsert_federated_memory(
-                &src.id,
-                &remote_id,
-                &pulled.rule.content_hash,
-                link.memory_id.as_ref(),
-                pulled.seq,
-            )
+            pg.upsert_federated_memory(&crate::db::pg_store::FederatedMemoryRow {
+                source_id: &src.id,
+                remote_rule_id: &remote_id,
+                content_hash: &pulled.rule.content_hash,
+                memory_id: link.memory_id.as_ref(),
+                remote_seq: pulled.seq,
+            })
             .await?;
             Ok(outcome)
         }
         None if tombstoned => {
-            pg.upsert_federated_memory(
-                &src.id,
-                &remote_id,
-                &pulled.rule.content_hash,
-                None,
-                pulled.seq,
-            )
+            pg.upsert_federated_memory(&crate::db::pg_store::FederatedMemoryRow {
+                source_id: &src.id,
+                remote_rule_id: &remote_id,
+                content_hash: &pulled.rule.content_hash,
+                memory_id: None,
+                remote_seq: pulled.seq,
+            })
             .await?;
             Ok(RuleOutcome::Skipped)
         }
@@ -303,13 +303,13 @@ async fn apply_pulled_rule(
                     feature: None,
                 })
                 .await?;
-            pg.upsert_federated_memory(
-                &src.id,
-                &remote_id,
-                &pulled.rule.content_hash,
-                Some(&mem),
-                pulled.seq,
-            )
+            pg.upsert_federated_memory(&crate::db::pg_store::FederatedMemoryRow {
+                source_id: &src.id,
+                remote_rule_id: &remote_id,
+                content_hash: &pulled.rule.content_hash,
+                memory_id: Some(&mem),
+                remote_seq: pulled.seq,
+            })
             .await?;
             Ok(RuleOutcome::Applied)
         }

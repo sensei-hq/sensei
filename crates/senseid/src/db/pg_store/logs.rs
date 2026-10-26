@@ -69,33 +69,10 @@ fn task_execution_json(r: TaskExecutionRow) -> serde_json::Value {
     })
 }
 
-/// One structured log line as it is stored.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct LogRow<'a> {
-    pub level: &'a str,
-    pub running_on: &'a str,
-    pub module: Option<&'a str>,
-    pub logged_at: &'a str,
-    pub message: &'a str,
-    pub context: &'a serde_json::Value,
-    pub data: &'a Option<serde_json::Value>,
-    pub error: &'a Option<serde_json::Value>,
-}
-
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
-    pub async fn log_index_error(
-        &self,
-        folder_id: &uuid::Uuid,
-        file_path: &str,
-        error: &str,
-        adapter: Option<&str>,
-        phase: Option<&str>,
-    ) -> Result<(), String> {
+    pub async fn log_index_error(&self, index_error: &IndexErrorRow<'_>) -> Result<(), String> {
+        let &IndexErrorRow { folder_id, file_path, error, adapter, phase } = index_error;
         sqlx_core::query::query(
             "INSERT INTO sensei.index_errors(folder_id, file_path, error, adapter, phase) VALUES($1, $2, $3, $4, $5)"
         )
@@ -436,14 +413,8 @@ impl PgStore {
     /// - `module`  → exact match on the indexed `module` column
     ///   (finer source: scanner / watcher / analyzer / scheduler / …).
     /// - `since`   → lower bound on the indexed `logged_at` timestamp.
-    pub async fn query_logs(
-        &self,
-        level: Option<&str>,
-        source: Option<&str>,
-        module: Option<&str>,
-        since: Option<chrono::DateTime<chrono::Utc>>,
-        limit: i64,
-    ) -> Result<Vec<serde_json::Value>, String> {
+    pub async fn query_logs(&self, q: &LogQuery<'_>) -> Result<Vec<serde_json::Value>, String> {
+        let &LogQuery { level, source, module, since, limit } = q;
         type LogRow = (
             uuid::Uuid,
             String,
@@ -499,13 +470,16 @@ impl PgStore {
     /// so bounded retries (D6c) are observable on the logs/health screen.
     pub async fn start_task_execution(
         &self,
-        task_id: i64,
-        parent_task_id: Option<i64>,
-        task_kind: &str,
-        folder_path: &str,
-        path: &str,
-        retry_number: i32,
+        start: &TaskExecutionStart<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &TaskExecutionStart {
+            task_id,
+            parent_task_id,
+            task_kind,
+            folder_path,
+            path,
+            retry_number,
+        } = start;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, retry_number)
              VALUES($1, $2, $3::sensei.task_execution_kind, $4, $5, 'running', $6) RETURNING id"

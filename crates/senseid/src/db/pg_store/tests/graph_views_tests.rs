@@ -203,7 +203,9 @@ async fn graph_nodes_makes_dependency_counting_a_query() {
         .await
         .unwrap();
     for t in [lib_a, lib_b, stub] {
-        s.insert_edge(&fid, &caller, Some(&t), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &caller, crate::db::pg_store::EdgeTarget::Node(&t), "calls")
+            .await
+            .unwrap();
     }
 
     let (deps, stubs): (i64, i64) = sqlx_core::query_as::query_as(
@@ -391,7 +393,7 @@ async fn re_detect_preserves_the_model_authored_description() {
         .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
-    s.insert_edge(&fid, &n1, Some(&n2), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &n1, crate::db::pg_store::EdgeTarget::Node(&n2), "calls").await.unwrap();
 
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
@@ -443,7 +445,7 @@ async fn re_detect_discards_a_description_whose_cluster_changed() {
         .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
-    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
     sqlx_core::query::query(
@@ -467,7 +469,9 @@ async fn re_detect_discards_a_description_whose_cluster_changed() {
         .await
         .unwrap();
     for src in [a, b, d] {
-        s.insert_edge(&fid, &src, Some(&c), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &src, crate::db::pg_store::EdgeTarget::Node(&c), "calls")
+            .await
+            .unwrap();
     }
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 

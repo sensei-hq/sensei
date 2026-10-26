@@ -1,63 +1,11 @@
 use super::*;
 
-/// The measured outcome of one session, written when it closes.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct SessionMetricsRow<'a> {
-    pub session_id: &'a uuid::Uuid,
-    pub turns: i32,
-    pub corrections: i32,
-    pub outcome: &'a str,
-    pub ftr: bool,
-    /// Active time and its R12 split; `None` writes NULL (no hook events).
-    pub duration_ms: Option<i64>,
-    pub claude_ms: Option<i64>,
-    pub user_ms: Option<i64>,
-    pub module: Option<&'a str>,
-    pub tool_usage: &'a serde_json::Value,
-}
-
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct HookEventRow<'a> {
-    pub session_id: &'a str,
-    pub assistant_family: &'a str,
-    pub event_type: &'a str,
-    pub tool_name: Option<&'a str>,
-    pub cwd: Option<&'a str>,
-    pub ts: i64,
-    pub success: Option<bool>,
-    pub payload: &'a serde_json::Value,
-}
-
-/// How a session ended, written once at completion.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct SessionOutcomeRow<'a> {
-    pub id: &'a uuid::Uuid,
-    pub outcome: &'a str,
-    pub ftr: bool,
-    pub turns: i32,
-    pub corrections: i32,
-    pub summary: Option<&'a str>,
-    pub tokens_in: Option<i64>,
-    pub tokens_out: Option<i64>,
-}
-
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// List all sessions across all folders.
-    /// List recent sessions, newest first. `range_days` (when `Some`) filters to
-    /// sessions started within the last N days — powers the Observatory · Sessions
+    /// List recent sessions, most recently active first. `range_days` (when `Some`)
+    /// filters to sessions ACTIVE within the last N days — a session that started
+    /// earlier and is still going belongs to this week — powers the Observatory · Sessions
     /// digest range chips (7d/30d/90d); `None` = no time filter. `workspace` (when
     /// `Some`) scopes to one workspace. `agent` (the acp harness, e.g. "claude" /
     /// "zed") lets the digest label each row's assistant.
@@ -98,9 +46,9 @@ impl PgStore {
                     s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
              FROM activity.sessions s
              LEFT JOIN sensei.workspaces p ON p.id = s.workspace_id
-             WHERE ($2::int IS NULL OR s.started_at >= now() - make_interval(days => $2::int))
+             WHERE ($2::int IS NULL OR coalesce(s.completed_at, s.started_at) >= now() - make_interval(days => $2::int))
                AND ($3::uuid IS NULL OR s.workspace_id = $3)
-             ORDER BY s.started_at DESC LIMIT $1"
+             ORDER BY coalesce(s.completed_at, s.started_at) DESC LIMIT $1"
         ).bind(limit).bind(range_days).bind(workspace).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
@@ -148,15 +96,9 @@ impl PgStore {
 
     // ── Extensions ────────────────────────────────────────────────────
 
-    pub async fn create_snapshot(
-        &self,
-        session_id: &uuid::Uuid,
-        folder_id: &uuid::Uuid,
-        kind: &str,
-        progress: &str,
-        next_step: Option<&str>,
-        completed_steps: &[String],
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn create_snapshot(&self, snap: &SnapshotRow<'_>) -> Result<uuid::Uuid, String> {
+        let &SnapshotRow { session_id, folder_id, kind, progress, next_step, completed_steps } =
+            snap;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.snapshots(session_id, folder_id, kind, progress_summary, next_step_hint, completed_steps) VALUES($1, $2, $3::sensei.snapshot_kind, $4, $5, $6) RETURNING id"
         ).bind(session_id).bind(folder_id).bind(kind).bind(progress).bind(next_step).bind(completed_steps)
@@ -231,12 +173,9 @@ impl PgStore {
     /// client_session_id so every hook event of a session folds into one row (#31).
     pub async fn record_session_event(
         &self,
-        client_session_id: &str,
-        folder_id: &uuid::Uuid,
-        workspace_id: Option<&uuid::Uuid>,
-        family: &str,
-        is_end: bool,
+        event: &SessionEventRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &SessionEventRow { client_session_id, folder_id, workspace_id, family, is_end } = event;
         // Derive the durable repo anchor from folder_id in the SAME write (spec 2026-08-18):
         // repo_anchor_for walks folder_id's abs_path up to its owning repo, so the session
         // attaches to a repo (repo_folder_id + repo_key) no matter which subfolder the cwd
@@ -386,7 +325,6 @@ impl PgStore {
     /// "curl timed out after the insert succeeded" race. Dedup is on the payload
     /// (identical on both the live POST and the fallback line) so it holds even
     /// though the two paths stamp `ts` independently.
-    #[allow(clippy::too_many_arguments)]
     pub async fn insert_hook_event_if_absent(
         &self,
         row: &HookEventRow<'_>,
@@ -1246,7 +1184,13 @@ impl PgStore {
                 continue; // no cwd resolves (no folder, no alias) — leave orphaned
             };
             if self
-                .record_session_event(&session_id, &folder_id, workspace_id.as_ref(), &family, true)
+                .record_session_event(&crate::db::pg_store::SessionEventRow {
+                    client_session_id: &session_id,
+                    folder_id: &folder_id,
+                    workspace_id: workspace_id.as_ref(),
+                    family: &family,
+                    is_end: true,
+                })
                 .await
                 .is_ok()
             {
@@ -1329,7 +1273,13 @@ impl PgStore {
                 continue; // unresolvable — leave it rather than misattribute
             };
             if self
-                .record_session_event(&session_id, &folder_id, workspace_id.as_ref(), &family, true)
+                .record_session_event(&crate::db::pg_store::SessionEventRow {
+                    client_session_id: &session_id,
+                    folder_id: &folder_id,
+                    workspace_id: workspace_id.as_ref(),
+                    family: &family,
+                    is_end: true,
+                })
                 .await
                 .is_ok()
             {
@@ -1420,12 +1370,9 @@ impl PgStore {
     pub async fn set_session_metadata(
         &self,
         client_session_id: &str,
-        provider: Option<&str>,
-        model: Option<&str>,
-        tokens_in: Option<i64>,
-        tokens_out: Option<i64>,
-        split: Option<&crate::transcript::SessionTokens>,
+        patch: &SessionMetadataPatch<'_>,
     ) -> Result<(), String> {
+        let &SessionMetadataPatch { provider, model, tokens_in, tokens_out, split } = patch;
         // COALESCE throughout: a source that reports no split must not erase what
         // another pass captured, and `tokens_in` keeps its "all input" meaning.
         sqlx_core::query::query(

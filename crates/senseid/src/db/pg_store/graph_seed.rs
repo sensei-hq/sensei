@@ -41,7 +41,16 @@ pub(crate) use super::folders::BARRIER_MTIME;
 /// hashes to decide "unchanged", so a random value would make every fixture look
 /// dirty on a re-seed).
 async fn seed_file(pg: &PgStore, folder_id: &uuid::Uuid, file_path: &str) -> Result<(), String> {
-    pg.upsert_file_row(folder_id, file_path, BARRIER_MTIME, file_path, None).await?;
+    pg.upsert_file_row(
+        &crate::db::pg_store::FileFingerprint {
+            folder_id,
+            file_path,
+            mtime: BARRIER_MTIME,
+            content_hash: file_path,
+        },
+        None,
+    )
+    .await?;
     Ok(())
 }
 
@@ -119,7 +128,15 @@ impl SeedGraph for PgStore {
         if let Some(d) = def.as_ref() {
             seed_file(self, folder_id, d.file_path).await?;
         }
-        self.upsert_node_by_fqn(folder_id, fqn, kind, name, language, def).await
+        self.upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+            folder_id,
+            fqn,
+            kind,
+            name,
+            language,
+            def,
+        })
+        .await
     }
 
     async fn seed_only_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<(), String> {

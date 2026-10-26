@@ -68,6 +68,7 @@ const KEY_TOKENS_PER_DAY: &str = "tokens_per_day";
 const KEY_TOKENS_IN: &str = "tokens_in_per_day";
 const KEY_TOKENS_OUT: &str = "tokens_out_per_day";
 const KEY_TOKENS_FRESH: &str = "tokens_fresh_per_day";
+const KEY_CACHE_READ: &str = "cache_read_per_day";
 const KEY_SESSION_DURATION: &str = "session_duration";
 const KEY_TOKENS_PER_RESULT: &str = "tokens_per_result";
 const KEY_INCOMPLETE_ANALYSIS: &str = "incomplete_analysis_rate";
@@ -119,6 +120,7 @@ pub(super) async fn compute(
     let tokens_in_id = ids.get(KEY_TOKENS_IN).copied();
     let tokens_out_id = ids.get(KEY_TOKENS_OUT).copied();
     let tokens_fresh_id = ids.get(KEY_TOKENS_FRESH).copied();
+    let cache_read_id = ids.get(KEY_CACHE_READ).copied();
     let duration_id = ids.get(KEY_SESSION_DURATION).copied();
     let tokens_result_id = ids.get(KEY_TOKENS_PER_RESULT).copied();
     let incomplete_id = ids.get(KEY_INCOMPLETE_ANALYSIS).copied();
@@ -260,21 +262,35 @@ pub(super) async fn compute(
         }
     }
 
-    // Per-repository daily token volume: tokens_per_day (in+out), tokens_in_per_day,
-    // tokens_out_per_day and tokens_fresh_per_day — count-type, so value IS the daily
-    // sum (the pooling view sums across repositories). Base = sessions carrying token
-    // usage. A day whose sessions do not all carry `tokens_fresh` has no fresh row.
-    if [tokens_day_id, tokens_in_id, tokens_out_id, tokens_fresh_id].iter().any(Option::is_some) {
+    // Per-repository daily token volume — count-type, so value IS the daily sum (the
+    // pooling view sums across repositories). Base = sessions carrying token usage.
+    //
+    // tokens_per_day is fresh input + cache writes + output: what was READ fresh,
+    // WRITTEN to cache and GENERATED. Cache READS are counted on their own
+    // (cache_read_per_day), never as tokens (user, 2026-10-26): summed in, they are
+    // nearly all of a long session's volume and inflate any cost read off it. A day
+    // whose sessions do not all carry the cache split has no total and no cache row
+    // — the reads cannot be left out of it — as it has no fresh row.
+    if [tokens_day_id, tokens_in_id, tokens_out_id, tokens_fresh_id, cache_read_id]
+        .iter()
+        .any(Option::is_some)
+    {
         for t in pg.session_outcomes_token_volume_by_day(&workspace_id, window_days, as_of).await? {
             let props = serde_json::json!({
                 "sessions": t.sessions, "tokens_in": t.sum_in, "tokens_out": t.sum_out,
-                "tokens_fresh": t.sum_fresh,
+                "tokens_fresh": t.sum_fresh, "cache_write": t.sum_cache_write,
+                "cache_read": t.sum_cache_read,
             });
+            let tokens = match (t.sum_fresh, t.sum_cache_write) {
+                (Some(fresh), Some(write)) => Some(fresh + write + t.sum_out),
+                _ => None,
+            };
             let values = [
-                (tokens_day_id, Some(t.sum_in + t.sum_out)),
+                (tokens_day_id, tokens),
                 (tokens_in_id, Some(t.sum_in)),
                 (tokens_out_id, Some(t.sum_out)),
                 (tokens_fresh_id, t.sum_fresh),
+                (cache_read_id, t.sum_cache_read),
             ];
             for (mid, value) in values {
                 let (Some(mid), Some(value)) = (mid, value) else { continue };
@@ -1023,6 +1039,12 @@ mod tests {
             !daily.iter().any(|r| r.0 == "tokens_fresh_per_day"),
             "no fresh row from a partial day: {daily:?}"
         );
+        // Nor a token total: without the cache split, cache reads cannot be left
+        // out, and a total with them in is the inflated figure this replaces.
+        assert!(
+            !daily.iter().any(|r| r.0 == "tokens_per_day" || r.0 == "cache_read_per_day"),
+            "no token total from a partial day: {daily:?}"
+        );
         cleanup_metrics_fixture(pg, &pid, Some(&fid), &[]).await;
     }
 
@@ -1035,28 +1057,37 @@ mod tests {
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) = seed_metrics_workspace_folder(pg, &uniq).await;
         let ts = chrono::Utc::now() - chrono::Duration::hours(2);
-        // Two completed sessions: (in=100 of which 10 fresh, out=20, 60s) +
-        // (in=300 of which 30 fresh, out=80, 120s).
+        // Two completed sessions, input split as the capture records it
+        // (in = fresh + cache write + cache read):
+        //   (in=100 = 10 + 20 + 70, out=20, 60s) + (in=300 = 30 + 50 + 220, out=80, 120s).
         let s1 = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
         let s2 = seed_metrics_session(pg, &fid, &pid, Some("completed"), Some(true), 0, ts).await;
-        for (sid, tin, fresh, tout, secs) in
-            [(s1, 100i32, 10i32, 20i32, 60.0f64), (s2, 300, 30, 80, 120.0)]
+        for (sid, tin, fresh, write, read, tout, secs) in
+            [(s1, 100i32, 10i32, 20i32, 70i32, 20i32, 60.0f64), (s2, 300, 30, 50, 220, 80, 120.0)]
         {
             sqlx_core::query::query(
-                "UPDATE activity.sessions SET tokens_in=$2, tokens_fresh=$3, tokens_out=$4, duration=make_interval(secs => $5) WHERE id=$1",
+                "UPDATE activity.sessions SET tokens_in=$2, tokens_fresh=$3, cache_write=$4, cache_read=$5, \
+                 tokens_out=$6, duration=make_interval(secs => $7) WHERE id=$1",
             )
-            .bind(sid).bind(tin).bind(fresh).bind(tout).bind(secs)
+            .bind(sid).bind(tin).bind(fresh).bind(write).bind(read).bind(tout).bind(secs)
             .execute(pg.pool()).await.unwrap();
         }
 
         compute(&ctx, &pid.to_string(), None).await.unwrap();
         let daily = daily_rows(pg, &pid).await;
 
+        // Tokens are what the model was charged to READ fresh, WRITE to cache and
+        // GENERATE; cache reads are counted on their own (user, 2026-10-26) —
+        // summed in, they made a month read 17.7B and inflated any cost read off it.
         let tpd = daily.iter().find(|r| r.0 == "tokens_per_day").expect("tokens_per_day row");
         assert!(
-            (tpd.1 - 500.0).abs() < 1e-9,
-            "tokens_per_day = (100+20)+(300+80) = 500 (summed across sessions)"
+            (tpd.1 - 210.0).abs() < 1e-9,
+            "tokens_per_day = (10+20+20)+(30+50+80) = 210, no cache reads: {}",
+            tpd.1
         );
+        let reads =
+            daily.iter().find(|r| r.0 == "cache_read_per_day").expect("cache_read_per_day row");
+        assert!((reads.1 - 290.0).abs() < 1e-9, "cache_read_per_day = 70+220");
         let tin = daily.iter().find(|r| r.0 == "tokens_in_per_day").expect("tokens_in_per_day row");
         assert!((tin.1 - 400.0).abs() < 1e-9, "tokens_in_per_day = 100+300");
         // #177: the fresh (uncached) input is the part that tracks cost.

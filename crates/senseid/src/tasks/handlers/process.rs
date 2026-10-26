@@ -111,10 +111,12 @@ pub async fn reconcile_repo_identity(
             .pg()
             .set_workspace_identity(
                 &pid,
-                fm.summary.as_deref(),
-                fm.client.as_deref(),
-                &id_stack,
-                &tags,
+                &crate::db::pg_store::WorkspaceIdentity {
+                    description: fm.summary.as_deref(),
+                    client: fm.client.as_deref(),
+                    stack: &id_stack,
+                    tags: &tags,
+                },
             )
             .await
         {
@@ -240,7 +242,14 @@ pub async fn reconcile_repo_identity(
             // member but never reclassifies a nested project root.
             match ctx
                 .pg()
-                .upsert_subfolder_kind(&root_id, "module", &name, &rel, &sub_abs, Some(&folder_id))
+                .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                    root_id: &root_id,
+                    kind: "module",
+                    name: &name,
+                    path: &rel,
+                    abs_path: &sub_abs,
+                    parent_id: Some(&folder_id),
+                })
                 .await
             {
                 Ok(sub_id) => {
@@ -249,7 +258,7 @@ pub async fn reconcile_repo_identity(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(sub = %sub_abs, error = %e, "sub-project upsert_subfolder_kind failed")
+                    tracing::warn!(sub = %sub_abs, error = %e, "sub-project upsert_subfolder failed")
                 }
             }
         }
@@ -586,7 +595,15 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         .await?;
         let count = written.map(|w| w.symbols as u32).unwrap_or(0);
         if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath)
-            && let Err(e) = ctx.pg().upsert_scan_state(fid, &rel, mtime, &hash).await
+            && let Err(e) = ctx
+                .pg()
+                .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                    folder_id: fid,
+                    file_path: &rel,
+                    mtime,
+                    content_hash: &hash,
+                })
+                .await
         {
             return fail_folder(ctx, fid, &rel, format!("upsert_scan_state: {e}")).await;
         }
@@ -621,8 +638,16 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             // surface the second failure so an operator can see the DB is unhappy;
             // otherwise the parse-error observability itself becomes silent.
             if let Some(fid) = &folder_id
-                && let Err(log_err) =
-                    ctx.pg().log_index_error(fid, abs_path, &e, Some(ext), Some("parse")).await
+                && let Err(log_err) = ctx
+                    .pg()
+                    .log_index_error(&crate::db::pg_store::IndexErrorRow {
+                        folder_id: fid,
+                        file_path: abs_path,
+                        error: &e,
+                        adapter: Some(ext),
+                        phase: Some("parse"),
+                    })
+                    .await
             {
                 tracing::warn!(error = %log_err, path = %abs_path, "log_index_error failed for parse error");
             }
@@ -636,8 +661,16 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             // rather than vanishing.
             let msg = format!("parser panicked: {join_err}");
             if let Some(fid) = &folder_id
-                && let Err(log_err) =
-                    ctx.pg().log_index_error(fid, abs_path, &msg, Some(ext), Some("parse")).await
+                && let Err(log_err) = ctx
+                    .pg()
+                    .log_index_error(&crate::db::pg_store::IndexErrorRow {
+                        folder_id: fid,
+                        file_path: abs_path,
+                        error: &msg,
+                        adapter: Some(ext),
+                        phase: Some("parse"),
+                    })
+                    .await
             {
                 tracing::warn!(error = %log_err, path = %abs_path, "log_index_error failed for parser panic");
             }
@@ -857,7 +890,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 .copied()
                 .unwrap_or(file_node_id);
             ctx.pg()
-                .insert_edge(&folder_id, &source, None, Some(&call.callee_name), None, "calls")
+                .insert_edge(&folder_id, &source, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(&call.callee_name), file: None }, "calls")
                 .await
                 .map_err(|e| format!("insert_edge (calls): {e}"))?;
         }
@@ -895,19 +928,12 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 match target {
                     Some(t) => ctx
                         .pg()
-                        .insert_edge(&folder_id, &file_node_id, Some(&t), None, None, "references")
+                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Node(&t), "references")
                         .await
                         .map_err(|e| format!("insert_edge (references, file resolved): {e}"))?,
                     None => ctx
                         .pg()
-                        .insert_edge(
-                            &folder_id,
-                            &file_node_id,
-                            None,
-                            Some(file_ref),
-                            None,
-                            "references",
-                        )
+                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(file_ref), file: None }, "references")
                         .await
                         .map_err(|e| format!("insert_edge (references, file): {e}"))?,
                 };
@@ -926,13 +952,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     .map_err(|e| format!("sole_definition_id_by_name({fn_ref}): {e}"))?
                 {
                     ctx.pg()
-                        .insert_edge(&folder_id, &file_node_id, Some(&t), None, None, "references")
+                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Node(&t), "references")
                         .await
                         .map_err(|e| format!("insert_edge (references, symbol resolved): {e}"))?;
                     continue;
                 }
                 ctx.pg()
-                    .insert_edge(&folder_id, &file_node_id, None, Some(fn_ref), None, "references")
+                    .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(fn_ref), file: None }, "references")
                     .await
                     .map_err(|e| format!("insert_edge (references, symbol): {e}"))?;
             }
@@ -978,7 +1004,15 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // so a fatal failure above leaves the `files` row unadvanced and the next scan
     // retries it. A `files` write failure is itself fatal.
     if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath)
-        && let Err(e) = ctx.pg().upsert_scan_state(&folder_id, &result.rel_path, mtime, &hash).await
+        && let Err(e) = ctx
+            .pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &folder_id,
+                file_path: &result.rel_path,
+                mtime,
+                content_hash: &hash,
+            })
+            .await
     {
         return fail_folder(ctx, &folder_id, &result.rel_path, format!("upsert_scan_state: {e}"))
             .await;
@@ -3071,8 +3105,24 @@ mod tests {
                 .await
                 .unwrap();
 
-        ctx.pg().upsert_scan_state(&fid, "a.rs", 111, "hashA").await.unwrap();
-        ctx.pg().upsert_scan_state(&fid, "b.rs", 222, "hashB").await.unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "a.rs",
+                mtime: 111,
+                content_hash: "hashA",
+            })
+            .await
+            .unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "b.rs",
+                mtime: 222,
+                content_hash: "hashB",
+            })
+            .await
+            .unwrap();
         let state = ctx.pg().list_scan_state(&fid).await.unwrap();
         assert_eq!(state.len(), 2, "two fingerprints recorded");
 
@@ -3103,7 +3153,15 @@ mod tests {
         for reason in crate::classifiers::ScanSkipReason::ALL {
             let file = format!("{}.txt", reason.as_db());
             ctx.pg()
-                .upsert_scan_state_skipped(&fid, &file, 1, "h", reason)
+                .upsert_scan_state_skipped(
+                    &crate::db::pg_store::FileFingerprint {
+                        folder_id: &fid,
+                        file_path: &file,
+                        mtime: 1,
+                        content_hash: "h",
+                    },
+                    reason,
+                )
                 .await
                 .unwrap_or_else(|e| panic!("{} is not a scan_skip_reason: {e}", reason.as_db()));
         }
@@ -3136,10 +3194,12 @@ mod tests {
         // Skipped: fingerprint + reason recorded (exercises the ::enum cast).
         ctx.pg()
             .upsert_scan_state_skipped(
-                &fid,
-                "docs/License.txt",
-                111,
-                "hashA",
+                &crate::db::pg_store::FileFingerprint {
+                    folder_id: &fid,
+                    file_path: "docs/License.txt",
+                    mtime: 111,
+                    content_hash: "hashA",
+                },
                 crate::classifiers::ScanSkipReason::InvalidUtf8,
             )
             .await
@@ -3164,7 +3224,15 @@ mod tests {
         );
 
         // User fixes the encoding → the file indexes normally → reason cleared.
-        ctx.pg().upsert_scan_state(&fid, "docs/License.txt", 222, "hashB").await.unwrap();
+        ctx.pg()
+            .upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "docs/License.txt",
+                mtime: 222,
+                content_hash: "hashB",
+            })
+            .await
+            .unwrap();
         let cleared: Option<String> = sqlx_core::query_scalar::query_scalar(
             "SELECT skip_reason::text FROM sensei.files WHERE folder_id = $1 AND file_path = $2",
         )
@@ -3201,8 +3269,16 @@ mod tests {
             .seed_node(&fid, "function", "funcB", "b.rs", None, None, None, None)
             .await
             .unwrap();
-        let edge =
-            ctx.pg().insert_edge(&fid, &node_b, None, Some("funcA"), None, "calls").await.unwrap();
+        let edge = ctx
+            .pg()
+            .insert_edge(
+                &fid,
+                &node_b,
+                crate::db::pg_store::EdgeTarget::Unresolved { name: Some("funcA"), file: None },
+                "calls",
+            )
+            .await
+            .unwrap();
         ctx.pg().resolve_edge(&edge, &node_a).await.unwrap();
 
         // Re-indexing a.rs un-resolves inbound edges instead of letting the

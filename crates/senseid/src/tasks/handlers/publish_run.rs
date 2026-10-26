@@ -441,22 +441,34 @@ mod tests {
         // Plan phases via cadence events: P1 started+done, P2 started.
         pg.append_run_event(
             &id,
-            RunEventKind::PhaseStarted,
-            Some("P1"),
-            None,
-            &serde_json::json!({}),
+            &crate::db::pg_store::RunEventRow {
+                kind: RunEventKind::PhaseStarted,
+                phase: Some("P1"),
+                feature: None,
+                detail: &serde_json::json!({}),
+            },
         )
         .await
         .unwrap();
-        pg.append_run_event(&id, RunEventKind::PhaseDone, Some("P1"), None, &serde_json::json!({}))
-            .await
-            .unwrap();
         pg.append_run_event(
             &id,
-            RunEventKind::PhaseStarted,
-            Some("P2"),
-            None,
-            &serde_json::json!({}),
+            &crate::db::pg_store::RunEventRow {
+                kind: RunEventKind::PhaseDone,
+                phase: Some("P1"),
+                feature: None,
+                detail: &serde_json::json!({}),
+            },
+        )
+        .await
+        .unwrap();
+        pg.append_run_event(
+            &id,
+            &crate::db::pg_store::RunEventRow {
+                kind: RunEventKind::PhaseStarted,
+                phase: Some("P2"),
+                feature: None,
+                detail: &serde_json::json!({}),
+            },
         )
         .await
         .unwrap();

@@ -34,11 +34,12 @@ describe('NAV_YOU — the personal zone (inbox model)', () => {
 		expect(NAV_YOU[0].items[0].label).toBe('Inbox');
 	});
 
-	it('has the six inbox-model destinations and none of the retired relay sections', () => {
+	it('has the inbox-model destinations and none of the retired relay sections', () => {
 		const ids = NAV_YOU.flatMap((g) => g.items.map((it) => it.id));
 		expect(ids).toEqual([
 			'inbox',
 			'workspaces',
+			'metrics',
 			'rules',
 			'packs',
 			'dojos',

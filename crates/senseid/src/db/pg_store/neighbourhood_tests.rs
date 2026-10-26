@@ -7,6 +7,7 @@
 use super::graph_seed::SeedGraph;
 use super::*;
 use crate::analysis::neighbourhood::{Call, Side};
+use crate::db::pg_store::{EdgeRow, EdgeTarget};
 
 struct Corpus {
     workspace: uuid::Uuid,
@@ -82,15 +83,13 @@ async fn seed(pg: &PgStore) -> Corpus {
     let foreign_caller = node(theirs, format!("rust·t{tag}·m·foreign"), "foreign", 1).await;
 
     let call = |folder, source, target: Option<uuid::Uuid>, name: Option<&'static str>, n| async move {
-        pg.insert_edge_with_props(
-            &folder,
-            &source,
-            target.as_ref(),
-            name,
-            None,
-            "calls",
-            &sites(n),
-        )
+        pg.insert_edge_with_props(&EdgeRow {
+            folder_id: &folder,
+            source_id: &source,
+            target: EdgeTarget::from_parts(target.as_ref(), name, None),
+            kind: "calls",
+            props: &sites(n),
+        })
         .await
         .unwrap();
     };
@@ -104,9 +103,15 @@ async fn seed(pg: &PgStore) -> Corpus {
     // Unplaced: one the focus makes, and one that NAMES the focus. Plus a
     // `plumbing` call, which is a verdict rather than a gap and must not count.
     let miss = |source, name: &'static str, reason: &'static str| async move {
-        pg.insert_edge_with_props(&mine, &source, None, Some(name), None, "calls", &missed(reason))
-            .await
-            .unwrap();
+        pg.insert_edge_with_props(&EdgeRow {
+            folder_id: &mine,
+            source_id: &source,
+            target: EdgeTarget::Unresolved { name: Some(name), file: None },
+            kind: "calls",
+            props: &missed(reason),
+        })
+        .await
+        .unwrap();
     };
     miss(focus, "mystery", "receiver_type_unknown").await;
     miss(focus, "elsewhere", "no_import_in_scope").await;

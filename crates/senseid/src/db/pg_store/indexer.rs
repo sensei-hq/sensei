@@ -201,13 +201,13 @@ impl PgStore {
         }
 
         let id = self
-            .upsert_node_by_fqn(
+            .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
                 folder_id,
                 fqn,
                 kind,
                 name,
-                language.as_deref(),
-                Some(FqnDef {
+                language: language.as_deref(),
+                def: Some(FqnDef {
                     file_path,
                     signature: None,
                     line_start: *line_start,
@@ -215,7 +215,7 @@ impl PgStore {
                     is_exported: *is_exported,
                     parent_id,
                 }),
-            )
+            })
             .await?;
 
         // `||` MERGES, the `set_node_props` idiom: props another writer owns

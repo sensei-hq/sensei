@@ -85,8 +85,18 @@ mod tests {
             std::fs::create_dir_all(dir.join(".git")).unwrap();
         }
         let abs_path = dir.to_string_lossy().to_string();
-        let fid =
-            pg.upsert_folder(root_id, "git", name, name, &abs_path, None, None).await.unwrap();
+        let fid = pg
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id,
+                kind: "git",
+                name,
+                path: name,
+                abs_path: &abs_path,
+                parent_id: None,
+                workspace_root_id: None,
+            })
+            .await
+            .unwrap();
         sqlx_core::query::query(
             "UPDATE sensei.folders SET status = $2::sensei.folder_status WHERE id = $1",
         )

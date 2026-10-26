@@ -96,14 +96,14 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // Record execution start in task_executions (fire-and-forget on failure)
     let exec_id = match ctx
         .pg()
-        .start_task_execution(
-            task.id as i64,
-            task.parent_task_id.map(|id| id as i64),
-            &task.kind.to_string(),
-            &task.folder_path,
-            &task.path,
-            task.retry_number as i32,
-        )
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: task.id as i64,
+            parent_task_id: task.parent_task_id.map(|id| id as i64),
+            task_kind: &task.kind.to_string(),
+            folder_path: &task.folder_path,
+            path: &task.path,
+            retry_number: task.retry_number as i32,
+        })
         .await
     {
         Ok(id) => Some(id),

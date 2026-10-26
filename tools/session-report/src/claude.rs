@@ -61,7 +61,6 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
     let mut cwd: Option<String> = None;
     let mut totals = Totals::default();
     let (mut input, mut output, mut cache_r, mut cache_w, mut thinking) = (0i64, 0, 0, 0, 0);
-    let mut event_count = 0usize;
     let mut last_assistant_ms: Option<i64> = None;
 
     for line in text.lines() {
@@ -73,7 +72,6 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             skipped += 1;
             continue;
         };
-        event_count += 1;
         let at = ms(v["timestamp"].as_str());
         if let Some(t) = at {
             first_ms.get_or_insert(t);
@@ -131,12 +129,13 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
                 if let Some(t) = at {
                     // A prompt also CLOSES the previous turn: the turn ran from
                     // the last prompt to the assistant's final message before
-                    // this one.
+                    // this one. A turn nobody answered has no end.
                     if let Some(cur) = turns.last_mut()
                         && cur.ended_ms.is_none()
                     {
-                        cur.ended_ms = Some(last_assistant_ms.unwrap_or(t));
+                        cur.ended_ms = last_assistant_ms;
                     }
+                    last_assistant_ms = None;
                     turns.push(Turn {
                         id: uuid.clone(),
                         started_ms: t,
@@ -239,7 +238,6 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             totals,
             models,
             permission_events: 0,
-            event_count,
             activity_ms: activity,
             delegated: 0,
             delegated_models: HashMap::new(),
@@ -281,7 +279,6 @@ fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 fn fold_into(parent: &mut Session, child: Session) {
     parent.turns.extend(child.turns);
     parent.tools.extend(child.tools);
-    parent.event_count += child.event_count;
     parent.activity_ms.extend(child.activity_ms);
     parent.delegated += 1;
     // A sub-agent editing a .ts file is real work in TypeScript, and a sub-agent
@@ -356,4 +353,41 @@ pub fn collect(root: &Path) -> (Vec<Session>, usize) {
     }
     sessions.sort_by_key(|s| s.first_ms);
     (sessions, skipped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session_of(lines: &[String]) -> Session {
+        let dir = std::env::temp_dir().join(format!("sr-claude-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("s.jsonl");
+        std::fs::write(&file, lines.join("\n")).unwrap();
+        let (s, _) = parse_session(&file).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        s
+    }
+
+    fn prompt(sec: u32) -> String {
+        format!(
+            r#"{{"type":"user","timestamp":"2026-10-26T10:00:{sec:02}Z","message":{{"content":"go"}}}}"#
+        )
+    }
+
+    fn reply(sec: u32) -> String {
+        format!(
+            r#"{{"type":"assistant","timestamp":"2026-10-26T10:00:{sec:02}Z","message":{{"model":"m","content":[]}}}}"#
+        )
+    }
+
+    #[test]
+    fn a_turn_with_no_reply_has_no_end() {
+        // Turn 2 and turn 4 were never answered. The previous turn's last reply
+        // is not their end, and neither is the next prompt.
+        let s = session_of(&[prompt(0), reply(10), prompt(20), prompt(30), reply(40), prompt(50)]);
+        let ends: Vec<_> = s.turns.iter().map(|t| t.ended_ms).collect();
+        let at = |sec: i64| Some(1_793_008_800_000 + sec * 1000);
+        assert_eq!(ends, vec![at(10), None, at(40), None]);
+    }
 }

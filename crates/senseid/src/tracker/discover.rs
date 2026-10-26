@@ -201,12 +201,21 @@ async fn apply(
     not_found: &[String],
     watermark: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<crate::db::pg_store::trackers::DiscoverCounts, DiscoverError> {
-    pg.apply_discovered(row.id, &row.secret_service, discovered, links, not_found, watermark)
-        .await
-        .map_err(|e| match e {
-            ApplyError::Gone | ApplyError::Superseded => DiscoverError::Gone,
-            ApplyError::Db(e) => DiscoverError::Db(e),
-        })
+    pg.apply_discovered(
+        row.id,
+        &crate::db::pg_store::DiscoveryApply {
+            secret_service: &row.secret_service,
+            discovered,
+            links,
+            not_found,
+            watermark,
+        },
+    )
+    .await
+    .map_err(|e| match e {
+        ApplyError::Gone | ApplyError::Superseded => DiscoverError::Gone,
+        ApplyError::Db(e) => DiscoverError::Db(e),
+    })
 }
 
 /// Ingest hook: queue one discovery per tracker whose candidates include this

@@ -3,56 +3,9 @@
 //! at that boundary — no compile error, no failing test, the value just stops.
 //! A typed row destructured EXHAUSTIVELY makes the same addition a compile error.
 //!
-//! This pins the functions that still take five or more positional parameters.
-//! A new one fails here; a converted one must come off the list. So the list
-//! only shrinks, and nothing reaches eight again.
-
-/// Every `pg_store` function that still takes five or more positional
-/// parameters, as `file::name`. Convert one to a typed row, then delete its line.
-const STILL_POSITIONAL: &[&str] = &[
-    "dojo.rs::outbox_mark_sent",
-    "dojo.rs::outbox_mark_state",
-    "dojo.rs::upsert_federated_memory",
-    "extensions.rs::create_extension",
-    "folders.rs::upsert_file_row",
-    "folders.rs::upsert_folder",
-    "folders.rs::upsert_scan_state_skipped",
-    "folders.rs::upsert_subfolder",
-    "folders.rs::upsert_subfolder_kind",
-    "folders.rs::write_scan_state",
-    "governance.rs::assemble_context",
-    "governance.rs::upsert_stance",
-    "graph.rs::insert_edge",
-    "graph.rs::insert_edge_with_props",
-    "graph.rs::merge_type",
-    "graph.rs::semantic_search_nodes",
-    "graph.rs::upsert_lib_node_by_fqn",
-    "graph.rs::upsert_node_by_fqn",
-    "library.rs::replace_library_capabilities",
-    "library.rs::upsert_folder_dependency",
-    "library.rs::upsert_library",
-    "logs.rs::log_index_error",
-    "logs.rs::query_logs",
-    "logs.rs::start_task_execution",
-    "mcp.rs::upsert_service",
-    "metrics.rs::create_benchmark_report",
-    "patterns.rs::accept_recommendation_as_rule",
-    "patterns.rs::create_recommendation",
-    "patterns.rs::insert_reasoning_trace",
-    "patterns.rs::upsert_narration_cache",
-    "patterns.rs::upsert_pattern",
-    "personas.rs::link_persona_identity",
-    "playbook.rs::playbook_combo_trust",
-    "runs.rs::append_run_event",
-    "sessions.rs::create_snapshot",
-    "sessions.rs::record_session_event",
-    "sessions.rs::set_session_metadata",
-    "trackers.rs::apply_discovered",
-    "trackers.rs::apply_tracker_snapshot",
-    "transcript.rs::set_capture_watermark",
-    "transcript.rs::upsert_transcript_turns",
-    "workspaces.rs::set_workspace_identity",
-];
+//! Every function in `db/pg_store` now takes its fields as a typed row or query
+//! struct. This keeps it so: one that takes five or more positional parameters
+//! fails here.
 
 /// The non-test source files of `db/pg_store`.
 fn store_sources() -> Vec<(String, String)> {
@@ -149,41 +102,17 @@ fn positional_counts(src: &str) -> Vec<(String, usize)> {
     out
 }
 
-fn still_positional() -> Vec<String> {
+#[test]
+fn no_persistence_function_takes_five_positional_parameters() {
     let mut found = Vec::new();
     for (file, src) in store_sources() {
         for (name, n) in positional_counts(&src) {
             if n >= 5 {
-                found.push(format!("{file}::{name}"));
+                found.push(format!("{file}::{name} ({n})"));
             }
         }
     }
-    found.sort();
-    found.dedup();
-    found
-}
-
-#[test]
-fn no_new_persistence_function_takes_five_positional_parameters() {
-    let found = still_positional();
-    let allowed: Vec<String> = STILL_POSITIONAL.iter().map(|s| s.to_string()).collect();
-    let new: Vec<&String> = found.iter().filter(|f| !allowed.contains(f)).collect();
-    let done: Vec<&String> = allowed.iter().filter(|a| !found.contains(a)).collect();
-    assert!(new.is_empty(), "take a typed row instead (#161): {new:#?}");
-    assert!(done.is_empty(), "converted — delete from STILL_POSITIONAL: {done:#?}");
-}
-
-#[test]
-fn no_persistence_function_takes_eight_positional_parameters() {
-    let mut eight = Vec::new();
-    for (file, src) in store_sources() {
-        for (name, n) in positional_counts(&src) {
-            if n >= 8 {
-                eight.push(format!("{file}::{name} ({n})"));
-            }
-        }
-    }
-    assert!(eight.is_empty(), "take a typed row (#161): {eight:#?}");
+    assert!(found.is_empty(), "take a typed row or query struct instead (#161): {found:#?}");
 }
 
 #[test]
@@ -445,4 +374,869 @@ async fn a_workflow_state_patch_lands_field_for_field() {
         got,
         (want("build"), want("plan.md"), want("task"), Some(161), want("ckpt"), want("rh"))
     );
+}
+
+#[tokio::test]
+async fn an_edge_row_lands_on_its_target_columns() {
+    use crate::db::pg_store::NodeRow;
+    use crate::db::pg_store::{EdgeRow, EdgeTarget};
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161e", "t161e", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161e", "/_t161e/repo").await.unwrap();
+    s.upsert_file_row(
+        &crate::db::pg_store::FileFingerprint {
+            folder_id: &folder,
+            file_path: "a.rs",
+            mtime: 0,
+            content_hash: "h",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    let node = |name: &'static str| NodeRow {
+        folder_id: &folder,
+        kind: "function",
+        name,
+        file_path: "a.rs",
+        parent_id: None,
+        signature: None,
+        line_start: Some(1),
+        line_end: Some(2),
+        is_exported: false,
+    };
+    let (src, dst) =
+        (s.upsert_node(&node("src")).await.unwrap(), s.upsert_node(&node("dst")).await.unwrap());
+    let props = serde_json::json!({ "k": "v" });
+    type Edge = (Option<uuid::Uuid>, Option<String>, Option<String>, String, serde_json::Value);
+    let read = async |id: uuid::Uuid| -> Edge {
+        sqlx_core::query_as::query_as(
+            "SELECT target_id, target_name, target_file, kind::text, props FROM sensei.edges WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(s.pool())
+        .await
+        .unwrap()
+    };
+
+    let resolved = s
+        .insert_edge_with_props(&EdgeRow {
+            folder_id: &folder,
+            source_id: &src,
+            target: EdgeTarget::Node(&dst),
+            kind: "calls",
+            props: &props,
+        })
+        .await
+        .unwrap();
+    assert_eq!(read(resolved).await, (Some(dst), None, None, "calls".into(), props.clone()));
+
+    let unresolved = s
+        .insert_edge_with_props(&EdgeRow {
+            folder_id: &folder,
+            source_id: &src,
+            target: EdgeTarget::Unresolved { name: Some("ghost"), file: Some("g.rs") },
+            kind: "calls",
+            props: &props,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        read(unresolved).await,
+        (None, Some("ghost".into()), Some("g.rs".into()), "calls".into(), props)
+    );
+}
+
+#[tokio::test]
+async fn a_folder_row_lands_field_for_field() {
+    use crate::db::pg_store::FolderRow;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161f", "t161f", &serde_json::json!([])).await.unwrap();
+    let parent = s.upsert_repo_kind(&root, "git", "t161f", "/_t161f/repo").await.unwrap();
+    let id = s
+        .upsert_folder(&FolderRow {
+            root_id: &root,
+            kind: "module",
+            name: "fname",
+            path: "fpath",
+            abs_path: "/_t161f/repo/fpath",
+            parent_id: Some(&parent),
+            workspace_root_id: Some(&parent),
+        })
+        .await
+        .unwrap();
+    type Folder =
+        (uuid::Uuid, String, String, String, String, Option<uuid::Uuid>, Option<uuid::Uuid>);
+    let got: Folder = sqlx_core::query_as::query_as(
+        "SELECT root_id, kind::text, name, path, abs_path, parent_id, workspace_root_id
+           FROM sensei.folders WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            root,
+            "module".into(),
+            "fname".into(),
+            "fpath".into(),
+            "/_t161f/repo/fpath".into(),
+            Some(parent),
+            Some(parent)
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_task_execution_start_lands_field_for_field() {
+    use crate::db::pg_store::TaskExecutionStart;
+    let s = super::pg_store().await;
+    let id = s
+        .start_task_execution(&TaskExecutionStart {
+            task_id: 41,
+            parent_task_id: Some(40),
+            task_kind: "process_file",
+            folder_path: "/fp",
+            path: "src/p.rs",
+            retry_number: 2,
+        })
+        .await
+        .unwrap();
+    type Exec = (i64, Option<i64>, String, String, String, String, i32);
+    let got: Exec = sqlx_core::query_as::query_as(
+        "SELECT task_id, parent_task_id, task_kind::text, folder_path, path, status, retry_number
+           FROM activity.task_executions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (41, Some(40), "process_file".into(), "/fp".into(), "src/p.rs".into(), "running".into(), 2)
+    );
+}
+
+#[tokio::test]
+async fn an_extension_row_lands_field_for_field() {
+    use crate::db::pg_store::ExtensionRow;
+    let s = super::pg_store().await;
+    let id = s
+        .create_extension(&ExtensionRow {
+            kind: "agent",
+            name: "ext-161",
+            description: Some("desc"),
+            content: Some("body"),
+            scope: "workspace",
+            source: "marketplace",
+        })
+        .await
+        .unwrap();
+    type Ext = (String, String, Option<String>, Option<String>, String, String);
+    let got: Ext = sqlx_core::query_as::query_as(
+        "SELECT kind::text, name, description, content, scope::text, source::text
+           FROM sensei.extensions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            "agent".into(),
+            "ext-161".into(),
+            Some("desc".into()),
+            Some("body".into()),
+            "workspace".into(),
+            "marketplace".into()
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_transcript_source_lands_on_every_turn() {
+    use crate::db::pg_store::TranscriptSource;
+    let s = super::pg_store().await;
+    let turn = crate::transcript::TranscriptTurn {
+        turn_index: 1,
+        user_text: Some("hi".into()),
+        assistant_text: "hello".into(),
+        started_at: None,
+        attrs: serde_json::json!({}),
+        facts: Default::default(),
+    };
+    s.upsert_transcript_turns(
+        &TranscriptSource {
+            source: "zed",
+            session_id: "sess-161",
+            family: "fam",
+            provider: Some("prov"),
+            model: Some("mdl"),
+        },
+        &[turn],
+    )
+    .await
+    .unwrap();
+    type Turn = (String, String, Option<String>, Option<String>);
+    let got: Turn = sqlx_core::query_as::query_as(
+        "SELECT source, family, provider, model FROM activity.transcript_turns WHERE session_id = 'sess-161'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, ("zed".into(), "fam".into(), Some("prov".into()), Some("mdl".into())));
+}
+
+#[tokio::test]
+async fn a_pattern_row_lands_field_for_field() {
+    use crate::db::pg_store::PatternRow;
+    let s = super::pg_store().await;
+    let ws = s.create_workspace("_t161p", None, None).await.unwrap();
+    let root = s.add_watch_root("/_t161p", "t161p", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161p", "/_t161p/repo").await.unwrap();
+    let instances = serde_json::json!([{ "file": "a.rs" }, { "file": "b.rs" }]);
+    let id = s
+        .upsert_pattern(&PatternRow {
+            workspace_id: &ws,
+            folder_id: Some(&folder),
+            name: "pat-161",
+            is_anti: true,
+            confidence: Some(0.75),
+            instances: &instances,
+        })
+        .await
+        .unwrap();
+    type Pattern =
+        (uuid::Uuid, Option<uuid::Uuid>, String, bool, Option<f64>, i32, serde_json::Value);
+    let got: Pattern = sqlx_core::query_as::query_as(
+        "SELECT workspace_id, folder_id, name, is_anti_pattern, confidence::float8, instance_count, instances
+           FROM inference.detected_patterns WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (ws, Some(folder), "pat-161".into(), true, Some(0.75), 2, instances));
+}
+
+#[tokio::test]
+async fn a_library_row_lands_on_the_library_and_its_release() {
+    use crate::db::pg_store::LibraryRow;
+    let s = super::pg_store().await;
+    let id = s
+        .upsert_library(&LibraryRow {
+            name: "lib-161",
+            ecosystem: "cargo",
+            version: Some("1.2.3"),
+            description: Some("desc"),
+            source_type: Some("llms.txt"),
+            base_url: Some("https://example.test/llms.txt"),
+        })
+        .await
+        .unwrap();
+    let lib: (String, String, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT name, ecosystem::text, description FROM sensei.libraries WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(lib, ("lib-161".into(), "cargo".into(), Some("desc".into())));
+    let release: (Option<String>, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT version, source_type::text, base_url FROM sensei.library_versions WHERE library_id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        release,
+        (
+            Some("1.2.3".into()),
+            Some("llms.txt".into()),
+            Some("https://example.test/llms.txt".into())
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_session_metadata_patch_lands_field_for_field() {
+    use crate::db::pg_store::SessionMetadataPatch;
+    let s = super::pg_store().await;
+    sqlx_core::query::query("INSERT INTO activity.sessions (client_session_id) VALUES ('sm-161')")
+        .execute(s.pool())
+        .await
+        .unwrap();
+    let split = crate::transcript::SessionTokens {
+        input: 11,
+        output: 12,
+        cache_read: Some(13),
+        cache_write: Some(14),
+        reasoning: Some(15),
+        cost: Some(0.5),
+    };
+    s.set_session_metadata(
+        "sm-161",
+        &SessionMetadataPatch {
+            provider: Some("prov"),
+            model: Some("mdl"),
+            tokens_in: Some(100),
+            tokens_out: Some(200),
+            split: Some(&split),
+        },
+    )
+    .await
+    .unwrap();
+    type Meta = (
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+    );
+    let got: Meta = sqlx_core::query_as::query_as(
+        "SELECT provider, model, tokens_in, tokens_out, tokens_fresh, cache_read, cache_write, tokens_reasoning
+           FROM activity.sessions WHERE client_session_id = 'sm-161'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            Some("prov".into()),
+            Some("mdl".into()),
+            Some(100),
+            Some(200),
+            Some(11),
+            Some(13),
+            Some(14),
+            Some(15)
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_snapshot_row_lands_field_for_field() {
+    use crate::db::pg_store::SnapshotRow;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161s", "t161s", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161s", "/_t161s/repo").await.unwrap();
+    let session = s.create_session(&folder, "task", None).await.unwrap();
+    let steps = vec!["a".to_string(), "b".to_string()];
+    let id = s
+        .create_snapshot(&SnapshotRow {
+            session_id: &session,
+            folder_id: &folder,
+            kind: "checkpoint",
+            progress: "half",
+            next_step: Some("next"),
+            completed_steps: &steps,
+        })
+        .await
+        .unwrap();
+    type Snap = (uuid::Uuid, uuid::Uuid, String, Option<String>, Option<String>, Vec<String>);
+    let got: Snap = sqlx_core::query_as::query_as(
+        "SELECT session_id, folder_id, kind::text, progress_summary, next_step_hint, completed_steps
+           FROM activity.snapshots WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (session, folder, "checkpoint".into(), Some("half".into()), Some("next".into()), steps)
+    );
+}
+
+#[tokio::test]
+async fn a_reasoning_trace_row_lands_field_for_field() {
+    use crate::db::pg_store::ReasoningTraceRow;
+    let s = super::pg_store().await;
+    let ws = s.create_workspace("_t161r", None, None).await.unwrap();
+    let (detail, ex, cons) =
+        (serde_json::json!({ "d": 1 }), serde_json::json!([1]), serde_json::json!({ "c": 2 }));
+    let models = vec!["m1".to_string()];
+    let id = s
+        .insert_reasoning_trace(&ReasoningTraceRow {
+            workspace_id: Some(&ws),
+            trigger_event: "trig",
+            trigger_detail: &detail,
+            models_used: &models,
+            exchanges: &ex,
+            consensus: &cons,
+        })
+        .await
+        .unwrap();
+    type Trace = (
+        Option<uuid::Uuid>,
+        String,
+        serde_json::Value,
+        Vec<String>,
+        serde_json::Value,
+        serde_json::Value,
+    );
+    let got: Trace = sqlx_core::query_as::query_as(
+        "SELECT workspace_id, trigger_event, trigger_detail, models_used, exchanges, consensus
+           FROM inference.reasoning_traces WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (Some(ws), "trig".into(), detail, models, ex, cons));
+}
+
+#[tokio::test]
+async fn a_benchmark_report_row_lands_field_for_field() {
+    use crate::db::pg_store::BenchmarkReportRow;
+    let s = super::pg_store().await;
+    let id = s
+        .create_benchmark_report(&BenchmarkReportRow {
+            folder_id: None,
+            run_name: "run",
+            strategy: "strat",
+            score: Some(0.25),
+            tokens: Some(7),
+            elapsed_ms: Some(9),
+        })
+        .await
+        .unwrap();
+    type Report = (Option<uuid::Uuid>, String, String, Option<f64>, Option<i32>, Option<i32>);
+    let got: Report = sqlx_core::query_as::query_as(
+        "SELECT folder_id, run_name, strategy, score::float8, tokens, elapsed_ms
+           FROM sensei.benchmark_reports WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (None, "run".into(), "strat".into(), Some(0.25), Some(7), Some(9)));
+}
+
+#[tokio::test]
+async fn an_outbox_sent_row_lands_field_for_field() {
+    use crate::db::pg_store::OutboxSentRow;
+    let s = super::pg_store().await;
+    let mid = uuid::Uuid::new_v4();
+    s.create_dojo_membership(&crate::db::pg_store::NewDojoMembership {
+        id: mid,
+        registry_url: "http://localhost:7755".into(),
+        tenant_key: "github/t161".into(),
+        dojo_url: "http://localhost:7755/github/t161".into(),
+        kind: "client".into(),
+        org_slugs: vec!["t161".into()],
+        role: "contributor".into(),
+        authenticated_via: "device_code".into(),
+        attribution_default: "anonymous".into(),
+        sync_status: "healthy".into(),
+    })
+    .await
+    .unwrap();
+    s.outbox_mark_sent(&OutboxSentRow {
+        membership_id: &mid,
+        batch_id: None,
+        memory_id: None,
+        signature: "sig",
+        sent_seq: 42,
+        remote_id: "rid",
+    })
+    .await
+    .unwrap();
+    type Sent = (String, String, Option<i64>, Option<String>);
+    let got: Sent = sqlx_core::query_as::query_as(
+        "SELECT signature, state::text, sent_seq, remote_id FROM sensei.dojo_outbox WHERE membership_id = $1",
+    )
+    .bind(mid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, ("sig".into(), "sent".into(), Some(42), Some("rid".into())));
+}
+
+#[tokio::test]
+async fn a_narration_row_lands_field_for_field() {
+    use crate::db::pg_store::NarrationRow;
+    let s = super::pg_store().await;
+    s.upsert_narration_cache(&NarrationRow {
+        kind: "kind-161",
+        facts_hash: "fh",
+        title: "ttl",
+        detail: "dtl",
+        model_provider: Some("prov"),
+        model_id: Some("mid"),
+    })
+    .await;
+    type Cached = (String, String, String, String, Option<String>, Option<String>);
+    let got: Cached = sqlx_core::query_as::query_as(
+        "SELECT kind, facts_hash, title, detail, model_provider, model_id
+           FROM sensei.narration_cache WHERE kind = 'kind-161'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            "kind-161".into(),
+            "fh".into(),
+            "ttl".into(),
+            "dtl".into(),
+            Some("prov".into()),
+            Some("mid".into())
+        )
+    );
+}
+
+/// Each override reaches its own column: the title replaces the rule's title,
+/// the body its content. Every caller in the tree passes `None` for both, so
+/// this is the only check that the two are not crossed.
+#[tokio::test]
+async fn a_rule_acceptance_puts_each_override_in_its_own_column() {
+    use crate::db::pg_store::RuleAcceptance;
+    let s = super::pg_store().await;
+    let ws = s.create_workspace("_t161a", None, None).await.unwrap();
+    let rid = s
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &ws,
+            title: "rec title",
+            why: "rec why",
+            impact: None,
+            action_type: "revise_rule",
+            urgency: "high",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
+        .await
+        .unwrap();
+    let mat = s
+        .accept_recommendation_as_rule(
+            &rid,
+            &RuleAcceptance {
+                namespace_id: None,
+                enforcement: Some("required"),
+                gov_scope: "general",
+                title_override: Some("override title"),
+                body_override: Some("override body"),
+            },
+        )
+        .await
+        .unwrap();
+    let mem = uuid::Uuid::parse_str(mat["memory_id"].as_str().unwrap()).unwrap();
+    let got: (String, String, String) = sqlx_core::query_as::query_as(
+        "SELECT title, content, enforcement::text FROM sensei.memories WHERE id = $1",
+    )
+    .bind(mem)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, ("override title".into(), "override body".into(), "required".into()));
+}
+
+#[tokio::test]
+async fn a_subfolder_row_lands_field_for_field() {
+    use crate::db::pg_store::SubfolderRow;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161sf", "t161sf", &serde_json::json!([])).await.unwrap();
+    let repo = s.upsert_repo_kind(&root, "git", "t161sf", "/_t161sf/repo").await.unwrap();
+    let id = s
+        .upsert_subfolder(&SubfolderRow {
+            root_id: &root,
+            kind: "module",
+            name: "sub",
+            path: "sub/path",
+            abs_path: "/_t161sf/repo/sub/path",
+            parent_id: Some(&repo),
+        })
+        .await
+        .unwrap();
+    type Sub = (uuid::Uuid, String, String, String, String, Option<uuid::Uuid>);
+    let got: Sub = sqlx_core::query_as::query_as(
+        "SELECT root_id, kind::text, name, path, abs_path, parent_id FROM sensei.folders WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            root,
+            "module".into(),
+            "sub".into(),
+            "sub/path".into(),
+            "/_t161sf/repo/sub/path".into(),
+            Some(repo)
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_capture_watermark_row_lands_field_for_field() {
+    use crate::db::pg_store::CaptureWatermarkRow;
+    let s = super::pg_store().await;
+    s.set_capture_watermark(&CaptureWatermarkRow {
+        source: "zed",
+        file_path: "/t/161.jsonl",
+        session_id: Some("sess"),
+        mtime_ns: 77,
+        turns: 5,
+    })
+    .await
+    .unwrap();
+    let got: (Option<String>, i64, i32, bool) = sqlx_core::query_as::query_as(
+        "SELECT session_id, last_mtime_ns, turns_ingested, untracked FROM activity.capture_watermarks
+          WHERE source = 'zed' AND file_path = '/t/161.jsonl'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (Some("sess".into()), 77, 5, false));
+}
+
+#[tokio::test]
+async fn an_outbox_state_row_lands_field_for_field() {
+    use crate::db::pg_store::OutboxStateRow;
+    let s = super::pg_store().await;
+    let mid = uuid::Uuid::new_v4();
+    s.create_dojo_membership(&crate::db::pg_store::NewDojoMembership {
+        id: mid,
+        registry_url: "http://localhost:7755".into(),
+        tenant_key: "github/t161o".into(),
+        dojo_url: "http://localhost:7755/github/t161o".into(),
+        kind: "client".into(),
+        org_slugs: vec!["t161o".into()],
+        role: "contributor".into(),
+        authenticated_via: "device_code".into(),
+        attribution_default: "anonymous".into(),
+        sync_status: "healthy".into(),
+    })
+    .await
+    .unwrap();
+    s.outbox_mark_state(&OutboxStateRow {
+        membership_id: &mid,
+        batch_id: None,
+        memory_id: None,
+        signature: "sig-o",
+        state: "queued",
+    })
+    .await
+    .unwrap();
+    let got: (String, String) = sqlx_core::query_as::query_as(
+        "SELECT signature, state::text FROM sensei.dojo_outbox WHERE membership_id = $1",
+    )
+    .bind(mid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, ("sig-o".into(), "queued".into()));
+}
+
+#[tokio::test]
+async fn a_service_row_lands_field_for_field() {
+    use crate::db::pg_store::ServiceRow;
+    let s = super::pg_store().await;
+    let config = serde_json::json!({ "k": 1 });
+    let id = s
+        .upsert_service(&ServiceRow {
+            name: "svc-161",
+            display_name: "Service 161",
+            kind: "inference",
+            protocol: "ollama",
+            config: &config,
+        })
+        .await
+        .unwrap();
+    type Svc = (String, String, String, String, serde_json::Value);
+    let got: Svc = sqlx_core::query_as::query_as(
+        "SELECT name, display_name, kind::text, protocol::text, config FROM sensei.services WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        ("svc-161".into(), "Service 161".into(), "inference".into(), "ollama".into(), config)
+    );
+}
+
+#[tokio::test]
+async fn a_workspace_identity_lands_field_for_field() {
+    use crate::db::pg_store::WorkspaceIdentity;
+    let s = super::pg_store().await;
+    let ws = s.create_workspace("_t161w", None, None).await.unwrap();
+    let (stack, tags) = (vec!["rust".to_string()], vec!["t1".to_string()]);
+    s.set_workspace_identity(
+        &ws,
+        &WorkspaceIdentity {
+            description: Some("desc"),
+            client: Some("cl"),
+            stack: &stack,
+            tags: &tags,
+        },
+    )
+    .await
+    .unwrap();
+    type Ident = (Option<String>, Option<String>, serde_json::Value, Vec<String>);
+    let got: Ident = sqlx_core::query_as::query_as(
+        "SELECT description, client, stack, tags FROM sensei.workspaces WHERE id = $1",
+    )
+    .bind(ws)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (Some("desc".into()), Some("cl".into()), serde_json::json!(["rust"]), tags));
+}
+
+#[tokio::test]
+async fn a_file_fingerprint_lands_field_for_field() {
+    use crate::db::pg_store::FileFingerprint;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161ff", "t161ff", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161ff", "/_t161ff/repo").await.unwrap();
+    let fp = FileFingerprint {
+        folder_id: &folder,
+        file_path: "src/a.rs",
+        mtime: 1234,
+        content_hash: "h-161",
+    };
+    s.upsert_file_row(&fp, Some(crate::classifiers::ScanSkipReason::Oversized)).await.unwrap();
+    type File = (i64, String, Option<String>);
+    let got: File = sqlx_core::query_as::query_as(
+        "SELECT mtime, content_hash, skip_reason::text FROM sensei.files WHERE folder_id = $1 AND file_path = 'src/a.rs'",
+    )
+    .bind(folder)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (1234, "h-161".into(), Some("oversized".into())));
+}
+
+/// The source and version range land on every content row the capabilities
+/// write. Nothing else read them back: forcing `source` passed every
+/// capability test.
+#[tokio::test]
+async fn library_capabilities_land_with_their_source_and_range() {
+    use crate::db::pg_store::{LibraryCapabilities, LibraryRow};
+    use crate::libraries::manifest::{ProvidedAgent, ProvidedSkill};
+    let s = super::pg_store().await;
+    let lib = s
+        .upsert_library(&LibraryRow {
+            name: "caps-161",
+            ecosystem: "cargo",
+            version: None,
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
+    let skills = vec![ProvidedSkill {
+        name: "sk".into(),
+        focus: "f".into(),
+        path: None,
+        body: Some("b".into()),
+    }];
+    let agents = vec![ProvidedAgent {
+        name: "ag".into(),
+        focus: "f".into(),
+        path: None,
+        body: Some("b".into()),
+    }];
+    s.replace_library_capabilities(
+        &lib,
+        &LibraryCapabilities {
+            source: "manifest",
+            version_range: Some(">=1"),
+            skills: &skills,
+            agents: &agents,
+        },
+    )
+    .await
+    .unwrap();
+    let got: Vec<(String, String, String, Option<String>)> = sqlx_core::query_as::query_as(
+        "SELECT c.kind::text, c.name, c.source::text, c.version_range
+           FROM sensei.library_content c JOIN sensei.library_versions v ON v.id = c.library_version_id
+          WHERE v.library_id = $1 ORDER BY c.kind::text, c.name",
+    )
+    .bind(lib)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        vec![
+            ("agent".into(), "ag".into(), "manifest".into(), Some(">=1".into())),
+            ("skill".into(), "sk".into(), "manifest".into(), Some(">=1".into())),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_index_error_row_lands_field_for_field() {
+    use crate::db::pg_store::IndexErrorRow;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161ie", "t161ie", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161ie", "/_t161ie/repo").await.unwrap();
+    s.log_index_error(&IndexErrorRow {
+        folder_id: &folder,
+        file_path: "src/x.rs",
+        error: "boom",
+        adapter: Some("rust"),
+        phase: Some("parse"),
+    })
+    .await
+    .unwrap();
+    let got: (String, String, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT file_path, error, adapter, phase FROM sensei.index_errors WHERE folder_id = $1",
+    )
+    .bind(folder)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, ("src/x.rs".into(), "boom".into(), Some("rust".into()), Some("parse".into())));
+}
+
+/// The property that makes a row worth having (#161 acceptance 3): adding a
+/// field to a row fails the build until a writer places it. That holds while
+/// each row is destructured somewhere EXHAUSTIVELY. A `..` rest pattern, or a
+/// row read only field by field, would accept a new field silently.
+///
+/// Every row type declared in `pg_store/mod.rs`'s row section must appear in a
+/// `let … Row { … } =` destructure in `db/pg_store`'s sources, with no `..`.
+#[test]
+fn every_row_is_destructured_exhaustively() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/db/pg_store");
+    let module = std::fs::read_to_string(dir.join("mod.rs")).unwrap();
+    let section = &module[module.find("The store's row types (#161)").expect("the row section")..];
+    let rows: Vec<String> = section
+        .lines()
+        .filter_map(|l| l.strip_prefix("pub struct "))
+        .map(|l| l.split(['<', ' ', '{']).next().unwrap().to_string())
+        .collect();
+    assert!(rows.len() > 30, "found the row types: {rows:?}");
+    let sources: String = store_sources().into_iter().map(|(_, src)| src).collect();
+    let mut missing = Vec::new();
+    for row in &rows {
+        let exhaustive = [format!("let &{row} {{"), format!("let {row} {{")].iter().any(|pat| {
+            sources.match_indices(pat.as_str()).any(|(at, _)| {
+                let body = &sources[at..];
+                let end = body.find('}').unwrap_or(body.len());
+                !body[..end].contains("..")
+            })
+        });
+        if !exhaustive {
+            missing.push(row.clone());
+        }
+    }
+    assert!(missing.is_empty(), "rows with no exhaustive destructure: {missing:#?}");
 }

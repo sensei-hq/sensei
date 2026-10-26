@@ -1,7 +1,8 @@
 # Session facets and the developer retrospective
 
 Status: design agreed; the offline half is BUILT and running against the sample.
-The sensei-side tables (D2/D3) are not built.
+The sensei-side tables (D2/D3) are BUILT (966e87d6), with the columns below as
+shipped; nothing writes them yet — the daemon-side facet pass is not built.
 Supersedes: nothing. Extends `2026-08-20-transcript-process-quality-analyzer.md`.
 
 ## What this is for
@@ -76,21 +77,27 @@ incremental gate to keep in step with the first.
 
 ### D2 — One 1:1 table for the scalar facets
 
+As built (`database/ddl/table/activity/session_facets.ddl`; the design had
+`session_type`, `satisfaction`, `helpfulness` and an enum `primary_success`,
+and none of them shipped):
+
 ```
 activity.session_facets
   session_id       text primary key   -- sessions.client_session_id
-  underlying_goal  text not null      -- free text, one sentence
-  session_type     session_type       -- single_task | multi_task | exploratory | interrupted
-  satisfaction     satisfaction_level -- likely_satisfied | neutral | likely_frustrated
-  helpfulness      helpfulness_level  -- very_helpful | helpful | mixed | unhelpful
-  primary_success  success_kind       -- multi_file_changes | debugging | research | ...
+  underlying_goal  text               -- one sentence; NULL until the facet pass runs
+  goal_outcome     goal_outcome       -- completed | mostly_achieved | partial | blocked | abandoned | unclear
+  primary_success  text not null default ''
   friction_detail  text not null default ''
+  stage            work_stage
+  stage_source     stage_source
   analyzed_at      timestamptz not null default now()
 ```
 
-`outcome` and `brief_summary` are deliberately ABSENT: they already live on
-`activity.sessions`. Duplicating them is how two tables for one thing start to
-diverge.
+`goal_outcome` corrects the design, found by building it: the design kept
+`outcome` off this table because `activity.sessions.outcome` holds it, but
+`sensei.session_outcome` has no `mostly_achieved` or `unclear`, which the
+facet reading needs. `brief_summary` stays ABSENT: `activity.sessions.summary`
+holds it.
 
 Enums, not text+CHECK — house rule, and these are closed vocabularies that the
 rollups group by.
@@ -129,7 +136,7 @@ requirement that every observation carry a reference.
 |---|---|
 | What you work on | `session_facet_tags` where kind=goal, by weight; joined to projects and languages |
 | How you use it | mechanical only — tool mix, delegation, model mix, turn length |
-| What went well | facets where `sessions.outcome='completed'` and helpfulness high, with cited quotes |
+| What went well | facets where `goal_outcome` is `completed` or `mostly_achieved`, with cited quotes |
 | Where things go wrong | kind=friction, by weight; joined to tool failure runs and `corrections` |
 | What to change | rules over the friction tags → concrete recommendations |
 
@@ -180,7 +187,8 @@ that `tools/session-report` is deliberately offline — no database, no network,
 these being other people's transcripts. That property should not be quietly
 dropped, so:
 
-- facets are produced only under an explicit `--facets <endpoint>` flag,
+- facets are produced only under an explicit `--facets [endpoint]` flag (the
+  endpoint defaults to a LOCAL ollama),
 - written to a local `facets/` folder beside the reports, never to our database,
 - and the folder is the input to the retrospective renderer.
 

@@ -1,16 +1,9 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
-    pub async fn create_extension(
-        &self,
-        kind: &str,
-        name: &str,
-        description: Option<&str>,
-        content: Option<&str>,
-        scope: &str,
-        source: &str,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn create_extension(&self, ext: &ExtensionRow<'_>) -> Result<uuid::Uuid, String> {
+        let &ExtensionRow { kind, name, description, content, scope, source } = ext;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.extensions(kind, name, description, content, scope, source)
              VALUES($1::sensei.extension_kind, $2, $3, $4, $5::sensei.extension_scope, $6::sensei.extension_source) RETURNING id"

@@ -98,7 +98,14 @@ pub(crate) async fn scan_manifests(
         let root_str = lib_root.to_string_lossy().to_string();
         let lib_id = state
             .pg
-            .upsert_library(&m.library, "npm", None, None, Some("local"), Some(&root_str))
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &m.library,
+                ecosystem: "npm",
+                version: None,
+                description: None,
+                source_type: Some("local"),
+                base_url: Some(&root_str),
+            })
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -142,14 +149,14 @@ pub(crate) async fn index_lib(
     // Upsert library into PgStore
     let lib_id = state
         .pg
-        .upsert_library(
-            &body.lib_name,
-            "npm",
-            body.version.as_deref(),
-            Some(&content),
-            Some("url"),
-            Some(&body.url),
-        )
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &body.lib_name,
+            ecosystem: "npm",
+            version: body.version.as_deref(),
+            description: Some(&content),
+            source_type: Some("url"),
+            base_url: Some(&body.url),
+        })
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

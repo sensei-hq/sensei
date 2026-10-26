@@ -625,7 +625,14 @@ mod tests {
         let message = crate::tasks::executor::watchdog_message(&kind, 3, kind.watchdog_timeout());
         let id = state
             .pg
-            .start_task_execution(3, None, &kind.to_string(), "/repo", "src/slow.rs", 0)
+            .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+                task_id: 3,
+                parent_task_id: None,
+                task_kind: &kind.to_string(),
+                folder_path: "/repo",
+                path: "src/slow.rs",
+                retry_number: 0,
+            })
             .await
             .unwrap();
         state.pg.fail_task_execution(&id, 180_000, &message).await.unwrap();
@@ -1533,7 +1540,16 @@ mod tests {
             .await
             .unwrap();
         for target in ["node:fs", "java.util.List", "./sibling", "$lib/x", "crate::db", "@/alias"] {
-            state.pg.insert_edge(&fid, &src, None, Some(target), None, "imports").await.unwrap();
+            state
+                .pg
+                .insert_edge(
+                    &fid,
+                    &src,
+                    crate::db::pg_store::EdgeTarget::Unresolved { name: Some(target), file: None },
+                    "imports",
+                )
+                .await
+                .unwrap();
         }
 
         let (st, body) = req(app, "GET", "/api/graph/imports", None).await;
@@ -2274,14 +2290,14 @@ mod tests {
             facts_hash(InsightKind::SessionMetricObservation, &hit_facts.to_facts_json());
         state
             .pg
-            .upsert_narration_cache(
-                "session_metric_observation",
-                &hit_hash,
-                "first-try win",
-                "this session resolved on the first attempt, lifting the rate",
-                None,
-                None,
-            )
+            .upsert_narration_cache(&crate::db::pg_store::NarrationRow {
+                kind: "session_metric_observation",
+                facts_hash: &hit_hash,
+                title: "first-try win",
+                detail: "this session resolved on the first attempt, lifting the rate",
+                model_provider: None,
+                model_id: None,
+            })
             .await;
 
         let (st, body) = req(
@@ -2685,7 +2701,9 @@ mod tests {
         let c1 = node("rust·p·gamma::util·three", "three", "c1.rs").await;
 
         for (s, t) in [(&a1, &b1), (&a1b, &b1), (&b1, &a1), (&b1, &c1), (&a1, &a2)] {
-            pg.insert_edge(&fid, s, Some(t), None, None, "calls").await.unwrap();
+            pg.insert_edge(&fid, s, crate::db::pg_store::EdgeTarget::Node(t), "calls")
+                .await
+                .unwrap();
         }
 
         let (status, body) =
@@ -2861,19 +2879,27 @@ mod tests {
 
         // `S2 implements Ifc` is what makes Ifc an abstraction — abstractness is
         // derived from the EDGES, never from the keyword (see `abstractions`).
-        pg.insert_edge(&fid, &s2, Some(&ifc), None, None, "implements").await.unwrap();
+        pg.insert_edge(&fid, &s2, crate::db::pg_store::EdgeTarget::Node(&ifc), "implements")
+            .await
+            .unwrap();
         // Delta's abstraction is implemented by its own sibling, so delta stays
         // abstract WITHOUT gaining an afferent dependency.
-        pg.insert_edge(&fid, &imp2, Some(&ifc2), None, None, "implements").await.unwrap();
+        pg.insert_edge(&fid, &imp2, crate::db::pg_store::EdgeTarget::Node(&ifc2), "implements")
+            .await
+            .unwrap();
         for (s, t) in [(&fn1, &fn2), (&fn3, &fn2), (&fn4, &fn2), (&fn1, &ext), (&fn1, &alias)] {
-            pg.insert_edge(&fid, s, Some(t), None, None, "calls").await.unwrap();
+            pg.insert_edge(&fid, s, crate::db::pg_store::EdgeTarget::Node(t), "calls")
+                .await
+                .unwrap();
         }
         // A SECOND edge of a different kind between the same module pair, so
         // `module_edges` carries two rows for `alpha -> beta`. Coupling counts
         // DISTINCT partners, so this must not move Ce(alpha) or Ca(beta) —
         // without it, counting rows and counting partners agree and the
         // difference is untestable.
-        pg.insert_edge(&fid, &fn1, Some(&fn2), None, None, "references").await.unwrap();
+        pg.insert_edge(&fid, &fn1, crate::db::pg_store::EdgeTarget::Node(&fn2), "references")
+            .await
+            .unwrap();
 
         let (status, body) =
             req(app, "GET", &format!("/api/workspaces/{pid}/diagrams/zones"), None).await;
@@ -3002,7 +3028,17 @@ mod tests {
         // one unit, which is a graph with no edge in it at all — and an endpoint
         // returning nothing proves nothing about a cache.
         for path in ["a.rs", "b.rs", "c.rs"] {
-            pg.upsert_file_row(&fid, path, 1, "seed", None).await.unwrap();
+            pg.upsert_file_row(
+                &crate::db::pg_store::FileFingerprint {
+                    folder_id: &fid,
+                    file_path: path,
+                    mtime: 1,
+                    content_hash: "seed",
+                },
+                None,
+            )
+            .await
+            .unwrap();
         }
 
         let def = |path: &'static str| crate::db::pg_store::FqnDef {
@@ -3024,7 +3060,7 @@ mod tests {
         let a = node("rust·p·alpha::core·one", "one", "a.rs").await;
         let b = node("rust·p·beta/web·two", "two", "b.rs").await;
         let c = node("rust·p·gamma::util·three", "three", "c.rs").await;
-        pg.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+        pg.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
 
         let url = format!("/api/workspaces/{pid}/diagrams/layering?level=module&kinds=calls");
         let (status, first) = req(app.clone(), "GET", &url, None).await;
@@ -3035,7 +3071,7 @@ mod tests {
         // BEHIND THE ENDPOINT'S BACK: a real new dependency, and no file
         // re-indexed. The daemon has not been told the graph moved, so it must
         // keep answering what it last computed.
-        pg.insert_edge(&fid, &b, Some(&c), None, None, "calls").await.unwrap();
+        pg.insert_edge(&fid, &b, crate::db::pg_store::EdgeTarget::Node(&c), "calls").await.unwrap();
         let (status, cached) = req(app.clone(), "GET", &url, None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
@@ -3086,7 +3122,17 @@ mod tests {
         crate::tasks::test_support::place_folder_in_workspace(pg, &fid, &mine, &format!("w-{tag}"))
             .await
             .unwrap();
-        pg.upsert_file_row(&fid, "a.rs", 1, "seed", None).await.unwrap();
+        pg.upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "a.rs",
+                mtime: 1,
+                content_hash: "seed",
+            },
+            None,
+        )
+        .await
+        .unwrap();
         let def = crate::db::pg_store::FqnDef {
             file_path: "a.rs",
             signature: None,
@@ -3184,10 +3230,14 @@ mod tests {
         let library = node(format!("lib·serde{tag}·json·to_string"), "to_string").await;
         let beyond = node(format!("rust·h{tag}·m·beyond·item"), "beyond").await;
         for (s, t) in [(caller, focus), (focus, callee), (callee, deeper), (focus, library)] {
-            pg.insert_edge(&fid, &s, Some(&t), None, None, "calls").await.unwrap();
+            pg.insert_edge(&fid, &s, crate::db::pg_store::EdgeTarget::Node(&t), "calls")
+                .await
+                .unwrap();
         }
         // Something the library "calls" — only reachable by walking THROUGH it.
-        pg.insert_edge(&fid, &library, Some(&beyond), None, None, "calls").await.unwrap();
+        pg.insert_edge(&fid, &library, crate::db::pg_store::EdgeTarget::Node(&beyond), "calls")
+            .await
+            .unwrap();
 
         let url = |q: &str| format!("/api/workspaces/{mine}/diagrams/neighbourhood?{q}");
         let ids = |body: &serde_json::Value| -> Vec<String> {
@@ -3491,20 +3541,33 @@ mod tests {
         use crate::libraries::manifest::ProvidedSkill;
         let (app, state) = test_app().await;
         let lib = format!("_libep_{}", uuid::Uuid::new_v4());
-        let lid = state.pg.upsert_library(&lib, "npm", Some("1"), None, None, None).await.unwrap();
+        let lid = state
+            .pg
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &lib,
+                ecosystem: "npm",
+                version: Some("1"),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
+            .await
+            .unwrap();
         state
             .pg
             .replace_library_capabilities(
                 &lid,
-                "manifest",
-                Some("1"),
-                &[ProvidedSkill {
-                    name: "semantic-styles-rokkit".into(),
-                    focus: "styling".into(),
-                    path: Some("p.md".into()),
-                    body: Some("# body".into()),
-                }],
-                &[],
+                &crate::db::pg_store::LibraryCapabilities {
+                    source: "manifest",
+                    version_range: Some("1"),
+                    skills: &[ProvidedSkill {
+                        name: "semantic-styles-rokkit".into(),
+                        focus: "styling".into(),
+                        path: Some("p.md".into()),
+                        body: Some("# body".into()),
+                    }],
+                    agents: &[],
+                },
             )
             .await
             .unwrap();
@@ -3759,13 +3822,14 @@ mod tests {
         .unwrap();
         let child_fid = state
             .pg
-            .upsert_subfolder(
-                &root_id,
-                &child_name,
-                &format!("{}/{}", root_name, child_name),
-                &format!("{}/{}/{}", root_path, root_name, child_name),
-                Some(&root_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: &child_name,
+                path: &format!("{}/{}", root_name, child_name),
+                abs_path: &format!("{}/{}/{}", root_path, root_name, child_name),
+                parent_id: Some(&root_fid),
+            })
             .await
             .unwrap();
 
@@ -4342,7 +4406,15 @@ mod tests {
             state.pg.add_watch_root(&abs_path, "mcp-seam", &serde_json::json!([])).await.unwrap();
         let folder_id = state
             .pg
-            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, None)
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "git",
+                name: "repo",
+                path: "repo",
+                abs_path: &abs_path,
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&state.pg, &folder_id, &pid, "repo")
@@ -4550,7 +4622,15 @@ mod tests {
         // Folder name == workspace name: get_file_tags looks up folders.name.
         let folder_id = state
             .pg
-            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, None)
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root_id,
+                kind: "git",
+                name: &name,
+                path: "repo",
+                abs_path: &abs_path,
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&state.pg, &folder_id, &pid, &name)
@@ -4935,8 +5015,19 @@ mod tests {
             .add_watch_root(&base, &format!("fp-{short}"), &serde_json::json!([]))
             .await
             .unwrap();
-        let fid =
-            state.pg.upsert_folder(&root, "git", &name, "repo", &under, None, None).await.unwrap();
+        let fid = state
+            .pg
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root,
+                kind: "git",
+                name: &name,
+                path: "repo",
+                abs_path: &under,
+                parent_id: None,
+                workspace_root_id: None,
+            })
+            .await
+            .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&state.pg, &fid, &pid, &name)
             .await
             .unwrap();
@@ -5077,7 +5168,15 @@ mod tests {
         // from the anchor, which is where the workspace now lives.
         let anchor = state
             .pg
-            .upsert_folder(&root, "git", &pname, "repo", &format!("{base}/repo"), None, None)
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &root,
+                kind: "git",
+                name: &pname,
+                path: "repo",
+                abs_path: &format!("{base}/repo"),
+                parent_id: None,
+                workspace_root_id: None,
+            })
             .await
             .unwrap();
         crate::tasks::test_support::place_folder_in_workspace(&state.pg, &anchor, &pid, &pname)
@@ -5086,15 +5185,15 @@ mod tests {
         for i in 0..40 {
             state
                 .pg
-                .upsert_folder(
-                    &root,
-                    "folder",
-                    &format!("d{i}"),
-                    &format!("repo/src/d{i}"),
-                    &format!("{base}/repo/src/d{i}"),
-                    None,
-                    None,
-                )
+                .upsert_folder(&crate::db::pg_store::FolderRow {
+                    root_id: &root,
+                    kind: "folder",
+                    name: &format!("d{i}"),
+                    path: &format!("repo/src/d{i}"),
+                    abs_path: &format!("{base}/repo/src/d{i}"),
+                    parent_id: None,
+                    workspace_root_id: None,
+                })
                 .await
                 .unwrap();
         }

@@ -20,6 +20,10 @@ pub(crate) struct TokenDay {
     /// Fresh (uncached) input — `None` when any of the day's sessions predates
     /// `tokens_fresh` capture, so a partial sum is never passed off as the day's.
     pub sum_fresh: Option<i64>,
+    /// Input written to and read from the prompt cache — `None` under the same
+    /// rule as `sum_fresh`. Reads are counted on their own, never as tokens.
+    pub sum_cache_write: Option<i64>,
+    pub sum_cache_read: Option<i64>,
     pub sessions: i64,
 }
 
@@ -210,6 +214,10 @@ impl PgStore {
                   , coalesce(sum(s.tokens_out), 0)::int8          AS sum_out
                   , CASE WHEN count(s.tokens_fresh) = count(*)
                          THEN sum(s.tokens_fresh) END::int8       AS sum_fresh
+                  , CASE WHEN count(s.cache_write) = count(*)
+                         THEN sum(s.cache_write) END::int8        AS sum_cache_write
+                  , CASE WHEN count(s.cache_read) = count(*)
+                         THEN sum(s.cache_read) END::int8         AS sum_cache_read
                   , count(*)::int8                                AS n
                FROM activity.sessions s
                JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
@@ -223,7 +231,7 @@ impl PgStore {
         );
         let q = sqlx_core::query_as::query_as::<
             _,
-            (chrono::NaiveDate, uuid::Uuid, i64, i64, Option<i64>, i64),
+            (chrono::NaiveDate, uuid::Uuid, i64, i64, Option<i64>, Option<i64>, Option<i64>, i64),
         >(&sql)
         .bind(workspace_id);
         let rows = bind_day(q, window_days, as_of)
@@ -232,14 +240,29 @@ impl PgStore {
             .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(day, repository_id, sum_in, sum_out, sum_fresh, sessions)| TokenDay {
-                day,
-                repository_id,
-                sum_in,
-                sum_out,
-                sum_fresh,
-                sessions,
-            })
+            .map(
+                |(
+                    day,
+                    repository_id,
+                    sum_in,
+                    sum_out,
+                    sum_fresh,
+                    sum_cache_write,
+                    sum_cache_read,
+                    sessions,
+                )| {
+                    TokenDay {
+                        day,
+                        repository_id,
+                        sum_in,
+                        sum_out,
+                        sum_fresh,
+                        sum_cache_write,
+                        sum_cache_read,
+                        sessions,
+                    }
+                },
+            )
             .collect())
     }
 

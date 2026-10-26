@@ -225,8 +225,16 @@ async fn assemble_context_blends_three_scopes() {
         .await
         .unwrap();
 
-    let blob =
-        pg.assemble_context(pid, &["rust".into()], Some(&only_ours), 50, None).await.unwrap();
+    let blob = pg
+        .assemble_context(&crate::db::pg_store::ContextQuery {
+            workspace_id: pid,
+            stack_ids: &["rust".into()],
+            tags: Some(&only_ours),
+            limit: 50,
+            slot: None,
+        })
+        .await
+        .unwrap();
     let titles: Vec<String> = blob["memories"]
         .as_array()
         .unwrap()
@@ -261,8 +269,16 @@ async fn assemble_context_blends_three_scopes() {
         .unwrap();
     // Carries the tag, so its absence below is genuinely the status filter
     // doing the work rather than the tag filter hiding it.
-    let blob2 =
-        pg.assemble_context(pid, &["rust".into()], Some(&only_ours), 50, None).await.unwrap();
+    let blob2 = pg
+        .assemble_context(&crate::db::pg_store::ContextQuery {
+            workspace_id: pid,
+            stack_ids: &["rust".into()],
+            tags: Some(&only_ours),
+            limit: 50,
+            slot: None,
+        })
+        .await
+        .unwrap();
     let titles2: Vec<String> = blob2["memories"]
         .as_array()
         .unwrap()
@@ -383,8 +399,16 @@ async fn assemble_context_leads_with_slot_anchored_memory() {
     let m_unanchored = pg.insert_memory(&fixture("unanchored", None)).await.unwrap();
     let m_design = pg.insert_memory(&fixture("design-anchored", Some("design"))).await.unwrap();
 
-    let blob =
-        pg.assemble_context(pid, &[], Some(&only_ours), 50, Some(("design", None))).await.unwrap();
+    let blob = pg
+        .assemble_context(&crate::db::pg_store::ContextQuery {
+            workspace_id: pid,
+            stack_ids: &[],
+            tags: Some(&only_ours),
+            limit: 50,
+            slot: Some(("design", None)),
+        })
+        .await
+        .unwrap();
     let ids: Vec<String> = blob["memories"]
         .as_array()
         .unwrap()
@@ -438,7 +462,16 @@ async fn assemble_context_logs_one_load_per_memory() {
         .await
         .unwrap();
 
-    let blob = pg.assemble_context(pid, &[], Some(&only_ours), 50, None).await.unwrap();
+    let blob = pg
+        .assemble_context(&crate::db::pg_store::ContextQuery {
+            workspace_id: pid,
+            stack_ids: &[],
+            tags: Some(&only_ours),
+            limit: 50,
+            slot: None,
+        })
+        .await
+        .unwrap();
     // Context is still delivered (writer is additive, non-fatal).
     assert!(
         blob["memories"]
@@ -456,7 +489,15 @@ async fn assemble_context_logs_one_load_per_memory() {
     // A second delivery logs a second load row. Same tag scope as the first —
     // an unscoped call may not deliver this memory at all, so it would log
     // nothing and the count below would stay at 1.
-    pg.assemble_context(pid, &[], Some(&only_ours), 50, None).await.unwrap();
+    pg.assemble_context(&crate::db::pg_store::ContextQuery {
+        workspace_id: pid,
+        stack_ids: &[],
+        tags: Some(&only_ours),
+        limit: 50,
+        slot: None,
+    })
+    .await
+    .unwrap();
     let (loaded2, _, _) = pg.memory_telemetry_7d(mid).await.unwrap();
     assert_eq!(loaded2, 2);
 
@@ -862,8 +903,24 @@ async fn federated_ledger_and_shareability() {
         })
         .await
         .unwrap();
-    pg.upsert_federated_memory(&src, &remote, "hash1", Some(&mem), 5).await.unwrap();
-    pg.upsert_federated_memory(&src, &remote, "hash1", Some(&mem), 9).await.unwrap(); // idempotent
+    pg.upsert_federated_memory(&crate::db::pg_store::FederatedMemoryRow {
+        source_id: &src,
+        remote_rule_id: &remote,
+        content_hash: "hash1",
+        memory_id: Some(&mem),
+        remote_seq: 5,
+    })
+    .await
+    .unwrap();
+    pg.upsert_federated_memory(&crate::db::pg_store::FederatedMemoryRow {
+        source_id: &src,
+        remote_rule_id: &remote,
+        content_hash: "hash1",
+        memory_id: Some(&mem),
+        remote_seq: 9,
+    })
+    .await
+    .unwrap(); // idempotent
     let link = pg.find_federated_memory(&src, &remote).await.unwrap().unwrap();
     assert_eq!(link.memory_id, Some(mem));
     assert_eq!(link.remote_seq, 9);

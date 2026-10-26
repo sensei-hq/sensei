@@ -406,84 +406,18 @@ jobs:
         # v0.12.0 against bootstrap's v0.14.0, and this is the pin that deploys
         # the dōjō's production schema. It now matches both `dbd-core` pins and
         # `rust.yml`, held by `crates/bootstrap/tests/dbd_pins.rs`.
-        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.27.6 dbd-cli
+        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.27.8 dbd-cli
 
-      - name: Fail on any unparseable DDL
-        # THE critical guard, and still required at 0.19.0. dbd drops a file it
-        # cannot parse from the entity set SILENTLY and still reports success —
-        # that is how dojo.set_pack_adoption and dojo.can_read_repository_metric
-        # were never created on any database. 0.12.0 fixed the specific parse
-        # failures we hit, but `dbd inspect` STILL EXITS 0 when a file fails to
-        # parse (re-verified), so the exit code cannot be trusted; grep the output
-        # and fail explicitly.
+      - name: Deploy the dōjō schema
+        # ONE script for production and for CI: dojo-db.yml runs it against a
+        # fresh Supabase on every schema change, before the access-rule tests, so
+        # this exact path is rehearsed long before it touches production. It
+        # refuses unparseable DDL (dbd inspect exits 0 on a parse error), prints
+        # the plan, reconciles (pre-v1, --allow-destructive: the user's decision,
+        # 2026-10-20) or migrates once released, deploys seed data, policies and
+        # after-scripts, and fails if any difference from the design remains.
         working-directory: database
-        run: |
-          dbd inspect 2>&1 | tee inspect.log
-          if grep -q "Parse error" inspect.log; then
-            echo "::error::DDL failed to parse — those entities would be skipped silently"
-            exit 1
-          fi
-
-      - name: Plan (audit trail)
-        # Printed before anything is applied, so the job log records what this
-        # release changed in production. Never fails the build: a fresh or drifted
-        # database legitimately shows differences here.
-        working-directory: database
-        run: dbd diff --scope dojo || true
-
-      - name: Apply schema changes
-        # Which tool applies a change depends on whether the project is RELEASED,
-        # so this branches rather than needing a manual edit at the cutover.
-        #
-        # Pre-release (today): `reconcile --allow-destructive`, unattended — the
-        # user's decision (2026-10-20): the dōjō has not released v1, so its data
-        # is expendable and a schema reshape may drop columns and rows. The plan
-        # step above records exactly what was dropped in this job's log.
-        #
-        # Reconcile is all-or-nothing: without `--allow-destructive`, one DROP
-        # anywhere refused the whole plan (creates included), and every reshape
-        # needed an attended run. The dōjō is pre-v1, so that gate cost a manual
-        # step per release for data nobody keeps.
-        #
-        # AT V1 THIS CHANGES — on the user's explicit request, not before: drop the
-        # reconcile and let `dbd deploy` migrate from the committed snapshot
-        # (`dbd release` disables reconcile; changes then travel as `make bump`
-        # snapshots). Verified earlier: snapshot then deploy reports "Migrated
-        # v1 → v2 — 1 migrated"; deploy WITHOUT the snapshot applies nothing.
-        #
-        # Ordering: the policies step below runs AFTER reconcile, so a reshape
-        # that drops a column old policies reference needs an apply.before hook
-        # to clear them first (see apply/before/dojo_projects_shared.sql, #299).
-        working-directory: database
-        run: |
-          if grep -qE '^[[:space:]]*released:[[:space:]]*true' design.yaml; then
-            echo "Project is released - the deploy step migrates from the committed snapshot."
-            dbd migrate --status
-            exit 0
-          fi
-          dbd reconcile --scope dojo --allow-destructive
-
-      - name: Apply seed data, policies and after-scripts
-        # Pre-release, reconcile handled the schema and this runs the import phase
-        # (seed datafiles), the RLS policy files, and the after-script that keeps
-        # the relay tables in the Realtime publication.
-        #
-        # Post-release this ALSO performs the migration, from the snapshot in the
-        # tag. Idempotent either way — every import is modified_at-guarded, so an
-        # in-place edit in prod is not clobbered.
-        working-directory: database
-        run: dbd deploy --scope dojo
-
-      - name: Verify the database matches the design
-        # The proof the job actually did something. `--exit-code` returns 2 when
-        # differences remain, 0 when in sync. Without this the job is only
-        # asserting that dbd ran, not that the schema landed.
-        #
-        # This is also what catches the post-release footgun: a release whose DDL
-        # changed but whose snapshot was never taken deploys NOTHING while
-        # reporting success. The diff then still shows the change and this fails.
-        working-directory: database
-        run: dbd diff --scope dojo --exit-code
+        run: ../scripts/deploy-dojo-db.sh
 
   # The dōjō Worker deploys from the tag, AFTER its database (wave 0b, user
   # 2026-10-22). It used to deploy through Cloudflare's git integration on every

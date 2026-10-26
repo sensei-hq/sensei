@@ -138,13 +138,13 @@ pub(crate) async fn recommend_playbook(
     let (auto_select, trust_n, trust_ftr) = if matches!(axes.risk, crate::playbook::Risk::Low) {
         match state
             .pg
-            .playbook_combo_trust(
-                axes.lifecycle.as_str(),
-                axes.intent.as_str(),
-                axes.risk.as_str(),
-                &rec.playbook,
-                &workspace_id,
-            )
+            .playbook_combo_trust(&crate::db::pg_store::ComboTrustQuery {
+                lifecycle: axes.lifecycle.as_str(),
+                intent: axes.intent.as_str(),
+                risk: axes.risk.as_str(),
+                playbook: &rec.playbook,
+                workspace_id: &workspace_id,
+            })
             .await
         {
             Ok((n, ftr)) => (crate::playbook::is_trusted(axes.risk, n, ftr), n, ftr),

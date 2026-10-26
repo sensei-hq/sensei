@@ -100,7 +100,17 @@ async fn a_workspaces_graph_version_is_none_until_a_file_is_indexed() {
         "a workspace whose folders hold no indexed file has no graph yet"
     );
 
-    pg.upsert_file_row(&folder_id, "a.rs", 1, "seed", None).await.unwrap();
+    pg.upsert_file_row(
+        &crate::db::pg_store::FileFingerprint {
+            folder_id: &folder_id,
+            file_path: "a.rs",
+            mtime: 1,
+            content_hash: "seed",
+        },
+        None,
+    )
+    .await
+    .unwrap();
     let first = pg.workspace_graph_version(&workspace_id).await.unwrap();
     assert!(first.is_some(), "an indexed file gives the workspace a version");
 

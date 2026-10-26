@@ -113,7 +113,15 @@ async fn workspace_identifiers_gathers_names_paths_repos_and_sessions() {
         .unwrap();
     // A session for the workspace, with a client_session_id.
     let csid = format!("cs-{suffix}");
-    s.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+    s.record_session_event(&crate::db::pg_store::SessionEventRow {
+        client_session_id: &csid,
+        folder_id: &fid,
+        workspace_id: Some(&pid),
+        family: "claude",
+        is_end: true,
+    })
+    .await
+    .unwrap();
 
     let ids = s.workspace_identifiers(&pid).await.unwrap();
     assert_eq!(ids.workspace_name.as_deref(), Some(format!("_test:{suffix}").as_str()));
@@ -275,7 +283,16 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
 
     // 1. Default row (namespace_id NULL): insert, then re-resolve returns it
     //    as the "default" source.
-    let ua = pg.upsert_stance(&user, None, "run_freely", "private", "quorum").await.unwrap();
+    let ua = pg
+        .upsert_stance(&crate::db::pg_store::StanceRow {
+            user_key: &user,
+            namespace_id: None,
+            autonomy: "run_freely",
+            sharing: "private",
+            review: "quorum",
+        })
+        .await
+        .unwrap();
     assert!(!ua.is_empty(), "upsert returns an updated_at");
     let r = pg.resolve_stance(&user, None).await.unwrap();
     assert_eq!(
@@ -285,7 +302,15 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
 
     // 2. Re-upsert the default (same partial-index conflict target): updates in
     //    place, no duplicate default row.
-    pg.upsert_stance(&user, None, "ask_always", "patterns", "me_alone").await.unwrap();
+    pg.upsert_stance(&crate::db::pg_store::StanceRow {
+        user_key: &user,
+        namespace_id: None,
+        autonomy: "ask_always",
+        sharing: "patterns",
+        review: "me_alone",
+    })
+    .await
+    .unwrap();
     let r = pg.resolve_stance(&user, None).await.unwrap();
     assert_eq!(
         (r.autonomy.as_str(), r.review.as_str()),
@@ -322,7 +347,15 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
     .await
     .unwrap();
 
-    pg.upsert_stance(&user, Some(&ns), "ask_on_risky", "derived", "two_maintainers").await.unwrap();
+    pg.upsert_stance(&crate::db::pg_store::StanceRow {
+        user_key: &user,
+        namespace_id: Some(&ns),
+        autonomy: "ask_on_risky",
+        sharing: "derived",
+        review: "two_maintainers",
+    })
+    .await
+    .unwrap();
     let (au, sh, rv): (String, String, String) = sqlx_core::query_as::query_as(
         "SELECT autonomy::text, sharing::text, review::text FROM sensei.stances
              WHERE user_key = $1 AND namespace_id = $2",
@@ -337,7 +370,15 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
         ("ask_on_risky", "derived", "two_maintainers")
     );
 
-    pg.upsert_stance(&user, Some(&ns), "run_freely", "patterns", "quorum").await.unwrap();
+    pg.upsert_stance(&crate::db::pg_store::StanceRow {
+        user_key: &user,
+        namespace_id: Some(&ns),
+        autonomy: "run_freely",
+        sharing: "patterns",
+        review: "quorum",
+    })
+    .await
+    .unwrap();
     let (au2,): (String,) = sqlx_core::query_as::query_as(
         "SELECT autonomy::text FROM sensei.stances WHERE user_key = $1 AND namespace_id = $2",
     )
@@ -443,18 +484,43 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
     .unwrap();
 
     assert!(!pg.outbox_already_sent(&mid, "sig-1").await.unwrap());
-    pg.outbox_mark_sent(&mid, Some(&batch), Some(&mem), "sig-1", 5, "remote-1").await.unwrap();
+    pg.outbox_mark_sent(&crate::db::pg_store::OutboxSentRow {
+        membership_id: &mid,
+        batch_id: Some(&batch),
+        memory_id: Some(&mem),
+        signature: "sig-1",
+        sent_seq: 5,
+        remote_id: "remote-1",
+    })
+    .await
+    .unwrap();
     assert!(pg.outbox_already_sent(&mid, "sig-1").await.unwrap());
     // A different signature is independent.
     assert!(!pg.outbox_already_sent(&mid, "sig-2").await.unwrap());
     // A late held/queued signal must NOT downgrade an already-sent row.
-    pg.outbox_mark_state(&mid, Some(&batch), Some(&mem), "sig-1", "queued").await.unwrap();
+    pg.outbox_mark_state(&crate::db::pg_store::OutboxStateRow {
+        membership_id: &mid,
+        batch_id: Some(&batch),
+        memory_id: Some(&mem),
+        signature: "sig-1",
+        state: "queued",
+    })
+    .await
+    .unwrap();
     assert!(
         pg.outbox_already_sent(&mid, "sig-1").await.unwrap(),
         "sent row must survive a late queued mark"
     );
     // A held record for a fresh signature.
-    pg.outbox_mark_state(&mid, Some(&batch), Some(&mem), "sig-3", "held").await.unwrap();
+    pg.outbox_mark_state(&crate::db::pg_store::OutboxStateRow {
+        membership_id: &mid,
+        batch_id: Some(&batch),
+        memory_id: Some(&mem),
+        signature: "sig-3",
+        state: "held",
+    })
+    .await
+    .unwrap();
     assert!(!pg.outbox_already_sent(&mid, "sig-3").await.unwrap());
 
     // Cleanup: membership delete cascades its outbox rows; then batch/memory/workspace.
@@ -966,7 +1032,16 @@ async fn a_verified_login_replaces_a_guessed_label_but_not_a_chosen_one() {
 
     // Discovered from git: a guessed label, unverified.
     let pid = s.upsert_persona(&guessed, true).await.unwrap();
-    let id = s.link_persona_identity(&guessed, "real-login", gh_id, None, &[]).await.unwrap();
+    let id = s
+        .link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+            persona_hint: &guessed,
+            github_login: "real-login",
+            github_user_id: gh_id,
+            primary_email: None,
+            verified_emails: &[],
+        })
+        .await
+        .unwrap();
     assert_eq!(id, pid, "verification lands on the existing persona");
 
     let (label, login, verified): (String, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
@@ -985,7 +1060,15 @@ async fn a_verified_login_replaces_a_guessed_label_but_not_a_chosen_one() {
         .execute(s.pool())
         .await
         .unwrap();
-    s.link_persona_identity("ignored", "real-login", gh_id, None, &[]).await.unwrap();
+    s.link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+        persona_hint: "ignored",
+        github_login: "real-login",
+        github_user_id: gh_id,
+        primary_email: None,
+        verified_emails: &[],
+    })
+    .await
+    .unwrap();
     let (after,): (String,) = query_as("SELECT label FROM sensei.personas WHERE id = $1")
         .bind(id)
         .fetch_one(s.pool())
@@ -1008,10 +1091,26 @@ async fn a_renamed_github_login_still_matches_the_same_persona() {
     let uniq = uuid::Uuid::new_v4();
     let gh_id: i64 = (uniq.as_u128() % 1_000_000) as i64 + 800_000;
 
-    let first =
-        s.link_persona_identity(&format!("a-{uniq}"), "old-login", gh_id, None, &[]).await.unwrap();
-    let second =
-        s.link_persona_identity(&format!("b-{uniq}"), "new-login", gh_id, None, &[]).await.unwrap();
+    let first = s
+        .link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+            persona_hint: &format!("a-{uniq}"),
+            github_login: "old-login",
+            github_user_id: gh_id,
+            primary_email: None,
+            verified_emails: &[],
+        })
+        .await
+        .unwrap();
+    let second = s
+        .link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+            persona_hint: &format!("b-{uniq}"),
+            github_login: "new-login",
+            github_user_id: gh_id,
+            primary_email: None,
+            verified_emails: &[],
+        })
+        .await
+        .unwrap();
 
     let (login,): (Option<String>,) =
         query_as("SELECT github_login FROM sensei.personas WHERE id = $1")

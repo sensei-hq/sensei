@@ -16,26 +16,7 @@ pub struct LibraryDocs {
     pub version_note: Option<String>,
 }
 
-/// One page of library documentation, with the identity that dedupes it.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct LibraryPageRow<'a> {
-    pub library_id: &'a uuid::Uuid,
-    pub title: &'a str,
-    pub url: Option<&'a str>,
-    pub local_path: Option<&'a str>,
-    pub description: Option<&'a str>,
-    pub content: Option<&'a str>,
-    pub source_type: &'a str,
-    pub component: Option<&'a str>,
-    pub package_name: Option<&'a str>,
-    pub version: Option<&'a str>,
-}
-
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// Search libraries by name (ILIKE).
     pub async fn search_libraries(&self, query: &str) -> Result<Vec<serde_json::Value>, String> {
@@ -299,15 +280,8 @@ impl PgStore {
             .collect())
     }
 
-    pub async fn upsert_library(
-        &self,
-        name: &str,
-        ecosystem: &str,
-        version: Option<&str>,
-        description: Option<&str>,
-        source_type: Option<&str>,
-        base_url: Option<&str>,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_library(&self, lib: &LibraryRow<'_>) -> Result<uuid::Uuid, String> {
+        let &LibraryRow { name, ecosystem, version, description, source_type, base_url } = lib;
         // `libraries` is IDENTITY ONLY (S10 option B). `version`, `source_type`
         // and `base_url` describe a RELEASE, not a library, and stage 0 moved
         // them to `library_versions` — so this writes both levels rather than
@@ -565,11 +539,9 @@ impl PgStore {
     pub async fn replace_library_capabilities(
         &self,
         library_id: &uuid::Uuid,
-        source: &str,
-        version_range: Option<&str>,
-        skills: &[crate::libraries::manifest::ProvidedSkill],
-        agents: &[crate::libraries::manifest::ProvidedAgent],
+        caps: &LibraryCapabilities<'_>,
     ) -> Result<(u32, u32), String> {
+        let &LibraryCapabilities { source, version_range, skills, agents } = caps;
         // Content hangs off a VERSION (S7b). `version_range` is an applies-to
         // RANGE, not a fetched version, so it is not the key — this content was
         // read from the manifest we have, which is 'latest' until a fetch says
@@ -1397,12 +1369,15 @@ impl PgStore {
     /// `folders.workspace_id`.
     pub async fn upsert_folder_dependency(
         &self,
-        from_folder_id: &uuid::Uuid,
-        to_folder_id: &uuid::Uuid,
-        source_protocol: &str,
-        source_manifest: &str,
-        resolved_target: Option<&str>,
+        folder_dependency: &FolderDependencyRow<'_>,
     ) -> Result<(), String> {
+        let &FolderDependencyRow {
+            from_folder_id,
+            to_folder_id,
+            source_protocol,
+            source_manifest,
+            resolved_target,
+        } = folder_dependency;
         sqlx_core::query::query(
             "INSERT INTO sensei.folder_dependencies
                 (from_folder_id, to_folder_id, source_protocol, source_manifest, resolved_target)

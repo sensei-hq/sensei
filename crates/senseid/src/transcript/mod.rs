@@ -470,7 +470,7 @@ fn adapters() -> Vec<Box<dyn TranscriptAdapter>> {
         Box::new(zed::ZedAdapter::new(zed_db_path())),
         Box::new(opencode::OpenCodeAdapter::new(opencode_db_path())),
         Box::new(cursor::CursorAdapter::new(cursor_transcript_root())),
-        Box::new(vscode::VscodeAdapter::new(vscode_user_root("Code").unwrap_or_else(claude_root))),
+        Box::new(vscode::VscodeAdapter::installed()),
         Box::new(copilot_cli::CopilotCliAdapter::new(copilot_home())),
     ]
 }
@@ -491,9 +491,7 @@ fn adapter_for_source(source: &str) -> Option<Box<dyn TranscriptAdapter>> {
         "zed" => Some(Box::new(zed::ZedAdapter::new(zed_db_path()))),
         "opencode" => Some(Box::new(opencode::OpenCodeAdapter::new(opencode_db_path()))),
         "cursor" => Some(Box::new(cursor::CursorAdapter::new(cursor_transcript_root()))),
-        "vscode" => Some(Box::new(vscode::VscodeAdapter::new(
-            vscode_user_root("Code").unwrap_or_else(claude_root),
-        ))),
+        "vscode" => Some(Box::new(vscode::VscodeAdapter::installed())),
         "copilot_cli" => Some(Box::new(copilot_cli::CopilotCliAdapter::new(copilot_home()))),
         _ => None,
     }
@@ -536,7 +534,11 @@ async fn ingest_one(
     // sets their metadata) and for sessions already attempted (skip the re-read,
     // even a token-less source), keyed on the `meta_synced_at` marker.
     let needs_meta = pg.session_needs_meta_backfill(&session_id).await?;
-    if prose_fresh && !needs_synth && !needs_meta {
+    // Fresh means nothing to do only for a session in scope. One with no row
+    // may be an orphan written before the scope rule (#125); it is read once
+    // more, so the scope gate below can ignore it and record the skip.
+    let has_row = pg.session_exists(&session_id).await?;
+    if prose_fresh && !needs_synth && !needs_meta && has_row {
         return Ok(IngestOutcome::skipped());
     }
     // Adapter owns the read + its own oversize/format guards (returns None to skip).
@@ -552,7 +554,7 @@ async fn ingest_one(
     // Hook EVENTS are not attribution: hooks record them for any cwd. Out of
     // scope, the transcript is ignored — its turns are not kept, so no turn set
     // is left without its session.
-    if !pg.session_exists(&session_id).await? && tracked_folder(pg, &parsed.cwds).await?.is_none() {
+    if !has_row && tracked_folder(pg, &parsed.cwds).await?.is_none() {
         pg.ignore_untracked_transcript(adapter.source(), key, &session_id, stamp).await?;
         return Ok(IngestOutcome::skipped());
     }
@@ -565,11 +567,13 @@ async fn ingest_one(
         };
         turns = pg
             .upsert_transcript_turns(
-                adapter.source(),
-                &session_id,
-                adapter.family(),
-                provider,
-                model_name,
+                &crate::db::pg_store::TranscriptSource {
+                    source: adapter.source(),
+                    session_id: &session_id,
+                    family: adapter.family(),
+                    provider,
+                    model: model_name,
+                },
                 &parsed.turns,
             )
             .await?;
@@ -583,8 +587,14 @@ async fn ingest_one(
         // with reality, so a watermark claiming turns that no longer exist was
         // undetectable — 1,986 Zed turns were claimed against an empty table for
         // two days (#125). With the real count, that mismatch is queryable.
-        pg.set_capture_watermark(adapter.source(), key, Some(&session_id), stamp, turns as i32)
-            .await?;
+        pg.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+            source: adapter.source(),
+            file_path: key,
+            session_id: Some(&session_id),
+            mtime_ns: stamp,
+            turns: turns as i32,
+        })
+        .await?;
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
@@ -628,7 +638,16 @@ async fn set_session_metadata(
         None => (None, None),
     };
     if let Err(e) = pg
-        .set_session_metadata(session_id, provider, model_name, tokens_in, tokens_out, t.as_ref())
+        .set_session_metadata(
+            session_id,
+            &crate::db::pg_store::SessionMetadataPatch {
+                provider,
+                model: model_name,
+                tokens_in,
+                tokens_out,
+                split: t.as_ref(),
+            },
+        )
         .await
     {
         tracing::warn!(error = %e, session = %session_id, "set_session_metadata: write failed");
@@ -702,8 +721,15 @@ async fn synthesize_session(
         tracing::debug!(session = %session_id, "synthesize_session: no tracked folder for cwds — skipping");
         return None;
     };
-    if let Err(e) =
-        pg.record_session_event(session_id, &folder_id, workspace_id.as_ref(), family, true).await
+    if let Err(e) = pg
+        .record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: session_id,
+            folder_id: &folder_id,
+            workspace_id: workspace_id.as_ref(),
+            family,
+            is_end: true,
+        })
+        .await
     {
         tracing::warn!(error = %e, "synthesize_session: record_session_event failed");
         return None;
@@ -1125,6 +1151,41 @@ mod tests {
 {"type":"assistant","timestamp":"2026-06-22T10:01:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Wired."}]}}
 "#;
 
+    /// #123 A5: a test that needs a real-data sample must not pass by skipping.
+    /// `let Ok(dir) = env::var("SENSEI_…_SAMPLE") else { return; }` reports `ok`
+    /// while executing nothing, and no Makefile or workflow sets those
+    /// variables, so A2 and A4 survived the very tests meant to catch them.
+    /// Such a test is `#[ignore]` with its reason (visible as "ignored" in every
+    /// run) and fails loudly when run without its sample.
+    #[test]
+    fn no_sample_test_passes_by_skipping() {
+        fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    rust_files(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        rust_files(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+        // Spelled at runtime so this test's own text never matches itself.
+        let skip = ["_SAMPLE\")", " else {"].concat();
+        let mut found = Vec::new();
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap();
+            for (i, line) in text.lines().enumerate() {
+                let code = line.trim_start();
+                if !code.starts_with("//") && code.contains(&skip) && code.contains("SENSEI_") {
+                    found.push(format!("{}:{}", f.display(), i + 1));
+                }
+            }
+        }
+        assert!(found.is_empty(), "sample tests that pass by skipping: {found:#?}");
+    }
+
     /// The Claude adapter, counting how often a transcript is parsed.
     struct CountingClaude {
         inner: claude::ClaudeAdapter,
@@ -1240,6 +1301,80 @@ mod tests {
         let attributed = ingest_one(&pg, &ad, &key).await.unwrap();
         assert_eq!(attributed.turns, 2, "a transcript its new repository owns is ingested");
         assert_eq!(ad.parses.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    /// #125, found on the released daemon: an orphan whose transcript had
+    /// ALREADY been ingested before the scope rule — fresh watermark, hook
+    /// events, no session row — was skipped as "fresh" before the scope gate
+    /// ran, so it stayed orphaned until its file changed (4 left on live data,
+    /// none of them changing). Fresh is not a reason to keep a turn set that has
+    /// no session: such a transcript is read once more and ignored.
+    #[tokio::test]
+    async fn an_already_ingested_orphan_is_ignored_though_its_file_is_unchanged() {
+        let pg = crate::db::pg_store::PgStore::test_store().await;
+        let sid = format!("_test-fresh-orphan-{}", uuid::Uuid::new_v4());
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("proj")).unwrap();
+        let file = root.path().join("proj").join(format!("{sid}.jsonl"));
+        let cwd = format!("/nowhere/fresh-orphan-{}", uuid::Uuid::new_v4());
+        let head = format!(
+            r#"{{"type":"user","cwd":"{cwd}","timestamp":"2026-06-22T09:59:00.000Z","message":{{"role":"user","content":[{{"type":"tool_result","content":"ok"}}]}}}}"#
+        );
+        std::fs::write(&file, format!("{head}{SAMPLE}")).unwrap();
+        let key = file.to_string_lossy().to_string();
+        let ad = claude::ClaudeAdapter::new(root.path().to_path_buf());
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &sid,
+            assistant_family: "claude",
+            event_type: "Stop",
+            tool_name: None,
+            cwd: Some(&cwd),
+            ts: 1,
+            success: None,
+            payload: &serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        // Ingested before the rule: its turns and a watermark at the file's stamp.
+        sqlx_core::query::query(
+            "INSERT INTO activity.transcript_turns (source, session_id, family, turn_index, started_at)
+             VALUES ('claude_code', $1, 'claude', 1, now())",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let stamp = ad.stamp_for(&key).unwrap();
+        pg.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+            source: "claude_code",
+            file_path: &key,
+            session_id: Some(&sid),
+            mtime_ns: stamp,
+            turns: 1,
+        })
+        .await
+        .unwrap();
+        // Its metadata pass is done too, so nothing else asks for a re-read.
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET meta_synced_at = now() WHERE client_session_id = $1",
+        )
+        .bind(&sid)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
+        let got = ingest_one(&pg, &ad, &key).await.unwrap();
+        assert!(got.skipped);
+        let turns: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM activity.transcript_turns WHERE session_id = $1",
+        )
+        .bind(&sid)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(turns.0, 0, "the orphan set is dropped although the file did not change");
+        let w = pg.get_capture_watermark("claude_code", &key).await.unwrap().unwrap();
+        assert!(w.untracked, "and the skip is recorded, so the next pass does not read it");
     }
 
     #[tokio::test]

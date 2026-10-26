@@ -19,12 +19,13 @@
 	import ScrMyDojos from '$lib/components/screens/ScrMyDojos.svelte';
 	import ScrSharing from '$lib/components/screens/ScrSharing.svelte';
 	import ScrContributions from '$lib/components/screens/ScrContributions.svelte';
+	import ScrMyMetrics from '$lib/components/screens/ScrMyMetrics.svelte';
 	import { youHref, orgHref } from '$lib/nav';
 	import { YouSectionState, type YouApi } from '$lib/you-state.svelte';
 	import type { KitWorkspace, KitDojo, KitDownstream, KitRulePack } from '$lib/components/kit/types';
 
 	// The personal-zone section screen — the non-inbox destinations (workspaces ·
-	// rules · packs · sharing · dojos · contributions). Presentation only: the
+	// metrics · rules · packs · sharing · dojos · contributions). Presentation only: the
 	// writes run in YouSectionState, which says why each one failed; the load is
 	// +page.ts and every write re-reads it.
 	let { data } = $props();
@@ -76,10 +77,12 @@
 		showDojo={false}
 		onOpenWorkspace={openWorkspace}
 	/>
+{:else if data.section === 'metrics'}
+	<ScrMyMetrics view={data.metricsView} error={data.metricsError} />
 {:else if data.section === 'rules'}
 	<ScrConstitution onGoPacks={goPacks} />
 {:else if data.section === 'packs'}
-	<ScrRulePacks packs={data.rulePacks} error={you.actionError} onToggle={onPackToggle} />
+	<ScrRulePacks packs={data.rulePacks} loadError={data.packsError} error={you.actionError} onToggle={onPackToggle} />
 {:else if data.section === 'sharing'}
 	<ScrSharing repos={sharingRepos} error={sharingError} pending={you.sharingPending} onToggle={elect} />
 {:else if data.section === 'dojos'}
@@ -96,6 +99,7 @@
 	<ScrContributions
 		mine={data.contributionsMine}
 		downstream={data.contributionsDownstream}
+		loadError={data.contributionsError}
 		error={you.actionError}
 		onPin={pinContribution}
 	/>

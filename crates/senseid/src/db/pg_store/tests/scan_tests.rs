@@ -244,7 +244,15 @@ async fn folder_upsert_and_list() {
     let path = format!("/_test/folder_root_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&path, "test_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "myrepo", "myrepo", &format!("{}/myrepo", path), None, None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "myrepo",
+            path: "myrepo",
+            abs_path: &format!("{}/myrepo", path),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
     let folders = s.list_folders_by_root(&rid).await.unwrap();
@@ -272,7 +280,18 @@ async fn list_pending_folders_returns_only_non_terminal_status() {
     ] {
         let name = format!("repo_{}", suffix);
         let abs_path = format!("{}/{}", root_path, name);
-        let fid = s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None).await.unwrap();
+        let fid = s
+            .upsert_folder(&crate::db::pg_store::FolderRow {
+                root_id: &rid,
+                kind: "git",
+                name: &name,
+                path: &name,
+                abs_path: &abs_path,
+                parent_id: None,
+                workspace_root_id: None,
+            })
+            .await
+            .unwrap();
         s.update_folder_status(&fid, status).await.unwrap();
     }
 
@@ -317,7 +336,15 @@ async fn update_folder_status_round_trips() {
     let root_path = format!("/_test/status_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "status_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "r",
+            path: "r",
+            abs_path: &format!("{root_path}/r"),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
 
@@ -343,7 +370,15 @@ async fn get_folder_status_reads_back_status_and_is_none_for_missing() {
     let root_path = format!("/_test/getstatus_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "getstatus_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "r",
+            path: "r",
+            abs_path: &format!("{root_path}/r"),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
 
@@ -393,7 +428,14 @@ async fn watch_root_update_status() {
 async fn scan_state_upsert_and_stale() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("scan_{}", uuid::Uuid::new_v4())).await;
-    s.upsert_scan_state(&fid, "src/main.rs", 1000, "hash1").await.unwrap();
+    s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+        folder_id: &fid,
+        file_path: "src/main.rs",
+        mtime: 1000,
+        content_hash: "hash1",
+    })
+    .await
+    .unwrap();
     // Same mtime = not stale
     let stale = s.get_stale_files(&fid, &[("src/main.rs".into(), 1000)]).await.unwrap();
     assert!(stale.is_empty());
@@ -517,7 +559,14 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     // `cluster/server` 1 node against 1,970 stale rows, `cluster/scheduler`
     // 1/1,816, `sensei/marketplace` 1/77 — enough to make a content-based
     // duplicate check report six false positives out of seven.
-    s.upsert_scan_state(&crate_fid, "src/store.rs", 1, &format!("hash-{uniq}")).await.unwrap();
+    s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+        folder_id: &crate_fid,
+        file_path: "src/store.rs",
+        mtime: 1,
+        content_hash: &format!("hash-{uniq}"),
+    })
+    .await
+    .unwrap();
     let phantom =
         s.upsert_repo_kind(&root_id, "standalone", "dojo-mind", &crate_abs).await.unwrap();
     assert_eq!(phantom, crate_fid, "the same folder, now mis-scoped as standalone");
@@ -638,10 +687,24 @@ async fn idx_err_log_and_get() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "idx_err_log").await;
     s.clear_index_errors(&fid).await.unwrap(); // ensure clean
-    s.log_index_error(&fid, "src/bad.ts", "SyntaxError", Some("typescript"), None).await.unwrap();
-    s.log_index_error(&fid, "src/x.py", "IndentError", Some("python"), Some("parse"))
-        .await
-        .unwrap();
+    s.log_index_error(&crate::db::pg_store::IndexErrorRow {
+        folder_id: &fid,
+        file_path: "src/bad.ts",
+        error: "SyntaxError",
+        adapter: Some("typescript"),
+        phase: None,
+    })
+    .await
+    .unwrap();
+    s.log_index_error(&crate::db::pg_store::IndexErrorRow {
+        folder_id: &fid,
+        file_path: "src/x.py",
+        error: "IndentError",
+        adapter: Some("python"),
+        phase: Some("parse"),
+    })
+    .await
+    .unwrap();
     let errors = s.get_index_errors(Some(&fid)).await.unwrap();
     assert_eq!(errors.len(), 2);
     s.clear_index_errors(&fid).await.unwrap();
@@ -652,7 +715,15 @@ async fn idx_err_clear() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "idx_err_clear").await;
     s.clear_index_errors(&fid).await.unwrap();
-    s.log_index_error(&fid, "a.rs", "err", Some("rust"), None).await.unwrap();
+    s.log_index_error(&crate::db::pg_store::IndexErrorRow {
+        folder_id: &fid,
+        file_path: "a.rs",
+        error: "err",
+        adapter: Some("rust"),
+        phase: None,
+    })
+    .await
+    .unwrap();
     s.clear_index_errors(&fid).await.unwrap();
     assert_eq!(s.get_index_errors(Some(&fid)).await.unwrap().len(), 0);
 }

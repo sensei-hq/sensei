@@ -697,12 +697,23 @@ mod tests {
     }
 
     /// Poll `GET …/trackers` until the status leaves `pending` (≤ 3 s).
+    /// The first sync has FINISHED: its status is written AND its lock released.
+    /// It writes the status before the lock drops, so a test that synced on the
+    /// status alone could arrive in between and read `busy` — a 409 seen under the
+    /// full parallel suite (2026-10-26).
     async fn settled(h: &Harness, p: uuid::Uuid) -> Value {
         for _ in 0..300 {
             let (_, body) =
                 call(h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
             let v = json(&body);
-            if v[0]["status"] != json!("pending") {
+            let ids: Vec<uuid::Uuid> = v
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|t| t["id"].as_str().and_then(|s| s.parse().ok()))
+                .collect();
+            let idle = ids.iter().all(|id| h.rt.locks.try_lock(*id).is_some());
+            if v[0]["status"] != json!("pending") && idle {
                 return v;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -1331,19 +1342,36 @@ mod tests {
             let (st, b) = call(&h, "POST", &uri, Some(board_body(&s, board, level)), None).await;
             assert_eq!(st, StatusCode::CREATED, "{b}");
         }
+        // Both initial syncs must be FINISHED, not merely connected. A sync marks
+        // its board connected inside its last transaction and releases the
+        // board's lock only when it returns, so "connected" can be read while
+        // the lock is still held. This used to wait 3 s for "connected" and then
+        // carry on regardless; on a loaded CI runner the sprint board was still
+        // locked and the lookup answered 409 busy (develop, a4e7171c).
+        let connected = |l: &serde_json::Value| {
+            l.as_array().is_some_and(|l| l.iter().all(|t| t["status"] == json!("connected")))
+        };
         let mut listed = json!(null);
-        for _ in 0..300 {
+        for _ in 0..1000 {
             listed = json(&call(&h, "GET", &uri, None, None).await.1);
-            if listed
-                .as_array()
-                .is_some_and(|l| l.iter().all(|t| t["status"] == json!("connected")))
-            {
+            if connected(&listed) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
+        assert!(connected(&listed), "both boards connect within 10 s: {listed}");
         let (epic, sprint) = (listed[0]["id"].as_str().unwrap(), listed[1]["id"].as_str().unwrap());
         assert_eq!(listed[0]["level"], json!("epic"), "{listed}");
+        let sprint_id: uuid::Uuid = sprint.parse().unwrap();
+        let mut released = false;
+        for _ in 0..1000 {
+            if h.rt.locks.try_lock(sprint_id).is_some() {
+                released = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(released, "the sprint board's initial sync releases its lock within 10 s");
         // The epic board, asked first, is mid-sync.
         let _held = h.rt.locks.try_lock(epic.parse().unwrap()).unwrap();
         let (st, b) =

@@ -884,14 +884,14 @@ pub async fn derive_signals(
         }]);
         match ctx
             .pg()
-            .upsert_pattern(
+            .upsert_pattern(&crate::db::pg_store::PatternRow {
                 workspace_id,
-                Some(&folder_id),
-                &churn_pattern_name(&file),
-                true,
-                Some(churn_confidence(max_edits)),
-                &instances,
-            )
+                folder_id: Some(&folder_id),
+                name: &churn_pattern_name(&file),
+                is_anti: true,
+                confidence: Some(churn_confidence(max_edits)),
+                instances: &instances,
+            })
             .await
         {
             Ok(_) => count += 1,
@@ -946,7 +946,14 @@ pub async fn derive_signals(
         let instances = serde_json::Value::Array(corrections);
         match ctx
             .pg()
-            .upsert_pattern(workspace_id, None, "correction-prone", true, None, &instances)
+            .upsert_pattern(&crate::db::pg_store::PatternRow {
+                workspace_id,
+                folder_id: None,
+                name: "correction-prone",
+                is_anti: true,
+                confidence: None,
+                instances: &instances,
+            })
             .await
         {
             Ok(_) => count += 1,
@@ -959,7 +966,14 @@ pub async fn derive_signals(
         let instances = serde_json::Value::Array(principles);
         match ctx
             .pg()
-            .upsert_pattern(workspace_id, None, "rule-candidates", false, None, &instances)
+            .upsert_pattern(&crate::db::pg_store::PatternRow {
+                workspace_id,
+                folder_id: None,
+                name: "rule-candidates",
+                is_anti: false,
+                confidence: None,
+                instances: &instances,
+            })
             .await
         {
             Ok(_) => count += 1,
@@ -1467,7 +1481,16 @@ mod tests {
         .await
         .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
 
         // 2 prompts (one a correction) + an edit + a Stop.
         let prompt = |t: &str| serde_json::json!({ "prompt": t });
@@ -1641,7 +1664,16 @@ mod tests {
         let fid =
             crate::tasks::test_support::seed_repo_folder(pg, &root, "rw-repo", &abs).await.unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
         pg.link_workspace_repository_for_folder(&fid, &pid).await.unwrap();
         // Most live sessions carry a workspace but no folder: the file's own path
         // has to place it.
@@ -1663,7 +1695,16 @@ mod tests {
         pg.link_workspace_repository_for_folder(&lib, &pid).await.unwrap();
         // A session that does have its folder, editing by relative path.
         let csid2 = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid2 = pg.record_session_event(&csid2, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid2 = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid2,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
 
         async fn edit(pg: &crate::db::pg_store::PgStore, csid: &str, fp: &str, ts: i64) {
             let payload = serde_json::json!({ "tool_input": {"file_path": fp} });
@@ -1690,14 +1731,14 @@ mod tests {
             edit(pg, &csid2, "src/b.rs", ts).await;
         }
         // An unreviewed rework row from an earlier, wrong derive.
-        pg.upsert_pattern(
-            &pid,
-            Some(&fid),
-            "rework: /old/out.rs",
-            true,
-            Some(0.5),
-            &serde_json::json!([]),
-        )
+        pg.upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &pid,
+            folder_id: Some(&fid),
+            name: "rework: /old/out.rs",
+            is_anti: true,
+            confidence: Some(0.5),
+            instances: &serde_json::json!([]),
+        })
         .await
         .unwrap();
 
@@ -1764,7 +1805,16 @@ mod tests {
         let fid =
             crate::tasks::test_support::seed_repo_folder(pg, &root, "bf-repo", &abs).await.unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
         sqlx_core::query::query(
             "UPDATE activity.sessions SET folder_id = NULL, analyzed_at = now() WHERE id = $1",
         )
@@ -1818,8 +1868,16 @@ mod tests {
             "duration = NULL, claude_time = NULL, user_time = NULL",
         ] {
             let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-            let sid =
-                pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+            let sid = pg
+                .record_session_event(&crate::db::pg_store::SessionEventRow {
+                    client_session_id: &csid,
+                    folder_id: &fid,
+                    workspace_id: Some(&pid),
+                    family: "claude",
+                    is_end: true,
+                })
+                .await
+                .unwrap();
             sqlx_core::query::query(&format!(
                 "UPDATE activity.sessions SET analyzed_at = now() + interval '1 day', {set} WHERE id = $1"
             ))
@@ -1876,7 +1934,16 @@ mod tests {
         .await
         .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
 
         let edit = |fp: &str| serde_json::json!({ "tool_input": {"file_path": fp} });
         let prompt = |t: &str| serde_json::json!({ "prompt": t });
@@ -2081,7 +2148,16 @@ mod tests {
         .await
         .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
-        let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        let sid = pg
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &csid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: true,
+            })
+            .await
+            .unwrap();
 
         // A minimal enrichable session (a prompt + a Stop) so analyze_workspace
         // reaches its success path.

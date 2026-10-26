@@ -135,7 +135,8 @@ The settings screen lists them as repositories.
 - **Operations:**
   - ~~#181~~ **Closed 2026-10-19**: `SKIP_DB_BACKUP`, prune after writing (12 → 8 GB), a failed export fails
     the backup.
-  - #194: **fixed and deployed (b3dfaf7b)**; open until a live retryable failure shows one row per task.
+  - ~~#194~~ **closed 2026-10-26**: one `task_failed` row per task on every day since b3dfaf7b; the 2,409 old duplicates deleted
+    (user OK). The success path does the same at 2 rows per execution (31.7M): #339.
     Pending a user decision: the 145k/day `task_started`/`task_completed` rows duplicate `task_executions`.
   - ~~#179~~ **Closed 2026-10-19**: every pre-bind exit records why; `senseid status` shows it.
 - **Gates:**
@@ -174,11 +175,12 @@ The settings screen lists them as repositories.
   - #149: **experiment run 2026-10-20, criterion not met** — without `parent_id` the >50-file giants grew
     (22,484 → 24,258 nodes); they are dense call/reference cores. Reverted. Awaiting a decision: Leiden/Louvain
     (recommended) or hierarchy grouping.
-  - #278: **both defects fixed and live** (`unknown`; action tools by outcome). Open to re-measure after #289.
+  - #278: **both defects fixed and live** (`unknown`; action tools by outcome). Re-measured on clean data after
+    #289: used 81.1%, ignored 13.6%, unknown 4.3%, partial 1.0%. Left: the 30-call hand-checked sample.
   - ~~#290~~ **Closed 2026-10-20**: a file is where declarations are. Atlas shows 2,096 modules and 11,823 exports (was 0 / 0), and `rework_density` is written again (371/2096 = 0.177, its first row since 2026-10-07). Traceability says "no documents indexed" instead of "no drift".
   - #292 (found via #290): indexer v2 has no markdown adapter, so doc drift never scans a document. **Decided 2026-10-20:** a markdown LanguageAdapter emitting `doc` nodes (with sections) and code mentions as references; an unplaced mention is drift.
-  - #289 (found via #278): 26% of assistant events are duplicates (non-idempotent staging import, now fixed).
-    Removing the existing 167,932 awaits the user's OK.
+  - ~~#289~~ **closed 2026-10-26** (user OK): after a backup, 153,430 duplicate events and the 40,148 verdicts of
+    their 26 sessions deleted, those sessions re-classified (14,398 verdicts). 0 duplicates left.
 - **Dōjō:**
   - #132: steps 1–2 done. No literal `font-size` remains in the dōjō (a spec guards it); sign-in verified at 13/11px. Step 3 (mockup compare) started: the sign-in left pane now follows the mockup, replacing an "Acme Corp" fixture (#241). The right pane's extra password form and placeholder remain.
   - **#293 screen structure (user, 2026-10-20):** every screen keeps presentation | state | load/save apart, uses the shared shell (fixed header over one scroll body) and rokkit before any custom duplicate. Audits filed as #293 with the ordered list. Step 0: `Screen` (with `fill` for list-and-detail screens) holds all 48 app screens and neither window `<main>` scrolls (522b8092, 47 probed live); `Screen` is now shared from `packages/ui` and holds all 22 dōjō screens (c9f1e0d7); the dōjō routes and AppShell are next, then the dōjō shell, then separation and rokkit. Step 1 (separation): app instruments (c290f38e), workspace memories (6c815eea), consolidation (ac1da700), workspace impact (3541ee2f), settings/* (5a1cb297), metric detail (e749b380) and the sessions pages → one screen (bae2126f) done — app step 1 complete; four hid a failed write, the metrics loaders a failed registry read (ee2b0f4c). Dōjō step 1: `you/[section]` (9f11df08), `org/[slug]/[section]` (785279a6), the run deep link (a0b8aaf4), inbox answers really sent (#305, bf16a437 — on develop; live on the local dōjō, production after the next release) and one run view (3d443b1b) — **step 1 done for both apps**. Next: step 2 (rokkit first); step 3 dead code adds `segmentsToPlan`, `planProgress`.
@@ -215,11 +217,11 @@ The settings screen lists them as repositories.
   origin guard covered only tracker routes and CORS allowed every origin. Now `caller_guard` on the whole router
   (loopback `Host` always; an app `Origin` or none for writes) and CORS for the app's origins only. Live on a
   throwaway daemon: the original repro → 403 with nothing added; the app's origin and the CLI still write.
-- #178 (B1): **landed 2026-10-25** (2e5c6c1f): a file over 2 MiB or with a line over 10,000 bytes is skipped
+- ~~#178~~ (B1): **closed 2026-10-25**, verified on v0.20.2 (live probe recorded `oversized`). Landed 2e5c6c1f: a file over 2 MiB or with a line over 10,000 bytes is skipped
   as `oversized` (new enum value), by the one classifier the scan and `process_file` share. Live DB
   reconciled; over the 61,349-file corpus it refuses exactly the 137 measured. Closes on the released
   daemon's first `oversized` rows.
-- #188 (B2): **landed 2026-10-25** (d5bfdc7d): `GET /api/tasks/abandoned` (per day and kind, ten worst by
+- ~~#188~~ (B2): **closed 2026-10-25**, verified on v0.20.2 (`sensei doctor` Watchdog). Landed d5bfdc7d: `GET /api/tasks/abandoned` (per day and kind, ten worst by
   kind and path) and a Watchdog section in `sensei doctor`. Live: 204 in 14 days. Closes when the released
   doctor prints it.
 - #336: **landed 2026-10-25** (e5bf2e9d): `ingest_capture` was abandoned 117× in 14 days on one 1.28 GB
@@ -228,20 +230,64 @@ The settings screen lists them as repositories.
 - ~~C1~~: `public.logs` size — #180, closed.
 - #125: **landed 2026-10-25** (17e81b4b). 72 orphan turn sets: 53 are from untracked folders, 1 is a Zed thread
   with no cwd, 18 have no transcript left. Ingest is now scoped to folders under the watch roots (user
-  decision); a trigger re-opens the skips when a repository is registered. Closes when the released daemon
-  shows 0 traceable orphans.
+  decision); a trigger re-opens the skips when a repository is registered. On v0.20.2: 72 → 22. The 4 fresh
+  orphans with hook events are fixed in 5dea36e3 (next release), then 18, which have no transcript.
 - #161: typed rows, remainder. **2026-10-25** (98e2c9cf): `adopt_node_by_identity` (12 args) takes `FqnNodeRow`
   (adding a field fails the build, verified). A guard test pins the positional writers: none at 8+, and the 50 at
   5+ are listed by name and may only shrink. 558b90fd: the three MCP writers take rows (50 → 47), with
-  round-trip tests. Then check runs, consolidated rulesets and workflow state (47 → 44). Next: the four
-  left at 7 args, then the `too_many_arguments` allows.
-- #123: VS Code adapter A5/A6, Track B.
+  round-trip tests. Then check runs, consolidated rulesets and workflow state (47 → 44); `merge_function`
+  deleted and `callee_row` typed (→ 42); `insert_edge_with_props` takes `EdgeRow` (→ 41); `upsert_folder` takes
+  `FolderRow` (→ 40); `insert_edge` takes `EdgeTarget` (→ 39); `TaskExecutionStart` (→ 38); `ExtensionRow`, `TranscriptSource` (→ 36). Row types
+  now live in `pg_store/mod.rs` (user decision 2026-10-26: re-exports dangled in the code graph, ratchet
+  1,304 → 1,045, ceiling 1,060). `PatternRow` (→ 35); `LibraryRow` (→ 34); five more (→ 29, eedc547e); three more (→ 26); `FqnNode` (→ 25); one `upsert_subfolder`
+  (→ 23, none at six args); four more and `merge_type` deleted (→ 18); `FileFingerprint` (→ 15); session and run events (→ 13); the last
+  writers (→ 4, all readers; 9bad2aa8); readers (→ 0, 853c46a5), allows removed, exhaustive-destructure guard.
+  **All acceptance met**; closes when the next release runs it.
+- #123: VS Code adapter. A5 (0c2d452b, sample tests no longer pass by skipping) and A6 (7f0d82c6, one
+  failure-rate denominator) fixed. The lower-severity list is verified (all real); #1 (04f78181), 2–5 and adjacent
+  (a)/(b) (9917ca6a), 7 (2ac89e21), (c) (fad9ef49: 10 of 635 real turns ended before they started), (d)
+  (d65dbde7: 22% of real VS Code file links carried a `#N-N` anchor; languages 375 → 1,208 touches) and (6)
+  (cee5ba48: the three-meaning event count removed) are fixed. **Lower-severity list done.**
+  **Track B (2026-10-26):** B1, the swarm blind on the pre-fix range (`56c3e90a^..525cfe04^`; old SHAs died
+  in the scrubs), re-derived 4 of 6 (A1 failure-mode, A2/A6 data-correctness, A5 test); missed A3/A4; the
+  security reviewer missed A1 (fixed by B4's port). Its new findings, still live, fixed: one VS Code session =
+  one unit (d9c1c338, sample 121 → 84 units for 84 sessions), UTF-8 percent-decoding (62a1bfca), facet writes
+  (ffb4544c), docs (f02ab900, 7668bb3d, a3aee653, facet DDL comments). B2/B3: `dojo-db.yml` deploys the dōjō
+  the production way on a fresh Supabase and runs its 58 access-rule files on schema changes and nightly
+  (caf47a19, 4cd9d340; first green run 40381330840). B4: catalog reviewers ported (72032126); deleting the
+  local copies is the user's call (`/review-slice` still names them). Also fixed: a large `kind:0` snapshot
+  was skipped by the line cap (c8014214; 2 real journals kept prompts for 7/130 and 6/37, now all 167); B2
+  CLI exit codes: a child killed by a signal no longer exits 0 (bdd21fdf). Left for B2: app e2e in WebKit.
+- ~~#338~~ **closed 2026-10-26** (be5a6677): scheduled workers ran at twice their interval (live: advance_run
+  every 30s, set to 15s). Found via a flaky test.
+- **Demo prep (user, 2026-10-26: a demo this week, sensei + dōjō, metrics and diagrams).** Done:
+  - 3f6f4199: "last 7 days", `sessions7d` and `last_session_at` key on last activity, not the start. Live
+    SQL: 7-day sessions 1 → 3, sensei's `sessions7d` 0 → 1.
+  - 00e84641: community labels take the directory most members live in (was the first member's, so the
+    largest read "function ()"). Live: the two largest gain `crates/senseid/src/indexer` and
+    `dojo/src/lib/server`; 177 of 684 "()" labels fixed, 507 have no member below the top level.
+  - 87bc0bbc, 7d22700c, eeb834ce: the dōjō's **My metrics** (`/you/metrics`): `dojo.my_metric_series`,
+    `GET /v1/you/metrics`, four cards (the Teams view's metrics) with daily lines. Seen in the browser on
+    the local dōjō: 16 sessions, 81% first-try, 55% rework share, 17.7B tokens over 30 days.
+  - Watch roots: dbd, gateway, torii added (user); indexed 10,317 / 11,800 / 8,360 nodes.
+  - Not a bug: the MCP 404 on `/api/projects` was a session's MCP process from 10-15 (pre-rename);
+    0.20.2's MCP answers. Product gap: an upgrade leaves running sessions on a stale MCP.
+  - Before the demo: a release (or install) so the daemon runs these; fresh sessions and a dōjō sync (the
+    synced session metrics end 10-18); demo from a fresh Claude session.
+  - eb4c16cd: a failed rule-pack or contributions read is an error, not an empty list (the personal
+    loader swallowed both). "Tokens" is dominated by cache reads (the user's call whether to change it).
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
   signing, notarization, and a first-start Permissions step. Needs the user's Apple Developer account.
   Local builds are fixed already (8d09be73, `make dev-signing-cert`).
 - #190: read `design.yaml` through dbd's `project::survey`, and load a workspace design with
   `Workspace::load`. Since dbd 0.27, a repository with a `modules:` design cannot be imported.
+  Already on dbd: SQL parsing (`dbd_core::parser`, 87cf190a) and schema import (`Design::from_config`; torii's
+  Schema diagram: 102 tables). Left: `DbdManifestAdapter`'s own serde struct. `project::survey` does not fit (it
+  walks the filesystem, defaults the dialect, has no extensions); `dbd_core::config::DesignConfig` from the text
+  does, once dbd says whether the dialect was stated: **blocked on sensei-hq/dbd#109** (filed 2026-10-26).
+  Accepting it drops the legacy top-level `extensions:` (23 of 77 local designs; `dbd doctor --fix` migrates).
+  `modules:` → `Workspace::load`: 0 of 77 local designs use it, so no live case yet.
 
 **dbd 0.27.3 (2026-10-19).**
 - All four pins move from v0.26.0.

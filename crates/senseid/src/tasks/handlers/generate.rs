@@ -480,12 +480,27 @@ mod tests {
         .unwrap();
         // A session attributes this folder to the workspace (L1's attribution path).
         let csid = format!("_test-gen-sid-{}", uuid::Uuid::new_v4());
-        pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
+        pg.record_session_event(&crate::db::pg_store::SessionEventRow {
+            client_session_id: &csid,
+            folder_id: &fid,
+            workspace_id: Some(&pid),
+            family: "claude",
+            is_end: true,
+        })
+        .await
+        .unwrap();
 
         // A rule-candidate pattern (the user stated a principle) → memory + promote rec.
         let instances = serde_json::json!([{ "session": csid, "prompt": "you should always run the tests first" }]);
         let pat_id = pg
-            .upsert_pattern(&pid, Some(&fid), "rule-candidates", false, None, &instances)
+            .upsert_pattern(&crate::db::pg_store::PatternRow {
+                workspace_id: &pid,
+                folder_id: Some(&fid),
+                name: "rule-candidates",
+                is_anti: false,
+                confidence: None,
+                instances: &instances,
+            })
             .await
             .unwrap();
 

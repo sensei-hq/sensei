@@ -564,14 +564,14 @@ pub async fn generate_and_cache(
                 LAST_FAIL_MS.store(0, Ordering::Relaxed);
                 // Provider not exposed on the response; model id is.
                 store
-                    .upsert_narration_cache(
-                        kind.as_str(),
-                        &h,
-                        &copy.title,
-                        &copy.detail,
-                        None,
-                        model.as_deref(),
-                    )
+                    .upsert_narration_cache(&crate::db::pg_store::NarrationRow {
+                        kind: kind.as_str(),
+                        facts_hash: &h,
+                        title: &copy.title,
+                        detail: &copy.detail,
+                        model_provider: None,
+                        model_id: model.as_deref(),
+                    })
                     .await;
                 return Some(copy);
             }

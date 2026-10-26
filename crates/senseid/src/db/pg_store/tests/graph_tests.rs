@@ -164,8 +164,16 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     // Permissive bound (1.0 admits everything): this test is about ORDER, and
     // `beta` is deliberately orthogonal, so a production-strength cutoff would
     // correctly drop it. The bound itself is exercised by the test below.
-    let hits =
-        s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10, 1.0).await.unwrap();
+    let hits = s
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &query,
+            kinds: &["function", "method"],
+            limit: 10,
+            max_distance: 1.0,
+        })
+        .await
+        .unwrap();
 
     let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
     assert!(
@@ -179,12 +187,43 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     );
 
     // A kind filter that matches neither node returns nothing.
-    let none = s.semantic_search_nodes(&[fid], &query, &["class"], 10, 1.0).await.unwrap();
+    let none = s
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &query,
+            kinds: &["class"],
+            limit: 10,
+            max_distance: 1.0,
+        })
+        .await
+        .unwrap();
     assert!(none.is_empty(), "kind filter should exclude functions, got {none:?}");
 
     // Empty inputs are cheap no-ops, never a query.
-    assert!(s.semantic_search_nodes(&[], &query, &["function"], 10, 1.0).await.unwrap().is_empty());
-    assert!(s.semantic_search_nodes(&[fid], &[], &["function"], 10, 1.0).await.unwrap().is_empty());
+    assert!(
+        s.semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[],
+            query_embedding: &query,
+            kinds: &["function"],
+            limit: 10,
+            max_distance: 1.0
+        })
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        s.semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &[],
+            kinds: &["function"],
+            limit: 10,
+            max_distance: 1.0
+        })
+        .await
+        .unwrap()
+        .is_empty()
+    );
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
@@ -205,23 +244,23 @@ async fn a_lib_node_records_the_language_that_minted_it() {
     let fid = create_test_folder(&s, &format!("liblang_{}", uuid::Uuid::new_v4())).await;
 
     let rust_id = s
-        .upsert_lib_node_by_fqn(
-            &fid,
-            "lib·serde_json·serde_json·Value",
-            "Value",
-            "serde_json",
-            Some("rust"),
-        )
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn: "lib·serde_json·serde_json·Value",
+            name: "Value",
+            package: "serde_json",
+            language: Some("rust"),
+        })
         .await
         .unwrap();
     let py_id = s
-        .upsert_lib_node_by_fqn(
-            &fid,
-            "lib·pydantic·pydantic·Value",
-            "Value",
-            "pydantic",
-            Some("python"),
-        )
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn: "lib·pydantic·pydantic·Value",
+            name: "Value",
+            package: "pydantic",
+            language: Some("python"),
+        })
         .await
         .unwrap();
 
@@ -270,7 +309,18 @@ async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_ca
         .await
         .unwrap();
     let abs = format!("/_test/s9-app-{}", uuid::Uuid::new_v4());
-    let folder = s.upsert_folder(&rid, "git", "s9-app", &abs, &abs, None, None).await.unwrap();
+    let folder = s
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "s9-app",
+            path: &abs,
+            abs_path: &abs,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
+        .unwrap();
 
     // Unique per run, like the watch root and the folder above. It was the one
     // FIXED identifier in the test, and `delete_library` at the bottom only
@@ -279,7 +329,17 @@ async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_ca
     // `library_content_identity_uq`, permanently, with an error naming the
     // constraint rather than the abandoned cleanup.
     let lib_name = format!("_test:s9lib:{}", uuid::Uuid::new_v4());
-    let lib = s.upsert_library(&lib_name, "npm", Some("1.2.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &lib_name,
+            ecosystem: "npm",
+            version: Some("1.2.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     // Two held versions: the one this folder pins, and a newer one.
     for (v, page) in [("1.2.0", "list @ 1.2"), ("3.0.0", "list @ 3.0")] {
         let vid = s.ensure_library_version(&lib, Some(v)).await.unwrap();
@@ -328,8 +388,17 @@ async fn registry_urls_land_on_the_right_level_and_a_later_silence_does_not_wipe
     // means "this one did not say", never "there is none".
     use crate::libraries::registry::RegistryUrls;
     let s = pg_store().await;
-    let lib =
-        s.upsert_library("_test:urls", "cargo", Some("1.0.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:urls",
+            ecosystem: "cargo",
+            version: Some("1.0.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
 
     s.set_library_urls(
         &lib,
@@ -382,8 +451,17 @@ async fn a_docs_read_failure_is_recorded_as_a_gap_and_never_deletes_the_pages() 
     //   2. the pages SURVIVE it. Stale content is the last known-true content,
     //      and dropping it on a read error trades a stale answer for no answer.
     let s = pg_store().await;
-    let lib =
-        s.upsert_library("_test:stale", "npm", Some("1.0.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:stale",
+            ecosystem: "npm",
+            version: Some("1.0.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     s.upsert_library_page(&LibraryPageRow {
         library_id: &lib,
         title: "Overview",
@@ -445,8 +523,17 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
     // and `@rokkit/chart`, and each can have a `List` page. Keyed without the
     // package, the second upserts over the first and one is simply lost.
     let s = pg_store().await;
-    let lib =
-        s.upsert_library("_test:pagekey", "npm", Some("1.0.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:pagekey",
+            ecosystem: "npm",
+            version: Some("1.0.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
 
     let ui = s
         .upsert_library_page(&LibraryPageRow {
@@ -545,15 +632,45 @@ async fn a_repo_relative_path_resolves_to_a_file_in_a_module_folder() {
     let base = format!("/tmp/fidfor_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&base, "fidfor", &serde_json::json!([])).await.unwrap();
 
-    let repo = s.upsert_folder(&rid, "git", "repo", &base, &base, None, None).await.unwrap();
+    let repo = s
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "repo",
+            path: &base,
+            abs_path: &base,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
+        .unwrap();
     let mod_abs = format!("{base}/crates/senseid");
     let module = s
-        .upsert_folder(&rid, "module", "senseid", "crates/senseid", &mod_abs, Some(&repo), None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "module",
+            name: "senseid",
+            path: "crates/senseid",
+            abs_path: &mod_abs,
+            parent_id: Some(&repo),
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
 
     // The file is FOLDER-relative to the module.
-    let fid = s.upsert_file_row(&module, "src/lib.rs", 1, "h", None).await.unwrap();
+    let fid = s
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &module,
+                file_path: "src/lib.rs",
+                mtime: 1,
+                content_hash: "h",
+            },
+            None,
+        )
+        .await
+        .unwrap();
 
     // Asked for from the REPO folder, repo-relative — the v1 caller's shape.
     assert_eq!(
@@ -600,16 +717,57 @@ async fn a_file_two_folders_both_track_resolves_to_the_callers_own_folder() {
     let base = format!("/tmp/fidtwo_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&base, "fidtwo", &serde_json::json!([])).await.unwrap();
 
-    let outer = s.upsert_folder(&rid, "git", "outer", &base, &base, None, None).await.unwrap();
+    let outer = s
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "outer",
+            path: &base,
+            abs_path: &base,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
+        .unwrap();
     let inner_abs = format!("{base}/vendored");
     let inner = s
-        .upsert_folder(&rid, "git", "vendored", "vendored", &inner_abs, Some(&outer), None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &rid,
+            kind: "git",
+            name: "vendored",
+            path: "vendored",
+            abs_path: &inner_abs,
+            parent_id: Some(&outer),
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
 
     // One file on disk, tracked by both folders at their own grains.
-    let outer_row = s.upsert_file_row(&outer, "vendored/src/lib.rs", 1, "h", None).await.unwrap();
-    let inner_row = s.upsert_file_row(&inner, "src/lib.rs", 1, "h", None).await.unwrap();
+    let outer_row = s
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &outer,
+                file_path: "vendored/src/lib.rs",
+                mtime: 1,
+                content_hash: "h",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let inner_row = s
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &inner,
+                file_path: "src/lib.rs",
+                mtime: 1,
+                content_hash: "h",
+            },
+            None,
+        )
+        .await
+        .unwrap();
     assert_ne!(outer_row, inner_row, "the fixture must really create two rows");
 
     assert_eq!(
@@ -703,7 +861,14 @@ async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     // denominator. This assertion is the one that catches a `decided`
     // predicate keyed on `indexed_at`, which is NOT NULL DEFAULT now() and so
     // counts every walked file the instant its row appears.
-    s.upsert_scan_state(&grand, "a.rs", 1, "h").await.unwrap();
+    s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+        folder_id: &grand,
+        file_path: "a.rs",
+        mtime: 1,
+        content_hash: "h",
+    })
+    .await
+    .unwrap();
     assert!(!complete!(grand), "a walked-but-unparsed file is discovered, not decided");
 
     // NOW decide it.
@@ -715,7 +880,14 @@ async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     // A CONTENT CHANGE un-decides it. The recorded parse described bytes that
     // no longer exist, so the file returns to `discovered` and the whole tree
     // is incomplete again — otherwise a stale parse counts as current work.
-    s.upsert_scan_state(&grand, "a.rs", 2, "DIFFERENT").await.unwrap();
+    s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+        folder_id: &grand,
+        file_path: "a.rs",
+        mtime: 2,
+        content_hash: "DIFFERENT",
+    })
+    .await
+    .unwrap();
     assert!(!complete!(grand), "a changed file needs re-parsing");
     assert!(!complete!(root), "...and that reaches the root too");
 
@@ -916,8 +1088,16 @@ async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
     let mut query = vec![0.0f32; dim];
     query[0] = 1.0;
 
-    let hits =
-        s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10, 0.45).await.unwrap();
+    let hits = s
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &query,
+            kinds: &["function", "method"],
+            limit: 10,
+            max_distance: 0.45,
+        })
+        .await
+        .unwrap();
     let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
     assert_eq!(
         names,
@@ -939,7 +1119,13 @@ async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
     let mut orthogonal = vec![0.0f32; dim];
     orthogonal[2] = 1.0;
     let none = s
-        .semantic_search_nodes(&[fid], &orthogonal, &["function", "method"], 10, 0.45)
+        .semantic_search_nodes(&crate::db::pg_store::NodeSearch {
+            folder_ids: &[fid],
+            query_embedding: &orthogonal,
+            kinds: &["function", "method"],
+            limit: 10,
+            max_distance: 0.45,
+        })
         .await
         .unwrap();
     assert!(none.is_empty(), "no node is within the bound — must return empty, got {none:?}");
@@ -977,7 +1163,9 @@ async fn edge_insert_and_query() {
     )
     .await
     .unwrap();
-    s.insert_edge(&fid, &fn_a, Some(&fn_b), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &fn_a, crate::db::pg_store::EdgeTarget::Node(&fn_b), "calls")
+        .await
+        .unwrap();
     let callers = s.get_callers(&fn_b).await.unwrap();
     assert_eq!(callers.len(), 1);
     assert_eq!(callers[0]["caller_id"], fn_a.to_string());
@@ -1022,8 +1210,10 @@ async fn insert_edge_is_idempotent() {
     .unwrap();
 
     // Resolved edge: a repeated identical insert upserts to the same row.
-    let e1 = s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
-    let e2 = s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+    let e1 =
+        s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
+    let e2 =
+        s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
     assert_eq!(e1, e2, "a repeated resolved edge returns the same id");
     assert_eq!(
         s.get_edges_by_kind(&fid, "calls").await.unwrap().len(),
@@ -1033,8 +1223,24 @@ async fn insert_edge_is_idempotent() {
 
     // Unresolved edge: a repeated insert (same source, target_name, kind)
     // upserts to the same row (nulls-not-distinct target_file).
-    let u1 = s.insert_edge(&fid, &a, None, Some("ext_fn"), None, "calls").await.unwrap();
-    let u2 = s.insert_edge(&fid, &a, None, Some("ext_fn"), None, "calls").await.unwrap();
+    let u1 = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("ext_fn"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
+    let u2 = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("ext_fn"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
     assert_eq!(u1, u2, "a repeated unresolved edge returns the same id");
     assert_eq!(
         s.get_edges_by_kind(&fid, "calls").await.unwrap().len(),
@@ -1079,8 +1285,16 @@ async fn resolve_edge_merges_into_existing_resolved_edge() {
     .await
     .unwrap();
 
-    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap(); // resolved a→b
-    let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap(); // unresolved a→"b"
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap(); // resolved a→b
+    let u = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("b"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap(); // unresolved a→"b"
     // The resolved and unresolved partial indexes are DISJOINT: both edges
     // coexist (no collision on insert) until resolution merges them.
     assert_eq!(
@@ -1256,7 +1470,9 @@ async fn detect_communities_assigns_deterministic_ids_by_natural_key() {
     }
     // Two disjoint triangles: {a,b,c} and {d,e,f} (resolved calls).
     for (x, y) in [("a", "b"), ("b", "c"), ("c", "a"), ("d", "e"), ("e", "f"), ("f", "d")] {
-        s.insert_edge(&fid, &n[x], Some(&n[y]), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &n[x], crate::db::pg_store::EdgeTarget::Node(&n[y]), "calls")
+            .await
+            .unwrap();
     }
 
     let read_ids = |s: &PgStore, n: &std::collections::HashMap<&str, uuid::Uuid>| {
@@ -1442,7 +1658,9 @@ async fn community_adjacency_includes_extends() {
         )
         .await
         .unwrap();
-    s.insert_edge(&fid, &derived, Some(&base), None, None, "extends").await.unwrap();
+    s.insert_edge(&fid, &derived, crate::db::pg_store::EdgeTarget::Node(&base), "extends")
+        .await
+        .unwrap();
 
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
@@ -1497,10 +1715,10 @@ async fn god_node_ids_rank_by_adjacency_not_by_a_stored_column() {
         .await
         .unwrap();
     // a→hub, b→hub, c→hub, a→b. Adjacency degrees: hub=3, a=2, b=2, c=1.
-    s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &b, Some(&hub), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &c, Some(&hub), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&hub), "calls").await.unwrap();
+    s.insert_edge(&fid, &b, crate::db::pg_store::EdgeTarget::Node(&hub), "calls").await.unwrap();
+    s.insert_edge(&fid, &c, crate::db::pg_store::EdgeTarget::Node(&hub), "calls").await.unwrap();
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
 
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
@@ -1534,7 +1752,7 @@ async fn community_description_authoritative_write_is_honest_null() {
         .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
-    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
 
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
@@ -1573,10 +1791,17 @@ async fn graph_nodes_returns_community_and_structural_edges() {
         .execute(s.pool())
         .await
         .unwrap();
-    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &a, None, Some("lib"), None, "imports").await.unwrap();
-    s.insert_edge(&fid, &b, Some(&a), None, None, "extends").await.unwrap();
-    s.insert_edge(&fid, &a, Some(&b), None, None, "covers").await.unwrap(); // overlay — excluded
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
+    s.insert_edge(
+        &fid,
+        &a,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("lib"), file: None },
+        "imports",
+    )
+    .await
+    .unwrap();
+    s.insert_edge(&fid, &b, crate::db::pg_store::EdgeTarget::Node(&a), "extends").await.unwrap();
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "covers").await.unwrap(); // overlay — excluded
 
     let nodes = s.get_nodes_scoped(&[fid]).await.unwrap();
     let a_node = nodes.iter().find(|n| n["name"] == "a").unwrap();
@@ -1994,13 +2219,13 @@ async fn an_upsert_whose_identity_moved_does_not_fail_the_file() {
 
     // The upsert that used to fail: same fqn, now top-level (no parent), line 20.
     let got = s
-        .upsert_node_by_fqn(
-            &fid,
-            held,
-            "function",
-            "generatePrescriptionSchedule",
-            Some("typescript"),
-            Some(FqnDef {
+        .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+            folder_id: &fid,
+            fqn: held,
+            kind: "function",
+            name: "generatePrescriptionSchedule",
+            language: Some("typescript"),
+            def: Some(FqnDef {
                 file_path: file,
                 signature: None,
                 line_start: Some(20),
@@ -2008,7 +2233,7 @@ async fn an_upsert_whose_identity_moved_does_not_fail_the_file() {
                 is_exported: true,
                 parent_id: None,
             }),
-        )
+        })
         .await
         .expect("an upsert whose identity moved must not fail the whole file");
 
@@ -2336,8 +2561,16 @@ async fn lib_node_by_fqn() {
     let fid = create_test_folder(&s, &format!("lib_{}", uuid::Uuid::new_v4())).await;
     let fqn = "lib·serde_json·serde_json·from_str";
 
-    let a =
-        s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
+    let a = s
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn,
+            name: "from_str",
+            package: "serde_json",
+            language: Some("rust"),
+        })
+        .await
+        .unwrap();
     let (kind, resolved, fp, pkg): (String, bool, Option<String>, Option<String>) = query_as(
         "SELECT n.kind::text, n.resolved, np.file_path, n.props->>'package' FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id=$1",
     )
@@ -2353,8 +2586,16 @@ async fn lib_node_by_fqn() {
     assert_eq!(pkg.as_deref(), Some("serde_json"), "grouped by package in props");
 
     // A second reference to the same external fqn shares the one node.
-    let b =
-        s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
+    let b = s
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn,
+            name: "from_str",
+            package: "serde_json",
+            language: Some("rust"),
+        })
+        .await
+        .unwrap();
     assert_eq!(a, b, "repeated external references share one lib node");
     let (n,): (i64,) = query_as(&format!(
         "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 \
@@ -2570,7 +2811,15 @@ async fn prune_file_nodes_deletes_vanished_and_unresolves_inbound() {
         .await
         .unwrap();
     // A resolved inbound edge b.rs::caller → a.rs::gone, carrying target_name.
-    let e = s.insert_edge(&fid, &caller, None, Some("gone"), None, "calls").await.unwrap();
+    let e = s
+        .insert_edge(
+            &fid,
+            &caller,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("gone"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
     s.resolve_edge(&e, &gone).await.unwrap();
 
     // Re-index of a.rs keeps only `keep`.
@@ -2617,8 +2866,22 @@ async fn delete_edges_from_sources_clears_a_files_out_edges() {
         .seed_node(&fid, "function", "b", "b.rs", None, Some("()"), Some(1), Some(5))
         .await
         .unwrap();
-    s.insert_edge(&fid, &a, None, Some("x"), None, "calls").await.unwrap(); // a's out-edge
-    s.insert_edge(&fid, &b, None, Some("y"), None, "calls").await.unwrap(); // b's out-edge (must survive)
+    s.insert_edge(
+        &fid,
+        &a,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("x"), file: None },
+        "calls",
+    )
+    .await
+    .unwrap(); // a's out-edge
+    s.insert_edge(
+        &fid,
+        &b,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("y"), file: None },
+        "calls",
+    )
+    .await
+    .unwrap(); // b's out-edge (must survive)
 
     let n = s.delete_edges_from_sources(&fid, &[a]).await.unwrap();
     assert_eq!(n, 1, "only a's out-edge is deleted");
@@ -2652,7 +2915,7 @@ async fn replace_edges_of_kind_swaps_the_full_set() {
     .unwrap();
 
     // A STALE covers edge doc→f1 (as if f1 was the covered file last scan).
-    s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
+    s.insert_edge(&fid, &doc, crate::db::pg_store::EdgeTarget::Node(&f1), "covers").await.unwrap();
     assert_eq!(s.get_edges_by_kind(&fid, "covers").await.unwrap().len(), 1);
 
     // Replace the covers set with {doc→f2}: the stale doc→f1 must vanish.
@@ -2707,7 +2970,14 @@ async fn replace_edges_of_kind_handles_unresolved_edges() {
     )
     .await
     .unwrap();
-    s.insert_edge(&fid, &a, None, Some("old"), None, "calls").await.unwrap(); // stale unresolved a→"old"
+    s.insert_edge(
+        &fid,
+        &a,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("old"), file: None },
+        "calls",
+    )
+    .await
+    .unwrap(); // stale unresolved a→"old"
 
     s.replace_edges_of_kind(
         &fid,
@@ -2754,7 +3024,7 @@ async fn replace_edges_of_kind_is_atomic_and_rolls_back_on_failure() {
     )
     .await
     .unwrap();
-    s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
+    s.insert_edge(&fid, &doc, crate::db::pg_store::EdgeTarget::Node(&f1), "covers").await.unwrap();
 
     // A batch whose second edge has a bogus source_id (no such node) → the
     // FK on edges.source_id fails the insert mid-batch.
@@ -2820,12 +3090,45 @@ async fn insert_edge_unresolved_dedups_by_target_file() {
     .await
     .unwrap();
 
-    let e1 = s.insert_edge(&fid, &a, None, Some("helper"), Some("x.rs"), "calls").await.unwrap();
-    let e2 = s.insert_edge(&fid, &a, None, Some("helper"), Some("y.rs"), "calls").await.unwrap();
+    let e1 = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved {
+                name: Some("helper"),
+                file: Some("x.rs"),
+            },
+            "calls",
+        )
+        .await
+        .unwrap();
+    let e2 = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved {
+                name: Some("helper"),
+                file: Some("y.rs"),
+            },
+            "calls",
+        )
+        .await
+        .unwrap();
     assert_ne!(e1, e2, "same target_name in different files are distinct unresolved edges");
     assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 2, "two distinct rows");
 
-    let e3 = s.insert_edge(&fid, &a, None, Some("helper"), Some("x.rs"), "calls").await.unwrap();
+    let e3 = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved {
+                name: Some("helper"),
+                file: Some("x.rs"),
+            },
+            "calls",
+        )
+        .await
+        .unwrap();
     assert_eq!(e1, e3, "same (target_name, target_file) upserts to the same row");
     assert_eq!(
         s.get_edges_by_kind(&fid, "calls").await.unwrap().len(),
@@ -2868,7 +3171,15 @@ async fn resolve_edge_second_call_is_safe() {
     )
     .await
     .unwrap();
-    let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
+    let u = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("b"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
 
     s.resolve_edge(&u, &b).await.unwrap();
     s.resolve_edge(&u, &b).await.unwrap(); // second call — must not throw
@@ -2913,7 +3224,15 @@ async fn resolve_edge_updates_in_place_when_no_conflict() {
     )
     .await
     .unwrap();
-    let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
+    let u = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("b"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
 
     s.resolve_edge(&u, &b).await.unwrap();
 

@@ -43,7 +43,17 @@ async fn every_column_a_node_write_touches_survives_the_round_trip() {
     // The file barrier (R13): a node naming an untracked file is refused, so the
     // `files` row comes first — the same order production writes them in.
     let file_path = "deep/a.rs";
-    pg.upsert_file_row(&folder_id, file_path, 1, "seed", None).await.unwrap();
+    pg.upsert_file_row(
+        &crate::db::pg_store::FileFingerprint {
+            folder_id: &folder_id,
+            file_path,
+            mtime: 1,
+            content_hash: "seed",
+        },
+        None,
+    )
+    .await
+    .unwrap();
 
     let parent = pg
         .upsert_node(&NodeRow {
@@ -115,7 +125,17 @@ async fn re_writing_one_identity_keeps_the_same_node_and_moves_the_rest() {
     let root_id = pg.add_watch_root(&root, "node-wt2", &serde_json::json!([])).await.unwrap();
     let folder_id = pg.upsert_repo(&root_id, "nodes2", &root).await.unwrap();
     let file_path = "b.rs";
-    pg.upsert_file_row(&folder_id, file_path, 1, "seed", None).await.unwrap();
+    pg.upsert_file_row(
+        &crate::db::pg_store::FileFingerprint {
+            folder_id: &folder_id,
+            file_path,
+            mtime: 1,
+            content_hash: "seed",
+        },
+        None,
+    )
+    .await
+    .unwrap();
 
     let first = pg
         .upsert_node(&NodeRow {
@@ -216,7 +236,16 @@ async fn re_minting_an_unchanged_library_node_does_not_move_it() {
 
     let fqn = format!("lib·probe-{uniq}·collections::BTreeMap");
     let package = format!("probe-{uniq}");
-    let mint = || pg.upsert_lib_node_by_fqn(&folder_id, &fqn, "BTreeMap", &package, Some("rust"));
+    let mint = async || {
+        pg.upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &folder_id,
+            fqn: &fqn,
+            name: "BTreeMap",
+            package: &package,
+            language: Some("rust"),
+        })
+        .await
+    };
     mint().await.unwrap();
 
     async fn stamp(pg: &PgStore, fqn: &str) -> chrono::DateTime<chrono::Utc> {

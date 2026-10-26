@@ -28,7 +28,7 @@ type LocatedNodeRow = (uuid::Uuid, String, String, Option<String>, Option<i32>, 
 type DuplicatePairRow = (String, String, Option<i32>, String, String, Option<i32>, f64);
 
 /// `(id, source_id, target_id, target_name, kind)`.
-type EdgeRow = (uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String);
+type StoredEdge = (uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String);
 
 /// The whole-graph projection the Atlas reads: `(id, kind, name, file_path,
 /// parent_id, line_start, line_end, community_id, folder_id, language, fqn,
@@ -124,47 +124,12 @@ pub enum Placement {
     ReceiverChain,
 }
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 use crate::languages::fqn::{sql_is_external, sql_is_not_external};
 
 /// `(id, kind, name, parent_id, line_start)` — one node as
 /// [`PgStore::get_nodes_by_file`] projects it, before it becomes JSON.
 type NodeOutline = (uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>);
-
-/// One row of `sensei.nodes`, named rather than positional (#161).
-///
-/// `upsert_node` took nine positional arguments and carried a comment defending
-/// them: *"The arguments ARE the columns. A struct here would restate the same
-/// names one indirection away without removing a single one."* The verbosity
-/// claim is true and beside the point. The value is not fewer names — it is that
-/// destructuring this EXHAUSTIVELY turns a field added to the producer into a
-/// compile error. The positional list could not, which is how
-/// `extract_return_type` ran on every rust function for months while no return
-/// type reached a column: there was no ninth argument, and nothing failed.
-///
-/// **No `Default`, deliberately.** `..Default::default()` would relocate the
-/// silence rather than remove it: a field added later would quietly take its
-/// default at every existing site instead of forcing a decision. That is why
-/// the defaulting wrapper this replaced (`upsert_node` → `upsert_node_ex` with
-/// `is_exported = false`) is gone — a wrapper whose only job is to supply a
-/// default is the same hazard with a friendlier name.
-#[derive(Debug, Clone)]
-pub struct NodeRow<'a> {
-    pub folder_id: &'a uuid::Uuid,
-    pub kind: &'a str,
-    pub name: &'a str,
-    /// Resolved to `nodes.file_id` by the writer, which FAILS CLOSED on a miss
-    /// (R13): a node naming an untracked file is a bug in the walk, and minting
-    /// a `files` row here would hide it behind a plausible id.
-    pub file_path: &'a str,
-    pub parent_id: Option<&'a uuid::Uuid>,
-    pub signature: Option<&'a str>,
-    /// Part of `nodes_unique_identity`, so moving a symbol within its file is a
-    /// different node rather than an update.
-    pub line_start: Option<i32>,
-    pub line_end: Option<i32>,
-    pub is_exported: bool,
-}
 
 /// The fields of one callee row, whichever query supplied them — see
 /// [`PgStore::callee_row`].
@@ -230,28 +195,6 @@ impl PgStore {
             parent_id: None,
             signature: None,
             line_start: None,
-            line_end: None,
-            is_exported: false,
-        })
-        .await
-    }
-
-    pub async fn merge_type(
-        &self,
-        folder_id: &uuid::Uuid,
-        name: &str,
-        file_path: &str,
-        kind: &str,
-        line_start: Option<i32>,
-    ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(&NodeRow {
-            folder_id,
-            kind,
-            name,
-            file_path,
-            parent_id: None,
-            signature: None,
-            line_start,
             line_end: None,
             is_exported: false,
         })
@@ -724,7 +667,6 @@ impl PgStore {
     /// parser's `pub`/`export` visibility). `is_exported` is written on INSERT and
     /// refreshed on the D3 upsert-then-prune conflict, so a symbol that flips
     /// pub↔private is kept current.
-    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_node(&self, row: &NodeRow<'_>) -> Result<uuid::Uuid, String> {
         // EXHAUSTIVE (#161). A field added to `NodeRow` stops this compiling
         // until someone binds it, and `clippy -D warnings` makes binding it
@@ -893,15 +835,8 @@ impl PgStore {
     /// signature changed — the same freshness rule as `upsert_node_ex`. Arbiter is
     /// the partial `nodes_unique_fqn` index, so this coexists with the line-based
     /// `nodes_unique_identity`.
-    pub async fn upsert_node_by_fqn(
-        &self,
-        folder_id: &uuid::Uuid,
-        fqn: &str,
-        kind: &str,
-        name: &str,
-        language: Option<&str>,
-        def: Option<FqnDef<'_>>,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_node_by_fqn(&self, node: FqnNode<'_>) -> Result<uuid::Uuid, String> {
+        let FqnNode { folder_id, fqn, kind, name, language, def } = node;
         let resolved = def.is_some();
         // A DEFINITION must name a tracked file (R13, 06 S6) — resolved here and
         // FAILING CLOSED. A REFERENCE has no file by construction: it is the
@@ -1167,12 +1102,9 @@ impl PgStore {
 
     pub async fn upsert_lib_node_by_fqn(
         &self,
-        folder_id: &uuid::Uuid,
-        fqn: &str,
-        name: &str,
-        package: &str,
-        language: Option<&str>,
+        lib_node: &LibNodeRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &LibNodeRow { folder_id, fqn, name, package, language } = lib_node;
         // One `package` container per dependency (fqn = `lib·<package>`).
         //
         // D12: the kind says WHAT — a package is a package whether it is ours or
@@ -1361,12 +1293,9 @@ impl PgStore {
     /// the least-bad of a bad set, and only the score can.
     pub async fn semantic_search_nodes(
         &self,
-        folder_ids: &[uuid::Uuid],
-        query_embedding: &[f32],
-        kinds: &[&str],
-        limit: i64,
-        max_distance: f64,
+        q: &NodeSearch<'_>,
     ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>, f64)>, String> {
+        let &NodeSearch { folder_ids, query_embedding, kinds, limit, max_distance } = q;
         if folder_ids.is_empty() || query_embedding.is_empty() || kinds.is_empty() {
             return Ok(Vec::new());
         }
@@ -1653,20 +1582,16 @@ impl PgStore {
         &self,
         folder_id: &uuid::Uuid,
         source_id: &uuid::Uuid,
-        target_id: Option<&uuid::Uuid>,
-        target_name: Option<&str>,
-        target_file: Option<&str>,
+        target: EdgeTarget<'_>,
         kind: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.insert_edge_with_props(
+        self.insert_edge_with_props(&EdgeRow {
             folder_id,
             source_id,
-            target_id,
-            target_name,
-            target_file,
+            target,
             kind,
-            &serde_json::json!({}),
-        )
+            props: &serde_json::json!({}),
+        })
         .await
     }
 
@@ -1680,22 +1605,9 @@ impl PgStore {
     /// Needed because `implements` carries two distinct facts — Java-style
     /// interface implementation and a Rust trait impl — told apart only by
     /// `props.relation`. Before this, no code path named the column at all.
-    // The arguments ARE the columns. A struct here would restate the same
-    // names one indirection away without removing a single one; `FqnDef`
-    // above is the case where a struct earned its keep, because that call
-    // has a meaningful default.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn insert_edge_with_props(
-        &self,
-        folder_id: &uuid::Uuid,
-        source_id: &uuid::Uuid,
-        target_id: Option<&uuid::Uuid>,
-        target_name: Option<&str>,
-        target_file: Option<&str>,
-        kind: &str,
-        props: &serde_json::Value,
-    ) -> Result<uuid::Uuid, String> {
-        let row: (uuid::Uuid,) = if let Some(tid) = target_id {
+    pub async fn insert_edge_with_props(&self, edge: &EdgeRow<'_>) -> Result<uuid::Uuid, String> {
+        let &EdgeRow { folder_id, source_id, target, kind, props } = edge;
+        let row: (uuid::Uuid,) = if let EdgeTarget::Node(tid) = target {
             sqlx_core::query_as::query_as(
                 // The verdict is DERIVED HERE, not left to the merge path. A
                 // first insert never goes through `merge_occurrences`, so the
@@ -1733,6 +1645,9 @@ impl PgStore {
             .await
             .map_err(|e| e.to_string())?
         } else {
+            let EdgeTarget::Unresolved { name: target_name, file: target_file } = target else {
+                unreachable!("the resolved target took the branch above")
+            };
             sqlx_core::query_as::query_as(
                 // Same derivation as the resolved branch above; the two must stay
                 // in step. An UNRESOLVED edge is the one that most needs its
@@ -1959,8 +1874,15 @@ impl PgStore {
             TargetRef::Lib { fqn, name, package } => {
                 #[cfg(test)]
                 crate::graph_facts::arm_tally::bump(fact.kind, "lib");
-                let id =
-                    self.upsert_lib_node_by_fqn(folder_id, fqn, name, package, language).await?;
+                let id = self
+                    .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+                        folder_id,
+                        fqn,
+                        name,
+                        package,
+                        language,
+                    })
+                    .await?;
                 (Some(id), None)
             }
             TargetRef::Internal { fqn, name, on_miss } => match known.get(fqn) {
@@ -1978,7 +1900,14 @@ impl PgStore {
                         #[cfg(test)]
                         crate::graph_facts::arm_tally::bump(fact.kind, "stub");
                         let id = self
-                            .upsert_node_by_fqn(folder_id, fqn, kind, name, language, None)
+                            .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+                                folder_id,
+                                fqn,
+                                kind,
+                                name,
+                                language,
+                                def: None,
+                            })
                             .await?;
                         (Some(id), None)
                     }
@@ -1997,15 +1926,14 @@ impl PgStore {
             }
         };
 
-        self.insert_edge_with_props(
+        let target = EdgeTarget::from_parts(target_id.as_ref(), target_name.as_deref(), None);
+        self.insert_edge_with_props(&EdgeRow {
             folder_id,
-            &fact.source_id,
-            target_id.as_ref(),
-            target_name.as_deref(),
-            None,
-            fact.kind,
-            &fact.props,
-        )
+            source_id: &fact.source_id,
+            target,
+            kind: fact.kind,
+            props: &fact.props,
+        })
         .await
     }
 
@@ -3689,7 +3617,7 @@ impl PgStore {
         kinds: &[&str],
     ) -> Result<Vec<serde_json::Value>, String> {
         let kinds_owned: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-        let rows: Vec<EdgeRow> = sqlx_core::query_as::query_as(
+        let rows: Vec<StoredEdge> = sqlx_core::query_as::query_as(
             "SELECT id, source_id, target_id, target_name, kind::text FROM sensei.edges
               WHERE folder_id = ANY($1) AND kind::text = ANY($2)",
         )

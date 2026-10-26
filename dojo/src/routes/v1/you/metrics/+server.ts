@@ -1,4 +1,6 @@
 // POST /v1/you/metrics — receive metric rows pushed by the daemon.
+// GET  /v1/you/metrics[?days=N] — the caller's own series, day by day, over the
+// last N days (default 30, at most 90), read as the caller (the developer console).
 //
 // The third leg of the user-plane cycle: /v1/you/repositories answers WHICH
 // TENANT, /v1/you/sync/plan answers WHAT MAY SYNC, and this one takes the rows.
@@ -16,6 +18,9 @@ import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { AdminError } from '$lib/server/admin-data';
 import { ingestMetrics, type MetricInput } from '$lib/server/metrics-ingest';
+import { readMyMetrics } from '$lib/server/my-metrics-data';
+import { windowDays } from '$lib/server/window-days';
+import { MY_METRICS_DEFAULT_DAYS } from '$lib/my-metrics';
 
 /** Cap on one batch. The daemon pages; an unbounded body is a memory profile
  *  set by the client, which is not a decision a client gets to make. */
@@ -46,6 +51,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return apiError(413, `at most ${MAX_ROWS} metrics per request, got ${rows.length}`);
 		}
 		return Response.json(await ingestMetrics(callerDb(caller), rows as MetricInput[]));
+	} catch (e) {
+		if (e instanceof Response) return e;
+		if (e instanceof AdminError) return apiError(e.status, e.message);
+		throw e;
+	}
+};
+
+export const GET: RequestHandler = async ({ request, locals, url }) => {
+	try {
+		const caller = await resolveCaller(request, locals);
+		const days = windowDays(url, MY_METRICS_DEFAULT_DAYS);
+		return Response.json(await readMyMetrics(callerDb(caller), { days, today: new Date() }));
 	} catch (e) {
 		if (e instanceof Response) return e;
 		if (e instanceof AdminError) return apiError(e.status, e.message);

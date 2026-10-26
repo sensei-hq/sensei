@@ -142,24 +142,61 @@ async fn list_workspaces_under_filters_by_folder_path_boundary() {
 
     // A: folder strictly beneath `under`.
     let a = s.ensure_test_workspace(&format!("fpu-a-{short}")).await.unwrap();
-    let fa =
-        s.upsert_folder(&root, "git", "a", "x/a", &format!("{under}/a"), None, None).await.unwrap();
+    let fa = s
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &root,
+            kind: "git",
+            name: "a",
+            path: "x/a",
+            abs_path: &format!("{under}/a"),
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
+        .unwrap();
     crate::tasks::test_support::place_folder_in_workspace(&s, &fa, &a, "fpu-a").await.unwrap();
     // B: folder exactly equal to `under` (boundary: abs_path == under).
     let b = s.ensure_test_workspace(&format!("fpu-b-{short}")).await.unwrap();
-    let fb = s.upsert_folder(&root, "git", "b", "x", &under, None, None).await.unwrap();
+    let fb = s
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &root,
+            kind: "git",
+            name: "b",
+            path: "x",
+            abs_path: &under,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
+        .unwrap();
     crate::tasks::test_support::place_folder_in_workspace(&s, &fb, &b, "fpu-b").await.unwrap();
     // C: folder elsewhere under base but outside `under`.
     let c = s.ensure_test_workspace(&format!("fpu-c-{short}")).await.unwrap();
     let fc = s
-        .upsert_folder(&root, "git", "c", "elsewhere", &format!("{base}/elsewhere"), None, None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &root,
+            kind: "git",
+            name: "c",
+            path: "elsewhere",
+            abs_path: &format!("{base}/elsewhere"),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
     crate::tasks::test_support::place_folder_in_workspace(&s, &fc, &c, "fpu-c").await.unwrap();
     // D: sibling sharing the `under` prefix textually but across a path boundary.
     let d = s.ensure_test_workspace(&format!("fpu-d-{short}")).await.unwrap();
     let fd = s
-        .upsert_folder(&root, "git", "d", "x-other", &format!("{under}-other/z"), None, None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &root,
+            kind: "git",
+            name: "d",
+            path: "x-other",
+            abs_path: &format!("{under}-other/z"),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
     crate::tasks::test_support::place_folder_in_workspace(&s, &fd, &d, "fpu-d").await.unwrap();
@@ -224,7 +261,15 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
     // descendants below need none: they inherit the repo anchor's repository,
     // which is where the workspace lives.
     let f_repo = s
-        .upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &root,
+            kind: "git",
+            name: "repo",
+            path: "repo",
+            abs_path: &format!("{base}/repo"),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
     crate::tasks::test_support::place_folder_in_workspace(&s, &f_repo, &p, "rootf-repo")
@@ -232,7 +277,15 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
         .unwrap();
     // … plus one standalone root …
     let f_lib = s
-        .upsert_folder(&root, "standalone", "lib", "lib", &format!("{base}/lib"), None, None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &root,
+            kind: "standalone",
+            name: "lib",
+            path: "lib",
+            abs_path: &format!("{base}/lib"),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
     crate::tasks::test_support::place_folder_in_workspace(&s, &f_lib, &p, "rootf-lib")
@@ -240,15 +293,15 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
         .unwrap();
     // … plus many nested `kind:'folder'` descendants (the bloat).
     for i in 0..30 {
-        s.upsert_folder(
-            &root,
-            "folder",
-            &format!("d{i}"),
-            &format!("repo/src/d{i}"),
-            &format!("{base}/repo/src/d{i}"),
-            None,
-            None,
-        )
+        s.upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &root,
+            kind: "folder",
+            name: &format!("d{i}"),
+            path: &format!("repo/src/d{i}"),
+            abs_path: &format!("{base}/repo/src/d{i}"),
+            parent_id: None,
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
     }
@@ -613,7 +666,14 @@ async fn setup_scope_test(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid,
     let child_abs = format!("/_test/scope_{}/root/child", suffix);
     let child_name = format!("scope_child_{}", suffix);
     let child_id = s
-        .upsert_subfolder(&watch_id, &child_name, &child_name, &child_abs, Some(&root_id))
+        .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &watch_id,
+            kind: "folder",
+            name: &child_name,
+            path: &child_name,
+            abs_path: &child_abs,
+            parent_id: Some(&root_id),
+        })
         .await
         .unwrap();
 
@@ -688,9 +748,14 @@ async fn scoped_search_and_count_across_child_folder() {
         .await
         .unwrap();
     // Insert resolved edge: widget_builder calls render_widget.
-    s.insert_edge(&child_id, &fn_id, Some(&tgt_id), Some("render_widget"), None, "calls")
-        .await
-        .unwrap();
+    s.insert_edge(
+        &child_id,
+        &fn_id,
+        crate::db::pg_store::EdgeTarget::from_parts(Some(&tgt_id), Some("render_widget"), None),
+        "calls",
+    )
+    .await
+    .unwrap();
 
     // Resolve scope.
     let ids = s.scope_folder_ids(&proj_name).await.unwrap();

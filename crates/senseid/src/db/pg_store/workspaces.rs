@@ -1,6 +1,6 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     pub async fn create_workspace(
         &self,
@@ -84,11 +84,9 @@ impl PgStore {
     pub async fn set_workspace_identity(
         &self,
         id: &uuid::Uuid,
-        description: Option<&str>,
-        client: Option<&str>,
-        stack: &[String],
-        tags: &[String],
+        identity: &WorkspaceIdentity<'_>,
     ) -> Result<(), String> {
+        let &WorkspaceIdentity { description, client, stack, tags } = identity;
         let stack_json = serde_json::json!(stack);
         let tags_vec: Vec<String> = tags.to_vec();
         sqlx_core::query::query(
@@ -380,9 +378,9 @@ impl PgStore {
                           WHERE fp.workspace_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
                         (SELECT count(*) FROM sensei.library_enablement pl
                           WHERE pl.workspace_id = p.id)::bigint AS libs_count,
-                        (SELECT max(s.started_at) FROM activity.sessions s WHERE s.workspace_id = p.id) AS last_session_at,
+                        (SELECT max(coalesce(s.completed_at, s.started_at)) FROM activity.sessions s WHERE s.workspace_id = p.id) AS last_session_at,
                         (SELECT count(*) FROM activity.sessions s
-                          WHERE s.workspace_id = p.id AND s.started_at > now() - interval '7 days')::bigint AS sessions7d
+                          WHERE s.workspace_id = p.id AND coalesce(s.completed_at, s.started_at) > now() - interval '7 days')::bigint AS sessions7d
                  FROM sensei.workspaces p
                  WHERE $1::text IS NULL OR EXISTS (
                           SELECT 1 FROM sensei.folder_workspaces fp

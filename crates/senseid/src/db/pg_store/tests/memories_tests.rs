@@ -362,7 +362,17 @@ async fn recommendation_lifecycle() {
     let s = pg_store().await;
     let pid = s.create_workspace("_test:rec_proj", None, None).await.unwrap();
     let rid = s
-        .create_recommendation(&pid, "_test:rec", "reduces corrections", "promote_pattern", "high")
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &pid,
+            title: "_test:rec",
+            why: "reduces corrections",
+            impact: None,
+            action_type: "promote_pattern",
+            urgency: "high",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
     s.accept_recommendation(&rid).await.unwrap();
@@ -387,8 +397,20 @@ async fn recommendation_lifecycle() {
 async fn recommendation_reject_writes_dismissed_and_guards_at_pending() {
     let s = pg_store().await;
     let pid = s.create_workspace("_test:rec_reject_proj", None, None).await.unwrap();
-    let rid =
-        s.create_recommendation(&pid, "_test:rej", "why", "revise_rule", "low").await.unwrap();
+    let rid = s
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &pid,
+            title: "_test:rej",
+            why: "why",
+            impact: None,
+            action_type: "revise_rule",
+            urgency: "low",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
+        .await
+        .unwrap();
 
     s.reject_recommendation(&rid).await.unwrap();
     let recs = s.list_recommendations(&pid).await.unwrap();
@@ -421,19 +443,32 @@ async fn accept_as_rule_materializes_a_memory_and_records_provenance() {
         .unwrap();
     // A revise_rule rec — the canonical rule-class case ("why are you using regex").
     let rid = s
-        .create_recommendation(
-            &pid,
-            "No bare regex in the parser",
-            "regex is fragile here; use the typed lexer",
-            "revise_rule",
-            "high",
-        )
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &pid,
+            title: "No bare regex in the parser",
+            why: "regex is fragile here; use the typed lexer",
+            impact: None,
+            action_type: "revise_rule",
+            urgency: "high",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
 
     // Accept + materialize at gov_scope=general (namespace None) enforcement=required.
     let mat = s
-        .accept_recommendation_as_rule(&rid, None, Some("required"), "general", None, None)
+        .accept_recommendation_as_rule(
+            &rid,
+            &crate::db::pg_store::RuleAcceptance {
+                namespace_id: None,
+                enforcement: Some("required"),
+                gov_scope: "general",
+                title_override: None,
+                body_override: None,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(mat["kind"], "rule");
@@ -470,7 +505,16 @@ async fn accept_as_rule_materializes_a_memory_and_records_provenance() {
 
     // Idempotent guard: a second materialize on the now-accepted rec errors (no double write).
     let err = s
-        .accept_recommendation_as_rule(&rid, None, None, "general", None, None)
+        .accept_recommendation_as_rule(
+            &rid,
+            &crate::db::pg_store::RuleAcceptance {
+                namespace_id: None,
+                enforcement: None,
+                gov_scope: "general",
+                title_override: None,
+                body_override: None,
+            },
+        )
         .await
         .expect_err("guarded at pending");
     assert!(err.contains("already decided") || err.contains("not found"), "guard: {err}");
@@ -498,28 +542,59 @@ async fn accept_as_rule_rejects_non_rule_action_and_title_body_override() {
 
     // Non-rule action (audit_stale) → error, no memory written (mis-route surfaced).
     let audit = s
-        .create_recommendation(&pid, "_test:audit", "high rework file", "audit_stale", "low")
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &pid,
+            title: "_test:audit",
+            why: "high rework file",
+            impact: None,
+            action_type: "audit_stale",
+            urgency: "low",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
     let err = s
-        .accept_recommendation_as_rule(&audit, None, None, "general", None, None)
+        .accept_recommendation_as_rule(
+            &audit,
+            &crate::db::pg_store::RuleAcceptance {
+                namespace_id: None,
+                enforcement: None,
+                gov_scope: "general",
+                title_override: None,
+                body_override: None,
+            },
+        )
         .await
         .expect_err("non-rule rejected");
     assert!(err.contains("not rule-class"), "got: {err}");
 
     // enrich_memory with title + body overrides (the review-before-apply edit path).
     let rid = s
-        .create_recommendation(&pid, "orig title", "orig why", "enrich_memory", "medium")
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &pid,
+            title: "orig title",
+            why: "orig why",
+            impact: None,
+            action_type: "enrich_memory",
+            urgency: "medium",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
     let mat = s
         .accept_recommendation_as_rule(
             &rid,
-            None,
-            Some("advisory"),
-            "general",
-            Some("edited title"),
-            Some("edited body"),
+            &crate::db::pg_store::RuleAcceptance {
+                namespace_id: None,
+                enforcement: Some("advisory"),
+                gov_scope: "general",
+                title_override: Some("edited title"),
+                body_override: Some("edited body"),
+            },
         )
         .await
         .unwrap();
@@ -615,14 +690,14 @@ async fn seed_promote_fixture(
 ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
     let (proj_id, fid) = create_test_workspace_and_folder(s, suffix).await;
     let pat_id = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid),
-            "_test:rule-candidates",
-            false,
-            None,
-            &serde_json::json!([]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:rule-candidates",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([]),
+        })
         .await
         .unwrap();
     // suggested is the seeded lifecycle default; assert the precondition so a
@@ -800,14 +875,14 @@ async fn seed_pattern_and_sourced_memory(
 ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
     let (proj_id, fid) = create_test_workspace_and_folder(s, suffix).await;
     let pat_id = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid),
-            "_test:regressed-rule",
-            false,
-            None,
-            &serde_json::json!([]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:regressed-rule",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([]),
+        })
         .await
         .unwrap();
     // Convention memory sourced by the pattern — mirrors the rule-candidates generator.
@@ -1034,14 +1109,14 @@ async fn challenge_source_memory_for_rec_no_source_memory_is_noop() {
     let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     // Pattern with NO sourced memory.
     let pat_id = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid),
-            "_test:orphan-rule",
-            false,
-            None,
-            &serde_json::json!([]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:orphan-rule",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([]),
+        })
         .await
         .unwrap();
     let rec_id = uuid::Uuid::new_v4();
@@ -1235,9 +1310,14 @@ async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_
         .await
         .unwrap();
         // The healed one holds stale `files` rows but NO content nodes.
-        s.upsert_scan_state(&healed, &format!("f{i}.rs"), 1, &format!("hash-{tag}-{i}"))
-            .await
-            .unwrap();
+        s.upsert_scan_state(&crate::db::pg_store::FileFingerprint {
+            folder_id: &healed,
+            file_path: &format!("f{i}.rs"),
+            mtime: 1,
+            content_hash: &format!("hash-{tag}-{i}"),
+        })
+        .await
+        .unwrap();
     }
     // ...only the module container the heal leaves behind.
     s.upsert_dir_node(&healed, "module", "healed", "").await.unwrap();
@@ -1553,16 +1633,39 @@ async fn workspace_patterns_fold_unreviewed_rework_into_hotspots() {
     let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let none = serde_json::json!([]);
     for name in ["rework: crates/a.rs", "rework: docs/b.md"] {
-        s.upsert_pattern(&proj_id, Some(&fid), name, true, Some(0.6), &none).await.unwrap();
+        s.upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name,
+            is_anti: true,
+            confidence: Some(0.6),
+            instances: &none,
+        })
+        .await
+        .unwrap();
     }
     let kept = s
-        .upsert_pattern(&proj_id, Some(&fid), "rework: crates/kept.rs", true, Some(0.9), &none)
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "rework: crates/kept.rs",
+            is_anti: true,
+            confidence: Some(0.9),
+            instances: &none,
+        })
         .await
         .unwrap();
     s.promote_pattern(&kept, "rule").await.unwrap();
-    s.upsert_pattern(&proj_id, Some(&fid), "correction-prone", true, Some(0.5), &none)
-        .await
-        .unwrap();
+    s.upsert_pattern(&crate::db::pg_store::PatternRow {
+        workspace_id: &proj_id,
+        folder_id: Some(&fid),
+        name: "correction-prone",
+        is_anti: true,
+        confidence: Some(0.5),
+        instances: &none,
+    })
+    .await
+    .unwrap();
 
     let view = s.get_workspace_patterns(&proj_id).await.unwrap();
     let mut anti: Vec<(String, i64)> = view["antiPatterns"]

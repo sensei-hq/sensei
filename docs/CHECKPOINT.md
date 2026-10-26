@@ -1,39 +1,39 @@
-# Checkpoint — 2026-10-25
+# Checkpoint — 2026-10-26
 
-**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md). Wave 4 is closed; wave 5 is in progress.
-Released v0.20.0 (dōjō deployed, Worker `fcf5d87`) and v0.20.1 (daemon only). Develop CI green.
+**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md), wave 5, plus **demo prep** (user: a demo
+this week, sensei + dōjō, metrics and diagrams).
 
-**Closed this run:** #106, #335, #201, #204, #183, #142, #298, #172, #195 (#120 updated).
+**Released:** v0.20.2 and dbd 0.27.7. Closed today: #289, #194, #331, #338. Filed #339.
 
-**Landed, each closing on the next release's binary:**
-- #178 (2e5c6c1f): a file over 2 MiB, or with a line over 10,000 bytes, is skipped as `oversized`.
-  Local DB reconciled; 137 of 61,349 corpus files refused.
-  Check: `select count(*) from sensei.files where skip_reason='oversized'` > 0.
-- #188 (d5bfdc7d): `GET /api/tasks/abandoned?days=N` and a Watchdog section in `sensei doctor`.
-  Live: 204 abandonments in 14 days. Check: the released `sensei doctor` prints the section.
+**Waiting on the next release:** #336, #125 (5dea36e3), #161, #338's cadence, the VS Code installed scan.
 
-- #336 (e5bf2e9d): a Claude transcript is read once per ingest, not five times; 25.2 s → 5.1 s on
-  the 1.28 GB transcript. Check: a week of `/api/tasks/abandoned` with no `ingest_capture`.
+**Demo prep, done today (develop, not yet released):**
+- 3f6f4199: sessions "last 7 days" / `sessions7d` / `last_session_at` key on last activity.
+- 00e84641: community labels by where most members live (the largest no longer read "function ()").
+- 87bc0bbc, 7d22700c, eeb834ce: dōjō **My metrics** at `/you/metrics` (`dojo.my_metric_series`,
+  `GET /v1/you/metrics`, four cards with daily lines). Seen in the browser on the local dōjō.
+- Watch roots: dbd, gateway, torii added (user) and indexed.
 
-- #125 (17e81b4b): ingest only sessions under the watch roots; a `sensei.folders` trigger re-opens the
-  skips when a repository is registered. Check: 0 traceable orphan turn sets (18 with no transcript stay).
-- Watch roots: the live DB watches only sensei on purpose, until the indexer covers JS/TS/Java/.NET
-  (user, 2026-10-25). Then ~/Developer + ~/Work; test/e2e use ~/Developer/sensei-hq.
+**Before the demo:**
+1. A patch release (`make bump v=patch` → PR → `make release`; deploy-dojo needs the user's approval),
+   or at least `make install` locally. Note that a daemon reinstall revokes its Keychain approval.
+2. Fresh sessions and a dōjō sync: the synced session metrics end 10-18.
+3. Demo from a fresh Claude session; this one runs a pre-rename MCP.
+4. A run-through: Today → Metrics (radar, a trend) → Diagrams (Structure, Cycles, Neighbourhood,
+   Schema with torii) → `get_callers` live in Claude → dōjō My metrics and Teams.
 
-**In progress — #161 (typed rows):** 98e2c9cf (`FqnNodeRow`), 558b90fd (MCP rows), and the check-run,
-ruleset and workflow-state rows (44 left in `typed_rows_tests.rs` `STILL_POSITIONAL`). Each conversion gets a
-round-trip test, and a swapped bind is probed.
+**In progress — #123 Track B** (burndown has the detail): B1 swarm 4/6; its live findings fixed. B2/B3:
+`dojo-db.yml` runs the dōjō's 58 access-rule files on a fresh Supabase through `scripts/deploy-dojo-db.sh`
+(release's path too), green; bdd21fdf exit codes. B4 ported. ae3f9514 fixed fmt/clippy slips that failed
+CI lint on 14c098e4: run fmt + workspace clippy before every Rust commit. Left: B2's app e2e (WebKit).
 
-**Next:** the four left at 7 args: `insert_edge_with_props` (19 callers), `merge_function`, `callee_row`,
-`upsert_folder` (36 callers). Then the 6-arg ones.
+**#190 blocked on sensei-hq/dbd#109.** Filed dbd#110: reconcile/diff ignore a changed TABLE comment (the facet
+tables' new table comments are in the DDL, not live; column comments converge).
 
-**Open (the user's):**
-- dbd 0.27.7: the v0.27.6 lockfile pins rustls-webpki/webpki-roots/ctutils for
-  `cargo install --locked` (fixed on dbd develop, 784db3d2). Needs a go.
-- v0.20.1's `deploy-dojo` is still waiting; it would change nothing. Approve or reject.
-- #331: count production's duplicate personal dōjōs (counts only):
-  `psql "$PROD" -Atc "select count(*) from dojo.tenants where origin='personal' and key ~ '-[0-9]+$'"`.
-- A release (patch) lets #178, #188, #336 and #125 close; it's the user's call when.
+**Next:** confirm Rust CI green on develop; then B2's app e2e (WebKit), or wave 5's #281.
 
-**Known:** DeepSource is red on kavach main; qlty is out of minutes. After a DDL change, run
-`make test-template` (#142). `update_phase` returned 404 from the released daemon.
+**Open (the user's):** release now for the demo?; should "Tokens" exclude cache reads?; dbd#109's shape and
+dbd#110, then a dbd release; delete the local reviewer agents (`/review-slice` names them)?
+
+**Known:** the dōjō Workers build is intermittent on PR/develop commits. qlty is out of minutes. After a DDL
+change, run `make test-template`. The Svelte MCP did not connect this session (svelte-check stood in).

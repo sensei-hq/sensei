@@ -1,24 +1,6 @@
 use super::*;
 
-/// One row of `inference.recommendations` — a proposal and its evidence.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct RecommendationRow<'a> {
-    pub workspace_id: &'a uuid::Uuid,
-    pub title: &'a str,
-    pub why: &'a str,
-    pub impact: Option<&'a str>,
-    pub action_type: &'a str,
-    pub urgency: &'a str,
-    pub based_on: &'a serde_json::Value,
-    pub reasoning_trace_id: Option<&'a uuid::Uuid>,
-    pub prompt: Option<&'a str>,
-}
-
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// Cache read for the narration-cache pipeline. Returns the persisted
     /// `(title, detail)` for `(kind, facts_hash)` and bumps `last_used_at`
@@ -51,15 +33,8 @@ impl PgStore {
     /// for `(kind, facts_hash)`; a newer generation wins on conflict and both
     /// timestamps reset. DB errors are logged and swallowed (the caller has
     /// already returned copy to the user — a failed cache write is not fatal).
-    pub async fn upsert_narration_cache(
-        &self,
-        kind: &str,
-        facts_hash: &str,
-        title: &str,
-        detail: &str,
-        model_provider: Option<&str>,
-        model_id: Option<&str>,
-    ) {
+    pub async fn upsert_narration_cache(&self, entry: &NarrationRow<'_>) {
+        let &NarrationRow { kind, facts_hash, title, detail, model_provider, model_id } = entry;
         let res = sqlx_core::query::query(
             "INSERT INTO sensei.narration_cache \
                (kind, facts_hash, title, detail, model_provider, model_id) \
@@ -83,29 +58,6 @@ impl PgStore {
     }
 
     // ── Tags (controlled vocabulary) ──────────────────────────────────
-
-    pub async fn create_recommendation(
-        &self,
-        workspace_id: &uuid::Uuid,
-        title: &str,
-        why: &str,
-        action_type: &str,
-        urgency: &str,
-    ) -> Result<uuid::Uuid, String> {
-        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO inference.recommendations(workspace_id, title, why, action_type, urgency)
-             VALUES($1, $2, $3, $4, $5::sensei.recommendation_urgency) RETURNING id",
-        )
-        .bind(workspace_id)
-        .bind(title)
-        .bind(why)
-        .bind(action_type)
-        .bind(urgency)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(row.0)
-    }
 
     /// Accept a `pending` recommendation and carry out the action it stands for.
     ///
@@ -214,12 +166,10 @@ impl PgStore {
     pub async fn accept_recommendation_as_rule(
         &self,
         id: &uuid::Uuid,
-        namespace_id: Option<&uuid::Uuid>,
-        enforcement: Option<&str>,
-        gov_scope: &str,
-        title_override: Option<&str>,
-        body_override: Option<&str>,
+        accept: &RuleAcceptance<'_>,
     ) -> Result<serde_json::Value, String> {
+        let &RuleAcceptance { namespace_id, enforcement, gov_scope, title_override, body_override } =
+            accept;
         let row: Option<(String, String, String, Option<String>, uuid::Uuid, String)> =
             sqlx_core::query_as::query_as(
                 "UPDATE inference.recommendations
@@ -518,13 +468,16 @@ impl PgStore {
 
     pub async fn insert_reasoning_trace(
         &self,
-        workspace_id: Option<&uuid::Uuid>,
-        trigger_event: &str,
-        trigger_detail: &serde_json::Value,
-        models_used: &[String],
-        exchanges: &serde_json::Value,
-        consensus: &serde_json::Value,
+        trace: &ReasoningTraceRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &ReasoningTraceRow {
+            workspace_id,
+            trigger_event,
+            trigger_detail,
+            models_used,
+            exchanges,
+            consensus,
+        } = trace;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO inference.reasoning_traces(workspace_id, trigger_event, trigger_detail, models_used, exchanges, consensus) VALUES($1, $2, $3, $4, $5, $6) RETURNING id"
         ).bind(workspace_id).bind(trigger_event).bind(trigger_detail).bind(models_used).bind(exchanges).bind(consensus)
@@ -818,15 +771,8 @@ impl PgStore {
     /// updates the same row and overwrites the locus — that's the desired
     /// merge behaviour when a single file's pattern shows up across sibling
     /// folders inside the workspace.
-    pub async fn upsert_pattern(
-        &self,
-        workspace_id: &uuid::Uuid,
-        folder_id: Option<&uuid::Uuid>,
-        name: &str,
-        is_anti: bool,
-        confidence: Option<f64>,
-        instances: &serde_json::Value,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_pattern(&self, pattern: &PatternRow<'_>) -> Result<uuid::Uuid, String> {
+        let &PatternRow { workspace_id, folder_id, name, is_anti, confidence, instances } = pattern;
         let count = instances.as_array().map(|a| a.len() as i32).unwrap_or(0);
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO inference.detected_patterns(workspace_id, folder_id, name, is_anti_pattern, confidence, instance_count, instances)

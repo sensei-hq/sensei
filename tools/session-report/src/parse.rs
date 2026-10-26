@@ -72,7 +72,6 @@ pub fn parse_events(
     let mut totals = Totals::default();
     let mut models: HashMap<String, usize> = HashMap::new();
     let mut permission_events = 0usize;
-    let mut event_count = 0usize;
     let mut activity_ms: Vec<i64> = Vec::new();
 
     for line in text.lines() {
@@ -84,7 +83,6 @@ pub fn parse_events(
             skipped += 1;
             continue;
         };
-        event_count += 1;
         let at = ms(v.get("timestamp").and_then(|t| t.as_str()));
         if let Some(t) = at {
             first_ms.get_or_insert(t);
@@ -243,7 +241,6 @@ pub fn parse_events(
             totals,
             models,
             permission_events,
-            event_count,
             activity_ms: {
                 activity_ms.sort_unstable();
                 activity_ms

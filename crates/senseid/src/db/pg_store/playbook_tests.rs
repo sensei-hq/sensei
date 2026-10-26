@@ -276,7 +276,18 @@ async fn find_duplicates_scoped_surfaces_same_folder_pairs() {
     // The `files` row first — stage 3's barrier (R14). `nodes.file_id` is a
     // foreign key now (R13), so a raw fixture insert has to establish the same
     // precondition the pipeline does.
-    let file = pg.upsert_file_row(&fid, "x.rs", 0, "x.rs", None).await.unwrap();
+    let file = pg
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "x.rs",
+                mtime: 0,
+                content_hash: "x.rs",
+            },
+            None,
+        )
+        .await
+        .unwrap();
     for n in ["_dupfn_a", "_dupfn_b"] {
         pg.execute_raw(&format!(
                 "INSERT INTO sensei.nodes(folder_id, kind, name, file_id, line_start, line_end, embedding) \
@@ -303,8 +314,18 @@ async fn patterns_for_symbol_matches_by_file_and_is_honest_empty() {
     let fid = uuid::Uuid::new_v4();
     pg.execute_raw(&format!("INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path) VALUES('{fid}','00000000-0000-0000-0000-000000000003','git'::sensei.folder_kind,'_pfs_{u}','_pfs','/_pfs/{u}')")).await.unwrap();
     // A node 'my_handler' at a repo-RELATIVE path; a workspace pattern whose instance is its ABSOLUTE form.
-    let file =
-        pg.upsert_file_row(&fid, "src/routes/x.rs", 0, "src/routes/x.rs", None).await.unwrap();
+    let file = pg
+        .upsert_file_row(
+            &crate::db::pg_store::FileFingerprint {
+                folder_id: &fid,
+                file_path: "src/routes/x.rs",
+                mtime: 0,
+                content_hash: "src/routes/x.rs",
+            },
+            None,
+        )
+        .await
+        .unwrap();
     pg.execute_raw(&format!("INSERT INTO sensei.nodes(folder_id, kind, name, file_id, line_start, line_end) VALUES('{fid}','function'::sensei.node_kind,'my_handler','{file}',1,10)")).await.unwrap();
     pg.execute_raw(&format!("INSERT INTO inference.detected_patterns(workspace_id, name, family, instance_count, instances) VALUES('{pid}','route-handler','route',1,'[{{\"file\":\"/_pfs/{u}/src/routes/x.rs\",\"line\":1}}]'::jsonb)")).await.unwrap();
     // The symbol's file IS in the pattern's instances (abs↔rel reconciled) → match.
@@ -336,18 +357,42 @@ async fn playbook_combo_trust_is_workspace_scoped() {
              values ('trust-test','stable','bug','low','debug_flow','t', true, true, '{proj_b}')")).await.unwrap();
 
     // scoped to A: only A's 2 runs → n=2, ftr=0.5 (B's run excluded — trust is per-workspace, never global)
-    let (na, fa) =
-        pg.playbook_combo_trust("stable", "bug", "low", "debug_flow", &proj_a).await.unwrap();
+    let (na, fa) = pg
+        .playbook_combo_trust(&crate::db::pg_store::ComboTrustQuery {
+            lifecycle: "stable",
+            intent: "bug",
+            risk: "low",
+            playbook: "debug_flow",
+            workspace_id: &proj_a,
+        })
+        .await
+        .unwrap();
     assert_eq!(na, 2, "trust must count only the in-scope workspace's runs");
     assert!((fa - 0.5).abs() < 1e-9);
     // scoped to B: only B's run → n=1, ftr=1.0
-    let (nb, fb) =
-        pg.playbook_combo_trust("stable", "bug", "low", "debug_flow", &proj_b).await.unwrap();
+    let (nb, fb) = pg
+        .playbook_combo_trust(&crate::db::pg_store::ComboTrustQuery {
+            lifecycle: "stable",
+            intent: "bug",
+            risk: "low",
+            playbook: "debug_flow",
+            workspace_id: &proj_b,
+        })
+        .await
+        .unwrap();
     assert_eq!(nb, 1);
     assert!((fb - 1.0).abs() < 1e-9);
     // empty combo in A → (0, 0.0)
-    let (n0, f0) =
-        pg.playbook_combo_trust("greenfield", "ux", "high", "vibe", &proj_a).await.unwrap();
+    let (n0, f0) = pg
+        .playbook_combo_trust(&crate::db::pg_store::ComboTrustQuery {
+            lifecycle: "greenfield",
+            intent: "ux",
+            risk: "high",
+            playbook: "vibe",
+            workspace_id: &proj_a,
+        })
+        .await
+        .unwrap();
     assert_eq!(n0, 0);
     assert_eq!(f0, 0.0);
     pg.execute_raw("delete from sensei.playbook_run where feature = 'trust-test'").await.ok();

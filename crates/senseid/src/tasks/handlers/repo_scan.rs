@@ -161,14 +161,14 @@ pub async fn process_manifest(ctx: &TaskContext, task: &Task) -> Result<u32, Str
         && !dir_rel.as_os_str().is_empty()
     {
         ctx.pg()
-            .upsert_subfolder_kind(
-                &root_id,
-                "module",
-                package,
-                &dir_rel.to_string_lossy(),
-                &dir_abs.to_string_lossy(),
-                Some(&repo_folder_id),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "module",
+                name: package,
+                path: &dir_rel.to_string_lossy(),
+                abs_path: &dir_abs.to_string_lossy(),
+                parent_id: Some(&repo_folder_id),
+            })
             .await?;
     }
 
@@ -506,21 +506,21 @@ async fn write_folder_tree(
         let abs = repo_abs.join(&f.rel_path);
         match ctx
             .pg()
-            .upsert_subfolder_kind(
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
                 root_id,
-                f.kind,
-                &name,
-                &f.rel_path.to_string_lossy(),
-                &abs.to_string_lossy(),
-                Some(&parent),
-            )
+                kind: f.kind,
+                name: &name,
+                path: &f.rel_path.to_string_lossy(),
+                abs_path: &abs.to_string_lossy(),
+                parent_id: Some(&parent),
+            })
             .await
         {
             Ok(id) => {
                 ids.insert(f.rel_path.clone(), id);
             }
             Err(e) => {
-                tracing::warn!(folder = %f.rel_path.display(), error = %e, "repo scan: upsert_subfolder_kind failed")
+                tracing::warn!(folder = %f.rel_path.display(), error = %e, "repo scan: upsert_subfolder failed")
             }
         }
     }
@@ -597,7 +597,15 @@ async fn write_file_rows(
                         };
                         let row = ctx
                             .pg()
-                            .upsert_file_row(folder_id, &rel, mtime, &hash, Some(reason))
+                            .upsert_file_row(
+                                &crate::db::pg_store::FileFingerprint {
+                                    folder_id,
+                                    file_path: &rel,
+                                    mtime,
+                                    content_hash: &hash,
+                                },
+                                Some(reason),
+                            )
                             .await;
                         // A file that is skipped NOW may have been indexed before
                         // (it became vendored, generated, binary): what it put in
@@ -646,7 +654,17 @@ async fn write_file_rows(
                                 (BARRIER_MTIME, BARRIER_HASH.to_string())
                             }
                         };
-                        ctx.pg().upsert_file_row(folder_id, &rel, mtime, &hash, None).await
+                        ctx.pg()
+                            .upsert_file_row(
+                                &crate::db::pg_store::FileFingerprint {
+                                    folder_id,
+                                    file_path: &rel,
+                                    mtime,
+                                    content_hash: &hash,
+                                },
+                                None,
+                            )
+                            .await
                     }
                 }
             }
@@ -660,10 +678,12 @@ async fn write_file_rows(
                 };
                 ctx.pg()
                     .upsert_file_row(
-                        folder_id,
-                        &rel,
-                        mtime,
-                        &hash,
+                        &crate::db::pg_store::FileFingerprint {
+                            folder_id,
+                            file_path: &rel,
+                            mtime,
+                            content_hash: &hash,
+                        },
                         Some(crate::classifiers::ScanSkipReason::UnsupportedFormat),
                     )
                     .await
@@ -1200,14 +1220,14 @@ mod scan_tests {
         // As the indexer pipeline leaves it.
         let app = repo.join("app");
         ctx.pg()
-            .upsert_subfolder_kind(
-                &root_id,
-                "module",
-                "app",
-                "app",
-                &app.to_string_lossy(),
-                Some(&fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "module",
+                name: "app",
+                path: "app",
+                abs_path: &app.to_string_lossy(),
+                parent_id: Some(&fid),
+            })
             .await
             .unwrap();
 

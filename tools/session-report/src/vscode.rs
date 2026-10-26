@@ -45,13 +45,16 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
     for req in &requests {
         let Some(started) = req.timestamp_ms else { continue };
         // `responseTimestamp` equals `timestamp` on some records, so a turn can
-        // legitimately measure zero; that is the transcript's precision, not a
-        // bug to paper over.
-        let ended = req.response_timestamp_ms.unwrap_or(started).max(started);
+        // legitimately measure zero; that is the transcript's precision. A
+        // request with NO response stamp, or one before its request, has no
+        // measured end, and is not given one (#123): `started` as its end was a
+        // fabricated zero-length turn in the sample that decides whether timing
+        // is measurable at all.
+        let ended = req.response_timestamp_ms.filter(|e| *e >= started);
         first = first.min(started);
-        last = last.max(ended);
+        last = last.max(ended.unwrap_or(started));
         activity.push(started);
-        activity.push(ended);
+        activity.extend(ended);
 
         if !req.user_text.is_empty() {
             prompt_ms.push(started);
@@ -63,7 +66,7 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
         turns.push(Turn {
             id: String::new(),
             started_ms: started,
-            ended_ms: Some(ended),
+            ended_ms: ended,
             model: req.model.clone(),
         });
 
@@ -86,7 +89,7 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             tools.push(ToolCall {
                 name: call.tool_id.clone(),
                 started_ms: started,
-                ended_ms: Some(ended),
+                ended_ms: ended,
                 // The journal records no outcome. `None` keeps it out of both
                 // the success and failure counts rather than inventing one.
                 success: None,
@@ -112,7 +115,6 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             totals: Totals::default(),
             models,
             permission_events: 0,
-            event_count: requests.len(),
             activity_ms: activity,
             delegated: 0,
             delegated_models: HashMap::new(),
@@ -270,6 +272,39 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// A journal of three requests: one answered 4s later, one never answered
+    /// (cancelled or still running), and one stamped BEFORE its request.
+    fn journal_with_unanswered_requests(dir: &Path) -> PathBuf {
+        let ws = dir.join("workspaceStorage/bbb/chatSessions");
+        std::fs::create_dir_all(&ws).unwrap();
+        let journal = serde_json::json!({
+            "kind": 0,
+            "v": {"requests": [
+                {"timestamp": 1_000_000_i64, "responseTimestamp": 1_004_000_i64,
+                 "message": {"text": "a"}, "requestId": "r1", "response": []},
+                {"timestamp": 1_010_000_i64,
+                 "message": {"text": "b"}, "requestId": "r2", "response": []},
+                {"timestamp": 1_020_000_i64, "responseTimestamp": 1_019_000_i64,
+                 "message": {"text": "c"}, "requestId": "r3", "response": []}
+            ]}
+        });
+        let f = ws.join("u1.jsonl");
+        std::fs::write(&f, format!("{journal}\n")).unwrap();
+        f
+    }
+
+    /// #123 (5): a request with no `responseTimestamp`, or one stamped before
+    /// its request, has no measured end. It used to be given one, equal to its
+    /// start: a fabricated zero-length turn, pushed into the very sample whose
+    /// median decides whether timing is measurable at all.
+    #[test]
+    fn an_unanswered_request_has_no_turn_end() {
+        let dir = tmp("unanswered");
+        let (session, _) = parse_session(&journal_with_unanswered_requests(&dir)).unwrap();
+        let ends: Vec<Option<i64>> = session.turns.iter().map(|t| t.ended_ms).collect();
+        assert_eq!(ends, [Some(1_004_000), None, None]);
     }
 
     // The replay itself — index ceiling, empty-path safety, kind:2 append — is

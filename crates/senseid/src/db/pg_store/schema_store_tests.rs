@@ -325,14 +325,14 @@ async fn a_described_stub_survives_the_orphan_gc() {
     let stub = |name: &'static str| {
         let pg = pg.clone();
         async move {
-            pg.upsert_node_by_fqn(
-                &folder,
-                &format!("sql·Gc{tag}·dbo·{name}·item"),
-                "unknown",
+            pg.upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+                folder_id: &folder,
+                fqn: &format!("sql·Gc{tag}·dbo·{name}·item"),
+                kind: "unknown",
                 name,
-                Some("sql"),
-                None,
-            )
+                language: Some("sql"),
+                def: None,
+            })
             .await
             .unwrap()
         }

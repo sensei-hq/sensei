@@ -1,18 +1,15 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// Upsert parsed transcript turns for a (source, session). Idempotent by
     /// (source, session_id, turn_index). Returns the number of rows written.
     pub async fn upsert_transcript_turns(
         &self,
-        source: &str,
-        session_id: &str,
-        family: &str,
-        provider: Option<&str>,
-        model: Option<&str>,
+        from: &TranscriptSource<'_>,
         turns: &[crate::transcript::TranscriptTurn],
     ) -> Result<u32, String> {
+        let &TranscriptSource { source, session_id, family, provider, model } = from;
         let mut n = 0u32;
         for t in turns {
             let char_count = t.assistant_text.chars().count() as i32;
@@ -158,12 +155,9 @@ impl PgStore {
     /// Advance the ingest cursor for a transcript file (idempotent upsert).
     pub async fn set_capture_watermark(
         &self,
-        source: &str,
-        file_path: &str,
-        session_id: Option<&str>,
-        mtime_ns: i64,
-        turns: i32,
+        mark: &CaptureWatermarkRow<'_>,
     ) -> Result<(), String> {
+        let &CaptureWatermarkRow { source, file_path, session_id, mtime_ns, turns } = mark;
         sqlx_core::query::query(
             "INSERT INTO activity.capture_watermarks
                 (source, file_path, session_id, last_mtime_ns, turns_ingested, untracked, updated_at)

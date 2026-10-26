@@ -261,10 +261,26 @@ async fn the_message_rewrite_resets_claude_watermarks_once() {
         .await
         .unwrap();
     let file = format!("/_test/{}.jsonl", uuid::Uuid::new_v4());
-    s.set_capture_watermark("claude_code", &file, None, 1, 0).await.unwrap();
+    s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+        source: "claude_code",
+        file_path: &file,
+        session_id: None,
+        mtime_ns: 1,
+        turns: 0,
+    })
+    .await
+    .unwrap();
     assert!(s.reset_claude_watermarks_once().await.unwrap(), "first call resets");
     assert_eq!(s.get_capture_watermark("claude_code", &file).await.unwrap(), None);
-    s.set_capture_watermark("claude_code", &file, None, 2, 0).await.unwrap();
+    s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+        source: "claude_code",
+        file_path: &file,
+        session_id: None,
+        mtime_ns: 2,
+        turns: 0,
+    })
+    .await
+    .unwrap();
     assert!(!s.reset_claude_watermarks_once().await.unwrap(), "second call is a no-op");
     assert_eq!(
         s.get_capture_watermark("claude_code", &file).await.unwrap().map(|w| w.mtime_ns),

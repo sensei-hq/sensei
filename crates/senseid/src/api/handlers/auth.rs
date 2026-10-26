@@ -1320,7 +1320,17 @@ async fn link_verified_identity(
     emails.sort();
     emails.dedup();
 
-    match state.pg.link_persona_identity(persona, login, gh_id, primary, &emails).await {
+    match state
+        .pg
+        .link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+            persona_hint: persona,
+            github_login: login,
+            github_user_id: gh_id,
+            primary_email: primary,
+            verified_emails: &emails,
+        })
+        .await
+    {
         Ok(id) => serde_json::json!({
             "verified": true,
             "personaId": id,

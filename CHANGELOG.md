@@ -15,6 +15,60 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-10-26
+
+### Added
+
+- **My metrics in the dōjō** (`/you/metrics`). A developer's own sessions,
+  first-try rate, rework share and tokens over 30 days, each with a daily line.
+  They are the Teams view's metrics, pooled the same way, so a person's numbers
+  and their lead's agree. Read through `GET /v1/you/metrics` and
+  `dojo.my_metric_series`, as the caller only.
+- **`cache_read_per_day`**: cache reads, counted on their own.
+- **The dōjō's access rules run in CI** (`dojo-db.yml`). On every schema change and
+  nightly, the schema is deployed to a fresh Supabase with the same script the
+  release uses (`scripts/deploy-dojo-db.sh`), and the 58 row-level-security test
+  files run against it. A failed nightly opens an issue. Until now none of them ran
+  in CI.
+
+### Changed
+
+- **Tokens no longer count cache reads.** `tokens_per_day` is now fresh input +
+  cache writes + output. Before, cache reads made it about 45 times too high
+  (62.9 billion of 64.3 billion tokens over 90 days). A day whose sessions lack the
+  cache split has no total, rather than an inflated one.
+- **dbd 0.27.8.** A changed table comment is now detected and applied (dbd#110).
+  `design.yaml` is read through dbd, including workspace designs with `modules:`,
+  which imported nothing before (#190).
+- **Every database writer takes a typed row** (#161), so a field added to a row
+  cannot be dropped silently.
+
+### Fixed
+
+- **This week's sessions include a long one that started earlier.** "Last 7 days"
+  and a workspace's session count went by start date, so one long session holding
+  a week's work left the week empty.
+- **Communities are named by where most of their code lives.** The largest ones
+  used to read "function ()".
+- **Scheduled workers run every interval** (#338). They ran every other one.
+- **VS Code transcripts** (#123):
+  - the daemon reads through the installed scan (OTel and event streams included);
+  - a session with both a journal and an event stream is ingested once (on a shared
+    sample, 121 units for 84 sessions before);
+  - a journal's large opening snapshot is replayed (two real journals had kept 13
+    of 167 prompts);
+  - a line anchor (`main.ts#1-50`) no longer hides a file's language;
+  - a non-ASCII folder name decodes correctly.
+- **A failed dōjō read is an error, not an empty list** (rule packs,
+  contributions). Counts in billions read `17.7B`.
+- **`sensei start`/`stop`/`restart` report a daemon killed by a signal as a
+  failure** (128 + the signal), not success.
+- **Session report:**
+  - one failure-rate denominator;
+  - no invented turn ends;
+  - a failed facet write is reported;
+  - the docs say what it reads.
+
 ## [0.20.2] — 2026-10-25
 
 ### Security

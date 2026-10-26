@@ -15,7 +15,8 @@ class AdminError extends Error {
 
 const mocks = vi.hoisted(() => ({
 	resolveCaller: vi.fn(),
-	ingestMetrics: vi.fn()
+	ingestMetrics: vi.fn(),
+	readMyMetrics: vi.fn()
 }));
 
 // The service role vs the caller's own JWT — which client the store got.
@@ -33,6 +34,7 @@ vi.mock('$lib/server/dojo-auth', () => ({
 }));
 vi.mock('$lib/server/admin-data', () => ({ AdminError }));
 vi.mock('$lib/server/metrics-ingest', () => ({ ingestMetrics: mocks.ingestMetrics }));
+vi.mock('$lib/server/my-metrics-data', () => ({ readMyMetrics: mocks.readMyMetrics }));
 
 const route = await import('./+server');
 
@@ -127,5 +129,51 @@ describe('POST /v1/you/metrics without a session', () => {
 		mocks.resolveCaller.mockResolvedValueOnce({ userId: 'p1', db: { client: 'service' } });
 		expect((await route.POST(post({ metrics: [row()] }))).status).toBe(401);
 		expect(mocks.ingestMetrics).not.toHaveBeenCalled();
+	});
+});
+
+function get(query = '') {
+	return {
+		request: new Request(`http://x/v1/you/metrics${query}`, { headers: { authorization: 'Bearer jwt' } }),
+		locals: {},
+		url: new URL(`http://x/v1/you/metrics${query}`)
+	} as never;
+}
+
+describe('GET /v1/you/metrics', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.resolveCaller.mockResolvedValue({ userId: 'p-alice', db: { client: 'service' }, accessToken: 'jwt-A' });
+		mocks.readMyMetrics.mockResolvedValue({ since: '2026-09-23', days: 30, series: {} });
+	});
+
+	it('reads the caller\'s own series, as the caller, over a month by default', async () => {
+		const res = await route.GET(get());
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ since: '2026-09-23', days: 30, series: {} });
+		const [db, opts] = mocks.readMyMetrics.mock.calls[0];
+		expect(db).toEqual({ client: 'user', token: 'jwt-A' });
+		expect(opts.days).toBe(30);
+	});
+
+	it('takes the window from ?days=', async () => {
+		await route.GET(get('?days=7'));
+		expect(mocks.readMyMetrics.mock.calls[0][1].days).toBe(7);
+	});
+
+	it.each(['0', '91', 'abc', '7.5'])('400s on ?days=%s, without reading', async (days) => {
+		expect((await route.GET(get(`?days=${days}`))).status).toBe(400);
+		expect(mocks.readMyMetrics).not.toHaveBeenCalled();
+	});
+
+	it('maps an AdminError to its own status', async () => {
+		mocks.readMyMetrics.mockRejectedValueOnce(new AdminError(403, 'no'));
+		expect((await route.GET(get())).status).toBe(403);
+	});
+
+	it('refuses without a session rather than reading as the service role', async () => {
+		mocks.resolveCaller.mockResolvedValueOnce({ userId: 'p1', db: { client: 'service' } });
+		expect((await route.GET(get())).status).toBe(401);
+		expect(mocks.readMyMetrics).not.toHaveBeenCalled();
 	});
 });

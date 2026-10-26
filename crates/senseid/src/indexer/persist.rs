@@ -1527,7 +1527,16 @@ async fn node_for(
         Some(id) => id,
         None => {
             let (kind, name) = stub_kind_and_name(fqn)?;
-            store.upsert_node_by_fqn(folder_id, fqn, kind, &name, Some(language), None).await?
+            store
+                .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+                    folder_id,
+                    fqn,
+                    kind,
+                    name: &name,
+                    language: Some(language),
+                    def: None,
+                })
+                .await?
         }
     };
     known.insert(fqn.to_string(), id);
@@ -2934,7 +2943,15 @@ public class ShopContext : DbContext {
             .expect("the lookup runs")
             .expect("the fixture declares it");
         store
-            .insert_edge(&folder, &source, None, Some("something_legacy_saw"), None, "calls")
+            .insert_edge(
+                &folder,
+                &source,
+                crate::db::pg_store::EdgeTarget::Unresolved {
+                    name: Some("something_legacy_saw"),
+                    file: None,
+                },
+                "calls",
+            )
             .await
             .expect("the legacy edge inserts");
 

@@ -23,7 +23,7 @@ export function windowSince(today: Date, days: number): string {
 	return start.toISOString().slice(0, 10);
 }
 
-type Num = number | string;
+export type Num = number | string;
 
 interface PersonRow {
 	principal_id: string;
@@ -45,13 +45,13 @@ interface TotalRow {
 
 /** A numeric the database sent as text (Postgres `numeric` over PostgREST) is a
  *  number here; anything that is not one is a fault, not a zero. */
-function num(v: Num): number {
+export function num(v: Num): number {
 	const n = typeof v === 'number' ? v : Number(v);
-	if (!Number.isFinite(n)) throw new AdminError(500, `team metrics: not a number: ${String(v)}`);
+	if (!Number.isFinite(n)) throw new AdminError(500, `metrics: not a number: ${String(v)}`);
 	return n;
 }
 
-const numOrNull = (v: Num | null): number | null => (v === null ? null : num(v));
+export const numOrNull = (v: Num | null): number | null => (v === null ? null : num(v));
 
 /** Group rows into `Map<owner, Record<metric, value>>`. */
 function byKey<R extends { metric_key: string }, V>(rows: R[], owner: (r: R) => string, value: (r: R) => V) {

@@ -112,10 +112,12 @@ pub async fn ingest_manifest_at(
     let (ns, na) = match pg
         .replace_library_capabilities(
             library_id,
-            "manifest",
-            Some(&m.version),
-            &m.skills,
-            &m.agents,
+            &crate::db::pg_store::LibraryCapabilities {
+                source: "manifest",
+                version_range: Some(&m.version),
+                skills: &m.skills,
+                agents: &m.agents,
+            },
         )
         .await
     {

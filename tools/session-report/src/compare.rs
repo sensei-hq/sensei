@@ -49,17 +49,24 @@ fn hours(ms: i64) -> f64 {
 pub fn report(people: &[Person]) -> String {
     let mut o = String::new();
     let _ = writeln!(o, "# Working patterns across the team\n");
+    // Active time only where it is measured: the table shows n/a for anyone
+    // whose transcripts do not time their turns, and the headline must not sum
+    // what the table refuses to show (#123).
+    let measured = people.iter().filter(|p| p.analysis.timing_is_measurable());
+    let active_h = hours(measured.map(|p| p.analysis.active_ms).sum());
+    let unmeasured = people.iter().filter(|p| !p.analysis.timing_is_measurable()).count();
+    let left_out = match unmeasured {
+        0 => String::new(),
+        1 => " (1 person's transcripts do not time their turns)".into(),
+        k => format!(" ({k} people's transcripts do not time their turns)"),
+    };
     let _ = writeln!(
         o,
-        "{} people, {} sessions, {} of active time. Read this as a description of \
-         different working styles, not a league table — there is no score here and no \
-         ranking, because the numbers below measure how much moved, not how well.\n",
+        "{} people, {} sessions, {active_h:.0} hours of active time{left_out}. Read this as \
+         a description of different working styles, not a league table — there is no score \
+         here and no ranking, because the numbers below measure how much moved, not how well.\n",
         people.len(),
         people.iter().map(|p| p.analysis.sessions).sum::<usize>(),
-        {
-            let h = hours(people.iter().map(|p| p.analysis.active_ms).sum());
-            format!("{h:.0} hours")
-        }
     );
 
     let mixed = people.iter().map(|p| p.tool).collect::<std::collections::HashSet<_>>().len() > 1;
@@ -319,5 +326,28 @@ fn observations(o: &mut String, people: &[Person]) {
     }
     for i in items {
         let _ = writeln!(o, "- {i}\n");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #123 (4): the headline's active time is the sum of what the table shows.
+    /// It added every person's gaps, including people whose cell says n/a
+    /// because their transcripts do not time turns, so "3 hours" sat above
+    /// "2h" and "n/a".
+    #[test]
+    fn the_headline_sums_only_measurable_active_time() {
+        let person = |name: &str, active_h: i64, turns: Vec<i64>| {
+            let mut analysis = crate::metrics::analyse(&[], 0);
+            analysis.active_ms = active_h * 3_600_000;
+            analysis.turn_ms_sorted = turns;
+            Person { name: name.into(), tool: None, analysis }
+        };
+        let out = report(&[person("a", 2, vec![3000, 5000]), person("b", 1, vec![0, 0])]);
+        let head = out.lines().find(|l| l.contains("of active time")).unwrap();
+        assert!(head.contains("2 hours of active time"), "{head}");
+        assert!(head.contains("1 person's transcripts do not time their turns"), "{head}");
     }
 }

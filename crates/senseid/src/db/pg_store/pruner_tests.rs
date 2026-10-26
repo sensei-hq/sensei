@@ -42,7 +42,15 @@ async fn seed(pg: &PgStore) -> Corpus {
     let ab = repo("ab").await;
     let shared_here = repo("shared").await;
     let a_sub = pg
-        .upsert_folder(&root_id, "folder", "sub", "a/sub", &format!("{root}/a/sub"), Some(&a), None)
+        .upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id: &root_id,
+            kind: "folder",
+            name: "sub",
+            path: "a/sub",
+            abs_path: &format!("{root}/a/sub"),
+            parent_id: Some(&a),
+            workspace_root_id: None,
+        })
         .await
         .unwrap();
 
@@ -102,7 +110,7 @@ async fn seed(pg: &PgStore) -> Corpus {
         )
         .await
         .unwrap();
-    pg.insert_edge(&a, &top, Some(&deep), None, None, "calls").await.unwrap();
+    pg.insert_edge(&a, &top, crate::db::pg_store::EdgeTarget::Node(&deep), "calls").await.unwrap();
     // ...and one in the prefix-sharing sibling, which must survive.
     pg.seed_node_by_fqn(
         &ab,

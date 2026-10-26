@@ -52,7 +52,7 @@ pub(crate) fn resolve_exclusion(root_path: &str, entry: &str) -> String {
     format!("{root}/{}", entry.trim_start_matches('/').trim_end_matches('/'))
 }
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// The absolute-path exclusion prefixes for a watch root — each `excluded`
     /// entry resolved against `root_path` (`root/entry`). Consumed by the scan
@@ -125,7 +125,16 @@ impl PgStore {
         name: &str,
         abs_path: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_folder(root_id, "git", name, name, abs_path, None, None).await
+        self.upsert_folder(&crate::db::pg_store::FolderRow {
+            root_id,
+            kind: "git",
+            name,
+            path: name,
+            abs_path,
+            parent_id: None,
+            workspace_root_id: None,
+        })
+        .await
     }
 
     /// Register a workspace root with an explicit folder kind — `git` for real
@@ -158,19 +167,6 @@ impl PgStore {
         Ok(row.0)
     }
 
-    /// Upsert a structural subfolder (`kind='folder'`) within a workspace, linked
-    /// to its parent folder. Thin wrapper over [`Self::upsert_subfolder_kind`].
-    pub async fn upsert_subfolder(
-        &self,
-        root_id: &uuid::Uuid,
-        name: &str,
-        path: &str,
-        abs_path: &str,
-        parent_id: Option<&uuid::Uuid>,
-    ) -> Result<uuid::Uuid, String> {
-        self.upsert_subfolder_kind(root_id, "folder", name, path, abs_path, parent_id).await
-    }
-
     /// Upsert a structural subfolder with an explicit `kind` — `folder` (the
     /// navigable filesystem-tree row) or `module` (a manifest-bearing build
     /// unit, D5a). Status is terminal (`indexed`) — these rows model the tree,
@@ -178,15 +174,8 @@ impl PgStore {
     /// two structural kinds (`folder`↔`module`); a path that is actually a
     /// (nested) workspace ROOT (`git`/`standalone`/`subtree`) is never
     /// reclassified.
-    pub async fn upsert_subfolder_kind(
-        &self,
-        root_id: &uuid::Uuid,
-        kind: &str,
-        name: &str,
-        path: &str,
-        abs_path: &str,
-        parent_id: Option<&uuid::Uuid>,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_subfolder(&self, sub: &SubfolderRow<'_>) -> Result<uuid::Uuid, String> {
+        let &SubfolderRow { root_id, kind, name, path, abs_path, parent_id } = sub;
         // THE REPOSITORY IS INHERITED FROM THE REPO ANCHOR, never taken on trust.
         //
         // `pipeline.rs` already states the intent — "a module belongs to its
@@ -609,16 +598,9 @@ impl PgStore {
 
     // ── Nodes ─────────────────────────────────────────────────────────
 
-    pub async fn upsert_folder(
-        &self,
-        root_id: &uuid::Uuid,
-        kind: &str,
-        name: &str,
-        path: &str,
-        abs_path: &str,
-        parent_id: Option<&uuid::Uuid>,
-        workspace_root_id: Option<&uuid::Uuid>,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_folder(&self, folder: &FolderRow<'_>) -> Result<uuid::Uuid, String> {
+        let &FolderRow { root_id, kind, name, path, abs_path, parent_id, workspace_root_id } =
+            folder;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             // `kind` IS refreshed on conflict. It is DERIVED — from whether an
             // ancestor manifest declares this directory (03 S1) — so a folder
@@ -649,7 +631,7 @@ impl PgStore {
                kind = EXCLUDED.kind,
                name = EXCLUDED.name,
                parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
-               -- See `upsert_subfolder_kind`: COALESCE so an anchor keeps its own.
+               -- See `upsert_subfolder`: COALESCE so an anchor keeps its own.
                repository_id = COALESCE((SELECT repository_id FROM inherited),
                                         folders.repository_id),
                -- ASSIGNED, not COALESCEd. Membership is derived, so a module
@@ -1458,14 +1440,8 @@ impl PgStore {
     /// Record that a file was indexed at this fingerprint (clears any prior
     /// skip reason — a file that used to be unscannable and now parses is
     /// indexed normally).
-    pub async fn upsert_scan_state(
-        &self,
-        folder_id: &uuid::Uuid,
-        file_path: &str,
-        mtime: i64,
-        content_hash: &str,
-    ) -> Result<(), String> {
-        self.write_scan_state(folder_id, file_path, mtime, content_hash, None).await
+    pub async fn upsert_scan_state(&self, fp: &FileFingerprint<'_>) -> Result<(), String> {
+        self.upsert_file_row(fp, None).await.map(|_| ())
     }
 
     /// Record that a file was EXAMINED at this fingerprint but deliberately not
@@ -1477,13 +1453,10 @@ impl PgStore {
     /// it self-healing — fix the file and the mtime/hash change re-triggers it.
     pub async fn upsert_scan_state_skipped(
         &self,
-        folder_id: &uuid::Uuid,
-        file_path: &str,
-        mtime: i64,
-        content_hash: &str,
+        fp: &FileFingerprint<'_>,
         reason: crate::classifiers::ScanSkipReason,
     ) -> Result<(), String> {
-        self.write_scan_state(folder_id, file_path, mtime, content_hash, Some(reason)).await
+        self.upsert_file_row(fp, Some(reason)).await.map(|_| ())
     }
 
     // ── indexer stages 1-3 (docs/spec/indexer/01..03) ────────────────────
@@ -1629,14 +1602,16 @@ impl PgStore {
     /// decided by `folder_completeness` while its declarations are stale. An
     /// unchanged file (a `touch`, or a re-run) keeps its timestamp, which is
     /// what stops a re-scan from re-reporting the whole tree as unparsed.
+    ///
+    /// `skip_reason` is ASSIGNED on conflict, never left stale, so a file moves
+    /// between indexed and skipped in either direction. `upsert_scan_state` and
+    /// `upsert_scan_state_skipped` are this writer with the id dropped.
     pub async fn upsert_file_row(
         &self,
-        folder_id: &uuid::Uuid,
-        file_path: &str,
-        mtime: i64,
-        content_hash: &str,
+        fp: &FileFingerprint<'_>,
         skip_reason: Option<crate::classifiers::ScanSkipReason>,
     ) -> Result<uuid::Uuid, String> {
+        let &FileFingerprint { folder_id, file_path, mtime, content_hash } = fp;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.files(folder_id, file_path, mtime, content_hash, skip_reason)
              VALUES($1, $2, $3, $4, $5::sensei.scan_skip_reason)
@@ -1756,28 +1731,6 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
         Ok(r.rows_affected())
-    }
-
-    /// Single writer behind [`upsert_scan_state`] / [`upsert_scan_state_skipped`]
-    /// so the statement lives in exactly one place. `skip_reason` is always
-    /// assigned on conflict (never left stale) so a file can move between
-    /// indexed and skipped in either direction.
-    ///
-    /// Delegates to [`Self::upsert_file_row`] and drops the id. Both were the
-    /// same INSERT ... ON CONFLICT against `files` differing only in whether
-    /// the caller wanted the returned id, and keeping two copies meant every
-    /// change to the conflict clause — the `parsed_at` reset being the one
-    /// that prompted this — had to be made twice or silently diverge.
-    async fn write_scan_state(
-        &self,
-        folder_id: &uuid::Uuid,
-        file_path: &str,
-        mtime: i64,
-        content_hash: &str,
-        reason: Option<crate::classifiers::ScanSkipReason>,
-    ) -> Result<(), String> {
-        self.upsert_file_row(folder_id, file_path, mtime, content_hash, reason).await?;
-        Ok(())
     }
 
     pub async fn get_stale_files(
