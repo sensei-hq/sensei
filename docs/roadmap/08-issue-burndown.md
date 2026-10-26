@@ -239,7 +239,8 @@ The settings screen lists them as repositories.
   now live in `pg_store/mod.rs` (user decision 2026-10-26: re-exports dangled in the code graph, ratchet
   1,304 → 1,045, ceiling 1,060). `PatternRow` (→ 35); `LibraryRow` (→ 34); five more (→ 29, eedc547e); three more (→ 26); `FqnNode` (→ 25); one `upsert_subfolder`
   (→ 23, none at six args); four more and `merge_type` deleted (→ 18); `FileFingerprint` (→ 15); session and run events (→ 13); the last
-  writers (→ 4, all readers; 9bad2aa8). Next: the four readers, then the impl-wide allows.
+  writers (→ 4, all readers; 9bad2aa8); readers (→ 0, 853c46a5), allows removed, exhaustive-destructure guard.
+  **All acceptance met**; closes when the next release runs it.
 - #123: VS Code adapter A5/A6, Track B.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID

@@ -13,11 +13,11 @@ in this release). Local daemon on 0.20.2.
 - #125: on 0.20.2, 72 → 22 orphan turn sets. 5dea36e3 (develop, next release) ignores the 4 fresh orphans
   that have hook events, leaving 18 with no transcript. Check: count after the next release.
 
-**In progress — #161 (typed rows):** every WRITER is typed (9bad2aa8); 4 left, all readers in `STILL_POSITIONAL` (`typed_rows_tests.rs`), none at 7+ args.
-Row types are declared in `pg_store/mod.rs` (user decision 2026-10-26, docs/decisions.md). Re-exporting them
-dangled in the code graph; the `indexer::resolve` ratchet went 1,304 → 1,045 and its ceiling is now 1,060.
-**Next:** the four readers (`assemble_context`, `semantic_search_nodes`, `query_logs`, `playbook_combo_trust`)
-as query-parameter structs, then remove the impl-wide `#[allow(clippy::too_many_arguments)]`.
+- #161 (853c46a5 and the guards after it): every pg_store function takes a typed row or query struct (≤4
+  positional args), and each row is destructured exhaustively, guarded by `typed_rows_tests.rs`. The
+  `too_many_arguments` allows are gone. Check: the next release's daemon runs it.
+
+**Next:** the next open wave-5 item in the burndown after #161 (#123, VS Code adapter). Read the issue first.
 
 **Watch roots:** the live DB watches only sensei on purpose until the indexer covers JS/TS/Java/.NET;
 then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.
