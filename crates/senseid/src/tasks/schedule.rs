@@ -110,9 +110,16 @@ pub fn on_allowed_day(weekday: u8, days: &[u8]) -> bool {
 /// freshly seeded schedule runs on the first tick rather than waiting a full
 /// interval for its first ever pass.
 pub fn is_due(now_utc: DateTime<Utc>, last_run: Option<DateTime<Utc>>, interval_secs: u32) -> bool {
+    // Resolved to the poll the loop actually runs at: due within half a poll of
+    // the interval. `last_run_at` is stamped when a pass ENDS, so an exact
+    // comparison came up short on the very next poll and every worker ran at
+    // twice its interval (advance_run, set to 15s, ran every 30s).
+    let half_poll_ms = poll_secs(interval_secs) as i64 * 500;
     match last_run {
         None => true,
-        Some(prev) => (now_utc - prev).num_seconds() >= i64::from(interval_secs),
+        Some(prev) => {
+            (now_utc - prev).num_milliseconds() + half_poll_ms >= i64::from(interval_secs) * 1000
+        }
     }
 }
 
@@ -308,11 +315,27 @@ mod tests {
     }
 
     #[test]
-    fn due_only_once_the_interval_has_elapsed() {
+    fn due_once_the_interval_has_elapsed_to_the_poll_resolution() {
+        // An hourly worker polls every 60s, so "due" resolves to half a poll.
         let last = utc(0);
-        assert!(!is_due(utc(3599), Some(last), 3600), "one second short");
+        assert!(!is_due(utc(3569), Some(last), 3600), "more than half a poll short");
+        assert!(is_due(utc(3570), Some(last), 3600), "within half a poll");
         assert!(is_due(utc(3600), Some(last), 3600), "exactly elapsed");
         assert!(is_due(utc(7200), Some(last), 3600), "long overdue");
+    }
+
+    /// `last_run_at` is stamped when a pass ENDS, so one poll later the elapsed
+    /// time is the interval minus the pass's own duration. An exact,
+    /// whole-second comparison skipped every other poll, so a worker ran at
+    /// TWICE its interval. Measured on the live daemon: `advance_run`, set to
+    /// 15s, ran every 30.0s. A pass that takes under half its interval now runs
+    /// every interval.
+    #[test]
+    fn a_pass_shorter_than_half_its_interval_runs_every_interval() {
+        let ended = |ms: i64| DateTime::from_timestamp_millis(1_800_000_000_000 + ms).unwrap();
+        // A 15s worker: the pass started at 0, took 300ms, and the next poll is at 15s.
+        assert!(is_due(ended(15_000), Some(ended(300)), 15), "due on the very next poll");
+        assert!(!is_due(ended(7_000), Some(ended(0)), 15), "not after half an interval");
     }
 
     #[test]
