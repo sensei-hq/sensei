@@ -349,14 +349,16 @@ consumed**, not money — see `cost_per_result` for the money question.
 
 ### Tokens per day `tokens_per_day` · Input `tokens_in_per_day` · Output `tokens_out_per_day`
 - **Facets:** usage · count · ● · weight **0** (descriptive)
-- **Definition:** total / input / output model tokens consumed per day.
-- **Calculation:** `sum(tokens_in + tokens_out)`, `sum(tokens_in)`, `sum(tokens_out)`
-  over sessions with token usage, per repository per day.
+- **Definition:** tokens consumed per day (fresh input + cache writes + output) / all input / output.
+  **Cache reads are not tokens here** — they are counted on their own, `cache_read_per_day` (user, 2026-10-26).
+- **Calculation:** `sum(tokens_fresh + cache_write + tokens_out)`, `sum(tokens_in)`, `sum(tokens_out)`
+  over sessions with token usage, per repository per day. A day where any session lacks the cache split has
+  **no total**, never one with the reads left in.
 - **Source:** transcript `usage` — live. **129 rows each, 16 repos.**
 - **How to read:** a volume signal, **not a quality one**, and `neutral` — up is
-  not bad. Input is dominated by cache re-reads that grow with session length, so
-  a spike usually means longer sessions, not waste. **Output is the cleaner "work
-  produced" proxy.** Read the trend, not a single day.
+  not bad. `tokens_in_per_day` still includes cache re-reads, which grow with session
+  length; the total does not, so it is no longer inflated by them. **Output is the
+  cleaner "work produced" proxy.** Read the trend, not a single day.
 - **Representation:** stacked area (in vs out) or dual trend. Never coloured good/bad.
   **Values reach 2.34 × 10⁹ — six orders of magnitude above the ratio metrics, so
   never share a linear axis with them.**
@@ -370,9 +372,19 @@ consumed**, not money — see `cost_per_result` for the money question.
 - **Calculation:** `sum(tokens_fresh)` over sessions with token usage, per repository per day. A day where any
   session predates `tokens_fresh` capture has **no row**, never a partial sum.
 - **Source:** `activity.sessions.tokens_fresh` — live from 2026-10-19 ([#177](https://github.com/sensei-hq/sensei/issues/177)).
-- **How to read:** the cost-bearing share of input. `tokens_per_day` is dominated by cache reads (one measured day:
-  99.9996%), so it cannot proxy spend; this can. Compare against `tokens_in_per_day` for the cache share.
+- **How to read:** the cost-bearing share of input. Input is dominated by cache reads (one measured day:
+  99.9996%), so `tokens_in_per_day` cannot proxy spend; this can. Compare against `tokens_in_per_day` for the cache share.
 - **Representation:** trend line beside tokens in.
+
+### Cache reads per day `cache_read_per_day`
+- **Facets:** usage · count · ● · weight **0** (descriptive)
+- **Definition:** input tokens served from the prompt cache per day — counted on their own, never as tokens.
+- **Calculation:** `sum(cache_read)` over sessions with the cache split, per repository per day. A day where any
+  session lacks the split has **no row**.
+- **Source:** `activity.sessions.cache_read` — live (2026-10-26).
+- **How to read:** volume, not cost: a cache read is billed at a fraction of fresh input, which is why it is not part
+  of `tokens_per_day`. Grows with session length; read beside `cache_reuse` for the share.
+- **Representation:** trend line beside tokens per day, on its own axis.
 
 ## Cost — what did it cost?
 
@@ -534,7 +546,7 @@ reader who encounters an old row or an old chart can find out what it was.
 | Outcome | ftr, rework_ratio, spec_depth, spec_deviation_rate, context_pressure_rate | run_completion (low-N, 1 repo) | |
 | Quality | duplication_ratio, module_quality, churn_rate, churn_concentration, rework_density, incomplete_analysis_rate, incomplete_analysis_llm_rate, refuted_finding_rate | coverage (3 repos — needs an lcov report) | per-module attribution for duplication/maintainability |
 | Velocity | throughput, session_duration, time_to_useful_result | | |
-| Usage | tokens_per_day, tokens_in_per_day, tokens_out_per_day, tokens_fresh_per_day, tokens_per_result, cache_reuse | | |
+| Usage | tokens_per_day, tokens_in_per_day, tokens_out_per_day, tokens_fresh_per_day, cache_read_per_day, tokens_per_result, cache_reuse | | |
 | Cost | | cost_per_result (2 repos — needs a configured plan) | |
 | Autonomy | interruption_rate | | false_crash_rate (never computed) |
 | Knowledge | memory_promotion (≈0 = the signal) | | recall-hit, repeat-mistake, guidance-adherence — all unregistered |
