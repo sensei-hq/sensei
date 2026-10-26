@@ -1,37 +1,33 @@
 # Checkpoint — 2026-10-26
 
-**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md), wave 5.
-**Released v0.20.2** (user go, 2026-10-25): PR #337 merged, tag `v0.20.2`; builds, GitHub release and tap done.
-The dōjō Worker serves 0.20.2 (`5fd2eb8`). **`deploy-dojo` is waiting for the user's approval** (no dōjō DDL
-in this release). Local daemon on 0.20.2.
+**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md), wave 5. The user wants a **demo this week**
+(sensei + dōjō, metrics and diagrams); a demo plan has been proposed and the order awaits the user's pick.
 
-**Closed:** #331 (production count 0, user 2026-10-26), #178 and #188, both verified on the released daemon. Earlier this run: #106, #335, #201, #204,
-#183, #142, #298, #172, #195.
+**Released:** v0.20.2 (deploy-dojo done; the Worker serves 0.20.2) and dbd 0.27.7 (sensei pins it).
 
-**Waiting on observation (released in 0.20.2):**
-- #336: a week with no `ingest_capture` abandonment (`GET /api/tasks/abandoned`).
-- #125: on 0.20.2, 72 → 22 orphan turn sets. 5dea36e3 (develop, next release) ignores the 4 fresh orphans
-  that have hook events, leaving 18 with no transcript. Check: count after the next release.
+**Closed today:** #289 (153,430 duplicate events and the 40,148 verdicts of their 26 sessions deleted after
+a backup in `database/backup/essential/20261026-121744`; sessions re-classified, 0 duplicates), #194 (one
+`task_failed` row per task; 2,409 old duplicates deleted), #331, #338. Filed #339: every execution writes
+`task_started` and `task_completed` log rows (31.7M in a month).
 
-- #161 (853c46a5 and the guards after it): every pg_store function takes a typed row or query struct (≤4
-  positional args), and each row is destructured exhaustively, guarded by `typed_rows_tests.rs`. The
-  `too_many_arguments` allows are gone. Check: the next release's daemon runs it.
+**Waiting on the next release:** #336 (a week with no `ingest_capture` abandonment), #125 (5dea36e3; 22 → 18
+orphans), #161 (all acceptance met), #338's cadence, the VS Code installed scan.
 
-**In progress — #123:** A5, A6 and lower-severity items 1–5 and 7, plus adjacent (a)/(b), are fixed
-(04f78181, 9917ca6a, 2ac89e21). Left: (6) `event_count`'s three meanings, adjacent (c) stale Claude turn
-ends and (d) `#L10` fragments, then Track B.
-**Also fixed:** #338, where scheduled workers ran at twice their interval (be5a6677; advance_run 30s → 15s
-after release).
-**Next:** #123 adjacent (c) (Claude turns ending at a stale `last_assistant_ms`), then (6) and (d), then Track B.
+**In progress — #123:** fixed: A5, A6, items 1–5 and 7, adjacent (a), (b), (c) (fad9ef49). Left: (6)
+`event_count`'s three meanings, (d) `#L10` fragments, then Track B.
 
-**Watch roots:** the live DB watches only sensei on purpose until the indexer covers JS/TS/Java/.NET;
-then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.
+**Found for the demo (not yet fixed):**
+- The sessions "last 7 days" filter keys on `started_at` (`pg_store/sessions.rs:48`), so a long session that
+  is still running (this one, started 10-15) drops out of the view.
+- The MCP graph tools (`get_communities`, `get_callers`) return 404 on `/api/projects` against 0.20.2.
+- The dōjō has no graph view, and the developer console has no metric charts.
+- `repository_graph` sync is skipped, and the `sensei` workspace has no `dojo_id`.
 
-**Released 2026-10-26:** dbd 0.27.7 (user go). dbd#107 fixed and closed; the real cause was a dropped
-comment on an ADD COLUMN, not line breaks. sensei pins it (af77da72). v0.20.2's `deploy-dojo` succeeded.
+**Next:** fix the two defects above (red-first), then the demo slice the user picks; then #190 (hours, through
+dbd-core's reader).
 
-**Open (the user's):** none.
+**Watch roots:** the live DB watches only sensei until the indexer covers JS/TS/Java/.NET. dbd and gateway
+are Rust, so they could join now; that is the user's decision.
 
-**Known:** the dōjō Workers build fails intermittently on PR/develop commits (it passed on main). The
-Cloudflare MCP needs `/mcp` auth to read build logs. qlty is out of minutes. After a DDL change, run
-`make test-template`.
+**Known:** the dōjō Workers build is intermittent on PR/develop commits. qlty is out of minutes. After a DDL
+change, run `make test-template`.

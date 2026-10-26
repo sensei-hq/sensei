@@ -135,7 +135,8 @@ The settings screen lists them as repositories.
 - **Operations:**
   - ~~#181~~ **Closed 2026-10-19**: `SKIP_DB_BACKUP`, prune after writing (12 → 8 GB), a failed export fails
     the backup.
-  - #194: **fixed and deployed (b3dfaf7b)**; open until a live retryable failure shows one row per task.
+  - ~~#194~~ **closed 2026-10-26**: one `task_failed` row per task on every day since b3dfaf7b; the 2,409 old duplicates deleted
+    (user OK). The success path does the same at 2 rows per execution (31.7M): #339.
     Pending a user decision: the 145k/day `task_started`/`task_completed` rows duplicate `task_executions`.
   - ~~#179~~ **Closed 2026-10-19**: every pre-bind exit records why; `senseid status` shows it.
 - **Gates:**
@@ -174,11 +175,12 @@ The settings screen lists them as repositories.
   - #149: **experiment run 2026-10-20, criterion not met** — without `parent_id` the >50-file giants grew
     (22,484 → 24,258 nodes); they are dense call/reference cores. Reverted. Awaiting a decision: Leiden/Louvain
     (recommended) or hierarchy grouping.
-  - #278: **both defects fixed and live** (`unknown`; action tools by outcome). Open to re-measure after #289.
+  - #278: **both defects fixed and live** (`unknown`; action tools by outcome). Re-measured on clean data after
+    #289: used 81.1%, ignored 13.6%, unknown 4.3%, partial 1.0%. Left: the 30-call hand-checked sample.
   - ~~#290~~ **Closed 2026-10-20**: a file is where declarations are. Atlas shows 2,096 modules and 11,823 exports (was 0 / 0), and `rework_density` is written again (371/2096 = 0.177, its first row since 2026-10-07). Traceability says "no documents indexed" instead of "no drift".
   - #292 (found via #290): indexer v2 has no markdown adapter, so doc drift never scans a document. **Decided 2026-10-20:** a markdown LanguageAdapter emitting `doc` nodes (with sections) and code mentions as references; an unplaced mention is drift.
-  - #289 (found via #278): 26% of assistant events are duplicates (non-idempotent staging import, now fixed).
-    Removing the existing 167,932 awaits the user's OK.
+  - ~~#289~~ **closed 2026-10-26** (user OK): after a backup, 153,430 duplicate events and the 40,148 verdicts of
+    their 26 sessions deleted, those sessions re-classified (14,398 verdicts). 0 duplicates left.
 - **Dōjō:**
   - #132: steps 1–2 done. No literal `font-size` remains in the dōjō (a spec guards it); sign-in verified at 13/11px. Step 3 (mockup compare) started: the sign-in left pane now follows the mockup, replacing an "Acme Corp" fixture (#241). The right pane's extra password form and placeholder remain.
   - **#293 screen structure (user, 2026-10-20):** every screen keeps presentation | state | load/save apart, uses the shared shell (fixed header over one scroll body) and rokkit before any custom duplicate. Audits filed as #293 with the ordered list. Step 0: `Screen` (with `fill` for list-and-detail screens) holds all 48 app screens and neither window `<main>` scrolls (522b8092, 47 probed live); `Screen` is now shared from `packages/ui` and holds all 22 dōjō screens (c9f1e0d7); the dōjō routes and AppShell are next, then the dōjō shell, then separation and rokkit. Step 1 (separation): app instruments (c290f38e), workspace memories (6c815eea), consolidation (ac1da700), workspace impact (3541ee2f), settings/* (5a1cb297), metric detail (e749b380) and the sessions pages → one screen (bae2126f) done — app step 1 complete; four hid a failed write, the metrics loaders a failed registry read (ee2b0f4c). Dōjō step 1: `you/[section]` (9f11df08), `org/[slug]/[section]` (785279a6), the run deep link (a0b8aaf4), inbox answers really sent (#305, bf16a437 — on develop; live on the local dōjō, production after the next release) and one run view (3d443b1b) — **step 1 done for both apps**. Next: step 2 (rokkit first); step 3 dead code adds `segmentsToPlan`, `planProgress`.
@@ -243,7 +245,8 @@ The settings screen lists them as repositories.
   **All acceptance met**; closes when the next release runs it.
 - #123: VS Code adapter. A5 (0c2d452b, sample tests no longer pass by skipping) and A6 (7f0d82c6, one
   failure-rate denominator) fixed. The lower-severity list is verified (all real); #1 (04f78181), 2–5 and adjacent
-  (a)/(b) (9917ca6a) and 7 (2ac89e21) are fixed. Left: (6), adjacent (c)/(d), then Track B.
+  (a)/(b) (9917ca6a), 7 (2ac89e21) and (c) (fad9ef49: 10 of 635 real turns ended before they started) are
+  fixed. Left: (6), adjacent (d), then Track B.
 - ~~#338~~ **closed 2026-10-26** (be5a6677): scheduled workers ran at twice their interval (live: advance_run
   every 30s, set to 15s). Found via a flaky test.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
@@ -252,6 +255,7 @@ The settings screen lists them as repositories.
   Local builds are fixed already (8d09be73, `make dev-signing-cert`).
 - #190: read `design.yaml` through dbd's `project::survey`, and load a workspace design with
   `Workspace::load`. Since dbd 0.27, a repository with a `modules:` design cannot be imported.
+  Estimate (user, 2026-10-26): hours, not days. dbd-core already exposes the read; this replaces our reader.
 
 **dbd 0.27.3 (2026-10-19).**
 - All four pins move from v0.26.0.
