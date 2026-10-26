@@ -1331,19 +1331,36 @@ mod tests {
             let (st, b) = call(&h, "POST", &uri, Some(board_body(&s, board, level)), None).await;
             assert_eq!(st, StatusCode::CREATED, "{b}");
         }
+        // Both initial syncs must be FINISHED, not merely connected. A sync marks
+        // its board connected inside its last transaction and releases the
+        // board's lock only when it returns, so "connected" can be read while
+        // the lock is still held. This used to wait 3 s for "connected" and then
+        // carry on regardless; on a loaded CI runner the sprint board was still
+        // locked and the lookup answered 409 busy (develop, a4e7171c).
+        let connected = |l: &serde_json::Value| {
+            l.as_array().is_some_and(|l| l.iter().all(|t| t["status"] == json!("connected")))
+        };
         let mut listed = json!(null);
-        for _ in 0..300 {
+        for _ in 0..1000 {
             listed = json(&call(&h, "GET", &uri, None, None).await.1);
-            if listed
-                .as_array()
-                .is_some_and(|l| l.iter().all(|t| t["status"] == json!("connected")))
-            {
+            if connected(&listed) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
+        assert!(connected(&listed), "both boards connect within 10 s: {listed}");
         let (epic, sprint) = (listed[0]["id"].as_str().unwrap(), listed[1]["id"].as_str().unwrap());
         assert_eq!(listed[0]["level"], json!("epic"), "{listed}");
+        let sprint_id: uuid::Uuid = sprint.parse().unwrap();
+        let mut released = false;
+        for _ in 0..1000 {
+            if h.rt.locks.try_lock(sprint_id).is_some() {
+                released = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(released, "the sprint board's initial sync releases its lock within 10 s");
         // The epic board, asked first, is mid-sync.
         let _held = h.rt.locks.try_lock(epic.parse().unwrap()).unwrap();
         let (st, b) =
