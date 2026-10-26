@@ -638,8 +638,16 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             // surface the second failure so an operator can see the DB is unhappy;
             // otherwise the parse-error observability itself becomes silent.
             if let Some(fid) = &folder_id
-                && let Err(log_err) =
-                    ctx.pg().log_index_error(fid, abs_path, &e, Some(ext), Some("parse")).await
+                && let Err(log_err) = ctx
+                    .pg()
+                    .log_index_error(&crate::db::pg_store::IndexErrorRow {
+                        folder_id: fid,
+                        file_path: abs_path,
+                        error: &e,
+                        adapter: Some(ext),
+                        phase: Some("parse"),
+                    })
+                    .await
             {
                 tracing::warn!(error = %log_err, path = %abs_path, "log_index_error failed for parse error");
             }
@@ -653,8 +661,16 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             // rather than vanishing.
             let msg = format!("parser panicked: {join_err}");
             if let Some(fid) = &folder_id
-                && let Err(log_err) =
-                    ctx.pg().log_index_error(fid, abs_path, &msg, Some(ext), Some("parse")).await
+                && let Err(log_err) = ctx
+                    .pg()
+                    .log_index_error(&crate::db::pg_store::IndexErrorRow {
+                        folder_id: fid,
+                        file_path: abs_path,
+                        error: &msg,
+                        adapter: Some(ext),
+                        phase: Some("parse"),
+                    })
+                    .await
             {
                 tracing::warn!(error = %log_err, path = %abs_path, "log_index_error failed for parser panic");
             }

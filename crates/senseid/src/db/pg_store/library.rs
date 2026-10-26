@@ -539,11 +539,9 @@ impl PgStore {
     pub async fn replace_library_capabilities(
         &self,
         library_id: &uuid::Uuid,
-        source: &str,
-        version_range: Option<&str>,
-        skills: &[crate::libraries::manifest::ProvidedSkill],
-        agents: &[crate::libraries::manifest::ProvidedAgent],
+        caps: &LibraryCapabilities<'_>,
     ) -> Result<(u32, u32), String> {
+        let &LibraryCapabilities { source, version_range, skills, agents } = caps;
         // Content hangs off a VERSION (S7b). `version_range` is an applies-to
         // RANGE, not a fetched version, so it is not the key — this content was
         // read from the manifest we have, which is 'latest' until a fetch says
@@ -1371,12 +1369,15 @@ impl PgStore {
     /// `folders.workspace_id`.
     pub async fn upsert_folder_dependency(
         &self,
-        from_folder_id: &uuid::Uuid,
-        to_folder_id: &uuid::Uuid,
-        source_protocol: &str,
-        source_manifest: &str,
-        resolved_target: Option<&str>,
+        folder_dependency: &FolderDependencyRow<'_>,
     ) -> Result<(), String> {
+        let &FolderDependencyRow {
+            from_folder_id,
+            to_folder_id,
+            source_protocol,
+            source_manifest,
+            resolved_target,
+        } = folder_dependency;
         sqlx_core::query::query(
             "INSERT INTO sensei.folder_dependencies
                 (from_folder_id, to_folder_id, source_protocol, source_manifest, resolved_target)

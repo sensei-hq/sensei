@@ -283,7 +283,16 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
 
     // 1. Default row (namespace_id NULL): insert, then re-resolve returns it
     //    as the "default" source.
-    let ua = pg.upsert_stance(&user, None, "run_freely", "private", "quorum").await.unwrap();
+    let ua = pg
+        .upsert_stance(&crate::db::pg_store::StanceRow {
+            user_key: &user,
+            namespace_id: None,
+            autonomy: "run_freely",
+            sharing: "private",
+            review: "quorum",
+        })
+        .await
+        .unwrap();
     assert!(!ua.is_empty(), "upsert returns an updated_at");
     let r = pg.resolve_stance(&user, None).await.unwrap();
     assert_eq!(
@@ -293,7 +302,15 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
 
     // 2. Re-upsert the default (same partial-index conflict target): updates in
     //    place, no duplicate default row.
-    pg.upsert_stance(&user, None, "ask_always", "patterns", "me_alone").await.unwrap();
+    pg.upsert_stance(&crate::db::pg_store::StanceRow {
+        user_key: &user,
+        namespace_id: None,
+        autonomy: "ask_always",
+        sharing: "patterns",
+        review: "me_alone",
+    })
+    .await
+    .unwrap();
     let r = pg.resolve_stance(&user, None).await.unwrap();
     assert_eq!(
         (r.autonomy.as_str(), r.review.as_str()),
@@ -330,7 +347,15 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
     .await
     .unwrap();
 
-    pg.upsert_stance(&user, Some(&ns), "ask_on_risky", "derived", "two_maintainers").await.unwrap();
+    pg.upsert_stance(&crate::db::pg_store::StanceRow {
+        user_key: &user,
+        namespace_id: Some(&ns),
+        autonomy: "ask_on_risky",
+        sharing: "derived",
+        review: "two_maintainers",
+    })
+    .await
+    .unwrap();
     let (au, sh, rv): (String, String, String) = sqlx_core::query_as::query_as(
         "SELECT autonomy::text, sharing::text, review::text FROM sensei.stances
              WHERE user_key = $1 AND namespace_id = $2",
@@ -345,7 +370,15 @@ async fn upsert_stance_default_and_scoped_roundtrip() {
         ("ask_on_risky", "derived", "two_maintainers")
     );
 
-    pg.upsert_stance(&user, Some(&ns), "run_freely", "patterns", "quorum").await.unwrap();
+    pg.upsert_stance(&crate::db::pg_store::StanceRow {
+        user_key: &user,
+        namespace_id: Some(&ns),
+        autonomy: "run_freely",
+        sharing: "patterns",
+        review: "quorum",
+    })
+    .await
+    .unwrap();
     let (au2,): (String,) = sqlx_core::query_as::query_as(
         "SELECT autonomy::text FROM sensei.stances WHERE user_key = $1 AND namespace_id = $2",
     )
@@ -999,7 +1032,16 @@ async fn a_verified_login_replaces_a_guessed_label_but_not_a_chosen_one() {
 
     // Discovered from git: a guessed label, unverified.
     let pid = s.upsert_persona(&guessed, true).await.unwrap();
-    let id = s.link_persona_identity(&guessed, "real-login", gh_id, None, &[]).await.unwrap();
+    let id = s
+        .link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+            persona_hint: &guessed,
+            github_login: "real-login",
+            github_user_id: gh_id,
+            primary_email: None,
+            verified_emails: &[],
+        })
+        .await
+        .unwrap();
     assert_eq!(id, pid, "verification lands on the existing persona");
 
     let (label, login, verified): (String, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
@@ -1018,7 +1060,15 @@ async fn a_verified_login_replaces_a_guessed_label_but_not_a_chosen_one() {
         .execute(s.pool())
         .await
         .unwrap();
-    s.link_persona_identity("ignored", "real-login", gh_id, None, &[]).await.unwrap();
+    s.link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+        persona_hint: "ignored",
+        github_login: "real-login",
+        github_user_id: gh_id,
+        primary_email: None,
+        verified_emails: &[],
+    })
+    .await
+    .unwrap();
     let (after,): (String,) = query_as("SELECT label FROM sensei.personas WHERE id = $1")
         .bind(id)
         .fetch_one(s.pool())
@@ -1041,10 +1091,26 @@ async fn a_renamed_github_login_still_matches_the_same_persona() {
     let uniq = uuid::Uuid::new_v4();
     let gh_id: i64 = (uniq.as_u128() % 1_000_000) as i64 + 800_000;
 
-    let first =
-        s.link_persona_identity(&format!("a-{uniq}"), "old-login", gh_id, None, &[]).await.unwrap();
-    let second =
-        s.link_persona_identity(&format!("b-{uniq}"), "new-login", gh_id, None, &[]).await.unwrap();
+    let first = s
+        .link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+            persona_hint: &format!("a-{uniq}"),
+            github_login: "old-login",
+            github_user_id: gh_id,
+            primary_email: None,
+            verified_emails: &[],
+        })
+        .await
+        .unwrap();
+    let second = s
+        .link_persona_identity(&crate::db::pg_store::PersonaIdentityRow {
+            persona_hint: &format!("b-{uniq}"),
+            github_login: "new-login",
+            github_user_id: gh_id,
+            primary_email: None,
+            verified_emails: &[],
+        })
+        .await
+        .unwrap();
 
     let (login,): (Option<String>,) =
         query_as("SELECT github_login FROM sensei.personas WHERE id = $1")

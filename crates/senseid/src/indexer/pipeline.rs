@@ -474,13 +474,13 @@ pub(crate) async fn apply_manifest(pg: &PgStore, job: ManifestJob<'_>) -> Manife
                 continue; // the table's CHECK forbids a self-edge
             }
             if let Err(e) = pg
-                .upsert_folder_dependency(
-                    &job.folder_id,
-                    &to_id,
-                    protocol,
-                    &dep.source,
-                    Some(target),
-                )
+                .upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+                    from_folder_id: &job.folder_id,
+                    to_folder_id: &to_id,
+                    source_protocol: protocol,
+                    source_manifest: &dep.source,
+                    resolved_target: Some(target),
+                })
                 .await
             {
                 out.errors.push(format!("upsert_folder_dependency({}): {e}", dep.lib_name));

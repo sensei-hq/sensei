@@ -33,18 +33,24 @@ async fn upsert_folder_dependency_is_idempotent_and_stores_all_columns() {
     let to_fid = create_test_folder(&s, &format!("fd-to-{}", uuid::Uuid::new_v4())).await;
 
     // First upsert
-    s.upsert_folder_dependency(&from_fid, &to_fid, "link", "package.json", Some("../actions"))
-        .await
-        .unwrap();
+    s.upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+        from_folder_id: &from_fid,
+        to_folder_id: &to_fid,
+        source_protocol: "link",
+        source_manifest: "package.json",
+        resolved_target: Some("../actions"),
+    })
+    .await
+    .unwrap();
     // Repeat with a different resolved_target — same PK, so this must
     // update in place (last-writer wins on non-key columns).
-    s.upsert_folder_dependency(
-        &from_fid,
-        &to_fid,
-        "link",
-        "package.json",
-        Some("../actions-renamed"),
-    )
+    s.upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+        from_folder_id: &from_fid,
+        to_folder_id: &to_fid,
+        source_protocol: "link",
+        source_manifest: "package.json",
+        resolved_target: Some("../actions-renamed"),
+    })
     .await
     .unwrap();
 
@@ -148,9 +154,15 @@ async fn list_workspace_dependencies_joins_target_name_and_folder() {
         create_test_workspace_and_folder(&s, &format!("lpd-from-{suffix}")).await;
     let (to_pid, to_fid) = create_test_workspace_and_folder(&s, &format!("lpd-to-{suffix}")).await;
 
-    s.upsert_folder_dependency(&from_fid, &to_fid, "link", "package.json", Some("../actions"))
-        .await
-        .unwrap();
+    s.upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+        from_folder_id: &from_fid,
+        to_folder_id: &to_fid,
+        source_protocol: "link",
+        source_manifest: "package.json",
+        resolved_target: Some("../actions"),
+    })
+    .await
+    .unwrap();
 
     let deps = s.list_workspace_dependencies(&from_pid).await.unwrap();
 
@@ -195,9 +207,15 @@ async fn folder_dependency_records_an_intra_workspace_edge() {
     let to_fid = create_test_folder(&s, &format!("intra-b-{suffix}")).await;
     s.set_folder_workspace(&to_fid, &pid, "root", None).await.unwrap();
 
-    s.upsert_folder_dependency(&from_fid, &to_fid, "path", "Cargo.toml", Some("../b"))
-        .await
-        .unwrap();
+    s.upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+        from_folder_id: &from_fid,
+        to_folder_id: &to_fid,
+        source_protocol: "path",
+        source_manifest: "Cargo.toml",
+        resolved_target: Some("../b"),
+    })
+    .await
+    .unwrap();
 
     let deps = s.list_workspace_dependencies(&pid).await.unwrap();
     assert_eq!(deps.len(), 1, "an intra-workspace folder edge MUST be recorded, not skipped");
@@ -218,7 +236,15 @@ async fn upsert_folder_dependency_rejects_self_edges() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("self-fid-{}", uuid::Uuid::new_v4())).await;
 
-    let err = s.upsert_folder_dependency(&fid, &fid, "path", "Cargo.toml", Some(".")).await;
+    let err = s
+        .upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+            from_folder_id: &fid,
+            to_folder_id: &fid,
+            source_protocol: "path",
+            source_manifest: "Cargo.toml",
+            resolved_target: Some("."),
+        })
+        .await;
 
     assert!(err.is_err(), "self-edge must be rejected");
     assert!(err.unwrap_err().contains("check"), "err message must reference the check constraint");

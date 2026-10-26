@@ -2372,20 +2372,26 @@ async fn an_unreferenced_lib_node_is_collected_and_a_referenced_one_survives() {
 
     // Referenced: a lib symbol with an edge pointing at it.
     let kept = s
-        .upsert_lib_node_by_fqn(
-            &fid,
-            "lib·serde·serde·Serialize",
-            "Serialize",
-            "serde",
-            Some("rust"),
-        )
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn: "lib·serde·serde·Serialize",
+            name: "Serialize",
+            package: "serde",
+            language: Some("rust"),
+        })
         .await
         .unwrap();
     s.insert_edge(&fid, &src, crate::db::pg_store::EdgeTarget::Node(&kept), "calls").await.unwrap();
 
     // Orphan: minted and never pointed at — the shape a wrong derivation leaves.
     let orphan = s
-        .upsert_lib_node_by_fqn(&fid, "lib·typo·typo·Nothing", "Nothing", "typo", Some("rust"))
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn: "lib·typo·typo·Nothing",
+            name: "Nothing",
+            package: "typo",
+            language: Some("rust"),
+        })
         .await
         .unwrap();
 

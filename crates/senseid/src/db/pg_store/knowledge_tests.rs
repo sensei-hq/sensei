@@ -862,8 +862,24 @@ async fn federated_ledger_and_shareability() {
         })
         .await
         .unwrap();
-    pg.upsert_federated_memory(&src, &remote, "hash1", Some(&mem), 5).await.unwrap();
-    pg.upsert_federated_memory(&src, &remote, "hash1", Some(&mem), 9).await.unwrap(); // idempotent
+    pg.upsert_federated_memory(&crate::db::pg_store::FederatedMemoryRow {
+        source_id: &src,
+        remote_rule_id: &remote,
+        content_hash: "hash1",
+        memory_id: Some(&mem),
+        remote_seq: 5,
+    })
+    .await
+    .unwrap();
+    pg.upsert_federated_memory(&crate::db::pg_store::FederatedMemoryRow {
+        source_id: &src,
+        remote_rule_id: &remote,
+        content_hash: "hash1",
+        memory_id: Some(&mem),
+        remote_seq: 9,
+    })
+    .await
+    .unwrap(); // idempotent
     let link = pg.find_federated_memory(&src, &remote).await.unwrap().unwrap();
     assert_eq!(link.memory_id, Some(mem));
     assert_eq!(link.remote_seq, 9);

@@ -507,13 +507,13 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 && to_folder_id != folder_id
                 && let Err(e) = ctx
                     .pg()
-                    .upsert_folder_dependency(
-                        &folder_id,
-                        &to_folder_id,
-                        protocol,
-                        &dep.source,
-                        Some(target),
-                    )
+                    .upsert_folder_dependency(&crate::db::pg_store::FolderDependencyRow {
+                        from_folder_id: &folder_id,
+                        to_folder_id: &to_folder_id,
+                        source_protocol: protocol,
+                        source_manifest: &dep.source,
+                        resolved_target: Some(target),
+                    })
                     .await
             {
                 tracing::warn!(

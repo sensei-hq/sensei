@@ -687,10 +687,24 @@ async fn idx_err_log_and_get() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "idx_err_log").await;
     s.clear_index_errors(&fid).await.unwrap(); // ensure clean
-    s.log_index_error(&fid, "src/bad.ts", "SyntaxError", Some("typescript"), None).await.unwrap();
-    s.log_index_error(&fid, "src/x.py", "IndentError", Some("python"), Some("parse"))
-        .await
-        .unwrap();
+    s.log_index_error(&crate::db::pg_store::IndexErrorRow {
+        folder_id: &fid,
+        file_path: "src/bad.ts",
+        error: "SyntaxError",
+        adapter: Some("typescript"),
+        phase: None,
+    })
+    .await
+    .unwrap();
+    s.log_index_error(&crate::db::pg_store::IndexErrorRow {
+        folder_id: &fid,
+        file_path: "src/x.py",
+        error: "IndentError",
+        adapter: Some("python"),
+        phase: Some("parse"),
+    })
+    .await
+    .unwrap();
     let errors = s.get_index_errors(Some(&fid)).await.unwrap();
     assert_eq!(errors.len(), 2);
     s.clear_index_errors(&fid).await.unwrap();
@@ -701,7 +715,15 @@ async fn idx_err_clear() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "idx_err_clear").await;
     s.clear_index_errors(&fid).await.unwrap();
-    s.log_index_error(&fid, "a.rs", "err", Some("rust"), None).await.unwrap();
+    s.log_index_error(&crate::db::pg_store::IndexErrorRow {
+        folder_id: &fid,
+        file_path: "a.rs",
+        error: "err",
+        adapter: Some("rust"),
+        phase: None,
+    })
+    .await
+    .unwrap();
     s.clear_index_errors(&fid).await.unwrap();
     assert_eq!(s.get_index_errors(Some(&fid)).await.unwrap().len(), 0);
 }

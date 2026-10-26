@@ -10,19 +10,10 @@
 /// Every `pg_store` function that still takes five or more positional
 /// parameters, as `file::name`. Convert one to a typed row, then delete its line.
 const STILL_POSITIONAL: &[&str] = &[
-    "dojo.rs::upsert_federated_memory",
     "governance.rs::assemble_context",
-    "governance.rs::upsert_stance",
     "graph.rs::semantic_search_nodes",
-    "graph.rs::upsert_lib_node_by_fqn",
-    "library.rs::replace_library_capabilities",
-    "library.rs::upsert_folder_dependency",
-    "logs.rs::log_index_error",
     "logs.rs::query_logs",
-    "patterns.rs::create_recommendation",
-    "personas.rs::link_persona_identity",
     "playbook.rs::playbook_combo_trust",
-    "trackers.rs::apply_tracker_snapshot",
 ];
 
 /// The non-test source files of `db/pg_store`.
@@ -945,8 +936,20 @@ async fn a_rule_acceptance_puts_each_override_in_its_own_column() {
     use crate::db::pg_store::RuleAcceptance;
     let s = super::pg_store().await;
     let ws = s.create_workspace("_t161a", None, None).await.unwrap();
-    let rid =
-        s.create_recommendation(&ws, "rec title", "rec why", "revise_rule", "high").await.unwrap();
+    let rid = s
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &ws,
+            title: "rec title",
+            why: "rec why",
+            impact: None,
+            action_type: "revise_rule",
+            urgency: "high",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
+        .await
+        .unwrap();
     let mat = s
         .accept_recommendation_as_rule(
             &rid,
@@ -1149,4 +1152,89 @@ async fn a_file_fingerprint_lands_field_for_field() {
     .await
     .unwrap();
     assert_eq!(got, (1234, "h-161".into(), Some("oversized".into())));
+}
+
+/// The source and version range land on every content row the capabilities
+/// write. Nothing else read them back: forcing `source` passed every
+/// capability test.
+#[tokio::test]
+async fn library_capabilities_land_with_their_source_and_range() {
+    use crate::db::pg_store::{LibraryCapabilities, LibraryRow};
+    use crate::libraries::manifest::{ProvidedAgent, ProvidedSkill};
+    let s = super::pg_store().await;
+    let lib = s
+        .upsert_library(&LibraryRow {
+            name: "caps-161",
+            ecosystem: "cargo",
+            version: None,
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
+    let skills = vec![ProvidedSkill {
+        name: "sk".into(),
+        focus: "f".into(),
+        path: None,
+        body: Some("b".into()),
+    }];
+    let agents = vec![ProvidedAgent {
+        name: "ag".into(),
+        focus: "f".into(),
+        path: None,
+        body: Some("b".into()),
+    }];
+    s.replace_library_capabilities(
+        &lib,
+        &LibraryCapabilities {
+            source: "manifest",
+            version_range: Some(">=1"),
+            skills: &skills,
+            agents: &agents,
+        },
+    )
+    .await
+    .unwrap();
+    let got: Vec<(String, String, String, Option<String>)> = sqlx_core::query_as::query_as(
+        "SELECT c.kind::text, c.name, c.source::text, c.version_range
+           FROM sensei.library_content c JOIN sensei.library_versions v ON v.id = c.library_version_id
+          WHERE v.library_id = $1 ORDER BY c.kind::text, c.name",
+    )
+    .bind(lib)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        vec![
+            ("agent".into(), "ag".into(), "manifest".into(), Some(">=1".into())),
+            ("skill".into(), "sk".into(), "manifest".into(), Some(">=1".into())),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_index_error_row_lands_field_for_field() {
+    use crate::db::pg_store::IndexErrorRow;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161ie", "t161ie", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161ie", "/_t161ie/repo").await.unwrap();
+    s.log_index_error(&IndexErrorRow {
+        folder_id: &folder,
+        file_path: "src/x.rs",
+        error: "boom",
+        adapter: Some("rust"),
+        phase: Some("parse"),
+    })
+    .await
+    .unwrap();
+    let got: (String, String, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT file_path, error, adapter, phase FROM sensei.index_errors WHERE folder_id = $1",
+    )
+    .bind(folder)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, ("src/x.rs".into(), "boom".into(), Some("rust".into()), Some("parse".into())));
 }

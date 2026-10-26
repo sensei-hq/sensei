@@ -236,7 +236,16 @@ async fn re_minting_an_unchanged_library_node_does_not_move_it() {
 
     let fqn = format!("lib·probe-{uniq}·collections::BTreeMap");
     let package = format!("probe-{uniq}");
-    let mint = || pg.upsert_lib_node_by_fqn(&folder_id, &fqn, "BTreeMap", &package, Some("rust"));
+    let mint = async || {
+        pg.upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &folder_id,
+            fqn: &fqn,
+            name: "BTreeMap",
+            package: &package,
+            language: Some("rust"),
+        })
+        .await
+    };
     mint().await.unwrap();
 
     async fn stamp(pg: &PgStore, fqn: &str) -> chrono::DateTime<chrono::Utc> {

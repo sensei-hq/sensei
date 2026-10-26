@@ -387,15 +387,17 @@ async fn a_declared_package_resolves_to_its_parent_library() {
         .unwrap();
     s.replace_library_capabilities(
         &lid,
-        "manifest",
-        Some(">=1.0"),
-        &[ProvidedSkill {
-            name: "styling".into(),
-            focus: "styling".into(),
-            path: Some("p/s.md".into()),
-            body: Some("# styling".into()),
-        }],
-        &[],
+        &crate::db::pg_store::LibraryCapabilities {
+            source: "manifest",
+            version_range: Some(">=1.0"),
+            skills: &[ProvidedSkill {
+                name: "styling".into(),
+                focus: "styling".into(),
+                path: Some("p/s.md".into()),
+                body: Some("# styling".into()),
+            }],
+            agents: &[],
+        },
     )
     .await
     .unwrap();
@@ -468,10 +470,12 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
     let (ns, na) = s
         .replace_library_capabilities(
             &lid,
-            "manifest",
-            Some(">=1.0"),
-            &[sk("styling", "styling"), sk("a11y", "accessibility")],
-            &[ag],
+            &crate::db::pg_store::LibraryCapabilities {
+                source: "manifest",
+                version_range: Some(">=1.0"),
+                skills: &[sk("styling", "styling"), sk("a11y", "accessibility")],
+                agents: &[ag],
+            },
         )
         .await
         .unwrap();
@@ -488,10 +492,12 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
     let (ns2, _) = s
         .replace_library_capabilities(
             &lid,
-            "manifest",
-            Some(">=1.0"),
-            &[sk("styling", "styling")],
-            &[],
+            &crate::db::pg_store::LibraryCapabilities {
+                source: "manifest",
+                version_range: Some(">=1.0"),
+                skills: &[sk("styling", "styling")],
+                agents: &[],
+            },
         )
         .await
         .unwrap();
@@ -508,10 +514,12 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
     let (ns3, _) = s
         .replace_library_capabilities(
             &lid,
-            "manifest",
-            None,
-            &[sk("styling", "styling"), bodyless],
-            &[],
+            &crate::db::pg_store::LibraryCapabilities {
+                source: "manifest",
+                version_range: None,
+                skills: &[sk("styling", "styling"), bodyless],
+                agents: &[],
+            },
         )
         .await
         .unwrap();
@@ -538,15 +546,17 @@ async fn list_workspace_library_capabilities_suggests_from_a_workspaces_deps() {
         .unwrap();
     s.replace_library_capabilities(
         &lid,
-        "manifest",
-        Some("1"),
-        &[ProvidedSkill {
-            name: "semantic-styles-rokkit".into(),
-            focus: "styling".into(),
-            path: Some("p".into()),
-            body: Some("b".into()),
-        }],
-        &[],
+        &crate::db::pg_store::LibraryCapabilities {
+            source: "manifest",
+            version_range: Some("1"),
+            skills: &[ProvidedSkill {
+                name: "semantic-styles-rokkit".into(),
+                focus: "styling".into(),
+                path: Some("p".into()),
+                body: Some("b".into()),
+            }],
+            agents: &[],
+        },
     )
     .await
     .unwrap();

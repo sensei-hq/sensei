@@ -362,7 +362,17 @@ async fn recommendation_lifecycle() {
     let s = pg_store().await;
     let pid = s.create_workspace("_test:rec_proj", None, None).await.unwrap();
     let rid = s
-        .create_recommendation(&pid, "_test:rec", "reduces corrections", "promote_pattern", "high")
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &pid,
+            title: "_test:rec",
+            why: "reduces corrections",
+            impact: None,
+            action_type: "promote_pattern",
+            urgency: "high",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
     s.accept_recommendation(&rid).await.unwrap();
@@ -387,8 +397,20 @@ async fn recommendation_lifecycle() {
 async fn recommendation_reject_writes_dismissed_and_guards_at_pending() {
     let s = pg_store().await;
     let pid = s.create_workspace("_test:rec_reject_proj", None, None).await.unwrap();
-    let rid =
-        s.create_recommendation(&pid, "_test:rej", "why", "revise_rule", "low").await.unwrap();
+    let rid = s
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &pid,
+            title: "_test:rej",
+            why: "why",
+            impact: None,
+            action_type: "revise_rule",
+            urgency: "low",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
+        .await
+        .unwrap();
 
     s.reject_recommendation(&rid).await.unwrap();
     let recs = s.list_recommendations(&pid).await.unwrap();
@@ -421,13 +443,17 @@ async fn accept_as_rule_materializes_a_memory_and_records_provenance() {
         .unwrap();
     // A revise_rule rec — the canonical rule-class case ("why are you using regex").
     let rid = s
-        .create_recommendation(
-            &pid,
-            "No bare regex in the parser",
-            "regex is fragile here; use the typed lexer",
-            "revise_rule",
-            "high",
-        )
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &pid,
+            title: "No bare regex in the parser",
+            why: "regex is fragile here; use the typed lexer",
+            impact: None,
+            action_type: "revise_rule",
+            urgency: "high",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
 
@@ -516,7 +542,17 @@ async fn accept_as_rule_rejects_non_rule_action_and_title_body_override() {
 
     // Non-rule action (audit_stale) → error, no memory written (mis-route surfaced).
     let audit = s
-        .create_recommendation(&pid, "_test:audit", "high rework file", "audit_stale", "low")
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &pid,
+            title: "_test:audit",
+            why: "high rework file",
+            impact: None,
+            action_type: "audit_stale",
+            urgency: "low",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
     let err = s
@@ -536,7 +572,17 @@ async fn accept_as_rule_rejects_non_rule_action_and_title_body_override() {
 
     // enrich_memory with title + body overrides (the review-before-apply edit path).
     let rid = s
-        .create_recommendation(&pid, "orig title", "orig why", "enrich_memory", "medium")
+        .create_recommendation_full(&crate::db::pg_store::RecommendationRow {
+            workspace_id: &pid,
+            title: "orig title",
+            why: "orig why",
+            impact: None,
+            action_type: "enrich_memory",
+            urgency: "medium",
+            based_on: &serde_json::json!({}),
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
     let mat = s

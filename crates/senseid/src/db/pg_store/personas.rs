@@ -11,7 +11,7 @@
 //! re-runnable — reassign an email to a different persona and re-resolve, with the
 //! original assertion still there to resolve from.
 
-use super::PgStore;
+use super::{PersonaIdentityRow, PgStore};
 
 /// The `personas.session_slot` value for a persona name.
 ///
@@ -264,12 +264,15 @@ impl PgStore {
     /// silently take over the first's persona and re-attribute its history.
     pub async fn link_persona_identity(
         &self,
-        persona_hint: &str,
-        github_login: &str,
-        github_user_id: i64,
-        primary_email: Option<&str>,
-        verified_emails: &[String],
+        persona_identity: &PersonaIdentityRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &PersonaIdentityRow {
+            persona_hint,
+            github_login,
+            github_user_id,
+            primary_email,
+            verified_emails,
+        } = persona_identity;
         let id = match self
             .resolve_persona_for_identity(persona_hint, github_user_id, primary_email)
             .await?

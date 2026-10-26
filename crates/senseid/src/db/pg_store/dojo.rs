@@ -783,12 +783,10 @@ impl PgStore {
 
     pub async fn upsert_federated_memory(
         &self,
-        source_id: &uuid::Uuid,
-        remote_rule_id: &uuid::Uuid,
-        content_hash: &str,
-        memory_id: Option<&uuid::Uuid>,
-        remote_seq: i64,
+        federated_memory: &FederatedMemoryRow<'_>,
     ) -> Result<(), String> {
+        let &FederatedMemoryRow { source_id, remote_rule_id, content_hash, memory_id, remote_seq } =
+            federated_memory;
         sqlx_core::query::query(
             "INSERT INTO sensei.federated_memories(knowledge_source_id, remote_rule_id, content_hash, memory_id, remote_seq)
              VALUES($1,$2,$3,$4,$5)

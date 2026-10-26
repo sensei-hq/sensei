@@ -1892,3 +1892,81 @@ pub struct RunEventRow<'a> {
     pub feature: Option<&'a str>,
     pub detail: &'a serde_json::Value,
 }
+
+// Written by `dojo.rs`.
+/// One rule federated from a Dōjō, as [`PgStore::upsert_federated_memory`] records it.
+pub struct FederatedMemoryRow<'a> {
+    pub source_id: &'a uuid::Uuid,
+    pub remote_rule_id: &'a uuid::Uuid,
+    pub content_hash: &'a str,
+    pub memory_id: Option<&'a uuid::Uuid>,
+    pub remote_seq: i64,
+}
+
+// Written by `governance.rs`.
+/// A user's behavioural stance at one rung of the scope ladder, as [`PgStore::upsert_stance`] writes it.
+pub struct StanceRow<'a> {
+    pub user_key: &'a str,
+    pub namespace_id: Option<&'a uuid::Uuid>,
+    pub autonomy: &'a str,
+    pub sharing: &'a str,
+    pub review: &'a str,
+}
+
+// Written by `library.rs`.
+/// One folder depending on another, as [`PgStore::upsert_folder_dependency`] writes it.
+pub struct FolderDependencyRow<'a> {
+    pub from_folder_id: &'a uuid::Uuid,
+    pub to_folder_id: &'a uuid::Uuid,
+    pub source_protocol: &'a str,
+    pub source_manifest: &'a str,
+    pub resolved_target: Option<&'a str>,
+}
+
+// Written by `library.rs`.
+/// What a library's manifest provides, as [`PgStore::replace_library_capabilities`] stores it (replacing the previous set).
+pub struct LibraryCapabilities<'a> {
+    pub source: &'a str,
+    pub version_range: Option<&'a str>,
+    pub skills: &'a [crate::libraries::manifest::ProvidedSkill],
+    pub agents: &'a [crate::libraries::manifest::ProvidedAgent],
+}
+
+// Written by `logs.rs`.
+/// One indexing failure, as [`PgStore::log_index_error`] records it.
+pub struct IndexErrorRow<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    pub file_path: &'a str,
+    pub error: &'a str,
+    pub adapter: Option<&'a str>,
+    pub phase: Option<&'a str>,
+}
+
+// Written by `personas.rs`.
+/// A persona's GitHub identity, as [`PgStore::link_persona_identity`] links it.
+pub struct PersonaIdentityRow<'a> {
+    pub persona_hint: &'a str,
+    pub github_login: &'a str,
+    pub github_user_id: i64,
+    pub primary_email: Option<&'a str>,
+    pub verified_emails: &'a [String],
+}
+
+// Written by `graph.rs`.
+/// An external library's symbol, as [`PgStore::upsert_lib_node_by_fqn`] gets or creates it under its package.
+pub struct LibNodeRow<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    pub fqn: &'a str,
+    pub name: &'a str,
+    pub package: &'a str,
+    pub language: Option<&'a str>,
+}
+
+// Written by `trackers.rs`.
+/// One tracker sync's result, as [`PgStore::apply_tracker_snapshot`] applies it (only while `secret_service` is still the tracker's).
+pub struct TrackerSnapshotApply<'a> {
+    pub secret_service: &'a str,
+    pub snapshot: &'a crate::tracker::Snapshot,
+    pub params_patch: &'a serde_json::Value,
+    pub links: &'a [crate::tracker::Link],
+}

@@ -71,14 +71,8 @@ fn task_execution_json(r: TaskExecutionRow) -> serde_json::Value {
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
-    pub async fn log_index_error(
-        &self,
-        folder_id: &uuid::Uuid,
-        file_path: &str,
-        error: &str,
-        adapter: Option<&str>,
-        phase: Option<&str>,
-    ) -> Result<(), String> {
+    pub async fn log_index_error(&self, index_error: &IndexErrorRow<'_>) -> Result<(), String> {
+        let &IndexErrorRow { folder_id, file_path, error, adapter, phase } = index_error;
         sqlx_core::query::query(
             "INSERT INTO sensei.index_errors(folder_id, file_path, error, adapter, phase) VALUES($1, $2, $3, $4, $5)"
         )

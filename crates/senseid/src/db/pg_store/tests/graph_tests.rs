@@ -205,23 +205,23 @@ async fn a_lib_node_records_the_language_that_minted_it() {
     let fid = create_test_folder(&s, &format!("liblang_{}", uuid::Uuid::new_v4())).await;
 
     let rust_id = s
-        .upsert_lib_node_by_fqn(
-            &fid,
-            "lib·serde_json·serde_json·Value",
-            "Value",
-            "serde_json",
-            Some("rust"),
-        )
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn: "lib·serde_json·serde_json·Value",
+            name: "Value",
+            package: "serde_json",
+            language: Some("rust"),
+        })
         .await
         .unwrap();
     let py_id = s
-        .upsert_lib_node_by_fqn(
-            &fid,
-            "lib·pydantic·pydantic·Value",
-            "Value",
-            "pydantic",
-            Some("python"),
-        )
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn: "lib·pydantic·pydantic·Value",
+            name: "Value",
+            package: "pydantic",
+            language: Some("python"),
+        })
         .await
         .unwrap();
 
@@ -2508,8 +2508,16 @@ async fn lib_node_by_fqn() {
     let fid = create_test_folder(&s, &format!("lib_{}", uuid::Uuid::new_v4())).await;
     let fqn = "lib·serde_json·serde_json·from_str";
 
-    let a =
-        s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
+    let a = s
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn,
+            name: "from_str",
+            package: "serde_json",
+            language: Some("rust"),
+        })
+        .await
+        .unwrap();
     let (kind, resolved, fp, pkg): (String, bool, Option<String>, Option<String>) = query_as(
         "SELECT n.kind::text, n.resolved, np.file_path, n.props->>'package' FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id=$1",
     )
@@ -2525,8 +2533,16 @@ async fn lib_node_by_fqn() {
     assert_eq!(pkg.as_deref(), Some("serde_json"), "grouped by package in props");
 
     // A second reference to the same external fqn shares the one node.
-    let b =
-        s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
+    let b = s
+        .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+            folder_id: &fid,
+            fqn,
+            name: "from_str",
+            package: "serde_json",
+            language: Some("rust"),
+        })
+        .await
+        .unwrap();
     assert_eq!(a, b, "repeated external references share one lib node");
     let (n,): (i64,) = query_as(&format!(
         "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 \

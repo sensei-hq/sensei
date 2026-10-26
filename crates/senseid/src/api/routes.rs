@@ -3557,15 +3557,17 @@ mod tests {
             .pg
             .replace_library_capabilities(
                 &lid,
-                "manifest",
-                Some("1"),
-                &[ProvidedSkill {
-                    name: "semantic-styles-rokkit".into(),
-                    focus: "styling".into(),
-                    path: Some("p.md".into()),
-                    body: Some("# body".into()),
-                }],
-                &[],
+                &crate::db::pg_store::LibraryCapabilities {
+                    source: "manifest",
+                    version_range: Some("1"),
+                    skills: &[ProvidedSkill {
+                        name: "semantic-styles-rokkit".into(),
+                        focus: "styling".into(),
+                        path: Some("p.md".into()),
+                        body: Some("# body".into()),
+                    }],
+                    agents: &[],
+                },
             )
             .await
             .unwrap();

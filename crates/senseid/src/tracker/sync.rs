@@ -146,7 +146,18 @@ async fn run(
         Some(name) => serde_json::json!({ "board_name": name }),
         None => serde_json::json!({}),
     };
-    match pg.apply_tracker_snapshot(tracker_id, &secret_service, &snapshot, &patch, &links).await {
+    match pg
+        .apply_tracker_snapshot(
+            tracker_id,
+            &crate::db::pg_store::TrackerSnapshotApply {
+                secret_service: &secret_service,
+                snapshot: &snapshot,
+                params_patch: &patch,
+                links: &links,
+            },
+        )
+        .await
+    {
         Ok(counts) => Ok(counts),
         Err(ApplyError::Gone) => Err(SyncError::Gone),
         Err(ApplyError::Superseded) => Err(SyncError::Superseded),
@@ -951,10 +962,12 @@ mod tests {
         let counts = pg
             .apply_tracker_snapshot(
                 t,
-                &row.secret_service,
-                &snapshot,
-                &json!({}),
-                &[to(live), to(uuid::Uuid::new_v4())],
+                &crate::db::pg_store::TrackerSnapshotApply {
+                    secret_service: &row.secret_service,
+                    snapshot: &snapshot,
+                    params_patch: &json!({}),
+                    links: &[to(live), to(uuid::Uuid::new_v4())],
+                },
             )
             .await
             .expect("no FK error");

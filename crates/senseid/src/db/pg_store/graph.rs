@@ -1103,12 +1103,9 @@ impl PgStore {
 
     pub async fn upsert_lib_node_by_fqn(
         &self,
-        folder_id: &uuid::Uuid,
-        fqn: &str,
-        name: &str,
-        package: &str,
-        language: Option<&str>,
+        lib_node: &LibNodeRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &LibNodeRow { folder_id, fqn, name, package, language } = lib_node;
         // One `package` container per dependency (fqn = `lib·<package>`).
         //
         // D12: the kind says WHAT — a package is a package whether it is ours or
@@ -1881,8 +1878,15 @@ impl PgStore {
             TargetRef::Lib { fqn, name, package } => {
                 #[cfg(test)]
                 crate::graph_facts::arm_tally::bump(fact.kind, "lib");
-                let id =
-                    self.upsert_lib_node_by_fqn(folder_id, fqn, name, package, language).await?;
+                let id = self
+                    .upsert_lib_node_by_fqn(&crate::db::pg_store::LibNodeRow {
+                        folder_id,
+                        fqn,
+                        name,
+                        package,
+                        language,
+                    })
+                    .await?;
                 (Some(id), None)
             }
             TargetRef::Internal { fqn, name, on_miss } => match known.get(fqn) {

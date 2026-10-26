@@ -276,14 +276,8 @@ impl PgStore {
     /// `user_key` where `namespace_id IS NULL` vs. the `(user_key, namespace_id)`
     /// composite), so the conflict target differs by branch. Callers validate the
     /// enum fields first (via [`crate::stance::StanceInput`]).
-    pub async fn upsert_stance(
-        &self,
-        user_key: &str,
-        namespace_id: Option<&uuid::Uuid>,
-        autonomy: &str,
-        sharing: &str,
-        review: &str,
-    ) -> Result<String, String> {
+    pub async fn upsert_stance(&self, stance: &StanceRow<'_>) -> Result<String, String> {
+        let &StanceRow { user_key, namespace_id, autonomy, sharing, review } = stance;
         let sql = if namespace_id.is_some() {
             "INSERT INTO sensei.stances (user_key, namespace_id, autonomy, sharing, review, updated_at)
              VALUES ($1, $2, $3::sensei.stance_autonomy, $4::sensei.stance_sharing, $5::sensei.stance_review, now())

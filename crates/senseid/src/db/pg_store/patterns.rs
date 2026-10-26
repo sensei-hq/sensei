@@ -59,29 +59,6 @@ impl PgStore {
 
     // ── Tags (controlled vocabulary) ──────────────────────────────────
 
-    pub async fn create_recommendation(
-        &self,
-        workspace_id: &uuid::Uuid,
-        title: &str,
-        why: &str,
-        action_type: &str,
-        urgency: &str,
-    ) -> Result<uuid::Uuid, String> {
-        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO inference.recommendations(workspace_id, title, why, action_type, urgency)
-             VALUES($1, $2, $3, $4, $5::sensei.recommendation_urgency) RETURNING id",
-        )
-        .bind(workspace_id)
-        .bind(title)
-        .bind(why)
-        .bind(action_type)
-        .bind(urgency)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(row.0)
-    }
-
     /// Accept a `pending` recommendation and carry out the action it stands for.
     ///
     /// Guards the transition to `accepted` at the `pending` state so a
