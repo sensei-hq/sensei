@@ -1,8 +1,7 @@
 # Checkpoint — 2026-10-25
 
 **Slice:** issue burndown (docs/roadmap/08-issue-burndown.md). Wave 4 is closed; wave 5 is in progress.
-Released v0.20.0 (dōjō deployed; Worker `/version` = 0.20.0 `fcf5d87`) and v0.20.1 (daemon only).
-Develop CI is green on 45bff79b.
+Released v0.20.0 (dōjō deployed, Worker `fcf5d87`) and v0.20.1 (daemon only). Develop CI green.
 
 **Closed this run:** #106, #335, #201, #204, #183, #142, #298, #172, #195 (#120 updated).
 
