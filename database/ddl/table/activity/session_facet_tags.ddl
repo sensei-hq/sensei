@@ -22,13 +22,14 @@ create index if not exists session_facet_tags_kind_value_idx
 
 comment on table activity.session_facet_tags is
 'Goal categories and friction kinds per session, one row per tag (spec 2026-08-26).
-One table for both multisets, discriminated by `kind`. Rewritten in place when a
-session is re-analyzed.';
+One table for both multisets, discriminated by `kind`. To be rewritten in place
+when a session is re-analyzed. Not yet written: nothing populates this table
+until the daemon''s facet pass is built.';
 comment on column activity.session_facet_tags.value is
 'Deliberately text, not an enum: the goal and friction vocabularies grow as more
-ACPs are seen, and a new value should not need a migration. The analyzer discards
-values outside its current closed list before writing, so a model inventing a
-category cannot break a group-by. `kind` IS an enum because it is closed.';
+ACPs are seen, and a new value should not need a migration. The analyzer is to
+discard values outside its current closed list before writing, so a model
+inventing a category cannot break a group-by. `kind` IS an enum because it is closed.';
 comment on column activity.session_facet_tags.weight is
 'How strongly the tag applies. 1 for a plain occurrence; higher when the analyzer
 saw a session dominated by one kind of work.';
