@@ -13,8 +13,10 @@ in this release). Local daemon on 0.20.2.
 - #125: on 0.20.2, 72 → 22 orphan turn sets. 5dea36e3 (develop, next release) ignores the 4 fresh orphans
   that have hook events, leaving 18 with no transcript. Check: count after the next release.
 
-**In progress — #161 (typed rows):** 42 left in `STILL_POSITIONAL` (`typed_rows_tests.rs`).
-**Next:** `insert_edge_with_props` (19 callers) and `upsert_folder` (36), each with a round-trip test.
+**In progress — #161 (typed rows):** 41 left in `STILL_POSITIONAL` (`typed_rows_tests.rs`). ee8fabd2:
+`insert_edge_with_props` takes `EdgeRow`, with `EdgeTarget::Node` or `Unresolved`.
+**Next:** `upsert_folder` (7 args, 36 callers), then the `insert_edge` wrapper (6 args, ~86 callers, via
+`EdgeTarget::from_parts`). Each conversion gets a round-trip test and a swapped-bind probe.
 
 **Watch roots:** the live DB watches only sensei on purpose until the indexer covers JS/TS/Java/.NET;
 then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.

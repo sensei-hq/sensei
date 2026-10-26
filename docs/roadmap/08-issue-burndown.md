@@ -233,8 +233,9 @@ The settings screen lists them as repositories.
 - #161: typed rows, remainder. **2026-10-25** (98e2c9cf): `adopt_node_by_identity` (12 args) takes `FqnNodeRow`
   (adding a field fails the build, verified). A guard test pins the positional writers: none at 8+, and the 50 at
   5+ are listed by name and may only shrink. 558b90fd: the three MCP writers take rows (50 → 47), with
-  round-trip tests. Then check runs, consolidated rulesets and workflow state (47 → 44). Next: the four
-  left at 7 args, then the `too_many_arguments` allows.
+  round-trip tests. Then check runs, consolidated rulesets and workflow state (47 → 44); `merge_function`
+  deleted and `callee_row` typed (→ 42); `insert_edge_with_props` takes `EdgeRow` (→ 41). Next: `upsert_folder`,
+  then the `insert_edge` wrapper, then the `too_many_arguments` allows.
 - #123: VS Code adapter A5/A6, Track B.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
