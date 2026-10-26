@@ -95,15 +95,9 @@ impl PgStore {
 
     // ── Extensions ────────────────────────────────────────────────────
 
-    pub async fn create_snapshot(
-        &self,
-        session_id: &uuid::Uuid,
-        folder_id: &uuid::Uuid,
-        kind: &str,
-        progress: &str,
-        next_step: Option<&str>,
-        completed_steps: &[String],
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn create_snapshot(&self, snap: &SnapshotRow<'_>) -> Result<uuid::Uuid, String> {
+        let &SnapshotRow { session_id, folder_id, kind, progress, next_step, completed_steps } =
+            snap;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.snapshots(session_id, folder_id, kind, progress_summary, next_step_hint, completed_steps) VALUES($1, $2, $3::sensei.snapshot_kind, $4, $5, $6) RETURNING id"
         ).bind(session_id).bind(folder_id).bind(kind).bind(progress).bind(next_step).bind(completed_steps)
@@ -1367,12 +1361,9 @@ impl PgStore {
     pub async fn set_session_metadata(
         &self,
         client_session_id: &str,
-        provider: Option<&str>,
-        model: Option<&str>,
-        tokens_in: Option<i64>,
-        tokens_out: Option<i64>,
-        split: Option<&crate::transcript::SessionTokens>,
+        patch: &SessionMetadataPatch<'_>,
     ) -> Result<(), String> {
+        let &SessionMetadataPatch { provider, model, tokens_in, tokens_out, split } = patch;
         // COALESCE throughout: a source that reports no split must not erase what
         // another pass captured, and `tokens_in` keeps its "all input" meaning.
         sqlx_core::query::query(

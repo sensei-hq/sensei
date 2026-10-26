@@ -177,14 +177,14 @@ impl Outbox for PgOutbox<'_> {
         let remote_id = remote_id.to_string();
         async move {
             store
-                .outbox_mark_sent(
-                    &membership_id,
-                    Some(&batch_id),
-                    Some(&memory_id),
-                    &signature,
+                .outbox_mark_sent(&crate::db::pg_store::OutboxSentRow {
+                    membership_id: &membership_id,
+                    batch_id: Some(&batch_id),
+                    memory_id: Some(&memory_id),
+                    signature: &signature,
                     sent_seq,
-                    &remote_id,
-                )
+                    remote_id: &remote_id,
+                })
                 .await
         }
     }

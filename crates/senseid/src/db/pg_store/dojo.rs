@@ -306,15 +306,9 @@ impl PgStore {
 
     /// Record a successful publish (idempotent on the `(membership_id, signature)`
     /// dedup key — a repeat send just refreshes the assigned seq/id).
-    pub async fn outbox_mark_sent(
-        &self,
-        membership_id: &uuid::Uuid,
-        batch_id: Option<&uuid::Uuid>,
-        memory_id: Option<&uuid::Uuid>,
-        signature: &str,
-        sent_seq: i64,
-        remote_id: &str,
-    ) -> Result<(), String> {
+    pub async fn outbox_mark_sent(&self, sent: &OutboxSentRow<'_>) -> Result<(), String> {
+        let &OutboxSentRow { membership_id, batch_id, memory_id, signature, sent_seq, remote_id } =
+            sent;
         sqlx_core::query::query(
             "INSERT INTO sensei.dojo_outbox
                 (membership_id, batch_id, memory_id, signature, state, sent_seq, remote_id, last_attempt_at)

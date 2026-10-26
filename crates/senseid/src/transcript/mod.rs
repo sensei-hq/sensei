@@ -634,7 +634,16 @@ async fn set_session_metadata(
         None => (None, None),
     };
     if let Err(e) = pg
-        .set_session_metadata(session_id, provider, model_name, tokens_in, tokens_out, t.as_ref())
+        .set_session_metadata(
+            session_id,
+            &crate::db::pg_store::SessionMetadataPatch {
+                provider,
+                model: model_name,
+                tokens_in,
+                tokens_out,
+                split: t.as_ref(),
+            },
+        )
         .await
     {
         tracing::warn!(error = %e, session = %session_id, "set_session_metadata: write failed");

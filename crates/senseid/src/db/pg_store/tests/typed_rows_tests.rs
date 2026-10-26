@@ -10,7 +10,6 @@
 /// Every `pg_store` function that still takes five or more positional
 /// parameters, as `file::name`. Convert one to a typed row, then delete its line.
 const STILL_POSITIONAL: &[&str] = &[
-    "dojo.rs::outbox_mark_sent",
     "dojo.rs::outbox_mark_state",
     "dojo.rs::upsert_federated_memory",
     "folders.rs::upsert_file_row",
@@ -29,17 +28,13 @@ const STILL_POSITIONAL: &[&str] = &[
     "logs.rs::log_index_error",
     "logs.rs::query_logs",
     "mcp.rs::upsert_service",
-    "metrics.rs::create_benchmark_report",
     "patterns.rs::accept_recommendation_as_rule",
     "patterns.rs::create_recommendation",
-    "patterns.rs::insert_reasoning_trace",
     "patterns.rs::upsert_narration_cache",
     "personas.rs::link_persona_identity",
     "playbook.rs::playbook_combo_trust",
     "runs.rs::append_run_event",
-    "sessions.rs::create_snapshot",
     "sessions.rs::record_session_event",
-    "sessions.rs::set_session_metadata",
     "trackers.rs::apply_discovered",
     "trackers.rs::apply_tracker_snapshot",
     "transcript.rs::set_capture_watermark",
@@ -713,4 +708,203 @@ async fn a_library_row_lands_on_the_library_and_its_release() {
             Some("https://example.test/llms.txt".into())
         )
     );
+}
+
+#[tokio::test]
+async fn a_session_metadata_patch_lands_field_for_field() {
+    use crate::db::pg_store::SessionMetadataPatch;
+    let s = super::pg_store().await;
+    sqlx_core::query::query("INSERT INTO activity.sessions (client_session_id) VALUES ('sm-161')")
+        .execute(s.pool())
+        .await
+        .unwrap();
+    let split = crate::transcript::SessionTokens {
+        input: 11,
+        output: 12,
+        cache_read: Some(13),
+        cache_write: Some(14),
+        reasoning: Some(15),
+        cost: Some(0.5),
+    };
+    s.set_session_metadata(
+        "sm-161",
+        &SessionMetadataPatch {
+            provider: Some("prov"),
+            model: Some("mdl"),
+            tokens_in: Some(100),
+            tokens_out: Some(200),
+            split: Some(&split),
+        },
+    )
+    .await
+    .unwrap();
+    type Meta = (
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+    );
+    let got: Meta = sqlx_core::query_as::query_as(
+        "SELECT provider, model, tokens_in, tokens_out, tokens_fresh, cache_read, cache_write, tokens_reasoning
+           FROM activity.sessions WHERE client_session_id = 'sm-161'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            Some("prov".into()),
+            Some("mdl".into()),
+            Some(100),
+            Some(200),
+            Some(11),
+            Some(13),
+            Some(14),
+            Some(15)
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_snapshot_row_lands_field_for_field() {
+    use crate::db::pg_store::SnapshotRow;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161s", "t161s", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161s", "/_t161s/repo").await.unwrap();
+    let session = s.create_session(&folder, "task", None).await.unwrap();
+    let steps = vec!["a".to_string(), "b".to_string()];
+    let id = s
+        .create_snapshot(&SnapshotRow {
+            session_id: &session,
+            folder_id: &folder,
+            kind: "checkpoint",
+            progress: "half",
+            next_step: Some("next"),
+            completed_steps: &steps,
+        })
+        .await
+        .unwrap();
+    type Snap = (uuid::Uuid, uuid::Uuid, String, Option<String>, Option<String>, Vec<String>);
+    let got: Snap = sqlx_core::query_as::query_as(
+        "SELECT session_id, folder_id, kind::text, progress_summary, next_step_hint, completed_steps
+           FROM activity.snapshots WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (session, folder, "checkpoint".into(), Some("half".into()), Some("next".into()), steps)
+    );
+}
+
+#[tokio::test]
+async fn a_reasoning_trace_row_lands_field_for_field() {
+    use crate::db::pg_store::ReasoningTraceRow;
+    let s = super::pg_store().await;
+    let ws = s.create_workspace("_t161r", None, None).await.unwrap();
+    let (detail, ex, cons) =
+        (serde_json::json!({ "d": 1 }), serde_json::json!([1]), serde_json::json!({ "c": 2 }));
+    let models = vec!["m1".to_string()];
+    let id = s
+        .insert_reasoning_trace(&ReasoningTraceRow {
+            workspace_id: Some(&ws),
+            trigger_event: "trig",
+            trigger_detail: &detail,
+            models_used: &models,
+            exchanges: &ex,
+            consensus: &cons,
+        })
+        .await
+        .unwrap();
+    type Trace = (
+        Option<uuid::Uuid>,
+        String,
+        serde_json::Value,
+        Vec<String>,
+        serde_json::Value,
+        serde_json::Value,
+    );
+    let got: Trace = sqlx_core::query_as::query_as(
+        "SELECT workspace_id, trigger_event, trigger_detail, models_used, exchanges, consensus
+           FROM inference.reasoning_traces WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (Some(ws), "trig".into(), detail, models, ex, cons));
+}
+
+#[tokio::test]
+async fn a_benchmark_report_row_lands_field_for_field() {
+    use crate::db::pg_store::BenchmarkReportRow;
+    let s = super::pg_store().await;
+    let id = s
+        .create_benchmark_report(&BenchmarkReportRow {
+            folder_id: None,
+            run_name: "run",
+            strategy: "strat",
+            score: Some(0.25),
+            tokens: Some(7),
+            elapsed_ms: Some(9),
+        })
+        .await
+        .unwrap();
+    type Report = (Option<uuid::Uuid>, String, String, Option<f64>, Option<i32>, Option<i32>);
+    let got: Report = sqlx_core::query_as::query_as(
+        "SELECT folder_id, run_name, strategy, score::float8, tokens, elapsed_ms
+           FROM sensei.benchmark_reports WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (None, "run".into(), "strat".into(), Some(0.25), Some(7), Some(9)));
+}
+
+#[tokio::test]
+async fn an_outbox_sent_row_lands_field_for_field() {
+    use crate::db::pg_store::OutboxSentRow;
+    let s = super::pg_store().await;
+    let mid = uuid::Uuid::new_v4();
+    s.create_dojo_membership(&crate::db::pg_store::NewDojoMembership {
+        id: mid,
+        registry_url: "http://localhost:7755".into(),
+        tenant_key: "github/t161".into(),
+        dojo_url: "http://localhost:7755/github/t161".into(),
+        kind: "client".into(),
+        org_slugs: vec!["t161".into()],
+        role: "contributor".into(),
+        authenticated_via: "device_code".into(),
+        attribution_default: "anonymous".into(),
+        sync_status: "healthy".into(),
+    })
+    .await
+    .unwrap();
+    s.outbox_mark_sent(&OutboxSentRow {
+        membership_id: &mid,
+        batch_id: None,
+        memory_id: None,
+        signature: "sig",
+        sent_seq: 42,
+        remote_id: "rid",
+    })
+    .await
+    .unwrap();
+    type Sent = (String, String, Option<i64>, Option<String>);
+    let got: Sent = sqlx_core::query_as::query_as(
+        "SELECT signature, state::text, sent_seq, remote_id FROM sensei.dojo_outbox WHERE membership_id = $1",
+    )
+    .bind(mid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, ("sig".into(), "sent".into(), Some(42), Some("rid".into())));
 }

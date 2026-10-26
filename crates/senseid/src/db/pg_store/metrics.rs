@@ -9,13 +9,10 @@ use super::*;
 impl PgStore {
     pub async fn create_benchmark_report(
         &self,
-        folder_id: Option<&uuid::Uuid>,
-        run_name: &str,
-        strategy: &str,
-        score: Option<f64>,
-        tokens: Option<i32>,
-        elapsed_ms: Option<i32>,
+        report: &BenchmarkReportRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &BenchmarkReportRow { folder_id, run_name, strategy, score, tokens, elapsed_ms } =
+            report;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.benchmark_reports(folder_id, run_name, strategy, score, tokens, elapsed_ms) VALUES($1, $2, $3, $4, $5, $6) RETURNING id"
         ).bind(folder_id).bind(run_name).bind(strategy).bind(score).bind(tokens).bind(elapsed_ms)

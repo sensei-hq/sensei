@@ -1680,3 +1680,66 @@ pub struct LibraryRow<'a> {
     pub source_type: Option<&'a str>,
     pub base_url: Option<&'a str>,
 }
+
+// Written by `sessions.rs`.
+/// A session's model and token usage, as [`PgStore::set_session_metadata`]
+/// applies it. Each `None` keeps what is stored; `split` carries the
+/// fresh/cache/reasoning breakdown and the metered cost when the source has one.
+pub struct SessionMetadataPatch<'a> {
+    pub provider: Option<&'a str>,
+    pub model: Option<&'a str>,
+    /// All input the model processed, cache included.
+    pub tokens_in: Option<i64>,
+    pub tokens_out: Option<i64>,
+    pub split: Option<&'a crate::transcript::SessionTokens>,
+}
+
+// Written by `sessions.rs`.
+/// One progress snapshot, as [`PgStore::create_snapshot`] inserts it.
+pub struct SnapshotRow<'a> {
+    pub session_id: &'a uuid::Uuid,
+    pub folder_id: &'a uuid::Uuid,
+    /// A `sensei.snapshot_kind` label: manual or checkpoint.
+    pub kind: &'a str,
+    pub progress: &'a str,
+    pub next_step: Option<&'a str>,
+    pub completed_steps: &'a [String],
+}
+
+// Written by `patterns.rs`.
+/// One multi-model reasoning trace, as [`PgStore::insert_reasoning_trace`]
+/// inserts it.
+pub struct ReasoningTraceRow<'a> {
+    pub workspace_id: Option<&'a uuid::Uuid>,
+    pub trigger_event: &'a str,
+    pub trigger_detail: &'a serde_json::Value,
+    pub models_used: &'a [String],
+    pub exchanges: &'a serde_json::Value,
+    pub consensus: &'a serde_json::Value,
+}
+
+// Written by `metrics.rs`.
+/// One benchmark run, as [`PgStore::create_benchmark_report`] inserts it.
+pub struct BenchmarkReportRow<'a> {
+    pub folder_id: Option<&'a uuid::Uuid>,
+    pub run_name: &'a str,
+    pub strategy: &'a str,
+    pub score: Option<f64>,
+    pub tokens: Option<i32>,
+    pub elapsed_ms: Option<i32>,
+}
+
+// Written by `dojo.rs`.
+/// One outbox entry the Dōjō accepted, as [`PgStore::outbox_mark_sent`]
+/// records it (state `sent`).
+pub struct OutboxSentRow<'a> {
+    pub membership_id: &'a uuid::Uuid,
+    pub batch_id: Option<&'a uuid::Uuid>,
+    pub memory_id: Option<&'a uuid::Uuid>,
+    /// The entry's identity within its membership.
+    pub signature: &'a str,
+    /// The Dōjō's sequence number for it.
+    pub sent_seq: i64,
+    /// The id the Dōjō gave it.
+    pub remote_id: &'a str,
+}

@@ -500,13 +500,16 @@ impl PgStore {
 
     pub async fn insert_reasoning_trace(
         &self,
-        workspace_id: Option<&uuid::Uuid>,
-        trigger_event: &str,
-        trigger_detail: &serde_json::Value,
-        models_used: &[String],
-        exchanges: &serde_json::Value,
-        consensus: &serde_json::Value,
+        trace: &ReasoningTraceRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &ReasoningTraceRow {
+            workspace_id,
+            trigger_event,
+            trigger_detail,
+            models_used,
+            exchanges,
+            consensus,
+        } = trace;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO inference.reasoning_traces(workspace_id, trigger_event, trigger_detail, models_used, exchanges, consensus) VALUES($1, $2, $3, $4, $5, $6) RETURNING id"
         ).bind(workspace_id).bind(trigger_event).bind(trigger_detail).bind(models_used).bind(exchanges).bind(consensus)

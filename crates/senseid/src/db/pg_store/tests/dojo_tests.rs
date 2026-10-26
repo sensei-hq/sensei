@@ -443,7 +443,16 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
     .unwrap();
 
     assert!(!pg.outbox_already_sent(&mid, "sig-1").await.unwrap());
-    pg.outbox_mark_sent(&mid, Some(&batch), Some(&mem), "sig-1", 5, "remote-1").await.unwrap();
+    pg.outbox_mark_sent(&crate::db::pg_store::OutboxSentRow {
+        membership_id: &mid,
+        batch_id: Some(&batch),
+        memory_id: Some(&mem),
+        signature: "sig-1",
+        sent_seq: 5,
+        remote_id: "remote-1",
+    })
+    .await
+    .unwrap();
     assert!(pg.outbox_already_sent(&mid, "sig-1").await.unwrap());
     // A different signature is independent.
     assert!(!pg.outbox_already_sent(&mid, "sig-2").await.unwrap());
