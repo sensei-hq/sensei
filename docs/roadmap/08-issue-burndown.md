@@ -276,20 +276,15 @@ The settings screen lists them as repositories.
     synced session metrics end 10-18); demo from a fresh Claude session.
   - eb4c16cd: a failed rule-pack or contributions read is an error, not an empty list (the personal
     loader swallowed both). "Tokens" is dominated by cache reads (the user's call whether to change it).
+- **v0.21.0 released 2026-10-26** (user go): carries the demo prep, #123's fixes, #161, #338, #190 (dbd
+  0.27.8: table comments converge, design.yaml read through dbd incl. workspace designs) and Tokens without
+  cache reads (user: cache reads counted apart; 64.3B → 1.44B over 90 days). `deploy-dojo` awaits approval.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
   signing, notarization, and a first-start Permissions step. Needs the user's Apple Developer account.
   Local builds are fixed already (8d09be73, `make dev-signing-cert`).
-- #190: read `design.yaml` through dbd's `project::survey`, and load a workspace design with
-  `Workspace::load`. Since dbd 0.27, a repository with a `modules:` design cannot be imported.
-  Already on dbd: SQL parsing (`dbd_core::parser`, 87cf190a) and schema import (`Design::from_config`; torii's
-  Schema diagram: 102 tables). Left: `DbdManifestAdapter`'s own serde struct. `project::survey` does not fit (it
-  walks the filesystem, defaults the dialect, has no extensions); `dbd_core::config::DesignConfig` from the text
-  does, once dbd says whether the dialect was stated: **blocked on sensei-hq/dbd#109** (filed 2026-10-26).
-  Accepting it drops the legacy top-level `extensions:` (23 of 77 local designs; `dbd doctor --fix` migrates).
-  `modules:` → `Workspace::load`: 0 of 77 local designs use it, so no live case yet.
-
-**dbd 0.27.3 (2026-10-19).**
+- ~~#190~~ **closed 2026-10-26** (77ab109c, dbd 0.27.8): the manifest is read through `dbd_core::config::parse`
+  (`dialect_stated`, dbd#109) and the schema import through dbd's `Workspace` (modules included).
 - All four pins move from v0.26.0.
 - 0.27.0 adds workspace designs (`modules:`):
   - The hand-rolled reader in `adapters/manifest/dbd.rs` does not know them.
