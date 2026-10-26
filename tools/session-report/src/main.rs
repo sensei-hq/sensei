@@ -11,6 +11,7 @@
 mod advice;
 mod claude;
 mod compare;
+mod facet_store;
 mod facets;
 mod metrics;
 mod model;
@@ -145,11 +146,15 @@ fn main() {
             let found = load_facets(&dir);
             match advice::derive(&label, &found, &analysis, endpoint, &facet_model) {
                 Ok(ins) => {
-                    let _ = std::fs::write(
-                        &target,
-                        serde_json::to_string_pretty(&ins).unwrap_or_default(),
-                    );
-                    eprintln!("  insights: {} recommendation(s) kept", ins.recommendations.len());
+                    match serde_json::to_string_pretty(&ins).map_err(|e| e.to_string()).and_then(
+                        |j| facet_store::write_atomically(&target, &j).map_err(|e| e.to_string()),
+                    ) {
+                        Ok(()) => eprintln!(
+                            "  insights: {} recommendation(s) kept",
+                            ins.recommendations.len()
+                        ),
+                        Err(e) => eprintln!("  insights: not written — {e}"),
+                    }
                 }
                 // Reported, not swallowed: an empty recommendations section
                 // should be visibly empty, not silently absent.
@@ -196,18 +201,17 @@ fn load_insights(dir: &Path) -> Option<advice::Insights> {
     serde_json::from_str(&text).ok()
 }
 
-/// Read the facet records already derived for this person.
+/// Read the facet records already derived for this person, naming any file
+/// that would not read as one rather than dropping it without a word.
 fn load_facets(dir: &Path) -> Vec<facets::Facet> {
-    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
-    let mut out: Vec<facets::Facet> = rd
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "json"))
-        .filter_map(|p| std::fs::read_to_string(p).ok())
-        .filter_map(|t| serde_json::from_str(&t).ok())
-        .collect();
-    out.sort_by(|a: &facets::Facet, b| a.session_id.cmp(&b.session_id));
-    out
+    let (found, rejected) = facet_store::read_facets(dir);
+    for p in rejected {
+        eprintln!(
+            "  facet {} does not read as a record — left out; delete it to derive again",
+            p.display()
+        );
+    }
+    found
 }
 
 /// Derive one facet per session and write it beside the report.
@@ -226,17 +230,21 @@ fn run_facets(sessions: &[model::Session], endpoint: &str, facet_model: &str, di
         std::collections::HashMap::new();
     for (i, s) in sessions.iter().enumerate() {
         let target = dir.join(format!("{}.json", s.id));
-        if target.exists() {
+        if facet_store::already_derived(&target) {
             ok += 1;
             continue;
         }
         eprint!("  facet {}/{} {}\r", i + 1, sessions.len(), &s.id[..8.min(s.id.len())]);
         match facets::derive(s, endpoint, facet_model) {
             Ok(f) => match serde_json::to_string_pretty(&f) {
-                Ok(j) => {
-                    let _ = std::fs::write(&target, j);
-                    ok += 1;
-                }
+                Ok(j) => match facet_store::write_atomically(&target, &j) {
+                    Ok(()) => ok += 1,
+                    Err(e) => {
+                        failed += 1;
+                        *reasons.entry(format!("could not write the record: {e}")).or_default() +=
+                            1;
+                    }
+                },
                 Err(e) => {
                     failed += 1;
                     *reasons.entry(e.to_string()).or_default() += 1;
