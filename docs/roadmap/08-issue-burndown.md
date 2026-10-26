@@ -215,11 +215,11 @@ The settings screen lists them as repositories.
   origin guard covered only tracker routes and CORS allowed every origin. Now `caller_guard` on the whole router
   (loopback `Host` always; an app `Origin` or none for writes) and CORS for the app's origins only. Live on a
   throwaway daemon: the original repro → 403 with nothing added; the app's origin and the CLI still write.
-- #178 (B1): **landed 2026-10-25** (2e5c6c1f): a file over 2 MiB or with a line over 10,000 bytes is skipped
+- ~~#178~~ (B1): **closed 2026-10-25**, verified on v0.20.2 (live probe recorded `oversized`). Landed 2e5c6c1f: a file over 2 MiB or with a line over 10,000 bytes is skipped
   as `oversized` (new enum value), by the one classifier the scan and `process_file` share. Live DB
   reconciled; over the 61,349-file corpus it refuses exactly the 137 measured. Closes on the released
   daemon's first `oversized` rows.
-- #188 (B2): **landed 2026-10-25** (d5bfdc7d): `GET /api/tasks/abandoned` (per day and kind, ten worst by
+- ~~#188~~ (B2): **closed 2026-10-25**, verified on v0.20.2 (`sensei doctor` Watchdog). Landed d5bfdc7d: `GET /api/tasks/abandoned` (per day and kind, ten worst by
   kind and path) and a Watchdog section in `sensei doctor`. Live: 204 in 14 days. Closes when the released
   doctor prints it.
 - #336: **landed 2026-10-25** (e5bf2e9d): `ingest_capture` was abandoned 117× in 14 days on one 1.28 GB
@@ -228,8 +228,8 @@ The settings screen lists them as repositories.
 - ~~C1~~: `public.logs` size — #180, closed.
 - #125: **landed 2026-10-25** (17e81b4b). 72 orphan turn sets: 53 are from untracked folders, 1 is a Zed thread
   with no cwd, 18 have no transcript left. Ingest is now scoped to folders under the watch roots (user
-  decision); a trigger re-opens the skips when a repository is registered. Closes when the released daemon
-  shows 0 traceable orphans.
+  decision); a trigger re-opens the skips when a repository is registered. On v0.20.2: 72 → 22. The 4 fresh
+  orphans with hook events are fixed in 5dea36e3 (next release), then 18, which have no transcript.
 - #161: typed rows, remainder. **2026-10-25** (98e2c9cf): `adopt_node_by_identity` (12 args) takes `FqnNodeRow`
   (adding a field fails the build, verified). A guard test pins the positional writers: none at 8+, and the 50 at
   5+ are listed by name and may only shrink. 558b90fd: the three MCP writers take rows (50 → 47), with
