@@ -1,39 +1,37 @@
 # Checkpoint — 2026-10-26
 
-**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md), wave 5, plus **demo prep** (user: a demo
-this week, sensei + dōjō, metrics and diagrams).
+**Slice:** issue burndown (docs/roadmap/08-issue-burndown.md), wave 5, plus demo prep (user: a demo this
+week, sensei + dōjō, metrics and diagrams).
 
-**Released:** v0.20.2 and dbd 0.27.7. Closed today: #289, #194, #331, #338. Filed #339.
+**Released v0.21.0** (user go, 2026-10-26): PR #340 merged, tag `v0.21.0`, `make release` installed it
+locally (daemon reports 0.21.0) and merged main back into develop. `release.yml` run 40408273707 builds;
+**`deploy-dojo` waits for the user's approval** (it creates `dojo.my_metric_series`).
+**dbd v0.27.8 released** (crates.io; dbd PR #111 merged): table comments converge (dbd#110), stated dialect
+and `config::parse` (dbd#109). sensei pins it everywhere.
 
-**Waiting on the next release:** #336, #125 (5dea36e3), #161, #338's cadence, the VS Code installed scan.
+**Verified on the installed 0.21.0:** 7-day sessions 2 (was empty); `tokens_per_day` 45M vs
+`cache_read_per_day` 5.1B over 14 days (cache reads apart, user's rule); community labels by directory
+(largest: `function (crates/senseid/src/indexer)`).
 
-**Demo prep, done today (develop, not yet released):**
-- 3f6f4199: sessions "last 7 days" / `sessions7d` / `last_session_at` key on last activity.
-- 00e84641: community labels by where most members live (the largest no longer read "function ()").
-- 87bc0bbc, 7d22700c, eeb834ce: dōjō **My metrics** at `/you/metrics` (`dojo.my_metric_series`,
-  `GET /v1/you/metrics`, four cards with daily lines). Seen in the browser on the local dōjō.
-- Watch roots: dbd, gateway, torii added (user) and indexed.
+**Closed today:** #289, #194, #331, #338, #190; dbd#109, dbd#110. Filed #339.
 
-**Before the demo:**
-1. A patch release (`make bump v=patch` → PR → `make release`; deploy-dojo needs the user's approval),
-   or at least `make install` locally. Note that a daemon reinstall revokes its Keychain approval.
-2. Fresh sessions and a dōjō sync: the synced session metrics end 10-18.
-3. Demo from a fresh Claude session; this one runs a pre-rename MCP.
-4. A run-through: Today → Metrics (radar, a trend) → Diagrams (Structure, Cycles, Neighbourhood,
-   Schema with torii) → `get_callers` live in Claude → dōjō My metrics and Teams.
+**Waiting on observation:** #336 (a week with no `ingest_capture` abandonment), #125 (orphan count after
+this release), #161, #338's cadence — all now released.
 
-**In progress — #123 Track B** (burndown has the detail): B1 swarm 4/6; its live findings fixed. B2/B3:
-`dojo-db.yml` runs the dōjō's 58 access-rule files on a fresh Supabase through `scripts/deploy-dojo-db.sh`
-(release's path too), green; bdd21fdf exit codes. B4 ported. ae3f9514 fixed fmt/clippy slips that failed
-CI lint on 14c098e4: run fmt + workspace clippy before every Rust commit. Left: B2's app e2e (WebKit).
+**#123:** lower-severity list done; Track B: B1 swarm 4/6 (findings fixed), B2/B3 `dojo-db.yml` (dōjō
+access rules in CI, green), CLI exit codes, B4 ported and the local duplicate agents removed (user OK;
+copies in /tmp/local-agents-removed; `/review-slice` now names the `sensei:` agents). Left: B2's app
+e2e in WebKit.
 
-**#190 blocked on sensei-hq/dbd#109.** Filed dbd#110: reconcile/diff ignore a changed TABLE comment (the facet
-tables' new table comments are in the DDL, not live; column comments converge).
+**Before the demo:** fresh sessions and a dōjō sync (synced session metrics end 10-18); a fresh Claude
+session (this one runs a pre-rename MCP); the run-through: Today → Metrics → Diagrams (Structure,
+Cycles, Neighbourhood, Schema with torii) → `get_callers` live in Claude → dōjō My metrics and Teams.
 
-**Next:** confirm Rust CI green on develop; then B2's app e2e (WebKit), or wave 5's #281.
+**Next:** approve `deploy-dojo`; confirm the release run green and the Worker serves 0.21.0; then the
+demo run-through, or B2's WebKit e2e / wave 5's #281.
 
-**Open (the user's):** release now for the demo?; should "Tokens" exclude cache reads?; dbd#109's shape and
-dbd#110, then a dbd release; delete the local reviewer agents (`/review-slice` names them)?
+**Open (the user's):** approve `deploy-dojo` for v0.21.0.
 
-**Known:** the dōjō Workers build is intermittent on PR/develop commits. qlty is out of minutes. After a DDL
-change, run `make test-template`. The Svelte MCP did not connect this session (svelte-check stood in).
+**Known:** the dōjō Workers build check and qlty fail on PRs (flaky integration; qlty out of minutes);
+the Worker built locally with WORKERS_CI=1 for this release. After a DDL change, run `make test-template`.
+Run fmt + workspace clippy before every Rust commit.
