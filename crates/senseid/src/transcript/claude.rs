@@ -89,10 +89,10 @@ impl TranscriptAdapter for ClaudeAdapter {
             .ok()
     }
 
-    /// Streamed, with no whole-file cap (#280): each pass reads the file line by
-    /// line, so a transcript of any size is read in bounded memory — only an
-    /// over-long single line is skipped, by the per-line guard. A 162 MB session
-    /// transcript was skipped whole as "oversized" before this.
+    /// Streamed, with no whole-file cap (#280): the file is read line by line,
+    /// ONCE (#336), so a transcript of any size is read in bounded memory — only
+    /// an over-long single line is skipped, by the per-line guard. A 162 MB
+    /// session transcript was skipped whole as "oversized" before this.
     fn parse_file(&self, key: &str) -> Option<ParsedTranscript> {
         // Lines are split on raw bytes and decoded one at a time, lossily, so a
         // line of invalid UTF-8 costs that line, not the rest of the file. An I/O
@@ -116,113 +116,170 @@ impl TranscriptAdapter for ClaudeAdapter {
                 }
             }))
         };
-        let session = parse_claude_session_of(lines()?);
-        let parsed = ParsedTranscript {
-            turns: parse_claude_transcript_of(lines()?),
-            cwds: session.as_ref().map(|s| s.cwds.clone()).unwrap_or_default(),
-            events: session.map(|s| s.events).unwrap_or_default(),
-            model: claude_model_of(lines()?).map(|m| ("anthropic".to_string(), m)),
-            tokens: claude_tokens_of(lines()?),
-            messages: claude_messages_of(lines()?),
-        };
+        let parsed = parse_claude_lines(lines()?);
         (!failed.get()).then_some(parsed)
     }
 
     fn parse(&self, content: &str) -> ParsedTranscript {
-        let session = parse_claude_session(content);
-        ParsedTranscript {
-            turns: parse_claude_transcript(content),
-            cwds: session.as_ref().map(|s| s.cwds.clone()).unwrap_or_default(),
-            events: session.map(|s| s.events).unwrap_or_default(),
-            model: claude_model(content).map(|m| ("anthropic".to_string(), m)),
-            tokens: claude_tokens(content),
-            messages: claude_messages(content),
+        parse_claude_lines(content.lines())
+    }
+}
+
+/// The records of a Claude transcript: each line's number (counting every raw
+/// line, so an id-less message keys the same however it is read) and its JSON.
+/// Blank, over-long and malformed lines are skipped here, once, for every reader.
+fn records<L: AsRef<str>>(
+    lines: impl Iterator<Item = L>,
+) -> impl Iterator<Item = (usize, serde_json::Value)> {
+    lines.enumerate().filter_map(|(n, raw)| {
+        let line = raw.as_ref().trim();
+        // An over-long line is a blob or attachment: parsing a multi-MB JSON line
+        // would stall the executor.
+        if line.is_empty() || line.len() > MAX_LINE_BYTES {
+            return None;
         }
+        serde_json::from_str(line).ok().map(|v| (n, v))
+    })
+}
+
+/// One of the things read out of a transcript, built a record at a time so that
+/// every reader shares ONE parse of each line (#336).
+trait Reader: Default {
+    type Out;
+    fn push(&mut self, n: usize, v: &serde_json::Value);
+    fn finish(self) -> Self::Out;
+}
+
+/// Run one reader over a transcript's lines — the tests' view of each reader
+/// alone; ingest reads through [`parse_claude_lines`].
+#[cfg(test)]
+fn read<R: Reader, L: AsRef<str>>(lines: impl Iterator<Item = L>) -> R::Out {
+    let mut reader = R::default();
+    for (n, v) in records(lines) {
+        reader.push(n, &v);
+    }
+    reader.finish()
+}
+
+/// Everything ingest needs from a Claude transcript, in ONE pass over its lines.
+///
+/// The five readers used to take the lines five times, and each re-parsed every
+/// line: 5 s apiece on a 1.28 GB transcript, so a session that kept writing was
+/// abandoned by the 180 s watchdog over and over (#336).
+pub(crate) fn parse_claude_lines<L: AsRef<str>>(
+    lines: impl Iterator<Item = L>,
+) -> ParsedTranscript {
+    let mut session = SessionReader::default();
+    let mut turns = TurnsReader::default();
+    let mut model = ModelReader::default();
+    let mut tokens = TokensReader::default();
+    let mut messages = MessagesReader::default();
+    for (n, v) in records(lines) {
+        session.push(n, &v);
+        turns.push(n, &v);
+        model.push(n, &v);
+        tokens.push(n, &v);
+        messages.push(n, &v);
+    }
+    let session = session.finish();
+    ParsedTranscript {
+        turns: turns.finish(),
+        cwds: session.as_ref().map(|s| s.cwds.clone()).unwrap_or_default(),
+        events: session.map(|s| s.events).unwrap_or_default(),
+        model: model.finish().map(|m| ("anthropic".to_string(), m)),
+        tokens: tokens.finish(),
+        messages: messages.finish(),
     }
 }
 
 /// Session-total token usage across a Claude transcript's assistant records, kept
 /// SPLIT (fresh input / cache write / cache read / output), each response counted
 /// once by `message.id`. `None` when no record carries usage (honest-empty). Pure.
+#[cfg(test)]
 pub fn claude_tokens(content: &str) -> Option<SessionTokens> {
-    claude_tokens_of(content.lines())
+    read::<TokensReader, _>(content.lines())
 }
 
-fn claude_tokens_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Option<SessionTokens> {
-    let (mut fresh, mut cw, mut cr, mut tout, mut seen) = (0i64, 0i64, 0i64, 0i64, false);
-    let mut counted = std::collections::HashSet::new();
-    for raw in lines {
-        let line = raw.as_ref().trim();
-        if line.is_empty() || line.len() > MAX_LINE_BYTES {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
+#[derive(Default)]
+struct TokensReader {
+    fresh: i64,
+    cache_write: i64,
+    cache_read: i64,
+    output: i64,
+    seen: bool,
+    counted: std::collections::HashSet<String>,
+}
+
+impl Reader for TokensReader {
+    type Out = Option<SessionTokens>;
+    fn push(&mut self, _n: usize, v: &serde_json::Value) {
         if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
-            continue;
+            return;
         }
         let Some(u) = v.get("message").and_then(|m| m.get("usage")) else {
-            continue;
+            return;
         };
         if let Some(id) = v["message"].get("id").and_then(|x| x.as_str())
-            && !counted.insert(id.to_string())
+            && !self.counted.insert(id.to_string())
         {
-            continue;
+            return;
         }
         let g = |k: &str| u.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
         let line_in =
             g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens");
         let line_out = g("output_tokens");
         if line_in > 0 || line_out > 0 {
-            seen = true;
-            fresh += g("input_tokens");
-            cw += g("cache_creation_input_tokens");
-            cr += g("cache_read_input_tokens");
-            tout += line_out;
+            self.seen = true;
+            self.fresh += g("input_tokens");
+            self.cache_write += g("cache_creation_input_tokens");
+            self.cache_read += g("cache_read_input_tokens");
+            self.output += line_out;
         }
     }
-    seen.then_some(SessionTokens {
-        input: fresh,
-        output: tout,
-        cache_read: Some(cr),
-        cache_write: Some(cw),
-        reasoning: None, // Claude does not separate reasoning tokens
-        cost: None,      // no metered cost in the transcript
-    })
+    fn finish(self) -> Self::Out {
+        self.seen.then_some(SessionTokens {
+            input: self.fresh,
+            output: self.output,
+            cache_read: Some(self.cache_read),
+            cache_write: Some(self.cache_write),
+            reasoning: None, // Claude does not separate reasoning tokens
+            cost: None,      // no metered cost in the transcript
+        })
+    }
 }
 
 /// One row per API response (spec session-api-cost C2): a response written on
 /// several records is one row (the last record's usage); a usage record with no
 /// `message.id` is its own row; `<synthetic>` and model-less records are none.
 /// Pure.
+#[cfg(test)]
 pub fn claude_messages(content: &str) -> Vec<TranscriptMessage> {
-    claude_messages_of(content.lines())
+    read::<MessagesReader, _>(content.lines())
 }
 
-fn claude_messages_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Vec<TranscriptMessage> {
-    let mut out: Vec<TranscriptMessage> = Vec::new();
-    let mut at_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut turn: Option<i32> = None;
-    for (n, raw) in lines.enumerate() {
-        let line = raw.as_ref().trim();
-        if line.is_empty() || line.len() > MAX_LINE_BYTES {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
+#[derive(Default)]
+struct MessagesReader {
+    out: Vec<TranscriptMessage>,
+    at_index: std::collections::HashMap<String, usize>,
+    turn: Option<i32>,
+}
+
+impl Reader for MessagesReader {
+    type Out = Vec<TranscriptMessage>;
+    fn push(&mut self, n: usize, v: &serde_json::Value) {
         match v.get("type").and_then(|t| t.as_str()) {
-            Some("user") if human_prompt_text(&v).is_some() => turn = Some(turn.unwrap_or(0) + 1),
+            Some("user") if human_prompt_text(v).is_some() => {
+                self.turn = Some(self.turn.unwrap_or(0) + 1)
+            }
             Some("assistant") => {
                 let m = &v["message"];
                 let (Some(u), Some(model)) =
                     (m.get("usage"), m.get("model").and_then(|x| x.as_str()))
                 else {
-                    continue;
+                    return;
                 };
                 if model == "<synthetic>" {
-                    continue;
+                    return;
                 }
                 let n_of = |x: &serde_json::Value| x.as_i64().unwrap_or(0);
                 let s_of = |x: &serde_json::Value| x.as_str().map(str::to_string);
@@ -238,8 +295,8 @@ fn claude_messages_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Vec<Tran
                     .unwrap_or_else(|| format!("line:{n}"));
                 let row = TranscriptMessage {
                     message_id: id.clone(),
-                    turn_index: turn,
-                    at: parse_timestamp(&v).map(|t| t.timestamp_millis()),
+                    turn_index: self.turn,
+                    at: parse_timestamp(v).map(|t| t.timestamp_millis()),
                     model: model.to_string(),
                     speed: s_of(&u["speed"]),
                     inference_geo: s_of(&u["inference_geo"]),
@@ -253,89 +310,88 @@ fn claude_messages_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Vec<Tran
                     output: n_of(&u["output_tokens"]),
                     thinking: u["output_tokens_details"]["thinking_tokens"].as_i64(),
                 };
-                match at_index.get(&id) {
-                    Some(&i) => out[i] = row,
+                match self.at_index.get(&id) {
+                    Some(&i) => self.out[i] = row,
                     None => {
-                        at_index.insert(id, out.len());
-                        out.push(row);
+                        self.at_index.insert(id, self.out.len());
+                        self.out.push(row);
                     }
                 }
             }
             _ => {}
         }
     }
-    out
+    fn finish(self) -> Self::Out {
+        self.out
+    }
 }
 
 /// The model that ran a Claude transcript: the most frequent `message.model`
 /// across assistant records (a session can switch models mid-run; the dominant
 /// one wins). `None` if no assistant record carries a model. Pure.
+#[cfg(test)]
 pub fn claude_model(content: &str) -> Option<String> {
-    claude_model_of(content.lines())
+    read::<ModelReader, _>(content.lines())
 }
 
-fn claude_model_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Option<String> {
-    use std::collections::HashMap;
-    let mut counts: HashMap<String, u32> = HashMap::new();
-    for raw in lines {
-        let line = raw.as_ref().trim();
-        if line.is_empty() || line.len() > MAX_LINE_BYTES {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
+#[derive(Default)]
+struct ModelReader {
+    counts: std::collections::HashMap<String, u32>,
+}
+
+impl Reader for ModelReader {
+    type Out = Option<String>;
+    fn push(&mut self, _n: usize, v: &serde_json::Value) {
         if v.get("type").and_then(|t| t.as_str()) == Some("assistant")
             && let Some(model) =
                 v.get("message").and_then(|m| m.get("model")).and_then(|m| m.as_str())
             && !model.is_empty()
             && model != "<synthetic>"
         {
-            *counts.entry(model.to_string()).or_default() += 1;
+            *self.counts.entry(model.to_string()).or_default() += 1;
         }
     }
-    // Most frequent; ties broken by model name for determinism.
-    counts
-        .into_iter()
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
-        .map(|(model, _)| model)
+    fn finish(self) -> Self::Out {
+        // Most frequent; ties broken by model name for determinism.
+        self.counts
+            .into_iter()
+            .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+            .map(|(model, _)| model)
+    }
 }
 
 /// Reconstruct a session's event stream from a Claude transcript (#75): a
 /// `UserPromptSubmit` per genuine human prompt, a `PostToolUse` per `tool_use`
 /// block (name + file_path), and a synthetic terminal `Stop` (transcripts carry
 /// no end marker). Also collects distinct `cwd`s for workspace resolution. Pure.
+#[cfg(test)]
 pub fn parse_claude_session(content: &str) -> Option<SynthSession> {
-    parse_claude_session_of(content.lines())
+    read::<SessionReader, _>(content.lines())
 }
 
-fn parse_claude_session_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Option<SynthSession> {
-    let mut cwds: Vec<String> = Vec::new();
-    let mut events: Vec<SynthEvent> = Vec::new();
-    let mut max_ts: i64 = 0;
+#[derive(Default)]
+struct SessionReader {
+    cwds: Vec<String>,
+    events: Vec<SynthEvent>,
+    max_ts: i64,
+}
 
-    for raw in lines {
-        let line = raw.as_ref().trim();
-        if line.is_empty() || line.len() > MAX_LINE_BYTES {
-            continue;
-        }
-        let v: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+impl Reader for SessionReader {
+    type Out = Option<SynthSession>;
+    fn push(&mut self, _n: usize, v: &serde_json::Value) {
         if let Some(cwd) = v.get("cwd").and_then(|c| c.as_str())
             && !cwd.is_empty()
-            && !cwds.iter().any(|c| c == cwd)
+            && !self.cwds.iter().any(|c| c == cwd)
         {
-            cwds.push(cwd.to_string());
+            self.cwds.push(cwd.to_string());
         }
-        let Some(ts) = parse_timestamp(&v).map(|d| d.timestamp_millis()) else {
-            continue;
+        let Some(ts) = parse_timestamp(v).map(|d| d.timestamp_millis()) else {
+            return;
         };
         match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
             "user" => {
-                if let Some(prompt) = human_prompt_text(&v) {
-                    events.push(SynthEvent {
+                if let Some(prompt) = human_prompt_text(v) {
+                    self.events.push(SynthEvent {
                         event_type: "UserPromptSubmit".into(),
                         tool_name: None,
                         file_path: None,
@@ -343,7 +399,7 @@ fn parse_claude_session_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Opt
                         tool_input: None,
                         ts,
                     });
-                    max_ts = max_ts.max(ts);
+                    self.max_ts = self.max_ts.max(ts);
                 }
             }
             "assistant" => {
@@ -363,7 +419,7 @@ fn parse_claude_session_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Opt
                                 .and_then(|i| i.get("file_path").or_else(|| i.get("path")))
                                 .and_then(|p| p.as_str())
                                 .map(str::to_string);
-                            events.push(SynthEvent {
+                            self.events.push(SynthEvent {
                                 event_type: "PostToolUse".into(),
                                 tool_name,
                                 file_path,
@@ -371,7 +427,7 @@ fn parse_claude_session_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Opt
                                 tool_input,
                                 ts,
                             });
-                            max_ts = max_ts.max(ts);
+                            self.max_ts = self.max_ts.max(ts);
                         }
                     }
                 }
@@ -379,21 +435,22 @@ fn parse_claude_session_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Opt
             _ => {}
         }
     }
-
-    if events.is_empty() {
-        return None;
+    fn finish(mut self) -> Self::Out {
+        if self.events.is_empty() {
+            return None;
+        }
+        // Transcripts have no explicit end marker — synthesize a terminal Stop so
+        // the enricher derives outcome=completed.
+        self.events.push(SynthEvent {
+            event_type: "Stop".into(),
+            tool_name: None,
+            file_path: None,
+            prompt: None,
+            tool_input: None,
+            ts: self.max_ts,
+        });
+        Some(SynthSession { cwds: self.cwds, events: self.events })
     }
-    // Transcripts have no explicit end marker — synthesize a terminal Stop so
-    // the enricher derives outcome=completed.
-    events.push(SynthEvent {
-        event_type: "Stop".into(),
-        tool_name: None,
-        file_path: None,
-        prompt: None,
-        tool_input: None,
-        ts: max_ts,
-    });
-    Some(SynthSession { cwds, events })
 }
 
 /// The per-turn attributes we PROMOTE to columns, lifted from one transcript
@@ -403,53 +460,46 @@ fn parse_claude_session_of<L: AsRef<str>>(lines: impl Iterator<Item = L>) -> Opt
 /// Parse a Claude transcript (JSONL) into user-prompt-bounded turns. A new turn
 /// starts at each genuine human prompt; assistant `text` blocks until the next
 /// prompt form that turn's response. Pure + deterministic.
+#[cfg(test)]
 pub fn parse_claude_transcript(content: &str) -> Vec<TranscriptTurn> {
-    parse_claude_transcript_of(content.lines())
+    read::<TurnsReader, _>(content.lines())
 }
 
-fn parse_claude_transcript_of<L: AsRef<str>>(
-    lines: impl Iterator<Item = L>,
-) -> Vec<TranscriptTurn> {
-    let mut turns: Vec<TranscriptTurn> = Vec::new();
-    let mut cur: Option<TranscriptTurn> = None;
-    let mut idx = 0i32;
+#[derive(Default)]
+struct TurnsReader {
+    turns: Vec<TranscriptTurn>,
+    cur: Option<TranscriptTurn>,
+    idx: i32,
+}
 
-    for raw in lines {
-        let line = raw.as_ref().trim();
-        // skip blank lines and oversized (blob/attachment) lines — parsing a
-        // multi-MB JSON line would stall the executor.
-        if line.is_empty() || line.len() > MAX_LINE_BYTES {
-            continue;
-        }
-        let v: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+impl Reader for TurnsReader {
+    type Out = Vec<TranscriptTurn>;
+    fn push(&mut self, _n: usize, v: &serde_json::Value) {
         match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
             "user" => {
-                if let Some(prompt) = human_prompt_text(&v) {
-                    if let Some(t) = cur.take() {
-                        turns.push(t);
+                if let Some(prompt) = human_prompt_text(v) {
+                    if let Some(t) = self.cur.take() {
+                        self.turns.push(t);
                     }
-                    idx += 1;
+                    self.idx += 1;
                     let mut facts = TurnFacts::default();
-                    merge_facts(&mut facts, &v);
-                    cur = Some(TranscriptTurn {
-                        turn_index: idx,
+                    merge_facts(&mut facts, v);
+                    self.cur = Some(TranscriptTurn {
+                        turn_index: self.idx,
                         user_text: Some(prompt),
                         assistant_text: String::new(),
-                        started_at: parse_timestamp(&v),
-                        attrs: turn_attrs(&v, &["message", "attachment", "toolUseResult"]),
+                        started_at: parse_timestamp(v),
+                        attrs: turn_attrs(v, &["message", "attachment", "toolUseResult"]),
                         facts,
                     });
                 }
                 // tool_result / meta / injected → not a boundary, ignore.
             }
             "assistant" => {
-                if let Some(t) = cur.as_mut() {
+                if let Some(t) = self.cur.as_mut() {
                     // A turn spans several assistant records — tokens sum, and the
                     // LAST stop_reason is the one that ended it.
-                    merge_facts(&mut t.facts, &v);
+                    merge_facts(&mut t.facts, v);
                     if let Some(sr) = v
                         .get("message")
                         .and_then(|m| m.get("stop_reason"))
@@ -458,7 +508,7 @@ fn parse_claude_transcript_of<L: AsRef<str>>(
                     {
                         t.facts.stop_reason = Some(sr.to_string());
                     }
-                    let text = assistant_text_blocks(&v);
+                    let text = assistant_text_blocks(v);
                     if !text.is_empty() {
                         if !t.assistant_text.is_empty() {
                             t.assistant_text.push_str("\n\n");
@@ -471,19 +521,20 @@ fn parse_claude_transcript_of<L: AsRef<str>>(
             _ => {}
         }
     }
-    if let Some(t) = cur.take() {
-        turns.push(t);
-    }
-
-    // Cap pathological turns.
-    for t in turns.iter_mut() {
-        if t.assistant_text.chars().count() > MAX_TURN_CHARS {
-            let mut s: String = t.assistant_text.chars().take(MAX_TURN_CHARS).collect();
-            s.push('…');
-            t.assistant_text = s;
+    fn finish(mut self) -> Self::Out {
+        if let Some(t) = self.cur.take() {
+            self.turns.push(t);
         }
+        // Cap pathological turns.
+        for t in self.turns.iter_mut() {
+            if t.assistant_text.chars().count() > MAX_TURN_CHARS {
+                let mut s: String = t.assistant_text.chars().take(MAX_TURN_CHARS).collect();
+                s.push('…');
+                t.assistant_text = s;
+            }
+        }
+        self.turns
     }
-    turns
 }
 
 /// Concatenated `text` blocks of an `assistant` record (prose only — no
@@ -532,6 +583,43 @@ mod tests {
         let streamed = ad.parse_file(&path.to_string_lossy()).expect("readable");
         assert_eq!(streamed, ad.parse(TRANSCRIPT));
         assert_eq!(streamed.turns.len(), 1);
+    }
+
+    /// #336: a transcript is read ONCE per ingest. Five readers each re-read and
+    /// re-parsed the whole file — 5 × 5 s on a 1.28 GB transcript, so a session
+    /// that kept writing was abandoned by the 180 s watchdog 117 times in 14
+    /// days. One pass feeds all five, and gives exactly what the five gave.
+    #[test]
+    fn one_pass_reads_each_line_once_and_gives_what_the_five_readers_gave() {
+        let text = concat!(
+            r#"{"type":"user","cwd":"/r","timestamp":"2026-06-20T10:00:00.000Z","message":{"role":"user","content":"go"}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-06-20T10:00:05.000Z","message":{"id":"m1","model":"claude-opus-5-5","content":[{"type":"text","text":"first"},{"type":"tool_use","name":"Read","input":{"file_path":"/r/a.rs"}}],"usage":{"input_tokens":2,"output_tokens":4,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-06-20T10:00:06.000Z","message":{"id":"m1","model":"claude-opus-5-5","content":[{"type":"text","text":"again"}],"usage":{"input_tokens":2,"output_tokens":9,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}}"#,
+            "\n",
+            "\n",
+            "not json\n",
+            r#"{"type":"user","cwd":"/r/sub","timestamp":"2026-06-20T10:01:00.000Z","message":{"role":"user","content":"next"}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-06-20T10:01:05.000Z","message":{"model":"claude-sonnet-5-5","content":[{"type":"text","text":"second"}],"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+            "\n",
+        );
+        let read = std::cell::Cell::new(0usize);
+        let once = super::parse_claude_lines(text.lines().inspect(|_| read.set(read.get() + 1)));
+        assert_eq!(read.get(), text.lines().count(), "every line is read exactly once");
+
+        let session = super::parse_claude_session(text);
+        let five = super::ParsedTranscript {
+            turns: super::parse_claude_transcript(text),
+            cwds: session.as_ref().map(|s| s.cwds.clone()).unwrap_or_default(),
+            events: session.map(|s| s.events).unwrap_or_default(),
+            model: super::claude_model(text).map(|m| ("anthropic".to_string(), m)),
+            tokens: super::claude_tokens(text),
+            messages: super::claude_messages(text),
+        };
+        assert_eq!(once, five);
+        assert_eq!((once.turns.len(), once.messages.len(), once.events.len()), (2, 2, 4));
     }
 
     /// One line of invalid UTF-8 must not end the read: `lines()` stopped at it
