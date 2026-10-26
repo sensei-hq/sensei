@@ -1,6 +1,6 @@
 ---
 name: Tracker metrics write-back
-status: draft
+status: reviewed
 date: 2026-10-26
 parent: docs/spec/daemon/tracker-jira-linkage.md (R4, R5, R7, R8, R11, "Out of scope")
 analysis: docs/analysis/2026-10-26-tracker-metrics-writeback.md
@@ -677,6 +677,9 @@ The rows marked *(rewrite)* were added by the rewrite and verified in a second p
 | C31 *(rewrite)* | The sibling re-key UPDATE runs after a first-time INSERT as well as after a re-connect UPDATE | pg_store/trackers.rs:960-1009 | as stated | CONFIRMED *(W11 and gate 22 now cover a new-board connect)* |
 | C32 *(rewrite)* | A keyring failure inside the write-back pass would be recorded nowhere (the sync before it succeeded and cleared `last_error`) | runtime.rs:76-92; trackers.rs:604 | as stated | CONFIRMED *(was MISLEADING in W9: "the sync already recorded it"; now `writeback_error`)* |
 | C33 *(rewrite)* | Discovery takes the same per-tracker guard as sync | discover.rs:97 | as stated | CONFIRMED |
+| C34 *(rewrite 3)* | Gate 13's two commands give no output on today's tree; the keyring `s.delete(` (connect.rs:177) isn't an HTTP call | ran both at `64f10fe46` | no output | CONFIRMED *(was FALSE: the earlier pattern `\.(post\|put\|patch\|delete)\(` matched connect.rs:177)* |
+| C35 *(rewrite 3)* | Today `Read-only mirror\|mirrored read-only` appears in both tracker DDL files and design.dbml, and `scheduled_tasks.rs:63` says "(read-only)" | rg at `64f10fe46` | tracker_tasks.ddl 2, trackers.ddl 1, design.dbml 3; scheduled_tasks.rs:63 | CONFIRMED |
+| C36 *(rewrite 3)* | The docs check as defined in gate 26 reports 39 units on the set's Markdown and `.feature` files, with no billing or viewer paragraph | scratch prototype run at `d9b708894` | 39; 0 billing/viewer | CONFIRMED |
 
 ## Related
 
