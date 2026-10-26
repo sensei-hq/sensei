@@ -247,7 +247,16 @@ The settings screen lists them as repositories.
   failure-rate denominator) fixed. The lower-severity list is verified (all real); #1 (04f78181), 2–5 and adjacent
   (a)/(b) (9917ca6a), 7 (2ac89e21), (c) (fad9ef49: 10 of 635 real turns ended before they started), (d)
   (d65dbde7: 22% of real VS Code file links carried a `#N-N` anchor; languages 375 → 1,208 touches) and (6)
-  (cee5ba48: the three-meaning event count removed) are fixed. **Lower-severity list done; left: Track B.**
+  (cee5ba48: the three-meaning event count removed) are fixed. **Lower-severity list done.**
+  **Track B (2026-10-26):** B1, the swarm blind on the pre-fix range (`56c3e90a^..525cfe04^`; old SHAs died
+  in the scrubs), re-derived 4 of 6 (A1 failure-mode, A2/A6 data-correctness, A5 test); missed A3/A4; the
+  security reviewer missed A1 (fixed by B4's port). Its new findings, still live, fixed: one VS Code session =
+  one unit (d9c1c338, sample 121 → 84 units for 84 sessions), UTF-8 percent-decoding (62a1bfca), facet writes
+  (ffb4544c), docs (f02ab900, 7668bb3d, a3aee653, facet DDL comments). B2/B3: `dojo-db.yml` deploys the dōjō
+  the production way on a fresh Supabase and runs its 58 access-rule files on schema changes and nightly
+  (caf47a19, 4cd9d340; first green run 40381330840). B4: catalog reviewers ported (72032126); deleting the
+  local copies is the user's call (`/review-slice` still names them). Left: an over-long `kind:0` journal
+  line ingests as 0 turns, silently; B2's other areas (CLI exit codes, app e2e in WebKit).
 - ~~#338~~ **closed 2026-10-26** (be5a6677): scheduled workers ran at twice their interval (live: advance_run
   every 30s, set to 15s). Found via a flaky test.
 - **Demo prep (user, 2026-10-26: a demo this week, sensei + dōjō, metrics and diagrams).** Done:

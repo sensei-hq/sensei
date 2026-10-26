@@ -22,19 +22,19 @@ this week, sensei + dōjō, metrics and diagrams).
 4. A run-through: Today → Metrics (radar, a trend) → Diagrams (Structure, Cycles, Neighbourhood,
    Schema with torii) → `get_callers` live in Claude → dōjō My metrics and Teams.
 
-**In progress — #123:** the lower-severity list is done (d65dbde7 line anchors, cee5ba48 event count). Left: Track B.
+**In progress — #123 Track B** (details in the burndown): B1 swarm 4/6 on Track A; its live findings fixed
+(d9c1c338 one unit per VS Code session, 62a1bfca UTF-8, ffb4544c facet writes, docs). B2/B3: `dojo-db.yml`
+runs the dōjō's 58 access-rule files on a fresh Supabase via `scripts/deploy-dojo-db.sh` (also release's
+deploy-dojo), green. B4 ported (72032126). Left: over-long `kind:0` line → 0 turns silently; CLI exit codes
+and app e2e for B2.
 
-**Done since:** eb4c16cd, a failed rule-pack/contributions read is an error, not an empty list.
-**#190 blocked on sensei-hq/dbd#109** (dbd must say whether `source.dialect` was stated; then the
-adapter deserializes `dbd_core::config::DesignConfig` from the text). Not `project::survey`: it walks the
-filesystem and defaults the dialect.
+**#190 blocked on sensei-hq/dbd#109.** Filed dbd#110: reconcile/diff ignore a changed TABLE comment (the facet
+tables' new table comments are in the DDL, not live; column comments converge).
 
-**Next:** #123 Track B (review-pipeline check, nightly integration fleet, local agent-file cleanup). CI on
-develop: each push cancels the last run; fmt and `clippy --workspace -D warnings` were clean locally
-(2026-10-26). Confirm the next completed Rust run is green.
+**Next:** the over-long `kind:0` line, then B2's CLI exit codes. After a DDL change: `make test-template`.
 
-**Open (the user's):** whether to release now for the demo; whether "Tokens" should exclude cache reads;
-dbd#109's shape (it changes a public dbd-core field) and a dbd release.
+**Open (the user's):** release now for the demo?; should "Tokens" exclude cache reads?; dbd#109's shape and
+dbd#110, then a dbd release; delete the local reviewer agents (`/review-slice` names them)?
 
 **Known:** the dōjō Workers build is intermittent on PR/develop commits. qlty is out of minutes. After a DDL
 change, run `make test-template`. The Svelte MCP did not connect this session (svelte-check stood in).
