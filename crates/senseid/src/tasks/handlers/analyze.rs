@@ -884,14 +884,14 @@ pub async fn derive_signals(
         }]);
         match ctx
             .pg()
-            .upsert_pattern(
+            .upsert_pattern(&crate::db::pg_store::PatternRow {
                 workspace_id,
-                Some(&folder_id),
-                &churn_pattern_name(&file),
-                true,
-                Some(churn_confidence(max_edits)),
-                &instances,
-            )
+                folder_id: Some(&folder_id),
+                name: &churn_pattern_name(&file),
+                is_anti: true,
+                confidence: Some(churn_confidence(max_edits)),
+                instances: &instances,
+            })
             .await
         {
             Ok(_) => count += 1,
@@ -946,7 +946,14 @@ pub async fn derive_signals(
         let instances = serde_json::Value::Array(corrections);
         match ctx
             .pg()
-            .upsert_pattern(workspace_id, None, "correction-prone", true, None, &instances)
+            .upsert_pattern(&crate::db::pg_store::PatternRow {
+                workspace_id,
+                folder_id: None,
+                name: "correction-prone",
+                is_anti: true,
+                confidence: None,
+                instances: &instances,
+            })
             .await
         {
             Ok(_) => count += 1,
@@ -959,7 +966,14 @@ pub async fn derive_signals(
         let instances = serde_json::Value::Array(principles);
         match ctx
             .pg()
-            .upsert_pattern(workspace_id, None, "rule-candidates", false, None, &instances)
+            .upsert_pattern(&crate::db::pg_store::PatternRow {
+                workspace_id,
+                folder_id: None,
+                name: "rule-candidates",
+                is_anti: false,
+                confidence: None,
+                instances: &instances,
+            })
             .await
         {
             Ok(_) => count += 1,
@@ -1690,14 +1704,14 @@ mod tests {
             edit(pg, &csid2, "src/b.rs", ts).await;
         }
         // An unreviewed rework row from an earlier, wrong derive.
-        pg.upsert_pattern(
-            &pid,
-            Some(&fid),
-            "rework: /old/out.rs",
-            true,
-            Some(0.5),
-            &serde_json::json!([]),
-        )
+        pg.upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &pid,
+            folder_id: Some(&fid),
+            name: "rework: /old/out.rs",
+            is_anti: true,
+            confidence: Some(0.5),
+            instances: &serde_json::json!([]),
+        })
         .await
         .unwrap();
 

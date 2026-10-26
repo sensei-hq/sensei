@@ -10,7 +10,14 @@ async fn pattern_upsert_and_list() {
     let instances =
         serde_json::json!([{"file":"src/lib.rs","line":10},{"file":"src/main.rs","line":20}]);
     let pat_id = s
-        .upsert_pattern(&proj_id, Some(&fid), "_test:Adapter", false, Some(0.85), &instances)
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:Adapter",
+            is_anti: false,
+            confidence: Some(0.85),
+            instances: &instances,
+        })
         .await
         .unwrap();
     let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
@@ -34,7 +41,14 @@ async fn pattern_promote() {
     let suffix = format!("pat_promote_{}", uuid::Uuid::new_v4());
     let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let pat_id = s
-        .upsert_pattern(&proj_id, Some(&fid), "_test:Factory", false, None, &serde_json::json!([]))
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:Factory",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([]),
+        })
         .await
         .unwrap();
     s.promote_pattern(&pat_id, "rule").await.unwrap();
@@ -59,25 +73,25 @@ async fn pattern_upsert_updates_existing() {
     let suffix = format!("pat_dup_{}", uuid::Uuid::new_v4());
     let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let id1 = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid),
-            "_test:Singleton",
-            false,
-            Some(0.5),
-            &serde_json::json!([{"file":"a.rs"}]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:Singleton",
+            is_anti: false,
+            confidence: Some(0.5),
+            instances: &serde_json::json!([{"file":"a.rs"}]),
+        })
         .await
         .unwrap();
     let id2 = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid),
-            "_test:Singleton",
-            false,
-            Some(0.9),
-            &serde_json::json!([{"file":"a.rs"},{"file":"b.rs"}]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:Singleton",
+            is_anti: false,
+            confidence: Some(0.9),
+            instances: &serde_json::json!([{"file":"a.rs"},{"file":"b.rs"}]),
+        })
         .await
         .unwrap();
     assert_eq!(id1, id2); // same row updated
@@ -108,25 +122,25 @@ async fn pattern_upsert_merges_across_folders_in_same_workspace() {
     s.set_folder_workspace(&fid_b, &proj_id, "root", None).await.unwrap();
 
     let id_a = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid_a),
-            "_test:Shared",
-            false,
-            None,
-            &serde_json::json!([{"file":"a.rs"}]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid_a),
+            name: "_test:Shared",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([{"file":"a.rs"}]),
+        })
         .await
         .unwrap();
     let id_b = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid_b),
-            "_test:Shared",
-            false,
-            None,
-            &serde_json::json!([{"file":"b.rs"},{"file":"b2.rs"}]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid_b),
+            name: "_test:Shared",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([{"file":"b.rs"},{"file":"b2.rs"}]),
+        })
         .await
         .unwrap();
     assert_eq!(id_a, id_b, "same (workspace_id, name) must merge into one row");

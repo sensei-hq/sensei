@@ -35,7 +35,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "patterns.rs::create_recommendation",
     "patterns.rs::insert_reasoning_trace",
     "patterns.rs::upsert_narration_cache",
-    "patterns.rs::upsert_pattern",
     "personas.rs::link_persona_identity",
     "playbook.rs::playbook_combo_trust",
     "runs.rs::append_run_event",
@@ -643,4 +642,36 @@ async fn a_transcript_source_lands_on_every_turn() {
     .await
     .unwrap();
     assert_eq!(got, ("zed".into(), "fam".into(), Some("prov".into()), Some("mdl".into())));
+}
+
+#[tokio::test]
+async fn a_pattern_row_lands_field_for_field() {
+    use crate::db::pg_store::PatternRow;
+    let s = super::pg_store().await;
+    let ws = s.create_workspace("_t161p", None, None).await.unwrap();
+    let root = s.add_watch_root("/_t161p", "t161p", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161p", "/_t161p/repo").await.unwrap();
+    let instances = serde_json::json!([{ "file": "a.rs" }, { "file": "b.rs" }]);
+    let id = s
+        .upsert_pattern(&PatternRow {
+            workspace_id: &ws,
+            folder_id: Some(&folder),
+            name: "pat-161",
+            is_anti: true,
+            confidence: Some(0.75),
+            instances: &instances,
+        })
+        .await
+        .unwrap();
+    type Pattern =
+        (uuid::Uuid, Option<uuid::Uuid>, String, bool, Option<f64>, i32, serde_json::Value);
+    let got: Pattern = sqlx_core::query_as::query_as(
+        "SELECT workspace_id, folder_id, name, is_anti_pattern, confidence::float8, instance_count, instances
+           FROM inference.detected_patterns WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (ws, Some(folder), "pat-161".into(), true, Some(0.75), 2, instances));
 }

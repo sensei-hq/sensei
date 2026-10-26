@@ -615,14 +615,14 @@ async fn seed_promote_fixture(
 ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
     let (proj_id, fid) = create_test_workspace_and_folder(s, suffix).await;
     let pat_id = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid),
-            "_test:rule-candidates",
-            false,
-            None,
-            &serde_json::json!([]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:rule-candidates",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([]),
+        })
         .await
         .unwrap();
     // suggested is the seeded lifecycle default; assert the precondition so a
@@ -800,14 +800,14 @@ async fn seed_pattern_and_sourced_memory(
 ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
     let (proj_id, fid) = create_test_workspace_and_folder(s, suffix).await;
     let pat_id = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid),
-            "_test:regressed-rule",
-            false,
-            None,
-            &serde_json::json!([]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:regressed-rule",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([]),
+        })
         .await
         .unwrap();
     // Convention memory sourced by the pattern — mirrors the rule-candidates generator.
@@ -1034,14 +1034,14 @@ async fn challenge_source_memory_for_rec_no_source_memory_is_noop() {
     let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     // Pattern with NO sourced memory.
     let pat_id = s
-        .upsert_pattern(
-            &proj_id,
-            Some(&fid),
-            "_test:orphan-rule",
-            false,
-            None,
-            &serde_json::json!([]),
-        )
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "_test:orphan-rule",
+            is_anti: false,
+            confidence: None,
+            instances: &serde_json::json!([]),
+        })
         .await
         .unwrap();
     let rec_id = uuid::Uuid::new_v4();
@@ -1553,16 +1553,39 @@ async fn workspace_patterns_fold_unreviewed_rework_into_hotspots() {
     let (proj_id, fid) = create_test_workspace_and_folder(&s, &suffix).await;
     let none = serde_json::json!([]);
     for name in ["rework: crates/a.rs", "rework: docs/b.md"] {
-        s.upsert_pattern(&proj_id, Some(&fid), name, true, Some(0.6), &none).await.unwrap();
+        s.upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name,
+            is_anti: true,
+            confidence: Some(0.6),
+            instances: &none,
+        })
+        .await
+        .unwrap();
     }
     let kept = s
-        .upsert_pattern(&proj_id, Some(&fid), "rework: crates/kept.rs", true, Some(0.9), &none)
+        .upsert_pattern(&crate::db::pg_store::PatternRow {
+            workspace_id: &proj_id,
+            folder_id: Some(&fid),
+            name: "rework: crates/kept.rs",
+            is_anti: true,
+            confidence: Some(0.9),
+            instances: &none,
+        })
         .await
         .unwrap();
     s.promote_pattern(&kept, "rule").await.unwrap();
-    s.upsert_pattern(&proj_id, Some(&fid), "correction-prone", true, Some(0.5), &none)
-        .await
-        .unwrap();
+    s.upsert_pattern(&crate::db::pg_store::PatternRow {
+        workspace_id: &proj_id,
+        folder_id: Some(&fid),
+        name: "correction-prone",
+        is_anti: true,
+        confidence: Some(0.5),
+        instances: &none,
+    })
+    .await
+    .unwrap();
 
     let view = s.get_workspace_patterns(&proj_id).await.unwrap();
     let mut anti: Vec<(String, i64)> = view["antiPatterns"]

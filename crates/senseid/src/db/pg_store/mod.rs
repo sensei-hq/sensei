@@ -1648,3 +1648,19 @@ pub struct ExtensionRow<'a> {
     /// A `sensei.extension_source` label: builtin, marketplace or local.
     pub source: &'a str,
 }
+
+// Written by `patterns.rs`.
+/// One detected pattern, as [`PgStore::upsert_pattern`] writes it. Keyed by
+/// `(workspace_id, name, is_anti)`; `instance_count` is derived from `instances`.
+pub struct PatternRow<'a> {
+    pub workspace_id: &'a uuid::Uuid,
+    /// Kept on conflict when `None`.
+    pub folder_id: Option<&'a uuid::Uuid>,
+    pub name: &'a str,
+    /// An anti-pattern rather than a pattern.
+    pub is_anti: bool,
+    /// Kept on conflict when `None`.
+    pub confidence: Option<f64>,
+    /// A JSON array of the occurrences.
+    pub instances: &'a serde_json::Value,
+}

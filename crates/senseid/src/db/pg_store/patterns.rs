@@ -800,15 +800,8 @@ impl PgStore {
     /// updates the same row and overwrites the locus — that's the desired
     /// merge behaviour when a single file's pattern shows up across sibling
     /// folders inside the workspace.
-    pub async fn upsert_pattern(
-        &self,
-        workspace_id: &uuid::Uuid,
-        folder_id: Option<&uuid::Uuid>,
-        name: &str,
-        is_anti: bool,
-        confidence: Option<f64>,
-        instances: &serde_json::Value,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_pattern(&self, pattern: &PatternRow<'_>) -> Result<uuid::Uuid, String> {
+        let &PatternRow { workspace_id, folder_id, name, is_anti, confidence, instances } = pattern;
         let count = instances.as_array().map(|a| a.len() as i32).unwrap_or(0);
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO inference.detected_patterns(workspace_id, folder_id, name, is_anti_pattern, confidence, instance_count, instances)

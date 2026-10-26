@@ -485,7 +485,14 @@ mod tests {
         // A rule-candidate pattern (the user stated a principle) → memory + promote rec.
         let instances = serde_json::json!([{ "session": csid, "prompt": "you should always run the tests first" }]);
         let pat_id = pg
-            .upsert_pattern(&pid, Some(&fid), "rule-candidates", false, None, &instances)
+            .upsert_pattern(&crate::db::pg_store::PatternRow {
+                workspace_id: &pid,
+                folder_id: Some(&fid),
+                name: "rule-candidates",
+                is_anti: false,
+                confidence: None,
+                instances: &instances,
+            })
             .await
             .unwrap();
 

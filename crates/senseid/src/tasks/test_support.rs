@@ -508,9 +508,16 @@ pub(crate) async fn seed_detected_pattern(
     name: &str,
     is_anti: bool,
 ) -> uuid::Uuid {
-    pg.upsert_pattern(workspace_id, folder_id, name, is_anti, None, &serde_json::json!([]))
-        .await
-        .unwrap()
+    pg.upsert_pattern(&crate::db::pg_store::PatternRow {
+        workspace_id,
+        folder_id,
+        name,
+        is_anti,
+        confidence: None,
+        instances: &serde_json::json!([]),
+    })
+    .await
+    .unwrap()
 }
 
 /// Insert one file-kind `sensei.nodes` row — a "workspace file" for the
@@ -571,14 +578,14 @@ pub(crate) async fn seed_pattern_with_instances(
     let instances: Vec<serde_json::Value> = (0..instance_count)
         .map(|i| serde_json::json!({ "file": format!("f{i}.rs"), "line": i }))
         .collect();
-    pg.upsert_pattern(
+    pg.upsert_pattern(&crate::db::pg_store::PatternRow {
         workspace_id,
         folder_id,
         name,
         is_anti,
-        None,
-        &serde_json::Value::Array(instances),
-    )
+        confidence: None,
+        instances: &serde_json::Value::Array(instances),
+    })
     .await
     .unwrap()
 }
