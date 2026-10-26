@@ -133,11 +133,20 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
     let _ = writeln!(o, "| | |");
     let _ = writeln!(o, "|---|---|");
     let _ = writeln!(o, "| Sessions | {} across {} active day(s) |", a.sessions, a.active_days);
-    let _ = writeln!(
-        o,
-        "| Time actively working | {} (idle gaps over 10 min excluded) |",
-        dur(a.active_ms)
-    );
+    // The gaps between stamps: n/a where the format does not time its turns,
+    // as the comparison report says for the same figure.
+    if a.timing_is_measurable() {
+        let _ = writeln!(
+            o,
+            "| Time actively working | {} (idle gaps over 10 min excluded) |",
+            dur(a.active_ms)
+        );
+    } else {
+        let _ = writeln!(
+            o,
+            "| Time actively working | n/a (this transcript format does not time its turns) |"
+        );
+    }
     if a.projects > 0 {
         let _ = writeln!(o, "| Projects worked in | {} |", a.projects);
     }
@@ -161,20 +170,21 @@ fn at_a_glance(o: &mut String, a: &Analysis) {
         );
         let _ = writeln!(o, "| Premium requests | {} |", n(a.premium_requests));
     }
-    // Only when the transcript actually times turns. VS Code writes
+    // Only when the transcript actually times turns (the median, as everywhere
+    // else: #123). VS Code writes
     // `responseTimestamp` equal to `timestamp` on these records, so every turn
     // measures zero — printing "0s typical" would read as instant replies rather
     // than as a field the format does not populate.
-    if let Some(p) = percentile(&a.turn_ms_sorted, 50.0) {
+    if a.timing_is_measurable()
+        && let Some(p) = percentile(&a.turn_ms_sorted, 50.0)
+    {
         let p90 = percentile(&a.turn_ms_sorted, 90.0).unwrap_or(p);
-        if p90 > 0 {
-            let _ = writeln!(
-                o,
-                "| Turn length | {} typical, {} at the 90th percentile |",
-                dur(p),
-                dur(p90)
-            );
-        }
+        let _ = writeln!(
+            o,
+            "| Turn length | {} typical, {} at the 90th percentile |",
+            dur(p),
+            dur(p90)
+        );
     }
     // How long the PERSON took to reply, as distinct from how long the assistant
     // took to work. A short reply time means the output was read and acted on;
@@ -467,12 +477,12 @@ fn friction(o: &mut String, a: &Analysis, sessions: &[Session]) {
     worst.sort_by(|x, y| y.failure_pct().partial_cmp(&x.failure_pct()).unwrap());
     for t in worst.iter().take(3) {
         items.push(format!(
-            "**`{}` fails {:.0}% of the time** ({} of {} calls). Against an overall rate of \
-             {:.1}%, this one tool is doing most of the recovering.",
+            "**`{}` fails {:.0}% of the time** ({} of the {} calls that reported an outcome). \
+             Against an overall rate of {:.1}%, this one tool is doing most of the recovering.",
             t.name,
             t.failure_pct().unwrap_or(0.0),
             t.failures,
-            t.calls,
+            t.known,
             a.tool_failure_pct().unwrap_or(0.0)
         ));
     }
@@ -590,7 +600,14 @@ fn per_session(o: &mut String, sessions: &[Session]) {
     let _ = writeln!(o, "| Session | Date | Active | Prompts | Tools | Failed | +/− lines |");
     let _ = writeln!(o, "|---|---|---:|---:|---:|---:|---|");
     for s in sessions {
-        let failed = s.tools.iter().filter(|t| t.failed()).count();
+        // n/a, not 0, when no call reported an outcome: a journal records none.
+        let failed = if s.tools.iter().any(|t| t.success.is_some()) {
+            s.tools.iter().filter(|t| t.failed()).count().to_string()
+        } else if s.tools.is_empty() {
+            "0".into()
+        } else {
+            "n/a".into()
+        };
         let lines = match (s.totals.lines_added, s.totals.lines_removed) {
             (Some(a), Some(r)) => format!("+{} / −{}", n(a), n(r)),
             _ => "—".into(),
@@ -756,6 +773,69 @@ mod tests {
         // Per tool, the same denominator: 4 of 200 reported, among 5,000 calls.
         let t = ToolStat { name: "bash".into(), calls: 5000, known: 200, failures: 4 };
         assert_eq!(t.failure_pct(), Some(2.0));
+    }
+
+    /// #123 (2): turn length is shown only when timing is measurable, decided
+    /// by the MEDIAN like everywhere else. Gated on p90 it printed "0s typical,
+    /// 5s at the 90th percentile" for a sample whose median turn is zero.
+    #[test]
+    fn turn_length_is_shown_only_when_timing_is_measurable() {
+        let mut a = crate::metrics::analyse(&[], 0);
+        a.turn_ms_sorted = vec![0, 5000];
+        let mut o = String::new();
+        at_a_glance(&mut o, &a);
+        assert!(!o.contains("Turn length"), "{o}");
+        a.turn_ms_sorted = vec![3000, 5000];
+        let mut o = String::new();
+        at_a_glance(&mut o, &a);
+        assert!(o.contains("| Turn length | 3s typical"), "{o}");
+    }
+
+    /// #123 (b): active time is the gaps between stamps, so where timing is
+    /// not measurable it is n/a, as the comparison report already says.
+    #[test]
+    fn active_time_is_n_a_where_timing_is_not_measurable() {
+        let mut a = crate::metrics::analyse(&[], 0);
+        a.active_ms = 3_600_000;
+        a.turn_ms_sorted = vec![0, 0, 0];
+        let mut o = String::new();
+        at_a_glance(&mut o, &a);
+        assert!(o.contains("| Time actively working | n/a"), "{o}");
+    }
+
+    /// #123 (a): the worst-tool line quotes the calls its rate was taken over.
+    /// "fails 20% of the time (4 of 100 calls)" read as a contradiction; the
+    /// 20% is 4 of the 20 calls that reported an outcome.
+    #[test]
+    fn the_worst_tool_line_quotes_its_own_denominator() {
+        let mut a = crate::metrics::analyse(&[], 0);
+        a.tools = vec![ToolStat { name: "bash".into(), calls: 100, known: 20, failures: 4 }];
+        let mut o = String::new();
+        friction(&mut o, &a, &[]);
+        assert!(o.contains("(4 of the 20 calls that reported an outcome)"), "{o}");
+    }
+
+    /// #123 (3): a session in which no tool call reported an outcome shows
+    /// n/a under Failed, as the comparison report does, never 0.
+    #[test]
+    fn a_session_with_no_reported_outcome_shows_failed_n_a() {
+        let dir = std::env::temp_dir().join("session-report-failed-na");
+        let _ = std::fs::remove_dir_all(&dir);
+        let chat = dir.join("workspaceStorage/ccc/chatSessions");
+        std::fs::create_dir_all(&chat).unwrap();
+        let journal = serde_json::json!({"kind": 0, "v": {"requests": [{
+            "timestamp": 1_000_000_i64, "responseTimestamp": 1_002_000_i64,
+            "message": {"text": "go"}, "requestId": "r1",
+            "response": [{"kind": "toolInvocationSerialized", "toolId": "read_file"}]
+        }]}});
+        let f = chat.join("s.jsonl");
+        std::fs::write(&f, format!("{journal}\n")).unwrap();
+        let (session, _) = crate::vscode::parse_session(&f).unwrap();
+        assert!(!session.tools.is_empty(), "the fixture has a tool call");
+        let mut o = String::new();
+        per_session(&mut o, &[session]);
+        let row = o.lines().find(|l| l.starts_with("| `")).unwrap();
+        assert_eq!(row.split('|').nth(6).map(str::trim), Some("n/a"), "{row}");
     }
 
     /// A transcript that records no outcome must show n/a, never 0.0%, which
