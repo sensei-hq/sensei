@@ -1205,3 +1205,38 @@ async fn an_index_error_row_lands_field_for_field() {
     .unwrap();
     assert_eq!(got, ("src/x.rs".into(), "boom".into(), Some("rust".into()), Some("parse".into())));
 }
+
+/// The property that makes a row worth having (#161 acceptance 3): adding a
+/// field to a row fails the build until a writer places it. That holds while
+/// each row is destructured somewhere EXHAUSTIVELY. A `..` rest pattern, or a
+/// row read only field by field, would accept a new field silently.
+///
+/// Every row type declared in `pg_store/mod.rs`'s row section must appear in a
+/// `let … Row { … } =` destructure in `db/pg_store`'s sources, with no `..`.
+#[test]
+fn every_row_is_destructured_exhaustively() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/db/pg_store");
+    let module = std::fs::read_to_string(dir.join("mod.rs")).unwrap();
+    let section = &module[module.find("The store's row types (#161)").expect("the row section")..];
+    let rows: Vec<String> = section
+        .lines()
+        .filter_map(|l| l.strip_prefix("pub struct "))
+        .map(|l| l.split(['<', ' ', '{']).next().unwrap().to_string())
+        .collect();
+    assert!(rows.len() > 30, "found the row types: {rows:?}");
+    let sources: String = store_sources().into_iter().map(|(_, src)| src).collect();
+    let mut missing = Vec::new();
+    for row in &rows {
+        let exhaustive = [format!("let &{row} {{"), format!("let {row} {{")].iter().any(|pat| {
+            sources.match_indices(pat.as_str()).any(|(at, _)| {
+                let body = &sources[at..];
+                let end = body.find('}').unwrap_or(body.len());
+                !body[..end].contains("..")
+            })
+        });
+        if !exhaustive {
+            missing.push(row.clone());
+        }
+    }
+    assert!(missing.is_empty(), "rows with no exhaustive destructure: {missing:#?}");
+}
