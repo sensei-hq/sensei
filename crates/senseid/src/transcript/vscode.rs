@@ -720,10 +720,18 @@ impl TranscriptAdapter for VscodeAdapter {
             }
         }
 
-        // Pass 2: journal + transcript units, but skip sessions OTel covers
+        // Pass 2: event-stream and journal units, skipping sessions OTel covers.
+        // One session, one unit: a chat with both an event stream and a journal
+        // under the same id is read from the event stream, the richer record —
+        // as two units both became `vscode-<id>` and overwrote each other's turns.
         for user_root in user_roots {
-            for path in glob_chat_sessions(user_root).into_iter().chain(glob_transcripts(user_root))
-            {
+            let streams = glob_transcripts(user_root);
+            let streamed: HashSet<String> =
+                streams.iter().filter_map(|p| session_id_from_path(p)).collect();
+            let journals = glob_chat_sessions(user_root)
+                .into_iter()
+                .filter(|p| session_id_from_path(p).is_none_or(|sid| !streamed.contains(&sid)));
+            for path in streams.into_iter().chain(journals) {
                 if let Some(sid) = session_id_from_path(&path)
                     && otel_sessions.contains(&sid)
                 {
@@ -1290,6 +1298,38 @@ mod tests {
         let (_tmp, user) = user_folder();
         let units = VscodeAdapter::installed_at(vec![user]).units();
         assert_eq!(unit_names(&units), ["j.jsonl", "t.jsonl"]);
+    }
+
+    /// One session, one unit. VS Code writes a session's journal
+    /// (`chatSessions/<id>.jsonl`) AND, for newer chats, its event stream
+    /// (`GitHub.copilot-chat/transcripts/<id>.jsonl`) under the same id. Both
+    /// were units, both became `vscode-<id>`, and each ingest overwrote the
+    /// other's turns row by row — 37 of 84 sessions in a shared sample have both.
+    /// The event stream is the richer record and wins, as in session-report.
+    #[test]
+    fn a_session_with_a_journal_and_an_event_stream_is_one_unit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("workspaceStorage/aaa");
+        std::fs::create_dir_all(ws.join("chatSessions")).unwrap();
+        std::fs::create_dir_all(ws.join("GitHub.copilot-chat/transcripts")).unwrap();
+        std::fs::write(ws.join("chatSessions/both.jsonl"), "{}\n").unwrap();
+        std::fs::write(ws.join("GitHub.copilot-chat/transcripts/both.jsonl"), "{}\n").unwrap();
+        std::fs::write(ws.join("chatSessions/journal-only.jsonl"), "{}\n").unwrap();
+
+        let ad = VscodeAdapter::installed_at(vec![tmp.path().to_path_buf()]);
+        let mut by_session: Vec<(String, String)> = ad
+            .units()
+            .into_iter()
+            .map(|u| (ad.session_id_for(&u.key).unwrap(), u.key))
+            .collect();
+        by_session.sort();
+        let sessions: Vec<&str> = by_session.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(sessions, ["vscode-both", "vscode-journal-only"], "one unit per session");
+        assert!(
+            by_session[0].1.contains("GitHub.copilot-chat/transcripts"),
+            "the event stream wins: {}",
+            by_session[0].1
+        );
     }
 
     /// The daemon reads VS Code through the installed scan. An explicit root is
