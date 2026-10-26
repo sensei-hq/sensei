@@ -1479,8 +1479,8 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.27.7"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.27.7#b9f3b5dd2ab3b815a31aaef24c7c4aff3bee9eb6"
+version = "0.27.8"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.27.8#c2823592f4c1cfaf907942a3be26216971f498d4"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2412,7 +2412,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.57.0",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

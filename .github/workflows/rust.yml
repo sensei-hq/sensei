@@ -141,7 +141,7 @@ jobs:
       # from an install. The tree had drifted four ways (v0.12.0 / v0.14.0 /
       # v0.15.0 / v0.17.0); see #197. One version, moved in one commit.
       - name: Install dbd
-        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.27.7 dbd-cli --locked
+        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.27.8 dbd-cli --locked
 
       # PROVISION FROM THE DDL TREE, not from a released bundle. A test database
       # built from a published snapshot ages out of the tree and then tests

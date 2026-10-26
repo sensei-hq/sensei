@@ -826,8 +826,8 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.27.7"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.27.7#b9f3b5dd2ab3b815a31aaef24c7c4aff3bee9eb6"
+version = "0.27.8"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.27.8#c2823592f4c1cfaf907942a3be26216971f498d4"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1907,7 +1907,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -3346,7 +3346,7 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -5100,7 +5100,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",

@@ -406,7 +406,7 @@ jobs:
         # v0.12.0 against bootstrap's v0.14.0, and this is the pin that deploys
         # the dōjō's production schema. It now matches both `dbd-core` pins and
         # `rust.yml`, held by `crates/bootstrap/tests/dbd_pins.rs`.
-        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.27.7 dbd-cli
+        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.27.8 dbd-cli
 
       - name: Deploy the dōjō schema
         # ONE script for production and for CI: dojo-db.yml runs it against a

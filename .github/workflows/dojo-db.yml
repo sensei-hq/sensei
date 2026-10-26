@@ -71,7 +71,7 @@ jobs:
       - name: Install dbd
         # The same pin as rust.yml and release.yml, held by
         # crates/bootstrap/tests/dbd_pins.rs. The package is `dbd-cli`.
-        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.27.7 dbd-cli
+        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.27.8 dbd-cli
 
       - name: Deploy the dōjō schema (the production path)
         working-directory: database
