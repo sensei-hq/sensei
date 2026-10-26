@@ -13,11 +13,11 @@ in this release). Local daemon on 0.20.2.
 - #125: on 0.20.2, 72 → 22 orphan turn sets. 5dea36e3 (develop, next release) ignores the 4 fresh orphans
   that have hook events, leaving 18 with no transcript. Check: count after the next release.
 
-**In progress — #161 (typed rows):** 15 left (all at 5 args) in `STILL_POSITIONAL` (`typed_rows_tests.rs`), none at 7+ args.
+**In progress — #161 (typed rows):** 13 left (all at 5 args) in `STILL_POSITIONAL` (`typed_rows_tests.rs`), none at 7+ args.
 Row types are declared in `pg_store/mod.rs` (user decision 2026-10-26, docs/decisions.md). Re-exporting them
 dangled in the code graph; the `indexer::resolve` ratchet went 1,304 → 1,045 and its ceiling is now 1,060.
-**Next:** the rest of the 5-arg list (writers first: `record_session_event` 33 callers, `append_run_event` 19,
-`upsert_federated_memory`, `upsert_stance`, …; readers last), then the `too_many_arguments` allows. A new row goes in `mod.rs`, with a round-trip test and a swapped-bind probe.
+**Next:** the rest of the 5-arg list (writers first: `upsert_federated_memory`, `upsert_stance`, `upsert_folder_dependency`,
+`replace_library_capabilities`, …; readers last), then the `too_many_arguments` allows. A new row goes in `mod.rs`, with a round-trip test and a swapped-bind probe.
 
 **Watch roots:** the live DB watches only sensei on purpose until the indexer covers JS/TS/Java/.NET;
 then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.
