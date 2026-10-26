@@ -1319,11 +1319,8 @@ mod tests {
         std::fs::write(ws.join("chatSessions/journal-only.jsonl"), "{}\n").unwrap();
 
         let ad = VscodeAdapter::installed_at(vec![tmp.path().to_path_buf()]);
-        let mut by_session: Vec<(String, String)> = ad
-            .units()
-            .into_iter()
-            .map(|u| (ad.session_id_for(&u.key).unwrap(), u.key))
-            .collect();
+        let mut by_session: Vec<(String, String)> =
+            ad.units().into_iter().map(|u| (ad.session_id_for(&u.key).unwrap(), u.key)).collect();
         by_session.sort();
         let sessions: Vec<&str> = by_session.iter().map(|(s, _)| s.as_str()).collect();
         assert_eq!(sessions, ["vscode-both", "vscode-journal-only"], "one unit per session");

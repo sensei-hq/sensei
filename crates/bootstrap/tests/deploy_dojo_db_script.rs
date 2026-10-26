@@ -5,7 +5,7 @@
 //! Driven with a fake `dbd` that logs each call and can be told to report a
 //! parse error or a remaining difference.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 fn script() -> PathBuf {

@@ -29,7 +29,8 @@ pub const MAX_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 /// Whether a line may be parsed. A snapshot is recognised by how VS Code writes
 /// it, `{"kind":0,…`, before parsing — the cap exists to avoid parsing.
 fn within_cap(line: &str) -> bool {
-    let snapshot = line.get(..16).is_some_and(|head| head.replace(' ', "").starts_with(r#"{"kind":0"#));
+    let snapshot =
+        line.get(..16).is_some_and(|head| head.replace(' ', "").starts_with(r#"{"kind":0"#));
     line.len() <= if snapshot { MAX_SNAPSHOT_BYTES } else { MAX_LINE_BYTES }
 }
 
