@@ -697,12 +697,23 @@ mod tests {
     }
 
     /// Poll `GET …/trackers` until the status leaves `pending` (≤ 3 s).
+    /// The first sync has FINISHED: its status is written AND its lock released.
+    /// It writes the status before the lock drops, so a test that synced on the
+    /// status alone could arrive in between and read `busy` — a 409 seen under the
+    /// full parallel suite (2026-10-26).
     async fn settled(h: &Harness, p: uuid::Uuid) -> Value {
         for _ in 0..300 {
             let (_, body) =
                 call(h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await;
             let v = json(&body);
-            if v[0]["status"] != json!("pending") {
+            let ids: Vec<uuid::Uuid> = v
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|t| t["id"].as_str().and_then(|s| s.parse().ok()))
+                .collect();
+            let idle = ids.iter().all(|id| h.rt.locks.try_lock(*id).is_some());
+            if v[0]["status"] != json!("pending") && idle {
                 return v;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
