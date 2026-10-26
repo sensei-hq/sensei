@@ -1664,3 +1664,19 @@ pub struct PatternRow<'a> {
     /// A JSON array of the occurrences.
     pub instances: &'a serde_json::Value,
 }
+
+// Written by `library.rs`.
+/// One library and one release of it, as [`PgStore::upsert_library`] writes
+/// them: `name`, `ecosystem` and `description` on `libraries`; `version`,
+/// `source_type` and `base_url` on that release's `library_versions` row. A
+/// `None` keeps what is stored.
+pub struct LibraryRow<'a> {
+    pub name: &'a str,
+    /// A `sensei.library_ecosystem` label.
+    pub ecosystem: &'a str,
+    pub version: Option<&'a str>,
+    pub description: Option<&'a str>,
+    /// A `sensei.library_source_type` label.
+    pub source_type: Option<&'a str>,
+    pub base_url: Option<&'a str>,
+}

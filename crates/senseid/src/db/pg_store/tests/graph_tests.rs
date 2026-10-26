@@ -290,7 +290,17 @@ async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_ca
     // `library_content_identity_uq`, permanently, with an error naming the
     // constraint rather than the abandoned cleanup.
     let lib_name = format!("_test:s9lib:{}", uuid::Uuid::new_v4());
-    let lib = s.upsert_library(&lib_name, "npm", Some("1.2.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &lib_name,
+            ecosystem: "npm",
+            version: Some("1.2.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     // Two held versions: the one this folder pins, and a newer one.
     for (v, page) in [("1.2.0", "list @ 1.2"), ("3.0.0", "list @ 3.0")] {
         let vid = s.ensure_library_version(&lib, Some(v)).await.unwrap();
@@ -339,8 +349,17 @@ async fn registry_urls_land_on_the_right_level_and_a_later_silence_does_not_wipe
     // means "this one did not say", never "there is none".
     use crate::libraries::registry::RegistryUrls;
     let s = pg_store().await;
-    let lib =
-        s.upsert_library("_test:urls", "cargo", Some("1.0.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:urls",
+            ecosystem: "cargo",
+            version: Some("1.0.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
 
     s.set_library_urls(
         &lib,
@@ -393,8 +412,17 @@ async fn a_docs_read_failure_is_recorded_as_a_gap_and_never_deletes_the_pages() 
     //   2. the pages SURVIVE it. Stale content is the last known-true content,
     //      and dropping it on a read error trades a stale answer for no answer.
     let s = pg_store().await;
-    let lib =
-        s.upsert_library("_test:stale", "npm", Some("1.0.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:stale",
+            ecosystem: "npm",
+            version: Some("1.0.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     s.upsert_library_page(&LibraryPageRow {
         library_id: &lib,
         title: "Overview",
@@ -456,8 +484,17 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
     // and `@rokkit/chart`, and each can have a `List` page. Keyed without the
     // package, the second upserts over the first and one is simply lost.
     let s = pg_store().await;
-    let lib =
-        s.upsert_library("_test:pagekey", "npm", Some("1.0.0"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:pagekey",
+            ecosystem: "npm",
+            version: Some("1.0.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
 
     let ui = s
         .upsert_library_page(&LibraryPageRow {

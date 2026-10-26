@@ -209,7 +209,14 @@ pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
     match ctx
         .pg()
-        .upsert_library(lib_name, "npm", None, Some(&content), Some("url"), Some(url))
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: lib_name,
+            ecosystem: "npm",
+            version: None,
+            description: Some(&content),
+            source_type: Some("url"),
+            base_url: Some(url),
+        })
         .await
     {
         Ok(lib_id) => {
@@ -254,9 +261,16 @@ async fn resolve_index_library_id(
             )),
         };
     }
-    pg.upsert_library(lib_name, "npm", None, None, Some(source_type), base_url)
-        .await
-        .map_err(|e| format!("upsert_library failed: {}", e))
+    pg.upsert_library(&crate::db::pg_store::LibraryRow {
+        name: lib_name,
+        ecosystem: "npm",
+        version: None,
+        description: None,
+        source_type: Some(source_type),
+        base_url,
+    })
+    .await
+    .map_err(|e| format!("upsert_library failed: {}", e))
 }
 
 /// Stamp the "docs applied at version" marker after a re-index (F v1a). The
@@ -516,7 +530,14 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // Upsert the library record (creates if not exists)
         let lib_id = match ctx
             .pg()
-            .upsert_library(&dep.lib_name, ecosystem, Some(&dep.version), None, None, None)
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &dep.lib_name,
+                ecosystem,
+                version: Some(&dep.version),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
             .await
         {
             Ok(id) => id,
@@ -556,7 +577,14 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     for (name, ecosystem, version) in public_member_libs(&members) {
         let lib_id = match ctx
             .pg()
-            .upsert_library(&name, ecosystem, version.as_deref(), None, None, None)
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &name,
+                ecosystem,
+                version: version.as_deref(),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
             .await
         {
             Ok(id) => id,
@@ -905,7 +933,14 @@ mod tests {
         let name = format!("_fidxlib_{}", uuid::Uuid::new_v4());
         // A cargo library, exactly as the dependency-extraction path creates it.
         let real_id = pg
-            .upsert_library(&name, "cargo", Some("1.0.0"), None, Some("local"), Some("/x"))
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &name,
+                ecosystem: "cargo",
+                version: Some("1.0.0"),
+                description: None,
+                source_type: Some("local"),
+                base_url: Some("/x"),
+            })
             .await
             .unwrap();
 
@@ -945,7 +980,17 @@ mod tests {
     async fn stamp_docs_applied_only_on_nonempty_index() {
         let pg = PgStore::test_store().await;
         let lib = format!("_fstamp_{}", uuid::Uuid::new_v4());
-        let lid = pg.upsert_library(&lib, "cargo", Some("1.0.0"), None, None, None).await.unwrap();
+        let lid = pg
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &lib,
+                ecosystem: "cargo",
+                version: Some("1.0.0"),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
+            .await
+            .unwrap();
         pg.set_library_latest_cache(&lid, "1.2.4", 10).await.unwrap();
         // pages_stored == 0 → NO stamp (a failed/empty re-ingest must not claim applied).
         stamp_docs_applied_if_indexed(&pg, &lid, 0, 99).await;

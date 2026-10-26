@@ -280,15 +280,8 @@ impl PgStore {
             .collect())
     }
 
-    pub async fn upsert_library(
-        &self,
-        name: &str,
-        ecosystem: &str,
-        version: Option<&str>,
-        description: Option<&str>,
-        source_type: Option<&str>,
-        base_url: Option<&str>,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_library(&self, lib: &LibraryRow<'_>) -> Result<uuid::Uuid, String> {
+        let &LibraryRow { name, ecosystem, version, description, source_type, base_url } = lib;
         // `libraries` is IDENTITY ONLY (S10 option B). `version`, `source_type`
         // and `base_url` describe a RELEASE, not a library, and stage 0 moved
         // them to `library_versions` — so this writes both levels rather than

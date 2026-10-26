@@ -6,7 +6,14 @@ use super::*;
 async fn library_upsert_and_get() {
     let s = pg_store().await;
     let id = s
-        .upsert_library("_test:tokio", "cargo", Some("1.0"), Some("async runtime"), None, None)
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:tokio",
+            ecosystem: "cargo",
+            version: Some("1.0"),
+            description: Some("async runtime"),
+            source_type: None,
+            base_url: None,
+        })
         .await
         .unwrap();
     let lib = s.get_library(&id).await.unwrap().unwrap();
@@ -75,7 +82,14 @@ async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
     let suffix = uuid::Uuid::new_v4();
     let pid = s.ensure_test_workspace(&format!("vc-{suffix}")).await.unwrap();
     let lib = s
-        .upsert_library(&format!("_test:vc-lib-{suffix}"), "npm", Some("1.0"), None, None, None)
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &format!("_test:vc-lib-{suffix}"),
+            ecosystem: "npm",
+            version: Some("1.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
         .await
         .unwrap();
 
@@ -219,14 +233,14 @@ async fn upsert_referenced_library_merges_props() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("refprops_{}", uuid::Uuid::new_v4())).await;
     let lib = s
-        .upsert_library(
-            &format!("_test:refprops-{}", uuid::Uuid::new_v4()),
-            "npm",
-            Some("1.0"),
-            None,
-            None,
-            None,
-        )
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &format!("_test:refprops-{}", uuid::Uuid::new_v4()),
+            ecosystem: "npm",
+            version: Some("1.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
         .await
         .unwrap();
 
@@ -267,8 +281,17 @@ async fn workspace_library_promotion_shows_in_resolved_and_is_idempotent() {
     // workspace_libraries_resolved (the Workspaces screen). Was never populated.
     let s = pg_store().await;
     let pid = s.ensure_test_workspace("proj-lib-promo").await.unwrap();
-    let lib =
-        s.upsert_library("_test:@rokkit/core", "npm", Some("1.2"), None, None, None).await.unwrap();
+    let lib = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:@rokkit/core",
+            ecosystem: "npm",
+            version: Some("1.2"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     // Promote twice — must be idempotent (no error, no duplicate row).
     s.upsert_workspace_library(&lib, &pid).await.unwrap();
     s.upsert_workspace_library(&lib, &pid).await.unwrap();

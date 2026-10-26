@@ -26,7 +26,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "graph.rs::upsert_node_by_fqn",
     "library.rs::replace_library_capabilities",
     "library.rs::upsert_folder_dependency",
-    "library.rs::upsert_library",
     "logs.rs::log_index_error",
     "logs.rs::query_logs",
     "mcp.rs::upsert_service",
@@ -674,4 +673,44 @@ async fn a_pattern_row_lands_field_for_field() {
     .await
     .unwrap();
     assert_eq!(got, (ws, Some(folder), "pat-161".into(), true, Some(0.75), 2, instances));
+}
+
+#[tokio::test]
+async fn a_library_row_lands_on_the_library_and_its_release() {
+    use crate::db::pg_store::LibraryRow;
+    let s = super::pg_store().await;
+    let id = s
+        .upsert_library(&LibraryRow {
+            name: "lib-161",
+            ecosystem: "cargo",
+            version: Some("1.2.3"),
+            description: Some("desc"),
+            source_type: Some("llms.txt"),
+            base_url: Some("https://example.test/llms.txt"),
+        })
+        .await
+        .unwrap();
+    let lib: (String, String, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT name, ecosystem::text, description FROM sensei.libraries WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(lib, ("lib-161".into(), "cargo".into(), Some("desc".into())));
+    let release: (Option<String>, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT version, source_type::text, base_url FROM sensei.library_versions WHERE library_id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        release,
+        (
+            Some("1.2.3".into()),
+            Some("llms.txt".into()),
+            Some("https://example.test/llms.txt".into())
+        )
+    );
 }

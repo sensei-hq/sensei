@@ -501,7 +501,14 @@ pub(crate) async fn apply_manifest(pg: &PgStore, job: ManifestJob<'_>) -> Manife
         }
         let version = scan_repo::resolve_pin(&pins, &dep.lib_name, &dep.version);
         let lib_id = match pg
-            .upsert_library(&dep.lib_name, job.ecosystem, Some(&version), None, None, None)
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &dep.lib_name,
+                ecosystem: job.ecosystem,
+                version: Some(&version),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
             .await
         {
             Ok(id) => id,
@@ -618,7 +625,14 @@ async fn ingest_library(
             a.parse_manifest(&content).version.or_else(|| workspace_inherited_version(&content))
         });
     let library_id = match pg
-        .upsert_library(&m.library, ecosystem, own_version.as_deref(), None, None, None)
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &m.library,
+            ecosystem,
+            version: own_version.as_deref(),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
         .await
     {
         Ok(id) => id,
@@ -1656,7 +1670,14 @@ mod corpus {
 
         for (name, eco, owner, repo, tag, site) in libs {
             let lib_id = pg
-                .upsert_library(name, eco, None, None, None, None)
+                .upsert_library(&crate::db::pg_store::LibraryRow {
+                    name,
+                    ecosystem: eco,
+                    version: None,
+                    description: None,
+                    source_type: None,
+                    base_url: None,
+                })
                 .await
                 .unwrap_or_else(|e| panic!("{name}: upsert_library: {e}"));
 

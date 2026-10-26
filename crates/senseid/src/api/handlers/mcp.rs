@@ -364,14 +364,14 @@ pub(crate) async fn mcp_call_tool(
                         // Upsert the library record with the resolved source_type.
                         match state
                             .pg
-                            .upsert_library(
+                            .upsert_library(&crate::db::pg_store::LibraryRow {
                                 name,
-                                "npm",
+                                ecosystem: "npm",
                                 version,
-                                None,
-                                Some(source_type),
-                                Some(&url),
-                            )
+                                description: None,
+                                source_type: Some(source_type),
+                                base_url: Some(&url),
+                            })
                             .await
                         {
                             Ok(lib_id) => {

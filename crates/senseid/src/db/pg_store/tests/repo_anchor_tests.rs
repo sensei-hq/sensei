@@ -342,7 +342,17 @@ async fn a_declared_package_resolves_to_its_parent_library() {
     let uniq = uuid::Uuid::new_v4();
     let parent = format!("_testlib_parent_{uniq}");
     let pkg = format!("@{parent}/ui");
-    let lid = s.upsert_library(&parent, "npm", Some(">=1.0"), None, None, None).await.unwrap();
+    let lid = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &parent,
+            ecosystem: "npm",
+            version: Some(">=1.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     s.replace_library_capabilities(
         &lid,
         "manifest",
@@ -399,7 +409,17 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
     use crate::libraries::manifest::{ProvidedAgent, ProvidedSkill};
     let s = pg_store().await;
     let lib = format!("_testlib_{}", uuid::Uuid::new_v4());
-    let lid = s.upsert_library(&lib, "npm", Some(">=1.0"), None, None, None).await.unwrap();
+    let lid = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &lib,
+            ecosystem: "npm",
+            version: Some(">=1.0"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     let sk = |n: &str, f: &str| ProvidedSkill {
         name: n.into(),
         focus: f.into(),
@@ -473,7 +493,17 @@ async fn list_workspace_library_capabilities_suggests_from_a_workspaces_deps() {
     let pid =
         s.create_workspace(&format!("_libcap_{}", uuid::Uuid::new_v4()), None, None).await.unwrap();
     let lib = format!("_libcapdep_{}", uuid::Uuid::new_v4());
-    let lid = s.upsert_library(&lib, "npm", Some("1"), None, None, None).await.unwrap();
+    let lid = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &lib,
+            ecosystem: "npm",
+            version: Some("1"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     s.replace_library_capabilities(
         &lid,
         "manifest",
@@ -1439,9 +1469,26 @@ async fn workspace_ftr_and_quality_decode_numeric_metrics() {
 #[tokio::test]
 async fn library_upsert_updates() {
     let s = pg_store().await;
-    let id1 = s.upsert_library("_test:react", "npm", Some("18"), None, None, None).await.unwrap();
+    let id1 = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:react",
+            ecosystem: "npm",
+            version: Some("18"),
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     let id2 = s
-        .upsert_library("_test:react", "npm", Some("19"), Some("UI library"), None, None)
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:react",
+            ecosystem: "npm",
+            version: Some("19"),
+            description: Some("UI library"),
+            source_type: None,
+            base_url: None,
+        })
         .await
         .unwrap();
     assert_eq!(id1, id2);
@@ -1454,8 +1501,28 @@ async fn library_upsert_updates() {
 #[tokio::test]
 async fn library_list() {
     let s = pg_store().await;
-    let id1 = s.upsert_library("_test:lib_a", "npm", None, None, None, None).await.unwrap();
-    let id2 = s.upsert_library("_test:lib_b", "cargo", None, None, None, None).await.unwrap();
+    let id1 = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:lib_a",
+            ecosystem: "npm",
+            version: None,
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
+    let id2 = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:lib_b",
+            ecosystem: "cargo",
+            version: None,
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     let all = s.list_libraries().await.unwrap();
     assert!(all.iter().any(|l| l["name"] == "_test:lib_a"));
     assert!(all.iter().any(|l| l["name"] == "_test:lib_b"));
@@ -1466,7 +1533,17 @@ async fn library_list() {
 #[tokio::test]
 async fn library_delete() {
     let s = pg_store().await;
-    let id = s.upsert_library("_test:deleteme", "npm", None, None, None, None).await.unwrap();
+    let id = s
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: "_test:deleteme",
+            ecosystem: "npm",
+            version: None,
+            description: None,
+            source_type: None,
+            base_url: None,
+        })
+        .await
+        .unwrap();
     s.delete_library(&id).await.unwrap();
     assert!(s.get_library(&id).await.unwrap().is_none());
 }

@@ -335,7 +335,17 @@ mod tests {
         let u = uuid::Uuid::new_v4();
         let pid = s.create_workspace(&format!("_fsched_{u}"), None, None).await.unwrap();
         let lib = format!("_flib_{u}");
-        let lid = s.upsert_library(&lib, "npm", Some("1.0.0"), None, None, None).await.unwrap();
+        let lid = s
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &lib,
+                ecosystem: "npm",
+                version: Some("1.0.0"),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
+            .await
+            .unwrap();
         // A folder owned by the workspace, referencing the library at `version_used`.
         s.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001','/_test','_test','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
         let fid = uuid::Uuid::new_v4();
@@ -393,7 +403,17 @@ mod tests {
     async fn docs_applied_marker_round_trips() {
         let s = PgStore::test_store().await;
         let lib = format!("_fmark_{}", uuid::Uuid::new_v4());
-        let lid = s.upsert_library(&lib, "cargo", Some("1.0.0"), None, None, None).await.unwrap();
+        let lid = s
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &lib,
+                ecosystem: "cargo",
+                version: Some("1.0.0"),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
+            .await
+            .unwrap();
         assert_eq!(s.get_library_docs_applied(&lid).await.unwrap(), None, "unset → None");
         s.set_library_docs_applied(&lid, "1.2.3", 111).await.unwrap();
         assert_eq!(

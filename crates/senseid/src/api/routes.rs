@@ -3521,7 +3521,18 @@ mod tests {
         use crate::libraries::manifest::ProvidedSkill;
         let (app, state) = test_app().await;
         let lib = format!("_libep_{}", uuid::Uuid::new_v4());
-        let lid = state.pg.upsert_library(&lib, "npm", Some("1"), None, None, None).await.unwrap();
+        let lid = state
+            .pg
+            .upsert_library(&crate::db::pg_store::LibraryRow {
+                name: &lib,
+                ecosystem: "npm",
+                version: Some("1"),
+                description: None,
+                source_type: None,
+                base_url: None,
+            })
+            .await
+            .unwrap();
         state
             .pg
             .replace_library_capabilities(
