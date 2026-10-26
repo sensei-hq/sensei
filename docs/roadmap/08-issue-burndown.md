@@ -226,7 +226,10 @@ The settings screen lists them as repositories.
   transcript. Claude's `parse_file` read the file five times, 5 s per pass. Now it reads once, 25.2 s → 5.1 s
   on that file. Closes after a week of the released daemon with no `ingest_capture` abandonment.
 - ~~C1~~: `public.logs` size — #180, closed.
-- #125: 68 orphaned transcript turn sets.
+- #125: **landed 2026-10-25** (17e81b4b). 72 orphan turn sets: 53 are from untracked folders, 1 is a Zed thread
+  with no cwd, 18 have no transcript left. Ingest is now scoped to folders under the watch roots (user
+  decision); a trigger re-opens the skips when a repository is registered. Closes when the released daemon
+  shows 0 traceable orphans.
 - #161: typed rows, remainder.
 - #123: VS Code adapter A5/A6, Track B.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.

@@ -16,8 +16,13 @@ Develop CI is green on 45bff79b.
 - #336 (e5bf2e9d): a Claude transcript is read once per ingest, not five times; 25.2 s → 5.1 s on
   the 1.28 GB transcript. Check: a week of `/api/tasks/abandoned` with no `ingest_capture`.
 
-**Next:** the next open wave-5 item after #336 in the burndown, which is #125 (68 orphaned
-transcript turn sets). Start by counting them on the live DB.
+- #125 (17e81b4b): ingest only sessions under the watch roots; a `sensei.folders` trigger re-opens the
+  skips when a repository is registered. Check: 0 traceable orphan turn sets (18 with no transcript stay).
+- Watch roots: the live DB watches only sensei on purpose, until the indexer covers JS/TS/Java/.NET
+  (user, 2026-10-25). Then ~/Developer + ~/Work; test/e2e use ~/Developer/sensei-hq.
+
+**Next:** the next open wave-5 item in the burndown, #161 (typed rows, remainder). Start by reading
+the issue for what is left.
 
 **Open (the user's):**
 - dbd 0.27.7: the v0.27.6 lockfile pins rustls-webpki/webpki-roots/ctutils for
@@ -25,7 +30,7 @@ transcript turn sets). Start by counting them on the live DB.
 - v0.20.1's `deploy-dojo` is still waiting; it would change nothing. Approve or reject.
 - #331: count production's duplicate personal dōjōs (counts only):
   `psql "$PROD" -Atc "select count(*) from dojo.tenants where origin='personal' and key ~ '-[0-9]+$'"`.
-- A release (patch) would let #178, #188 and #336 close; it's the user's call when.
+- A release (patch) lets #178, #188, #336 and #125 close; it's the user's call when.
 
 **Known:** DeepSource is red on kavach main; qlty is out of minutes. After a DDL change, run
 `make test-template` (#142). `update_phase` returned 404 from the released daemon.
