@@ -46,9 +46,20 @@ fn is_transcript_event_stream(first_line: &str) -> bool {
     first_line.contains("\"session.start\"") || first_line.contains("\"type\":\"session.start\"")
 }
 
-/// Path to the OTel agent-traces.db for a variant.
+/// The file name of the OTel store an OTel unit key points into.
+const OTEL_DB: &str = "agent-traces.db";
+
+/// An OTel unit key, `<…/agent-traces.db>#<session id>`, split into the store
+/// and the session. `None` for any other key: a journal or transcript path may
+/// itself contain `#` (#123), so the split is at the LAST `#` and only when the
+/// left side names the OTel store.
+fn otel_key(key: &str) -> Option<(&str, &str)> {
+    key.rsplit_once('#').filter(|(db, sid)| db.ends_with(OTEL_DB) && !sid.is_empty())
+}
+
+/// The OTel store under an editor's `User/` folder, if it has one.
 fn otel_db_path(user_root: &Path) -> Option<PathBuf> {
-    let db = user_root.join("globalStorage/github.copilot-chat/agent-traces.db");
+    let db = user_root.join("globalStorage/github.copilot-chat").join(OTEL_DB);
     if db.exists() { Some(db) } else { None }
 }
 
@@ -728,16 +739,13 @@ impl TranscriptAdapter for VscodeAdapter {
     }
 
     fn stamp_for(&self, key: &str) -> Option<i64> {
-        // OTel keys are "<db_path>#<session_id>" — use the db file's mtime
-        if let Some(db_path) = key.split('#').next() {
-            return mtime_ns(Path::new(db_path));
-        }
-        mtime_ns(Path::new(key))
+        // An OTel unit is stamped by its store's mtime.
+        let path = otel_key(key).map_or(key, |(db_path, _)| db_path);
+        mtime_ns(Path::new(path))
     }
 
     fn session_id_for(&self, key: &str) -> Option<String> {
-        // OTel keys: "<db>#<session-id>" → use session-id after #
-        if let Some(session_id) = key.split('#').nth(1) {
+        if let Some((_, session_id)) = otel_key(key) {
             return Some(format!("vscode-{}", session_id));
         }
         // Journal/transcript: use filename stem
@@ -747,8 +755,7 @@ impl TranscriptAdapter for VscodeAdapter {
     }
 
     fn load_content(&self, key: &str) -> Option<String> {
-        // OTel unit: key is "<db_path>#<session_id>"
-        if let Some((db_path, session_id)) = key.split_once('#') {
+        if let Some((db_path, session_id)) = otel_key(key) {
             let conn = rusqlite::Connection::open_with_flags(
                 Path::new(db_path),
                 rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
@@ -1299,6 +1306,33 @@ mod tests {
             "production builds an explicit root"
         );
         assert!(production.contains(&["VscodeAdapter", "::installed()"].concat()));
+    }
+
+    /// #123 (7): a `#` in the storage path is not an OTel key. Every key with a
+    /// `#` was read as `<db>#<session>`, so a journal under `/tmp/a#b/…` took
+    /// the mtime of `/tmp/a`, read as gone, got the session id `vscode-b/…`, and
+    /// opened `/tmp/a` as SQLite.
+    #[test]
+    fn a_hash_in_the_storage_path_is_not_an_otel_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("a#b/workspaceStorage/h/chatSessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("s1.jsonl");
+        std::fs::write(&file, "{}\n").unwrap();
+        let key = file.to_string_lossy().to_string();
+        let ad = VscodeAdapter::installed_at(vec![]);
+        assert_eq!(ad.session_id_for(&key).as_deref(), Some("vscode-s1"));
+        assert_eq!(ad.stamp_for(&key), mtime_ns(&file), "the journal's own mtime");
+        assert!(ad.load_content(&key).is_some(), "the journal is read, not opened as SQLite");
+
+        // A real OTel key still parses, even under a `#` directory.
+        let otel = "/x/a#b/globalStorage/github.copilot-chat/agent-traces.db#0af3";
+        assert_eq!(
+            otel_key(otel),
+            Some(("/x/a#b/globalStorage/github.copilot-chat/agent-traces.db", "0af3"))
+        );
+        assert_eq!(otel_key(&key), None);
+        assert_eq!(ad.session_id_for(otel).as_deref(), Some("vscode-0af3"));
     }
 
     /// Ingestion proof against REAL VS Code data, when a sample is provided.
