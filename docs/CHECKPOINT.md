@@ -21,8 +21,13 @@ Develop CI is green on 45bff79b.
 - Watch roots: the live DB watches only sensei on purpose, until the indexer covers JS/TS/Java/.NET
   (user, 2026-10-25). Then ~/Developer + ~/Work; test/e2e use ~/Developer/sensei-hq.
 
-**Next:** the next open wave-5 item in the burndown, #161 (typed rows, remainder). Start by reading
-the issue for what is left.
+**In progress — #161 (typed rows):** 98e2c9cf converted `adopt_node_by_identity` (12 args → `FqnNodeRow`).
+`db/pg_store/tests/typed_rows_tests.rs` pins the 50 functions still at 5+ args; take one off per conversion.
+
+**Next:** convert the ten 7-argument writers (`upsert_mcp_server`, `upsert_mcp_tool_manifest`,
+`upsert_assistant_tool`, `insert_edge_with_props`, `merge_function`, `insert_check_run`,
+`insert_consolidated_ruleset`, `upsert_folder`, `upsert_workflow_state`, `callee_row`), each to a typed row
+with exhaustive destructuring, deleting its line from `STILL_POSITIONAL`.
 
 **Open (the user's):**
 - dbd 0.27.7: the v0.27.6 lockfile pins rustls-webpki/webpki-roots/ctutils for
