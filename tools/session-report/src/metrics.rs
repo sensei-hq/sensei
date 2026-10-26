@@ -53,7 +53,6 @@ pub struct FailureRun {
 pub struct Analysis {
     pub sessions: usize,
     pub unclosed: usize,
-    pub events: usize,
     pub skipped_lines: usize,
     pub first_ms: i64,
     pub last_ms: i64,
@@ -183,7 +182,6 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
     let mut a = Analysis {
         sessions: sessions.len(),
         unclosed: 0,
-        events: 0,
         skipped_lines,
         first_ms: i64::MAX,
         last_ms: 0,
@@ -229,7 +227,6 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
     let mut cwds: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for s in sessions {
-        a.events += s.event_count;
         a.prompts += s.prompts;
         a.turns += s.turns.len();
         a.permission_events += s.permission_events;

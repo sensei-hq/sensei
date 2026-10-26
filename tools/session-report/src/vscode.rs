@@ -115,7 +115,6 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             totals: Totals::default(),
             models,
             permission_events: 0,
-            event_count: requests.len(),
             activity_ms: activity,
             delegated: 0,
             delegated_models: HashMap::new(),

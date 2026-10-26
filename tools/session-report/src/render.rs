@@ -58,16 +58,13 @@ pub fn report(
     let _ = writeln!(o, "# Working session retrospective — {label}\n");
     let _ = writeln!(
         o,
-        "Drawn from {} {} session{} between {} and {}, covering {} event{}. Everything \
-         below comes from the transcripts themselves; nothing is estimated or inferred \
-         from outside them.\n",
+        "Drawn from {} {} session{} between {} and {}. Everything below comes from the \
+         transcripts themselves; nothing is estimated or inferred from outside them.\n",
         a.sessions,
         tool.map(crate::Tool::label).unwrap_or("coding assistant"),
         if a.sessions == 1 { "" } else { "s" },
         day(a.first_ms),
-        day(a.last_ms),
-        n(a.events as i64),
-        if a.events == 1 { "" } else { "s" }
+        day(a.last_ms)
     );
 
     coverage(&mut o, a);
@@ -736,6 +733,20 @@ fn method(o: &mut String, tool: Option<crate::Tool>, sessions: &[Session], a: &A
 mod tests {
     use super::*;
     use crate::metrics::ToolStat;
+
+    /// #123 (6): the opening line quoted "covering N events", and an event was
+    /// a record (Copilot CLI), a record including sub-agents' (Claude) or a
+    /// request (a VS Code journal): figures that read as comparable and were
+    /// not. The report says what it is drawn from without them.
+    #[test]
+    fn the_opening_line_quotes_no_event_count() {
+        let mut a = crate::metrics::analyse(&[], 0);
+        a.sessions = 2;
+        let o = report("x", None, &[], &a);
+        let opening = o.lines().find(|l| l.starts_with("Drawn from")).unwrap();
+        assert!(opening.starts_with("Drawn from 2 coding assistant sessions between"), "{opening}");
+        assert!(!opening.contains("event"), "{opening}");
+    }
 
     /// The tool mix is the one place the report says what someone actually
     /// does all day, so it must not silently drop the long tail.

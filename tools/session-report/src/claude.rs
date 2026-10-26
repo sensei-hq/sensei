@@ -61,7 +61,6 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
     let mut cwd: Option<String> = None;
     let mut totals = Totals::default();
     let (mut input, mut output, mut cache_r, mut cache_w, mut thinking) = (0i64, 0, 0, 0, 0);
-    let mut event_count = 0usize;
     let mut last_assistant_ms: Option<i64> = None;
 
     for line in text.lines() {
@@ -73,7 +72,6 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             skipped += 1;
             continue;
         };
-        event_count += 1;
         let at = ms(v["timestamp"].as_str());
         if let Some(t) = at {
             first_ms.get_or_insert(t);
@@ -240,7 +238,6 @@ pub fn parse_session(file: &Path) -> Option<(Session, usize)> {
             totals,
             models,
             permission_events: 0,
-            event_count,
             activity_ms: activity,
             delegated: 0,
             delegated_models: HashMap::new(),
@@ -282,7 +279,6 @@ fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 fn fold_into(parent: &mut Session, child: Session) {
     parent.turns.extend(child.turns);
     parent.tools.extend(child.tools);
-    parent.event_count += child.event_count;
     parent.activity_ms.extend(child.activity_ms);
     parent.delegated += 1;
     // A sub-agent editing a .ts file is real work in TypeScript, and a sub-agent

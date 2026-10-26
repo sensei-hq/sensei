@@ -179,12 +179,7 @@ fn main() {
                 eprintln!("error: could not write {}: {e}", p.display());
                 std::process::exit(1);
             }
-            eprintln!(
-                "wrote {} — {} session(s), {} events",
-                p.display(),
-                analysis.sessions,
-                analysis.events
-            );
+            eprintln!("wrote {} — {} session(s)", p.display(), analysis.sessions);
         }
         None => print!("{doc}"),
     }
