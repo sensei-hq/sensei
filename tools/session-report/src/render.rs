@@ -374,10 +374,10 @@ fn working_well(o: &mut String, a: &Analysis) {
         && a.tool_outcomes_known > 100
     {
         items.push(format!(
-            "**Tool use is landing.** {:.1}% of {} tool calls failed. Most of the loop is \
-             productive rather than spent recovering.",
+            "**Tool use is landing.** {:.1}% of the {} tool calls that reported an outcome \
+             failed. Most of the loop is productive rather than spent recovering.",
             f,
-            n(a.tool_calls as i64)
+            n(a.tool_outcomes_known as i64)
         ));
     }
 
@@ -726,11 +726,36 @@ mod tests {
     fn the_tool_mix_accounts_for_everything_it_does_not_list() {
         let mut a = crate::metrics::analyse(&[], 0);
         a.tools = (0..14)
-            .map(|i| ToolStat { name: format!("t{i}"), calls: 100 - i, failures: 0 })
+            .map(|i| ToolStat {
+                name: format!("t{i}"),
+                calls: 100 - i,
+                known: 100 - i,
+                failures: 0,
+            })
             .collect();
         let mut o = String::new();
         tool_mix(&mut o, &a);
         assert!(o.contains("4 further tool(s)"), "the untabled tail is named: {o}");
+    }
+
+    /// #123 A6: ONE denominator for "failure rate", the calls that REPORTED
+    /// an outcome. The prose used to quote every call beside a rate taken over
+    /// the reported ones: "2.0% of 5,000 tool calls failed" where 2.0% was 4/200,
+    /// so a reader multiplied and got 100 failures where there were 4.
+    #[test]
+    fn a_failure_rate_is_quoted_over_the_calls_it_was_taken_over() {
+        let mut a = crate::metrics::analyse(&[], 0);
+        a.tool_calls = 5000;
+        a.tool_outcomes_known = 200;
+        a.tool_failures = 4;
+        let mut o = String::new();
+        working_well(&mut o, &a);
+        assert!(o.contains("2.0% of the 200 tool calls that reported an outcome failed"), "{o}");
+        assert!(!o.contains("of 5,000 tool calls failed"), "{o}");
+
+        // Per tool, the same denominator: 4 of 200 reported, among 5,000 calls.
+        let t = ToolStat { name: "bash".into(), calls: 5000, known: 200, failures: 4 };
+        assert_eq!(t.failure_pct(), Some(2.0));
     }
 
     /// A transcript that records no outcome must show n/a, never 0.0%, which
@@ -739,9 +764,10 @@ mod tests {
     fn a_tool_with_no_recorded_outcome_shows_n_a() {
         let mut a = crate::metrics::analyse(&[], 0);
         a.tools = vec![
-            ToolStat { name: "known".into(), calls: 10, failures: 1 },
-            ToolStat { name: "silent".into(), calls: 0, failures: 0 },
-            ToolStat { name: "third".into(), calls: 5, failures: 0 },
+            ToolStat { name: "known".into(), calls: 10, known: 10, failures: 1 },
+            // Called, but no call reported an outcome: n/a, not 0.0%.
+            ToolStat { name: "silent".into(), calls: 7, known: 0, failures: 0 },
+            ToolStat { name: "third".into(), calls: 5, known: 5, failures: 0 },
         ];
         let mut o = String::new();
         tool_mix(&mut o, &a);

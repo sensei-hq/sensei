@@ -26,12 +26,17 @@ pub fn percentile(sorted: &[i64], p: f64) -> Option<i64> {
 pub struct ToolStat {
     pub name: String,
     pub calls: usize,
+    /// Calls that reported an outcome, success or failure. The failure rate is
+    /// taken over these: a call with no reported outcome is not a success.
+    pub known: usize,
     pub failures: usize,
 }
 
 impl ToolStat {
+    /// Failures over the calls that reported an outcome, the same denominator
+    /// as [`Analysis::tool_failure_pct`] (#123 A6). `None` when none did.
     pub fn failure_pct(&self) -> Option<f64> {
-        pct(self.failures, self.calls)
+        pct(self.failures, self.known)
     }
 }
 
@@ -218,7 +223,8 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
         returned_later: 0,
     };
 
-    let mut by_tool: HashMap<String, (usize, usize)> = HashMap::new();
+    // (calls, calls that reported an outcome, failures)
+    let mut by_tool: HashMap<String, (usize, usize, usize)> = HashMap::new();
     let mut days: std::collections::HashSet<i64> = std::collections::HashSet::new();
     let mut cwds: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -272,13 +278,14 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
         let mut run: Option<(String, usize, i64, String)> = None;
         for c in &s.tools {
             a.tool_calls += 1;
-            let e = by_tool.entry(c.name.clone()).or_insert((0, 0));
+            let e = by_tool.entry(c.name.clone()).or_insert((0, 0, 0));
             e.0 += 1;
             match c.success {
                 Some(false) => {
                     a.tool_failures += 1;
                     a.tool_outcomes_known += 1;
                     e.1 += 1;
+                    e.2 += 1;
                     match &mut run {
                         Some((name, len, _, _)) if *name == c.name => *len += 1,
                         _ => run = Some((c.name.clone(), 1, c.started_ms, c.event_id.clone())),
@@ -290,6 +297,7 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
                 }
                 Some(true) => {
                     a.tool_outcomes_known += 1;
+                    e.1 += 1;
                     run = None;
                 }
             }
@@ -342,7 +350,7 @@ pub fn analyse(sessions: &[Session], skipped_lines: usize) -> Analysis {
     a.response_ms_sorted.sort_unstable();
     a.tools = by_tool
         .into_iter()
-        .map(|(name, (calls, failures))| ToolStat { name, calls, failures })
+        .map(|(name, (calls, known, failures))| ToolStat { name, calls, known, failures })
         .collect();
     a.tools.sort_by_key(|t| std::cmp::Reverse(t.calls));
     a.failure_runs.sort_by_key(|f| std::cmp::Reverse(f.length));
