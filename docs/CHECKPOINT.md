@@ -13,10 +13,11 @@ in this release). Local daemon on 0.20.2.
 - #125: on 0.20.2, 72 → 22 orphan turn sets. 5dea36e3 (develop, next release) ignores the 4 fresh orphans
   that have hook events, leaving 18 with no transcript. Check: count after the next release.
 
-**In progress — #161 (typed rows):** 23 left (all at 5 args) in `STILL_POSITIONAL` (`typed_rows_tests.rs`), none at 7+ args.
+**In progress — #161 (typed rows):** 18 left (all at 5 args) in `STILL_POSITIONAL` (`typed_rows_tests.rs`), none at 7+ args.
 Row types are declared in `pg_store/mod.rs` (user decision 2026-10-26, docs/decisions.md). Re-exporting them
 dangled in the code graph; the `indexer::resolve` ratchet went 1,304 → 1,045 and its ceiling is now 1,060.
-**Next:** the 23 five-arg functions (list in `typed_rows_tests.rs`), then the `too_many_arguments` allows. A new row goes in `mod.rs`, with a round-trip test and a swapped-bind probe.
+**Next:** the scan-state family as one fingerprint row (`upsert_file_row` 23 callers, `upsert_scan_state`,
+`_skipped`, the pass-through `write_scan_state`), then the rest of the list, then the allows. A new row goes in `mod.rs`, with a round-trip test and a swapped-bind probe.
 
 **Watch roots:** the live DB watches only sensei on purpose until the indexer covers JS/TS/Java/.NET;
 then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.
@@ -25,9 +26,7 @@ then ~/Developer + ~/Work. Test/e2e use ~/Developer/sensei-hq.
 comment on an ADD COLUMN, not line breaks. sensei pins it (af77da72). v0.20.2's `deploy-dojo` succeeded.
 
 **Open (the user's):**
-- Reject the stale v0.20.1 `deploy-dojo` (v0.20.2 already deployed over it).
-- #331: production count (counts only), run by the user, since there is no prod connection here:
-  `psql "$PROD" -Atc "select count(*) from dojo.tenants where origin='personal' and key ~ '-[0-9]+$'"`.
+- #331: the production count must be run by the user (no prod connection here); nothing on the issue yet.
 
 **Known:** the dōjō Workers build fails intermittently on PR/develop commits (it passed on main). The
 Cloudflare MCP needs `/mcp` auth to read build logs. qlty is out of minutes. After a DDL change, run

@@ -238,7 +238,7 @@ The settings screen lists them as repositories.
   `FolderRow` (→ 40); `insert_edge` takes `EdgeTarget` (→ 39); `TaskExecutionStart` (→ 38); `ExtensionRow`, `TranscriptSource` (→ 36). Row types
   now live in `pg_store/mod.rs` (user decision 2026-10-26: re-exports dangled in the code graph, ratchet
   1,304 → 1,045, ceiling 1,060). `PatternRow` (→ 35); `LibraryRow` (→ 34); five more (→ 29, eedc547e); three more (→ 26); `FqnNode` (→ 25); one `upsert_subfolder`
-  (→ 23, none at six args). Next: the 23 at five args, then the allows.
+  (→ 23, none at six args); four more and `merge_type` deleted (→ 18). Next: the scan-state family, then the allows.
 - #123: VS Code adapter A5/A6, Track B.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
