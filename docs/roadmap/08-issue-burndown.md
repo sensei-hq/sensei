@@ -255,7 +255,9 @@ The settings screen lists them as repositories.
   Local builds are fixed already (8d09be73, `make dev-signing-cert`).
 - #190: read `design.yaml` through dbd's `project::survey`, and load a workspace design with
   `Workspace::load`. Since dbd 0.27, a repository with a `modules:` design cannot be imported.
-  Estimate (user, 2026-10-26): hours, not days. dbd-core already exposes the read; this replaces our reader.
+  Already on dbd: SQL parsing (`dbd_core::parser`, 87cf190a) and schema import (`Design::from_config`). Left:
+  `DbdManifestAdapter` still parses `design.yaml` with its own serde struct (step 2, never done) → `project::survey`;
+  and workspace designs (`modules:`) → `Workspace::load`. Both are calls into dbd: hours (user, 2026-10-26).
 
 **dbd 0.27.3 (2026-10-19).**
 - All four pins move from v0.26.0.

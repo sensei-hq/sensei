@@ -16,18 +16,22 @@ orphans), #161 (all acceptance met), #338's cadence, the VS Code installed scan.
 **In progress — #123:** fixed: A5, A6, items 1–5 and 7, adjacent (a), (b), (c) (fad9ef49). Left: (6)
 `event_count`'s three meanings, (d) `#L10` fragments, then Track B.
 
-**Found for the demo (not yet fixed):**
-- The sessions "last 7 days" filter keys on `started_at` (`pg_store/sessions.rs:48`), so a long session that
-  is still running (this one, started 10-15) drops out of the view.
-- The MCP graph tools (`get_communities`, `get_callers`) return 404 on `/api/projects` against 0.20.2.
-- The dōjō has no graph view, and the developer console has no metric charts.
-- `repository_graph` sync is skipped, and the `sensei` workspace has no `dojo_id`.
+**Demo prep (user: demo this week, sensei + dōjō, metrics and diagrams):**
+- FIXED (this tick, see commit): "last 7 days" and a workspace's `sessions7d`/`last_session_at` keyed on a
+  session's START, so a long running session vanished from this week. Now keyed on last activity. FTR keeps
+  bucketing finished sessions by start; changing that is a metric decision, not this bug.
+- NOT a bug: the MCP 404 on `/api/projects` is this session's MCP process, running since 10-15 (pre-R3b
+  binary). The installed 0.20.2 MCP answers `get_callers`/`get_communities` correctly. A demo needs a fresh
+  Claude session. Product gap: an upgrade leaves running sessions on a stale MCP.
+- TODO: community labels read "function ()" / "unknown ()" (kind + shared dir); name them by their central
+  module or most-connected function.
+- TODO: the dōjō developer console has no metric charts; no dōjō graph view (out of scope this week).
+- Watch roots: dbd, gateway, torii added 2026-10-26 (user). Scans running. TS/JS/Svelte call resolution
+  57.7% (44.3% by the compiler); the gap is `receiver_type_unknown` (9,942 of 37,060).
 
-**Next:** fix the two defects above (red-first), then the demo slice the user picks; then #190 (hours, through
-dbd-core's reader).
-
-**Watch roots:** the live DB watches only sensei until the indexer covers JS/TS/Java/.NET. dbd and gateway
-are Rust, so they could join now; that is the user's decision.
+**Next:** commit the sessions-window fix after the full senseid suite, verify on the live daemon, then the
+community labels, then the dōjō metric chart; then #190 (hours: manifest adapter → `project::survey`,
+workspace designs → `Workspace::load`).
 
 **Known:** the dōjō Workers build is intermittent on PR/develop commits. qlty is out of minutes. After a DDL
 change, run `make test-template`.

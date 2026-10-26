@@ -1752,3 +1752,55 @@ async fn library_delete() {
     s.delete_library(&id).await.unwrap();
     assert!(s.get_library(&id).await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn a_session_active_in_the_window_counts_however_long_ago_it_started() {
+    // A session that started ten days ago and is still going is part of this
+    // week. Keying "the last 7 days" on the start hid the one long session that
+    // held a whole week's work.
+    let s = pg_store().await;
+    let pid = s
+        .create_workspace(&format!("_test:window-{}", uuid::Uuid::new_v4()), None, None)
+        .await
+        .unwrap();
+    let fid = create_test_folder(&s, "window-sess").await;
+    let mut ids = Vec::new();
+    for last_active in ["1 hour", "10 days"] {
+        let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let id = s
+            .record_session_event(&crate::db::pg_store::SessionEventRow {
+                client_session_id: &sid,
+                folder_id: &fid,
+                workspace_id: Some(&pid),
+                family: "claude",
+                is_end: false,
+            })
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET started_at = now() - interval '10 days', \
+                 completed_at = now() - $2::interval WHERE id = $1",
+        )
+        .bind(id)
+        .bind(last_active)
+        .execute(s.pool())
+        .await
+        .unwrap();
+        ids.push(id.to_string());
+    }
+    let ongoing = &ids[0];
+
+    let week = s.list_all_sessions(500, Some(7), Some(&pid)).await.unwrap();
+    let listed: Vec<&str> = week.iter().filter_map(|r| r["id"].as_str()).collect();
+    assert_eq!(listed, vec![ongoing.as_str()], "only the session active this week");
+
+    let all = s.list_workspaces_under(None).await.unwrap();
+    let ws = all.iter().find(|w| w["id"] == serde_json::json!(pid)).unwrap();
+    assert_eq!(ws["sessions7d"].as_i64(), Some(1), "the ongoing session counts this week");
+    let last =
+        chrono::DateTime::parse_from_rfc3339(ws["last_session_at"].as_str().unwrap()).unwrap();
+    assert!(
+        chrono::Utc::now().signed_duration_since(last) < chrono::Duration::days(1),
+        "last_session_at is the last activity, not the start ten days ago: {last}"
+    );
+}

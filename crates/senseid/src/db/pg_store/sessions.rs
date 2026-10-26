@@ -3,8 +3,9 @@ use super::*;
 #[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// List all sessions across all folders.
-    /// List recent sessions, newest first. `range_days` (when `Some`) filters to
-    /// sessions started within the last N days — powers the Observatory · Sessions
+    /// List recent sessions, most recently active first. `range_days` (when `Some`)
+    /// filters to sessions ACTIVE within the last N days — a session that started
+    /// earlier and is still going belongs to this week — powers the Observatory · Sessions
     /// digest range chips (7d/30d/90d); `None` = no time filter. `workspace` (when
     /// `Some`) scopes to one workspace. `agent` (the acp harness, e.g. "claude" /
     /// "zed") lets the digest label each row's assistant.
@@ -45,9 +46,9 @@ impl PgStore {
                     s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
              FROM activity.sessions s
              LEFT JOIN sensei.workspaces p ON p.id = s.workspace_id
-             WHERE ($2::int IS NULL OR s.started_at >= now() - make_interval(days => $2::int))
+             WHERE ($2::int IS NULL OR coalesce(s.completed_at, s.started_at) >= now() - make_interval(days => $2::int))
                AND ($3::uuid IS NULL OR s.workspace_id = $3)
-             ORDER BY s.started_at DESC LIMIT $1"
+             ORDER BY coalesce(s.completed_at, s.started_at) DESC LIMIT $1"
         ).bind(limit).bind(range_days).bind(workspace).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()

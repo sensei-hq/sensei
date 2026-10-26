@@ -378,9 +378,9 @@ impl PgStore {
                           WHERE fp.workspace_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
                         (SELECT count(*) FROM sensei.library_enablement pl
                           WHERE pl.workspace_id = p.id)::bigint AS libs_count,
-                        (SELECT max(s.started_at) FROM activity.sessions s WHERE s.workspace_id = p.id) AS last_session_at,
+                        (SELECT max(coalesce(s.completed_at, s.started_at)) FROM activity.sessions s WHERE s.workspace_id = p.id) AS last_session_at,
                         (SELECT count(*) FROM activity.sessions s
-                          WHERE s.workspace_id = p.id AND s.started_at > now() - interval '7 days')::bigint AS sessions7d
+                          WHERE s.workspace_id = p.id AND coalesce(s.completed_at, s.started_at) > now() - interval '7 days')::bigint AS sessions7d
                  FROM sensei.workspaces p
                  WHERE $1::text IS NULL OR EXISTS (
                           SELECT 1 FROM sensei.folder_workspaces fp
