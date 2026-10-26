@@ -21,6 +21,18 @@ pub const MAX_INDEX: usize = 1_000_000;
 /// into memory whole.
 pub const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
 
+/// Ceiling on the `kind:0` snapshot line — the whole session's state, so the one
+/// line that is legitimately large (11 and 19.5 MiB in a shared sample). The
+/// transcript cap: a snapshot can be no larger than the file it is in.
+pub const MAX_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+
+/// Whether a line may be parsed. A snapshot is recognised by how VS Code writes
+/// it, `{"kind":0,…`, before parsing — the cap exists to avoid parsing.
+fn within_cap(line: &str) -> bool {
+    let snapshot = line.get(..16).is_some_and(|head| head.replace(' ', "").starts_with(r#"{"kind":0"#));
+    line.len() <= if snapshot { MAX_SNAPSHOT_BYTES } else { MAX_LINE_BYTES }
+}
+
 /// One exchange: what the human typed and what came back.
 ///
 /// This is the normalised shape both consumers build their own types from. It
@@ -59,7 +71,7 @@ pub fn replay(content: &str) -> serde_json::Value {
     let mut root = serde_json::json!(null);
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.len() > MAX_LINE_BYTES {
+        if trimmed.is_empty() || !within_cap(trimmed) {
             continue;
         }
         let Ok(op) = serde_json::from_str::<serde_json::Value>(trimmed) else {
@@ -239,6 +251,30 @@ pub fn requests(content: &str) -> Vec<Request> {
 
 #[cfg(test)]
 mod tests {
+    /// The `kind:0` snapshot is the whole session's state, so it is the one line
+    /// that can legitimately be large: 2 of 84 shared journals open with one of
+    /// 11 and 19.5 MiB. Skipped by the per-line cap, the replay began from
+    /// nothing and the session ingested as zero turns, without a word.
+    #[test]
+    fn a_large_snapshot_is_replayed_not_skipped() {
+        let padding = "x".repeat(MAX_LINE_BYTES + 1);
+        let journal = [
+            format!(
+                r#"{{"kind":0,"v":{{"requests":[{{"message":{{"text":"q"}},"response":[],"pad":"{padding}"}}]}}}}"#
+            ),
+            r#"{"kind":2,"k":["requests",0,"response"],"v":[{"value":"a"}]}"#.to_string(),
+        ]
+        .join("\n");
+        let reqs = requests(&journal);
+        assert_eq!(reqs.len(), 1, "the snapshot's request survives");
+        assert_eq!(reqs[0].user_text, "q");
+
+        // Any other line over the cap is still skipped.
+        let huge_set = format!(r#"{{"kind":1,"k":["requests",0,"pad"],"v":"{padding}"}}"#);
+        let root = replay(&[r#"{"kind":0,"v":{"requests":[]}}"#.to_string(), huge_set].join("\n"));
+        assert_eq!(root["requests"], serde_json::json!([]));
+    }
+
     use super::*;
 
     fn journal(ops: &[&str]) -> String {
