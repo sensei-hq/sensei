@@ -57,8 +57,12 @@ jobs:
 
       - name: Start Supabase
         # Postgres and auth (the seed creates auth users); the rest of the stack
-        # is not what these tests read.
-        run: supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+        # is not what these tests read. PostgREST (and kong, its gateway) is left
+        # out too: config.toml exposes the `dojo` schema, which a fresh database
+        # does not have until the deploy step creates it, so PostgREST reports
+        # unhealthy and `supabase start` fails (the first run, 2026-10-26). The
+        # tests speak to Postgres directly.
+        run: supabase start -x postgrest,kong,realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
