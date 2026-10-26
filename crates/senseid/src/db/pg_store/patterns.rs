@@ -1,6 +1,6 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// Cache read for the narration-cache pipeline. Returns the persisted
     /// `(title, detail)` for `(kind, facts_hash)` and bumps `last_used_at`

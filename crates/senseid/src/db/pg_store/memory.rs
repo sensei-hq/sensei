@@ -6,7 +6,7 @@ use super::*;
 /// writer, so a field added here is a compile error until someone binds it.
 /// No `Default` — that would relocate the silence to the call sites.
 // Gated with its writer — see `create_memory`, which has no production caller.
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// NO PRODUCTION CALLER (measured 2026-10-06, #161). Every one of its 17
     /// call sites is a test. `sensei.memories` has three writers —

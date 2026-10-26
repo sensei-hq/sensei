@@ -52,7 +52,7 @@ pub(crate) fn resolve_exclusion(root_path: &str, entry: &str) -> String {
     format!("{root}/{}", entry.trim_start_matches('/').trim_end_matches('/'))
 }
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// The absolute-path exclusion prefixes for a watch root — each `excluded`
     /// entry resolved against `root_path` (`root/entry`). Consumed by the scan

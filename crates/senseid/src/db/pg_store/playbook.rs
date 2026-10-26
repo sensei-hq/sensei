@@ -1,6 +1,6 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     pub async fn list_playbooks(&self) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, String, String, String, Option<String>)> =
@@ -168,7 +168,6 @@ impl PgStore {
     /// a gateway model id, or "heuristic") and `model_fallback`
     /// flags whether the local-model path fell back to the heuristic —
     /// both feed the §9 measurement of local-model usefulness.
-    #[allow(clippy::too_many_arguments)]
     pub async fn insert_playbook_run(
         &self,
         row: &PlaybookRunRow<'_>,

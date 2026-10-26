@@ -278,7 +278,6 @@ impl PgStore {
     /// conflict target is the column list — Postgres infers the arbiter index
     /// (honouring its `nulls not distinct`); `ON CONFLICT ON CONSTRAINT <name>`
     /// would not resolve against an index.
-    #[allow(clippy::too_many_arguments)]
     /// Metric correlations for a workspace: which signals move together.
     ///
     /// Reads the daily workspace-scope values as (workspace, day) CELLS and the

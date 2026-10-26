@@ -16,7 +16,7 @@ pub struct LibraryDocs {
     pub version_note: Option<String>,
 }
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// Search libraries by name (ILIKE).
     pub async fn search_libraries(&self, query: &str) -> Result<Vec<serde_json::Value>, String> {

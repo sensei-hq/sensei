@@ -69,7 +69,7 @@ fn task_execution_json(r: TaskExecutionRow) -> serde_json::Value {
     })
 }
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     pub async fn log_index_error(&self, index_error: &IndexErrorRow<'_>) -> Result<(), String> {
         let &IndexErrorRow { folder_id, file_path, error, adapter, phase } = index_error;

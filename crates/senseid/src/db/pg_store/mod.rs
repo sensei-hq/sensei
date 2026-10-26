@@ -628,7 +628,7 @@ pub(crate) mod tests;
 #[cfg(test)]
 mod tool_calls_tests;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
 // are inherently verbose and adding an extra layer of type aliases would
 // not improve readability at the call sites.

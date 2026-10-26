@@ -1,6 +1,6 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// Create a run. `id`, `status` (`'running'`), and all timestamps are
     /// DB-defaulted; `plan_ref`/`max_concurrency` fall back to the DDL defaults

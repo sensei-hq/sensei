@@ -124,7 +124,7 @@ pub enum Placement {
     ReceiverChain,
 }
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 use crate::languages::fqn::{sql_is_external, sql_is_not_external};
 
 /// `(id, kind, name, parent_id, line_start)` — one node as
@@ -667,7 +667,6 @@ impl PgStore {
     /// parser's `pub`/`export` visibility). `is_exported` is written on INSERT and
     /// refreshed on the D3 upsert-then-prune conflict, so a symbol that flips
     /// pub↔private is kept current.
-    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_node(&self, row: &NodeRow<'_>) -> Result<uuid::Uuid, String> {
         // EXHAUSTIVE (#161). A field added to `NodeRow` stops this compiling
         // until someone binds it, and `clippy -D warnings` makes binding it

@@ -1,6 +1,6 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// List all sessions across all folders.
     /// List recent sessions, newest first. `range_days` (when `Some`) filters to
@@ -324,7 +324,6 @@ impl PgStore {
     /// "curl timed out after the insert succeeded" race. Dedup is on the payload
     /// (identical on both the live POST and the fallback line) so it holds even
     /// though the two paths stamp `ts` independently.
-    #[allow(clippy::too_many_arguments)]
     pub async fn insert_hook_event_if_absent(
         &self,
         row: &HookEventRow<'_>,

@@ -1,6 +1,6 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     /// Upsert parsed transcript turns for a (source, session). Idempotent by
     /// (source, session_id, turn_index). Returns the number of rows written.
