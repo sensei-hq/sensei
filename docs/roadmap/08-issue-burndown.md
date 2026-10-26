@@ -263,17 +263,20 @@ The settings screen lists them as repositories.
     0.20.2's MCP answers. Product gap: an upgrade leaves running sessions on a stale MCP.
   - Before the demo: a release (or install) so the daemon runs these; fresh sessions and a dōjō sync (the
     synced session metrics end 10-18); demo from a fresh Claude session.
-  - Seen on the way: the personal loader turns a failed packs or contributions read into an empty list
-    (`you/[section]/+page.ts`), against the no-fabrication rule. "Tokens" is dominated by cache reads.
+  - eb4c16cd: a failed rule-pack or contributions read is an error, not an empty list (the personal
+    loader swallowed both). "Tokens" is dominated by cache reads (the user's call whether to change it).
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
   signing, notarization, and a first-start Permissions step. Needs the user's Apple Developer account.
   Local builds are fixed already (8d09be73, `make dev-signing-cert`).
 - #190: read `design.yaml` through dbd's `project::survey`, and load a workspace design with
   `Workspace::load`. Since dbd 0.27, a repository with a `modules:` design cannot be imported.
-  Already on dbd: SQL parsing (`dbd_core::parser`, 87cf190a) and schema import (`Design::from_config`). Left:
-  `DbdManifestAdapter` still parses `design.yaml` with its own serde struct (step 2, never done) → `project::survey`;
-  and workspace designs (`modules:`) → `Workspace::load`. Both are calls into dbd: hours (user, 2026-10-26).
+  Already on dbd: SQL parsing (`dbd_core::parser`, 87cf190a) and schema import (`Design::from_config`; torii's
+  Schema diagram: 102 tables). Left: `DbdManifestAdapter`'s own serde struct. `project::survey` does not fit (it
+  walks the filesystem, defaults the dialect, has no extensions); `dbd_core::config::DesignConfig` from the text
+  does, once dbd says whether the dialect was stated: **blocked on sensei-hq/dbd#109** (filed 2026-10-26).
+  Accepting it drops the legacy top-level `extensions:` (23 of 77 local designs; `dbd doctor --fix` migrates).
+  `modules:` → `Workspace::load`: 0 of 77 local designs use it, so no live case yet.
 
 **dbd 0.27.3 (2026-10-19).**
 - All four pins move from v0.26.0.

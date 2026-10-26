@@ -24,11 +24,16 @@ this week, sensei + dōjō, metrics and diagrams).
 
 **In progress — #123:** left (6) `event_count`'s meanings, (d) `#L10` fragments, Track B.
 
-**Next:** #190 (hours: `DbdManifestAdapter` → dbd's `project::survey`; workspace designs →
-`Workspace::load`), then the two loaders that turn a failed read into an empty list (packs,
-contributions in `you/[section]/+page.ts`).
+**Done since:** eb4c16cd, a failed rule-pack/contributions read is an error, not an empty list.
+**#190 blocked on sensei-hq/dbd#109** (dbd must say whether `source.dialect` was stated; then the
+adapter deserializes `dbd_core::config::DesignConfig` from the text). Not `project::survey`: it walks the
+filesystem and defaults the dialect.
 
-**Open (the user's):** whether to release now for the demo; whether "Tokens" should exclude cache reads.
+**Next:** #123 (d) `#L10` fragments, then (6), then Track B. Rust CI on develop has had only cancelled runs
+since fad9ef49 (each push cancels the last): confirm 845b8b7e's run is green.
+
+**Open (the user's):** whether to release now for the demo; whether "Tokens" should exclude cache reads;
+dbd#109's shape (it changes a public dbd-core field) and a dbd release.
 
 **Known:** the dōjō Workers build is intermittent on PR/develop commits. qlty is out of minutes. After a DDL
 change, run `make test-template`. The Svelte MCP did not connect this session (svelte-check stood in).
