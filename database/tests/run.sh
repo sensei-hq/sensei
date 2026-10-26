@@ -25,6 +25,21 @@ database_for() { # FILE
     esac
 }
 
+# `run.sh <scope>` runs one scope's directory and asks only for that scope's
+# database — a CI job that stands up the dōjō has no daemon database, and the
+# dōjō's access rules are most of this suite. An unknown scope is refused, so a
+# typo cannot run nothing and pass. No argument: every scope, every database.
+search=.
+urls=("$DOJO_DATABASE_URL" "$SENSEI_DATABASE_URL")
+if [ $# -gt 0 ]; then
+    if [ ! -d "./$1" ]; then
+        echo "no such test scope: $1 (one of: $(find . -mindepth 1 -maxdepth 1 -type d | sed 's#^\./##' | sort | tr '\n' ' '))" >&2
+        exit 2
+    fi
+    search="./$1"
+    urls=("$(database_for "./$1/x")")
+fi
+
 if ! command -v psql >/dev/null 2>&1; then
     echo "psql not found on PATH." >&2
     echo "  Homebrew keeps it keg-only: export PATH=\"\$(brew --prefix libpq)/bin:\$PATH\"" >&2
@@ -34,7 +49,7 @@ fi
 # Prove the target is reachable before reporting any file as passing — an
 # unreachable database would otherwise fail every file identically and read as
 # "the schema is broken" rather than "nothing was tested".
-for url in "$DOJO_DATABASE_URL" "$SENSEI_DATABASE_URL"; do
+for url in "${urls[@]}"; do
     if ! psql "$url" -X -q -c 'select 1' >/dev/null 2>&1; then
         echo "cannot reach $url" >&2
         echo "  the dōjō tests need the local Supabase (supabase start); the rest, the daemon's database" >&2
@@ -55,7 +70,7 @@ while IFS= read -r file; do
         echo "  FAIL  $file" >&2
         failed=$((failed + 1))
     fi
-done < <(find . -name '*.sql' -type f | sort)
+done < <(find "$search" -name '*.sql' -type f | sort)
 
 if [ "$ran" -eq 0 ]; then
     echo "no test files found under database/tests/ — nothing was verified" >&2
