@@ -2934,7 +2934,15 @@ public class ShopContext : DbContext {
             .expect("the lookup runs")
             .expect("the fixture declares it");
         store
-            .insert_edge(&folder, &source, None, Some("something_legacy_saw"), None, "calls")
+            .insert_edge(
+                &folder,
+                &source,
+                crate::db::pg_store::EdgeTarget::Unresolved {
+                    name: Some("something_legacy_saw"),
+                    file: None,
+                },
+                "calls",
+            )
             .await
             .expect("the legacy edge inserts");
 

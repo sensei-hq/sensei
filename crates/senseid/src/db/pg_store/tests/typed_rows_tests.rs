@@ -21,7 +21,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "folders.rs::write_scan_state",
     "governance.rs::assemble_context",
     "governance.rs::upsert_stance",
-    "graph.rs::insert_edge",
     "graph.rs::merge_type",
     "graph.rs::semantic_search_nodes",
     "graph.rs::upsert_lib_node_by_fqn",

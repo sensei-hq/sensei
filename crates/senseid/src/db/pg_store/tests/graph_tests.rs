@@ -1026,7 +1026,9 @@ async fn edge_insert_and_query() {
     )
     .await
     .unwrap();
-    s.insert_edge(&fid, &fn_a, Some(&fn_b), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &fn_a, crate::db::pg_store::EdgeTarget::Node(&fn_b), "calls")
+        .await
+        .unwrap();
     let callers = s.get_callers(&fn_b).await.unwrap();
     assert_eq!(callers.len(), 1);
     assert_eq!(callers[0]["caller_id"], fn_a.to_string());
@@ -1071,8 +1073,10 @@ async fn insert_edge_is_idempotent() {
     .unwrap();
 
     // Resolved edge: a repeated identical insert upserts to the same row.
-    let e1 = s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
-    let e2 = s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+    let e1 =
+        s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
+    let e2 =
+        s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
     assert_eq!(e1, e2, "a repeated resolved edge returns the same id");
     assert_eq!(
         s.get_edges_by_kind(&fid, "calls").await.unwrap().len(),
@@ -1082,8 +1086,24 @@ async fn insert_edge_is_idempotent() {
 
     // Unresolved edge: a repeated insert (same source, target_name, kind)
     // upserts to the same row (nulls-not-distinct target_file).
-    let u1 = s.insert_edge(&fid, &a, None, Some("ext_fn"), None, "calls").await.unwrap();
-    let u2 = s.insert_edge(&fid, &a, None, Some("ext_fn"), None, "calls").await.unwrap();
+    let u1 = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("ext_fn"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
+    let u2 = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("ext_fn"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
     assert_eq!(u1, u2, "a repeated unresolved edge returns the same id");
     assert_eq!(
         s.get_edges_by_kind(&fid, "calls").await.unwrap().len(),
@@ -1128,8 +1148,16 @@ async fn resolve_edge_merges_into_existing_resolved_edge() {
     .await
     .unwrap();
 
-    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap(); // resolved a→b
-    let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap(); // unresolved a→"b"
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap(); // resolved a→b
+    let u = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("b"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap(); // unresolved a→"b"
     // The resolved and unresolved partial indexes are DISJOINT: both edges
     // coexist (no collision on insert) until resolution merges them.
     assert_eq!(
@@ -1305,7 +1333,9 @@ async fn detect_communities_assigns_deterministic_ids_by_natural_key() {
     }
     // Two disjoint triangles: {a,b,c} and {d,e,f} (resolved calls).
     for (x, y) in [("a", "b"), ("b", "c"), ("c", "a"), ("d", "e"), ("e", "f"), ("f", "d")] {
-        s.insert_edge(&fid, &n[x], Some(&n[y]), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &n[x], crate::db::pg_store::EdgeTarget::Node(&n[y]), "calls")
+            .await
+            .unwrap();
     }
 
     let read_ids = |s: &PgStore, n: &std::collections::HashMap<&str, uuid::Uuid>| {
@@ -1491,7 +1521,9 @@ async fn community_adjacency_includes_extends() {
         )
         .await
         .unwrap();
-    s.insert_edge(&fid, &derived, Some(&base), None, None, "extends").await.unwrap();
+    s.insert_edge(&fid, &derived, crate::db::pg_store::EdgeTarget::Node(&base), "extends")
+        .await
+        .unwrap();
 
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
@@ -1546,10 +1578,10 @@ async fn god_node_ids_rank_by_adjacency_not_by_a_stored_column() {
         .await
         .unwrap();
     // a→hub, b→hub, c→hub, a→b. Adjacency degrees: hub=3, a=2, b=2, c=1.
-    s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &b, Some(&hub), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &c, Some(&hub), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&hub), "calls").await.unwrap();
+    s.insert_edge(&fid, &b, crate::db::pg_store::EdgeTarget::Node(&hub), "calls").await.unwrap();
+    s.insert_edge(&fid, &c, crate::db::pg_store::EdgeTarget::Node(&hub), "calls").await.unwrap();
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
 
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
@@ -1583,7 +1615,7 @@ async fn community_description_authoritative_write_is_honest_null() {
         .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
-    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
 
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
@@ -1622,10 +1654,17 @@ async fn graph_nodes_returns_community_and_structural_edges() {
         .execute(s.pool())
         .await
         .unwrap();
-    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &a, None, Some("lib"), None, "imports").await.unwrap();
-    s.insert_edge(&fid, &b, Some(&a), None, None, "extends").await.unwrap();
-    s.insert_edge(&fid, &a, Some(&b), None, None, "covers").await.unwrap(); // overlay — excluded
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
+    s.insert_edge(
+        &fid,
+        &a,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("lib"), file: None },
+        "imports",
+    )
+    .await
+    .unwrap();
+    s.insert_edge(&fid, &b, crate::db::pg_store::EdgeTarget::Node(&a), "extends").await.unwrap();
+    s.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "covers").await.unwrap(); // overlay — excluded
 
     let nodes = s.get_nodes_scoped(&[fid]).await.unwrap();
     let a_node = nodes.iter().find(|n| n["name"] == "a").unwrap();
@@ -2619,7 +2658,15 @@ async fn prune_file_nodes_deletes_vanished_and_unresolves_inbound() {
         .await
         .unwrap();
     // A resolved inbound edge b.rs::caller → a.rs::gone, carrying target_name.
-    let e = s.insert_edge(&fid, &caller, None, Some("gone"), None, "calls").await.unwrap();
+    let e = s
+        .insert_edge(
+            &fid,
+            &caller,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("gone"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
     s.resolve_edge(&e, &gone).await.unwrap();
 
     // Re-index of a.rs keeps only `keep`.
@@ -2666,8 +2713,22 @@ async fn delete_edges_from_sources_clears_a_files_out_edges() {
         .seed_node(&fid, "function", "b", "b.rs", None, Some("()"), Some(1), Some(5))
         .await
         .unwrap();
-    s.insert_edge(&fid, &a, None, Some("x"), None, "calls").await.unwrap(); // a's out-edge
-    s.insert_edge(&fid, &b, None, Some("y"), None, "calls").await.unwrap(); // b's out-edge (must survive)
+    s.insert_edge(
+        &fid,
+        &a,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("x"), file: None },
+        "calls",
+    )
+    .await
+    .unwrap(); // a's out-edge
+    s.insert_edge(
+        &fid,
+        &b,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("y"), file: None },
+        "calls",
+    )
+    .await
+    .unwrap(); // b's out-edge (must survive)
 
     let n = s.delete_edges_from_sources(&fid, &[a]).await.unwrap();
     assert_eq!(n, 1, "only a's out-edge is deleted");
@@ -2701,7 +2762,7 @@ async fn replace_edges_of_kind_swaps_the_full_set() {
     .unwrap();
 
     // A STALE covers edge doc→f1 (as if f1 was the covered file last scan).
-    s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
+    s.insert_edge(&fid, &doc, crate::db::pg_store::EdgeTarget::Node(&f1), "covers").await.unwrap();
     assert_eq!(s.get_edges_by_kind(&fid, "covers").await.unwrap().len(), 1);
 
     // Replace the covers set with {doc→f2}: the stale doc→f1 must vanish.
@@ -2756,7 +2817,14 @@ async fn replace_edges_of_kind_handles_unresolved_edges() {
     )
     .await
     .unwrap();
-    s.insert_edge(&fid, &a, None, Some("old"), None, "calls").await.unwrap(); // stale unresolved a→"old"
+    s.insert_edge(
+        &fid,
+        &a,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("old"), file: None },
+        "calls",
+    )
+    .await
+    .unwrap(); // stale unresolved a→"old"
 
     s.replace_edges_of_kind(
         &fid,
@@ -2803,7 +2871,7 @@ async fn replace_edges_of_kind_is_atomic_and_rolls_back_on_failure() {
     )
     .await
     .unwrap();
-    s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
+    s.insert_edge(&fid, &doc, crate::db::pg_store::EdgeTarget::Node(&f1), "covers").await.unwrap();
 
     // A batch whose second edge has a bogus source_id (no such node) → the
     // FK on edges.source_id fails the insert mid-batch.
@@ -2869,12 +2937,45 @@ async fn insert_edge_unresolved_dedups_by_target_file() {
     .await
     .unwrap();
 
-    let e1 = s.insert_edge(&fid, &a, None, Some("helper"), Some("x.rs"), "calls").await.unwrap();
-    let e2 = s.insert_edge(&fid, &a, None, Some("helper"), Some("y.rs"), "calls").await.unwrap();
+    let e1 = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved {
+                name: Some("helper"),
+                file: Some("x.rs"),
+            },
+            "calls",
+        )
+        .await
+        .unwrap();
+    let e2 = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved {
+                name: Some("helper"),
+                file: Some("y.rs"),
+            },
+            "calls",
+        )
+        .await
+        .unwrap();
     assert_ne!(e1, e2, "same target_name in different files are distinct unresolved edges");
     assert_eq!(s.get_edges_by_kind(&fid, "calls").await.unwrap().len(), 2, "two distinct rows");
 
-    let e3 = s.insert_edge(&fid, &a, None, Some("helper"), Some("x.rs"), "calls").await.unwrap();
+    let e3 = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved {
+                name: Some("helper"),
+                file: Some("x.rs"),
+            },
+            "calls",
+        )
+        .await
+        .unwrap();
     assert_eq!(e1, e3, "same (target_name, target_file) upserts to the same row");
     assert_eq!(
         s.get_edges_by_kind(&fid, "calls").await.unwrap().len(),
@@ -2917,7 +3018,15 @@ async fn resolve_edge_second_call_is_safe() {
     )
     .await
     .unwrap();
-    let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
+    let u = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("b"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
 
     s.resolve_edge(&u, &b).await.unwrap();
     s.resolve_edge(&u, &b).await.unwrap(); // second call — must not throw
@@ -2962,7 +3071,15 @@ async fn resolve_edge_updates_in_place_when_no_conflict() {
     )
     .await
     .unwrap();
-    let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
+    let u = s
+        .insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("b"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
 
     s.resolve_edge(&u, &b).await.unwrap();
 

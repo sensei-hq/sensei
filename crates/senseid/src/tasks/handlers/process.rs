@@ -857,7 +857,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 .copied()
                 .unwrap_or(file_node_id);
             ctx.pg()
-                .insert_edge(&folder_id, &source, None, Some(&call.callee_name), None, "calls")
+                .insert_edge(&folder_id, &source, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(&call.callee_name), file: None }, "calls")
                 .await
                 .map_err(|e| format!("insert_edge (calls): {e}"))?;
         }
@@ -895,19 +895,12 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 match target {
                     Some(t) => ctx
                         .pg()
-                        .insert_edge(&folder_id, &file_node_id, Some(&t), None, None, "references")
+                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Node(&t), "references")
                         .await
                         .map_err(|e| format!("insert_edge (references, file resolved): {e}"))?,
                     None => ctx
                         .pg()
-                        .insert_edge(
-                            &folder_id,
-                            &file_node_id,
-                            None,
-                            Some(file_ref),
-                            None,
-                            "references",
-                        )
+                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(file_ref), file: None }, "references")
                         .await
                         .map_err(|e| format!("insert_edge (references, file): {e}"))?,
                 };
@@ -926,13 +919,13 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     .map_err(|e| format!("sole_definition_id_by_name({fn_ref}): {e}"))?
                 {
                     ctx.pg()
-                        .insert_edge(&folder_id, &file_node_id, Some(&t), None, None, "references")
+                        .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Node(&t), "references")
                         .await
                         .map_err(|e| format!("insert_edge (references, symbol resolved): {e}"))?;
                     continue;
                 }
                 ctx.pg()
-                    .insert_edge(&folder_id, &file_node_id, None, Some(fn_ref), None, "references")
+                    .insert_edge(&folder_id, &file_node_id, crate::db::pg_store::EdgeTarget::Unresolved { name: Some(fn_ref), file: None }, "references")
                     .await
                     .map_err(|e| format!("insert_edge (references, symbol): {e}"))?;
             }
@@ -3201,8 +3194,16 @@ mod tests {
             .seed_node(&fid, "function", "funcB", "b.rs", None, None, None, None)
             .await
             .unwrap();
-        let edge =
-            ctx.pg().insert_edge(&fid, &node_b, None, Some("funcA"), None, "calls").await.unwrap();
+        let edge = ctx
+            .pg()
+            .insert_edge(
+                &fid,
+                &node_b,
+                crate::db::pg_store::EdgeTarget::Unresolved { name: Some("funcA"), file: None },
+                "calls",
+            )
+            .await
+            .unwrap();
         ctx.pg().resolve_edge(&edge, &node_a).await.unwrap();
 
         // Re-indexing a.rs un-resolves inbound edges instead of letting the

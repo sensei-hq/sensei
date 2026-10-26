@@ -88,11 +88,28 @@ async fn an_edge_nobody_asked_about_is_not_reported_as_a_miss() {
         .unwrap();
 
     // Three edges, one per verdict state — including the one that is NEITHER.
-    let placed = pg.insert_edge(&folder_id, &a, Some(&b), None, None, "calls").await.unwrap();
-    let missed =
-        pg.insert_edge(&folder_id, &a, None, Some("gone_one"), None, "calls").await.unwrap();
-    let silent =
-        pg.insert_edge(&folder_id, &a, None, Some("gone_two"), None, "imports").await.unwrap();
+    let placed = pg
+        .insert_edge(&folder_id, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls")
+        .await
+        .unwrap();
+    let missed = pg
+        .insert_edge(
+            &folder_id,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("gone_one"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
+    let silent = pg
+        .insert_edge(
+            &folder_id,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("gone_two"), file: None },
+            "imports",
+        )
+        .await
+        .unwrap();
     set_verdict(&pg, &placed, Some("declared_here"), None).await;
     set_verdict(&pg, &missed, None, Some("no_import_in_scope")).await;
     set_verdict(&pg, &silent, None, None).await;
@@ -158,9 +175,23 @@ async fn placement_is_decomposed_by_the_package_the_edge_was_written_in() {
         );
     }
     let (a, b, c) = (nodes[0], nodes[1], nodes[2]);
-    let placed_a = pg.insert_edge(&folder_id, &a, Some(&b), None, None, "calls").await.unwrap();
-    let missed_a = pg.insert_edge(&folder_id, &a, None, Some("x"), None, "calls").await.unwrap();
-    let placed_c = pg.insert_edge(&folder_id, &c, Some(&a), None, None, "calls").await.unwrap();
+    let placed_a = pg
+        .insert_edge(&folder_id, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls")
+        .await
+        .unwrap();
+    let missed_a = pg
+        .insert_edge(
+            &folder_id,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("x"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
+    let placed_c = pg
+        .insert_edge(&folder_id, &c, crate::db::pg_store::EdgeTarget::Node(&a), "calls")
+        .await
+        .unwrap();
     set_verdict(&pg, &placed_a, Some("resolved_by_compiler"), None).await;
     set_verdict(&pg, &missed_a, None, Some("compiler_no_symbol")).await;
     set_verdict(&pg, &placed_c, Some("resolved_by_compiler"), None).await;
@@ -240,9 +271,14 @@ async fn language_follows_the_source_and_an_unattributable_edge_still_appears() 
         .await
         .unwrap();
 
-    let cross = pg.insert_edge(&folder_id, &rs, Some(&ts), None, None, "calls").await.unwrap();
-    let from_anon =
-        pg.insert_edge(&folder_id, &anon, Some(&ts), None, None, "calls").await.unwrap();
+    let cross = pg
+        .insert_edge(&folder_id, &rs, crate::db::pg_store::EdgeTarget::Node(&ts), "calls")
+        .await
+        .unwrap();
+    let from_anon = pg
+        .insert_edge(&folder_id, &anon, crate::db::pg_store::EdgeTarget::Node(&ts), "calls")
+        .await
+        .unwrap();
     set_verdict(&pg, &cross, Some("declared_here"), None).await;
     set_verdict(&pg, &from_anon, Some("declared_here"), None).await;
 

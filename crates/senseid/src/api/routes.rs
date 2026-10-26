@@ -1533,7 +1533,16 @@ mod tests {
             .await
             .unwrap();
         for target in ["node:fs", "java.util.List", "./sibling", "$lib/x", "crate::db", "@/alias"] {
-            state.pg.insert_edge(&fid, &src, None, Some(target), None, "imports").await.unwrap();
+            state
+                .pg
+                .insert_edge(
+                    &fid,
+                    &src,
+                    crate::db::pg_store::EdgeTarget::Unresolved { name: Some(target), file: None },
+                    "imports",
+                )
+                .await
+                .unwrap();
         }
 
         let (st, body) = req(app, "GET", "/api/graph/imports", None).await;
@@ -2685,7 +2694,9 @@ mod tests {
         let c1 = node("rust·p·gamma::util·three", "three", "c1.rs").await;
 
         for (s, t) in [(&a1, &b1), (&a1b, &b1), (&b1, &a1), (&b1, &c1), (&a1, &a2)] {
-            pg.insert_edge(&fid, s, Some(t), None, None, "calls").await.unwrap();
+            pg.insert_edge(&fid, s, crate::db::pg_store::EdgeTarget::Node(t), "calls")
+                .await
+                .unwrap();
         }
 
         let (status, body) =
@@ -2861,19 +2872,27 @@ mod tests {
 
         // `S2 implements Ifc` is what makes Ifc an abstraction — abstractness is
         // derived from the EDGES, never from the keyword (see `abstractions`).
-        pg.insert_edge(&fid, &s2, Some(&ifc), None, None, "implements").await.unwrap();
+        pg.insert_edge(&fid, &s2, crate::db::pg_store::EdgeTarget::Node(&ifc), "implements")
+            .await
+            .unwrap();
         // Delta's abstraction is implemented by its own sibling, so delta stays
         // abstract WITHOUT gaining an afferent dependency.
-        pg.insert_edge(&fid, &imp2, Some(&ifc2), None, None, "implements").await.unwrap();
+        pg.insert_edge(&fid, &imp2, crate::db::pg_store::EdgeTarget::Node(&ifc2), "implements")
+            .await
+            .unwrap();
         for (s, t) in [(&fn1, &fn2), (&fn3, &fn2), (&fn4, &fn2), (&fn1, &ext), (&fn1, &alias)] {
-            pg.insert_edge(&fid, s, Some(t), None, None, "calls").await.unwrap();
+            pg.insert_edge(&fid, s, crate::db::pg_store::EdgeTarget::Node(t), "calls")
+                .await
+                .unwrap();
         }
         // A SECOND edge of a different kind between the same module pair, so
         // `module_edges` carries two rows for `alpha -> beta`. Coupling counts
         // DISTINCT partners, so this must not move Ce(alpha) or Ca(beta) —
         // without it, counting rows and counting partners agree and the
         // difference is untestable.
-        pg.insert_edge(&fid, &fn1, Some(&fn2), None, None, "references").await.unwrap();
+        pg.insert_edge(&fid, &fn1, crate::db::pg_store::EdgeTarget::Node(&fn2), "references")
+            .await
+            .unwrap();
 
         let (status, body) =
             req(app, "GET", &format!("/api/workspaces/{pid}/diagrams/zones"), None).await;
@@ -3024,7 +3043,7 @@ mod tests {
         let a = node("rust·p·alpha::core·one", "one", "a.rs").await;
         let b = node("rust·p·beta/web·two", "two", "b.rs").await;
         let c = node("rust·p·gamma::util·three", "three", "c.rs").await;
-        pg.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+        pg.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
 
         let url = format!("/api/workspaces/{pid}/diagrams/layering?level=module&kinds=calls");
         let (status, first) = req(app.clone(), "GET", &url, None).await;
@@ -3035,7 +3054,7 @@ mod tests {
         // BEHIND THE ENDPOINT'S BACK: a real new dependency, and no file
         // re-indexed. The daemon has not been told the graph moved, so it must
         // keep answering what it last computed.
-        pg.insert_edge(&fid, &b, Some(&c), None, None, "calls").await.unwrap();
+        pg.insert_edge(&fid, &b, crate::db::pg_store::EdgeTarget::Node(&c), "calls").await.unwrap();
         let (status, cached) = req(app.clone(), "GET", &url, None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
@@ -3184,10 +3203,14 @@ mod tests {
         let library = node(format!("lib·serde{tag}·json·to_string"), "to_string").await;
         let beyond = node(format!("rust·h{tag}·m·beyond·item"), "beyond").await;
         for (s, t) in [(caller, focus), (focus, callee), (callee, deeper), (focus, library)] {
-            pg.insert_edge(&fid, &s, Some(&t), None, None, "calls").await.unwrap();
+            pg.insert_edge(&fid, &s, crate::db::pg_store::EdgeTarget::Node(&t), "calls")
+                .await
+                .unwrap();
         }
         // Something the library "calls" — only reachable by walking THROUGH it.
-        pg.insert_edge(&fid, &library, Some(&beyond), None, None, "calls").await.unwrap();
+        pg.insert_edge(&fid, &library, crate::db::pg_store::EdgeTarget::Node(&beyond), "calls")
+            .await
+            .unwrap();
 
         let url = |q: &str| format!("/api/workspaces/{mine}/diagrams/neighbourhood?{q}");
         let ids = |body: &serde_json::Value| -> Vec<String> {

@@ -565,7 +565,7 @@ pub use config::WorkflowStatePatch;
 pub use folders::FolderRow;
 pub use governance::{CheckRunRow, ConsolidatedRulesetRow};
 /// One row of `sensei.nodes`, named rather than positional (#161).
-pub use graph::NodeRow;
+pub use graph::{EdgeTarget, NodeRow};
 pub use library::LibraryPageRow;
 pub use logs::{Abandonments, LogRow};
 pub use mcp::{AssistantToolRow, McpManifestRow, McpServerRow};

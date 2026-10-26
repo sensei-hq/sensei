@@ -28,7 +28,9 @@ async fn prune_orphan_stubs_collects_unreferenced_stubs_only() {
         .seed_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(2))
         .await
         .unwrap();
-    s.insert_edge(&fid, &caller, Some(&referenced), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &caller, crate::db::pg_store::EdgeTarget::Node(&referenced), "calls")
+        .await
+        .unwrap();
     // Must survive: a real local definition.
     let real = s
         .seed_node(&fid, "function", "real", "src/b.rs", None, None, Some(1), Some(2))
@@ -345,8 +347,22 @@ async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
         .seed_node(&fid, "function", "handleAuth", "src/auth.rs", None, None, Some(10), Some(20))
         .await
         .unwrap();
-    s.insert_edge(&fid, &resolved_caller, Some(&target_id), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &unresolved_caller, None, Some("handleAuth"), None, "calls").await.unwrap();
+    s.insert_edge(
+        &fid,
+        &resolved_caller,
+        crate::db::pg_store::EdgeTarget::Node(&target_id),
+        "calls",
+    )
+    .await
+    .unwrap();
+    s.insert_edge(
+        &fid,
+        &unresolved_caller,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("handleAuth"), file: None },
+        "calls",
+    )
+    .await
+    .unwrap();
 
     let callers = s.get_callers_by_name(&folder, "handleAuth").await.unwrap();
     let names: std::collections::HashSet<String> =
@@ -406,10 +422,19 @@ async fn callers_carry_the_verdict_that_placed_each_edge() {
         .await
         .unwrap();
 
-    let placed_edge =
-        s.insert_edge(&fid, &placed, Some(&target), None, None, "calls").await.unwrap();
-    let missed_edge =
-        s.insert_edge(&fid, &missed, None, Some("handleAuth"), None, "calls").await.unwrap();
+    let placed_edge = s
+        .insert_edge(&fid, &placed, crate::db::pg_store::EdgeTarget::Node(&target), "calls")
+        .await
+        .unwrap();
+    let missed_edge = s
+        .insert_edge(
+            &fid,
+            &missed,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("handleAuth"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
 
     s.merge_edge_occurrences(
         &placed_edge,
@@ -688,10 +713,19 @@ async fn callees_carry_the_verdict_that_placed_each_edge() {
         .await
         .unwrap();
 
-    let placed_edge =
-        s.insert_edge(&fid, &source, Some(&placed_target), None, None, "calls").await.unwrap();
-    let missed_edge =
-        s.insert_edge(&fid, &source, None, Some("dispatch"), None, "calls").await.unwrap();
+    let placed_edge = s
+        .insert_edge(&fid, &source, crate::db::pg_store::EdgeTarget::Node(&placed_target), "calls")
+        .await
+        .unwrap();
+    let missed_edge = s
+        .insert_edge(
+            &fid,
+            &source,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("dispatch"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
 
     s.merge_edge_occurrences(
         &placed_edge,
@@ -764,7 +798,15 @@ async fn the_writer_fills_the_verdict_columns_and_redrives_them_on_change() {
         .seed_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(9))
         .await
         .unwrap();
-    let edge = s.insert_edge(&fid, &src, None, Some("nowhere"), None, "calls").await.unwrap();
+    let edge = s
+        .insert_edge(
+            &fid,
+            &src,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("nowhere"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
 
     let refusal = serde_json::json!([
         { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "reason": "plumbing" }
@@ -1213,7 +1255,9 @@ async fn impact_of_symbol_walks_callers_to_depth_and_says_when_it_stopped_early(
     for (from, to) in
         [("middle", "bottom"), ("upper", "middle"), ("top", "upper"), ("bottom", "top")]
     {
-        s.insert_edge(&fid, &id[from], Some(&id[to]), None, None, "calls").await.unwrap();
+        s.insert_edge(&fid, &id[from], crate::db::pg_store::EdgeTarget::Node(&id[to]), "calls")
+            .await
+            .unwrap();
     }
 
     let deep = s.impact_of_symbol(&[fid], "bottom", 3).await.unwrap();
@@ -1411,8 +1455,17 @@ async fn call_coverage_reports_unresolved_separately_per_direction() {
         .seed_node(&fid, "function", "caller", "src/c.rs", None, None, Some(1), Some(2))
         .await
         .unwrap();
-    s.insert_edge(&fid, &caller, Some(&target), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &caller, None, Some("target"), None, "calls").await.unwrap();
+    s.insert_edge(&fid, &caller, crate::db::pg_store::EdgeTarget::Node(&target), "calls")
+        .await
+        .unwrap();
+    s.insert_edge(
+        &fid,
+        &caller,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("target"), file: None },
+        "calls",
+    )
+    .await
+    .unwrap();
 
     let (resolved, unresolved) =
         s.call_coverage(&[fid], "target", CallDirection::Incoming).await.unwrap();
@@ -1462,10 +1515,21 @@ async fn get_callees_by_name_labels_locality_from_graph_nodes() {
         .await
         .unwrap();
 
-    s.insert_edge(&fid, &caller, Some(&local), None, None, "calls").await.unwrap();
-    s.insert_edge(&fid, &caller, Some(&lib), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &caller, crate::db::pg_store::EdgeTarget::Node(&local), "calls")
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &caller, crate::db::pg_store::EdgeTarget::Node(&lib), "calls")
+        .await
+        .unwrap();
     // unknown: an unresolved edge has NO target node to classify at all.
-    s.insert_edge(&fid, &caller, None, Some("map_err"), None, "calls").await.unwrap();
+    s.insert_edge(
+        &fid,
+        &caller,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("map_err"), file: None },
+        "calls",
+    )
+    .await
+    .unwrap();
 
     let callees = s.get_callees_by_name(&folder, "extract_deps").await.unwrap();
     let by_name: std::collections::HashMap<String, String> = callees
@@ -1737,7 +1801,8 @@ async fn insert_edge_with_props_stamps_and_merges() {
     assert_eq!(u_rel.as_deref(), Some("trait_impl"), "unresolved edges need the discriminant too");
 
     // The plain wrapper must still work and leave props empty.
-    let plain = s.insert_edge(&fid, &b, Some(&a), None, None, "calls").await.unwrap();
+    let plain =
+        s.insert_edge(&fid, &b, crate::db::pg_store::EdgeTarget::Node(&a), "calls").await.unwrap();
     let empty: serde_json::Value =
         sqlx_core::query_scalar::query_scalar("SELECT props FROM sensei.edges WHERE id = $1")
             .bind(plain)
@@ -1814,7 +1879,14 @@ async fn the_sweep_takes_mislabelled_containment_and_spares_real_inheritance() {
     .unwrap();
 
     // The mislabelled shape: FILE source, unresolved, no discriminant.
-    s.insert_edge(&fid, &file, None, Some("Sub"), None, "extends").await.unwrap();
+    s.insert_edge(
+        &fid,
+        &file,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("Sub"), file: None },
+        "extends",
+    )
+    .await
+    .unwrap();
     // Real inheritance, resolved and stamped.
     s.insert_edge_with_props(&EdgeRow {
         folder_id: &fid,
@@ -2099,9 +2171,18 @@ async fn a_resolved_import_is_not_reported_as_an_empty_external_target() {
 
     // A resolved import: target_id set, target_name NULL — the shape the
     // invariant guarantees.
-    s.insert_edge(&fid, &src, Some(&tgt), None, None, "imports").await.unwrap();
+    s.insert_edge(&fid, &src, crate::db::pg_store::EdgeTarget::Node(&tgt), "imports")
+        .await
+        .unwrap();
     // An external one, unresolved, carrying its specifier.
-    s.insert_edge(&fid, &src, None, Some("java.util.List"), None, "imports").await.unwrap();
+    s.insert_edge(
+        &fid,
+        &src,
+        crate::db::pg_store::EdgeTarget::Unresolved { name: Some("java.util.List"), file: None },
+        "imports",
+    )
+    .await
+    .unwrap();
 
     let rows = s.import_target_counts().await.unwrap();
     let mine: Vec<_> = rows
@@ -2203,7 +2284,14 @@ async fn the_resolution_classes_are_distinct_and_only_one_is_a_defect() {
     .unwrap();
 
     for name in ["only", "twin", "nowhere"] {
-        s.insert_edge(&fid, &src, None, Some(name), None, "calls").await.unwrap();
+        s.insert_edge(
+            &fid,
+            &src,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some(name), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
     }
 
     let rows: Vec<(Option<String>, i64)> = sqlx_core::query_as::query_as(
@@ -2281,7 +2369,7 @@ async fn an_unreferenced_lib_node_is_collected_and_a_referenced_one_survives() {
         )
         .await
         .unwrap();
-    s.insert_edge(&fid, &src, Some(&kept), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &src, crate::db::pg_store::EdgeTarget::Node(&kept), "calls").await.unwrap();
 
     // Orphan: minted and never pointed at — the shape a wrong derivation leaves.
     let orphan = s

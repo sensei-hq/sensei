@@ -1687,12 +1687,9 @@ impl PgStore {
         &self,
         folder_id: &uuid::Uuid,
         source_id: &uuid::Uuid,
-        target_id: Option<&uuid::Uuid>,
-        target_name: Option<&str>,
-        target_file: Option<&str>,
+        target: EdgeTarget<'_>,
         kind: &str,
     ) -> Result<uuid::Uuid, String> {
-        let target = EdgeTarget::from_parts(target_id, target_name, target_file);
         self.insert_edge_with_props(&EdgeRow {
             folder_id,
             source_id,

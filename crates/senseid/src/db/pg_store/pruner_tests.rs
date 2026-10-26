@@ -110,7 +110,7 @@ async fn seed(pg: &PgStore) -> Corpus {
         )
         .await
         .unwrap();
-    pg.insert_edge(&a, &top, Some(&deep), None, None, "calls").await.unwrap();
+    pg.insert_edge(&a, &top, crate::db::pg_store::EdgeTarget::Node(&deep), "calls").await.unwrap();
     // ...and one in the prefix-sharing sibling, which must survive.
     pg.seed_node_by_fqn(
         &ab,

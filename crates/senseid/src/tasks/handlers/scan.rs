@@ -1151,7 +1151,10 @@ mod tests {
             )
             .await
             .unwrap();
-        ctx.pg().insert_edge(&member_fid, &dup, Some(&stub), None, None, "calls").await.unwrap();
+        ctx.pg()
+            .insert_edge(&member_fid, &dup, crate::db::pg_store::EdgeTarget::Node(&stub), "calls")
+            .await
+            .unwrap();
 
         // Pre-state: the GC would NOT take it, which is what makes the ordering
         // the whole defect rather than a weak predicate.
@@ -1748,7 +1751,12 @@ mod tests {
             .unwrap();
         let ghost_edge = ctx
             .pg()
-            .insert_edge(&gone_fid, &ghost_a, Some(&ghost_b), None, None, "references")
+            .insert_edge(
+                &gone_fid,
+                &ghost_a,
+                crate::db::pg_store::EdgeTarget::Node(&ghost_b),
+                "references",
+            )
             .await
             .unwrap();
         ctx.pg().upsert_scan_state(&gone_fid, "gone/config.rs", 1, "h").await.unwrap();

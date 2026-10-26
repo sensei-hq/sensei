@@ -243,10 +243,24 @@ mod tests {
         .unwrap();
 
         // Two placed, two unplaced → confidence is exactly 0.5.
-        pg.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
-        pg.insert_edge(&fid, &b, Some(&c), None, None, "calls").await.unwrap();
-        pg.insert_edge(&fid, &a, None, Some("gone_one"), None, "calls").await.unwrap();
-        pg.insert_edge(&fid, &b, None, Some("gone_two"), None, "calls").await.unwrap();
+        pg.insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls").await.unwrap();
+        pg.insert_edge(&fid, &b, crate::db::pg_store::EdgeTarget::Node(&c), "calls").await.unwrap();
+        pg.insert_edge(
+            &fid,
+            &a,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("gone_one"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
+        pg.insert_edge(
+            &fid,
+            &b,
+            crate::db::pg_store::EdgeTarget::Unresolved { name: Some("gone_two"), file: None },
+            "calls",
+        )
+        .await
+        .unwrap();
 
         let written = compute(&ctx, &pid.to_string(), None).await.unwrap();
         assert!(written >= 3, "one row per architecture metric, got {written}");

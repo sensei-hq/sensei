@@ -741,9 +741,14 @@ async fn scoped_search_and_count_across_child_folder() {
         .await
         .unwrap();
     // Insert resolved edge: widget_builder calls render_widget.
-    s.insert_edge(&child_id, &fn_id, Some(&tgt_id), Some("render_widget"), None, "calls")
-        .await
-        .unwrap();
+    s.insert_edge(
+        &child_id,
+        &fn_id,
+        crate::db::pg_store::EdgeTarget::from_parts(Some(&tgt_id), Some("render_widget"), None),
+        "calls",
+    )
+    .await
+    .unwrap();
 
     // Resolve scope.
     let ids = s.scope_folder_ids(&proj_name).await.unwrap();
