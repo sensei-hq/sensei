@@ -19,21 +19,30 @@ edited in place. Jira is the first adapter. The engine is provider-neutral.
 
 The user was shown the PRD, `decisions.md` and design §2.6 wording and chose to
 **reverse** the read-only rule for metrics, automatically after every sync, on by default
-for every board including existing ones. Every surface below is updated **in this slice**
-(W-DOCS), so no document keeps contradicting the code.
+for every board including existing ones. Every document in the W-DOCS file set is updated
+**in this slice** by one rule, so no document keeps contradicting the code. The table lists the
+load-bearing statements, and W-DOCS covers the rest.
+
+**The canonical narrowed sentence** (used wherever a document says trackers are read-only,
+never written, or that sync never writes):
+
+> Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the
+> dōjō never writes to a tracker. The one write path is usage-metrics write-back by the
+> local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
 
 | Surface | Said | Now |
 |---|---|---|
-| `prd/modules/04-team/03-dojo-workspace-planning/README.md` :58 (Out), :105 (Lead rule), :221 (wrong gate) | "adapters are strictly read-only"; "An adapter never writes to the tracker"; "a tracker adapter writes back" is a regression | Reads stay read-only. An adapter may write **usage metrics only**, to tickets assigned to the token owner. Writing anything else (status, sprint, fields other than mapped metrics) is still a wrong gate. |
-| `decisions.md` :76 "Read-only means read-only" | "Tracker adapters never write back. There is no export-back path." | A new row dated 2026-10-26 supersedes it for metrics write-back; the old row stays, marked superseded. |
-| `design/integrations-and-gating-requirements.md` :23-24 ("read, never written"), §2.6 :140-144 ("a separate, explicit action, never a side effect of sync"), :401-403 (2026-10-14 decision), §6.2 | sync never writes; an export would be an explicit action | Metrics write-back **is** a side effect of every successful sync, on by default (user, 2026-10-26). Sprints, statuses and memberships are still never written. |
-| `scenarios/dojo-workspace-planning-gaps.feature` :29-32 | "no export action and no write path" | the scenario is narrowed to "sync never writes sprints, statuses or memberships" |
+| `prd/modules/04-team/03-dojo-workspace-planning/README.md` :36 (resolved 2026-10-21), :58 (Out), :105 (Lead rule), :221-222 (wrong gate) | "adapters are strictly read-only"; "An adapter never writes to the tracker"; "a tracker adapter writes back" is a regression | The canonical sentence. The wrong gate becomes "a tracker adapter writes anything other than usage metrics, or to a ticket not assigned to the token owner". |
+| `decisions.md` :69, :76 "Read-only means read-only"; `roadmap/09-dojo-expansion.md` D3 (:14) | "Tracker adapters never write back. There is no export-back path."; "Jira / ADO / GitHub stay read-only" | A new `decisions.md` row dated 2026-10-26 supersedes both for metrics write-back. The old rows stay, marked "superseded 2026-10-26 (tracker-metrics-writeback)". |
+| `design/integrations-and-gating-requirements.md` :23-24, §2.6 :136-144, :401-403 (2026-10-14 decision), §6.2, §8 :457 ("Sync never writes; after a sync, the tracker is unchanged") | sync never writes; an export would be an explicit action | Metrics write-back **is** a side effect of every successful sync, on by default (user, 2026-10-26); otherwise the canonical sentence. The §8 row becomes "Sync never writes sprints, statuses or memberships; after a sync the only tracker change is metrics write-back". |
+| `prd/modules/04-team/03-dojo-workspace-planning/scenarios/dojo-workspace-planning-gaps.feature` :29-32; `…/dojo-workspace-planning.feature` :5, :14 | "no export action and no write path" | the scenarios are narrowed to "sync never writes sprints, statuses or memberships" |
 | `spec/dojo/daemon-sync.md` :20 | "the dōjō reads; nothing writes back" | the dōjō still never writes to a tracker; the local daemon writes metrics (this spec) |
 | linkage spec Purpose :17-21 ("read-only", "never keyed by person"), Overrides row T3/D9 (:95 "no assignee"), "Out of scope" :657-659 ("write-back to any tracker", "assignee or any per-person figure"), Wrong gate :753 | read-only; no assignee; no per-person figure | The assignee is **compared, never stored**. The figure written is the assignee's own; usage **API output** still carries no person attribute. `assigned_to_me` is a property of the ticket relative to this machine's token, not a person attribute (W1). |
-| linkage spec Done gate 2 :717 and seam list :73 ("GET-only transport"); `tracker/mod.rs:95` doc comment; `tracker/transport.rs:1` module doc | no `post/put/…` call anywhere in `tracker/` | `GetTransport` stays GET-only, and sync, discover and connect only ever get one. Gate 2 is restated: POST/PUT calls exist only in `transport.rs`'s `RawWrite` impl, and `write_transport(` is called only from `tracker/writeback.rs` (gate 13). |
+| linkage spec Done gate 2 :717 and seam list :73 ("GET-only transport"); `tracker/mod.rs:94` doc comment; `tracker/transport.rs:1` module doc | no `post/put/…` call anywhere in `tracker/` | `GetTransport` stays GET-only, and sync, discover and connect only ever get one. Gate 2 is restated as this spec's gate 13. |
 | `backlog.md` :106 Jira deviation (3) | no assignee synced or stored; no per-person figure | as the linkage row above |
 | `database/ddl/table/sensei/{trackers,tracker_tasks}.ddl` comments and `database/design.dbml` :2781, :4135 | "Read-only mirror source"; "mirrored read-only … No assignee or other person data" | W11 wording, in both DDL and dbml |
-| `screen/workspace-integrations.md` sub-line :46-48, wrong gate :172; `screen/workspace-tickets.md` wrong gate :133; `app/…/integrations/IntegrationsScreen.svelte:71` | "Read-only: sensei never changes anything in Jira."; no per-person data shown | W-UI copy. The two screen wrong gates gain: "`assigned_to_me` and the write-back state are not person data; showing them is allowed." |
+| `screen/workspace-integrations.md` sub-line :46-48, wrong gate :172; `screen/workspace-tickets.md` sub-line :45-47, wrong gates :133-134; `app/…/integrations/IntegrationsScreen.svelte:71`; `app/…/tickets/TicketsScreen.svelte:40` | "Read-only: sensei never changes anything in Jira."; "Read from Jira; nothing is changed there."; "any write route called from this screen"; no per-person data shown | W-UI copy for both screens. The screen wrong gates gain: "`assigned_to_me` and the write-back state are not person data; showing them is allowed". The Tickets wrong gate :134 stays: the Tickets screen itself calls no write route. |
+| `prd/modules/04-team/README.md` :22, :28-29; `prd/modules/04-team/05-releases-and-dora/README.md` :24-25 | "external systems (trackers, CI) are read-only"; "tracker APIs are read, never written" | the canonical sentence (CI stays read-only) |
 
 ## Resolved design
 
@@ -84,6 +93,13 @@ for every board including existing ones. Every surface below is updated **in thi
 - The whole pass runs under `WRITEBACK_DEADLINE = 5 min`, including every 429 sleep.
   Writes use `WRITE_RETRIES = 3`, the same budget as `SYNC_RETRIES`. When the deadline is
   hit, tasks not yet written keep their state.
+- Discovery takes the same guard, so it is also locked out during a pass. A discovery
+  that finds the guard busy returns `Busy`, as it does today against a sync.
+- **The pass's own credential.** `run` builds its write transport with
+  `rt.transports.write_transport(...)`. If the keyring read fails (`TokenMissing`,
+  `CredentialStore`), it sets `trackers.writeback_error` to that code and returns, with
+  no task status written. A pass that gets a transport clears `writeback_error` first.
+  This is the only place `writeback_error` is written, and `last_error` is never touched.
 - **Before every task's write**, one read (`writeback_target(task_id)`) re-checks four things:
   - the tracker still exists
   - `writeback_enabled` is true
@@ -234,8 +250,12 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
      board issue endpoint with `jql=cf[N] is not EMPTY&maxResults=1&fields=none`. `true` →
      422 `field_in_use` `{field_ref}`, so a mapping can't take over Story Points or any
      field people fill in.
-  7. Transport and credential failures map exactly as in `connect_failure` (R8): 401
-     `unauthorized`, keyring → 503 `credential_store`, and so on.
+  7. Transport and credential failures use the statuses connect returns for the same
+     `TrackerError` (C26): `Unauthorized` → 401 `unauthorized`, `Forbidden` → 403
+     `forbidden`, `TokenMissing`/`CredentialStore` → 500 with their code, and any other →
+     502 with its code. The handler maps `TrackerError` directly. It doesn't go through
+     `connect_failure`, which matches `ConnectError`. The status table is factored into
+     one `fn tracker_error_status(TrackerError) -> StatusCode` that both use.
 - On success, one transaction replaces the set, sets `writeback_hash = NULL` on every task
   of the tracker, and clears `field_invalid`. The route returns 200 with the
   `GET …/fields` body.
@@ -255,13 +275,14 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   tracker's tasks, and with `comment_removed` it also sets `writeback_comment_ref = NULL`
   and `writeback_hash = NULL`. The next pass therefore posts a new comment.
 - `GET …/trackers`: each tracker gains
-  `"writeback": {"enabled", "state", "surface": "comment"|"fields", "mapped": <rows>, "failing": <tasks in a non-ok status>}`.
+  `"writeback": {"enabled", "state", "surface": "comment"|"fields", "mapped": <rows>, "assigned": <live tasks with assigned_to_me>, "failing": <tasks in a non-ok status>, "error": <writeback_error|null>}`.
   `state` is the first of these that applies:
   1. `disabled`
-  2. `owner_not_a_person` (`owner_state = not_a_person`)
-  3. `owner_unknown` (`owner_ref` NULL otherwise)
-  4. `nothing_assigned` (no live task with `assigned_to_me`)
-  5. `active`
+  2. `credential_failed` (`writeback_error` not NULL)
+  3. `owner_not_a_person` (`owner_state = not_a_person`)
+  4. `owner_unknown` (`owner_ref` NULL otherwise)
+  5. `nothing_assigned` (`assigned = 0`)
+  6. `active`
 - `GET …/tasks` and `GET …/tracker-tasks/{key}`: each task gains `assigned_to_me`,
   `writeback_status`, `writeback_at`.
 - Both new routes are added inside `api::routes::tracker_routes()`, before its
@@ -280,7 +301,7 @@ The mapping covers every `TrackerError` and every operation:
 | the W5 404 check finds the issue | `comment_removed` | toggle on, re-connect (both clear the ref) |
 | `RateLimited` after `WRITE_RETRIES` | `rate_limited` | not sticky |
 | `BadRequest` on a comment write, `HttpError`, `Transport`, `Decode`, `Redirect`, `Db`, deadline, an id failing W10's shape check | `error` | not sticky |
-| `TokenMissing`, `CredentialStore` (no transport) | the pass stops with no status written; the sync already recorded the credential problem | n/a |
+| `TokenMissing`, `CredentialStore` (no write transport) | no task status; `trackers.writeback_error` = the code (W2) | cleared by the next pass that gets a transport |
 
 - A write failure **never** writes `trackers.last_error` or changes the sync's result. The
   success apply clears `last_error` before the pass runs (C17). One task's failure doesn't
@@ -305,9 +326,13 @@ pub enum WriteMethod { Post, Put }
 ```
 
 - `PolicyTransport<R>` implements `WriteTransport` for `R: RawWrite`. The 429 loop
-  is **one** generic function used by both the GET and the write impls, not a copy.
-  `map_response` returns `Value::Null` for a 2xx with an empty body. Today that's a
-  `Decode` error (C10). GET callers are unaffected, since Jira's GETs always have a body.
+  is **one** generic function used by both the GET and the write impls, not a copy. It
+  takes the response mapper as a parameter.
+  - GET keeps `map_response` unchanged: an empty 2xx is still `Decode` (C10).
+  - Writes use `map_write_response`, which returns `Value::Null` for an empty 2xx and
+    otherwise delegates to `map_response`.
+  
+  No existing GET caller changes behaviour (C30).
 - `ReqwestRaw` implements `RawWrite` on **the same client** it builds for GET:
   `crate::http::bounded_builder()` with `redirect::Policy::none()`. A 3xx on a write is
   `Redirect`, never followed. The base URL is the stored, normalised `trackers.base_url`,
@@ -343,8 +368,8 @@ pub enum WriteMethod { Post, Put }
   - `tracker_writeback_status` (`ok, forbidden, field_invalid, comment_removed, not_found, rate_limited, error`)
   - `tracker_owner_state` (`unknown, not_a_person`)
 - New table `tracker_fields` (W6).
-- `trackers` gains `owner_ref text`, `owner_state tracker_owner_state` and
-  `writeback_enabled boolean not null default true`. The comment's "Read-only mirror source
+- `trackers` gains `owner_ref text`, `owner_state tracker_owner_state`,
+  `writeback_enabled boolean not null default true` and `writeback_error tracker_error`. The comment's "Read-only mirror source
   for …" becomes "Mirror source for …; writes back usage metrics only, to tickets
   assigned to the token owner (spec tracker-metrics-writeback)".
 - `tracker_tasks` gains `assigned_to_me boolean`, `writeback_hash text`,
@@ -353,11 +378,12 @@ pub enum WriteMethod { Post, Put }
   read-only" to "mirrored from the tracker", and "No assignee or other person data, by
   design" to "No assignee identity: only whether the token owner is the assignee".
 - `database/design.dbml` gets the same comments, columns and table.
-- **Re-key and re-connect.** `connect_tracker` updates two kinds of row: the row being
-  re-connected, and every sibling board it re-keys onto the new token (C22). On all of
-  them it:
-  - sets `owner_ref` and `owner_state` (the re-connected row from its `validate`; siblings
-    to NULL, so their next sync backfills)
+- **Re-key and re-connect.** `connect_tracker` writes the connected board (an UPDATE on
+  re-connect, an INSERT on a new board) and then, on **every** connect, re-keys each
+  sibling board on the same site onto the new token (C22, C31). On the connected board
+  and every re-keyed sibling it:
+  - sets `owner_ref` and `owner_state` (the connected board from its `validate`; siblings
+    to NULL, so their next sync backfills) and `writeback_error = NULL`
   - sets `writeback_comment_ref`, `writeback_hash`, `writeback_status` and
     `assigned_to_me` to NULL for their tasks, since a new token owner can't edit the old
     owner's comments
@@ -374,9 +400,10 @@ pub enum WriteMethod { Post, Put }
   - **Write back to Jira**, a toggle (`data-action="writeback"`) that sends the PATCH.
     While pending, the toggle is disabled. On error, it reverts and shows the code text.
   - **A state line** (`data-writeback-state=<state>`):
-    - `active`: "Writing to N tickets assigned to you." N is the count of live
-      `assigned_to_me` tasks. With `failing > 0` it adds " K couldn't be written."
+    - `active`: "Writing to N tickets assigned to you." N is `writeback.assigned`. With
+      `failing > 0` it adds " K couldn't be written."
     - `disabled`: "Write-back is off."
+    - `credential_failed`: "Couldn't read the Jira token to write back. Replace the token."
     - `owner_not_a_person`: "This token belongs to an app account, so sensei can't tell
       which tickets are yours. Nothing is written."
     - `owner_unknown`: "Checking which tickets are yours on the next sync."
@@ -394,15 +421,37 @@ pub enum WriteMethod { Post, Put }
     - `invalid_body` "Couldn't save the mapping."
 - **Per-ticket write status** on the Tickets screen stays out of this slice. The state
   line's `failing` count is the only aggregate.
-- **App wrappers** in `app/src/lib/api-trackers.ts` (next to the existing ones):
-  `setTrackerWriteback`, `getTrackerFields`, `putTrackerFields`. The codes are added to
+- **Tickets screen sub-line** (`TicketsScreen.svelte:40`, `workspace-tickets.md:45-47`):
+  "… Read from Jira. On tickets assigned to you, sensei writes these numbers back, as set
+  on Integrations."
+- **App wrappers** go on `senseiApi` in `app/src/lib/api.ts`, beside `tryListTrackers`
+  and the others, following their `try*` convention (C29): `trySetTrackerWriteback`,
+  `tryGetTrackerFields`, `tryPutTrackerFields`. They're tested in
+  `app/src/lib/api-trackers.spec.ts`. The W7/W8 codes and `credential_failed` are added to
   `tracker-errors.ts`.
 - **Disconnect copy** stays "Jira itself is not changed." It's still true: disconnect never
   deletes what was written.
 
 ### W-DOCS · Documents updated in this slice
 
-Every surface in "Overrides of parents", with the wording given there. The `/api/projects/{id}/trackers`
+**The file set:**
+- `docs/prd/modules/04-team/` (all files)
+- `docs/decisions.md`
+- `docs/roadmap/09-dojo-expansion.md`
+- `docs/design/integrations-and-gating-requirements.md`
+- `docs/spec/dojo/daemon-sync.md`
+- `docs/spec/daemon/tracker-jira-linkage.md`
+- `docs/spec/screen/workspace-integrations.md` and `workspace-tickets.md`
+- `docs/backlog.md`
+- the two tracker DDL files and `database/design.dbml`
+
+**The rule.** In those files, every paragraph that says trackers are read-only, never
+written, or that sync never writes is either:
+- rewritten to the "Now" wording in "Overrides of parents", or
+- given the canonical sentence.
+
+Statements about CI, or about the dōjō never writing, stay as they are, but their
+paragraph gains the spec reference. The shipped app copy changes as W-UI says. The `/api/projects/{id}/trackers`
 path in the screen spec's Data invariants (:142) is inherited staleness, so it's
 corrected in passing and noted as such.
 
@@ -489,11 +538,15 @@ and the test DB unless marked *(tenant)*.
       next pass sends 0 requests for that task.
     - Toggle off and on → the next pass sends 1 list GET and 1 POST.
     - A 404 on both → `not_found`.
-13. **GET-only stays GET-only**:
-    - `rg -n 'write_transport\(' crates/senseid/src --glob '!**/tests*'` → only the
-      definition in `runtime.rs` and calls in `tracker/writeback.rs`.
-    - `rg -n '\.(post|put|patch|delete)\(|Method::' crates/senseid/src/tracker` → only the
-      `RawWrite` impl in `transport.rs`.
+13. **GET-only stays GET-only** (replaces linkage gate 2):
+    - `rg -n 'write_transport\(' crates/senseid/src` → only the trait method and impls in
+      `tracker/runtime.rs`, and calls in `tracker/writeback.rs`.
+    - `rg -n 'reqwest::Method|\.(post|put|patch|delete)\(' crates/senseid/src/tracker` →
+      only the `RawWrite` impl in `transport.rs`.
+    - `rg -n 'WriteMethod::' crates/senseid/src` → only `tracker/transport.rs` and
+      `tracker/jira.rs`, plus their `#[cfg(test)]` modules.
+    - `sync.rs`, `discover.rs` and `connect.rs` contain no `WriteTransport` and no
+      `write_transport`.
 14. **Isolation from Jira wording**: `rg -n -i 'jira|atlassian' crates/senseid/src/tracker/writeback.rs`
     outside `#[cfg(test)]` → no output.
 15. **Fields path**: with `active_hours → customfield_10050`, a pass sends exactly
@@ -519,20 +572,32 @@ and the test DB unless marked *(tenant)*.
 21. **Lock and deadline**: a pass while a sync holds the guard → 0 requests and no error.
     A pass whose fake sleeps past `WRITEBACK_DEADLINE` stops, and unwritten tasks keep
     their prior status.
-22. **Re-connect and re-key**: re-connecting a board whose site has a sibling board → both
-    rows have `owner_ref`/`owner_state` reset as W11 says, and every task's
+22. **Re-connect and re-key**: for both a re-connect and a **new** board on a site with an
+    existing sibling board, the connected and sibling rows have
+    `owner_ref`/`owner_state`/`writeback_error` reset as W11 says, and each of their tasks'
     `writeback_comment_ref`, hash, status and `assigned_to_me` are NULL.
+22a. **Pass credential**: a keyring failure when building the write transport → no
+    request, `writeback_error = credential_store`, `writeback.state = credential_failed`,
+    and `last_error` still NULL. The next pass that gets a transport clears it.
+22b. **GET unchanged**: an empty 200 on a GET is still `Decode` (the existing transport
+    test is extended), and an empty 204 on a write is `Ok(Value::Null)`.
 23. **Toggle and PATCH**: `{writeback_enabled:false}` → 200 and the next sync sends 0
     writes. `{"foo":1}`, `{}` and `{"writeback_enabled":"no"}` → 422 `invalid_body`.
 24. **Guard**: PATCH and PUT `…/fields` with `Origin: https://evil.example` → 403, and with
     no Origin → allowed (the existing guard rule).
 25. **UI** (component tests, `IntegrationsScreen.spec.svelte.ts`):
     - the sub-line equals the W-UI text
-    - for each `writeback.state` the line has the W-UI text
+    - for each `writeback.state` the line has the W-UI text (`active` with `assigned: 2`
+      renders "Writing to 2 tickets assigned to you.")
+    - `TicketsScreen` renders the W-UI Tickets sub-line
     - the toggle sends `setTrackerWriteback` and reverts on error
     - a `field_in_use` response shows its text on the named row
-26. **Docs**: `rg -n 'never write|writes? back|read-only' docs/prd/modules/04-team/03-dojo-workspace-planning docs/decisions.md docs/design/integrations-and-gating-requirements.md docs/spec/dojo/daemon-sync.md`
-    → every remaining hit is the narrowed wording from "Overrides of parents".
+26. **Docs**:
+    - Over the W-DOCS file set, every paragraph that matches the read-only or no-write
+      pattern also names this spec. This command → no output:
+      `for f in <W-DOCS markdown files>; do awk -v RS= -v F="$f" 'tolower($0) ~ /read-only|never writ|writes? back|nothing is changed|never changes anything/ && $0 !~ /tracker-metrics-writeback/ {print F": "substr($0,1,80)}' "$f"; done`
+    - `rg -n 'nothing is changed there|never changes anything in Jira' app/src` → no output.
+    - Each superseded `decisions.md` row carries "superseded 2026-10-26".
 27. *(tenant)* X1–X8 confirmed or their decided fallback applied, recorded under Evidence.
 
 ## Wrong gate
@@ -584,12 +649,17 @@ The rows marked *(rewrite)* were added by the rewrite and verified in a second p
 | C20 | `sync`/`connect` core fns take `&dyn GetTransport`; `discover.rs::run_task` holds the whole `TrackerRuntime` (factory included) | discover.rs:241 | as stated | CONFIRMED *(was MISLEADING: draft said none holds a factory; gate 13 now checks `write_transport(` callers)* |
 | C21 | `TransportFactory` has one method, with `FakeFactory` for tests | runtime.rs:18-25, 130-154 | as stated | CONFIRMED |
 | C22 | A re-connect updates the board in place **and** re-keys every sibling board on the site to the new account and token | trackers.rs:962-968, 1005-1009 | as stated | CONFIRMED *(was MISLEADING: draft said single upsert; W11 now resets siblings)* |
-| C23 *(rewrite)* | A session whose messages are all unpriced yields `api_cost = NULL` with `api_cost_n ≥ 1` | `session_api_cost.ddl` `sum(c.cost)`, `count(*)-count(c.cost)`; tracker_usage.rs:122-124 | | |
-| C24 *(rewrite)* | The board issue endpoint is already called with a `jql` parameter (R11) | jira.rs `search_keys` | | |
-| C25 *(rewrite)* | `ReqwestRaw::new` builds its client with `bounded_builder()` and `Policy::none()` | transport.rs:83-90 | | |
-| C26 *(rewrite)* | `connect_failure` maps keyring failures to a status the W7 route can reuse | api/handlers/trackers.rs `connect_failure` | | |
-| C27 *(rewrite)* | The decision row, PRD lines and design lines quoted in "Overrides of parents" exist at those lines | read each | | |
-| C28 *(rewrite)* | `IntegrationsScreen.spec.svelte.ts` exists as the screen's component-test file | `ls app/src/routes/(workspace)/workspace/[id]/integrations/` | | |
+| C23 *(rewrite)* | A session whose messages are all unpriced yields `api_cost = NULL` with `api_cost_n ≥ 1` | `message_api_cost.ddl`, `session_api_cost.ddl` `sum(c.cost)`; tracker_usage.rs:122-124 | sum of NULLs is NULL; row exists so n=1 | CONFIRMED |
+| C24 *(rewrite)* | The board issue endpoint is already called with a `jql` parameter (R11) | jira.rs:313-323 `search_keys` | `{board_path}/issue` with `jql=key in (…)` | CONFIRMED |
+| C25 *(rewrite)* | `ReqwestRaw::new` builds its client with `bounded_builder()` and `Policy::none()` | transport.rs:85-89 | as stated | CONFIRMED |
+| C26 *(rewrite)* | Connect's statuses for a `TrackerError`: 401 `unauthorized`, 403 `forbidden`, keyring 500 `credential_store`, other 502 with code; `connect_failure` matches `ConnectError`, not `TrackerError` | api/handlers/trackers.rs:219-252; test `a_keyring_failure_is_500_credential_store` :833 | as stated | CONFIRMED *(was FALSE: draft said keyring → 503 and reuse of `connect_failure`; W7 step 7 corrected)* |
+| C27 *(rewrite)* | The lines quoted in "Overrides of parents" exist with that wording | sed each cited line | all match; mod.rs doc comment is :94 | CONFIRMED *(was MISLEADING on completeness: the table read as exhaustive; now a canonical sentence + W-DOCS file-set rule + gate 26; gaps.feature path and mod.rs line corrected)* |
+| C28 *(rewrite)* | `IntegrationsScreen.spec.svelte.ts` exists as the screen's component-test file | `find app/src -iname 'IntegrationsScreen*'` | present | CONFIRMED |
+| C29 *(rewrite)* | The tracker app wrappers are `try*` methods on `senseiApi` in `app/src/lib/api.ts`; `app/src/lib/api-trackers.ts` does not exist (only its spec); `tracker-errors.ts` holds the code→words map | api.ts:756-785; `ls app/src/lib` | as stated | CONFIRMED *(was FALSE: draft placed wrappers in a non-existent `api-trackers.ts`; W-UI corrected)* |
+| C30 *(rewrite)* | Changing `map_response` to accept an empty 2xx would alter two GET callers (`validate`'s `/myself`, the board-name read) | jira.rs:119, 152 | as stated | CONFIRMED *(was MISLEADING: draft said GET callers unaffected; W10 now scopes the empty-body rule to writes)* |
+| C31 *(rewrite)* | The sibling re-key UPDATE runs after a first-time INSERT as well as after a re-connect UPDATE | pg_store/trackers.rs:960-1009 | as stated | CONFIRMED *(W11 and gate 22 now cover a new-board connect)* |
+| C32 *(rewrite)* | A keyring failure inside the write-back pass would be recorded nowhere (the sync before it succeeded and cleared `last_error`) | runtime.rs:76-92; trackers.rs:604 | as stated | CONFIRMED *(was MISLEADING in W9: "the sync already recorded it"; now `writeback_error`)* |
+| C33 *(rewrite)* | Discovery takes the same per-tracker guard as sync | discover.rs:97 | as stated | CONFIRMED |
 
 ## Related
 
