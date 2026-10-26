@@ -222,8 +222,9 @@ The settings screen lists them as repositories.
 - #188 (B2): **landed 2026-10-25** (d5bfdc7d): `GET /api/tasks/abandoned` (per day and kind, ten worst by
   kind and path) and a Watchdog section in `sensei doctor`. Live: 204 in 14 days. Closes when the released
   doctor prints it.
-- #336: `ingest_capture` abandoned 117× in 14 days on one 1.28 GB active transcript (found by #188).
-  Measure first: does a pass re-read the file whole?
+- #336: **landed 2026-10-25** (e5bf2e9d): `ingest_capture` was abandoned 117× in 14 days on one 1.28 GB
+  transcript. Claude's `parse_file` read the file five times, 5 s per pass. Now it reads once, 25.2 s → 5.1 s
+  on that file. Closes after a week of the released daemon with no `ingest_capture` abandonment.
 - ~~C1~~: `public.logs` size — #180, closed.
 - #125: 68 orphaned transcript turn sets.
 - #161: typed rows, remainder.

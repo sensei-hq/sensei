@@ -13,9 +13,11 @@ Develop CI is green on 45bff79b.
 - #188 (d5bfdc7d): `GET /api/tasks/abandoned?days=N` and a Watchdog section in `sensei doctor`.
   Live: 204 abandonments in 14 days. Check: the released `sensei doctor` prints the section.
 
-**Next:** #336. The worst abandonment is `ingest_capture` on one 1.28 GB active transcript (117×).
-Measure first whether a pass re-reads the file from the start. Start by reading
-`crate::transcript::run_ingest_capture`.
+- #336 (e5bf2e9d): a Claude transcript is read once per ingest, not five times; 25.2 s → 5.1 s on
+  the 1.28 GB transcript. Check: a week of `/api/tasks/abandoned` with no `ingest_capture`.
+
+**Next:** the next open wave-5 item after #336 in the burndown, which is #125 (68 orphaned
+transcript turn sets). Start by counting them on the live DB.
 
 **Open (the user's):**
 - dbd 0.27.7: the v0.27.6 lockfile pins rustls-webpki/webpki-roots/ctutils for
@@ -23,7 +25,7 @@ Measure first whether a pass re-reads the file from the start. Start by reading
 - v0.20.1's `deploy-dojo` is still waiting; it would change nothing. Approve or reject.
 - #331: count production's duplicate personal dōjōs (counts only):
   `psql "$PROD" -Atc "select count(*) from dojo.tenants where origin='personal' and key ~ '-[0-9]+$'"`.
-- A release (patch) would let #178 and #188 close; it's the user's call when.
+- A release (patch) would let #178, #188 and #336 close; it's the user's call when.
 
 **Known:** DeepSource is red on kavach main; qlty is out of minutes. After a DDL change, run
 `make test-template` (#142). `update_phase` returned 404 from the released daemon.
