@@ -484,27 +484,31 @@ async fn callers_carry_the_verdict_that_placed_each_edge() {
 /// `resolved_via`, or drop a key from either arm of `callee_row`.
 #[test]
 fn both_callee_paths_report_the_same_shape() {
-    use crate::db::pg_store::graph::Placement;
+    use crate::db::pg_store::graph::{Callee, Placement};
 
     let indexed = PgStore::callee_row(
-        "parse",
-        Some("function"),
-        Some("src/parse.rs"),
-        Some(12),
-        "internal",
-        "calls",
+        Callee {
+            name: "parse",
+            kind: Some("function"),
+            file: Some("src/parse.rs"),
+            line: Some(12),
+            locality: "internal",
+            edge_kind: "calls",
+        },
         &Placement::Indexed {
             resolved_via: Some("through_an_import".to_string()),
             unresolved_reason: None,
         },
     );
     let chased = PgStore::callee_row(
-        "parse",
-        Some("function"),
-        Some("src/parse.rs"),
-        Some(12),
-        "internal",
-        "calls",
+        Callee {
+            name: "parse",
+            kind: Some("function"),
+            file: Some("src/parse.rs"),
+            line: Some(12),
+            locality: "internal",
+            edge_kind: "calls",
+        },
         &Placement::ReceiverChain,
     );
 
@@ -538,12 +542,14 @@ fn both_callee_paths_report_the_same_shape() {
 
     // A missed edge: no rung, a reason, and `resolved` false.
     let missed = PgStore::callee_row(
-        "mystery",
-        None,
-        None,
-        None,
-        "unknown",
-        "calls",
+        Callee {
+            name: "mystery",
+            kind: None,
+            file: None,
+            line: None,
+            locality: "unknown",
+            edge_kind: "calls",
+        },
         &Placement::Indexed {
             resolved_via: None,
             unresolved_reason: Some("dynamic_dispatch".to_string()),

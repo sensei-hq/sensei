@@ -115,15 +115,17 @@ mod tests {
 
         // 1. The symbol EXISTS as code ⇒ the mention resolves ⇒ not drift. This
         //    scan also records `sym` into the symbol-name history.
-        pg.merge_function(
-            &fid,
-            &sym,
-            "src/events.rs",
-            Some("fn process_event()"),
-            Some(1),
-            Some(9),
-            None,
-        )
+        pg.upsert_node(&crate::db::pg_store::NodeRow {
+            folder_id: &fid,
+            kind: "function",
+            name: &sym,
+            file_path: "src/events.rs",
+            parent_id: None,
+            signature: Some("fn process_event()"),
+            line_start: Some(1),
+            line_end: Some(9),
+            is_exported: false,
+        })
         .await
         .unwrap();
         assert_eq!(
@@ -164,15 +166,17 @@ mod tests {
         assert_eq!(total.0, 1, "dedup — still a single row");
 
         // 4. Add the code back ⇒ the mention resolves in place.
-        pg.merge_function(
-            &fid,
-            &sym,
-            "src/events.rs",
-            Some("fn process_event()"),
-            Some(1),
-            Some(9),
-            None,
-        )
+        pg.upsert_node(&crate::db::pg_store::NodeRow {
+            folder_id: &fid,
+            kind: "function",
+            name: &sym,
+            file_path: "src/events.rs",
+            parent_id: None,
+            signature: Some("fn process_event()"),
+            line_start: Some(1),
+            line_end: Some(9),
+            is_exported: false,
+        })
         .await
         .unwrap();
         assert_eq!(scan_doc_drift(&ctx, &task).await.unwrap(), 0, "nothing newly broken");

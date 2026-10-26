@@ -166,6 +166,17 @@ pub struct NodeRow<'a> {
     pub is_exported: bool,
 }
 
+/// The fields of one callee row, whichever query supplied them — see
+/// [`PgStore::callee_row`].
+pub(super) struct Callee<'a> {
+    pub name: &'a str,
+    pub kind: Option<&'a str>,
+    pub file: Option<&'a str>,
+    pub line: Option<i32>,
+    pub locality: &'a str,
+    pub edge_kind: &'a str,
+}
+
 /// One `upsert_node_by_fqn` write, its file already resolved: what the insert
 /// writes and, on an identity collision, what the adoption searches and sets.
 /// One row for both, each destructuring it EXHAUSTIVELY (#161), so a column
@@ -204,35 +215,6 @@ impl PgStore {
     }
 
     // ── Graph (typed wrappers) ─────────────────────────────────────────
-
-    // The arguments ARE the columns. A struct here would restate the same
-    // names one indirection away without removing a single one; `FqnDef`
-    // above is the case where a struct earned its keep, because that call
-    // has a meaningful default.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn merge_function(
-        &self,
-        folder_id: &uuid::Uuid,
-        name: &str,
-        file_path: &str,
-        signature: Option<&str>,
-        line_start: Option<i32>,
-        line_end: Option<i32>,
-        parent_id: Option<&uuid::Uuid>,
-    ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(&NodeRow {
-            folder_id,
-            kind: "function",
-            name,
-            file_path,
-            parent_id,
-            signature,
-            line_start,
-            line_end,
-            is_exported: false,
-        })
-        .await
-    }
 
     pub async fn merge_file(
         &self,
@@ -2657,15 +2639,8 @@ impl PgStore {
     /// the point of extracting it is that the guarantee holds whichever query
     /// supplied the fields, and a test that has to go through Postgres to check
     /// that is testing the query instead.
-    pub(super) fn callee_row(
-        name: &str,
-        kind: Option<&str>,
-        file: Option<&str>,
-        line: Option<i32>,
-        locality: &str,
-        edge_kind: &str,
-        placement: &Placement,
-    ) -> serde_json::Value {
+    pub(super) fn callee_row(callee: Callee<'_>, placement: &Placement) -> serde_json::Value {
+        let Callee { name, kind, file, line, locality, edge_kind } = callee;
         let (resolved, via, reason, placed_by) = match placement {
             Placement::Indexed { resolved_via, unresolved_reason } => {
                 (resolved_via.is_some(), resolved_via.clone(), unresolved_reason.clone(), "indexer")
@@ -2774,21 +2749,25 @@ impl PgStore {
                     // The chase found a definition, so the row describes THAT
                     // node — not the unresolved target the edge recorded.
                     Some((n, k, f, l, loc)) => Self::callee_row(
-                        n,
-                        Some(k),
-                        f.as_deref(),
-                        *l,
-                        loc,
-                        &edge_kind,
+                        Callee {
+                            name: n,
+                            kind: Some(k),
+                            file: f.as_deref(),
+                            line: *l,
+                            locality: loc,
+                            edge_kind: &edge_kind,
+                        },
                         &Placement::ReceiverChain,
                     ),
                     None => Self::callee_row(
-                        &name,
-                        kind.as_deref(),
-                        file.as_deref(),
-                        line,
-                        &locality,
-                        &edge_kind,
+                        Callee {
+                            name: &name,
+                            kind: kind.as_deref(),
+                            file: file.as_deref(),
+                            line,
+                            locality: &locality,
+                            edge_kind: &edge_kind,
+                        },
                         &Placement::Indexed { resolved_via: via, unresolved_reason: reason },
                     ),
                 }
