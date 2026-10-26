@@ -38,7 +38,7 @@ never written, or that sync never writes):
 | `prd/modules/04-team/03-dojo-workspace-planning/scenarios/dojo-workspace-planning-gaps.feature` :29-32; `…/dojo-workspace-planning.feature` :5, :14 | "no export action and no write path" | the scenarios are narrowed to "sync never writes sprints, statuses or memberships" |
 | `spec/dojo/daemon-sync.md` :20 | "the dōjō reads; nothing writes back" | the dōjō still never writes to a tracker; the local daemon writes metrics (this spec) |
 | linkage spec Purpose :17-21 ("read-only", "never keyed by person"), Overrides row T3/D9 (:95 "no assignee"), "Out of scope" :657-659 ("write-back to any tracker", "assignee or any per-person figure"), Wrong gate :753 | read-only; no assignee; no per-person figure | The assignee is **compared, never stored**. The figure written is the assignee's own; usage **API output** still carries no person attribute. `assigned_to_me` is a property of the ticket relative to this machine's token, not a person attribute (W1). |
-| linkage spec Done gate 2 :717 and seam list :73 ("GET-only transport"); `tracker/mod.rs:94` doc comment; `tracker/transport.rs:1` module doc | no `post/put/…` call anywhere in `tracker/` | `GetTransport` stays GET-only, and sync, discover and connect only ever get one. Gate 2 is restated as this spec's gate 13. |
+| linkage spec Done gate 2 :717 and seam list :73 ("GET-only transport"); `tracker/mod.rs:94` doc comment; `tracker/transport.rs:1` module doc | no `post/put/…` call anywhere in `tracker/` | `GetTransport` stays GET-only, and sync, discover and connect only ever get one. Gate 2 is restated as this spec's gate 13. `mod.rs:94` stays true. `transport.rs:1` is reworded to "The shared GET transport, and the write seam that only `writeback.rs` uses: status → error mapping and the 429 policy over one-method raw HTTP seams". |
 | `backlog.md` :106 Jira deviation (3) | no assignee synced or stored; no per-person figure | as the linkage row above |
 | `database/ddl/table/sensei/{trackers,tracker_tasks}.ddl` comments and `database/design.dbml` :2781, :4135 | "Read-only mirror source"; "mirrored read-only … No assignee or other person data" | W11 wording, in both DDL and dbml |
 | `screen/workspace-integrations.md` sub-line :46-48, wrong gate :172; `screen/workspace-tickets.md` sub-line :45-47, wrong gates :133-134; `app/…/integrations/IntegrationsScreen.svelte:71`; `app/…/tickets/TicketsScreen.svelte:40` | "Read-only: sensei never changes anything in Jira."; "Read from Jira; nothing is changed there."; "any write route called from this screen"; no per-person data shown | W-UI copy for both screens. The screen wrong gates gain: "`assigned_to_me` and the write-back state are not person data; showing them is allowed". The Tickets wrong gate :134 stays: the Tickets screen itself calls no write route. |
@@ -271,7 +271,7 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
 - `PATCH /api/workspaces/{id}/trackers/{tracker}`: the body must be exactly
   `{"writeback_enabled": <bool>}`. Anything else (missing, non-bool, extra key) → 422
   `invalid_body`. It returns 200 with the tracker in the `GET …/trackers` element shape.
-  Going false → true clears `comment_removed`, `forbidden` and `not_found` for that
+  Going false → true clears `comment_removed`, `forbidden`, `not_found` and `field_invalid` for that
   tracker's tasks, and with `comment_removed` it also sets `writeback_comment_ref = NULL`
   and `writeback_hash = NULL`. The next pass therefore posts a new comment.
 - `GET …/trackers`: each tracker gains
@@ -421,6 +421,9 @@ pub enum WriteMethod { Post, Put }
     - `invalid_body` "Couldn't save the mapping."
 - **Per-ticket write status** on the Tickets screen stays out of this slice. The state
   line's `failing` count is the only aggregate.
+- **Scheduled tasks**: the `tracker_sync` description (`api/handlers/scheduled_tasks.rs:63`)
+  becomes "Tracker sync: mirrors each connected Jira board's sprints and tickets, writes
+  usage metrics back to tickets assigned to you, and drains removed credentials".
 - **Tickets screen sub-line** (`TicketsScreen.svelte:40`, `workspace-tickets.md:45-47`):
   "… Read from Jira. On tickets assigned to you, sensei writes these numbers back, as set
   on Integrations."
@@ -435,7 +438,7 @@ pub enum WriteMethod { Post, Put }
 ### W-DOCS · Documents updated in this slice
 
 **The file set:**
-- `docs/prd/modules/04-team/` (all files)
+- `docs/prd/modules/04-team/` (every `.md` and `.feature`)
 - `docs/decisions.md`
 - `docs/roadmap/09-dojo-expansion.md`
 - `docs/design/integrations-and-gating-requirements.md`
@@ -541,12 +544,12 @@ and the test DB unless marked *(tenant)*.
 13. **GET-only stays GET-only** (replaces linkage gate 2):
     - `rg -n 'write_transport\(' crates/senseid/src` → only the trait method and impls in
       `tracker/runtime.rs`, and calls in `tracker/writeback.rs`.
-    - `rg -n 'reqwest::Method|\.(post|put|patch|delete)\(' crates/senseid/src/tracker` →
-      only the `RawWrite` impl in `transport.rs`.
-    - `rg -n 'WriteMethod::' crates/senseid/src` → only `tracker/transport.rs` and
-      `tracker/jira.rs`, plus their `#[cfg(test)]` modules.
-    - `sync.rs`, `discover.rs` and `connect.rs` contain no `WriteTransport` and no
-      `write_transport`.
+    - `rg -n 'client\.(post|put|patch|delete|request)\(|reqwest::Method' crates/senseid/src/tracker`
+      → only the `RawWrite` impl in `transport.rs`. Today it gives no output: the keyring
+      `s.delete(` at connect.rs:177 doesn't match, because it isn't a `client.` call.
+    - `rg -n 'WriteMethod|WriteTransport|write_transport' crates/senseid/src/tracker/{sync,discover,connect}.rs crates/senseid/src/api`
+      → no output. These are forbidden where they mustn't appear; tests elsewhere may
+      use them freely.
 14. **Isolation from Jira wording**: `rg -n -i 'jira|atlassian' crates/senseid/src/tracker/writeback.rs`
     outside `#[cfg(test)]` → no output.
 15. **Fields path**: with `active_hours → customfield_10050`, a pass sends exactly
@@ -590,12 +593,26 @@ and the test DB unless marked *(tenant)*.
     - for each `writeback.state` the line has the W-UI text (`active` with `assigned: 2`
       renders "Writing to 2 tickets assigned to you.")
     - `TicketsScreen` renders the W-UI Tickets sub-line
-    - the toggle sends `setTrackerWriteback` and reverts on error
+    - the toggle calls `senseiApi.trySetTrackerWriteback` and reverts on error
     - a `field_in_use` response shows its text on the named row
 26. **Docs**:
-    - Over the W-DOCS file set, every paragraph that matches the read-only or no-write
-      pattern also names this spec. This command → no output:
-      `for f in <W-DOCS markdown files>; do awk -v RS= -v F="$f" 'tolower($0) ~ /read-only|never writ|writes? back|nothing is changed|never changes anything/ && $0 !~ /tracker-metrics-writeback/ {print F": "substr($0,1,80)}' "$f"; done`
+    - `scripts/check-tracker-readonly-docs.sh <W-DOCS file set>` → no output. The build
+      adds it (plan task) and it works like this:
+      - **Unit:** each Markdown table row (a line starting with `|`) on its own, and
+        otherwise each blank-line-delimited paragraph. Checking per row means one
+        reference elsewhere in a table can't excuse a stale row.
+      - **Flagged when** the unit, lowercased, matches
+        `read-only|read only|never writ|writes? back|no write path|nothing is changed|never changes anything|never written`,
+        **and** a tracker context
+        `tracker|jira|adapter|azure board|github issues|export|sync never|sync is|sync only`,
+        **and** doesn't contain `tracker-metrics-writeback`.
+      - **Baseline:** prototyped on `d9b708894`, it reports **39** units over the
+        Markdown and `.feature` files of the set. Billing "read-only members" and the
+        workspace-viewer paragraphs aren't flagged, and the roadmap D3 row is flagged
+        on its own.
+    - `rg -n 'Read-only mirror|mirrored read-only' database/ddl/table/sensei/tracker*.ddl database/design.dbml`
+      → no output.
+    - `rg -n '\(read-only\)' crates/senseid/src/api/handlers/scheduled_tasks.rs` → no output.
     - `rg -n 'nothing is changed there|never changes anything in Jira' app/src` → no output.
     - Each superseded `decisions.md` row carries "superseded 2026-10-26".
 27. *(tenant)* X1–X8 confirmed or their decided fallback applied, recorded under Evidence.
