@@ -84,11 +84,9 @@ impl PgStore {
     pub async fn set_workspace_identity(
         &self,
         id: &uuid::Uuid,
-        description: Option<&str>,
-        client: Option<&str>,
-        stack: &[String],
-        tags: &[String],
+        identity: &WorkspaceIdentity<'_>,
     ) -> Result<(), String> {
+        let &WorkspaceIdentity { description, client, stack, tags } = identity;
         let stack_json = serde_json::json!(stack);
         let tags_vec: Vec<String> = tags.to_vec();
         sqlx_core::query::query(

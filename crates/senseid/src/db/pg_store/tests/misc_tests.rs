@@ -110,13 +110,13 @@ async fn service_upsert_and_list() {
     let s = pg_store().await;
     let name = format!("_test:svc_{}", uuid::Uuid::new_v4());
     let id = s
-        .upsert_service(
-            &name,
-            "Test MCP",
-            "data",
-            "mcp",
-            &serde_json::json!({"url":"http://localhost"}),
-        )
+        .upsert_service(&crate::db::pg_store::ServiceRow {
+            name: &name,
+            display_name: "Test MCP",
+            kind: "data",
+            protocol: "mcp",
+            config: &serde_json::json!({"url":"http://localhost"}),
+        })
         .await
         .unwrap();
     let svcs = s.list_services().await.unwrap();

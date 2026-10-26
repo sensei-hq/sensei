@@ -199,13 +199,13 @@ impl Outbox for PgOutbox<'_> {
         let signature = key.signature.to_string();
         async move {
             store
-                .outbox_mark_state(
-                    &membership_id,
-                    Some(&batch_id),
-                    Some(&memory_id),
-                    &signature,
-                    state.as_str(),
-                )
+                .outbox_mark_state(&crate::db::pg_store::OutboxStateRow {
+                    membership_id: &membership_id,
+                    batch_id: Some(&batch_id),
+                    memory_id: Some(&memory_id),
+                    signature: &signature,
+                    state: state.as_str(),
+                })
                 .await
         }
     }

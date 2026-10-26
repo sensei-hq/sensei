@@ -1808,3 +1808,50 @@ pub struct SubfolderRow<'a> {
     pub abs_path: &'a str,
     pub parent_id: Option<&'a uuid::Uuid>,
 }
+
+// Written by `transcript.rs`.
+/// A transcript file's ingest cursor after its turns were written, as
+/// [`PgStore::set_capture_watermark`] records it (and clears `untracked`).
+pub struct CaptureWatermarkRow<'a> {
+    pub source: &'a str,
+    pub file_path: &'a str,
+    pub session_id: Option<&'a str>,
+    /// The source mtime (ns) the file was read at.
+    pub mtime_ns: i64,
+    /// How many turns were WRITTEN, not parsed (#125).
+    pub turns: i32,
+}
+
+// Written by `dojo.rs`.
+/// An outbox entry's state short of `sent`, as [`PgStore::outbox_mark_state`]
+/// records it. A `sent` entry is never moved back.
+pub struct OutboxStateRow<'a> {
+    pub membership_id: &'a uuid::Uuid,
+    pub batch_id: Option<&'a uuid::Uuid>,
+    pub memory_id: Option<&'a uuid::Uuid>,
+    pub signature: &'a str,
+    /// `held`, `queued`, `error` or `pending`; anything else is refused.
+    pub state: &'a str,
+}
+
+// Written by `mcp.rs`.
+/// One installed service, as [`PgStore::upsert_service`] writes it (keyed by `name`).
+pub struct ServiceRow<'a> {
+    pub name: &'a str,
+    pub display_name: &'a str,
+    /// A `sensei.service_kind` label.
+    pub kind: &'a str,
+    /// A `sensei.service_protocol` label.
+    pub protocol: &'a str,
+    pub config: &'a serde_json::Value,
+}
+
+// Written by `workspaces.rs`.
+/// What a workspace says about itself, as [`PgStore::set_workspace_identity`]
+/// applies it: a `None` or empty field keeps what is stored; tags are added to.
+pub struct WorkspaceIdentity<'a> {
+    pub description: Option<&'a str>,
+    pub client: Option<&'a str>,
+    pub stack: &'a [String],
+    pub tags: &'a [String],
+}

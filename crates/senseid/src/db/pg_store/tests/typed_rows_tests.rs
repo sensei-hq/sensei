@@ -10,29 +10,24 @@
 /// Every `pg_store` function that still takes five or more positional
 /// parameters, as `file::name`. Convert one to a typed row, then delete its line.
 const STILL_POSITIONAL: &[&str] = &[
-    "dojo.rs::outbox_mark_state",
     "dojo.rs::upsert_federated_memory",
     "folders.rs::upsert_file_row",
     "folders.rs::upsert_scan_state_skipped",
     "folders.rs::write_scan_state",
     "governance.rs::assemble_context",
     "governance.rs::upsert_stance",
-    "graph.rs::merge_type",
     "graph.rs::semantic_search_nodes",
     "graph.rs::upsert_lib_node_by_fqn",
     "library.rs::replace_library_capabilities",
     "library.rs::upsert_folder_dependency",
     "logs.rs::log_index_error",
     "logs.rs::query_logs",
-    "mcp.rs::upsert_service",
     "patterns.rs::create_recommendation",
     "personas.rs::link_persona_identity",
     "playbook.rs::playbook_combo_trust",
     "runs.rs::append_run_event",
     "sessions.rs::record_session_event",
     "trackers.rs::apply_tracker_snapshot",
-    "transcript.rs::set_capture_watermark",
-    "workspaces.rs::set_workspace_identity",
 ];
 
 /// The non-test source files of `db/pg_store`.
@@ -1007,4 +1002,122 @@ async fn a_subfolder_row_lands_field_for_field() {
             Some(repo)
         )
     );
+}
+
+#[tokio::test]
+async fn a_capture_watermark_row_lands_field_for_field() {
+    use crate::db::pg_store::CaptureWatermarkRow;
+    let s = super::pg_store().await;
+    s.set_capture_watermark(&CaptureWatermarkRow {
+        source: "zed",
+        file_path: "/t/161.jsonl",
+        session_id: Some("sess"),
+        mtime_ns: 77,
+        turns: 5,
+    })
+    .await
+    .unwrap();
+    let got: (Option<String>, i64, i32, bool) = sqlx_core::query_as::query_as(
+        "SELECT session_id, last_mtime_ns, turns_ingested, untracked FROM activity.capture_watermarks
+          WHERE source = 'zed' AND file_path = '/t/161.jsonl'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (Some("sess".into()), 77, 5, false));
+}
+
+#[tokio::test]
+async fn an_outbox_state_row_lands_field_for_field() {
+    use crate::db::pg_store::OutboxStateRow;
+    let s = super::pg_store().await;
+    let mid = uuid::Uuid::new_v4();
+    s.create_dojo_membership(&crate::db::pg_store::NewDojoMembership {
+        id: mid,
+        registry_url: "http://localhost:7755".into(),
+        tenant_key: "github/t161o".into(),
+        dojo_url: "http://localhost:7755/github/t161o".into(),
+        kind: "client".into(),
+        org_slugs: vec!["t161o".into()],
+        role: "contributor".into(),
+        authenticated_via: "device_code".into(),
+        attribution_default: "anonymous".into(),
+        sync_status: "healthy".into(),
+    })
+    .await
+    .unwrap();
+    s.outbox_mark_state(&OutboxStateRow {
+        membership_id: &mid,
+        batch_id: None,
+        memory_id: None,
+        signature: "sig-o",
+        state: "queued",
+    })
+    .await
+    .unwrap();
+    let got: (String, String) = sqlx_core::query_as::query_as(
+        "SELECT signature, state::text FROM sensei.dojo_outbox WHERE membership_id = $1",
+    )
+    .bind(mid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, ("sig-o".into(), "queued".into()));
+}
+
+#[tokio::test]
+async fn a_service_row_lands_field_for_field() {
+    use crate::db::pg_store::ServiceRow;
+    let s = super::pg_store().await;
+    let config = serde_json::json!({ "k": 1 });
+    let id = s
+        .upsert_service(&ServiceRow {
+            name: "svc-161",
+            display_name: "Service 161",
+            kind: "inference",
+            protocol: "ollama",
+            config: &config,
+        })
+        .await
+        .unwrap();
+    type Svc = (String, String, String, String, serde_json::Value);
+    let got: Svc = sqlx_core::query_as::query_as(
+        "SELECT name, display_name, kind::text, protocol::text, config FROM sensei.services WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        ("svc-161".into(), "Service 161".into(), "inference".into(), "ollama".into(), config)
+    );
+}
+
+#[tokio::test]
+async fn a_workspace_identity_lands_field_for_field() {
+    use crate::db::pg_store::WorkspaceIdentity;
+    let s = super::pg_store().await;
+    let ws = s.create_workspace("_t161w", None, None).await.unwrap();
+    let (stack, tags) = (vec!["rust".to_string()], vec!["t1".to_string()]);
+    s.set_workspace_identity(
+        &ws,
+        &WorkspaceIdentity {
+            description: Some("desc"),
+            client: Some("cl"),
+            stack: &stack,
+            tags: &tags,
+        },
+    )
+    .await
+    .unwrap();
+    type Ident = (Option<String>, Option<String>, serde_json::Value, Vec<String>);
+    let got: Ident = sqlx_core::query_as::query_as(
+        "SELECT description, client, stack, tags FROM sensei.workspaces WHERE id = $1",
+    )
+    .bind(ws)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, (Some("desc".into()), Some("cl".into()), serde_json::json!(["rust"]), tags));
 }

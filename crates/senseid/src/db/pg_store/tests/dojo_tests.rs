@@ -457,13 +457,29 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
     // A different signature is independent.
     assert!(!pg.outbox_already_sent(&mid, "sig-2").await.unwrap());
     // A late held/queued signal must NOT downgrade an already-sent row.
-    pg.outbox_mark_state(&mid, Some(&batch), Some(&mem), "sig-1", "queued").await.unwrap();
+    pg.outbox_mark_state(&crate::db::pg_store::OutboxStateRow {
+        membership_id: &mid,
+        batch_id: Some(&batch),
+        memory_id: Some(&mem),
+        signature: "sig-1",
+        state: "queued",
+    })
+    .await
+    .unwrap();
     assert!(
         pg.outbox_already_sent(&mid, "sig-1").await.unwrap(),
         "sent row must survive a late queued mark"
     );
     // A held record for a fresh signature.
-    pg.outbox_mark_state(&mid, Some(&batch), Some(&mem), "sig-3", "held").await.unwrap();
+    pg.outbox_mark_state(&crate::db::pg_store::OutboxStateRow {
+        membership_id: &mid,
+        batch_id: Some(&batch),
+        memory_id: Some(&mem),
+        signature: "sig-3",
+        state: "held",
+    })
+    .await
+    .unwrap();
     assert!(!pg.outbox_already_sent(&mid, "sig-3").await.unwrap());
 
     // Cleanup: membership delete cascades its outbox rows; then batch/memory/workspace.

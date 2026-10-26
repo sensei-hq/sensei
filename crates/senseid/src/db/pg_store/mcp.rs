@@ -190,14 +190,8 @@ impl PgStore {
 
     // ── Manual impact-verdict log (T3 Slice 3) ─────────────────────────────
 
-    pub async fn upsert_service(
-        &self,
-        name: &str,
-        display_name: &str,
-        kind: &str,
-        protocol: &str,
-        config: &serde_json::Value,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_service(&self, svc: &ServiceRow<'_>) -> Result<uuid::Uuid, String> {
+        let &ServiceRow { name, display_name, kind, protocol, config } = svc;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.services(name, display_name, kind, protocol, config) VALUES($1, $2, $3::sensei.service_kind, $4::sensei.service_protocol, $5)
              ON CONFLICT(name) DO UPDATE SET display_name = EXCLUDED.display_name, config = EXCLUDED.config, modified_at = now()

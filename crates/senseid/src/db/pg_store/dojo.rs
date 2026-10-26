@@ -325,14 +325,8 @@ impl PgStore {
     /// Record a non-sent outbox state (`held` | `queued` | `error`). Never
     /// downgrades an already-`sent` row (the `WHERE` guard), so a late held/queued
     /// signal can't erase a successful publish.
-    pub async fn outbox_mark_state(
-        &self,
-        membership_id: &uuid::Uuid,
-        batch_id: Option<&uuid::Uuid>,
-        memory_id: Option<&uuid::Uuid>,
-        signature: &str,
-        state: &str,
-    ) -> Result<(), String> {
+    pub async fn outbox_mark_state(&self, entry: &OutboxStateRow<'_>) -> Result<(), String> {
+        let &OutboxStateRow { membership_id, batch_id, memory_id, signature, state } = entry;
         if !matches!(state, "held" | "queued" | "error" | "pending") {
             return Err(format!("invalid outbox state {state}"));
         }

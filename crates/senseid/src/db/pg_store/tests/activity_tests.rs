@@ -134,7 +134,15 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     // Its survival is what made the prune self-sealing (#125): `ingest_one`
     // gates the turn re-import on it, so a pruned session never re-imported
     // while `synthesize_session` kept re-creating the session row.
-    s.set_capture_watermark("claude_code", &csid, Some(&csid), 1, 1).await.unwrap();
+    s.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+        source: "claude_code",
+        file_path: &csid,
+        session_id: Some(&csid),
+        mtime_ns: 1,
+        turns: 1,
+    })
+    .await
+    .unwrap();
 
     // Prove the fixture landed — an assertion that the row is GONE passes
     // trivially if it was never there.

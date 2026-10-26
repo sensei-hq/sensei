@@ -201,28 +201,6 @@ impl PgStore {
         .await
     }
 
-    pub async fn merge_type(
-        &self,
-        folder_id: &uuid::Uuid,
-        name: &str,
-        file_path: &str,
-        kind: &str,
-        line_start: Option<i32>,
-    ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(&NodeRow {
-            folder_id,
-            kind,
-            name,
-            file_path,
-            parent_id: None,
-            signature: None,
-            line_start,
-            line_end: None,
-            is_exported: false,
-        })
-        .await
-    }
-
     pub async fn merge_doc(
         &self,
         folder_id: &uuid::Uuid,

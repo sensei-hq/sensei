@@ -589,8 +589,14 @@ async fn ingest_one(
         // with reality, so a watermark claiming turns that no longer exist was
         // undetectable — 1,986 Zed turns were claimed against an empty table for
         // two days (#125). With the real count, that mismatch is queryable.
-        pg.set_capture_watermark(adapter.source(), key, Some(&session_id), stamp, turns as i32)
-            .await?;
+        pg.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+            source: adapter.source(),
+            file_path: key,
+            session_id: Some(&session_id),
+            mtime_ns: stamp,
+            turns: turns as i32,
+        })
+        .await?;
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
@@ -1299,7 +1305,15 @@ mod tests {
         .await
         .unwrap();
         let stamp = ad.stamp_for(&key).unwrap();
-        pg.set_capture_watermark("claude_code", &key, Some(&sid), stamp, 1).await.unwrap();
+        pg.set_capture_watermark(&crate::db::pg_store::CaptureWatermarkRow {
+            source: "claude_code",
+            file_path: &key,
+            session_id: Some(&sid),
+            mtime_ns: stamp,
+            turns: 1,
+        })
+        .await
+        .unwrap();
         // Its metadata pass is done too, so nothing else asks for a re-read.
         sqlx_core::query::query(
             "UPDATE activity.sessions SET meta_synced_at = now() WHERE client_session_id = $1",

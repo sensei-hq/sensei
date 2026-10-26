@@ -111,10 +111,12 @@ pub async fn reconcile_repo_identity(
             .pg()
             .set_workspace_identity(
                 &pid,
-                fm.summary.as_deref(),
-                fm.client.as_deref(),
-                &id_stack,
-                &tags,
+                &crate::db::pg_store::WorkspaceIdentity {
+                    description: fm.summary.as_deref(),
+                    client: fm.client.as_deref(),
+                    stack: &id_stack,
+                    tags: &tags,
+                },
             )
             .await
         {

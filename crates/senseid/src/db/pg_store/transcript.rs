@@ -155,12 +155,9 @@ impl PgStore {
     /// Advance the ingest cursor for a transcript file (idempotent upsert).
     pub async fn set_capture_watermark(
         &self,
-        source: &str,
-        file_path: &str,
-        session_id: Option<&str>,
-        mtime_ns: i64,
-        turns: i32,
+        mark: &CaptureWatermarkRow<'_>,
     ) -> Result<(), String> {
+        let &CaptureWatermarkRow { source, file_path, session_id, mtime_ns, turns } = mark;
         sqlx_core::query::query(
             "INSERT INTO activity.capture_watermarks
                 (source, file_path, session_id, last_mtime_ns, turns_ingested, untracked, updated_at)
