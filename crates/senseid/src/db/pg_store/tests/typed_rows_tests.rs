@@ -23,7 +23,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "governance.rs::assemble_context",
     "governance.rs::upsert_stance",
     "graph.rs::insert_edge",
-    "graph.rs::insert_edge_with_props",
     "graph.rs::merge_type",
     "graph.rs::semantic_search_nodes",
     "graph.rs::upsert_lib_node_by_fqn",
@@ -444,5 +443,66 @@ async fn a_workflow_state_patch_lands_field_for_field() {
     assert_eq!(
         got,
         (want("build"), want("plan.md"), want("task"), Some(161), want("ckpt"), want("rh"))
+    );
+}
+
+#[tokio::test]
+async fn an_edge_row_lands_on_its_target_columns() {
+    use crate::db::pg_store::NodeRow;
+    use crate::db::pg_store::graph::{EdgeRow, EdgeTarget};
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161e", "t161e", &serde_json::json!([])).await.unwrap();
+    let folder = s.upsert_repo_kind(&root, "git", "t161e", "/_t161e/repo").await.unwrap();
+    s.upsert_file_row(&folder, "a.rs", 0, "h", None).await.unwrap();
+    let node = |name: &'static str| NodeRow {
+        folder_id: &folder,
+        kind: "function",
+        name,
+        file_path: "a.rs",
+        parent_id: None,
+        signature: None,
+        line_start: Some(1),
+        line_end: Some(2),
+        is_exported: false,
+    };
+    let (src, dst) =
+        (s.upsert_node(&node("src")).await.unwrap(), s.upsert_node(&node("dst")).await.unwrap());
+    let props = serde_json::json!({ "k": "v" });
+    type Edge = (Option<uuid::Uuid>, Option<String>, Option<String>, String, serde_json::Value);
+    let read = async |id: uuid::Uuid| -> Edge {
+        sqlx_core::query_as::query_as(
+            "SELECT target_id, target_name, target_file, kind::text, props FROM sensei.edges WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(s.pool())
+        .await
+        .unwrap()
+    };
+
+    let resolved = s
+        .insert_edge_with_props(&EdgeRow {
+            folder_id: &folder,
+            source_id: &src,
+            target: EdgeTarget::Node(&dst),
+            kind: "calls",
+            props: &props,
+        })
+        .await
+        .unwrap();
+    assert_eq!(read(resolved).await, (Some(dst), None, None, "calls".into(), props.clone()));
+
+    let unresolved = s
+        .insert_edge_with_props(&EdgeRow {
+            folder_id: &folder,
+            source_id: &src,
+            target: EdgeTarget::Unresolved { name: Some("ghost"), file: Some("g.rs") },
+            kind: "calls",
+            props: &props,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        read(unresolved).await,
+        (None, Some("ghost".into()), Some("g.rs".into()), "calls".into(), props)
     );
 }

@@ -28,7 +28,7 @@ type LocatedNodeRow = (uuid::Uuid, String, String, Option<String>, Option<i32>, 
 type DuplicatePairRow = (String, String, Option<i32>, String, String, Option<i32>, f64);
 
 /// `(id, source_id, target_id, target_name, kind)`.
-type EdgeRow = (uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String);
+type StoredEdge = (uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String);
 
 /// The whole-graph projection the Atlas reads: `(id, kind, name, file_path,
 /// parent_id, line_start, line_end, community_id, folder_id, language, fqn,
@@ -164,6 +164,40 @@ pub struct NodeRow<'a> {
     pub line_start: Option<i32>,
     pub line_end: Option<i32>,
     pub is_exported: bool,
+}
+
+/// What an edge points at. Resolved, the target IS the node: a name or file
+/// beside it would be ignored, so the type cannot carry one. Unresolved, the
+/// name and file are the edge's identity (`edges_unique_unresolved`).
+#[derive(Clone, Copy)]
+pub enum EdgeTarget<'a> {
+    Node(&'a uuid::Uuid),
+    Unresolved { name: Option<&'a str>, file: Option<&'a str> },
+}
+
+impl<'a> EdgeTarget<'a> {
+    /// The node when there is one, else the name and file it was recorded under.
+    pub fn from_parts(
+        id: Option<&'a uuid::Uuid>,
+        name: Option<&'a str>,
+        file: Option<&'a str>,
+    ) -> Self {
+        match id {
+            Some(id) => Self::Node(id),
+            None => Self::Unresolved { name, file },
+        }
+    }
+}
+
+/// One edge, as [`PgStore::insert_edge_with_props`] writes it (#161).
+pub struct EdgeRow<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    pub source_id: &'a uuid::Uuid,
+    pub target: EdgeTarget<'a>,
+    /// A `sensei.edge_kind` label.
+    pub kind: &'a str,
+    /// Merged into the stored props on conflict, never replacing them.
+    pub props: &'a serde_json::Value,
 }
 
 /// The fields of one callee row, whichever query supplied them — see
@@ -1658,15 +1692,14 @@ impl PgStore {
         target_file: Option<&str>,
         kind: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.insert_edge_with_props(
+        let target = EdgeTarget::from_parts(target_id, target_name, target_file);
+        self.insert_edge_with_props(&EdgeRow {
             folder_id,
             source_id,
-            target_id,
-            target_name,
-            target_file,
+            target,
             kind,
-            &serde_json::json!({}),
-        )
+            props: &serde_json::json!({}),
+        })
         .await
     }
 
@@ -1680,22 +1713,9 @@ impl PgStore {
     /// Needed because `implements` carries two distinct facts — Java-style
     /// interface implementation and a Rust trait impl — told apart only by
     /// `props.relation`. Before this, no code path named the column at all.
-    // The arguments ARE the columns. A struct here would restate the same
-    // names one indirection away without removing a single one; `FqnDef`
-    // above is the case where a struct earned its keep, because that call
-    // has a meaningful default.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn insert_edge_with_props(
-        &self,
-        folder_id: &uuid::Uuid,
-        source_id: &uuid::Uuid,
-        target_id: Option<&uuid::Uuid>,
-        target_name: Option<&str>,
-        target_file: Option<&str>,
-        kind: &str,
-        props: &serde_json::Value,
-    ) -> Result<uuid::Uuid, String> {
-        let row: (uuid::Uuid,) = if let Some(tid) = target_id {
+    pub async fn insert_edge_with_props(&self, edge: &EdgeRow<'_>) -> Result<uuid::Uuid, String> {
+        let &EdgeRow { folder_id, source_id, target, kind, props } = edge;
+        let row: (uuid::Uuid,) = if let EdgeTarget::Node(tid) = target {
             sqlx_core::query_as::query_as(
                 // The verdict is DERIVED HERE, not left to the merge path. A
                 // first insert never goes through `merge_occurrences`, so the
@@ -1733,6 +1753,9 @@ impl PgStore {
             .await
             .map_err(|e| e.to_string())?
         } else {
+            let EdgeTarget::Unresolved { name: target_name, file: target_file } = target else {
+                unreachable!("the resolved target took the branch above")
+            };
             sqlx_core::query_as::query_as(
                 // Same derivation as the resolved branch above; the two must stay
                 // in step. An UNRESOLVED edge is the one that most needs its
@@ -1997,15 +2020,14 @@ impl PgStore {
             }
         };
 
-        self.insert_edge_with_props(
+        let target = EdgeTarget::from_parts(target_id.as_ref(), target_name.as_deref(), None);
+        self.insert_edge_with_props(&EdgeRow {
             folder_id,
-            &fact.source_id,
-            target_id.as_ref(),
-            target_name.as_deref(),
-            None,
-            fact.kind,
-            &fact.props,
-        )
+            source_id: &fact.source_id,
+            target,
+            kind: fact.kind,
+            props: &fact.props,
+        })
         .await
     }
 
@@ -3689,7 +3711,7 @@ impl PgStore {
         kinds: &[&str],
     ) -> Result<Vec<serde_json::Value>, String> {
         let kinds_owned: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-        let rows: Vec<EdgeRow> = sqlx_core::query_as::query_as(
+        let rows: Vec<StoredEdge> = sqlx_core::query_as::query_as(
             "SELECT id, source_id, target_id, target_name, kind::text FROM sensei.edges
               WHERE folder_id = ANY($1) AND kind::text = ANY($2)",
         )

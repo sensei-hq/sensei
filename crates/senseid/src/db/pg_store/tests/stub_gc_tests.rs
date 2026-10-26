@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::pg_store::graph::{EdgeRow, EdgeTarget};
 
 // ── stub GC ──────────────────────────────────────────────────────────────────
 
@@ -850,18 +851,16 @@ async fn the_rung_and_reason_come_from_the_occurrences_the_indexer_writes() {
     // PLACED, with the rung nested exactly as `occurrence_prop` writes it. Two
     // occurrences with different rungs, so the reduction is exercised rather
     // than assumed: `declared_here` (10) must win over `in_the_prelude` (60).
-    s.insert_edge_with_props(
-        &fid,
-        &caller,
-        Some(&callee),
-        None,
-        None,
-        "calls",
-        &serde_json::json!({ "occurrences": { "src/a.rs": [
+    s.insert_edge_with_props(&EdgeRow {
+        folder_id: &fid,
+        source_id: &caller,
+        target: EdgeTarget::Node(&callee),
+        kind: "calls",
+        props: &serde_json::json!({ "occurrences": { "src/a.rs": [
             { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "rung": "in_the_prelude" },
             { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "rung": "declared_here" }
         ]}}),
-    )
+    })
     .await
     .unwrap();
 
@@ -872,18 +871,10 @@ async fn the_rung_and_reason_come_from_the_occurrences_the_indexer_writes() {
         .seed_node(&fid, "function", "stray", "src/c.rs", None, None, Some(1), Some(9))
         .await
         .unwrap();
-    s.insert_edge_with_props(
-        &fid,
-        &stray,
-        None,
-        Some("nowhere"),
-        None,
-        "calls",
-        &serde_json::json!({ "occurrences": { "src/c.rs": [
+    s.insert_edge_with_props(&EdgeRow { folder_id: &fid, source_id: &stray, target: EdgeTarget::Unresolved { name: Some("nowhere"), file: None }, kind: "calls", props: &serde_json::json!({ "occurrences": { "src/c.rs": [
             { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "reason": "plumbing" },
             { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "reason": "receiver_type_unknown" }
-        ]}}),
-    )
+        ]}}) })
     .await
     .unwrap();
 
@@ -946,18 +937,16 @@ async fn an_inserted_edge_carries_its_verdict_on_the_column_not_just_the_view() 
         s.seed_node(&fid, "function", "t", "src/b.rs", None, None, Some(1), Some(9)).await.unwrap();
 
     let placed = s
-        .insert_edge_with_props(
-            &fid,
-            &caller,
-            Some(&callee),
-            None,
-            None,
-            "calls",
-            &serde_json::json!({ "occurrences": { "src/a.rs": [
+        .insert_edge_with_props(&EdgeRow {
+            folder_id: &fid,
+            source_id: &caller,
+            target: EdgeTarget::Node(&callee),
+            kind: "calls",
+            props: &serde_json::json!({ "occurrences": { "src/a.rs": [
                 { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "rung": "in_the_prelude" },
                 { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "rung": "declared_here" }
             ]}}),
-        )
+        })
         .await
         .unwrap();
 
@@ -976,18 +965,10 @@ async fn an_inserted_edge_carries_its_verdict_on_the_column_not_just_the_view() 
     assert_eq!(reason, None, "exactly one of the two is set: a placed edge has no reason");
 
     let missed = s
-        .insert_edge_with_props(
-            &fid,
-            &caller,
-            None,
-            Some("nowhere"),
-            None,
-            "calls",
-            &serde_json::json!({ "occurrences": { "src/a.rs": [
+        .insert_edge_with_props(&EdgeRow { folder_id: &fid, source_id: &caller, target: EdgeTarget::Unresolved { name: Some("nowhere"), file: None }, kind: "calls", props: &serde_json::json!({ "occurrences": { "src/a.rs": [
                 { "fact": "use", "kind": "calls", "at": [3, 1, 3, 9], "reason": "plumbing" },
                 { "fact": "use", "kind": "calls", "at": [4, 1, 4, 9], "reason": "receiver_type_unknown" }
-            ]}}),
-        )
+            ]}}) })
         .await
         .unwrap();
 
@@ -1009,17 +990,15 @@ async fn an_inserted_edge_carries_its_verdict_on_the_column_not_just_the_view() 
     // recomputed from the MERGED value — a second occurrence carrying a stronger
     // rung must move the column, or the materialised value drifts from the props
     // it claims to summarise.
-    s.insert_edge_with_props(
-        &fid,
-        &caller,
-        None,
-        Some("nowhere"),
-        None,
-        "calls",
-        &serde_json::json!({ "occurrences": { "src/a.rs": [
+    s.insert_edge_with_props(&EdgeRow {
+        folder_id: &fid,
+        source_id: &caller,
+        target: EdgeTarget::Unresolved { name: Some("nowhere"), file: None },
+        kind: "calls",
+        props: &serde_json::json!({ "occurrences": { "src/a.rs": [
             { "fact": "use", "kind": "calls", "at": [5, 1, 5, 9], "reason": "unhandled_form" }
         ]}}),
-    )
+    })
     .await
     .unwrap();
     let reason3: Option<String> = sqlx_core::query_scalar::query_scalar(
@@ -1071,15 +1050,13 @@ async fn graph_resolution_says_which_rung_placed_each_edge() {
             )
             .await
             .unwrap();
-        s.insert_edge_with_props(
-            &fid,
-            &caller,
-            Some(&target),
-            None,
-            None,
-            "calls",
-            &serde_json::json!({ "rung": rung }),
-        )
+        s.insert_edge_with_props(&EdgeRow {
+            folder_id: &fid,
+            source_id: &caller,
+            target: EdgeTarget::Node(&target),
+            kind: "calls",
+            props: &serde_json::json!({ "rung": rung }),
+        })
         .await
         .unwrap();
     }
@@ -1090,15 +1067,13 @@ async fn graph_resolution_says_which_rung_placed_each_edge() {
         .seed_node(&fid, "function", "stray", "src/s.rs", None, None, Some(1), Some(9))
         .await
         .unwrap();
-    s.insert_edge_with_props(
-        &fid,
-        &stray,
-        None,
-        Some("placed"),
-        None,
-        "calls",
-        &serde_json::json!({ "reason": "receiver_type_unknown" }),
-    )
+    s.insert_edge_with_props(&EdgeRow {
+        folder_id: &fid,
+        source_id: &stray,
+        target: EdgeTarget::Unresolved { name: Some("placed"), file: None },
+        kind: "calls",
+        props: &serde_json::json!({ "reason": "receiver_type_unknown" }),
+    })
     .await
     .unwrap();
 
@@ -1172,15 +1147,13 @@ async fn call_coverage_reasons_says_why_the_missing_callers_are_missing() {
             )
             .await
             .unwrap();
-        s.insert_edge_with_props(
-            &fid,
-            &caller,
-            None,
-            Some(names),
-            None,
-            "calls",
-            &serde_json::json!({ "reason": reason }),
-        )
+        s.insert_edge_with_props(&EdgeRow {
+            folder_id: &fid,
+            source_id: &caller,
+            target: EdgeTarget::Unresolved { name: Some(names), file: None },
+            kind: "calls",
+            props: &serde_json::json!({ "reason": reason }),
+        })
         .await
         .unwrap();
     }
@@ -1306,15 +1279,13 @@ async fn graph_boundary_explains_a_miss_and_keeps_one_it_cannot_explain() {
         ("trim", "external_boundary"),
         ("mystery", "not_a_seeded_code"),
     ] {
-        s.insert_edge_with_props(
-            &fid,
-            &caller,
-            None,
-            Some(names),
-            None,
-            "calls",
-            &serde_json::json!({ "reason": reason }),
-        )
+        s.insert_edge_with_props(&EdgeRow {
+            folder_id: &fid,
+            source_id: &caller,
+            target: EdgeTarget::Unresolved { name: Some(names), file: None },
+            kind: "calls",
+            props: &serde_json::json!({ "reason": reason }),
+        })
         .await
         .unwrap();
     }
@@ -1704,7 +1675,13 @@ async fn insert_edge_with_props_stamps_and_merges() {
 
     let props = serde_json::json!({ "relation": "trait_impl" });
     let e1 = s
-        .insert_edge_with_props(&fid, &a, Some(&b), None, None, "implements", &props)
+        .insert_edge_with_props(&EdgeRow {
+            folder_id: &fid,
+            source_id: &a,
+            target: EdgeTarget::Node(&b),
+            kind: "implements",
+            props: &props,
+        })
         .await
         .unwrap();
 
@@ -1719,15 +1696,13 @@ async fn insert_edge_with_props_stamps_and_merges() {
 
     // A second write with DIFFERENT keys must not erase the first.
     let e2 = s
-        .insert_edge_with_props(
-            &fid,
-            &a,
-            Some(&b),
-            None,
-            None,
-            "implements",
-            &serde_json::json!({ "other": 1 }),
-        )
+        .insert_edge_with_props(&EdgeRow {
+            folder_id: &fid,
+            source_id: &a,
+            target: EdgeTarget::Node(&b),
+            kind: "implements",
+            props: &serde_json::json!({ "other": 1 }),
+        })
         .await
         .unwrap();
     assert_eq!(e1, e2, "same edge identity");
@@ -1743,7 +1718,13 @@ async fn insert_edge_with_props_stamps_and_merges() {
     // The UNRESOLVED branch carries props too — an unresolved supertype is the
     // common case on a cold index, and it must still say which relation it is.
     let u = s
-        .insert_edge_with_props(&fid, &a, None, Some("Serializable"), None, "implements", &props)
+        .insert_edge_with_props(&EdgeRow {
+            folder_id: &fid,
+            source_id: &a,
+            target: EdgeTarget::Unresolved { name: Some("Serializable"), file: None },
+            kind: "implements",
+            props: &props,
+        })
         .await
         .unwrap();
     let u_rel: Option<String> = sqlx_core::query_scalar::query_scalar(
@@ -1835,28 +1816,24 @@ async fn the_sweep_takes_mislabelled_containment_and_spares_real_inheritance() {
     // The mislabelled shape: FILE source, unresolved, no discriminant.
     s.insert_edge(&fid, &file, None, Some("Sub"), None, "extends").await.unwrap();
     // Real inheritance, resolved and stamped.
-    s.insert_edge_with_props(
-        &fid,
-        &sub,
-        Some(&base),
-        None,
-        None,
-        "extends",
-        &serde_json::json!({ "relation": "extends" }),
-    )
+    s.insert_edge_with_props(&EdgeRow {
+        folder_id: &fid,
+        source_id: &sub,
+        target: EdgeTarget::Node(&base),
+        kind: "extends",
+        props: &serde_json::json!({ "relation": "extends" }),
+    })
     .await
     .unwrap();
     // A real UNRESOLVED inheritance edge — stamped but with no target yet. This
     // is the common cold-index case and must NOT be swept.
-    s.insert_edge_with_props(
-        &fid,
-        &sub,
-        None,
-        Some("Missing"),
-        None,
-        "extends",
-        &serde_json::json!({ "relation": "extends" }),
-    )
+    s.insert_edge_with_props(&EdgeRow {
+        folder_id: &fid,
+        source_id: &sub,
+        target: EdgeTarget::Unresolved { name: Some("Missing"), file: None },
+        kind: "extends",
+        props: &serde_json::json!({ "relation": "extends" }),
+    })
     .await
     .unwrap();
 
@@ -1864,15 +1841,13 @@ async fn the_sweep_takes_mislabelled_containment_and_spares_real_inheritance() {
     // unresolved AND stamped. The inheritance emit really produces this — it
     // anchors on the file node when a child fqn is missing — so a predicate
     // keyed on "file-sourced and unresolved" would delete a real relation.
-    s.insert_edge_with_props(
-        &fid,
-        &file,
-        None,
-        Some("FromFileAnchor"),
-        None,
-        "extends",
-        &serde_json::json!({ "relation": "extends" }),
-    )
+    s.insert_edge_with_props(&EdgeRow {
+        folder_id: &fid,
+        source_id: &file,
+        target: EdgeTarget::Unresolved { name: Some("FromFileAnchor"), file: None },
+        kind: "extends",
+        props: &serde_json::json!({ "relation": "extends" }),
+    })
     .await
     .unwrap();
 
