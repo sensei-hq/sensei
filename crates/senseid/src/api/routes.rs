@@ -2290,14 +2290,14 @@ mod tests {
             facts_hash(InsightKind::SessionMetricObservation, &hit_facts.to_facts_json());
         state
             .pg
-            .upsert_narration_cache(
-                "session_metric_observation",
-                &hit_hash,
-                "first-try win",
-                "this session resolved on the first attempt, lifting the rate",
-                None,
-                None,
-            )
+            .upsert_narration_cache(&crate::db::pg_store::NarrationRow {
+                kind: "session_metric_observation",
+                facts_hash: &hit_hash,
+                title: "first-try win",
+                detail: "this session resolved on the first attempt, lifting the rate",
+                model_provider: None,
+                model_id: None,
+            })
             .await;
 
         let (st, body) = req(

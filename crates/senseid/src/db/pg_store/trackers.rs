@@ -3,7 +3,7 @@
 //! tracker integration runs lives here; `crate::tracker` holds the provider
 //! logic and calls these methods.
 
-use crate::db::pg_store::PgStore;
+use crate::db::pg_store::{DiscoveryApply, PgStore};
 use crate::tracker::link::StoredAlias;
 use crate::tracker::sprint::{SprintRank, SprintState, pick_current_sprint};
 use crate::tracker::{Link, PrevState, SessionText, Snapshot, TaskRow};
@@ -819,12 +819,9 @@ impl PgStore {
     pub async fn apply_discovered(
         &self,
         id: uuid::Uuid,
-        secret_service: &str,
-        discovered: &crate::tracker::Discovered,
-        links: &[Link],
-        not_found: &[String],
-        watermark: Option<chrono::DateTime<chrono::Utc>>,
+        found: &DiscoveryApply<'_>,
     ) -> Result<DiscoverCounts, ApplyError> {
+        let &DiscoveryApply { secret_service, discovered, links, not_found, watermark } = found;
         let db = |e: sqlx_core::Error| ApplyError::Db(e.to_string());
         let tasks = dedupe_by(&discovered.tasks, |t| t.external_id.clone());
         let mut tx = self.pool.begin().await.map_err(db)?;

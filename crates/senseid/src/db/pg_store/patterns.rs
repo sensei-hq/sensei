@@ -33,15 +33,8 @@ impl PgStore {
     /// for `(kind, facts_hash)`; a newer generation wins on conflict and both
     /// timestamps reset. DB errors are logged and swallowed (the caller has
     /// already returned copy to the user — a failed cache write is not fatal).
-    pub async fn upsert_narration_cache(
-        &self,
-        kind: &str,
-        facts_hash: &str,
-        title: &str,
-        detail: &str,
-        model_provider: Option<&str>,
-        model_id: Option<&str>,
-    ) {
+    pub async fn upsert_narration_cache(&self, entry: &NarrationRow<'_>) {
+        let &NarrationRow { kind, facts_hash, title, detail, model_provider, model_id } = entry;
         let res = sqlx_core::query::query(
             "INSERT INTO sensei.narration_cache \
                (kind, facts_hash, title, detail, model_provider, model_id) \
@@ -196,12 +189,10 @@ impl PgStore {
     pub async fn accept_recommendation_as_rule(
         &self,
         id: &uuid::Uuid,
-        namespace_id: Option<&uuid::Uuid>,
-        enforcement: Option<&str>,
-        gov_scope: &str,
-        title_override: Option<&str>,
-        body_override: Option<&str>,
+        accept: &RuleAcceptance<'_>,
     ) -> Result<serde_json::Value, String> {
+        let &RuleAcceptance { namespace_id, enforcement, gov_scope, title_override, body_override } =
+            accept;
         let row: Option<(String, String, String, Option<String>, uuid::Uuid, String)> =
             sqlx_core::query_as::query_as(
                 "UPDATE inference.recommendations

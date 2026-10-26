@@ -1743,3 +1743,42 @@ pub struct OutboxSentRow<'a> {
     /// The id the Dōjō gave it.
     pub remote_id: &'a str,
 }
+
+// Written by `patterns.rs`.
+/// One cached piece of narration copy, as [`PgStore::upsert_narration_cache`]
+/// writes it. Keyed by `(kind, facts_hash)`; a later write replaces it.
+pub struct NarrationRow<'a> {
+    pub kind: &'a str,
+    /// The hash of the facts the copy describes.
+    pub facts_hash: &'a str,
+    pub title: &'a str,
+    pub detail: &'a str,
+    pub model_provider: Option<&'a str>,
+    pub model_id: Option<&'a str>,
+}
+
+// Written by `patterns.rs`.
+/// How a recommendation becomes a rule, as
+/// [`PgStore::accept_recommendation_as_rule`] applies it.
+pub struct RuleAcceptance<'a> {
+    pub namespace_id: Option<&'a uuid::Uuid>,
+    pub enforcement: Option<&'a str>,
+    /// The governance scope the rule is filed under.
+    pub gov_scope: &'a str,
+    /// Replaces the recommendation's title when given.
+    pub title_override: Option<&'a str>,
+    /// Replaces the recommendation's body when given.
+    pub body_override: Option<&'a str>,
+}
+
+// Written by `trackers.rs`.
+/// One discovery pass's result for a tracker, as [`PgStore::apply_discovered`]
+/// applies it. Applied only while `secret_service` is still the tracker's.
+pub struct DiscoveryApply<'a> {
+    pub secret_service: &'a str,
+    pub discovered: &'a crate::tracker::Discovered,
+    pub links: &'a [crate::tracker::Link],
+    /// Keys the tracker said do not exist.
+    pub not_found: &'a [String],
+    pub watermark: Option<chrono::DateTime<chrono::Utc>>,
+}

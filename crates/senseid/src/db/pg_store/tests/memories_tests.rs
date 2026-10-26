@@ -433,7 +433,16 @@ async fn accept_as_rule_materializes_a_memory_and_records_provenance() {
 
     // Accept + materialize at gov_scope=general (namespace None) enforcement=required.
     let mat = s
-        .accept_recommendation_as_rule(&rid, None, Some("required"), "general", None, None)
+        .accept_recommendation_as_rule(
+            &rid,
+            &crate::db::pg_store::RuleAcceptance {
+                namespace_id: None,
+                enforcement: Some("required"),
+                gov_scope: "general",
+                title_override: None,
+                body_override: None,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(mat["kind"], "rule");
@@ -470,7 +479,16 @@ async fn accept_as_rule_materializes_a_memory_and_records_provenance() {
 
     // Idempotent guard: a second materialize on the now-accepted rec errors (no double write).
     let err = s
-        .accept_recommendation_as_rule(&rid, None, None, "general", None, None)
+        .accept_recommendation_as_rule(
+            &rid,
+            &crate::db::pg_store::RuleAcceptance {
+                namespace_id: None,
+                enforcement: None,
+                gov_scope: "general",
+                title_override: None,
+                body_override: None,
+            },
+        )
         .await
         .expect_err("guarded at pending");
     assert!(err.contains("already decided") || err.contains("not found"), "guard: {err}");
@@ -502,7 +520,16 @@ async fn accept_as_rule_rejects_non_rule_action_and_title_body_override() {
         .await
         .unwrap();
     let err = s
-        .accept_recommendation_as_rule(&audit, None, None, "general", None, None)
+        .accept_recommendation_as_rule(
+            &audit,
+            &crate::db::pg_store::RuleAcceptance {
+                namespace_id: None,
+                enforcement: None,
+                gov_scope: "general",
+                title_override: None,
+                body_override: None,
+            },
+        )
         .await
         .expect_err("non-rule rejected");
     assert!(err.contains("not rule-class"), "got: {err}");
@@ -515,11 +542,13 @@ async fn accept_as_rule_rejects_non_rule_action_and_title_body_override() {
     let mat = s
         .accept_recommendation_as_rule(
             &rid,
-            None,
-            Some("advisory"),
-            "general",
-            Some("edited title"),
-            Some("edited body"),
+            &crate::db::pg_store::RuleAcceptance {
+                namespace_id: None,
+                enforcement: Some("advisory"),
+                gov_scope: "general",
+                title_override: Some("edited title"),
+                body_override: Some("edited body"),
+            },
         )
         .await
         .unwrap();

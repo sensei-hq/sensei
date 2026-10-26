@@ -721,11 +721,13 @@ pub(crate) async fn materialize_recommendation(
             .pg
             .accept_recommendation_as_rule(
                 &rec_uuid,
-                namespace_id.as_ref(),
-                enforcement,
-                &gov_scope,
-                b.title.as_deref(),
-                b.body.as_deref(),
+                &crate::db::pg_store::RuleAcceptance {
+                    namespace_id: namespace_id.as_ref(),
+                    enforcement,
+                    gov_scope: &gov_scope,
+                    title_override: b.title.as_deref(),
+                    body_override: b.body.as_deref(),
+                },
             )
             .await
             .map_err(|e| {

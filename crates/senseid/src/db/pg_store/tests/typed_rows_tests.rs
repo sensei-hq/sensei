@@ -28,14 +28,11 @@ const STILL_POSITIONAL: &[&str] = &[
     "logs.rs::log_index_error",
     "logs.rs::query_logs",
     "mcp.rs::upsert_service",
-    "patterns.rs::accept_recommendation_as_rule",
     "patterns.rs::create_recommendation",
-    "patterns.rs::upsert_narration_cache",
     "personas.rs::link_persona_identity",
     "playbook.rs::playbook_combo_trust",
     "runs.rs::append_run_event",
     "sessions.rs::record_session_event",
-    "trackers.rs::apply_discovered",
     "trackers.rs::apply_tracker_snapshot",
     "transcript.rs::set_capture_watermark",
     "workspaces.rs::set_workspace_identity",
@@ -907,4 +904,72 @@ async fn an_outbox_sent_row_lands_field_for_field() {
     .await
     .unwrap();
     assert_eq!(got, ("sig".into(), "sent".into(), Some(42), Some("rid".into())));
+}
+
+#[tokio::test]
+async fn a_narration_row_lands_field_for_field() {
+    use crate::db::pg_store::NarrationRow;
+    let s = super::pg_store().await;
+    s.upsert_narration_cache(&NarrationRow {
+        kind: "kind-161",
+        facts_hash: "fh",
+        title: "ttl",
+        detail: "dtl",
+        model_provider: Some("prov"),
+        model_id: Some("mid"),
+    })
+    .await;
+    type Cached = (String, String, String, String, Option<String>, Option<String>);
+    let got: Cached = sqlx_core::query_as::query_as(
+        "SELECT kind, facts_hash, title, detail, model_provider, model_id
+           FROM sensei.narration_cache WHERE kind = 'kind-161'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            "kind-161".into(),
+            "fh".into(),
+            "ttl".into(),
+            "dtl".into(),
+            Some("prov".into()),
+            Some("mid".into())
+        )
+    );
+}
+
+/// Each override reaches its own column: the title replaces the rule's title,
+/// the body its content. Every caller in the tree passes `None` for both, so
+/// this is the only check that the two are not crossed.
+#[tokio::test]
+async fn a_rule_acceptance_puts_each_override_in_its_own_column() {
+    use crate::db::pg_store::RuleAcceptance;
+    let s = super::pg_store().await;
+    let ws = s.create_workspace("_t161a", None, None).await.unwrap();
+    let rid =
+        s.create_recommendation(&ws, "rec title", "rec why", "revise_rule", "high").await.unwrap();
+    let mat = s
+        .accept_recommendation_as_rule(
+            &rid,
+            &RuleAcceptance {
+                namespace_id: None,
+                enforcement: Some("required"),
+                gov_scope: "general",
+                title_override: Some("override title"),
+                body_override: Some("override body"),
+            },
+        )
+        .await
+        .unwrap();
+    let mem = uuid::Uuid::parse_str(mat["memory_id"].as_str().unwrap()).unwrap();
+    let got: (String, String, String) = sqlx_core::query_as::query_as(
+        "SELECT title, content, enforcement::text FROM sensei.memories WHERE id = $1",
+    )
+    .bind(mem)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, ("override title".into(), "override body".into(), "required".into()));
 }
