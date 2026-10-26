@@ -50,19 +50,42 @@ never written, or that sync never writes):
 
 - **Owner lookup.** The adapter method `owner(t) -> Result<OwnerLookup, TrackerError>`
   returns one of three outcomes. For Jira it reads `GET /rest/api/3/myself`, the request
-  `validate` already makes:
-  - `Person(AccountRef)` when `accountType == "atlassian"` and `accountId` is a non-empty string
-  - `NotAPerson` when `accountType` is present and is anything else (`app`, `customer`)
-  - `Unknown` when either field is missing
+  `validate` already makes. The rules are applied **in order**, and the first match wins:
+  1. `accountType` is a JSON string whose lowercased value isn't `"atlassian"` (e.g.
+     `app`, `customer`) → `NotAPerson`. `accountId` is ignored.
+  2. `accountType` lowercased is `"atlassian"` and `accountId` is a non-empty JSON string
+     → `Person(AccountRef(accountId))`. The id is kept byte for byte, untrimmed.
+  3. Anything else → `Unknown`. That covers a missing or non-string `accountType`, and
+     `atlassian` with a missing, empty or non-string `accountId`.
+  
+  Only rule 1 is sticky (W1 backfill). Rule 3 is retried, so a real person is never
+  shut out permanently.
 - `validate` returns the lookup in `Validated.owner`. Connect stores it:
   - `Person(r)` → `owner_ref = r`, `owner_state = NULL`
   - `NotAPerson` → `owner_ref = NULL`, `owner_state = 'not_a_person'`
   - `Unknown` → `owner_ref = NULL`, `owner_state = 'unknown'`
 - **Backfill.** Step 1 of the sync (after the guard, before the fetch) runs this only
-  when `owner_ref IS NULL AND owner_state IS DISTINCT FROM 'not_a_person'`. It makes one
-  `owner(t)` call and stores the result as connect does. On `Err` it stores nothing,
-  which leaves the state `unknown` (or NULL), and the sync carries on. The read sync never
-  fails because of the lookup. A `not_a_person` tracker never asks again until a re-connect.
+  when `owner_ref IS NULL AND owner_state IS DISTINCT FROM 'not_a_person'`.
+  - **Deadline.** The whole-sync deadline `until` is computed **before** this step.
+    The lookup runs under `timeout_at(until, adapter.owner(t))`, so its 429 sleeps count
+    against `SYNC_DEADLINE` and the sync stays bounded by it (C37). A timeout is treated
+    as an `Err(Transport)`.
+  - **Ok.** `set_tracker_owner(id, secret_service, &lookup)` stores the result as
+    connect does and clears `owner_error`. It's one UPDATE
+    `… WHERE id = $1 AND secret_service = $2 AND owner_ref IS NULL AND owner_state IS DISTINCT FROM 'not_a_person'`,
+    bound to the `secret_service` the sync started with. If it touches 0 rows, a re-key
+    or re-connect got there first and nothing is stored.
+  - **Err.** `set_tracker_owner_error(id, secret_service, code)` sets
+    `trackers.owner_error` to the `TrackerError` code, with the same `secret_service`
+    condition. `last_error` and the sync's result are unchanged. The board shows the code
+    (W8 `owner_lookup_failed`), so a lookup that fails every time can be seen without
+    reading the logs.
+  - **Store failure.** If either store fails, the error is logged with `tracker_id`
+    only, with no `?`, and the sync carries on. `assigned_to_me` then stays NULL for
+    this sync, because the apply reads the unchanged `owner_ref`.
+  - The read sync never fails because of the lookup. A `not_a_person` tracker never asks
+    again until a re-connect. A failing or `Unknown` lookup costs at most one `/myself`
+    call per sync (up to `SYNC_RETRIES` + 1 with 429s), inside the deadline.
 - **The comparison uses the owner as of step 1**, so the snapshot applied in the same sync uses
   the value just stored.
 - **Assignee.** `TaskRow` gains `assignee: Option<AccountRef>` (Jira:
@@ -280,9 +303,13 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   1. `disabled`
   2. `credential_failed` (`writeback_error` not NULL)
   3. `owner_not_a_person` (`owner_state = not_a_person`)
-  4. `owner_unknown` (`owner_ref` NULL otherwise)
-  5. `nothing_assigned` (`assigned = 0`)
-  6. `active`
+  4. `owner_lookup_failed` (`owner_ref` NULL and `owner_error` not NULL; `error` carries the code)
+  5. `owner_unknown` (`owner_ref` NULL otherwise)
+  6. `nothing_assigned` (`assigned = 0`)
+  7. `active`
+  
+  `error` is `writeback_error` when the state is `credential_failed`, `owner_error` when
+  it's `owner_lookup_failed`, and otherwise `null`.
 - `GET …/tasks` and `GET …/tracker-tasks/{key}`: each task gains `assigned_to_me`,
   `writeback_status`, `writeback_at`.
 - Both new routes are added inside `api::routes::tracker_routes()`, before its
@@ -369,7 +396,10 @@ pub enum WriteMethod { Post, Put }
   - `tracker_owner_state` (`unknown, not_a_person`)
 - New table `tracker_fields` (W6).
 - `trackers` gains `owner_ref text`, `owner_state tracker_owner_state`,
-  `writeback_enabled boolean not null default true` and `writeback_error tracker_error`. The comment's "Read-only mirror source
+  `owner_error tracker_error` (F1), plus `writeback_enabled boolean not null default true`
+  and `writeback_error tracker_error` (F2). `TrackerRow` is read through a
+  `#[derive(FromRow)]` struct, not the positional `TrackerTuple`. With these five columns
+  the tuple would reach 19 fields, past sqlx 0.8's 16-field `FromRow` tuple limit (C38). The comment's "Read-only mirror source
   for …" becomes "Mirror source for …; writes back usage metrics only, to tickets
   assigned to the token owner (spec tracker-metrics-writeback)".
 - `tracker_tasks` gains `assigned_to_me boolean`, `writeback_hash text`,
@@ -383,7 +413,7 @@ pub enum WriteMethod { Post, Put }
   sibling board on the same site onto the new token (C22, C31). On the connected board
   and every re-keyed sibling it:
   - sets `owner_ref` and `owner_state` (the connected board from its `validate`; siblings
-    to NULL, so their next sync backfills) and `writeback_error = NULL`
+    to NULL, so their next sync backfills) and `owner_error = NULL`, `writeback_error = NULL`
   - sets `writeback_comment_ref`, `writeback_hash`, `writeback_status` and
     `assigned_to_me` to NULL for their tasks, since a new token owner can't edit the old
     owner's comments
@@ -406,6 +436,8 @@ pub enum WriteMethod { Post, Put }
     - `credential_failed`: "Couldn't read the Jira token to write back. Replace the token."
     - `owner_not_a_person`: "This token belongs to an app account, so sensei can't tell
       which tickets are yours. Nothing is written."
+    - `owner_lookup_failed`: "Couldn't check which tickets are yours: <error text>.
+      Retrying on each sync." The `<error text>` is `tracker-errors.ts`'s words for the code.
     - `owner_unknown`: "Checking which tickets are yours on the next sync."
     - `nothing_assigned`: "No tickets on this board are assigned to you."
   - **Fields** (`data-section="fields"`): lists the mappings in enum order, adds a row
@@ -507,13 +539,35 @@ and the test DB unless marked *(tenant)*.
 1. **DDL**: `information_schema.columns` shows the W11 columns and none named `*assignee*`.
    `tracker_fields` has both unique constraints. Each of the three enums equals its Rust
    `ALL` (unit test). A `trackers` row inserted without `writeback_enabled` has `true`.
-2. **Owner, three ways**: `/myself` returning `{accountId:"A1",accountType:"atlassian"}`
-   → `owner_ref = 'A1'`. `accountType:"app"` → `not_a_person` and
-   `writeback.state = owner_not_a_person`. `{}` → `unknown` and `owner_unknown`.
-3. **Backfill bounds**: a pre-slice tracker (`owner_ref` and `owner_state` NULL) whose
-   `/myself` says `app` makes exactly **1** `/myself` request across two syncs. A failing
-   `/myself` leaves the sync `Ok` and `last_error` NULL.
+2. **Owner, three ways.**
+   - Unit table over the W1 rules:
+     - `{accountType:"atlassian",accountId:"A1"}` → `Person("A1")`
+     - `{accountType:"app"}` (no `accountId`) and `{accountType:"customer",accountId:"C1"}` → `NotAPerson`
+     - `{}`, `{accountId:"A1"}`, `{accountType:"atlassian"}`,
+       `{accountType:"atlassian",accountId:""}`, `{accountType:"atlassian",accountId:123}`
+       and `{accountType:null,accountId:"A1"}` → `Unknown`
+     - `{accountType:"Atlassian",accountId:"A1"}` → `Person("A1")`
+   - Stored on connect: `owner_ref = 'A1'`; `not_a_person`; `unknown`.
+   - *(F2)* `writeback.state` is `owner_not_a_person` and `owner_unknown` for the last two.
+3. **Backfill bounds**:
+   - A pre-slice tracker (`owner_ref` and `owner_state` NULL) whose `/myself` says `app`
+     makes exactly **1** `/myself` request across two syncs.
+   - A `/myself` that 403s every time leaves each sync `Ok`, `last_error` NULL and
+     `owner_error = 'forbidden'`. *(F2)* `writeback.state = owner_lookup_failed` with
+     `error: "forbidden"`.
+   - A later `/myself` that succeeds clears `owner_error`.
+3a. **Backfill under re-key**: `/myself` returns `A1`, but an `on_call` hook on `/myself`
+   re-connects the board with a new token mid-call. Afterwards `owner_ref` isn't `'A1'`;
+   it's NULL, or the new connect's owner.
+3b. **Backfill inside the deadline** (`start_paused`): `/myself` answers 429 with
+   `Retry-After: 60` four times, and the fetch never resolves. The sync returns within
+   `SYNC_DEADLINE` of its start.
+3c. **Store failure**: if `set_tracker_owner` fails (a store fake or a revoked
+   privilege), the sync returns `Ok` and the tasks' `assigned_to_me` is NULL.
 4. **Assignee only**: board with AUTH-1→A1, AUTH-2→`zz-sentinel-b2`, AUTH-3 unassigned, all linked.
+   The fake board strips `fields.assignee` from its responses unless the request's
+   `fields` query names `assignee`. That way a read that forgets to ask gives `f/f/f`
+   and fails, for both the snapshot read and the discovery (`search_keys`) read.
    One pass sends write requests for AUTH-1 only, and `assigned_to_me` is `t/f/f`. Then
    reassign AUTH-1 to `zz-sentinel-b2` and sync: the next pass sends 0 requests.
 5. **No identity stored or logged**: after gate 4, no row in any `sensei` table contains
@@ -680,6 +734,9 @@ The rows marked *(rewrite)* were added by the rewrite and verified in a second p
 | C34 *(rewrite 3)* | Gate 13's two commands give no output on today's tree; the keyring `s.delete(` (connect.rs:177) isn't an HTTP call | ran both at `64f10fe46` | no output | CONFIRMED *(was FALSE: the earlier pattern `\.(post\|put\|patch\|delete)\(` matched connect.rs:177)* |
 | C35 *(rewrite 3)* | Today `Read-only mirror\|mirrored read-only` appears in both tracker DDL files and design.dbml, and `scheduled_tasks.rs:63` says "(read-only)" | rg at `64f10fe46` | tracker_tasks.ddl 2, trackers.ddl 1, design.dbml 3; scheduled_tasks.rs:63 | CONFIRMED |
 | C36 *(rewrite 3)* | The docs check as defined in gate 26 reports 39 units on the set's Markdown and `.feature` files, with no billing or viewer paragraph | scratch prototype run at `d9b708894` | 39; 0 billing/viewer | CONFIRMED |
+| C37 *(build F1)* | `until` is computed after `mark_tracker_attempt`, so a step-1 call made before it isn't covered by `SYNC_DEADLINE`; the 429 loop sleeps up to `MAX_RETRY_AFTER` = 60 s per retry with `SYNC_RETRIES` = 3 | sync.rs:103-111; transport.rs 429 loop; http.rs; runtime.rs:15 | as stated | CONFIRMED *(found by the F1 failure-mode pre-audit; W1 now starts the deadline first)* |
+| C38 *(build F1)* | `TrackerTuple` has 14 fields; sqlx-core 0.8.6 implements `FromRow` for tuples up to 16 | trackers.rs:130-145; sqlx-core-0.8.6 `from_row.rs` | as stated | CONFIRMED *(W11 switches `TrackerRow` to a derived struct)* |
+| C39 *(build F1)* | `FakeBoard::get_json` ignores the `fields` query; `FakeBoard::standard`'s `/myself` has no `accountType` | tracker/mod.rs:519, 540-573 | as stated | CONFIRMED *(gate 4's fake now honours `fields`; the standard fixture gains `accountType`)* |
 
 ## Related
 

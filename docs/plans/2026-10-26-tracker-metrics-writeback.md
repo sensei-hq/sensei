@@ -42,18 +42,29 @@ tree moves. Any `FALSE` stops the build.
 
 - **Issue:** TBD
 - **Layers:**
-  - DDL: enum `tracker_owner_state`; `trackers.owner_ref`, `owner_state`;
-    `tracker_tasks.assigned_to_me`
+  - DDL: enum `tracker_owner_state`; `trackers.owner_ref`, `owner_state`, `owner_error`;
+    `tracker_tasks.assigned_to_me`; `design.dbml`; `make test-template`
   - daemon: `AccountRef` (redacting `Debug`); `OwnerLookup`; `TrackerAdapter::owner`;
-    `Validated.owner`; Jira `owner()` from `/myself`; `assignee` added to `ISSUE_FIELDS`
+    `Validated.owner`; Jira `owner()` from `/myself` (the W1 ordered rules); `assignee` added to `ISSUE_FIELDS`
     and `search_keys`; `TaskRow.assignee`; `upsert_tasks` sets `assigned_to_me`; sync
-    step-1 backfill; `connect_tracker` resets owner state on the connected and sibling
-    rows (W11)
-  - API: `GET …/tasks` and `…/tracker-tasks/{key}` gain `assigned_to_me`
+    step-1 backfill under the sync deadline, with conditional stores and `owner_error`;
+    `connect_tracker` resets owner state on the connected and sibling rows (W11), and
+    `NewTracker` carries the owner
+  - touch points:
+    - `TrackerRow` is read through a `#[derive(FromRow)]` struct (C38)
+    - `owner()` on `FakeAdapter` (sync.rs:587) and `BrokenLinks` (sync.rs:969)
+    - the `TaskRow` literals at link.rs:77 and sync.rs:619, and the `Validated` literal
+      at jira.rs:700
+    - `FakeBoard`: `/myself` gains `accountType`; responses honour the `fields` query
+      (gate 4); an owner/assignee fixture builder
+  - API: `GET …/tasks` and `…/tracker-tasks/{key}` gain `assigned_to_me`, through
+    `TaskListRow`/`tracker_task_rows` (tracker_usage.rs) and
+    `TaskDetail`/`tracker_task_detail` (trackers.rs)
 - **Depends on:** —
 - **Acceptance criteria** (spec gates):
-  - **2:** owner is one of three outcomes
-  - **3:** one backfill request for `not_a_person`; the sync stays `Ok` on failure
+  - **2:** the W1 rule table and the stored values (not the `writeback.state` half)
+  - **3, 3a, 3b, 3c:** backfill bounds, `owner_error`, re-key mid-lookup, inside the
+    deadline, store failure
   - **4:** `assigned_to_me` is `t/f/f` (only the assignment part; the write half lands in F2)
   - **5:** no `zz-sentinel-b2` in `pg_dump -n sensei`, and no account id in `Debug`
   - **22:** owner reset on re-connect and on a new sibling connect
@@ -92,6 +103,8 @@ tree moves. Any `FALSE` stops the build.
     `issue_exists`, ADF builder, id-shape checks
   - API: `GET …/trackers` gains the `writeback` object (`enabled`, `state`, `surface`,
     `mapped` = 0, `assigned`, `failing`, `error`)
+  - daemon: `connect_tracker` also resets `writeback_error` and the tasks'
+    `writeback_comment_ref`, `writeback_hash` and `writeback_status` (W11)
 - **Depends on:** F1
 - **Acceptance criteria** (spec gates):
   - **6:** render golden
@@ -109,6 +122,8 @@ tree moves. Any `FALSE` stops the build.
   - **20:** switch-off and disconnect mid-pass
   - **21:** lock and deadline
   - **22a:** pass credential → `credential_failed`
+  - **2** (state half): `owner_not_a_person`, `owner_unknown`, `owner_lookup_failed`
+  - **22** (write-back half): re-connect and new-sibling reset of the `writeback_*` columns
   - **22b:** GET empty-200 still `Decode`
   - **4:** write requests for AUTH-1 only, 0 after reassignment
 - **Test scenarios:**
