@@ -12,6 +12,24 @@ updated: 2026-10-25
 
 ---
 
+## 2026-10-26 — The store's row types live in `pg_store/mod.rs` (#161)
+
+**Decision (user):** the typed row/argument types of `db/pg_store` (`NodeRow`, `FolderRow`, `EdgeTarget`,
+`MetricRow`, `HookEventRow`, …) are declared in `pg_store/mod.rs`, the path every caller names. They are not
+declared beside their writers and re-exported.
+
+**Why:** the Rust indexer does not follow `pub use`. A re-exported row was a reference to an identity no
+declaration mints, at every use. #161's conversions pushed the first-party dangling-reference ratchet
+(`indexer::resolve`) to 1,304 against its 1,300 ceiling. Moving 22 types took it to 1,045, and the ceiling
+was lowered to 1,060.
+
+**Cost:** a row is read in `mod.rs`, away from the writer that destructures it. Each one is labelled with
+its writer file.
+
+**Alternatives considered:** teaching the indexer to resolve `pub use` (the right long-term fix; it is
+cross-file, stage-12 work, listed in `docs/backlog.md`), and raising the ceiling (rejected: the ratchet
+exists to stop exactly this growth).
+
 ## 2026-10-25 — A database per test (#183)
 
 Every Rust DB test shared one `sensei_test`. A database-wide operation in one test (a heal, a prune, a rescan

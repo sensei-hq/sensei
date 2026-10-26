@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::pg_store::graph::{EdgeRow, EdgeTarget};
+use crate::db::pg_store::{EdgeRow, EdgeTarget};
 
 // ── stub GC ──────────────────────────────────────────────────────────────────
 

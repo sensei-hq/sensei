@@ -569,11 +569,13 @@ async fn ingest_one(
         };
         turns = pg
             .upsert_transcript_turns(
-                adapter.source(),
-                &session_id,
-                adapter.family(),
-                provider,
-                model_name,
+                &crate::db::pg_store::TranscriptSource {
+                    source: adapter.source(),
+                    session_id: &session_id,
+                    family: adapter.family(),
+                    provider,
+                    model: model_name,
+                },
                 &parsed.turns,
             )
             .await?;

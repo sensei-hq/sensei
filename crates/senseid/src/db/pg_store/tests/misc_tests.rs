@@ -8,7 +8,14 @@ async fn extension_create_and_list() {
     let s = pg_store().await;
     let name = format!("_test:ext_{}", uuid::Uuid::new_v4());
     let id = s
-        .create_extension("skill", &name, Some("test skill"), Some("# content"), "global", "local")
+        .create_extension(&crate::db::pg_store::ExtensionRow {
+            kind: "skill",
+            name: &name,
+            description: Some("test skill"),
+            content: Some("# content"),
+            scope: "global",
+            source: "local",
+        })
         .await
         .unwrap();
     let skills = s.list_extensions_by_kind("skill").await.unwrap();
@@ -20,7 +27,17 @@ async fn extension_create_and_list() {
 async fn extension_historize_trigger() {
     let s = pg_store().await;
     let name = format!("_test:ext_hist_{}", uuid::Uuid::new_v4());
-    let id = s.create_extension("skill", &name, Some("v1"), None, "global", "local").await.unwrap();
+    let id = s
+        .create_extension(&crate::db::pg_store::ExtensionRow {
+            kind: "skill",
+            name: &name,
+            description: Some("v1"),
+            content: None,
+            scope: "global",
+            source: "local",
+        })
+        .await
+        .unwrap();
     s.update_extension(&id, Some("v2"), None).await.unwrap();
     let history = s.get_extension_history(&id).await.unwrap();
     assert!(history.len() >= 2, "historize trigger should create INSERT + UPDATE entries");

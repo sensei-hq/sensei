@@ -1,58 +1,5 @@
 use super::*;
 
-/// The measured outcome of one session, written when it closes.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct SessionMetricsRow<'a> {
-    pub session_id: &'a uuid::Uuid,
-    pub turns: i32,
-    pub corrections: i32,
-    pub outcome: &'a str,
-    pub ftr: bool,
-    /// Active time and its R12 split; `None` writes NULL (no hook events).
-    pub duration_ms: Option<i64>,
-    pub claude_ms: Option<i64>,
-    pub user_ms: Option<i64>,
-    pub module: Option<&'a str>,
-    pub tool_usage: &'a serde_json::Value,
-}
-
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct HookEventRow<'a> {
-    pub session_id: &'a str,
-    pub assistant_family: &'a str,
-    pub event_type: &'a str,
-    pub tool_name: Option<&'a str>,
-    pub cwd: Option<&'a str>,
-    pub ts: i64,
-    pub success: Option<bool>,
-    pub payload: &'a serde_json::Value,
-}
-
-/// How a session ended, written once at completion.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct SessionOutcomeRow<'a> {
-    pub id: &'a uuid::Uuid,
-    pub outcome: &'a str,
-    pub ftr: bool,
-    pub turns: i32,
-    pub corrections: i32,
-    pub summary: Option<&'a str>,
-    pub tokens_in: Option<i64>,
-    pub tokens_out: Option<i64>,
-}
-
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// List all sessions across all folders.

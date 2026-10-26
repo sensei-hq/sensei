@@ -13,7 +13,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "dojo.rs::outbox_mark_sent",
     "dojo.rs::outbox_mark_state",
     "dojo.rs::upsert_federated_memory",
-    "extensions.rs::create_extension",
     "folders.rs::upsert_file_row",
     "folders.rs::upsert_scan_state_skipped",
     "folders.rs::upsert_subfolder",
@@ -46,7 +45,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "trackers.rs::apply_discovered",
     "trackers.rs::apply_tracker_snapshot",
     "transcript.rs::set_capture_watermark",
-    "transcript.rs::upsert_transcript_turns",
     "workspaces.rs::set_workspace_identity",
 ];
 
@@ -446,7 +444,7 @@ async fn a_workflow_state_patch_lands_field_for_field() {
 #[tokio::test]
 async fn an_edge_row_lands_on_its_target_columns() {
     use crate::db::pg_store::NodeRow;
-    use crate::db::pg_store::graph::{EdgeRow, EdgeTarget};
+    use crate::db::pg_store::{EdgeRow, EdgeTarget};
     let s = super::pg_store().await;
     let root = s.add_watch_root("/_t161e", "t161e", &serde_json::json!([])).await.unwrap();
     let folder = s.upsert_repo_kind(&root, "git", "t161e", "/_t161e/repo").await.unwrap();
@@ -574,4 +572,75 @@ async fn a_task_execution_start_lands_field_for_field() {
         got,
         (41, Some(40), "process_file".into(), "/fp".into(), "src/p.rs".into(), "running".into(), 2)
     );
+}
+
+#[tokio::test]
+async fn an_extension_row_lands_field_for_field() {
+    use crate::db::pg_store::ExtensionRow;
+    let s = super::pg_store().await;
+    let id = s
+        .create_extension(&ExtensionRow {
+            kind: "agent",
+            name: "ext-161",
+            description: Some("desc"),
+            content: Some("body"),
+            scope: "workspace",
+            source: "marketplace",
+        })
+        .await
+        .unwrap();
+    type Ext = (String, String, Option<String>, Option<String>, String, String);
+    let got: Ext = sqlx_core::query_as::query_as(
+        "SELECT kind::text, name, description, content, scope::text, source::text
+           FROM sensei.extensions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            "agent".into(),
+            "ext-161".into(),
+            Some("desc".into()),
+            Some("body".into()),
+            "workspace".into(),
+            "marketplace".into()
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_transcript_source_lands_on_every_turn() {
+    use crate::db::pg_store::TranscriptSource;
+    let s = super::pg_store().await;
+    let turn = crate::transcript::TranscriptTurn {
+        turn_index: 1,
+        user_text: Some("hi".into()),
+        assistant_text: "hello".into(),
+        started_at: None,
+        attrs: serde_json::json!({}),
+        facts: Default::default(),
+    };
+    s.upsert_transcript_turns(
+        &TranscriptSource {
+            source: "zed",
+            session_id: "sess-161",
+            family: "fam",
+            provider: Some("prov"),
+            model: Some("mdl"),
+        },
+        &[turn],
+    )
+    .await
+    .unwrap();
+    type Turn = (String, String, Option<String>, Option<String>);
+    let got: Turn = sqlx_core::query_as::query_as(
+        "SELECT source, family, provider, model FROM activity.transcript_turns WHERE session_id = 'sess-161'",
+    )
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(got, ("zed".into(), "fam".into(), Some("prov".into()), Some("mdl".into())));
 }

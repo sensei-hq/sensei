@@ -16,25 +16,6 @@ pub struct LibraryDocs {
     pub version_note: Option<String>,
 }
 
-/// One page of library documentation, with the identity that dedupes it.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct LibraryPageRow<'a> {
-    pub library_id: &'a uuid::Uuid,
-    pub title: &'a str,
-    pub url: Option<&'a str>,
-    pub local_path: Option<&'a str>,
-    pub description: Option<&'a str>,
-    pub content: Option<&'a str>,
-    pub source_type: &'a str,
-    pub component: Option<&'a str>,
-    pub package_name: Option<&'a str>,
-    pub version: Option<&'a str>,
-}
-
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// Search libraries by name (ILIKE).

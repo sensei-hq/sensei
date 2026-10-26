@@ -369,7 +369,18 @@ async fn repair_sessions_from_transcripts_creates_the_missing_session() {
         attrs: serde_json::json!({ "cwd": "/_test/repair-tt" }),
         ..Default::default()
     };
-    s.upsert_transcript_turns("claude_code", sess, "claude", None, None, &[turn]).await.unwrap();
+    s.upsert_transcript_turns(
+        &crate::db::pg_store::TranscriptSource {
+            source: "claude_code",
+            session_id: sess,
+            family: "claude",
+            provider: None,
+            model: None,
+        },
+        &[turn],
+    )
+    .await
+    .unwrap();
     assert_eq!(session_row_folder(&s, sess).await, None, "no session before the repair");
 
     let n = s.repair_sessions_from_transcripts().await.unwrap();
@@ -472,7 +483,18 @@ async fn repair_from_transcripts_leaves_an_unresolvable_cwd_alone() {
         attrs: serde_json::json!({ "cwd": "/_nowhere/not/tracked" }),
         ..Default::default()
     };
-    s.upsert_transcript_turns("claude_code", sess, "claude", None, None, &[turn]).await.unwrap();
+    s.upsert_transcript_turns(
+        &crate::db::pg_store::TranscriptSource {
+            source: "claude_code",
+            session_id: sess,
+            family: "claude",
+            provider: None,
+            model: None,
+        },
+        &[turn],
+    )
+    .await
+    .unwrap();
     s.repair_sessions_from_transcripts().await.unwrap();
     assert_eq!(
         session_row_folder(&s, sess).await,

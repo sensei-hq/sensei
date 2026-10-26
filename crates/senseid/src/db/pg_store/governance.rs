@@ -1,29 +1,5 @@
 use super::*;
 
-/// One checker run, as [`PgStore::insert_check_run`] appends it (D-CHECKER).
-pub struct CheckRunRow<'a> {
-    pub folder_id: &'a uuid::Uuid,
-    pub rule_statement: &'a str,
-    pub checker_ref: &'a str,
-    pub command: &'a str,
-    /// A `sensei.check_verdict` label.
-    pub verdict: &'a str,
-    pub exit_code: Option<i32>,
-    pub output_tail: &'a str,
-}
-
-/// One consolidated ruleset version, as [`PgStore::insert_consolidated_ruleset`]
-/// writes it.
-pub struct ConsolidatedRulesetRow<'a> {
-    pub scope: &'a str,
-    pub version: i32,
-    pub content: &'a str,
-    pub conflicts: &'a serde_json::Value,
-    pub model: Option<&'a str>,
-    pub source_hash: &'a str,
-    pub status: &'a str,
-}
-
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// Assemble a blended context blob: workspace-scoped + stack-scoped + global memories.

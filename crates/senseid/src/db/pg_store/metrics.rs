@@ -1,42 +1,5 @@
 use super::*;
 
-/// One row of `sensei.repository_metrics`, named rather than positional (#161).
-///
-/// The ten values this carries used to be ten positional arguments, four of them
-/// string-ish and two of them adjacent `Option<&str>`. A call site read
-/// `SCOPE_USER, None, None, day, GRAIN_DAILY, …`, and transposing the two `None`s
-/// — `identity` for `commit_sha` — was invisible to the compiler, to the database
-/// and to every test. Naming them makes that transposition unwriteable.
-///
-/// **No `Default`, deliberately.** `..Default::default()` at a call site is the
-/// same silence in a different place: a field added later would quietly take its
-/// default at every existing site instead of forcing a decision. Every field is
-/// written out, every time; the cost is a longer literal and the benefit is that
-/// adding a dimension is a compile error at all 30-odd call sites rather than a
-/// value that stops arriving.
-#[derive(Debug, Clone)]
-pub struct MetricRow<'a> {
-    pub metric_id: &'a uuid::Uuid,
-    /// The repository the value belongs to. NOT NULL in the table — a metric row
-    /// that joins to nothing is not a reading.
-    pub repository_id: &'a uuid::Uuid,
-    /// `sensei.metric_scope`: `user` | `repo`.
-    pub scope: &'a str,
-    /// The sub-key within the scope, when the metric has one. Part of the
-    /// conflict target, so two identities are two rows.
-    pub identity: Option<&'a str>,
-    /// The commit a point-in-time reading was taken at, when it has one. Also
-    /// part of the conflict target.
-    pub commit_sha: Option<&'a str>,
-    pub computed_on: chrono::NaiveDate,
-    /// `sensei.metric_grain`: `daily` | `session`.
-    pub grain: &'a str,
-    pub value: f64,
-    pub props: &'a serde_json::Value,
-    /// `sensei.metric_source`: `measured` | `estimated` | `federated`.
-    pub source: &'a str,
-}
-
 // `too_many_arguments` is NOT silenced here any more (#161). It was, and that is
 // part of why a ten-argument writer survived: the lint that would have named it
 // was turned off for the whole impl. Measured 2026-10-05 after the `MetricRow`

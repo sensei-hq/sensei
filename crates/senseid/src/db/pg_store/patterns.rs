@@ -1,23 +1,5 @@
 use super::*;
 
-/// One row of `inference.recommendations` — a proposal and its evidence.
-///
-/// Named rather than positional (#161): destructured exhaustively by its
-/// writer, so a field added here is a compile error until someone binds it.
-/// No `Default` — that would relocate the silence to the call sites.
-#[derive(Debug, Clone)]
-pub struct RecommendationRow<'a> {
-    pub workspace_id: &'a uuid::Uuid,
-    pub title: &'a str,
-    pub why: &'a str,
-    pub impact: Option<&'a str>,
-    pub action_type: &'a str,
-    pub urgency: &'a str,
-    pub based_on: &'a serde_json::Value,
-    pub reasoning_trace_id: Option<&'a uuid::Uuid>,
-    pub prompt: Option<&'a str>,
-}
-
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// Cache read for the narration-cache pipeline. Returns the persisted

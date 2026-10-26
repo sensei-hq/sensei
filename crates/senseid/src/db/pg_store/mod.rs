@@ -561,29 +561,12 @@ mod orm_reads;
 mod pruner;
 mod schema_store;
 pub use call_sites::{CallSiteColumns, StoredCallSite};
-pub use config::WorkflowStatePatch;
-pub use folders::FolderRow;
-pub use governance::{CheckRunRow, ConsolidatedRulesetRow};
-/// One row of `sensei.nodes`, named rather than positional (#161).
-pub use graph::{EdgeTarget, NodeRow};
-pub use library::LibraryPageRow;
-pub use logs::{Abandonments, LogRow, TaskExecutionStart};
-pub use mcp::{AssistantToolRow, McpManifestRow, McpServerRow};
+pub use logs::Abandonments;
 pub use neighbourhood::NeighbourNode;
 pub use pruner::PruneReport;
 #[cfg(test)]
 pub use schema_store::StoredSchemaRef;
 pub use schema_store::{StoredDep, StoredSchemaEntity, UnplacedRef};
-// `create_memory` is `#[cfg(test)]` — it has no production caller.
-#[cfg(test)]
-pub use memory::MemoryRow;
-/// One row of `sensei.repository_metrics`, named rather than positional (#161).
-pub use metrics::MetricRow;
-pub use patterns::RecommendationRow;
-pub use playbook::PlaybookRunRow;
-pub use sessions::HookEventRow;
-pub use sessions::SessionMetricsRow;
-pub use sessions::SessionOutcomeRow;
 mod patterns;
 mod personas;
 /// Named outside this module because THREE callers now share it — the scheduled
@@ -1237,4 +1220,431 @@ mod pool_lifecycle_tests {
         pg.close().await;
         assert!(pg.pool().is_closed(), "a second close() leaves the pool closed");
     }
+}
+
+// ── The store's row types (#161) ─────────────────────────────────────
+//
+// Declared HERE, at the path every caller names (`pg_store::FolderRow`), not
+// beside their writers: the Rust indexer does not follow `pub use`, so a
+// re-exported row was a dangling reference at every use (user decision
+// 2026-10-26, docs/decisions.md).
+
+// Written by `config.rs`.
+/// A change to a workspace's workflow state, as [`PgStore::upsert_workflow_state`]
+/// applies it: each `Some` replaces its column, each `None` keeps the stored value.
+pub struct WorkflowStatePatch<'a> {
+    pub phase: Option<&'a str>,
+    pub plan: Option<&'a str>,
+    pub task: Option<&'a str>,
+    pub issue: Option<i64>,
+    pub checkpoint: Option<&'a str>,
+    pub rules_hash: Option<&'a str>,
+}
+
+// Written by `folders.rs`.
+/// One folder, as [`PgStore::upsert_folder`] writes it. Its repository is never
+/// the caller's to name: it is inherited from the repo anchor (#211).
+pub struct FolderRow<'a> {
+    pub root_id: &'a uuid::Uuid,
+    /// A `sensei.folder_kind` label; refreshed on conflict, since it is derived.
+    pub kind: &'a str,
+    pub name: &'a str,
+    pub path: &'a str,
+    pub abs_path: &'a str,
+    /// Kept on conflict when `None`.
+    pub parent_id: Option<&'a uuid::Uuid>,
+    /// The workspace root this folder is a member of; assigned on conflict.
+    pub workspace_root_id: Option<&'a uuid::Uuid>,
+}
+
+// Written by `governance.rs`.
+/// One checker run, as [`PgStore::insert_check_run`] appends it (D-CHECKER).
+pub struct CheckRunRow<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    pub rule_statement: &'a str,
+    pub checker_ref: &'a str,
+    pub command: &'a str,
+    /// A `sensei.check_verdict` label.
+    pub verdict: &'a str,
+    pub exit_code: Option<i32>,
+    pub output_tail: &'a str,
+}
+
+// Written by `governance.rs`.
+/// One consolidated ruleset version, as [`PgStore::insert_consolidated_ruleset`]
+/// writes it.
+pub struct ConsolidatedRulesetRow<'a> {
+    pub scope: &'a str,
+    pub version: i32,
+    pub content: &'a str,
+    pub conflicts: &'a serde_json::Value,
+    pub model: Option<&'a str>,
+    pub source_hash: &'a str,
+    pub status: &'a str,
+}
+
+// Written by `graph.rs`.
+/// What an edge points at. Resolved, the target IS the node: a name or file
+/// beside it would be ignored, so the type cannot carry one. Unresolved, the
+/// name and file are the edge's identity (`edges_unique_unresolved`).
+#[derive(Clone, Copy)]
+pub enum EdgeTarget<'a> {
+    Node(&'a uuid::Uuid),
+    Unresolved { name: Option<&'a str>, file: Option<&'a str> },
+}
+
+impl<'a> EdgeTarget<'a> {
+    /// The node when there is one, else the name and file it was recorded under.
+    pub fn from_parts(
+        id: Option<&'a uuid::Uuid>,
+        name: Option<&'a str>,
+        file: Option<&'a str>,
+    ) -> Self {
+        match id {
+            Some(id) => Self::Node(id),
+            None => Self::Unresolved { name, file },
+        }
+    }
+}
+
+// Written by `graph.rs`.
+/// One edge, as [`PgStore::insert_edge_with_props`] writes it (#161).
+pub struct EdgeRow<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    pub source_id: &'a uuid::Uuid,
+    pub target: EdgeTarget<'a>,
+    /// A `sensei.edge_kind` label.
+    pub kind: &'a str,
+    /// Merged into the stored props on conflict, never replacing them.
+    pub props: &'a serde_json::Value,
+}
+
+// Written by `graph.rs`.
+/// One row of `sensei.nodes`, named rather than positional (#161).
+///
+/// `upsert_node` took nine positional arguments and carried a comment defending
+/// them: *"The arguments ARE the columns. A struct here would restate the same
+/// names one indirection away without removing a single one."* The verbosity
+/// claim is true and beside the point. The value is not fewer names — it is that
+/// destructuring this EXHAUSTIVELY turns a field added to the producer into a
+/// compile error. The positional list could not, which is how
+/// `extract_return_type` ran on every rust function for months while no return
+/// type reached a column: there was no ninth argument, and nothing failed.
+///
+/// **No `Default`, deliberately.** `..Default::default()` would relocate the
+/// silence rather than remove it: a field added later would quietly take its
+/// default at every existing site instead of forcing a decision. That is why
+/// the defaulting wrapper this replaced (`upsert_node` → `upsert_node_ex` with
+/// `is_exported = false`) is gone — a wrapper whose only job is to supply a
+/// default is the same hazard with a friendlier name.
+#[derive(Debug, Clone)]
+pub struct NodeRow<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    pub kind: &'a str,
+    pub name: &'a str,
+    /// Resolved to `nodes.file_id` by the writer, which FAILS CLOSED on a miss
+    /// (R13): a node naming an untracked file is a bug in the walk, and minting
+    /// a `files` row here would hide it behind a plausible id.
+    pub file_path: &'a str,
+    pub parent_id: Option<&'a uuid::Uuid>,
+    pub signature: Option<&'a str>,
+    /// Part of `nodes_unique_identity`, so moving a symbol within its file is a
+    /// different node rather than an update.
+    pub line_start: Option<i32>,
+    pub line_end: Option<i32>,
+    pub is_exported: bool,
+}
+
+// Written by `library.rs`.
+/// One page of library documentation, with the identity that dedupes it.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct LibraryPageRow<'a> {
+    pub library_id: &'a uuid::Uuid,
+    pub title: &'a str,
+    pub url: Option<&'a str>,
+    pub local_path: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub content: Option<&'a str>,
+    pub source_type: &'a str,
+    pub component: Option<&'a str>,
+    pub package_name: Option<&'a str>,
+    pub version: Option<&'a str>,
+}
+
+// Written by `logs.rs`.
+/// One structured log line as it is stored.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct LogRow<'a> {
+    pub level: &'a str,
+    pub running_on: &'a str,
+    pub module: Option<&'a str>,
+    pub logged_at: &'a str,
+    pub message: &'a str,
+    pub context: &'a serde_json::Value,
+    pub data: &'a Option<serde_json::Value>,
+    pub error: &'a Option<serde_json::Value>,
+}
+
+// Written by `logs.rs`.
+/// One attempt at a task, as [`PgStore::start_task_execution`] records it
+/// (`running`, until completed or failed).
+pub struct TaskExecutionStart<'a> {
+    /// The queue's id — it restarts at 1 with every daemon session.
+    pub task_id: i64,
+    pub parent_task_id: Option<i64>,
+    /// A `sensei.task_execution_kind` label.
+    pub task_kind: &'a str,
+    pub folder_path: &'a str,
+    pub path: &'a str,
+    pub retry_number: i32,
+}
+
+// Written by `mcp.rs`.
+/// One registered tool, as [`PgStore::upsert_assistant_tool`] writes it.
+pub struct AssistantToolRow<'a> {
+    pub assistant_family: &'a str,
+    /// `builtin` | `mcp`.
+    pub source_type: &'a str,
+    pub source_key: &'a str,
+    pub tool_name: &'a str,
+    /// The name the harness records when the tool is called.
+    pub invoked_name: &'a str,
+    pub description: Option<&'a str>,
+    pub server_id: Option<uuid::Uuid>,
+}
+
+// Written by `mcp.rs`.
+/// One probe of an MCP server, as [`PgStore::upsert_mcp_tool_manifest`] writes it.
+pub struct McpManifestRow<'a> {
+    pub server_id: &'a uuid::Uuid,
+    pub tools: &'a serde_json::Value,
+    pub tool_count: i32,
+    pub protocol_version: Option<&'a str>,
+    pub server_name: Option<&'a str>,
+    pub server_version: Option<&'a str>,
+    /// Why the probe failed; `None` on success.
+    pub error: Option<&'a str>,
+}
+
+impl<'a> McpManifestRow<'a> {
+    /// A probe that failed: no tools, and the reason.
+    pub fn failed(
+        server_id: &'a uuid::Uuid,
+        no_tools: &'a serde_json::Value,
+        error: &'a str,
+    ) -> Self {
+        Self {
+            server_id,
+            tools: no_tools,
+            tool_count: 0,
+            protocol_version: None,
+            server_name: None,
+            server_version: None,
+            error: Some(error),
+        }
+    }
+}
+
+// Written by `mcp.rs`.
+/// One discovered MCP server, as [`PgStore::upsert_mcp_server`] writes it.
+pub struct McpServerRow<'a> {
+    /// `claude` | `zed` | `cursor` | `codex` | `opencode` | `other`.
+    pub acp_family: &'a str,
+    /// The key in the assistant's config, e.g. `sensei`, `postgres`.
+    pub mcp_key: &'a str,
+    /// `Some` for the assistant's project scope, `None` for user scope.
+    pub workspace_id: Option<uuid::Uuid>,
+    /// The absolute path the entry was discovered in.
+    pub config_source: &'a str,
+    pub command: &'a str,
+    /// JSON array of args, from the config.
+    pub args: &'a serde_json::Value,
+    /// JSON object of env vars, from the config.
+    pub env: &'a serde_json::Value,
+}
+
+// Written by `transcript.rs`.
+/// Whose turns [`PgStore::upsert_transcript_turns`] writes: the same on every
+/// turn of one transcript.
+pub struct TranscriptSource<'a> {
+    /// The capture source, e.g. `claude_code`, `zed`.
+    pub source: &'a str,
+    pub session_id: &'a str,
+    /// The assistant family, e.g. `claude`.
+    pub family: &'a str,
+    pub provider: Option<&'a str>,
+    pub model: Option<&'a str>,
+}
+
+// Written by `memory.rs`.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub struct MemoryRow<'a> {
+    pub workspace_id: Option<&'a uuid::Uuid>,
+    pub scope: &'a str,
+    pub scope_filter: Option<&'a str>,
+    pub mem_type: &'a str,
+    pub title: &'a str,
+    pub content: &'a str,
+    pub impact: Option<&'a str>,
+    pub session_id: Option<&'a uuid::Uuid>,
+    pub spine_slot: Option<&'a str>,
+    pub feature: Option<&'a str>,
+}
+
+// Written by `metrics.rs`.
+/// One row of `sensei.repository_metrics`, named rather than positional (#161).
+///
+/// The ten values this carries used to be ten positional arguments, four of them
+/// string-ish and two of them adjacent `Option<&str>`. A call site read
+/// `SCOPE_USER, None, None, day, GRAIN_DAILY, …`, and transposing the two `None`s
+/// — `identity` for `commit_sha` — was invisible to the compiler, to the database
+/// and to every test. Naming them makes that transposition unwriteable.
+///
+/// **No `Default`, deliberately.** `..Default::default()` at a call site is the
+/// same silence in a different place: a field added later would quietly take its
+/// default at every existing site instead of forcing a decision. Every field is
+/// written out, every time; the cost is a longer literal and the benefit is that
+/// adding a dimension is a compile error at all 30-odd call sites rather than a
+/// value that stops arriving.
+#[derive(Debug, Clone)]
+pub struct MetricRow<'a> {
+    pub metric_id: &'a uuid::Uuid,
+    /// The repository the value belongs to. NOT NULL in the table — a metric row
+    /// that joins to nothing is not a reading.
+    pub repository_id: &'a uuid::Uuid,
+    /// `sensei.metric_scope`: `user` | `repo`.
+    pub scope: &'a str,
+    /// The sub-key within the scope, when the metric has one. Part of the
+    /// conflict target, so two identities are two rows.
+    pub identity: Option<&'a str>,
+    /// The commit a point-in-time reading was taken at, when it has one. Also
+    /// part of the conflict target.
+    pub commit_sha: Option<&'a str>,
+    pub computed_on: chrono::NaiveDate,
+    /// `sensei.metric_grain`: `daily` | `session`.
+    pub grain: &'a str,
+    pub value: f64,
+    pub props: &'a serde_json::Value,
+    /// `sensei.metric_source`: `measured` | `estimated` | `federated`.
+    pub source: &'a str,
+}
+
+// Written by `patterns.rs`.
+/// One row of `inference.recommendations` — a proposal and its evidence.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct RecommendationRow<'a> {
+    pub workspace_id: &'a uuid::Uuid,
+    pub title: &'a str,
+    pub why: &'a str,
+    pub impact: Option<&'a str>,
+    pub action_type: &'a str,
+    pub urgency: &'a str,
+    pub based_on: &'a serde_json::Value,
+    pub reasoning_trace_id: Option<&'a uuid::Uuid>,
+    pub prompt: Option<&'a str>,
+}
+
+// Written by `playbook.rs`.
+/// One row of `sensei.playbook_runs` — a classification and what produced it.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct PlaybookRunRow<'a> {
+    pub session_id: Option<uuid::Uuid>,
+    pub feature: Option<&'a str>,
+    pub lifecycle: &'a str,
+    pub intent: &'a str,
+    pub risk: &'a str,
+    pub rule_id: Option<uuid::Uuid>,
+    pub playbook: &'a str,
+    pub rationale: &'a str,
+    pub confirmed: bool,
+    pub classified_by: Option<&'a str>,
+    pub model_fallback: bool,
+    pub workspace_id: uuid::Uuid,
+}
+
+// Written by `sessions.rs`.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct HookEventRow<'a> {
+    pub session_id: &'a str,
+    pub assistant_family: &'a str,
+    pub event_type: &'a str,
+    pub tool_name: Option<&'a str>,
+    pub cwd: Option<&'a str>,
+    pub ts: i64,
+    pub success: Option<bool>,
+    pub payload: &'a serde_json::Value,
+}
+
+// Written by `sessions.rs`.
+/// The measured outcome of one session, written when it closes.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct SessionMetricsRow<'a> {
+    pub session_id: &'a uuid::Uuid,
+    pub turns: i32,
+    pub corrections: i32,
+    pub outcome: &'a str,
+    pub ftr: bool,
+    /// Active time and its R12 split; `None` writes NULL (no hook events).
+    pub duration_ms: Option<i64>,
+    pub claude_ms: Option<i64>,
+    pub user_ms: Option<i64>,
+    pub module: Option<&'a str>,
+    pub tool_usage: &'a serde_json::Value,
+}
+
+// Written by `sessions.rs`.
+/// How a session ended, written once at completion.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct SessionOutcomeRow<'a> {
+    pub id: &'a uuid::Uuid,
+    pub outcome: &'a str,
+    pub ftr: bool,
+    pub turns: i32,
+    pub corrections: i32,
+    pub summary: Option<&'a str>,
+    pub tokens_in: Option<i64>,
+    pub tokens_out: Option<i64>,
+}
+
+// Written by `extensions.rs`.
+/// One extension, as [`PgStore::create_extension`] inserts it.
+pub struct ExtensionRow<'a> {
+    /// A `sensei.extension_kind` label: plugin, skill, command, agent or hook.
+    pub kind: &'a str,
+    pub name: &'a str,
+    pub description: Option<&'a str>,
+    pub content: Option<&'a str>,
+    /// A `sensei.extension_scope` label: global, workspace or folder.
+    pub scope: &'a str,
+    /// A `sensei.extension_source` label: builtin, marketplace or local.
+    pub source: &'a str,
 }

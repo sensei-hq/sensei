@@ -6,13 +6,10 @@ impl PgStore {
     /// (source, session_id, turn_index). Returns the number of rows written.
     pub async fn upsert_transcript_turns(
         &self,
-        source: &str,
-        session_id: &str,
-        family: &str,
-        provider: Option<&str>,
-        model: Option<&str>,
+        from: &TranscriptSource<'_>,
         turns: &[crate::transcript::TranscriptTurn],
     ) -> Result<u32, String> {
+        let &TranscriptSource { source, session_id, family, provider, model } = from;
         let mut n = 0u32;
         for t in turns {
             let char_count = t.assistant_text.chars().count() as i32;

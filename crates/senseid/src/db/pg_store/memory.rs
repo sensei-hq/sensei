@@ -6,21 +6,6 @@ use super::*;
 /// writer, so a field added here is a compile error until someone binds it.
 /// No `Default` — that would relocate the silence to the call sites.
 // Gated with its writer — see `create_memory`, which has no production caller.
-#[cfg(test)]
-#[derive(Debug, Clone)]
-pub struct MemoryRow<'a> {
-    pub workspace_id: Option<&'a uuid::Uuid>,
-    pub scope: &'a str,
-    pub scope_filter: Option<&'a str>,
-    pub mem_type: &'a str,
-    pub title: &'a str,
-    pub content: &'a str,
-    pub impact: Option<&'a str>,
-    pub session_id: Option<&'a uuid::Uuid>,
-    pub spine_slot: Option<&'a str>,
-    pub feature: Option<&'a str>,
-}
-
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// NO PRODUCTION CALLER (measured 2026-10-06, #161). Every one of its 17

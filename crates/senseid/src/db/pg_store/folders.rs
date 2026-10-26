@@ -1,20 +1,5 @@
 use super::*;
 
-/// One folder, as [`PgStore::upsert_folder`] writes it. Its repository is never
-/// the caller's to name: it is inherited from the repo anchor (#211).
-pub struct FolderRow<'a> {
-    pub root_id: &'a uuid::Uuid,
-    /// A `sensei.folder_kind` label; refreshed on conflict, since it is derived.
-    pub kind: &'a str,
-    pub name: &'a str,
-    pub path: &'a str,
-    pub abs_path: &'a str,
-    /// Kept on conflict when `None`.
-    pub parent_id: Option<&'a uuid::Uuid>,
-    /// The workspace root this folder is a member of; assigned on conflict.
-    pub workspace_root_id: Option<&'a uuid::Uuid>,
-}
-
 /// The `mtime` a BARRIER-seeded `files` row carries.
 ///
 /// Zero, and deliberately not a real timestamp. Stage 3's barrier (R14) writes
