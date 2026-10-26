@@ -2,8 +2,10 @@
 //!
 //! 1. **Chat session journals** (delta journal format):
 //!    `~/Library/Application Support/Code/User/workspaceStorage/<hash>/chatSessions/<uuid>.jsonl`
-//!    Delta journal: `kind:0` = root snapshot, `kind:1` = set value at path,
-//!    `kind:2` = replace array slice. Reconstruct `requests[]` for turns.
+//!    Delta journal: `kind:0` = root snapshot, `kind:1` = set the value `v` at
+//!    path `k`, `kind:2` = APPEND `v` to the array at `k` — a replace keeps only a
+//!    reply's last fragment. Read by `sensei_transcript_formats::journal`, which
+//!    rebuilds `requests[]` for turns.
 //!
 //! 2. **Newer transcript format** (event stream):
 //!    `~/Library/Application Support/Code/User/workspaceStorage/<hash>/GitHub.copilot-chat/transcripts/<session>.jsonl`
