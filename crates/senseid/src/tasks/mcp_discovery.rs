@@ -204,15 +204,15 @@ pub async fn run_once(
 
     let discovered = entries.len();
     for e in &entries {
-        pg.upsert_mcp_server(
-            e.acp_family.as_str(),
-            &e.mcp_key,
-            e.workspace_id,
-            &e.config_source.to_string_lossy(),
-            &e.command,
-            &e.args,
-            &e.env,
-        )
+        pg.upsert_mcp_server(&crate::db::pg_store::McpServerRow {
+            acp_family: e.acp_family.as_str(),
+            mcp_key: &e.mcp_key,
+            workspace_id: e.workspace_id,
+            config_source: &e.config_source.to_string_lossy(),
+            command: &e.command,
+            args: &e.args,
+            env: &e.env,
+        })
         .await?;
     }
 

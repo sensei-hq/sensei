@@ -137,15 +137,15 @@ pub(crate) async fn get_tools(
             let tools = serde_json::Value::Array(manifest.tools.clone());
             state
                 .pg
-                .upsert_mcp_tool_manifest(
-                    &uuid,
-                    &tools,
-                    manifest.tools.len() as i32,
-                    manifest.protocol_version.as_deref(),
-                    manifest.server_name.as_deref(),
-                    manifest.server_version.as_deref(),
-                    None,
-                )
+                .upsert_mcp_tool_manifest(&crate::db::pg_store::McpManifestRow {
+                    server_id: &uuid,
+                    tools: &tools,
+                    tool_count: manifest.tools.len() as i32,
+                    protocol_version: manifest.protocol_version.as_deref(),
+                    server_name: manifest.server_name.as_deref(),
+                    server_version: manifest.server_version.as_deref(),
+                    error: None,
+                })
                 .await
                 .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
         }
@@ -155,7 +155,9 @@ pub(crate) async fn get_tools(
             let empty = serde_json::Value::Array(vec![]);
             state
                 .pg
-                .upsert_mcp_tool_manifest(&uuid, &empty, 0, None, None, None, Some(&msg))
+                .upsert_mcp_tool_manifest(&crate::db::pg_store::McpManifestRow::failed(
+                    &uuid, &empty, &msg,
+                ))
                 .await
                 .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
         }

@@ -565,6 +565,7 @@ pub use call_sites::{CallSiteColumns, StoredCallSite};
 pub use graph::NodeRow;
 pub use library::LibraryPageRow;
 pub use logs::{Abandonments, LogRow};
+pub use mcp::{AssistantToolRow, McpManifestRow, McpServerRow};
 pub use neighbourhood::NeighbourNode;
 pub use pruner::PruneReport;
 #[cfg(test)]
