@@ -90,7 +90,10 @@ pub fn file_uris(message: &str) -> Vec<String> {
         let tail = &rest[start + "file:///".len()..];
         // The URI runs to the first character that cannot appear in one.
         let end = tail.find([')', ' ', '"', '\'', '>', '\n']).unwrap_or(tail.len());
-        let uri = percent_decode(&tail[..end]);
+        // A raw `#` opens the fragment — a line anchor such as `#1-50` — which is
+        // not part of the file; a `#` IN a file name is encoded as `%23`.
+        let path = tail[..end].split('#').next().unwrap_or_default();
+        let uri = percent_decode(path);
         if !uri.is_empty() {
             out.push(uri);
         }
@@ -149,5 +152,16 @@ mod tests {
         let msg = "Reading [](file:///c%3A/Users/r/app/src/main.ts) and done";
         assert_eq!(file_uris(msg), vec!["c:/Users/r/app/src/main.ts"]);
         assert!(file_uris("Searching for `**/src/**`").is_empty());
+    }
+
+    /// VS Code links a read to the lines it read: 22% of the file links in a
+    /// shared corpus (15,021 of 67,644) end `#N-N`. Kept, the anchor became part
+    /// of the file name — `main.ts#1-50` has no `.ts` — and the file's language
+    /// was lost.
+    #[test]
+    fn a_line_anchor_is_not_part_of_the_file() {
+        let msg = "Read [](file:///c%3A/Users/r/app/src/main.ts#1-50), lines 1 to 50";
+        assert_eq!(file_uris(msg), vec!["c:/Users/r/app/src/main.ts"]);
+        assert_eq!(file_uris("see file:///repo/lib.rs#L10 here"), vec!["repo/lib.rs"]);
     }
 }
