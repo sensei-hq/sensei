@@ -18,6 +18,19 @@ type TaskExecutionRow = (
     Option<chrono::DateTime<chrono::Utc>>, // completed_at
 );
 
+/// One attempt at a task, as [`PgStore::start_task_execution`] records it
+/// (`running`, until completed or failed).
+pub struct TaskExecutionStart<'a> {
+    /// The queue's id — it restarts at 1 with every daemon session.
+    pub task_id: i64,
+    pub parent_task_id: Option<i64>,
+    /// A `sensei.task_execution_kind` label.
+    pub task_kind: &'a str,
+    pub folder_path: &'a str,
+    pub path: &'a str,
+    pub retry_number: i32,
+}
+
 /// Watchdog abandonments over a window — see [`PgStore::watchdog_abandonments`].
 #[derive(Debug, serde::Serialize)]
 pub struct Abandonments {
@@ -499,13 +512,16 @@ impl PgStore {
     /// so bounded retries (D6c) are observable on the logs/health screen.
     pub async fn start_task_execution(
         &self,
-        task_id: i64,
-        parent_task_id: Option<i64>,
-        task_kind: &str,
-        folder_path: &str,
-        path: &str,
-        retry_number: i32,
+        start: &TaskExecutionStart<'_>,
     ) -> Result<uuid::Uuid, String> {
+        let &TaskExecutionStart {
+            task_id,
+            parent_task_id,
+            task_kind,
+            folder_path,
+            path,
+            retry_number,
+        } = start;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status, retry_number)
              VALUES($1, $2, $3::sensei.task_execution_kind, $4, $5, 'running', $6) RETURNING id"

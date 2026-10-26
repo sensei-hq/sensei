@@ -30,7 +30,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "library.rs::upsert_library",
     "logs.rs::log_index_error",
     "logs.rs::query_logs",
-    "logs.rs::start_task_execution",
     "mcp.rs::upsert_service",
     "metrics.rs::create_benchmark_report",
     "patterns.rs::accept_recommendation_as_rule",
@@ -544,5 +543,35 @@ async fn a_folder_row_lands_field_for_field() {
             Some(parent),
             Some(parent)
         )
+    );
+}
+
+#[tokio::test]
+async fn a_task_execution_start_lands_field_for_field() {
+    use crate::db::pg_store::TaskExecutionStart;
+    let s = super::pg_store().await;
+    let id = s
+        .start_task_execution(&TaskExecutionStart {
+            task_id: 41,
+            parent_task_id: Some(40),
+            task_kind: "process_file",
+            folder_path: "/fp",
+            path: "src/p.rs",
+            retry_number: 2,
+        })
+        .await
+        .unwrap();
+    type Exec = (i64, Option<i64>, String, String, String, String, i32);
+    let got: Exec = sqlx_core::query_as::query_as(
+        "SELECT task_id, parent_task_id, task_kind::text, folder_path, path, status, retry_number
+           FROM activity.task_executions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (41, Some(40), "process_file".into(), "/fp".into(), "src/p.rs".into(), "running".into(), 2)
     );
 }

@@ -625,7 +625,14 @@ mod tests {
         let message = crate::tasks::executor::watchdog_message(&kind, 3, kind.watchdog_timeout());
         let id = state
             .pg
-            .start_task_execution(3, None, &kind.to_string(), "/repo", "src/slow.rs", 0)
+            .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+                task_id: 3,
+                parent_task_id: None,
+                task_kind: &kind.to_string(),
+                folder_path: "/repo",
+                path: "src/slow.rs",
+                retry_number: 0,
+            })
             .await
             .unwrap();
         state.pg.fail_task_execution(&id, 180_000, &message).await.unwrap();

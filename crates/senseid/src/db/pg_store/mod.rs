@@ -567,7 +567,7 @@ pub use governance::{CheckRunRow, ConsolidatedRulesetRow};
 /// One row of `sensei.nodes`, named rather than positional (#161).
 pub use graph::{EdgeTarget, NodeRow};
 pub use library::LibraryPageRow;
-pub use logs::{Abandonments, LogRow};
+pub use logs::{Abandonments, LogRow, TaskExecutionStart};
 pub use mcp::{AssistantToolRow, McpManifestRow, McpServerRow};
 pub use neighbourhood::NeighbourNode;
 pub use pruner::PruneReport;

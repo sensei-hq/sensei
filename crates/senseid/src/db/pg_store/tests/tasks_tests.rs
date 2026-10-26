@@ -20,17 +20,46 @@ async fn task_failures_lists_only_jobs_whose_latest_run_failed_and_counts_their_
     // "stuck" — failed twice and never recovered. Belongs on the restart list,
     // with both failures counted.
     for attempt in 0..2 {
-        let id =
-            s.start_task_execution(1, None, &kind, &fp, "src/stuck.rs", attempt).await.unwrap();
+        let id = s
+            .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+                task_id: 1,
+                parent_task_id: None,
+                task_kind: &kind,
+                folder_path: &fp,
+                path: "src/stuck.rs",
+                retry_number: attempt,
+            })
+            .await
+            .unwrap();
         s.fail_task_execution(&id, 5, "boom: no files row for src/stuck.rs, metric churn")
             .await
             .unwrap();
     }
 
     // "recovered" — failed once, then succeeded. Must NOT appear.
-    let failed = s.start_task_execution(2, None, &kind, &fp, "recovered.rs", 0).await.unwrap();
+    let failed = s
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 2,
+            parent_task_id: None,
+            task_kind: &kind,
+            folder_path: &fp,
+            path: "recovered.rs",
+            retry_number: 0,
+        })
+        .await
+        .unwrap();
     s.fail_task_execution(&failed, 5, "boom: transient").await.unwrap();
-    let ok = s.start_task_execution(2, None, &kind, &fp, "recovered.rs", 1).await.unwrap();
+    let ok = s
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 2,
+            parent_task_id: None,
+            task_kind: &kind,
+            folder_path: &fp,
+            path: "recovered.rs",
+            retry_number: 1,
+        })
+        .await
+        .unwrap();
     s.complete_task_execution(&ok, 1, 5).await.unwrap();
 
     let rows: Vec<(String, i64, i32)> = sqlx_core::query_as::query_as(
@@ -88,14 +117,14 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
 
     // A — orphaned: running, started well before the cutoff (prior session).
     let a = s
-        .start_task_execution(
-            1,
-            None,
-            &crate::tasks::TaskKind::ProcessFile.to_string(),
-            &fp,
-            "a",
-            0,
-        )
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 1,
+            parent_task_id: None,
+            task_kind: &crate::tasks::TaskKind::ProcessFile.to_string(),
+            folder_path: &fp,
+            path: "a",
+            retry_number: 0,
+        })
         .await
         .unwrap();
     sqlx_core::query::query(
@@ -107,26 +136,26 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
     .unwrap();
     // B — this session: running, started at now() (after the cutoff).
     let b = s
-        .start_task_execution(
-            2,
-            None,
-            &crate::tasks::TaskKind::ProcessFile.to_string(),
-            &fp,
-            "b",
-            0,
-        )
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 2,
+            parent_task_id: None,
+            task_kind: &crate::tasks::TaskKind::ProcessFile.to_string(),
+            folder_path: &fp,
+            path: "b",
+            retry_number: 0,
+        })
         .await
         .unwrap();
     // C — already terminal from a prior session: must not be re-touched.
     let c = s
-        .start_task_execution(
-            3,
-            None,
-            &crate::tasks::TaskKind::ProcessFile.to_string(),
-            &fp,
-            "c",
-            0,
-        )
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 3,
+            parent_task_id: None,
+            task_kind: &crate::tasks::TaskKind::ProcessFile.to_string(),
+            folder_path: &fp,
+            path: "c",
+            retry_number: 0,
+        })
         .await
         .unwrap();
     sqlx_core::query::query(
@@ -139,14 +168,14 @@ async fn reconcile_orphaned_task_executions_terminates_only_prior_session_runnin
     // exclusive (`started_at < cutoff`), so a row at session_start belongs
     // to this session and must be left running — locks the `<` vs `<=` line.
     let d = s
-        .start_task_execution(
-            4,
-            None,
-            &crate::tasks::TaskKind::ProcessFile.to_string(),
-            &fp,
-            "d",
-            0,
-        )
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 4,
+            parent_task_id: None,
+            task_kind: &crate::tasks::TaskKind::ProcessFile.to_string(),
+            folder_path: &fp,
+            path: "d",
+            retry_number: 0,
+        })
         .await
         .unwrap();
     sqlx_core::query::query("UPDATE activity.task_executions SET started_at = $2 WHERE id = $1")
@@ -219,7 +248,17 @@ async fn rollup_keeps_failures_raw_and_is_idempotent() {
 
     // Three old rows: two completed, one failed. All past the 14d window.
     for (tid, status) in [(901i64, "completed"), (902, "completed"), (903, "failed")] {
-        let id = s.start_task_execution(tid, None, &kind, &fp, "x", 0).await.unwrap();
+        let id = s
+            .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+                task_id: tid,
+                parent_task_id: None,
+                task_kind: &kind,
+                folder_path: &fp,
+                path: "x",
+                retry_number: 0,
+            })
+            .await
+            .unwrap();
         sqlx_core::query::query(
             "UPDATE activity.task_executions \
                     SET started_at = now() - interval '30 days', status = $2, duration_ms = 10 \
@@ -286,14 +325,14 @@ async fn start_task_execution_records_retry_number() {
     let s = pg_store().await;
     let fp = format!("/_test/retrynum/{}", uuid::Uuid::new_v4());
     let id = s
-        .start_task_execution(
-            77,
-            None,
-            &crate::tasks::TaskKind::ProcessFile.to_string(),
-            &fp,
-            "a.rs",
-            2,
-        )
+        .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+            task_id: 77,
+            parent_task_id: None,
+            task_kind: &crate::tasks::TaskKind::ProcessFile.to_string(),
+            folder_path: &fp,
+            path: "a.rs",
+            retry_number: 2,
+        })
         .await
         .unwrap();
 
@@ -870,7 +909,17 @@ async fn watchdog_abandonments_count_per_day_and_name_the_worst_offenders() {
     };
 
     let fail = async |kind: &crate::tasks::TaskKind, path: &str, message: String| {
-        let id = s.start_task_execution(7, None, &kind.to_string(), &fp, path, 0).await.unwrap();
+        let id = s
+            .start_task_execution(&crate::db::pg_store::TaskExecutionStart {
+                task_id: 7,
+                parent_task_id: None,
+                task_kind: &kind.to_string(),
+                folder_path: &fp,
+                path,
+                retry_number: 0,
+            })
+            .await
+            .unwrap();
         s.fail_task_execution(&id, 180_000, &message).await.unwrap();
         id
     };
