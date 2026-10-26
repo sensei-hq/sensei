@@ -45,30 +45,32 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 	}
 
 	// Real contributions (F5) — user-wide across every dōjō, only on this section.
-	// Honest-empty until the contribute pipeline federates; a transient read error
-	// degrades to empty (a read-only informational surface).
+	// Empty until the contribute pipeline federates; a failed read is carried as
+	// an error, never as "nothing shared" (#109).
 	let contributionsMine: KitContribution[] = [];
 	let contributionsDownstream: KitDownstream[] = [];
+	let contributionsError: string | null = null;
 	if (section === 'contributions') {
 		try {
 			const c = await listContributions({ fetch, accessToken });
 			contributionsMine = toKitContributions(c.mine);
 			contributionsDownstream = toKitDownstreams(c.downstream);
-		} catch {
-			// honest-empty — the sections render their empty state.
+		} catch (e) {
+			contributionsError = e instanceof Error ? e.message : 'the request failed';
 		}
 	}
 
 	// Real rule-pack library (browse) — the user-wide global catalog (GET
-	// /v1/you/rule-packs), only on this section. Honest-empty on a read failure
-	// (read-only informational surface), never the old fixture.
+	// /v1/you/rule-packs), only on this section. A failed read is carried as an
+	// error, never as an empty library (#109).
 	let rulePacks: KitRulePack[] = [];
+	let packsError: string | null = null;
 	if (section === 'packs') {
 		try {
 			const { packs, adopted } = await listLibraryPacks({ fetch, accessToken });
 			rulePacks = toKitRulePacks(packs, new Set(adopted));
-		} catch {
-			// honest-empty — the screen renders its empty state.
+		} catch (e) {
+			packsError = e instanceof Error ? e.message : 'the request failed';
 		}
 	}
 
@@ -118,15 +120,18 @@ export const load: PageLoad = async ({ params, parent, fetch }) => {
 		metricsView,
 		metricsError,
 		title: labelForSection(section, 'you'),
-		// Rule packs — real global library read (browse); honest-empty on failure.
+		// Rule packs — real global library read (browse); a failure is an error.
 		rulePacks,
+		packsError,
 		// Memberships — real, from the layout's `listUserOrgs`, mapped to KitDojo.
 		dojos: toKitDojos(memberships),
 		// Workspaces — real user-wide read; error ≠ empty (F1).
 		workspaces,
 		workspacesError,
-		// Contributions — real user-wide read (F5); honest-empty until federated.
+		// Contributions — real user-wide read (F5); empty until federated, and a
+		// failure is an error.
 		contributionsMine,
-		contributionsDownstream
+		contributionsDownstream,
+		contributionsError
 	};
 };

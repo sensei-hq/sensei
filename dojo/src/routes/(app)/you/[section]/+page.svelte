@@ -82,7 +82,7 @@
 {:else if data.section === 'rules'}
 	<ScrConstitution onGoPacks={goPacks} />
 {:else if data.section === 'packs'}
-	<ScrRulePacks packs={data.rulePacks} error={you.actionError} onToggle={onPackToggle} />
+	<ScrRulePacks packs={data.rulePacks} loadError={data.packsError} error={you.actionError} onToggle={onPackToggle} />
 {:else if data.section === 'sharing'}
 	<ScrSharing repos={sharingRepos} error={sharingError} pending={you.sharingPending} onToggle={elect} />
 {:else if data.section === 'dojos'}
@@ -99,6 +99,7 @@
 	<ScrContributions
 		mine={data.contributionsMine}
 		downstream={data.contributionsDownstream}
+		loadError={data.contributionsError}
 		error={you.actionError}
 		onPin={pinContribution}
 	/>

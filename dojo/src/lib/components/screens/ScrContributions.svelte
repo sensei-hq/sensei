@@ -50,6 +50,7 @@
 		downstream = [],
 		stat,
 		error = null,
+		loadError = null,
 		onPin
 	}: {
 		mine?: KitContribution[];
@@ -57,6 +58,9 @@
 		stat?: KitContribStat;
 		/** Why the last pin did not land. */
 		error?: string | null;
+		/** Non-null when the screen's read FAILED: shown in place of the lists, which
+		 *  drawn with a count of 0 would read as "you have none". */
+		loadError?: string | null;
 		onPin?: (item: KitDownstream) => void;
 	} = $props();
 
@@ -85,6 +89,9 @@
 		{#if error}
 			<p role="alert" class="text-sm text-danger m-0">{error}</p>
 		{/if}
+		{#if loadError}
+			<p role="alert" class="text-sm text-danger m-0">Could not load your contributions — {loadError}</p>
+		{:else}
 		<ListSection icon="upload-square" title="What you've shared" count={mine.length}>
 			{#each mine as c, i (i)}
 				{@const s = CSTAT[c.status] ?? CSTAT.pending}
@@ -151,5 +158,6 @@
 				</div>
 			{/each}
 		</ListSection>
+		{/if}
 	</div>
 </Screen>

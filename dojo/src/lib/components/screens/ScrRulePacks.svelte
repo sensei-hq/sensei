@@ -18,11 +18,15 @@
 	let {
 		packs = [],
 		error = null,
+		loadError = null,
 		onToggle
 	}: {
 		packs?: KitRulePack[];
 		/** Why the last adopt or drop did not land. */
 		error?: string | null;
+		/** Non-null when the screen's read FAILED: shown in place of the lists, which
+		 *  drawn with a count of 0 would read as "you have none". */
+		loadError?: string | null;
 		/** Persist the change; resolving `false` means it did not land, and the
 		 *  row flips back. */
 		onToggle?: (pack: KitRulePack, adopt: boolean) => void | Promise<boolean | void>;
@@ -66,6 +70,9 @@
 		{#if error}
 			<p role="alert" class="text-sm text-danger m-0">{error}</p>
 		{/if}
+		{#if loadError}
+			<p role="alert" class="text-sm text-danger m-0">Could not load the rule packs — {loadError}</p>
+		{:else}
 		<ListSection
 			icon="check-circle"
 			iconToneClass="text-success"
@@ -83,6 +90,7 @@
 				{@render packRow(pack)}
 			{/each}
 		</ListSection>
+		{/if}
 	</div>
 </Screen>
 
