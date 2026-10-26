@@ -1,3 +1,40 @@
+# Checkpoint — 2026-10-26 (tracker metrics write-back)
+
+**Slice:** tracker metrics write-back, on branch `feature/tracker_metrics_writeback`.
+**Stage:** design done, and the gate passes. Next is build.
+- Analysis: `docs/analysis/2026-10-26-tracker-metrics-writeback.md`
+- Spec (reviewed): `docs/spec/daemon/tracker-metrics-writeback.md`
+- Plan: `docs/plans/2026-10-26-tracker-metrics-writeback.md`. It has F1–F6, and its issues are TBD (no `gh`).
+
+**User decisions (2026-10-26):**
+- Only the assignee's daemon writes.
+- Write to mapped custom fields, or else to one sensei comment edited in place.
+- Write on every sync tick.
+- Write all metrics.
+- Store the mappings in `tracker_fields`, one row per metric.
+- Write-back is on by default, for existing boards too.
+- Reverse the read-only rule in the PRD, decisions.md and design §2.6.
+
+**Claims that verification found false, and what changed:**
+- The keyring status is 500 (not 503), so W7 now reuses connect's statuses.
+- Tracker SQL lives in both `trackers.rs` and `tracker_usage.rs`.
+- `api-trackers.ts` doesn't exist; the app wrappers are `try*` methods on `senseiApi` in `api.ts`.
+- Gate 13's pattern matched the keyring delete.
+
+**Claims that were misleading, and what changed:**
+- A re-connect also re-keys sibling boards, on a new connect as well as a re-connect, so W11 resets their owner and write state.
+- `metered_cost` isn't USD, so no `$` is shown for it.
+- Discovery holds the transport factory, so gate 13 now checks who calls `write_transport(`.
+- An empty-body 2xx is mapped for writes only.
+- A keyring failure in the pass is now recorded in `writeback_error`.
+
+**Next:** `/sensei:build` F1 (`AccountRef`, `OwnerLookup`, Jira `owner()`), red-first against gate 2.
+Re-run the claims ledger first.
+
+**Blocks the F2 merge:** a Jira tenant for gate 27 (X1–X8). It needs a person token, an app token and two assignees.
+
+---
+
 # Checkpoint — 2026-10-26
 
 **Slice:** issue burndown (docs/roadmap/08-issue-burndown.md), wave 5.

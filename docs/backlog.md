@@ -111,6 +111,15 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   OAuth (integrations §2.3) deferred; (7) one tracker per project in v1 — T3
   §2.2's secondary issue-only trackers deferred. Blocked on **P0**: session
   synthesis + transcript ingest on Linux (0 sessions today).
+- **Tracker metrics write-back** (2026-10-26). Analysis
+  [`analysis/2026-10-26-tracker-metrics-writeback.md`](analysis/2026-10-26-tracker-metrics-writeback.md),
+  spec [`spec/daemon/tracker-metrics-writeback.md`](spec/daemon/tracker-metrics-writeback.md),
+  plan [`plans/2026-10-26-tracker-metrics-writeback.md`](plans/2026-10-26-tracker-metrics-writeback.md).
+  **It reverses, with the user's approval (2026-10-26),** the read-only rule (PRD T3,
+  `decisions.md` "Read-only means read-only", design §2.6) for usage metrics, and
+  deviation (3) above: the assignee is compared, never stored. Write-back is on by default
+  for existing boards too, which the user confirmed after being shown the "Read-only" copy
+  and that clients may see comments. The docs are narrowed in F5.
 - **Daemon routes reachable from any web page** (found by the Jira-spec security
   review 2026-10-15) — `api/server.rs` sets `CorsLayer::allow_origin(Any)` with all
   methods and no auth middleware (loopback bind by default), so any page the user
