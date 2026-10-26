@@ -119,7 +119,15 @@ impl SeedGraph for PgStore {
         if let Some(d) = def.as_ref() {
             seed_file(self, folder_id, d.file_path).await?;
         }
-        self.upsert_node_by_fqn(folder_id, fqn, kind, name, language, def).await
+        self.upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+            folder_id,
+            fqn,
+            kind,
+            name,
+            language,
+            def,
+        })
+        .await
     }
 
     async fn seed_only_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<(), String> {

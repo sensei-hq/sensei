@@ -65,25 +65,25 @@ async fn an_edge_nobody_asked_about_is_not_reported_as_a_miss() {
         parent_id: None,
     };
     let a = pg
-        .upsert_node_by_fqn(
-            &folder_id,
-            "rust·p·m·a",
-            "function",
-            "a",
-            Some("rust"),
-            Some(def("a.rs")),
-        )
+        .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+            folder_id: &folder_id,
+            fqn: "rust·p·m·a",
+            kind: "function",
+            name: "a",
+            language: Some("rust"),
+            def: Some(def("a.rs")),
+        })
         .await
         .unwrap();
     let b = pg
-        .upsert_node_by_fqn(
-            &folder_id,
-            "rust·p·m·b",
-            "function",
-            "b",
-            Some("rust"),
-            Some(def("a.rs")),
-        )
+        .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+            folder_id: &folder_id,
+            fqn: "rust·p·m·b",
+            kind: "function",
+            name: "b",
+            language: Some("rust"),
+            def: Some(def("a.rs")),
+        })
         .await
         .unwrap();
 
@@ -162,14 +162,14 @@ async fn placement_is_decomposed_by_the_package_the_edge_was_written_in() {
     for fqn in ["rust·alpha·m·a", "rust·alpha·m·b", "rust·beta·m·c"] {
         let name = fqn.rsplit('·').next().unwrap();
         nodes.push(
-            pg.upsert_node_by_fqn(
-                &folder_id,
+            pg.upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+                folder_id: &folder_id,
                 fqn,
-                "function",
+                kind: "function",
                 name,
-                Some("rust"),
-                Some(def("a.rs")),
-            )
+                language: Some("rust"),
+                def: Some(def("a.rs")),
+            })
             .await
             .unwrap(),
         );
@@ -244,30 +244,37 @@ async fn language_follows_the_source_and_an_unattributable_edge_still_appears() 
 
     // A rust source calling a TYPESCRIPT target. Attribution must say `rust`.
     let rs = pg
-        .upsert_node_by_fqn(
-            &folder_id,
-            "rust·p·m·caller",
-            "function",
-            "caller",
-            Some("rust"),
-            Some(def("a.rs")),
-        )
+        .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+            folder_id: &folder_id,
+            fqn: "rust·p·m·caller",
+            kind: "function",
+            name: "caller",
+            language: Some("rust"),
+            def: Some(def("a.rs")),
+        })
         .await
         .unwrap();
     let ts = pg
-        .upsert_node_by_fqn(
-            &folder_id,
-            "typescript·p·m·callee",
-            "function",
-            "callee",
-            Some("typescript"),
-            Some(def("b.ts")),
-        )
+        .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+            folder_id: &folder_id,
+            fqn: "typescript·p·m·callee",
+            kind: "function",
+            name: "callee",
+            language: Some("typescript"),
+            def: Some(def("b.ts")),
+        })
         .await
         .unwrap();
     // And a source with NO language at all.
     let anon = pg
-        .upsert_node_by_fqn(&folder_id, "·p·m·anon", "function", "anon", None, Some(def("a.rs")))
+        .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+            folder_id: &folder_id,
+            fqn: "·p·m·anon",
+            kind: "function",
+            name: "anon",
+            language: None,
+            def: Some(def("a.rs")),
+        })
         .await
         .unwrap();
 

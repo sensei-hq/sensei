@@ -858,15 +858,8 @@ impl PgStore {
     /// signature changed — the same freshness rule as `upsert_node_ex`. Arbiter is
     /// the partial `nodes_unique_fqn` index, so this coexists with the line-based
     /// `nodes_unique_identity`.
-    pub async fn upsert_node_by_fqn(
-        &self,
-        folder_id: &uuid::Uuid,
-        fqn: &str,
-        kind: &str,
-        name: &str,
-        language: Option<&str>,
-        def: Option<FqnDef<'_>>,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_node_by_fqn(&self, node: FqnNode<'_>) -> Result<uuid::Uuid, String> {
+        let FqnNode { folder_id, fqn, kind, name, language, def } = node;
         let resolved = def.is_some();
         // A DEFINITION must name a tracked file (R13, 06 S6) — resolved here and
         // FAILING CLOSED. A REFERENCE has no file by construction: it is the
@@ -1929,7 +1922,14 @@ impl PgStore {
                         #[cfg(test)]
                         crate::graph_facts::arm_tally::bump(fact.kind, "stub");
                         let id = self
-                            .upsert_node_by_fqn(folder_id, fqn, kind, name, language, None)
+                            .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+                                folder_id,
+                                fqn,
+                                kind,
+                                name,
+                                language,
+                                def: None,
+                            })
                             .await?;
                         (Some(id), None)
                     }

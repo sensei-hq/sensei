@@ -2119,13 +2119,13 @@ async fn an_upsert_whose_identity_moved_does_not_fail_the_file() {
 
     // The upsert that used to fail: same fqn, now top-level (no parent), line 20.
     let got = s
-        .upsert_node_by_fqn(
-            &fid,
-            held,
-            "function",
-            "generatePrescriptionSchedule",
-            Some("typescript"),
-            Some(FqnDef {
+        .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+            folder_id: &fid,
+            fqn: held,
+            kind: "function",
+            name: "generatePrescriptionSchedule",
+            language: Some("typescript"),
+            def: Some(FqnDef {
                 file_path: file,
                 signature: None,
                 line_start: Some(20),
@@ -2133,7 +2133,7 @@ async fn an_upsert_whose_identity_moved_does_not_fail_the_file() {
                 is_exported: true,
                 parent_id: None,
             }),
-        )
+        })
         .await
         .expect("an upsert whose identity moved must not fail the whole file");
 

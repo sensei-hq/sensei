@@ -22,7 +22,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "graph.rs::merge_type",
     "graph.rs::semantic_search_nodes",
     "graph.rs::upsert_lib_node_by_fqn",
-    "graph.rs::upsert_node_by_fqn",
     "library.rs::replace_library_capabilities",
     "library.rs::upsert_folder_dependency",
     "logs.rs::log_index_error",

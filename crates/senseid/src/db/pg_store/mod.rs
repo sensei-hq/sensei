@@ -31,6 +31,18 @@ pub struct PgStore {
 /// and `the_test_suite_fits_postgres_connection_budget` checks the sum.
 pub(crate) const TEST_POOL_MAX_CONNECTIONS: u32 = 4;
 
+/// One node keyed by its fqn, as [`PgStore::upsert_node_by_fqn`] writes it: a
+/// REFERENCE (`def: None`) creates or returns the unresolved stub; a DEFINITION
+/// (`def: Some`) creates or enriches the same node in place.
+pub struct FqnNode<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    pub fqn: &'a str,
+    pub kind: &'a str,
+    pub name: &'a str,
+    pub language: Option<&'a str>,
+    pub def: Option<FqnDef<'a>>,
+}
+
 /// Definition details for [`PgStore::upsert_node_by_fqn`] — the fields a
 /// DEFINITION fills on a node a reference may have created as a stub. Passing
 /// `None` for the `def` argument means "this mention is a REFERENCE": get-or-create

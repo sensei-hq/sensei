@@ -1527,7 +1527,16 @@ async fn node_for(
         Some(id) => id,
         None => {
             let (kind, name) = stub_kind_and_name(fqn)?;
-            store.upsert_node_by_fqn(folder_id, fqn, kind, &name, Some(language), None).await?
+            store
+                .upsert_node_by_fqn(crate::db::pg_store::FqnNode {
+                    folder_id,
+                    fqn,
+                    kind,
+                    name: &name,
+                    language: Some(language),
+                    def: None,
+                })
+                .await?
         }
     };
     known.insert(fqn.to_string(), id);
