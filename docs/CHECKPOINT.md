@@ -22,16 +22,15 @@ this week, sensei + dōjō, metrics and diagrams).
 4. A run-through: Today → Metrics (radar, a trend) → Diagrams (Structure, Cycles, Neighbourhood,
    Schema with torii) → `get_callers` live in Claude → dōjō My metrics and Teams.
 
-**In progress — #123 Track B** (details in the burndown): B1 swarm 4/6 on Track A; its live findings fixed
-(d9c1c338 one unit per VS Code session, 62a1bfca UTF-8, ffb4544c facet writes, docs). B2/B3: `dojo-db.yml`
-runs the dōjō's 58 access-rule files on a fresh Supabase via `scripts/deploy-dojo-db.sh` (also release's
-deploy-dojo), green. B4 ported (72032126). Left: over-long `kind:0` line → 0 turns silently; CLI exit codes
-and app e2e for B2.
+**In progress — #123 Track B** (burndown has the detail): B1 swarm 4/6; its live findings fixed. B2/B3:
+`dojo-db.yml` runs the dōjō's 58 access-rule files on a fresh Supabase through `scripts/deploy-dojo-db.sh`
+(release's path too), green; bdd21fdf exit codes. B4 ported. ae3f9514 fixed fmt/clippy slips that failed
+CI lint on 14c098e4: run fmt + workspace clippy before every Rust commit. Left: B2's app e2e (WebKit).
 
 **#190 blocked on sensei-hq/dbd#109.** Filed dbd#110: reconcile/diff ignore a changed TABLE comment (the facet
 tables' new table comments are in the DDL, not live; column comments converge).
 
-**Next:** the over-long `kind:0` line, then B2's CLI exit codes. After a DDL change: `make test-template`.
+**Next:** confirm Rust CI green on develop; then B2's app e2e (WebKit), or wave 5's #281.
 
 **Open (the user's):** release now for the demo?; should "Tokens" exclude cache reads?; dbd#109's shape and
 dbd#110, then a dbd release; delete the local reviewer agents (`/review-slice` names them)?

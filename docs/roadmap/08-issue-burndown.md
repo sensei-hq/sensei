@@ -255,8 +255,9 @@ The settings screen lists them as repositories.
   (ffb4544c), docs (f02ab900, 7668bb3d, a3aee653, facet DDL comments). B2/B3: `dojo-db.yml` deploys the dōjō
   the production way on a fresh Supabase and runs its 58 access-rule files on schema changes and nightly
   (caf47a19, 4cd9d340; first green run 40381330840). B4: catalog reviewers ported (72032126); deleting the
-  local copies is the user's call (`/review-slice` still names them). Left: an over-long `kind:0` journal
-  line ingests as 0 turns, silently; B2's other areas (CLI exit codes, app e2e in WebKit).
+  local copies is the user's call (`/review-slice` still names them). Also fixed: a large `kind:0` snapshot
+  was skipped by the line cap (c8014214; 2 real journals kept prompts for 7/130 and 6/37, now all 167); B2
+  CLI exit codes: a child killed by a signal no longer exits 0 (bdd21fdf). Left for B2: app e2e in WebKit.
 - ~~#338~~ **closed 2026-10-26** (be5a6677): scheduled workers ran at twice their interval (live: advance_run
   every 30s, set to 15s). Found via a flaky test.
 - **Demo prep (user, 2026-10-26: a demo this week, sensei + dōjō, metrics and diagrams).** Done:
