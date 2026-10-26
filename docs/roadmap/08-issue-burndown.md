@@ -245,8 +245,9 @@ The settings screen lists them as repositories.
   **All acceptance met**; closes when the next release runs it.
 - #123: VS Code adapter. A5 (0c2d452b, sample tests no longer pass by skipping) and A6 (7f0d82c6, one
   failure-rate denominator) fixed. The lower-severity list is verified (all real); #1 (04f78181), 2–5 and adjacent
-  (a)/(b) (9917ca6a), 7 (2ac89e21) and (c) (fad9ef49: 10 of 635 real turns ended before they started) are
-  fixed. Left: (6), adjacent (d), then Track B.
+  (a)/(b) (9917ca6a), 7 (2ac89e21), (c) (fad9ef49: 10 of 635 real turns ended before they started), (d)
+  (d65dbde7: 22% of real VS Code file links carried a `#N-N` anchor; languages 375 → 1,208 touches) and (6)
+  (cee5ba48: the three-meaning event count removed) are fixed. **Lower-severity list done; left: Track B.**
 - ~~#338~~ **closed 2026-10-26** (be5a6677): scheduled workers ran at twice their interval (live: advance_run
   every 30s, set to 15s). Found via a flaky test.
 - **Demo prep (user, 2026-10-26: a demo this week, sensei + dōjō, metrics and diagrams).** Done:

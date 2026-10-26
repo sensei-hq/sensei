@@ -22,15 +22,16 @@ this week, sensei + dōjō, metrics and diagrams).
 4. A run-through: Today → Metrics (radar, a trend) → Diagrams (Structure, Cycles, Neighbourhood,
    Schema with torii) → `get_callers` live in Claude → dōjō My metrics and Teams.
 
-**In progress — #123:** left (6) `event_count`'s meanings, (d) `#L10` fragments, Track B.
+**In progress — #123:** the lower-severity list is done (d65dbde7 line anchors, cee5ba48 event count). Left: Track B.
 
 **Done since:** eb4c16cd, a failed rule-pack/contributions read is an error, not an empty list.
 **#190 blocked on sensei-hq/dbd#109** (dbd must say whether `source.dialect` was stated; then the
 adapter deserializes `dbd_core::config::DesignConfig` from the text). Not `project::survey`: it walks the
 filesystem and defaults the dialect.
 
-**Next:** #123 (d) `#L10` fragments, then (6), then Track B. Rust CI on develop has had only cancelled runs
-since fad9ef49 (each push cancels the last): confirm 845b8b7e's run is green.
+**Next:** #123 Track B (review-pipeline check, nightly integration fleet, local agent-file cleanup). CI on
+develop: each push cancels the last run; fmt and `clippy --workspace -D warnings` were clean locally
+(2026-10-26). Confirm the next completed Rust run is green.
 
 **Open (the user's):** whether to release now for the demo; whether "Tokens" should exclude cache reads;
 dbd#109's shape (it changes a public dbd-core field) and a dbd release.
