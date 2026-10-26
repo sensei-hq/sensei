@@ -161,14 +161,14 @@ pub async fn process_manifest(ctx: &TaskContext, task: &Task) -> Result<u32, Str
         && !dir_rel.as_os_str().is_empty()
     {
         ctx.pg()
-            .upsert_subfolder_kind(
-                &root_id,
-                "module",
-                package,
-                &dir_rel.to_string_lossy(),
-                &dir_abs.to_string_lossy(),
-                Some(&repo_folder_id),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "module",
+                name: package,
+                path: &dir_rel.to_string_lossy(),
+                abs_path: &dir_abs.to_string_lossy(),
+                parent_id: Some(&repo_folder_id),
+            })
             .await?;
     }
 
@@ -506,21 +506,21 @@ async fn write_folder_tree(
         let abs = repo_abs.join(&f.rel_path);
         match ctx
             .pg()
-            .upsert_subfolder_kind(
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
                 root_id,
-                f.kind,
-                &name,
-                &f.rel_path.to_string_lossy(),
-                &abs.to_string_lossy(),
-                Some(&parent),
-            )
+                kind: f.kind,
+                name: &name,
+                path: &f.rel_path.to_string_lossy(),
+                abs_path: &abs.to_string_lossy(),
+                parent_id: Some(&parent),
+            })
             .await
         {
             Ok(id) => {
                 ids.insert(f.rel_path.clone(), id);
             }
             Err(e) => {
-                tracing::warn!(folder = %f.rel_path.display(), error = %e, "repo scan: upsert_subfolder_kind failed")
+                tracing::warn!(folder = %f.rel_path.display(), error = %e, "repo scan: upsert_subfolder failed")
             }
         }
     }
@@ -1200,14 +1200,14 @@ mod scan_tests {
         // As the indexer pipeline leaves it.
         let app = repo.join("app");
         ctx.pg()
-            .upsert_subfolder_kind(
-                &root_id,
-                "module",
-                "app",
-                "app",
-                &app.to_string_lossy(),
-                Some(&fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "module",
+                name: "app",
+                path: "app",
+                abs_path: &app.to_string_lossy(),
+                parent_id: Some(&fid),
+            })
             .await
             .unwrap();
 

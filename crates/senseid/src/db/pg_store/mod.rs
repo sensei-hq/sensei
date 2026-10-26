@@ -1794,3 +1794,17 @@ pub struct DiscoveryApply<'a> {
     pub not_found: &'a [String],
     pub watermark: Option<chrono::DateTime<chrono::Utc>>,
 }
+
+// Written by `folders.rs`.
+/// One structural subfolder, as [`PgStore::upsert_subfolder`] writes it: a
+/// `folder` (a navigable directory) or a `module` (a manifest-bearing build
+/// unit). Its repository is inherited from the repo anchor, never named here.
+pub struct SubfolderRow<'a> {
+    pub root_id: &'a uuid::Uuid,
+    /// `folder` or `module`; a path that is already a repository root keeps its kind.
+    pub kind: &'a str,
+    pub name: &'a str,
+    pub path: &'a str,
+    pub abs_path: &'a str,
+    pub parent_id: Option<&'a uuid::Uuid>,
+}

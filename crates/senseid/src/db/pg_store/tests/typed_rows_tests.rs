@@ -14,8 +14,6 @@ const STILL_POSITIONAL: &[&str] = &[
     "dojo.rs::upsert_federated_memory",
     "folders.rs::upsert_file_row",
     "folders.rs::upsert_scan_state_skipped",
-    "folders.rs::upsert_subfolder",
-    "folders.rs::upsert_subfolder_kind",
     "folders.rs::write_scan_state",
     "governance.rs::assemble_context",
     "governance.rs::upsert_stance",
@@ -971,4 +969,42 @@ async fn a_rule_acceptance_puts_each_override_in_its_own_column() {
     .await
     .unwrap();
     assert_eq!(got, ("override title".into(), "override body".into(), "required".into()));
+}
+
+#[tokio::test]
+async fn a_subfolder_row_lands_field_for_field() {
+    use crate::db::pg_store::SubfolderRow;
+    let s = super::pg_store().await;
+    let root = s.add_watch_root("/_t161sf", "t161sf", &serde_json::json!([])).await.unwrap();
+    let repo = s.upsert_repo_kind(&root, "git", "t161sf", "/_t161sf/repo").await.unwrap();
+    let id = s
+        .upsert_subfolder(&SubfolderRow {
+            root_id: &root,
+            kind: "module",
+            name: "sub",
+            path: "sub/path",
+            abs_path: "/_t161sf/repo/sub/path",
+            parent_id: Some(&repo),
+        })
+        .await
+        .unwrap();
+    type Sub = (uuid::Uuid, String, String, String, String, Option<uuid::Uuid>);
+    let got: Sub = sqlx_core::query_as::query_as(
+        "SELECT root_id, kind::text, name, path, abs_path, parent_id FROM sensei.folders WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        got,
+        (
+            root,
+            "module".into(),
+            "sub".into(),
+            "sub/path".into(),
+            "/_t161sf/repo/sub/path".into(),
+            Some(repo)
+        )
+    );
 }

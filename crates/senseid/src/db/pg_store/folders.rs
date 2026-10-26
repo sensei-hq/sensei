@@ -167,19 +167,6 @@ impl PgStore {
         Ok(row.0)
     }
 
-    /// Upsert a structural subfolder (`kind='folder'`) within a workspace, linked
-    /// to its parent folder. Thin wrapper over [`Self::upsert_subfolder_kind`].
-    pub async fn upsert_subfolder(
-        &self,
-        root_id: &uuid::Uuid,
-        name: &str,
-        path: &str,
-        abs_path: &str,
-        parent_id: Option<&uuid::Uuid>,
-    ) -> Result<uuid::Uuid, String> {
-        self.upsert_subfolder_kind(root_id, "folder", name, path, abs_path, parent_id).await
-    }
-
     /// Upsert a structural subfolder with an explicit `kind` — `folder` (the
     /// navigable filesystem-tree row) or `module` (a manifest-bearing build
     /// unit, D5a). Status is terminal (`indexed`) — these rows model the tree,
@@ -187,15 +174,8 @@ impl PgStore {
     /// two structural kinds (`folder`↔`module`); a path that is actually a
     /// (nested) workspace ROOT (`git`/`standalone`/`subtree`) is never
     /// reclassified.
-    pub async fn upsert_subfolder_kind(
-        &self,
-        root_id: &uuid::Uuid,
-        kind: &str,
-        name: &str,
-        path: &str,
-        abs_path: &str,
-        parent_id: Option<&uuid::Uuid>,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_subfolder(&self, sub: &SubfolderRow<'_>) -> Result<uuid::Uuid, String> {
+        let &SubfolderRow { root_id, kind, name, path, abs_path, parent_id } = sub;
         // THE REPOSITORY IS INHERITED FROM THE REPO ANCHOR, never taken on trust.
         //
         // `pipeline.rs` already states the intent — "a module belongs to its
@@ -651,7 +631,7 @@ impl PgStore {
                kind = EXCLUDED.kind,
                name = EXCLUDED.name,
                parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
-               -- See `upsert_subfolder_kind`: COALESCE so an anchor keeps its own.
+               -- See `upsert_subfolder`: COALESCE so an anchor keeps its own.
                repository_id = COALESCE((SELECT repository_id FROM inherited),
                                         folders.repository_id),
                -- ASSIGNED, not COALESCEd. Membership is derived, so a module

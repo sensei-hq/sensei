@@ -632,7 +632,14 @@ async fn a_subfolder_cannot_be_written_into_a_different_workspace_than_its_repo(
     // The caller cannot name a workspace at all. The repository says `owner`.
     let sub_path = format!("{repo_path}/src");
     let sub = s
-        .upsert_subfolder_kind(&root_id, "folder", "src", &sub_path, &sub_path, Some(&repo))
+        .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &root_id,
+            kind: "folder",
+            name: "src",
+            path: &sub_path,
+            abs_path: &sub_path,
+            parent_id: Some(&repo),
+        })
         .await
         .unwrap();
 
@@ -686,7 +693,7 @@ async fn a_subfolder_cannot_be_written_into_a_different_workspace_than_its_repo(
 /// able to fail.
 ///
 /// Breaking mutation: drop `repository_id` from the inherited CTE in
-/// `upsert_subfolder_kind` — the subfolder inherits no repository, resolves
+/// `upsert_subfolder` — the subfolder inherits no repository, resolves
 /// through nothing, and reports no workspace at all.
 ///
 /// (The ORIGINAL mutation — point `folder_workspaces` at `f.workspace_id` — is no
@@ -715,7 +722,14 @@ async fn a_folder_resolves_the_workspace_of_its_repository_not_its_own_column() 
     // repository's, which is the whole point.
     let sub_path = format!("{repo_path}/docs");
     let sub = s
-        .upsert_subfolder_kind(&root_id, "folder", "docs", &sub_path, &sub_path, Some(&repo))
+        .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &root_id,
+            kind: "folder",
+            name: "docs",
+            path: &sub_path,
+            abs_path: &sub_path,
+            parent_id: Some(&repo),
+        })
         .await
         .unwrap();
 
@@ -753,10 +767,28 @@ async fn first_party_packages_are_every_module_the_workspace_declares() {
     // Two manifest-declared packages, and one ordinary folder that is NOT one.
     for (name, path) in [("alpha", "/repo/crates/alpha"), ("beta", "/repo/crates/beta")] {
         let abs = tkey("fp", path);
-        s.upsert_subfolder_kind(&root_id, "module", name, &abs, &abs, Some(&repo)).await.unwrap();
+        s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &root_id,
+            kind: "module",
+            name,
+            path: &abs,
+            abs_path: &abs,
+            parent_id: Some(&repo),
+        })
+        .await
+        .unwrap();
     }
     let src = tkey("fp", "/repo/src");
-    s.upsert_subfolder_kind(&root_id, "folder", "src", &src, &src, Some(&repo)).await.unwrap();
+    s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+        root_id: &root_id,
+        kind: "folder",
+        name: "src",
+        path: &src,
+        abs_path: &src,
+        parent_id: Some(&repo),
+    })
+    .await
+    .unwrap();
 
     let pkgs = s.first_party_packages(&repo).await.unwrap();
 
@@ -784,9 +816,16 @@ async fn repo_root_for_path_resolves_nearest_git_ancestor_skipping_members() {
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "mono", &repo).await.unwrap();
     // A workspace member subdir (not an index owner) — must be skipped.
     let member = format!("{repo}/packages/chart");
-    s.upsert_subfolder(&root_id, "chart", "mono/packages/chart", &member, Some(&repo_fid))
-        .await
-        .ok();
+    s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+        root_id: &root_id,
+        kind: "folder",
+        name: "chart",
+        path: "mono/packages/chart",
+        abs_path: &member,
+        parent_id: Some(&repo_fid),
+    })
+    .await
+    .ok();
 
     let got = s.repo_root_for_path(&format!("{member}/src/x.ts")).await.unwrap();
     assert_eq!(
@@ -830,8 +869,17 @@ async fn scope_repo_roots_returns_repo_roots_not_structural_subfolders() {
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "app", &repo).await.unwrap();
     // A structural subfolder (kind='folder') under the repo — NOT a repo root.
     let comp = format!("{repo}/src/lib");
-    let comp_fid =
-        s.upsert_subfolder(&root_id, "lib", "app/src/lib", &comp, Some(&repo_fid)).await.unwrap();
+    let comp_fid = s
+        .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &root_id,
+            kind: "folder",
+            name: "lib",
+            path: "app/src/lib",
+            abs_path: &comp,
+            parent_id: Some(&repo_fid),
+        })
+        .await
+        .unwrap();
 
     let roots = s.scope_repo_roots(&[repo_fid, comp_fid]).await.unwrap();
     assert!(roots.contains(&repo), "the git repo root is returned");
@@ -1307,8 +1355,8 @@ async fn get_workspace_repos_excludes_subfolder_tree() {
 }
 
 #[tokio::test]
-async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
-    // D5a: upsert_subfolder_kind relabels between the two STRUCTURAL kinds
+async fn upsert_subfolder_relabels_structural_but_preserves_root() {
+    // D5a: upsert_subfolder relabels between the two STRUCTURAL kinds
     // (folder ↔ workspace_member) on conflict, but NEVER reclassifies a path
     // that is actually a nested workspace ROOT (git/standalone/subtree).
     let s = pg_store().await;
@@ -1331,15 +1379,42 @@ async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
 
     // A plain structural folder → relabel to workspace_member on re-upsert.
     let a = format!("/_test/sfk-a-{}", uuid::Uuid::new_v4());
-    s.upsert_subfolder(&rid, "a", "a", &a, None).await.unwrap();
+    s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+        root_id: &rid,
+        kind: "folder",
+        name: "a",
+        path: "a",
+        abs_path: &a,
+        parent_id: None,
+    })
+    .await
+    .unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "folder", "first upsert is a plain folder");
-    s.upsert_subfolder_kind(&rid, "module", "a", "a", &a, None).await.unwrap();
+    s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+        root_id: &rid,
+        kind: "module",
+        name: "a",
+        path: "a",
+        abs_path: &a,
+        parent_id: None,
+    })
+    .await
+    .unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "module", "relabelled folder → workspace_member");
 
     // A nested workspace root (subtree) must NOT be reclassified by a member upsert.
     let b = format!("/_test/sfk-b-{}", uuid::Uuid::new_v4());
     s.upsert_repo_kind(&rid, "subtree", "b", &b).await.unwrap();
-    s.upsert_subfolder_kind(&rid, "module", "b", "b", &b, None).await.unwrap();
+    s.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+        root_id: &rid,
+        kind: "module",
+        name: "b",
+        path: "b",
+        abs_path: &b,
+        parent_id: None,
+    })
+    .await
+    .unwrap();
     assert_eq!(
         kind_at(&s, b.clone()).await,
         "subtree",

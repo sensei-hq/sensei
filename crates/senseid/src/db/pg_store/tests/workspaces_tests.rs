@@ -666,7 +666,14 @@ async fn setup_scope_test(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid,
     let child_abs = format!("/_test/scope_{}/root/child", suffix);
     let child_name = format!("scope_child_{}", suffix);
     let child_id = s
-        .upsert_subfolder(&watch_id, &child_name, &child_name, &child_abs, Some(&root_id))
+        .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &watch_id,
+            kind: "folder",
+            name: &child_name,
+            path: &child_name,
+            abs_path: &child_abs,
+            parent_id: Some(&root_id),
+        })
         .await
         .unwrap();
 

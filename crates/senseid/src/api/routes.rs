@@ -3800,13 +3800,14 @@ mod tests {
         .unwrap();
         let child_fid = state
             .pg
-            .upsert_subfolder(
-                &root_id,
-                &child_name,
-                &format!("{}/{}", root_name, child_name),
-                &format!("{}/{}/{}", root_path, root_name, child_name),
-                Some(&root_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: &child_name,
+                path: &format!("{}/{}", root_name, child_name),
+                abs_path: &format!("{}/{}/{}", root_path, root_name, child_name),
+                parent_id: Some(&root_fid),
+            })
             .await
             .unwrap();
 

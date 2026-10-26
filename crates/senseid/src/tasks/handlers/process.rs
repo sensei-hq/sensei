@@ -240,7 +240,14 @@ pub async fn reconcile_repo_identity(
             // member but never reclassifies a nested project root.
             match ctx
                 .pg()
-                .upsert_subfolder_kind(&root_id, "module", &name, &rel, &sub_abs, Some(&folder_id))
+                .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                    root_id: &root_id,
+                    kind: "module",
+                    name: &name,
+                    path: &rel,
+                    abs_path: &sub_abs,
+                    parent_id: Some(&folder_id),
+                })
                 .await
             {
                 Ok(sub_id) => {
@@ -249,7 +256,7 @@ pub async fn reconcile_repo_identity(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(sub = %sub_abs, error = %e, "sub-project upsert_subfolder_kind failed")
+                    tracing::warn!(sub = %sub_abs, error = %e, "sub-project upsert_subfolder failed")
                 }
             }
         }

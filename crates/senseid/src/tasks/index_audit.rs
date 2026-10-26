@@ -581,12 +581,26 @@ mod tests {
         // Live subfolder (dir present) vs ghost subfolder (dir absent, has a node).
         let live_dir = repo.join("live");
         std::fs::create_dir_all(&live_dir).unwrap();
-        pg.upsert_subfolder(&root_id, "live", "live", &live_dir.to_string_lossy(), Some(&repo_fid))
-            .await
-            .unwrap();
+        pg.upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+            root_id: &root_id,
+            kind: "folder",
+            name: "live",
+            path: "live",
+            abs_path: &live_dir.to_string_lossy(),
+            parent_id: Some(&repo_fid),
+        })
+        .await
+        .unwrap();
         let gone = repo.join("gone"); // never created on disk
         let gone_fid = pg
-            .upsert_subfolder(&root_id, "gone", "gone", &gone.to_string_lossy(), Some(&repo_fid))
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: "gone",
+                path: "gone",
+                abs_path: &gone.to_string_lossy(),
+                parent_id: Some(&repo_fid),
+            })
             .await
             .unwrap();
         pg.seed_node(&gone_fid, "struct", "Ghost", "gone/x.rs", None, None, None, None)
@@ -791,13 +805,14 @@ mod tests {
         // (b) ghost subfolder (dir absent) with a node (ghost-folder class).
         let ghost_dir = repo.join("ghost"); // never created on disk
         let ghost_fid = pg
-            .upsert_subfolder(
-                &root_id,
-                "ghost",
-                "ghost",
-                &ghost_dir.to_string_lossy(),
-                Some(&repo_fid),
-            )
+            .upsert_subfolder(&crate::db::pg_store::SubfolderRow {
+                root_id: &root_id,
+                kind: "folder",
+                name: "ghost",
+                path: "ghost",
+                abs_path: &ghost_dir.to_string_lossy(),
+                parent_id: Some(&repo_fid),
+            })
             .await
             .unwrap();
         pg.seed_node(&ghost_fid, "struct", "Ghost", "ghost/x.rs", None, None, None, None)
