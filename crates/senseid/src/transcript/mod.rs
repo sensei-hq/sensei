@@ -470,7 +470,7 @@ fn adapters() -> Vec<Box<dyn TranscriptAdapter>> {
         Box::new(zed::ZedAdapter::new(zed_db_path())),
         Box::new(opencode::OpenCodeAdapter::new(opencode_db_path())),
         Box::new(cursor::CursorAdapter::new(cursor_transcript_root())),
-        Box::new(vscode::VscodeAdapter::new(vscode_user_root("Code").unwrap_or_else(claude_root))),
+        Box::new(vscode::VscodeAdapter::installed()),
         Box::new(copilot_cli::CopilotCliAdapter::new(copilot_home())),
     ]
 }
@@ -491,9 +491,7 @@ fn adapter_for_source(source: &str) -> Option<Box<dyn TranscriptAdapter>> {
         "zed" => Some(Box::new(zed::ZedAdapter::new(zed_db_path()))),
         "opencode" => Some(Box::new(opencode::OpenCodeAdapter::new(opencode_db_path()))),
         "cursor" => Some(Box::new(cursor::CursorAdapter::new(cursor_transcript_root()))),
-        "vscode" => Some(Box::new(vscode::VscodeAdapter::new(
-            vscode_user_root("Code").unwrap_or_else(claude_root),
-        ))),
+        "vscode" => Some(Box::new(vscode::VscodeAdapter::installed())),
         "copilot_cli" => Some(Box::new(copilot_cli::CopilotCliAdapter::new(copilot_home()))),
         _ => None,
     }

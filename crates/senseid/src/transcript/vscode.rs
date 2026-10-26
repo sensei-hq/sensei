@@ -47,9 +47,8 @@ fn is_transcript_event_stream(first_line: &str) -> bool {
 }
 
 /// Path to the OTel agent-traces.db for a variant.
-fn otel_db_path(variant: &str) -> Option<PathBuf> {
-    let base = super::vscode_user_root(variant)?;
-    let db = base.join("globalStorage/github.copilot-chat/agent-traces.db");
+fn otel_db_path(user_root: &Path) -> Option<PathBuf> {
+    let db = user_root.join("globalStorage/github.copilot-chat/agent-traces.db");
     if db.exists() { Some(db) } else { None }
 }
 
@@ -105,6 +104,7 @@ fn glob_chat_sessions(user_root: &Path) -> Vec<PathBuf> {
 
 /// Every chat file under a bare `workspaceStorage/` root — both the delta
 /// journals and the newer transcript event streams.
+#[cfg(test)]
 fn scan_workspace_storage(ws: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     let Ok(entries) = std::fs::read_dir(ws) else {
@@ -626,12 +626,53 @@ fn extract_otel_tokens(content: &str) -> Option<SessionTokens> {
 }
 
 pub struct VscodeAdapter {
-    root: PathBuf,
+    scope: Scope,
+}
+
+/// Where the adapter looks.
+enum Scope {
+    /// A folder someone sent: a `User/` directory or a bare `workspaceStorage/`.
+    /// Read as it is; the installed editors are not scanned. Tests and
+    /// real-sample runs only: the daemon reads the installed editors.
+    #[cfg(test)]
+    Explicit(PathBuf),
+    /// The installed editors' `User/` directories (VS Code, Insiders, VSCodium,
+    /// OSS): journals, event streams, and each editor's OTel store.
+    Installed(Vec<PathBuf>),
+}
+
+/// The units under an explicit folder: a `User/` directory (holding
+/// `workspaceStorage/`) or a bare `workspaceStorage/`, the shape people send.
+/// Both layers, the journals and the event streams.
+#[cfg(test)]
+fn explicit_units(root: &Path) -> Vec<UnitRef> {
+    if !root.exists() {
+        return Vec::new();
+    }
+    let user_ws = root.join("workspaceStorage");
+    let ws = if user_ws.is_dir() { user_ws } else { root.to_path_buf() };
+    scan_workspace_storage(&ws)
+        .into_iter()
+        .filter_map(|p| mtime_ns(&p).map(|stamp| UnitRef { key: p.display().to_string(), stamp }))
+        .collect()
 }
 
 impl VscodeAdapter {
+    /// Read one explicit folder, a `User/` directory or a bare
+    /// `workspaceStorage/`, instead of the installed editors.
+    #[cfg(test)]
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self { scope: Scope::Explicit(root) }
+    }
+
+    /// Read every installed editor's `User/` directory. What the daemon uses.
+    pub fn installed() -> Self {
+        Self::installed_at(VARIANTS.iter().filter_map(|v| super::vscode_user_root(v)).collect())
+    }
+
+    /// The installed scan over the given `User/` directories.
+    pub(crate) fn installed_at(user_roots: Vec<PathBuf>) -> Self {
+        Self { scope: Scope::Installed(user_roots) }
     }
 }
 
@@ -646,76 +687,32 @@ impl TranscriptAdapter for VscodeAdapter {
 
     fn units(&self) -> Vec<UnitRef> {
         let mut units = Vec::new();
+        // Outside tests `Scope` has one variant, so the match is irrefutable there.
+        #[cfg_attr(not(test), allow(clippy::infallible_destructuring_match))]
+        let user_roots = match &self.scope {
+            #[cfg(test)]
+            Scope::Explicit(root) => return explicit_units(root),
+            Scope::Installed(user_roots) => user_roots,
+        };
         let mut otel_sessions: HashSet<String> = HashSet::new();
 
-        // An explicit root OVERRIDES the installed-editor scan. Without this the
-        // field was inert and the adapter could only ever read this machine's
-        // own VS Code — so a shared transcript folder could not be ingested or
-        // tested against. Accepts either a `User/` directory or a bare
-        // `workspaceStorage/` one, which is the shape people actually send.
-        if self.root.components().next().is_some() && self.root.exists() {
-            let user_root = if self.root.join("workspaceStorage").is_dir() {
-                self.root.clone()
-            } else {
-                // Treat the folder itself as workspaceStorage by borrowing its
-                // parent as the notional User/ root.
-                self.root.parent().map(Path::to_path_buf).unwrap_or_else(|| self.root.clone())
-            };
-            let ws_root = if self.root.join("workspaceStorage").is_dir() {
-                user_root.clone()
-            } else {
-                self.root.clone()
-            };
-            for p in scan_workspace_storage(&ws_root) {
-                if let Some(stamp) = mtime_ns(&p) {
-                    units.push(UnitRef { key: p.display().to_string(), stamp });
-                }
-            }
-            for p in glob_chat_sessions(&user_root) {
-                if let Some(stamp) = mtime_ns(&p) {
-                    let key = p.display().to_string();
-                    if !units.iter().any(|u| u.key == key) {
-                        units.push(UnitRef { key, stamp });
-                    }
-                }
-            }
-            return units;
-        }
-
         // Pass 1: enumerate OTel sessions (per-session units)
-        for variant in VARIANTS {
-            if let Some(db_path) = otel_db_path(variant) {
-                let sessions = query_otel_sessions(&db_path);
-                for session_id in sessions {
-                    otel_sessions.insert(session_id.clone());
-                    if let Some(stamp) = mtime_ns(&db_path) {
-                        units.push(UnitRef {
-                            key: format!("{}#{}", db_path.display(), session_id),
-                            stamp,
-                        });
-                    }
+        for db_path in user_roots.iter().filter_map(|u| otel_db_path(u)) {
+            for session_id in query_otel_sessions(&db_path) {
+                otel_sessions.insert(session_id.clone());
+                if let Some(stamp) = mtime_ns(&db_path) {
+                    units.push(UnitRef {
+                        key: format!("{}#{}", db_path.display(), session_id),
+                        stamp,
+                    });
                 }
             }
         }
 
         // Pass 2: journal + transcript units, but skip sessions OTel covers
-        for variant in VARIANTS {
-            let Some(root) = super::vscode_user_root(variant) else {
-                continue;
-            };
-            // Journal units
-            for path in glob_chat_sessions(&root) {
-                if let Some(sid) = session_id_from_path(&path)
-                    && otel_sessions.contains(&sid)
-                {
-                    continue;
-                }
-                if let Some(stamp) = mtime_ns(&path) {
-                    units.push(UnitRef { key: path.to_string_lossy().to_string(), stamp });
-                }
-            }
-            // Transcript units
-            for path in glob_transcripts(&root) {
+        for user_root in user_roots {
+            for path in glob_chat_sessions(user_root).into_iter().chain(glob_transcripts(user_root))
+            {
                 if let Some(sid) = session_id_from_path(&path)
                     && otel_sessions.contains(&sid)
                 {
@@ -1241,6 +1238,67 @@ mod tests {
             sensei_transcript_formats::paths::normalise_uri_path("/Users/jane/My%20Code"),
             "/Users/jane/My Code"
         );
+    }
+
+    /// A `User/`-shaped folder: `workspaceStorage/<hash>/` holding a journal
+    /// (`chatSessions/`) and an event-stream transcript
+    /// (`GitHub.copilot-chat/transcripts/`).
+    fn user_folder() -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let user = tmp.path().join("User");
+        let ws = user.join("workspaceStorage/h1");
+        std::fs::create_dir_all(ws.join("chatSessions")).unwrap();
+        std::fs::create_dir_all(ws.join("GitHub.copilot-chat/transcripts")).unwrap();
+        std::fs::write(ws.join("chatSessions/j.jsonl"), "{}\n").unwrap();
+        std::fs::write(ws.join("GitHub.copilot-chat/transcripts/t.jsonl"), "{}\n").unwrap();
+        (tmp, user)
+    }
+
+    fn unit_names(units: &[UnitRef]) -> Vec<String> {
+        let mut n: Vec<String> = units
+            .iter()
+            .map(|u| Path::new(&u.key).file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        n.sort();
+        n
+    }
+
+    /// #123: an explicit `User/` folder finds BOTH layers. It scanned
+    /// `User/<child>/GitHub.copilot-chat/transcripts`, one level too shallow, so
+    /// every event-stream transcript was missed and only journals were found.
+    #[test]
+    fn an_explicit_user_folder_finds_journals_and_event_streams() {
+        let (_tmp, user) = user_folder();
+        let units = VscodeAdapter::new(user).units();
+        assert_eq!(unit_names(&units), ["j.jsonl", "t.jsonl"]);
+    }
+
+    /// #123: the INSTALLED scan reads each editor's `User/` folder: journals,
+    /// event streams, and (where present) the OTel store. Production used to
+    /// pass `Code/User` as an EXPLICIT root, which switched the installed scan
+    /// off, so the OTel and editor-variant passes never ran, and a machine with
+    /// no `Code/User` fell back to `~/.claude/projects` and found nothing.
+    #[test]
+    fn the_installed_scan_reads_every_editor_user_folder() {
+        let (_tmp, user) = user_folder();
+        let units = VscodeAdapter::installed_at(vec![user]).units();
+        assert_eq!(unit_names(&units), ["j.jsonl", "t.jsonl"]);
+    }
+
+    /// The daemon reads VS Code through the installed scan. An explicit root is
+    /// for a shared folder only; production code never builds one.
+    #[test]
+    fn production_reads_vscode_through_the_installed_scan() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/transcript/mod.rs"),
+        )
+        .unwrap();
+        let production = &src[..src.find("\nmod tests").unwrap_or(src.len())];
+        assert!(
+            !production.contains(&["VscodeAdapter", "::new("].concat()),
+            "production builds an explicit root"
+        );
+        assert!(production.contains(&["VscodeAdapter", "::installed()"].concat()));
     }
 
     /// Ingestion proof against REAL VS Code data, when a sample is provided.
