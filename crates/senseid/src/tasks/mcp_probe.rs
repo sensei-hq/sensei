@@ -169,11 +169,24 @@ impl Session {
         })
     }
 
-    /// One request; its `result`, or the server's `error` as an `Err`.
+    /// One request; its `result`, or the server's `error` as an `Err`. A
+    /// request the SERVER sends meanwhile is answered, since a server may wait
+    /// on it before it answers ours (semgrep asks for `roots/list`).
     async fn request(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
         let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         write_frame(&mut self.stdin, &msg).await?;
-        let resp = read_response_matching(&mut self.reader, id).await?;
+        let resp = loop {
+            let frame = read_frame(&mut self.reader).await?;
+            if let (Some(asked), Some(their_id)) =
+                (frame.get("method").and_then(Value::as_str), frame.get("id"))
+            {
+                write_frame(&mut self.stdin, &answer_server_request(their_id, asked)).await?;
+                continue;
+            }
+            if frame.get("id").and_then(Value::as_u64) == Some(id) {
+                break frame;
+            }
+        };
         if let Some(err) = resp.get("error") {
             let text = err.get("message").and_then(|v| v.as_str()).unwrap_or("error");
             return Err(format!("server error: {text}"));
@@ -214,13 +227,9 @@ async fn write_frame(stdin: &mut tokio::process::ChildStdin, msg: &Value) -> Res
     Ok(())
 }
 
-/// Read newline-delimited JSON frames from `reader` until one with `id ==
-/// expected_id` arrives. Skips notifications and unrelated messages. Returns
-/// an error if the reader closes before a match is seen.
-async fn read_response_matching(
-    reader: &mut BufReader<tokio::process::ChildStdout>,
-    expected_id: u64,
-) -> Result<Value, String> {
+/// The next newline-delimited JSON frame from the server; an error when it
+/// closes stdout or writes something that is not JSON.
+async fn read_frame(reader: &mut BufReader<tokio::process::ChildStdout>) -> Result<Value, String> {
     let mut line = String::new();
     loop {
         line.clear();
@@ -229,19 +238,35 @@ async fn read_response_matching(
             return Err("server closed stdout before response".into());
         }
         let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
+        if !trimmed.is_empty() {
+            return serde_json::from_str(trimmed).map_err(|e| format!("bad json from server: {e}"));
         }
-        let msg: Value = match serde_json::from_str(trimmed) {
-            Ok(v) => v,
-            Err(e) => return Err(format!("bad json from server: {e}")),
-        };
-        // Match the response id.
+    }
+}
+
+/// Frames until the response with `id == expected_id`. Used for `initialize`,
+/// before which a server has nothing to ask; later requests go through
+/// [`Session::request`], which answers what the server asks.
+async fn read_response_matching(
+    reader: &mut BufReader<tokio::process::ChildStdout>,
+    expected_id: u64,
+) -> Result<Value, String> {
+    loop {
+        let msg = read_frame(reader).await?;
         if msg.get("id").and_then(|v| v.as_u64()) == Some(expected_id) {
             return Ok(msg);
         }
-        // Non-matching id → probably a server-originated notification or
-        // request; ignore and keep reading.
+    }
+}
+
+/// Our answer to a request the server sent: no roots (we expose none), a ping
+/// answered, anything else not supported — always an answer, never silence.
+fn answer_server_request(id: &Value, method: &str) -> Value {
+    match method {
+        "roots/list" => json!({"jsonrpc": "2.0", "id": id, "result": {"roots": []}}),
+        "ping" => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+        _ => json!({"jsonrpc": "2.0", "id": id,
+                    "error": {"code": -32601, "message": format!("method not supported: {method}")}}),
     }
 }
 
@@ -277,6 +302,22 @@ read l
 case "$l" in
   *'"name":"echo"'*'"x":1'*) echo '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"echoed"}],"isError":false}}' ;;
   *) echo '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"bad args"}],"isError":true}}' ;;
+esac"#;
+        ("sh".into(), vec!["-c".into(), script.into()])
+    }
+
+    /// A server that, like semgrep's, asks the client for its roots and answers
+    /// the tool call only once that request has an answer.
+    pub(crate) fn asking_server() -> (String, Vec<String>) {
+        let script = r#"read l
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"asker"}}}'
+read l
+read l
+echo '{"jsonrpc":"2.0","id":0,"method":"roots/list"}'
+read answer
+case "$answer" in
+  *'"id":0'*'"roots"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"answered"}]}}' ;;
+  *) echo '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"no roots answer"}],"isError":true}}' ;;
 esac"#;
         ("sh".into(), vec!["-c".into(), script.into()])
     }
@@ -361,6 +402,27 @@ mod tests {
                 assert_eq!(result["content"][0]["text"], "echoed");
             }
             CallOutcome::Error(e) => panic!("expected a result, got {e}"),
+        }
+    }
+
+    /// A server may ask the client something mid-call (semgrep asks for
+    /// `roots/list`) and wait for the answer: unanswered, the call hung for its
+    /// whole 60s cap.
+    #[tokio::test]
+    async fn a_request_from_the_server_is_answered_mid_call() {
+        let (cmd, args) = fake::asking_server();
+        let got = tokio::time::timeout(
+            Duration::from_secs(5),
+            call_tool(&cmd, &args, &HashMap::new(), None, "anything", &json!({})),
+        )
+        .await
+        .expect("the call must not wait on an unanswered request");
+        match got {
+            CallOutcome::Ok { result, is_error } => {
+                assert!(!is_error, "{result}");
+                assert_eq!(result["content"][0]["text"], "answered");
+            }
+            CallOutcome::Error(e) => panic!("{e}"),
         }
     }
 
