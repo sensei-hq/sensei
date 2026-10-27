@@ -78,7 +78,35 @@ pub(crate) async fn list_solutions(
         }
         enriched.push(workspace);
     }
+    // An image icon is offered only when it can be served (the app would
+    // otherwise ask for it and get a 404): its repository root may be gone from
+    // disk, or the logo removed since it was inferred.
+    let enriched = tokio::task::spawn_blocking(move || {
+        enriched.into_iter().map(mark_icon_available).collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!(enriched)))
+}
+
+/// Mark a listed workspace's image icon `available` (or not), from its folders'
+/// paths. Blocking disk I/O.
+fn mark_icon_available(mut workspace: serde_json::Value) -> serde_json::Value {
+    let rel = match workspace["icon"].get("kind").and_then(|k| k.as_str()) {
+        Some("image") => workspace["icon"]["value"].as_str().map(str::to_string),
+        _ => None,
+    };
+    if let Some(rel) = rel {
+        let roots: Vec<String> = workspace["folders"]
+            .as_array()
+            .map(|fs| {
+                fs.iter().filter_map(|f| f["abs_path"].as_str().map(str::to_string)).collect()
+            })
+            .unwrap_or_default();
+        workspace["icon"]["available"] =
+            serde_json::json!(crate::analysis::workspace_icon::icon_available(&roots, &rel));
+    }
+    workspace
 }
 
 #[derive(Deserialize)]

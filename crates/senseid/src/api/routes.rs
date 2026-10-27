@@ -1194,6 +1194,46 @@ mod tests {
         }
     }
 
+    /// A workspace's image icon is offered only when the daemon can serve it:
+    /// the list marks it `available`, so the app asks for no image that answers
+    /// 404 — a repository no longer on disk, or a logo since removed.
+    #[tokio::test]
+    async fn the_workspace_list_says_whether_an_image_icon_can_be_served() {
+        let (app, state) = test_app().await;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("logo.svg"), "<svg/>").unwrap();
+        let uniq = uuid::Uuid::new_v4();
+        let (here, _) = crate::tasks::test_support::seed_workspace_folder_at(
+            &state.pg,
+            &uniq,
+            &dir.path().to_string_lossy(),
+        )
+        .await;
+        let (gone, _) = crate::tasks::test_support::seed_metrics_workspace_folder(
+            &state.pg,
+            &uuid::Uuid::new_v4(),
+        )
+        .await;
+        for (pid, rel) in [(here, "logo.svg"), (gone, "logo.svg")] {
+            state
+                .pg
+                .set_workspace_icon(
+                    &pid,
+                    &serde_json::json!({"kind": "image", "value": rel, "source": "logo_file"}),
+                )
+                .await
+                .unwrap();
+        }
+        let (st, body) = req(app, "GET", "/api/workspaces", None).await;
+        assert_eq!(st, StatusCode::OK);
+        let icon = |pid: uuid::Uuid| {
+            body.as_array().unwrap().iter().find(|w| w["id"] == pid.to_string()).unwrap()["icon"]
+                .clone()
+        };
+        assert_eq!(icon(here)["available"], true);
+        assert_eq!(icon(gone)["available"], false, "its folder is not on disk");
+    }
+
     /// A request as the CLI or the app sends it: addressed to loopback, which
     /// `caller_guard` requires of every request (#334).
     fn local_request() -> axum::http::request::Builder {
