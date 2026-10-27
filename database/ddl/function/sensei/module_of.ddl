@@ -30,6 +30,13 @@ as $$
            -- which would drop a C header's whole contents off every structure
            -- diagram rather than showing them at the root.
            when mod = '' then pkg
+           -- A CONTAINER FOLDER IS NOT A MODULE (M17): SvelteKit's `lib/` and
+           -- `routes/`, a `src/` or `app/` root, dbd's `ddl/`. Read as the
+           -- module they made `sensei-dojo-web/lib` one module of 405 files.
+           -- The module under one is its first two segments.
+           when split_part(mod, '/', 1) in ('lib', 'routes', 'src', 'app', 'ddl')
+                and split_part(mod, '/', 2) <> ''
+             then pkg || '/' || split_part(mod, '/', 1) || '/' || split_part(mod, '/', 2)
            else pkg || '/' || split_part(split_part(mod, '/', 1), '::', 1)
          end
 $$;
