@@ -15,6 +15,58 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.21.1] — 2026-10-27
+
+### Added
+
+- **The Code map** (M17), the workspace window's first diagram: modules → files →
+  symbols, with lenses Structure, Wheel, Cycles, Matrix, Zones, Hidden coupling
+  (modules that change together with no edge) and Complexity (function complexity
+  from local qlty). Shared with the dōjō as `@sensei/codemap`. World and Atlas are
+  retired.
+- **The Playground runs any MCP tool through its own server**, as an assistant
+  would, in the workspace you pick ("Runs in" — only workspaces under a watched
+  root). Register and remove an MCP server by hand (#343).
+- **Libraries show what a library provides** — its packages, docs, skills and
+  agents (#341).
+- **Settings is its own window**: Preferences… (⌘,), with its own sidebar.
+- **Make default**: choose which identity is the default, over the git-email rule.
+- **Settings · Dōjō by identity**: each identity's credential, then what it agreed
+  with its dōjō, by day and repository; every sync record names its identity.
+- **The glyph choice (kanji or icons) syncs** between the app and the dōjō (#133).
+- **`get_duplicates` reads what qlty's scan found** at each repository's HEAD,
+  instead of a similarity search per call (over 200s on a large workspace).
+- **A baseline of the app** (`docs/baseline/2026-10-27-app.md`): every screen
+  crawled, and every read-only sensei tool run and checked against an answer
+  worked out without it (31 of 32 right).
+
+### Fixed
+
+- The Playground ran tools in the daemon's own folder, so a tool that takes no
+  workspace answered about the wrong place.
+- `get_patterns` was always empty; workspace conventions counted no files;
+  `match_pattern` answered 500; pattern reads for an unknown workspace answered an
+  empty success; `recommend_playbook` and `get_pending_nudges` hid their refusals;
+  `get_communities` returned half a megabyte.
+- A library name two ecosystems share (`uuid`) broke its docs, skills and agents;
+  every `design.yaml`'s extensions failed to file (830 failures a day).
+- An expired credential asks for a sign-in, not a Keychain approval first; a
+  finished sign-in clears "your browser is open".
+- No request for a workspace icon the daemon cannot serve.
+
+### Changed
+
+- **rokkit 1.9.1**: the switch reads when off, and every size lands right.
+- Settings · General's digest, tone and glyph choices are toggle groups.
+
+### Security
+
+- **The dōjō database**: row level security on every table it carries (13 had
+  none, among them `sensei.metrics` and `sensei.reason_codes`, which production
+  exposed through its API); every function pins its `search_path`; a test holds
+  that each SECURITY DEFINER function a signed-in person can call answers only
+  for the caller.
+
 ## [0.21.0] — 2026-10-26
 
 ### Added
