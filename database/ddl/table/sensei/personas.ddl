@@ -42,6 +42,7 @@ create table if not exists personas (
 , is_self       boolean     not null default true
 , principal_id  uuid
 , session_slot  text
+, is_chosen_default boolean not null default false
 , forge_token_state      sensei.forge_token_state not null default 'unknown'
 , forge_token_expires_at timestamptz
 , forge_token_checked_at timestamptz
@@ -69,6 +70,10 @@ create unique index if not exists personas_principal_unique
 -- person's metrics under the other's token.
 create unique index if not exists personas_session_slot_unique
     on personas (session_slot) where session_slot is not null;
+
+-- At most one identity is the chosen default.
+create unique index if not exists personas_one_chosen_default
+    on personas ((true)) where is_chosen_default;
 
 comment on table personas is
 'A working identity kept separate from the user''s others — business vs personal
@@ -112,3 +117,6 @@ comment on column personas.forge_token_expires_at
 When the token stops working, as the FORGE states it. Null when no expiry has ever been learned — GoTrue''s exchange does not report the provider''s deadline, so it can only come from GitHub''s own `github-authentication-token-expiration` response header. Null therefore means "not yet known", never "does not expire".';
 comment on column personas.forge_token_checked_at
      is 'When anything was last learned about the forge token. Deliberately NOT stamped when a probe could not reach the forge: recording a check that told us nothing would make a stale belief look fresh.';
+
+comment on column personas.is_chosen_default
+     is 'Chosen in sensei as the default identity (Make default; user, 2026-10-27). At most one. When none is chosen, the default is the identity owning the global git email (#296).';

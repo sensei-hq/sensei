@@ -284,6 +284,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/signout", post(crate::api::handlers::auth::signout))
         .route("/api/auth/status", get(crate::api::handlers::auth::status))
         .route("/api/auth/personas", get(crate::api::handlers::auth::personas))
+        .route("/api/auth/personas/{label}/default", post(crate::api::handlers::auth::make_default))
         .route("/api/auth/keychain/approve", post(crate::api::handlers::auth::approve_keychain))
         .route("/api/auth/orgs", get(crate::api::handlers::auth::orgs))
         .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
@@ -874,6 +875,28 @@ mod tests {
         assert_eq!(body["files"].as_array().map(Vec::len), Some(200));
         assert_eq!(body["total"], 201, "{}", body["total"]);
         crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+    }
+
+    /// Make default: the identity becomes the default the list reports; an
+    /// identity this machine does not have is a 404 (user, 2026-10-27).
+    #[tokio::test]
+    async fn make_default_makes_the_identity_the_default() {
+        let (app, state) = test_app().await;
+        let label = format!("_test:mkdef-{}", uuid::Uuid::new_v4().simple());
+        state.pg.upsert_persona(&label, true).await.unwrap();
+        let (st, body) =
+            req(app.clone(), "POST", &format!("/api/auth/personas/{label}/default"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let (_, list) = req(app.clone(), "GET", "/api/auth/personas", None).await;
+        assert_eq!(list["default"], label.as_str(), "{list}");
+        let (st, _) =
+            req(app.clone(), "POST", "/api/auth/personas/_test:no-such/default", None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE label = $1")
+            .bind(&label)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
     }
 
     /// get_duplicates answers what qlty's scan found, stored at HEAD — not a

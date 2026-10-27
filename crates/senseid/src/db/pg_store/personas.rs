@@ -396,6 +396,47 @@ impl PgStore {
     /// Ordered so the connected ones come first: they are the rows a user is
     /// most likely to be looking for, and an inferred persona they have never
     /// heard of should not head the list.
+    /// The identity chosen as the default in sensei, if one is:
+    /// `(label, session_slot)`.
+    pub async fn chosen_default_persona(&self) -> Result<Option<(String, Option<String>)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT label, session_slot FROM sensei.personas WHERE is_chosen_default",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("chosen_default_persona: {e}"))
+    }
+
+    /// Choose `label` as the default identity, moving the choice from any
+    /// other. `false` when no identity has that label — nothing moves.
+    pub async fn choose_default_persona(&self, label: &str) -> Result<bool, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        let exists: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.personas WHERE lower(label) = lower($1)",
+        )
+        .bind(label)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| format!("choose_default_persona: {e}"))?;
+        let Some((id,)) = exists else { return Ok(false) };
+        sqlx_core::query::query(
+            "UPDATE sensei.personas SET is_chosen_default = false, modified_at = now() WHERE is_chosen_default AND id <> $1",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("choose_default_persona: clear: {e}"))?;
+        sqlx_core::query::query(
+            "UPDATE sensei.personas SET is_chosen_default = true, modified_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("choose_default_persona: set: {e}"))?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
     /// The identities that own `email` (#296): `(label, session_slot)`.
     /// Case-insensitive, current aliases only.
     pub async fn personas_owning_email(
