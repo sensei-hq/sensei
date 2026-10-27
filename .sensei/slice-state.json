@@ -12,18 +12,20 @@
     "F5",
     "F6"
   ],
-  "current_phase": "F4",
+  "current_phase": "F6",
   "completed": [
     "F1 (4794e815b, 079f0cc81)",
     "F2 (ac7822d2b, 0dc79d0cb)",
-    "F3 (this commit)"
+    "F3 (3148ba1fd)",
+    "F4 (521a99f77)",
+    "F5 (this commit)"
   ],
-  "gate_status": "F3 pass",
+  "gate_status": "F5 pass (gate 26 clean); F6 blocked on the user",
   "open_questions": [],
   "known_broken": [],
   "notes": [
     "build with cargo -j 2 (OOM at -j 4); run make test-template after any database/ change",
     "F6 is live verification against a Jira tenant: needs the user (person token, app token, two assignees)"
   ],
-  "next_command": "F4 mapped fields, then F5 W-DOCS; F6 needs the user"
+  "next_command": "F6: live Jira tenant check (X1-X8, gates needing a tenant) with the user; then /sensei:complete"
 }

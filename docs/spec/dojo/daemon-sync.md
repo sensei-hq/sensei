@@ -17,7 +17,7 @@
 | sensei ⇄ dōjō | **two-way** | workspaces and their repositories, teams, roles, integration connections — authored on either side, mirrored to the other; **the dōjō wins on conflict** and sensei says when a local change lost; `origin` marks where a row was authored so nothing loops |
 | sensei → dōjō | one-way (as today) | repository registration, metrics, the code graph, contributions, relay sessions and segments |
 | dōjō → sensei | one-way (as today) | the sync plan, memberships, resolved rules, relay replies — and, new, the mirrored tickets, deployments, release-gate results and DORA keys |
-| external → dōjō | **read-only pull** | trackers (Jira, Azure Boards, GitHub Issues) and CI (GitHub Actions, Azure Pipelines) — the dōjō reads; nothing writes back |
+| external → dōjō | **read-only pull** | trackers (Jira, Azure Boards, GitHub Issues) and CI (GitHub Actions, Azure Pipelines) — the dōjō reads and never writes to a tracker; the local daemon writes usage metrics to tickets assigned to its token owner (`spec/daemon/tracker-metrics-writeback.md`) |
 
 **Branch scope (user, 2026-10-21; target — not in code).** Code graphs are tagged by branch and the
 latest push per branch wins. Sensei syncs only the branches mapped to the three environments —

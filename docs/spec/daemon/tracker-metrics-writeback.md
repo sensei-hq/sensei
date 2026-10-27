@@ -858,7 +858,8 @@ and the test DB unless marked *(tenant)*.
     - `rg -n 'Read-only mirror|mirrored read-only' database/ddl/table/sensei/tracker*.ddl database/design.dbml`
       → no output.
     - `rg -n '\(read-only\)' crates/senseid/src/api/handlers/scheduled_tasks.rs` → no output.
-    - `rg -n 'nothing is changed there|never changes anything in Jira' app/src` → no output.
+    - `rg -n -g '!*.spec.*' 'nothing is changed there|never changes anything in Jira' app/src`
+      → no output. (The screen specs assert that the old copy is absent.)
     - Each superseded `decisions.md` row carries "superseded 2026-10-26".
 27. *(tenant)* X1–X8 confirmed or their decided fallback applied, recorded under Evidence.
 

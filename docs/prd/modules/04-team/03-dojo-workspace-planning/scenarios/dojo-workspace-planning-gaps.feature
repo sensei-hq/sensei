@@ -26,10 +26,11 @@ Feature: Dōjō Workspace Planning — the unbuilt tracker adapters and scoped r
 
   # gap: T-1
   NO TEST
-  Scenario: tracker adapters are read-only — they never write back
+  # Metrics write-back is the one write: spec/daemon/tracker-metrics-writeback.md
+  Scenario: tracker sync never writes the plan
     Given a tracker adapter
     When it syncs
-    Then it only reads; there is no export action and no write path
+    Then sync never writes sprints, statuses or memberships
     This is unbuilt — mockup only.
 
   # gap: T-1

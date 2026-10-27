@@ -14,11 +14,13 @@ analysis: docs/analysis/2026-10-15-jira-ticket-linkage.md
 
 ## Purpose
 
-Connect a sensei **project** to a Jira Cloud board **read-only**, mirror its sprints
+Connect a sensei **project** to a Jira Cloud board, mirror its sprints
 and issues into the local DB, link the project's AI sessions to those issues by the
 issue key found in the session's **branch** or **prompts**, and report per-ticket and
 per-sprint **active AI-session time** and **token usage**. Insight only — never a
-gate, never keyed by person.
+gate, and usage API output carries no person attribute. Sync reads only; the assignee is
+compared with the token owner, never stored, and the one write is the assignee's own
+usage metrics (`spec/daemon/tracker-metrics-writeback.md`).
 
 ## Integration seam (applies to every section below)
 
@@ -71,7 +73,7 @@ The coordinator stores each `TaskRow.key` **exactly as the adapter gives it**; k
 form is the adapter's (Jira upper-cases; GitLab keeps `group/proj#12`).
 
 - **Provider-neutral (written once):** tables (R2), credentials (R3), the GET-only
-  transport + error mapping + 429 policy (R4), sync coordinator (R5), relink
+  transport + error mapping + 429 policy (R4; the write seam is `tracker-metrics-writeback` W10), sync coordinator (R5), relink
   orchestration (R6), usage (R7), routes (R8), status (R9), scheduling.
 - **Per adapter:** connect params and URL policy, auth scheme, endpoints and
   pagination, what a "sprint" is, ticket-key matching.
@@ -157,7 +159,7 @@ sensei project ──< repositories        (existing: repositories_in_projects; 
 | `sensei.sprints` | `id uuid pk`, `tracker_id → trackers cascade`, `external_id text not null`, `seq bigint not null` (adapter-supplied creation order — Jira: the numeric sprint id; never compare `external_id` text), `name text not null`, `state text not null` (common states `future`/`active`/`closed`; adapters map theirs onto these), `start_at`, `end_at`, `complete_at` (nullable), `members_fetched_state text` (state at last membership fetch), `removed_at`, `last_seen_at` | `unique(tracker_id, external_id)` |
 | `sensei.tracker_tasks` | `id uuid pk`, `tracker_id → trackers cascade`, `external_id text not null` (provider issue id), `key text not null` (provider's canonical display key — Jira `AUTH-420` upper-cased; GitLab `group/project#12`), `scope text` (nullable; GitLab project path the key is relative to), `summary text`, `issue_type text`, `status text`, `current_sprint_id uuid → sprints on delete set null`, `removed_at`, `last_seen_at` | `unique(tracker_id, external_id)`; index `(tracker_id, key)` |
 | `sensei.tracker_task_sprints` | `task_id → tracker_tasks cascade`, `sprint_id → sprints cascade` | `pk(task_id, sprint_id)`; index `(sprint_id)` — which sprints list the issue |
-| `sensei.session_task_links` | `session_id → activity.sessions cascade`, `task_id → tracker_tasks cascade`, `source link_source not null` (enum: `branch`, `prompt`, `commit` — `commit` never written in v1), `matched_key text not null`, `mentions integer not null check (mentions > 0)`, `linked_at timestamptz not null default now()` | `pk(session_id, task_id, source)`; index `(task_id)` |
+| `sensei.session_task_links` | `session_id → activity.sessions cascade`, `task_id → tracker_tasks cascade`, `source link_source not null` (enum: `branch`, `prompt`, `commit` — `commit` not produced in v1), `matched_key text not null`, `mentions integer not null check (mentions > 0)`, `linked_at timestamptz not null default now()` | `pk(session_id, task_id, source)`; index `(task_id)` |
 | `sensei.tracker_unknown_keys` | `tracker_id → trackers cascade`, `key text not null`, `checked_at timestamptz not null default now()` | `pk(tracker_id, key)` — R11's negative cache: keys the board was asked for and does not have. Re-asked only after `UNKNOWN_KEY_TTL` (6 h); a full sync deletes the rows of every key it now has |
 | `sensei.tracker_task_keys` | `task_id → tracker_tasks cascade`, `key text not null`, `first_seen_at timestamptz not null default now()` | `pk(task_id, key)`; index `(key)` — **every key a ticket has ever had** (its current key included), so a renamed or moved issue still matches text written with its old key |
 
@@ -717,7 +719,7 @@ Unattended (CI):
    l. **Seam test:** a test-only `FakeAdapter` (non-Jira key format `#12` scoped by `repo_key`, its own sprint shape) runs through the coordinator (sync, relink, usage) with no change to coordinator code. `repositories.repo_key` is seeded through the production `normalize_repo_key` from remotes like `git@gitlab.com:Group/Sub/Repo.git`, and the fake's `scope` comes from `https://gitlab.com/Group/Sub/Repo`. Two sessions in different repos both saying `#12` link to different tasks. A third repo with no matching scope gives 0 links, and a session with NULL `repo_key` gives 0 links.
    n. **Backlog:** a ticket no sprint lists, and one listed only by a sprint Jira deleted, are backlog; a ticket in a closed sprint is not; a removed ticket is excluded unless `include_removed`. `GET …/backlog` counts a session linked to two backlog tickets once (`sessions = 1`) and reports the ticket count; `?sprint=X&backlog=true` → 422 `sprint_or_backlog`.
    m. **Discovery (R11):** `unknown_keys` with known `{P-1}`: `P-900` → `[P-900]`; `P-1`, `UTF-8`, `Q-5` (prefix the board doesn't use), `P-9x;DROP` → none beyond the valid `P-9`; a prompt naming `P-900` twice → once. A session ingested after the watermark naming `P-900` → one board-scoped request with `key in (P-900)`, the task inserted, the session linked, the watermark advanced; nothing marked removed, no other link touched. A session with no unknown key → no request. A key the board lacks → a `tracker_unknown_keys` row, and a second discovery within 6 h makes no request. A 400 batch (fake) → one request per key; the bad key negative-cached, the good ones inserted. Lock held → skipped, watermark unchanged. A provider failure → nothing applied, no `last_error`, watermark unchanged, a second trigger within 5 min makes no request. A full sync after discovery: the discovered task stays (it is on the board), its links are recomputed, and its negative-cache row (if any) is gone. `GET …/tracker-tasks/P-900` before any ingest → discovers, 200; `…/P-404` → 404 `task_not_on_board`; `…/UTF-8` → 404 `task_not_found` with no request. Ingest wiring: `ingest_capture` writing turns for a candidate session enqueues exactly one `TrackerDiscover` per tracker while one is pending.
-2. `rg -n 'Method::|\.request\(|client\.(post|put|patch|delete)\(' crates/senseid/src/tracker/` → no output (the HTTP client is GET-only; `SecretStore::delete` is a keyring call, not an HTTP verb).
+2. *Replaced by `spec/daemon/tracker-metrics-writeback.md` gate 13:* sync, discover and connect get only the GET transport; the write seam is used by `writeback.rs` alone.
 2a. `rg -n -i '\b(select|insert|update|delete)\b.*\b(from|into|set|where)\b' crates/senseid/src/tracker` → no hits **outside `#[cfg(test)]` modules** (test fixtures may seed rows, as `check-sql-in-layer` allows; `make check-sql-in-layer` only matches `sqlx_core::query*` call sites, so SQL text in a `const` would slip past it).
 2b. Outside `#[cfg(test)]` modules: `rg -n -i 'jira|atlassian'` over `crates/senseid/src/tracker/{http,sync,status,sprint,transport,runtime,secret,connect}.rs` (and `link.rs`/`usage.rs` once F3/F4 add them) → no output; in `tracker/mod.rs` the only hits are `mod jira;`, the `JiraAdapter` entry in `adapters()`, the `TrackerKind::Jira` variant with its `"jira"` label (the `tracker_kind` enum), and doc comments. Naming the adapter in the registry, the CLI's `jira` subcommand and `SENSEI_JIRA_TOKEN` is expected; Jira **logic** (key shape, endpoints, auth, host rule) lives only in `tracker/jira.rs`.
 3. `rg -n 'api_token|SENSEI_JIRA_TOKEN' crates/senseid/src crates/cli/src` hits only the connect request type, its keyring call, and the CLI token reader; no DDL column holds a token.

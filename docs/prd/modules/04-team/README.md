@@ -19,14 +19,15 @@ Memberships, routing, preview and the universal strip (T1); the role consoles
 (T2 — the four Dōjō roles live in [`02-objectives.md`](../../02-objectives.md) §Dōjō:
 contributor < maintainer < **lead** < admin (D1), alongside the manager and
 client / workspace viewpoints);
-workspace planning against external trackers (Jira / ADO read-only) with
+workspace planning against external trackers (Jira / ADO; sync reads, and the one write
+is usage metrics, `spec/daemon/tracker-metrics-writeback.md`) with
 **delta-scoped, ratchet-fair quality gates** (T3, reorg §9); the free-where-public
 business model — open source, with a paid tier for gating, integrations and consolidated metrics (T4, D24); and release
 pipelines, the five DORA keys and **release gates** that hold a release to the T3
 targets over its change set (T5).
 
-**Resolved 2026-10-21** ([roadmap/09](../../../roadmap/09-dojo-expansion.md)): external
-systems (trackers, CI) are **read-only**; a credential stays local unless its owner marks it
+**Resolved 2026-10-21** ([roadmap/09](../../../roadmap/09-dojo-expansion.md)), narrowed
+2026-10-26: CI is **read-only**. Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`). Further, a credential stays local unless its owner marks it
 shared, and a shared service key hands off to the **dōjō** (D14, D21); each daemon pulls its
 trackers at its person's cadence (D22); **sensei ⇄ dōjō is two-way sync** for workspaces, teams,
 roles and connections, with the dōjō the authority on conflict. The canonical role

@@ -2,20 +2,22 @@ Feature: Dōjō Workspace Planning — gate/improvement split, targets, and the 
 
   # gap: T-1
   NO TEST
-  Scenario: a workspace connects to Jira read-only and imports the plan
+  # Metrics write-back is the one write: spec/daemon/tracker-metrics-writeback.md
+  Scenario: a workspace connects to Jira and imports the plan
     Given a Jira workspace and a sensei workspace
     When the tracker is connected
     Then the plan imports from Jira (phases, features, tasks, AC, dependencies)
-    And nothing is written back to Jira
+    And sync never writes sprints, statuses or memberships to Jira
     This is unbuilt — no Jira adapter code.
 
   # gap: T-1
   NO TEST
-  Scenario: a workspace connects to ADO read-only and imports the plan
+  # Metrics write-back is the one write: spec/daemon/tracker-metrics-writeback.md
+  Scenario: a workspace connects to ADO and imports the plan
     Given an ADO workspace and a sensei workspace
     When the tracker is connected
     Then the plan imports from ADO
-    And nothing is written back to ADO
+    And sync never writes sprints, statuses or memberships to ADO
     This is unbuilt — no ADO adapter code.
 
   NO TEST

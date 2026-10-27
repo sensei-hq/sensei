@@ -20,9 +20,9 @@ also records three places where T3's spec **contradicts its own design source**
 
 These settle the open questions below and override §5 where they differ.
 
-- **External integrations are read-only; we pull.** Trackers (Jira, Azure Boards,
-  GitHub Issues) and CI (GitHub Actions, Azure Pipelines) are read, never written —
-  §2.6 and the §6.2 decision stand, and there is no export action.
+- **External integrations are read; we pull.** Trackers (Jira, Azure Boards, GitHub
+  Issues) and CI (GitHub Actions, Azure Pipelines) are read, and CI is never written.
+  Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`). §2.6 and §6.2 are narrowed to match.
 - **The dōjō owns them.** A connection is made once per project **in the dōjō**,
   which holds the credential and mirrors the tickets, sprints and pipeline runs;
   sensei reads the mirror. Connecting from sensei writes the connection to the dōjō.
@@ -47,6 +47,8 @@ header comment states the rules plainly:
 
 > * a project groups many repos (any provider, or a local path via the CLI)
 > * tasks + sprints are synced **read-only** from the tracker that **owns sprints**
+>   (since 2026-10-26 the daemon writes usage metrics back:
+>   `spec/daemon/tracker-metrics-writeback.md`)
 > * a session counts toward a task when its **branch, commit or prompt carries the
 >   ticket key**
 > * **targets gate on code quality only; AI-usage signals are insights, never gated**
@@ -71,7 +73,9 @@ Those six lines are the load-bearing requirements. Everything below expands them
 | **Slack** | connected · `acme.slack.com · posts to #auth-eng` | **Notifications out** (not a task source) |
 
 GitLab and Bitbucket appear as **repo providers** (the Repos tab), not as trackers.
-The mockup's model line is explicit: *"tasks and sprints sync in, read-only."*
+The mockup's model line is explicit: *"tasks and sprints sync in, read-only."* Sync still
+never writes them; usage metrics are written back after each sync
+(`spec/daemon/tracker-metrics-writeback.md`).
 
 ### 2.2 One sprint owner (lead invariant)
 
@@ -135,13 +139,14 @@ Story → feature     Bug → bug     Task → chore     label: migration → mi
 
 ### 2.6 Sync semantics (read-only)
 
-- **Sync in is automatic and read-only.** Status shows `connected · synced 2m ago`,
-  with a manual **Sync now**.
+- **Sync in is automatic.** Status shows `connected · synced 2m ago`, with a manual
+  **Sync now**.
 - **Sprints/tasks are never written back by sync.** Closing a sprint
   *"Closes in Sensei; Jira's sprint is untouched."*
-- Exporting status to the tracker, if ever offered, is a **separate, explicit
-  action** — never a side effect of sync (this is the T3 "read-only" wrong gate;
-  see §6.2 for the spec's current contradiction).
+- **Usage-metrics write-back is a side effect of every successful sync**, on by default
+  (user, 2026-10-26): the local daemon writes each ticket's own usage to tickets assigned
+  to the token owner (`spec/daemon/tracker-metrics-writeback.md`). Exporting status or
+  anything else to the tracker stays out of scope.
 - Staleness is a first-class state: `connected` / `stale` / `error`, with the
   last-sync age always visible.
 
@@ -324,7 +329,7 @@ gating model — no separate gate semantics.
 |---|---|---|
 | `sensei.trackers` | connection per project: kind, host, project/area, PAT/OAuth ref | secrets in the vault, not the row |
 | `sensei.tracker_links` | repo → ticket-key regex, sync cursor, last-sync status | per-repo key pattern (§2.3) |
-| `sensei.tracker_tasks` | tickets synced in: key, type, title, status, sprint, assignee | **read-only mirror** |
+| `sensei.tracker_tasks` | tickets synced in: key, type, title, status, sprint, assignee | **mirror**; only usage metrics are written back (`spec/daemon/tracker-metrics-writeback.md`) |
 | `sensei.sprints` | name, dates, state, owner-tracker, closing note | one owner (§2.2) |
 | `sensei.plan_targets` | target rows incl. `dojo`, `project`, `mode`, `source` | the ladder base |
 | `sensei.plan_target_overrides` | `{target_id, scope, on, value, note}` | §3.2 |
@@ -337,7 +342,7 @@ gating model — no separate gate semantics.
 GET   /api/projects/{id}/trackers                      # connection + status
 POST  /api/projects/{id}/trackers/{kind}/connect
 PATCH /api/projects/{id}/trackers/{kind}               # mapping, key regex, owner
-POST  /api/projects/{id}/trackers/{kind}/sync          # explicit, read-only
+POST  /api/projects/{id}/trackers/{kind}/sync          # explicit; writes back metrics only (tracker-metrics-writeback)
 
 GET   /api/projects/{id}/targets                       # resolved ladder + effective
 PATCH /api/projects/{id}/targets/{targetId}            # project value / mode
@@ -388,7 +393,7 @@ Two problems:
 are not sprint gates (absolute project-level ratios are improvement-only). The
 T3 spec's target table and Done gate were rewritten accordingly.
 
-### 6.2 "Read-only" vs "exports run status back"
+### 6.2 "Read-only" vs "exports run status back" (narrowed by tracker-metrics-writeback)
 
 T3's gaps feature contains **both**:
 
@@ -396,11 +401,12 @@ T3's gaps feature contains **both**:
   export"* and T3's Wrong gate *"A tracker adapter claims to write back"*;
 - yet also *"the Jira adapter **exports run status back to issues**"* and *"work
   item statuses are updated in ADO."*
+- (Both quotes predate `spec/daemon/tracker-metrics-writeback.md`.)
 
 The mockup is unambiguous (*"synced read-only"*, *"Closes in Sensei; Jira's sprint
 is untouched"*). **Decision (2026-10-14): read-only means read-only** — the export
 scenarios were removed and replaced by a single “adapters never write back”
-scenario; there is no export action in scope.
+scenario; there is no export action in scope. **Narrowed 2026-10-26:** Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
 
 ### 6.3 The inheritance ladder, modes and Slack are missing
 
@@ -434,8 +440,9 @@ spec.
 **Roadmap resolution tasks to add** (per the ACP-style gap resolution the roadmap
 carries):
 
-1. **T-1a** — Jira read-only adapter (projects, issues, sprints, key mapping).
-2. **T-1b** — ADO read-only adapter (projects, work items, iterations, area path).
+1. **T-1a** — Jira adapter, reading projects, issues, sprints, key mapping (its one
+   write, usage metrics, is `spec/daemon/tracker-metrics-writeback.md`).
+2. **T-1b** — ADO adapter, reading projects, work items, iterations, area path.
 3. **T-1c** — one-sprint-owner + task-type mapping + per-repo key pattern.
 4. **T-1d** — session↔task linkage (branch/commit/prompt) + unlinked review.
 5. **T-1e** — target ladder resolver (Dōjō → … → Task) + `block`/`warn`/`off`.
@@ -451,10 +458,10 @@ carries):
 
 | Scenario | Pass condition |
 |---|---|
-| Connect Jira | OAuth/PAT completes; status shows `connected · synced …`; 142 issues import read-only |
+| Connect Jira | OAuth/PAT completes; status shows `connected · synced …`; 142 issues import; sync changes nothing in Jira but usage metrics (`spec/daemon/tracker-metrics-writeback.md`) |
 | Connect ADO | Org/project/area + `AB#\d+` accepted; iterations import |
 | Sprint owner switch | Switching to ADO iterations re-labels sprints; task links survive |
-| Sync never writes | After a sync, the tracker is unchanged; close-sprint leaves Jira's sprint untouched |
+| Sync never writes the plan | Sync never writes sprints, statuses or memberships; after a sync the only tracker change is metrics write-back (`spec/daemon/tracker-metrics-writeback.md`); close-sprint leaves Jira's sprint untouched |
 | Session links by key | A session whose branch/commit/prompt carries `AUTH-420` counts toward AUTH-420 |
 | Unlinked sessions | The count is shown and *Review unlinked* lists them |
 | Inherit a target | A project target shows `inherits` when unset; setting a value overrides the Dōjō default |

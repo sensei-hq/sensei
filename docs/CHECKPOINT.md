@@ -32,7 +32,20 @@
 review: 5 reviewers plus 8 mutations, all caught. senseid has 3872 tests, the app 2473, all passing.
 The review found the DBML column on the wrong table, and a new parity test now guards the tracker tables.
 
-**Next:** `/sensei:build` F2 (the write seam and the comment surface). Re-run the claims ledger first.
+**F2–F5 done (2026-10-27, unattended):**
+- F2 `ac7822d2b`/`0dc79d0cb`: write seam, comment surface.
+- F3 `3148ba1fd`: per-board switch and state line.
+- F4 `521a99f77`: mapped fields. Review fixes: Save takes the board lock (409 `busy`),
+  `clear_pending` (last landed vs tried), unclearable retired fields dropped, the checks
+  each over the whole body.
+- F5: `scripts/check-tracker-readonly-docs.sh` (+ `make check-tracker-docs`, in `test` and `test-fast`);
+  the W-DOCS set narrowed 38 → 0; new decisions.md 2026-10-26 entry.
+- senseid 3965 tests, app 2497, all passing.
+
+**Next:** F6 needs the user: a Jira Cloud tenant with a person token, an app token and two
+assignees, to run X1–X8 and the tenant gates. Then `/sensei:complete`.
+
+**Earlier next (done):** `/sensei:build` F2 (the write seam and the comment surface). Re-run the claims ledger first.
 - After any `database/` change, run `make test-template`.
 - Build with `cargo … -j 4`.
 - F2 also adds the `connect_tracker` reset of the `writeback_*` columns (gate 22, write-back half) and the

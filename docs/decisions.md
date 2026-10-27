@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-10-25
+updated: 2026-10-26
 ---
 
 # Decisions
@@ -9,6 +9,25 @@ updated: 2026-10-25
 > The anti-rework memory — never re-derive a settled choice.
 > The **design journey** (approaches tried, what worked, what didn't) lives in
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
+
+---
+
+## 2026-10-26 — Usage metrics are written back to the tracker
+
+Each ticket's usage (sessions, active time, tokens, cost) was visible only in sensei. The user
+reversed the read-only rule for that one thing: the local daemon writes it back after every
+successful sync, on by default for every board, existing ones included
+(`spec/daemon/tracker-metrics-writeback.md`). Supersedes, for usage metrics only, the 2026-10-14
+"Read-only means read-only" row and roadmap/09 D3.
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **One write path: metrics** | Sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The local daemon writes usage metrics, nothing else (`spec/daemon/tracker-metrics-writeback.md`). | The rest of the read-only rule still holds; only the figures people asked to see in Jira move. |
+| **Only the assignee's daemon writes** | A ticket is written only by the daemon whose token owner is its assignee. The assignee is compared, never stored. | Two teammates who both mention a ticket would otherwise overwrite each other with partial figures. |
+| **Mapped fields, else one comment** | A board with custom fields mapped (`sensei.tracker_fields`) gets those fields; otherwise one sensei comment per ticket, edited in place. | Users who set up a field want it there; a comment works with no Jira admin. |
+| **Every sync, on by default** | Written after each successful sync; a per-board switch turns it off. | Asked for by the user; a figure that lags the sync is a wrong figure. |
+
+Rejected: a manual export action; writing from the dōjō; storing the assignee.
 
 ---
 
@@ -67,13 +86,14 @@ The T3 spec (Dōjō Project Planning) had drifted from its design source. Its se
 "gating targets" were a different set from the mockup's, one of them gated on FTR —
 which reorg §9.3 lists as **improvement-only** — and its Done gate said the
 adapters "export status back" while its own wrong-gate said read-only. Reconciled
-to the mockup (`dojo2-project.jsx`) and reorg §9 as the single source.
+to the mockup (`dojo2-project.jsx`) and reorg §9 as the single source. (Its read-only
+row is superseded 2026-10-26 for metrics write-back: `spec/daemon/tracker-metrics-writeback.md`.)
 
 | Decision | Locked answer | Why |
 |---|---|---|
 | **Targets gate on the code; insights never gate** | Every gated reading is code-derived. Behavioural readings — **FTR, corrections/session, AI-assisted share, gate wait time** — are insights only and can never block a merge or sprint close. The old "FTR ≥ baseline + δ" gate is **removed**. | reorg §9.1/§9.3 and the mockup both state it; an inherited codebase would otherwise fail every sprint on behaviour it did not cause. |
 | **The seven targets are the mockup's seven** | 1 hard-rule violations `=0` · 2 coverage on guarded paths `≥75/80%` · 3 new layer violations `=0` · 4 new dependency cycles `=0` · 5 modules in the zone of pain `≤2/1` (warn) · 6 changed functions over complexity 10 `≤3/2` · 7 new high-severity anti-patterns `=0` (warn). Coupling/cohesion are **not** gates — they are absolute project-level ratios (improvement-only). | Matches `PJ_TARGETS` in the mockup and reorg §9.2's buildable map (1 ✅, 2 🟡 scoped reads, 4 ⛔ #156). |
-| **Read-only means read-only** | Tracker adapters **never write back**. There is no export-back path; the Done-gate line is removed and the gaps feature's export scenarios are replaced by one read-only scenario. | The mockup is unambiguous (*"synced read-only"*); the spec contradicted its own wrong-gate. |
+| **Read-only means read-only** — *superseded 2026-10-26 (tracker-metrics-writeback) for usage metrics* | Tracker adapters **never write back**. There is no export-back path; the Done-gate line is removed and the gaps feature's export scenarios are replaced by one read-only scenario. | The mockup is unambiguous (*"synced read-only"*); the spec contradicted its own wrong-gate. |
 | **Inheritance is most-specific-wins** | Dōjō → Project → Sprint → Task type → Task; a target with no value at a scope **inherits** the nearest ancestor's. Overrides narrow, never widen. | `PJ_CHAIN` in the mockup; reorg §9.1. |
 | **Modes are `block` / `warn` / `off`** | Only `block` prevents a sprint close; `warn` surfaces; `off` disables the check. | `TargetEditor` in the mockup offers all three. |
 | **A blocking miss needs a note; unlinked sessions don't count** | A sprint missing a blocking target cannot close without a note (maintainer+). A session counts toward a task only when its branch, commit or prompt carries the ticket key; the rest are unlinked and count toward nothing. | Mockup sprint-close rule + key-linkage row. |

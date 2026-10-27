@@ -53,7 +53,7 @@ comment or in the fields you map."
 ## Write-back on each board card (tracker-metrics-writeback W-UI)
 
 - **Write back to Jira**: a labelled checkbox (`data-action="writeback"`) that sends
-  `PATCH …/trackers/{tracker}` `{writeback_enabled}`. It is disabled while any request
+  `PATCH …/trackers/{tracker}` `{writeback_enabled}` (`spec/daemon/tracker-metrics-writeback.md` W8). It is disabled while any request
   runs. The card shows the tracker the daemon returns, so a refused switch stays as it
   was and the alert says why.
 - **A state line** (`data-writeback-state=<state>`), from `writeback.state`:

@@ -7,7 +7,8 @@ maintainer ([persona 3](../../../03-personas.md#3--maintainer--the-curator))
 ## Purpose
 
 Dōjō Workspace Planning connects a workspace to its **external tracker** — Jira, Azure
-DevOps Boards or GitHub Issues, **read-only** — groups its repos, and enforces
+DevOps Boards or GitHub Issues, **reading** its plan (the one write is usage-metrics
+write-back by the local daemon, `spec/daemon/tracker-metrics-writeback.md`) — groups its repos, and enforces
 **delta-scoped, ratchet-fair quality gates** before a sprint closes. The planner
 (M20) emits a `PlanGraph`; the run engine (M21) drives execution; T3 syncs the
 tracker so the plan and the task↔session links reflect the tracker's state, and
@@ -33,7 +34,10 @@ knows what the sprint actually changed, and it only ever asks for better.*
 > architecture-metrics family (#156). The workspace window Tasks tab (M16) stays
 > unbuilt until planner persistence lands (C-1 → M20).
 
-> **Resolved 2026-10-21.** Trackers stay **read-only**, and **the daemon pulls** — each
+> **Resolved 2026-10-21** (narrowed 2026-10-26). Tracker reads are read-only: sync never
+> writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one
+> write path is usage-metrics write-back by the local daemon, to tickets assigned to the
+> token owner (`spec/daemon/tracker-metrics-writeback.md`). **The daemon pulls** — each
 > person's daemon at that person's cadence (D22); the dōjō may later take webhooks. This
 > is the sensei-first path #274 built. **A credential stays local unless its owner marks
 > it shared**; a shared credential should be a service API key, and only a shared one
@@ -45,7 +49,7 @@ knows what the sprint actually changed, and it only ever asks for better.*
 ## In scope / out of scope
 
 - In: **repo grouping** (a workspace groups many repos — any provider, or a local
-  path via the CLI); **tracker sync, read-only** (Jira / ADO / GitHub Issues) →
+  path via the CLI); **tracker sync** (Jira / ADO / GitHub Issues; reads only) →
   `PlanGraph` fields, with **one tracker owning sprints**; **task linkage by ticket
   key** (found in branch name, commit message or session prompt; unlinked sessions
   count toward no task); the **seven gating targets**, all code-derived and
@@ -55,7 +59,7 @@ knows what the sprint actually changed, and it only ever asks for better.*
   delta-scoped; the **sprint scorecard and close rule** (a sprint that misses a
   blocking target cannot close without a note); **notifications** (Slack hooks);
   the planner/run wiring that makes the readings available.
-- Out: **writing back to the tracker** — adapters are strictly read-only; the
+- Out: **writing back to the tracker**, except usage metrics — Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`). Also out: the
   planner persistence (C-1 → M20), the run engine (M21), the Instruments verdict
   classifier (M18), the architecture-metrics family (#156); **per-author metrics as
   gates** (never).
@@ -102,7 +106,7 @@ knows what the sprint actually changed, and it only ever asks for better.*
   ancestor's.
 - **Lead.** **Modes are `block` / `warn` / `off`.** Only `block` can prevent a
   sprint close; `warn` surfaces and never blocks; `off` disables the check.
-- **Lead.** **Tracker sync is read-only.** An adapter never writes to the tracker.
+- **Lead.** **Tracker sync reads; it never writes the plan.** Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
 - **Lead.** **One tracker owns sprints.** Workspaces, issues and task types may come
   from several trackers; the sprint calendar has exactly one owner.
 - **Lead.** **A session counts toward a task only when its branch, commit or prompt
@@ -153,9 +157,10 @@ or sprint gate. They show beside the scorecard for context.
 ## Tracker sync & task linkage
 
 - **Providers** — GitHub, GitLab, Azure Repos, Bitbucket, or a local path.
-- **Read-only** — workspaces, issues/work items, sprints/iterations, task types and
+- **Pulled** — workspaces, issues/work items, sprints/iterations, task types and
   **milestones** (Jira versions / epics, ADO milestones — V11) are pulled into the
-  `PlanGraph`. Nothing is written back.
+  `PlanGraph`. None of them is written back; the only write is usage metrics on tickets
+  assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
 - **One sprint owner.** Jira or ADO owns the sprint calendar; the other may still
   supply issues and task types.
 - **Task types** map to sensei's kinds — e.g. `Story → feature`, `Bug → bug`,
@@ -192,8 +197,8 @@ Three hooks, each independently toggled, posted to a channel:
 
 ## Done gate
 
-- A workspace connects to a tracker **read-only**; the plan imports from it and
-  **nothing is written back**.
+- A workspace connects to a tracker; the plan imports from it and **none of the plan is
+  written back**. Tracker reads are read-only: sync never writes sprints, statuses or memberships, and the dōjō never writes to a tracker. The one write path is usage-metrics write-back by the local daemon, to tickets assigned to the token owner (`spec/daemon/tracker-metrics-writeback.md`).
 - The **buildable** targets (hard rules today; coverage and complexity once their
   scoped reads land) run on every run outcome and **block close on failure**.
 - The ladder resolves most-specific-wins across Dōjō → Workspace → Sprint → Task
@@ -218,8 +223,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - **The baseline advances on a single spike** — ratchet regressed.
 - **A `warn` or `off` target blocks a close** — the mode model regressed.
 - **A narrower scope does not override a broader one** — the ladder regressed.
-- **Two trackers claim sprint ownership**, or a tracker adapter **writes back** —
-  ownership / read-only regressed.
+- **Two trackers claim sprint ownership**, or a tracker adapter **writes anything other
+  than usage metrics, or to a ticket not assigned to the token owner** — ownership /
+  write-back scope regressed (`spec/daemon/tracker-metrics-writeback.md`).
 - **An unlinked session counts toward a task**, or a blocking miss closes without a
   note.
 - **Client work uses the employer's tracker/gates** — client binding regressed.
@@ -228,7 +234,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 - [`scenarios/dojo-workspace-planning.feature`](scenarios/dojo-workspace-planning.feature) —
   the gate/insight split, the own-baseline ratchet, the seven targets, the ladder,
-  the modes, the close rule, read-only sync (`NO TEST` / `# gap: T-1` for adapters).
+  the modes, the close rule, sync that never writes the plan (`NO TEST` / `# gap: T-1` for
+  adapters; metrics write-back is `spec/daemon/tracker-metrics-writeback.md`).
 - [`scenarios/dojo-workspace-planning-gaps.feature`](scenarios/dojo-workspace-planning-gaps.feature) —
   the unbuilt tracker adapters, task linkage, and the scoped reads
   (`NO TEST` / `# gap: T-1`, `# gap: architecture-metrics`).
