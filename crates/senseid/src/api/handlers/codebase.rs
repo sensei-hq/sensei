@@ -591,58 +591,38 @@ pub(crate) async fn pattern_for_symbol(
 
 #[derive(Deserialize)]
 pub(crate) struct DuplicatesQuery {
-    pub min_similarity: Option<f64>,
     pub limit: Option<i64>,
 }
 
-/// GET /api/patterns/{workspace}/duplicates — near-duplicate functions found by
-/// cosine similarity on code embeddings. `min_similarity` (default 0.92) and
-/// `limit` (default 50) are query params.
-///
-/// #54 — Scope is the WHOLE workspace, not just one folder: when the caller
-/// passes a workspace name we resolve every folder that belongs to it and
-/// run the cosine-similarity self-join across all of them, so a
-/// duplicate that spans two crates in the same workspace surfaces. If the
-/// caller passes a bare repo name that resolves to a folder without a
-/// workspace, we fall back to the single-folder variant.
+/// GET /api/patterns/{workspace}/duplicates — the code local qlty found more
+/// than once in the workspace's repositories, measured at each HEAD (user,
+/// 2026-10-27: from the scan that finds them, not a similarity search per
+/// question). Largest first, at most `limit` (default 50), with the total, and
+/// how many of its repositories have been measured — so "none found" and "not
+/// measured yet" read differently.
 pub(crate) async fn find_duplicates_handler(
     State(state): State<AppState>,
     Path(workspace): Path<String>,
     Query(q): Query<DuplicatesQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     require_known(&state, &workspace).await?;
-    let min_similarity = q.min_similarity.unwrap_or(0.92).clamp(0.0, 1.0);
-    let limit = q.limit.unwrap_or(50).clamp(1, 500);
-
-    // Workspace scope first — every folder that belongs to the named workspace.
-    let scope = state.pg.scope_folder_ids(&workspace).await
-        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: scope_folder_ids failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-    if !scope.is_empty() {
-        let dups = state.pg.find_duplicates_scoped(&scope, min_similarity, limit).await
-            .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: find_duplicates_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-        return Ok(Json(serde_json::json!({
-            "count": dups.len(),
-            "min_similarity": min_similarity,
-            "scope": "workspace",
-            "folder_count": scope.len(),
-            "duplicates": dups,
-        })));
-    }
-
-    // Fall back to a single-folder lookup when the caller passed a repo
-    // name (or the workspace resolution returned nothing).
-    let Some(folder_id) = repo_folder_id(&state, &workspace).await? else {
-        return Ok(Json(
-            serde_json::json!({ "duplicates": [], "count": 0, "message": "workspace not indexed" }),
-        ));
+    let Some(workspace_id) = crate::api::util::resolve_workspace_uuid(&state, &workspace)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    else {
+        return Err(StatusCode::NOT_FOUND);
     };
-    let dups = state.pg.find_duplicates(&folder_id, min_similarity, limit).await
-        .map_err(|e| { tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: find_duplicates failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+    let (groups, total, measured, repositories) =
+        state.pg.workspace_duplicates(&workspace_id, limit).await.map_err(|e| {
+            tracing::warn!(error = %e, workspace = %workspace, "find_duplicates_handler: workspace_duplicates failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     Ok(Json(serde_json::json!({
-        "count": dups.len(),
-        "min_similarity": min_similarity,
-        "scope": "folder",
-        "duplicates": dups,
+        "duplicates": groups,
+        "total": total,
+        "repositories_measured": measured,
+        "repositories": repositories,
     })))
 }
 

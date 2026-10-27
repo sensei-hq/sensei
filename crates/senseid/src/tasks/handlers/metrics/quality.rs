@@ -199,18 +199,6 @@ struct SmellCounts {
     per_file_maintainability: HashMap<String, i64>,
 }
 
-/// Whether a SARIF result is a duplication finding — by its `duplication` taxon (the
-/// robust signal) with a `ruleId` substring fallback (`identical`/`similar`/`duplicat`).
-fn is_duplication(result: &serde_json::Value) -> bool {
-    let by_taxon = result["taxa"]
-        .as_array()
-        .is_some_and(|taxa| taxa.iter().any(|t| t["id"].as_str() == Some("duplication")));
-    by_taxon
-        || result["ruleId"].as_str().is_some_and(|r| {
-            r.contains("identical") || r.contains("similar") || r.contains("duplicat")
-        })
-}
-
 /// Add every physical line covered by `result`'s primary + related locations to
 /// `per_file` (keyed by artifact uri), so overlapping ranges across findings are
 /// counted once per line.
@@ -262,7 +250,7 @@ fn parse_smells(json: &str) -> Result<SmellCounts, String> {
     let mut dup_per_file: HashMap<String, HashSet<i64>> = HashMap::new();
     let mut maint_per_file: HashMap<String, i64> = HashMap::new();
     for result in results {
-        if is_duplication(result) {
+        if crate::qlty::is_duplication(result) {
             collect_dup_lines(result, &mut dup_per_file);
         } else {
             // A maintainability finding with no locatable file still counts toward the

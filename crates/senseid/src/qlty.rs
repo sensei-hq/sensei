@@ -204,23 +204,164 @@ pub(crate) fn parse_function_metrics(
     out
 }
 
-/// Complexity of every file at `root`'s HEAD, measured in a temporary worktree
-/// against the pinned ruler — never in the working copy, which may carry no qlty
-/// config and must not be written to. `Ok(None)`: qlty absent or the worktree
-/// could not be made (honest-empty).
-pub(crate) fn measure_head(
-    root: &str,
-) -> Result<Option<std::collections::HashMap<String, FileComplexity>>, String> {
+/// Whether a SARIF result from `qlty smells` is a duplication finding — by its
+/// `duplication` taxon, with a `ruleId` substring fallback.
+pub(crate) fn is_duplication(result: &serde_json::Value) -> bool {
+    let by_taxon = result["taxa"]
+        .as_array()
+        .is_some_and(|taxa| taxa.iter().any(|t| t["id"].as_str() == Some("duplication")));
+    by_taxon
+        || result["ruleId"].as_str().is_some_and(|r| {
+            r.contains("identical") || r.contains("similar") || r.contains("duplicat")
+        })
+}
+
+/// One copy of duplicated code: a file and its line range.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub struct Span {
+    pub path: String,
+    pub start: i64,
+    pub end: i64,
+}
+
+/// Code qlty found more than once: its copies, how big (qlty's `mass`), how
+/// many lines, and whether the copies are identical or only similar.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct DuplicateGroup {
+    pub hash: String,
+    pub identical: bool,
+    pub mass: f64,
+    pub lines: i64,
+    pub copies: Vec<Span>,
+}
+
+/// The duplicate groups in `qlty smells --sarif` output, largest first. qlty
+/// reports a duplicate once per copy, each naming the others, so findings are
+/// merged by their structural hash and every copy is kept once. Pure.
+pub(crate) fn parse_duplicates(sarif: &str) -> Result<Vec<DuplicateGroup>, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(sarif).map_err(|e| format!("qlty: bad SARIF: {e}"))?;
+    let mut groups: std::collections::BTreeMap<String, DuplicateGroup> = Default::default();
+    let span = |loc: &serde_json::Value| {
+        let pl = &loc["physicalLocation"];
+        Some(Span {
+            path: pl["artifactLocation"]["uri"].as_str()?.to_string(),
+            start: pl["region"]["startLine"].as_i64()?,
+            end: pl["region"]["endLine"].as_i64()?,
+        })
+    };
+    let results = v["runs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|r| r["results"].as_array().into_iter().flatten());
+    for result in results.filter(|r| is_duplication(r)) {
+        let props = &result["properties"];
+        let Some(hash) = props["structural_hash"].as_str() else { continue };
+        let group = groups.entry(hash.to_string()).or_insert_with(|| DuplicateGroup {
+            hash: hash.to_string(),
+            identical: props["identical"].as_bool().unwrap_or(false),
+            mass: props["mass"].as_f64().unwrap_or(0.0),
+            lines: 0,
+            copies: Vec::new(),
+        });
+        let locs = result["locations"].as_array().into_iter().flatten();
+        let related = result["relatedLocations"].as_array().into_iter().flatten();
+        for copy in locs.chain(related).filter_map(span) {
+            group.lines = group.lines.max(copy.end - copy.start + 1);
+            if !group.copies.contains(&copy) {
+                group.copies.push(copy);
+            }
+        }
+    }
+    let mut out: Vec<DuplicateGroup> = groups
+        .into_values()
+        .filter(|g| g.copies.len() > 1)
+        .map(|mut g| {
+            g.copies.sort();
+            g
+        })
+        .collect();
+    out.sort_by(|a, b| b.mass.total_cmp(&a.mass).then_with(|| a.hash.cmp(&b.hash)));
+    Ok(out)
+}
+
+/// What one qlty run at a repository's HEAD measures: each file's complexity,
+/// and the code it finds more than once.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HeadMeasure {
+    pub files: std::collections::HashMap<String, FileComplexity>,
+    pub duplicates: Vec<DuplicateGroup>,
+}
+
+/// Complexity and duplication at `root`'s HEAD, measured in a temporary
+/// worktree against the pinned ruler — never in the working copy, which may
+/// carry no qlty config and must not be written to. `Ok(None)`: qlty absent or
+/// the worktree could not be made (honest-empty).
+pub(crate) fn measure_head(root: &str) -> Result<Option<HeadMeasure>, String> {
     scan_at_commit(root, "HEAD", |wt| {
         pin_qlty_config(wt)?;
-        Ok(run_qlty(wt, &["metrics", "--all", "--functions", "--quiet", "--no-upgrade-check"])
-            .map(|out| parse_function_metrics(&out)))
+        let Some(metrics) =
+            run_qlty(wt, &["metrics", "--all", "--functions", "--quiet", "--no-upgrade-check"])
+        else {
+            return Ok(None);
+        };
+        let Some(sarif) = run_qlty(wt, &["smells", "--all", "--sarif", "--no-upgrade-check"])
+        else {
+            return Ok(None);
+        };
+        Ok(Some(HeadMeasure {
+            files: parse_function_metrics(&metrics),
+            duplicates: parse_duplicates(&sarif)?,
+        }))
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn finding(
+        rule: &str,
+        hash: &str,
+        mass: f64,
+        at: (&str, i64, i64),
+        also: &[(&str, i64, i64)],
+    ) -> serde_json::Value {
+        let loc = |(uri, s, e): (&str, i64, i64)| serde_json::json!({"physicalLocation": {"artifactLocation": {"uri": uri}, "region": {"startLine": s, "endLine": e}}});
+        serde_json::json!({
+            "ruleId": rule,
+            "taxa": [{"id": "duplication"}],
+            "locations": [loc(at)],
+            "relatedLocations": also.iter().map(|l| loc(*l)).collect::<Vec<_>>(),
+            "properties": {"mass": mass, "structural_hash": hash, "identical": rule.ends_with("identical-code")},
+        })
+    }
+
+    /// qlty reports a duplicate once per copy, each naming the others: one
+    /// group per structural hash, every copy once, largest first. A finding
+    /// that is not duplication is not a group.
+    #[test]
+    fn duplicate_findings_become_groups_of_their_copies() {
+        let sarif = serde_json::json!({"runs": [{"results": [
+            finding("qlty:similar-code", "aa", 87.0, ("src/a.rs", 10, 25), &[("src/b.rs", 40, 55)]),
+            finding("qlty:similar-code", "aa", 87.0, ("src/b.rs", 40, 55), &[("src/a.rs", 10, 25)]),
+            finding("qlty:identical-code", "bb", 120.0, ("src/c.rs", 1, 30), &[("src/c.rs", 100, 129), ("src/d.rs", 5, 34)]),
+            {"ruleId": "qlty:function-complexity", "locations": [], "properties": {}},
+        ]}]})
+        .to_string();
+        let groups = parse_duplicates(&sarif).unwrap();
+        assert_eq!(
+            groups
+                .iter()
+                .map(|g| (g.hash.as_str(), g.identical, g.copies.len(), g.lines))
+                .collect::<Vec<_>>(),
+            [("bb", true, 3, 30), ("aa", false, 2, 16)]
+        );
+        assert_eq!(groups[1].copies[0], Span { path: "src/a.rs".into(), start: 10, end: 25 });
+        assert!(parse_duplicates("not json").is_err());
+        assert!(parse_duplicates(r#"{"runs":[{}]}"#).unwrap().is_empty());
+    }
 
     #[test]
     fn function_tables_become_per_file_counts() {

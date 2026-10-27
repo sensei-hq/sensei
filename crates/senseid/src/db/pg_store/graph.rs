@@ -23,10 +23,6 @@ type SemanticNodeRow = (uuid::Uuid, String, String, Option<String>, Option<i32>,
 /// `(id, name, file_path, signature, line_start, locality)`.
 type LocatedNodeRow = (uuid::Uuid, String, String, Option<String>, Option<i32>, String);
 
-/// Two sides of a near-duplicate pair — `(name, file_path, line_start)` each —
-/// and the similarity between them.
-type DuplicatePairRow = (String, String, Option<i32>, String, String, Option<i32>, f64);
-
 /// `(id, source_id, target_id, target_name, kind)`.
 type StoredEdge = (uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String);
 
@@ -1275,7 +1271,7 @@ impl PgStore {
 
     /// Semantic nearest-neighbour search over node embeddings, scoped to the
     /// given folders + node kinds. Reuses the same pgvector cosine-distance
-    /// operator (`<=>`) as `find_duplicates`, ordering by ascending distance so
+    /// operator (`<=>`), ordering by ascending distance so
     /// the most semantically similar nodes come first. The query embedding is
     /// rendered with `vector_literal` and cast to `vector`, matching how
     /// `set_node_embedding` stores node vectors. Bounded by `limit` so it never
@@ -1388,119 +1384,6 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())
-    }
-
-    /// Find near-duplicate function/method pairs within a folder by cosine
-    /// similarity on their code embeddings (HNSW `<=>` cosine distance). Each
-    /// pair is returned once (`a.id < b.id`) at or above `min_similarity`,
-    /// strongest first. Trivial functions (< 4 lines) are skipped — they bound
-    /// the O(n²) self-join and avoid false positives from boilerplate. On-demand
-    /// review query, not a hot path.
-    pub async fn find_duplicates(
-        &self,
-        folder_id: &uuid::Uuid,
-        min_similarity: f64,
-        limit: i64,
-    ) -> Result<Vec<serde_json::Value>, String> {
-        let max_distance = 1.0 - min_similarity;
-        let rows: Vec<DuplicatePairRow> = sqlx_core::query_as::query_as(
-            "SELECT a.name, pa.file_path, a.line_start,
-                        b.name, pb.file_path, b.line_start,
-                        1 - (a.embedding <=> b.embedding) AS similarity
-                   FROM sensei.nodes a
-                   JOIN sensei.node_paths pa ON pa.node_id = a.id
-                   JOIN sensei.nodes b
-                     ON b.folder_id = a.folder_id
-                    AND a.id < b.id
-                    AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-                    AND b.embedding IS NOT NULL
-                    AND (b.line_end - b.line_start) >= 3
-                   JOIN sensei.node_paths pb ON pb.node_id = b.id
-                  WHERE a.folder_id = $1
-                    AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-                    AND a.embedding IS NOT NULL
-                    AND (a.line_end - a.line_start) >= 3
-                    AND (a.embedding <=> b.embedding) <= $2
-                  ORDER BY similarity DESC
-                  LIMIT $3",
-        )
-        .bind(folder_id)
-        .bind(max_distance)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(|(na, fa, la, nb, fb, lb, sim)| {
-                serde_json::json!({
-                    "a": { "name": na, "file": fa, "line": la },
-                    "b": { "name": nb, "file": fb, "line": lb },
-                    "similarity": (sim * 10000.0).round() / 10000.0,
-                })
-            })
-            .collect())
-    }
-
-    /// Multi-folder variant of `find_duplicates` (#54). Runs the same
-    /// cosine-similarity self-join but scopes the pair search to every
-    /// folder belonging to a workspace — so a duplicate function defined in
-    /// `crates/foo/src/x.rs` and `crates/bar/src/y.rs` (both inside the
-    /// same workspace) surfaces even though they don't share a folder_id.
-    ///
-    /// Pairs are restricted to `a.id < b.id` so each dyad appears once. It does
-    /// NOT require `a.folder_id != b.folder_id`: in a monorepo the indexer rolls
-    /// every function node up to the single repo-root folder, so a cross-folder-only
-    /// filter made this always return `count:0` (masking every real duplicate).
-    /// The handler uses either this OR `find_duplicates` per call (never both), so
-    /// there is no double-count to guard against.
-    pub async fn find_duplicates_scoped(
-        &self,
-        folder_ids: &[uuid::Uuid],
-        min_similarity: f64,
-        limit: i64,
-    ) -> Result<Vec<serde_json::Value>, String> {
-        if folder_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let max_distance = 1.0 - min_similarity;
-        let rows: Vec<DuplicatePairRow> = sqlx_core::query_as::query_as(
-            "SELECT a.name, pa.file_path, a.line_start,
-                        b.name, pb.file_path, b.line_start,
-                        1 - (a.embedding <=> b.embedding) AS similarity
-                   FROM sensei.nodes a
-                   JOIN sensei.node_paths pa ON pa.node_id = a.id
-                   JOIN sensei.nodes b
-                     ON a.id < b.id
-                    AND b.folder_id = ANY($1::uuid[])
-                    AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-                    AND b.embedding IS NOT NULL
-                    AND (b.line_end - b.line_start) >= 3
-                   JOIN sensei.node_paths pb ON pb.node_id = b.id
-                  WHERE a.folder_id = ANY($1::uuid[])
-                    AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-                    AND a.embedding IS NOT NULL
-                    AND (a.line_end - a.line_start) >= 3
-                    AND (a.embedding <=> b.embedding) <= $2
-                  ORDER BY similarity DESC
-                  LIMIT $3",
-        )
-        .bind(folder_ids)
-        .bind(max_distance)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(|(na, fa, la, nb, fb, lb, sim)| {
-                serde_json::json!({
-                    "a": { "name": na, "file": fa, "line": la },
-                    "b": { "name": nb, "file": fb, "line": lb },
-                    "similarity": (sim * 10000.0).round() / 10000.0,
-                })
-            })
-            .collect())
     }
 
     /// Abs paths of folders that still have embeddable nodes without an
@@ -3993,6 +3876,77 @@ impl PgStore {
         .await
         .map_err(|e| format!("complexity_sha: {e}"))?;
         Ok(row.map(|r| r.0))
+    }
+
+    /// Replace a repository's duplicate groups with one measurement's, whole.
+    pub async fn replace_duplicates(
+        &self,
+        repository_id: &uuid::Uuid,
+        sha: &str,
+        groups: &[crate::qlty::DuplicateGroup],
+    ) -> Result<u64, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("DELETE FROM sensei.code_duplicates WHERE repository_id = $1")
+            .bind(repository_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("replace_duplicates: clear: {e}"))?;
+        let rows = serde_json::to_value(groups).map_err(|e| e.to_string())?;
+        let res = sqlx_core::query::query(
+            "INSERT INTO sensei.code_duplicates (repository_id, hash, identical, mass, lines, copies, measured_sha)
+             SELECT $1, g->>'hash', (g->>'identical')::boolean, (g->>'mass')::real,
+                    (g->>'lines')::int, g->'copies', $3
+               FROM jsonb_array_elements($2) AS g",
+        )
+        .bind(repository_id)
+        .bind(&rows)
+        .bind(sha)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("replace_duplicates: insert: {e}"))?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
+    /// A workspace's duplicate groups, largest first — at most `limit`, with
+    /// the total, how many of its repositories have been measured, and how many
+    /// it has. A repository is measured once qlty has run at its HEAD
+    /// (`file_complexity` carries that measurement's commit).
+    pub async fn workspace_duplicates(
+        &self,
+        workspace_id: &uuid::Uuid,
+        limit: i64,
+    ) -> Result<(Vec<serde_json::Value>, i64, i64, i64), String> {
+        let groups: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
+            "SELECT jsonb_build_object('repository', r.name, 'hash', d.hash, 'identical', d.identical,
+                                       'mass', d.mass, 'lines', d.lines, 'copies', d.copies,
+                                       'measured_sha', d.measured_sha)
+               FROM sensei.code_duplicates d
+               JOIN sensei.repositories_in_workspaces rw ON rw.repository_id = d.repository_id
+               JOIN sensei.repositories r ON r.id = d.repository_id
+              WHERE rw.workspace_id = $1
+              ORDER BY d.mass DESC, d.hash
+              LIMIT $2",
+        )
+        .bind(workspace_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("workspace_duplicates: {e}"))?;
+        let (total, measured, repos): (i64, i64, i64) = sqlx_core::query_as::query_as(
+            "SELECT (SELECT count(*) FROM sensei.code_duplicates d
+                       JOIN sensei.repositories_in_workspaces rw ON rw.repository_id = d.repository_id
+                      WHERE rw.workspace_id = $1),
+                    (SELECT count(*) FROM sensei.repositories_in_workspaces rw
+                      WHERE rw.workspace_id = $1
+                        AND EXISTS (SELECT 1 FROM sensei.file_complexity c WHERE c.repository_id = rw.repository_id)),
+                    (SELECT count(*) FROM sensei.repositories_in_workspaces rw WHERE rw.workspace_id = $1)",
+        )
+        .bind(workspace_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("workspace_duplicates: counts: {e}"))?;
+        Ok((groups.into_iter().map(|g| g.0).collect(), total, measured, repos))
     }
 
     /// Module pairs that changed in the same commits (Code map, Hidden coupling):

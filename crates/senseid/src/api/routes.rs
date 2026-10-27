@@ -876,6 +876,60 @@ mod tests {
         crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
     }
 
+    /// get_duplicates answers what qlty's scan found, stored at HEAD — not a
+    /// similarity search run per question (over 200s on sensei; the MCP gives
+    /// up at 30s). Largest first, with the total and how many repositories
+    /// were measured.
+    #[tokio::test]
+    async fn duplicates_are_the_scans_groups() {
+        use crate::qlty::{DuplicateGroup, FileComplexity, Span};
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (ws, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        let (repo,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+                .bind(fid)
+                .fetch_one(state.pg.pool())
+                .await
+                .unwrap();
+        state
+            .pg
+            .replace_file_complexity(
+                &repo,
+                "s",
+                &[("a.rs".to_string(), FileComplexity::default())].into(),
+            )
+            .await
+            .unwrap();
+        let copies = vec![
+            Span { path: "src/a.rs".into(), start: 1, end: 9 },
+            Span { path: "src/b.rs".into(), start: 3, end: 11 },
+        ];
+        state
+            .pg
+            .replace_duplicates(
+                &repo,
+                "s",
+                &[DuplicateGroup {
+                    hash: "h".into(),
+                    identical: true,
+                    mass: 70.0,
+                    lines: 9,
+                    copies,
+                }],
+            )
+            .await
+            .unwrap();
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/patterns/{ws}/duplicates"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["total"], 1, "{body}");
+        assert_eq!(body["repositories_measured"], 1, "{body}");
+        assert_eq!(body["duplicates"][0]["copies"][1]["path"], "src/b.rs", "{body}");
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+    }
+
     /// A workspace's conventions count ITS files, by their repo-relative paths.
     #[tokio::test]
     async fn conventions_count_the_workspaces_files() {
@@ -5558,19 +5612,15 @@ mod tests {
                 "get_duplicates",
                 serde_json::json!({}),
                 Box::new(move |b| {
-                    // No code embeddings are seeded in-process, so the cosine
-                    // self-join yields 0 rows — but the seam MUST resolve WORKSPACE
-                    // scope (name → folders), which is what drift would break.
-                    // NOTE (gap): actual duplicate detection needs embeddings and is
-                    // exercised by the daemon's own embedding tests, not here.
-                    if b["scope"].as_str() == Some("workspace")
-                        && b["folder_count"].as_i64().unwrap_or(0) >= 1
-                    {
+                    // The seam must resolve the WORKSPACE (name → its
+                    // repositories), which is what drift would break: the
+                    // seeded workspace has one repository.
+                    if b["repositories"].as_i64() == Some(1) && b["total"].is_i64() {
                         Ok(())
                     } else {
                         Err(format!(
-                            "duplicates scope={:?} folder_count={:?} (want workspace scope over >=1 folder)",
-                            b["scope"], b["folder_count"]
+                            "duplicates repositories={:?} total={:?} (want the workspace's one repository)",
+                            b["repositories"], b["total"]
                         ))
                     }
                 }),

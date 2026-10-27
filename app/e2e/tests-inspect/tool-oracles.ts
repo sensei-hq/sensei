@@ -312,17 +312,25 @@ export const CASES: Case[] = [
   {
     tool: 'get_duplicates',
     args: {},
-    oracle: 'disk: both sides of each pair exist at the line named',
+    oracle: 'disk + database: each copy is a real range of a tracked file; an identical group’s copies read the same; the total is the stored groups’',
     expect: (a, ctx) => {
-      const d = obj(a).duplicates ?? [];
+      const d = obj(a);
       const out = [...ok(a)];
-      if (obj(a).message) out.push(obj(a).message);
-      if (!d.length) out.push('no duplicates');
-      for (const p of d.slice(0, 10))
-        for (const s of [p.a, p.b]) {
-          const lines = existsSync(join(ctx.root, s.file)) ? readFileSync(join(ctx.root, s.file), 'utf8').split('\n') : [];
-          if (!lines[s.line - 1]?.includes(s.name)) out.push(`${s.file}:${s.line} is not ${s.name}`);
-        }
+      const [stored] = ctx.sql(
+        `select count(*) from sensei.code_duplicates d join sensei.repositories_in_workspaces rw on rw.repository_id = d.repository_id where rw.workspace_id = '${ctx.wsId}'`,
+      );
+      if (d.total !== Number(stored)) out.push(`total ${d.total}, ${stored} stored`);
+      if (!(d.repositories_measured >= 1)) out.push(`${d.repositories_measured} of ${d.repositories} repositories measured`);
+      if (!(d.duplicates ?? []).length) out.push('no duplicates');
+      const tracked = new Set(ctx.git(['ls-files']).split('\n'));
+      const text = (c: { path: string; start: number; end: number }) =>
+        readFileSync(join(ctx.root, c.path), 'utf8').split('\n').slice(c.start - 1, c.end).join('\n').replace(/\s+/g, ' ').trim();
+      for (const g of (d.duplicates ?? []).slice(0, 20)) {
+        if (g.repository !== 'sensei') continue;
+        const missing = g.copies.filter((c: { path: string }) => !tracked.has(c.path) || !existsSync(join(ctx.root, c.path)));
+        if (missing.length) { out.push(`${g.hash}: not tracked files ${missing.map((c: { path: string }) => c.path).join(', ')}`); continue; }
+        if (g.identical && new Set(g.copies.map(text)).size !== 1) out.push(`${g.hash}: identical copies read differently`);
+      }
       return out;
     },
   },

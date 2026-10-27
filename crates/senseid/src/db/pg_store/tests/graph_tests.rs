@@ -3292,3 +3292,65 @@ async fn community_upsert_and_list() {
         .await
         .unwrap();
 }
+
+/// A workspace's duplicates are its repositories' groups as qlty measured
+/// them, largest first, at most `limit`, with the total — and how many of its
+/// repositories were measured, so "none found" and "not measured" differ.
+#[tokio::test]
+async fn a_workspaces_duplicates_are_its_repositories_measured_groups() {
+    use crate::qlty::{DuplicateGroup, FileComplexity, Span};
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (ws, fid) = crate::tasks::test_support::seed_metrics_workspace_folder(&s, &uniq).await;
+    let (repo,): (uuid::Uuid,) =
+        sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    let group = |hash: &str, mass: f64| DuplicateGroup {
+        hash: hash.into(),
+        identical: false,
+        mass,
+        lines: 12,
+        copies: vec![
+            Span { path: "src/a.rs".into(), start: 1, end: 12 },
+            Span { path: "src/b.rs".into(), start: 30, end: 41 },
+        ],
+    };
+
+    let (groups, total, measured, repos) = s.workspace_duplicates(&ws, 10).await.unwrap();
+    assert_eq!(
+        (groups.len(), total, measured, repos),
+        (0, 0, 0, 1),
+        "not measured is not none found"
+    );
+
+    s.replace_file_complexity(
+        &repo,
+        "sha1",
+        &[("src/a.rs".to_string(), FileComplexity::default())].into(),
+    )
+    .await
+    .unwrap();
+    s.replace_duplicates(
+        &repo,
+        "sha1",
+        &[group("small", 40.0), group("big", 90.0), group("mid", 60.0)],
+    )
+    .await
+    .unwrap();
+    let (groups, total, measured, repos) = s.workspace_duplicates(&ws, 2).await.unwrap();
+    assert_eq!((total, measured, repos), (3, 1, 1));
+    assert_eq!(
+        groups.iter().map(|g| g["hash"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["big", "mid"]
+    );
+    assert_eq!(groups[0]["copies"][1]["path"], "src/b.rs");
+
+    s.replace_duplicates(&repo, "sha2", &[]).await.unwrap();
+    let (_, total, _, _) = s.workspace_duplicates(&ws, 10).await.unwrap();
+    assert_eq!(total, 0, "a measurement replaces the repository's groups whole");
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &ws, Some(&fid), &[]).await;
+}

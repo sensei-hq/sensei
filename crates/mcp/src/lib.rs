@@ -187,7 +187,18 @@ pub fn daemon_request_for(
             let symbol = args["symbol"].as_str().unwrap_or("");
             Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/for/{symbol}")))
         }
-        "get_duplicates" => Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/duplicates"))),
+        "get_duplicates" => {
+            let mut req = DaemonRequest::get(format!("/api/patterns/{repo_id}/duplicates"));
+            let limit = match &args["limit"] {
+                Value::Number(n) => Some(n.to_string()),
+                Value::String(s) if !s.is_empty() => Some(s.clone()),
+                _ => None,
+            };
+            if let Some(l) = limit {
+                req = req.with_query("limit", &l);
+            }
+            Some(req)
+        }
         "get_workspace_conventions" => {
             Some(DaemonRequest::get(format!("/api/patterns/{repo_id}/conventions")))
         }
@@ -722,7 +733,9 @@ pub fn handle_list_tools() -> Value {
             tool("get_pattern_for", "Check if a specific symbol belongs to a detected pattern. Use during /sensei:review to check pattern conformance.", &[
                 ("symbol", "string", "Symbol name to check (e.g. 'SqlAdapter', 'TaskWorker')"),
             ], &[]),
-            tool("get_duplicates", "Find duplicate or very similar functions across different files. Use during /sensei:review to catch code duplication.", &[], &[]),
+            tool("get_duplicates", "Code duplicated in the workspace, as local qlty's scan found it at each repository's HEAD: groups of identical or similar copies (file + lines), largest first, with the total and how many repositories were measured. Use during /sensei:review to catch code duplication.", &[], &[
+                ("limit", "integer", "How many groups to return, largest first (default 50)."),
+            ]),
             tool("get_workspace_conventions", "Analyze workspace conventions — naming patterns, directory structure, design patterns. Use to understand how this workspace is structured.", &[], &[]),
             tool("resolve_risk_class", "Classify how hard a change must be reviewed (auto | review | approve) from its changed file paths. Call FIRST in /sensei:review to set the depth: 'approve' (identity/auth/money/secrets/schema/governance) demands the full adversarial review + human sign-off; 'review' is a standard review; 'auto' can skip the heavy pass. Returns {class, reasons}.", &[
                 ("paths", "array", "Changed file paths (repo-relative or absolute)."),
@@ -1701,6 +1714,23 @@ mod tests {
             daemon_request_for("get_layered_context", &json!({}), "/cwd", Some("sensei")).unwrap();
         assert_eq!(q(&no_slot, "slot"), None, "no slot arg → no slot query param");
         assert_eq!(q(&no_slot, "feature"), None, "no feature arg → no feature query param");
+    }
+
+    /// get_duplicates asks for `limit` groups, as a number or a string.
+    #[test]
+    fn duplicates_forward_their_limit() {
+        for limit in [json!(5), json!("5")] {
+            let req = daemon_request_for(
+                "get_duplicates",
+                &json!({ "limit": limit }),
+                "/cwd",
+                Some("sensei"),
+            )
+            .unwrap();
+            assert_eq!(q(&req, "limit"), Some("5"));
+        }
+        let req = daemon_request_for("get_duplicates", &json!({}), "/cwd", Some("sensei")).unwrap();
+        assert_eq!(q(&req, "limit"), None);
     }
 
     /// A tool that names its workspace in the daemon path, with none resolved,
