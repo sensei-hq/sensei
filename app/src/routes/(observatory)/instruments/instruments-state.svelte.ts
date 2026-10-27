@@ -4,13 +4,14 @@
 // holds only what the screen owns. Every read is the daemon's answer or why
 // it failed (#288).
 import { failureReason, readOutcome, type ApiResult } from '$lib/api.js';
-import type { ObservatoryFtr, SessionData, SessionReplayCall, ToolHealthSource } from '$lib/types.js';
+import type { McpToolCallResult, ObservatoryFtr, SessionData, SessionReplayCall, ToolHealthSource } from '$lib/types.js';
 import { loadReplaySessions, type ReplaySession } from './replay-sessions';
 import type { InstrumentsTab } from './instruments-view';
+import { formFields, resultText, toArguments } from './tool-form';
 
 /** The reads the screen makes — injected so a spec can fail them. */
 export interface InstrumentsApi {
-  tryMcpCallTool: (tool: string, params: Record<string, string>) => Promise<ApiResult<Record<string, unknown>>>;
+  tryCallServerTool: (serverId: string, tool: string, args: Record<string, unknown>) => Promise<ApiResult<McpToolCallResult>>;
   tryGetSessions: () => Promise<ApiResult<Pick<SessionData, 'sessions'> & Partial<SessionData>>>;
   tryGetObservatoryFtr: () => Promise<ApiResult<ObservatoryFtr>>;
 }
@@ -38,6 +39,8 @@ export class InstrumentsState {
   toolResult = $state('');
   /** Why the last call failed — never an empty answer in its place. */
   toolError = $state<string | null>(null);
+  /** The last call's round trip, as the daemon measured it. */
+  durationMs = $state<number | null>(null);
   executing = $state(false);
   refreshingServers = $state(false);
   /** The last refused toggle or failed scan, in words; cleared on success. */
@@ -72,16 +75,32 @@ export class InstrumentsState {
     this.toolParams = params;
     this.toolResult = '';
     this.toolError = null;
+    this.durationMs = null;
   }
 
-  /** Call a tool and show its answer, or why there is none. */
-  async execute(api: InstrumentsApi, tool: string): Promise<void> {
-    this.executing = true;
+  /** Run a tool through its server with the form's values, typed by its
+   *  schema, and show its answer — or why there is none. */
+  async execute(
+    api: InstrumentsApi,
+    tool: { serverId: string; name: string; schema: unknown },
+  ): Promise<void> {
     this.toolResult = '';
     this.toolError = null;
-    const read = await api.tryMcpCallTool(tool, this.toolParams);
-    if (read.ok) this.toolResult = JSON.stringify(read.data, null, 2);
-    else this.toolError = `The call failed: ${failureReason(read.error)}`;
+    this.durationMs = null;
+    const args = toArguments(formFields(tool.schema), this.toolParams);
+    if (!args.ok) {
+      this.toolError = args.error;
+      return;
+    }
+    this.executing = true;
+    const read = await api.tryCallServerTool(tool.serverId, tool.name, args.args);
+    if (read.ok) {
+      this.toolResult = resultText(read.data.result);
+      this.durationMs = read.data.duration_ms;
+      if (read.data.isError) this.toolError = 'The tool reported an error';
+    } else {
+      this.toolError = `The call failed: ${failureReason(read.error)}`;
+    }
     this.executing = false;
   }
 

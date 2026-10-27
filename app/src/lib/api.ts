@@ -10,7 +10,7 @@ import type {
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   DojoMembership, DojoBindingSuggestion, DojoUpgradesResponse, CollectivePreferences,
   ShareReviewResponse, PublishBatchOutcome,
-  McpToolManifest, MemoryShareBatch, ImpactVerdictEntry,
+  McpToolCallResult, MemoryShareBatch, ImpactVerdictEntry,
   WorkspaceMcpToolStat, ToolSignal, WorkspaceService, ToolInsight, ToolsHealth,
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, WorkspaceOverview,
@@ -834,12 +834,10 @@ export function senseiApi(port: number) {
     tryScanFolder: (root: string, maxDepth = 3) =>
       tryPost<{ ok: boolean; scanning: boolean }>('/api/scan', { root, max_depth: maxDepth }),
 
-    // ── MCP Tool Proxy ────────────────────────────────────────────────
-    tryMcpListTools: () => tryGet<{ tools: McpToolManifest[] }>('/api/mcp/tools'),
-
-    /** Call a tool from the Playground — its answer, or why there is none. */
-    tryMcpCallTool: (tool: string, params: Record<string, string>) =>
-      tryPost<Record<string, unknown>>('/api/mcp/call', { tool, params }),
+    /** Run one tool through its MCP server, as an assistant would: the tool's
+     *  result and its own `isError`, or why the server could not answer. */
+    tryCallServerTool: (serverId: string, tool: string, args: Record<string, unknown>) =>
+      tryPost<McpToolCallResult>(`/api/instruments/mcp-servers/${enc(serverId)}/call`, { tool, arguments: args }),
 
     // #84 T2 Slice C — Replay timeline with #90 verdicts joined + session
     // summary. Set `classify: true` to run the classifier before the read

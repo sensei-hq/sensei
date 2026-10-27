@@ -76,7 +76,6 @@ const cases: Array<{ name: string; call: () => Promise<unknown>; body: unknown }
   { name: 'tryListGatewayChains', call: () => api().tryListGatewayChains(), body: { chains: [] } },
   { name: 'tryProvisionStatus', call: () => api().tryProvisionStatus(), body: { models: [] } },
   // #288 — the Instruments store.
-  { name: 'tryMcpListTools', call: () => api().tryMcpListTools(), body: { tools: [] } },
   { name: 'tryGetToolUsage', call: () => api().tryGetToolUsage(), body: { tools: [] } },
   { name: 'tryGetToolSignals', call: () => api().tryGetToolSignals(), body: { signals: [] } },
   { name: 'tryGetToolInsights', call: () => api().tryGetToolInsights(), body: { insights: [] } },

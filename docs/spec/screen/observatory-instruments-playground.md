@@ -35,28 +35,24 @@ two-pane body, via the `subNav` JSX prop. See
 
 ## Data invariants
 
-- `GET /api/observatory/mcp-servers` returns the connected MCPs
-  (same shape as [[screen/observatory-instruments-health]]).
-- `GET /api/mcp/tools?mcp={id}` returns tool declarations:
-  ```json
-  {
-    "tools": [
-      { "name": "sensei.search", "description": "…",
-        "input_schema": { … JSON schema … },
-        "defaults": { "query": "sensei.projects", "limit": 10 },
-        "category": "codebase" | "session" | "memory" | "library" | "governance" | …,
-        "activity": { "calls_14d": N, "last_used_at": iso? } }, …
-    ]
-  }
-  ```
-- `POST /api/mcp/call` — the execute endpoint. Body:
-  `{ mcp: string, tool: string, args: object }`. Returns the tool's
-  raw response, or `{ error, code }`.
-- **Argument defaults come from the tool declaration**, not the UI.
-  The daemon computes them: for a `repoId` field, it defaults to
-  the active project or an example project id (whichever is likely
-  useful), not empty. See (memory: feedback_no_command_guessing) — the
-  UI can't guess defaults; the tool must declare them.
+- `GET /api/instruments/mcp-servers` returns every MCP server discovered in
+  an assistant's config (same rows as
+  [[screen/observatory-instruments-health]]). Sensei's own server is one of
+  them — the rail lists it first and opens it.
+- `GET /api/instruments/mcp-servers/{id}/tools` returns the tools **as the
+  server itself lists them** (`tools/list`, probed over stdio and cached):
+  `name`, `description`, `inputSchema`. A probe that failed carries its
+  `error`, shown on the group.
+- `POST /api/instruments/mcp-servers/{id}/call` runs one tool **through the
+  server**, over stdio `tools/call`, exactly as an assistant would. Body:
+  `{ tool, arguments }`. Answers `{ result, isError, duration_ms }`; a tool's
+  own failure is `isError: true` (its message is the result), and a server
+  that cannot be started or answered is a 502 naming why.
+- **The form is the tool's `inputSchema`.** One field per property, typed
+  (string, number, boolean, enum, JSON); a declared `default` prefills it,
+  and an otherwise-open `repoId` / `workspaceId` takes the active workspace.
+  Values are sent in their declared types; an empty optional value is left
+  out so the tool's own default applies.
 
 ## Signals shown
 
@@ -87,11 +83,11 @@ Below the hero: the `subNav` strip (`Playground · Replay · Health`).
 | Tool title | full tool name (mono) + short name (display) |
 | Description | tool declaration description |
 | Category chip | small `category` label |
-| Argument form | one row per property in `input_schema.properties`. Type-appropriate widget: text, number, boolean toggle, JSON textarea for objects/arrays |
-| Argument default | pre-filled from `tool.defaults` — never empty when a default exists |
+| Argument form | one row per property in `inputSchema.properties`. Type-appropriate widget: text, number, boolean, enum select, JSON textarea for objects/arrays |
+| Argument default | pre-filled from the schema's `default`; a repo/workspace id from the active workspace |
 | Execute button | `data-testid="tool-execute"` — mockup convention |
-| Response viewer | pretty-printed JSON with copy button, elapsed time chip |
-| Error viewer | red-tinted panel with `error.message` + `error.code` when the call fails |
+| Response viewer | the result's text parts (pretty-printed when JSON), elapsed time chip from `duration_ms` |
+| Error viewer | the tool's own `isError`, or the daemon's reason the server could not answer |
 
 ## Done gate
 
@@ -111,10 +107,11 @@ Below the hero: the `subNav` strip (`Playground · Replay · Health`).
 
 Optional check:
 ```
-# Are default args populated for sensei.search?
-curl -s 'http://localhost:7744/api/mcp/tools?mcp=sensei' \
-  | jq '.tools[] | select(.name=="sensei.search") | .defaults'
-# expected: at least { query: "…", limit: N } — never {}
+# sensei's server lists its tools, with schemas, as an assistant sees them
+id=$(curl -s localhost:7744/api/instruments/mcp-servers | jq -r '.servers[] | select(.mcp_key|test("(^|_)sensei$")) | .id')
+curl -s "localhost:7744/api/instruments/mcp-servers/$id/tools" | jq '.tools | length'
+curl -s -X POST "localhost:7744/api/instruments/mcp-servers/$id/call" \
+  -H 'content-type: application/json' -d '{"tool":"list_workspaces","arguments":{}}' | jq '.isError, .duration_ms'
 ```
 
 ## Wrong gate

@@ -1043,37 +1043,15 @@ export interface DojoBindingSuggestion {
   dojo_url: string;
 }
 
-// ─── MCP tool manifests (playground / instruments) ───────────────────────────
+// ─── A tool run through its MCP server (Instruments Playground) ──────────────
 //
-// Wire shape returned by `GET /api/mcp/tools`. One entry per tool the daemon
-// dispatches on. Fields mirror `crates/senseid/src/api/handlers/mcp_manifests.rs`
-// — the daemon is the source of truth; keep in lockstep.
+// `POST /api/instruments/mcp-servers/{id}/call`: the server's `tools/call`
+// result as it sent it, its own `isError`, and the round trip in ms.
 
-export type McpToolKind = 'query' | 'action';
-export type McpInputKind = 'text' | 'enum' | 'number';
-
-export interface McpToolInput {
-  key: string;
-  kind: McpInputKind;
-  required: boolean;
-  label: string;
-  placeholder?: string;
-  default?: string;
-  options?: string[];
-}
-
-export interface McpToolExample {
-  response: string;
-}
-
-export interface McpToolManifest {
-  mcp: string;
-  id: string;
-  name: string;
-  kind: McpToolKind;
-  summary: string;
-  inputs: McpToolInput[];
-  example: McpToolExample;
+export interface McpToolCallResult {
+  result: unknown;
+  isError: boolean;
+  duration_ms: number;
 }
 
 // ─── Session tool timeline (Instruments Replay tab) ──────────────────────────
@@ -1204,6 +1182,9 @@ export interface ImpactVerdictEntry {
 }
 
 // ─── Workspace-scoped MCP tool stats (T2 Slice F) ──────────────────────────────
+
+/** Whether a sensei tool reads (`query`) or changes something (`action`). */
+export type McpToolKind = 'query' | 'action';
 
 export interface WorkspaceMcpToolStat {
   id: string;

@@ -29,10 +29,10 @@ describe('instrument marks', () => {
 
   it('gives the sensei group and an unknown server an icon, and leaves the assistants kanji', () => {
     const groups = buildPlaygroundGroups(
-      [],
       [
         { id: 'a', acp_family: 'claude', mcp_key: 'x', enabled: true },
         { id: 'b', acp_family: 'windsurf', mcp_key: 'y', enabled: true },
+        { id: 's', acp_family: 'claude', mcp_key: 'plugin_sensei_sensei', enabled: true },
       ],
       {},
     );

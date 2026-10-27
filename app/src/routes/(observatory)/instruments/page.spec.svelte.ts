@@ -6,22 +6,64 @@ import Page from './+page.svelte';
 let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; vi.unstubAllGlobals(); });
 
-// #288: a tool catalog that could not be read is said so — sensei's own tools
-// were otherwise just missing from the Playground rail.
-describe('Instruments /+page — a failed catalog read', () => {
-  it('shows the catalog error in the Playground', async () => {
+const json = (body: unknown) => ({ ok: true, status: 200, statusText: 'OK', json: async () => body });
+
+// #288: a server list that could not be read is said so, and not re-asked
+// without end.
+describe('Instruments /+page — a failed server read', () => {
+  it('says the servers could not be read, and stops asking', async () => {
     const fetch = vi.fn().mockResolvedValue({ ok: false, status: 503, statusText: 'Service Unavailable', json: async () => ({}) });
     vi.stubGlobal('fetch', fetch);
     const m = mountComponent(Page, {});
     cleanup.push(m.destroy);
     await vi.waitFor(() =>
-      expect(m.container.querySelector('[data-screen-state="error"]')?.textContent).toContain('Could not read the tool catalog: Service Unavailable'),
+      expect(m.container.querySelector('[data-testid="servers-load-error"]')).not.toBeNull(),
     );
-    // And it stops asking: the tab effect used to re-run on every status
-    // change, so a failing read was re-fetched without end.
     await new Promise((r) => setTimeout(r, 200));
     const settled = fetch.mock.calls.length;
     await new Promise((r) => setTimeout(r, 300));
     expect(fetch.mock.calls.length).toBe(settled);
+  });
+});
+
+// The Playground is what an assistant sees: sensei's server first, its tools
+// as the server lists them, a form from each tool's schema, and a call that
+// runs through the server.
+describe('Instruments /+page — the Playground', () => {
+  it('lists the server’s tools, builds the form from the schema, and runs the tool', async () => {
+    const servers = { servers: [{ id: 'se', acp_family: 'claude', mcp_key: 'plugin_sensei_sensei', enabled: true }] };
+    const tools = {
+      id: 'm', server_id: 'se', tool_count: 1, error: null,
+      tools: [{
+        name: 'list_library_skills', description: 'Skills a library provides',
+        inputSchema: { type: 'object', properties: { library: { type: 'string' } }, required: ['library'] },
+      }],
+    };
+    const call = { result: { content: [{ type: 'text', text: '[{"name":"dbd"}]' }] }, isError: false, duration_ms: 12 };
+    const fetch = vi.fn().mockImplementation(async (url: string, init?: { method?: string; body?: string }) => {
+      if (url.includes('/mcp-servers/se/call')) return json(call);
+      if (url.includes('/mcp-servers/se/tools')) return json(tools);
+      if (url.includes('/mcp-servers')) return json(servers);
+      return json({});
+    });
+    vi.stubGlobal('fetch', fetch);
+    const m = mountComponent(Page, {});
+    cleanup.push(m.destroy);
+
+    await vi.waitFor(() => expect(m.container.querySelector('[data-testid="tool-row-list_library_skills"]')).not.toBeNull());
+    (m.container.querySelector('[data-testid="tool-row-list_library_skills"]') as HTMLButtonElement).click();
+    const input = await vi.waitFor(() => {
+      const el = m.container.querySelector('[data-testid="tool-input-library"]') as HTMLInputElement | null;
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    input.value = 'dbd';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    (m.container.querySelector('[data-testid="tool-execute"]') as HTMLButtonElement).click();
+
+    await vi.waitFor(() => expect(m.container.querySelector('[data-testid="tool-ok"]')?.textContent).toContain('12 ms'));
+    const sent = fetch.mock.calls.find(([u]) => String(u).includes('/call'))!;
+    expect(JSON.parse(sent[1].body)).toEqual({ tool: 'list_library_skills', arguments: { library: 'dbd' } });
+    expect(m.container.textContent).toContain('"name": "dbd"');
   });
 });

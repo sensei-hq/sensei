@@ -9,7 +9,6 @@ vi.mock('$lib/appstate.svelte.js', () => ({
 
 // Stub senseiApi with call trackers we assert against later.
 const mocks = {
-    tryMcpListTools: vi.fn(),
     tryGetToolUsage: vi.fn(),
     tryGetToolSignals: vi.fn(),
     tryGetToolInsights: vi.fn(),
@@ -50,7 +49,6 @@ beforeEach(() => {
     for (const key of Object.keys(mocks)) {
         (mocks as Record<string, ReturnType<typeof vi.fn>>)[key].mockReset();
     }
-    mocks.tryMcpListTools.mockResolvedValue(okRead({ tools: [{ mcp: 'sensei', id: 'sensei.search', name: 'search', kind: 'query', summary: 's', inputs: [], example: { response: '' } }] }));
     mocks.tryGetToolUsage.mockResolvedValue(okRead({ tools: [] }));
     mocks.tryGetToolSignals.mockResolvedValue(okRead({ signals: [], source: 'cache' }));
     mocks.tryGetToolInsights.mockResolvedValue(okRead({ insights: [{ toolName: 'search', computedAt: '2026-07-02T12:00:00Z', metrics: {}, variant: 'win', title: 'Workhorse', detail: 'ok' }] }));
@@ -82,27 +80,26 @@ describe('toolVerdict', () => {
 });
 
 describe('mcp store', () => {
-    it('loadCatalog fills tools / stats / signals from the API', async () => {
+    it('loadCatalog fills stats / signals from the API', async () => {
         const mcp = await freshStore();
         await mcp.loadCatalog();
         expect(mcp.catalogStatus).toBe('ready');
-        expect(mcp.tools.length).toBe(1);
         expect(mcp.signalSource).toBe('cache');
-        expect(mocks.tryMcpListTools).toHaveBeenCalledTimes(1);
+        expect(mocks.tryGetToolUsage).toHaveBeenCalledTimes(1);
     });
 
     it('loadCatalog is idempotent — a second call hits no endpoints', async () => {
         const mcp = await freshStore();
         await mcp.loadCatalog();
         await mcp.loadCatalog();
-        expect(mocks.tryMcpListTools).toHaveBeenCalledTimes(1);
+        expect(mocks.tryGetToolUsage).toHaveBeenCalledTimes(1);
     });
 
     it('loadCatalog(force=true) re-fetches even after ready', async () => {
         const mcp = await freshStore();
         await mcp.loadCatalog();
         await mcp.loadCatalog(true);
-        expect(mocks.tryMcpListTools).toHaveBeenCalledTimes(2);
+        expect(mocks.tryGetToolUsage).toHaveBeenCalledTimes(2);
     });
 
     it('insightFor returns the cached insight row by tool name', async () => {
@@ -117,13 +114,13 @@ describe('mcp store', () => {
         await mcp.loadCatalog();
         await mcp.loadInsights();
         await mcp.refresh();
-        expect(mocks.tryMcpListTools).toHaveBeenCalledTimes(2);
+        expect(mocks.tryGetToolUsage).toHaveBeenCalledTimes(2);
         expect(mocks.tryGetToolInsights).toHaveBeenCalledTimes(2);
     });
 
     // #288: a failed read is an error with its reason — the fallback reads
     // never threw, so this status could never become 'error' before.
-    for (const read of ['tryMcpListTools', 'tryGetToolUsage', 'tryGetToolSignals'] as const) {
+    for (const read of ['tryGetToolUsage', 'tryGetToolSignals'] as const) {
         it(`a failed ${read} marks the catalog in error, with the reason`, async () => {
             mocks[read].mockResolvedValueOnce(down);
             const mcp = await freshStore();
