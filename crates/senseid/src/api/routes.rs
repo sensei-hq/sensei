@@ -2427,9 +2427,10 @@ mod tests {
         let err_key = format!("test/sync-err-{uniq}");
         let skip_key = format!("test/sync-skip-{uniq}");
 
-        let ok = SyncMark { entity: "repository", key: &ok_key, direction: "push" };
-        let err = SyncMark { entity: "repository", key: &err_key, direction: "push" };
-        let skip = SyncMark { entity: "repository", key: &skip_key, direction: "push" };
+        let ok = SyncMark { entity: "repository", key: &ok_key, direction: "push", persona: "p" };
+        let err = SyncMark { entity: "repository", key: &err_key, direction: "push", persona: "p" };
+        let skip =
+            SyncMark { entity: "repository", key: &skip_key, direction: "push", persona: "p" };
 
         state.pg.mark_synced(&ok, Some(7)).await.unwrap();
         // Synced FIRST, then failed — so this row carries both a `synced_at` and

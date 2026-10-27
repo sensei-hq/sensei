@@ -23,6 +23,7 @@ create table if not exists sync_state (
 , attempted_at    timestamptz
 , synced_at       timestamptz
 , updated_at      timestamptz    not null default now()
+, persona         text
 , primary key (entity, entity_key, direction)
 );
 
@@ -44,3 +45,6 @@ comment on column sync_state.entity_key
      is 'The entity''s DURABLE key, not a local uuid: repo_key for a repository, metric key for the catalogue. A local uuid differs between installs, so a sync row keyed on one could never be reconciled against the other side.';
 comment on column sync_state.last_error
      is 'Kept, not cleared on the next attempt: a sync that fails, retries and fails differently is a different problem, and overwriting loses the first cause.';
+
+comment on column sync_state.persona is
+'The identity (its Keychain session slot) whose sync last wrote this row. NULL on a row no sync has written since the column was added; the next pass fills it.';

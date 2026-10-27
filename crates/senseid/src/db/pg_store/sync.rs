@@ -18,6 +18,8 @@ pub struct SyncMark<'a> {
     pub key: &'a str,
     /// `push` or `pull`.
     pub direction: &'a str,
+    /// The identity syncing it — its Keychain session slot.
+    pub persona: &'a str,
 }
 
 /// One `sensei.sync_state` row — the shape [`PgStore::sync_state_rows`] returns.
@@ -42,6 +44,9 @@ pub struct SyncStateRow {
     pub attempted_at: Option<chrono::DateTime<chrono::Utc>>,
     pub synced_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// The identity (session slot) whose sync last wrote it; `None` on a row
+    /// written before identities were recorded.
+    pub persona: Option<String>,
 }
 
 /// The push query's column tuple. Named for the same reason `ScheduleRow` and
@@ -124,15 +129,16 @@ impl PgStore {
     pub async fn mark_synced(&self, m: &SyncMark<'_>, version: Option<i64>) -> Result<(), String> {
         sqlx_core::query::query(
             "INSERT INTO sensei.sync_state \
-                 (entity, entity_key, direction, state, remote_version, attempted_at, synced_at, updated_at) \
-             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, 'synced', $4, now(), now(), now()) \
-             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET \
+                 (entity, entity_key, direction, persona, state, remote_version, attempted_at, synced_at, updated_at) \
+             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, $4, 'synced', $5, now(), now(), now()) \
+             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET persona = EXCLUDED.persona, \
                  state = 'synced', remote_version = EXCLUDED.remote_version, \
                  last_error = NULL, attempted_at = now(), synced_at = now(), updated_at = now()",
         )
         .bind(m.entity)
         .bind(m.key)
         .bind(m.direction)
+        .bind(m.persona)
         .bind(version)
         .execute(&self.pool)
         .await
@@ -170,15 +176,16 @@ impl PgStore {
     pub async fn mark_sync_error(&self, m: &SyncMark<'_>, error: &str) -> Result<(), String> {
         sqlx_core::query::query(
             "INSERT INTO sensei.sync_state \
-                 (entity, entity_key, direction, state, last_error, attempted_at, updated_at) \
-             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, 'error', $4, now(), now()) \
-             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET \
+                 (entity, entity_key, direction, persona, state, last_error, attempted_at, updated_at) \
+             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, $4, 'error', $5, now(), now()) \
+             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET persona = EXCLUDED.persona, \
                  state = 'error', last_error = EXCLUDED.last_error, \
                  attempted_at = now(), updated_at = now()",
         )
         .bind(m.entity)
         .bind(m.key)
         .bind(m.direction)
+        .bind(m.persona)
         .bind(error)
         .execute(&self.pool)
         .await
@@ -199,15 +206,16 @@ impl PgStore {
     ) -> Result<(), String> {
         sqlx_core::query::query(
             "INSERT INTO sensei.sync_state \
-                 (entity, entity_key, direction, state, last_error, attempted_at, synced_at, updated_at) \
-             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, 'partial', $4, now(), now(), now()) \
-             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET \
+                 (entity, entity_key, direction, persona, state, last_error, attempted_at, synced_at, updated_at) \
+             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, $4, 'partial', $5, now(), now(), now()) \
+             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET persona = EXCLUDED.persona, \
                  state = 'partial', last_error = EXCLUDED.last_error, \
                  attempted_at = now(), synced_at = now(), updated_at = now()",
         )
         .bind(m.entity)
         .bind(m.key)
         .bind(m.direction)
+        .bind(m.persona)
         .bind(what_is_missing)
         .execute(&self.pool)
         .await
@@ -224,15 +232,16 @@ impl PgStore {
     pub async fn mark_sync_skipped(&self, m: &SyncMark<'_>, reason: &str) -> Result<(), String> {
         sqlx_core::query::query(
             "INSERT INTO sensei.sync_state \
-                 (entity, entity_key, direction, state, last_error, attempted_at, updated_at) \
-             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, 'skipped', $4, now(), now()) \
-             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET \
+                 (entity, entity_key, direction, persona, state, last_error, attempted_at, updated_at) \
+             VALUES ($1::sensei.sync_entity, $2, $3::sensei.sync_direction, $4, 'skipped', $5, now(), now()) \
+             ON CONFLICT (entity, entity_key, direction) DO UPDATE SET persona = EXCLUDED.persona, \
                  state = 'skipped', last_error = EXCLUDED.last_error, \
                  attempted_at = now(), updated_at = now()",
         )
         .bind(m.entity)
         .bind(m.key)
         .bind(m.direction)
+        .bind(m.persona)
         .bind(reason)
         .execute(&self.pool)
         .await
@@ -277,10 +286,11 @@ impl PgStore {
             Option<chrono::DateTime<chrono::Utc>>,
             Option<chrono::DateTime<chrono::Utc>>,
             chrono::DateTime<chrono::Utc>,
+            Option<String>,
         );
         let rows: Vec<Row> = sqlx_core::query_as::query_as(
             "SELECT entity::text, entity_key, direction::text, state, last_error,
-                    attempted_at, synced_at, updated_at
+                    attempted_at, synced_at, updated_at, persona
                FROM sensei.sync_state
               ORDER BY CASE state
                          WHEN 'error'   THEN 0
@@ -307,6 +317,7 @@ impl PgStore {
                 attempted_at: r.5,
                 synced_at: r.6,
                 updated_at: r.7,
+                persona: r.8,
             })
             .collect())
     }
