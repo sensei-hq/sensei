@@ -1,12 +1,10 @@
 import type { Level0, Level1, Level2, Zones } from '@sensei/codemap';
 import type {
   ServerWorkspace,
-  GraphSymbolNode, GraphCallEdge,
-  WorkspaceGraphResponse, SolutionAnalysis,
-  FunctionMatch, CommunityInfo,
+  SolutionAnalysis,
+  FunctionMatch,
   LibEntry, LibCapability, LibPage, SessionData, SessionsDigest,
   WorkspaceMemory, DriftItem, PatternEntry, Recommendation,
-  CallFlowModule, CallFlowCall,
   WorkspaceListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
   DojoMembership, DojoBindingSuggestion, DojoUpgradesResponse, CollectivePreferences,
@@ -22,7 +20,6 @@ import type {
   ProvisionModel, ProvisionPhase,
   StructureLevel, StructurePayload,
   LayeringLevel, LayeringPayload,
-  WorldGroupBy, WorldPayload,
   NeighbourhoodPayload,
   SchemaPayload,
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
@@ -501,19 +498,6 @@ export function senseiApi(port: number) {
         `/api/workspaces/${enc(id)}/diagrams/layering?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
       ),
 
-    /** #219 — the World payload: every indexed declaration, nested.
-     *
-     *  CROSS-WORKSPACE. The workspace in the path names the view and does not scope
-     *  it — the picture is all indexed code, with workspace as its outermost ring.
-     *
-     *  Result-based like its siblings: this screen must tell "nothing indexed"
-     *  apart from "the daemon failed", and on a picture whose whole subject is
-     *  how much there is, an empty canvas is the worse lie. */
-    tryGetWorkspaceWorld: (id: string, groupBy: WorldGroupBy) =>
-      tryGet<WorldPayload>(
-        `/api/workspaces/${enc(id)}/diagrams/world?groupBy=${enc(groupBy)}`
-      ),
-
     /** #220 — one symbol, its callers and callees, `depth` rings out.
      *  `focus` is a node id; a missing one is a 400, never a default symbol. */
     tryGetWorkspaceNeighbourhood: (id: string, focus: string, depth: number) =>
@@ -665,26 +649,6 @@ export function senseiApi(port: number) {
      *  symbol that exists. */
     trySearchFunctions: (repoId: string, q: string) =>
       tryGet<FunctionMatch[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`),
-
-    // Atlas (#288): each read is the daemon's answer or why it failed — never
-    // an empty graph, zero calls or a 0-repo roll-up standing in for a failure.
-    tryGetGraphNodes: (repoId: string) =>
-      tryGet<{ nodes: GraphSymbolNode[]; edges: GraphCallEdge[] }>(`/api/graph/nodes?repoId=${enc(repoId)}`),
-
-    tryGetCommunities: (repoId: string) =>
-      tryGet<CommunityInfo[]>(`/api/graph/communities/info?repoId=${enc(repoId)}`),
-
-    /** Refresh the repo's clustering, so the communities read after it is current. */
-    tryDetectCommunities: (repoId: string) =>
-      tryPost<{ ok: boolean; communities: number }>('/api/graph/communities', { repoId }),
-
-    tryGetCallFlow: (repoId: string) =>
-      tryGet<{ modules: CallFlowModule[]; calls: CallFlowCall[]; moduleCount: number; exportCount: number; callCount: number }>(
-        `/api/graph/call-flow?repoId=${enc(repoId)}`,
-      ),
-
-    /** The workspace's solution roll-up across its repos. */
-    tryGetWorkspaceGraph: (id: string) => tryGet<WorkspaceGraphResponse>(`/api/workspaces/${enc(id)}/graph`),
 
     // ── Libraries ────────────────────────────────────────────────────────
     /** Every detected library (#288: a failure is an error, not an empty index). */

@@ -1,5 +1,7 @@
 # 図 · Project window · Atlas (code graph)
 
+> **Retired 2026-10-27 (M17, `docs/mockups/Sensei/docs/prd-drafts/M17-code-map.md`).** The Code map replaces it: its L0 opens on modules and drills to files and symbols on one canvas. The route, its state and its daemon endpoint are removed; this file is kept for the record.
+
 **Segment:** 04 · The project window
 **Route:** `/project/[id]/atlas` (proposed — a 10th `ProjectSidebar` section; the mockup's `ProjectAtlasWindow` renders `<ProjectSidebar … active="atlas"/>`)
 **Source mockup:** [`lib/project/project-atlas.jsx`](../../mockups/Sensei/lib/project/project-atlas.jsx) → `ProjectAtlasWindow` (screen: `ProjectAtlas`; canvas: `AtlasGraph`; inspector: `AtlasInspector`; legend: `AtlasLegend`)

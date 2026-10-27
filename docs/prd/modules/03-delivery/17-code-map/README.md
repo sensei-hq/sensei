@@ -22,19 +22,20 @@ window's Diagrams list (M16) and the dōjō's Workspace › Code health tab (T3)
 this one map. Schema (Database · ER) is not part of it: tables, columns and keys are
 not the call graph.
 
-> **Build status, per part.** Nothing below is a claim that the merged map exists.
+> **Build status, per part (2026-10-27).** The merged map exists in the desktop app, from
+> the shared package `packages/codemap` (`@sensei/codemap`); the dōjō embed does not yet.
 >
 > | Part | Status today |
 > |---|---|
-> | L0 · L1 · L2 levels | **not built** — gap [G-1](../../../../roadmap/06-gaps.md). Atlas today is a two-level canvas (Communities → Symbols) at `/project/[id]/atlas`. |
-> | Structure | **partly built** — the Structure diagram (`diagrams/structure`, file · module · package grain) and the Layers diagram (`diagrams/layers`, over the `layering` endpoint). The merged canvas, group-by, role bar and *Colour by direction* are not built. |
+> | L0 · L1 · L2 levels | **built** — `/workspace/[id]/diagrams/codemap` over `GET …/diagrams/codemap` (L0: ≤ 60 blocks, "+N more" per group, hub lane, one band per pair), `/codemap/module` (L1: role columns ≤ 12) and `/codemap/file` (L2: symbols, callers/callees ≤ 7); breadcrumb; list mode under 640px. Atlas and World are retired. |
+> | Structure | **built** on the canvas: group by Layers or Folders, bands coloured by the layering's direction (upward red, skip amber). The role bar on L0 blocks is not built (roles exist at L1). The older Structure and Layers diagrams remain beside it. |
 > | Wheel | **not built**. Communities grouping needs Fix 2 (M4). |
-> | Zones | **daemon only** — `GET /api/projects/{id}/diagrams/zones` is built and pinned; no app screen. Illustrative until abstractness is defined per language (see Open gaps). |
-> | Dependency matrix | **not built**. Its input, the `sensei.module_edges` view, exists. |
-> | Cycles | **built as a diagram** — `diagrams/cycles`, over the `layering` endpoint. Not yet a lens on the shared canvas. |
+> | Zones | **built** as a lens over `GET …/diagrams/zones`. Illustrative until abstractness is defined per language (see Open gaps). |
+> | Dependency matrix | **built** as the Matrix lens over L0's bands, ordered by group so upward sits below the diagonal. |
+> | Cycles | **built** as a lens (only bands inside a cycle; members tinted), and still as `diagrams/cycles`. |
 > | Hidden coupling | **not built**. The commit facts exist (`sensei.commits`, `sensei.commit_files`, written by `ScanGitHistory`); co-change mining (M4) does not. |
 > | Complexity | **not built**. Per-function complexity is parsed into the indexer IR (`ir.rs`) but no table stores it. |
-> | File roles | **partly built** — `nodes.is_test` from `languages::is_test_path`; docs are `doc`/`section` nodes. Config and generated are not tagged (M4). |
+> | File roles | **built at read time** — `analysis::codemap::file_role` (code · test · docs · config · generated, from the path); not stored. |
 
 ## In scope / out of scope
 
@@ -148,20 +149,20 @@ when looking at a release (D18).
   zone of pain, complexity) opens the lens that explains it.
 - **Metrics (M8)** — the architecture-metric charts (layers histogram, zones, cycles)
   link into the lens here instead of drawing their own diagram.
-- **Routes today** — `/project/[id]/atlas`; `/project/[id]/diagrams/{structure,layers,
-  world,cycles,neighbourhood,schema}`.
+- **Routes today** — `/workspace/[id]/diagrams/{codemap,structure,layers,cycles,
+  neighbourhood,schema}`; `codemap` is the default.
 - **API** — `GET /api/graph/nodes` · `/communities` (POST) · `/communities/info` ·
   `/callers` · `/callees` · `/call-flow` · `/{repoId}/tree`;
-  `/api/projects/{id}/diagrams/{structure,layering,zones,world,neighbourhood,schema}`.
+  `/api/workspaces/{id}/diagrams/{codemap,codemap/module,codemap/file,structure,layering,
+  zones,neighbourhood,schema}`.
 - **Daemon** — `api/handlers/codebase.rs` (`graph_nodes`, `community_info`,
   `community_counts`, `fn_callers`, `fn_callees`, `graph_tree`, `call_flow`);
   `api/handlers/diagrams.rs`; `api/diagram_cache.rs`; `db/pg_store/{graph.rs,
   neighbourhood.rs}`; `indexer/{community.rs,structure.rs,impact.rs,
   quality/reachability.rs}`; `tasks/handlers/git_history.rs`.
-- **App today** — `atlas-graph.svelte.ts` (`buildAtlasPage`, `buildCommunities`,
-  `buildSymbolGraph`, `SYMBOL_CAP=200`, `COLLAPSE_THRESHOLD=500`),
-  `atlas-view.svelte.ts`, `AtlasCanvas` / `AtlasInspector` / `AtlasLegend`; diagram
-  states and `diagrams-nav.ts` under `(project)/project/[id]/diagrams/`.
+- **App today** — `packages/codemap` (`CodeMapState`, `layoutLevel0`, lenses, `CodeMap`
+  and its parts) through `diagrams/codemap-port.ts`; the remaining diagram states and
+  `diagrams-nav.ts` under `(workspace)/workspace/[id]/diagrams/`.
 - **Data** — `sensei.nodes` / `sensei.edges` → `sensei.graph_nodes` (view) →
   `inference.communities` → `sensei.structure_graph` + `structure_edges` (views) →
   `sensei.module_edges` → `sensei.graph_placement`; `sensei.component_zones()` (function);

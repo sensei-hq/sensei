@@ -250,7 +250,6 @@ test.describe('Workspace window — section pages', () => {
     { id: 'sessions',     label: 'Sessions',     kanji: '録' },
     { id: 'memories',     label: 'Memories',     kanji: '憶' },
     { id: 'traceability', label: 'Traceability', kanji: '跡' },
-    { id: 'atlas',        label: 'Atlas',        kanji: '図' },
     { id: 'libraries',    label: 'Libraries',    kanji: '蔵' },
     { id: 'instruments',  label: 'Instruments',  kanji: '器' },
     { id: 'patterns',     label: 'Patterns',     kanji: '型' },

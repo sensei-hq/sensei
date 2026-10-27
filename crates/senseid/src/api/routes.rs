@@ -139,7 +139,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/diagrams/codemap/file", get(diagrams::codemap_file))
         .route("/api/workspaces/{id}/diagrams/layering", get(diagrams::layering))
         .route("/api/workspaces/{id}/diagrams/zones", get(diagrams::zones))
-        .route("/api/workspaces/{id}/diagrams/world", get(diagrams::world))
         .route("/api/workspaces/{id}/diagrams/neighbourhood", get(diagrams::neighbourhood))
         .route("/api/workspaces/{id}/diagrams/schema", get(diagrams::schema))
         .route("/api/workspaces/{id}/tags", post(observatory::add_solution_tag))
@@ -333,7 +332,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/transcripts/consent", get(observatory::transcript_consent))
         .route("/api/transcripts/consent/{source}", put(observatory::set_transcript_consent))
         .route("/api/metrics/backfill", post(observatory::backfill_metrics))
-        .route("/api/workspaces/{id}/graph", get(observatory::solution_graph))
         .route("/api/workspaces/{id}/roles", get(observatory::solution_roles))
         // Folder mutations (setup wizard — Workspaces stage)
         .route("/api/folders/{id}", put(workspace::update_folder))
@@ -778,50 +776,6 @@ mod tests {
         )
         .await;
         assert_eq!(st, StatusCode::NOT_FOUND);
-    }
-
-    /// A workspace's graph carries its repositories and their code. It filtered
-    /// every repository by a `workspace_id` the repository list never returns,
-    /// so `repos` was always 0 and the graph held only the workspace node.
-    #[tokio::test]
-    async fn a_workspace_graph_holds_its_repositories_and_their_code() {
-        let (app, state) = test_app().await;
-        let uniq = uuid::Uuid::new_v4();
-        let (pid, fid) =
-            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
-        let caller = state
-            .pg
-            .seed_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(3))
-            .await
-            .unwrap();
-        let callee = state
-            .pg
-            .seed_node(&fid, "function", "callee", "src/b.rs", None, None, Some(1), Some(3))
-            .await
-            .unwrap();
-        state
-            .pg
-            .insert_edge(&fid, &caller, crate::db::pg_store::EdgeTarget::Node(&callee), "calls")
-            .await
-            .unwrap();
-
-        let (st, body) = req(app, "GET", &format!("/api/workspaces/{pid}/graph"), None).await;
-        assert_eq!(st, StatusCode::OK, "{body}");
-        assert_eq!(body["repos"], 1, "{body}");
-        let names: Vec<&str> = body["graph"]["nodes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|n| n["name"].as_str())
-            .collect();
-        assert!(names.contains(&"caller") && names.contains(&"callee"), "{names:?}");
-        let calls = body["graph"]["edges"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|e| e["type"] == "calls")
-            .count();
-        assert_eq!(calls, 1);
     }
 
     /// #343: a server registered by hand is listed, inspected and run like a
@@ -3527,93 +3481,6 @@ mod tests {
         );
 
         pg.delete_workspace(&pid).await.ok();
-    }
-
-    /// **THE WORLD ENDPOINT NESTS A SEEDED CORPUS, AND REFUSES A GROUPING IT
-    /// DOES NOT HAVE (#219).**
-    ///
-    /// `analysis::world` owns the nesting invariants and tests them in
-    /// isolation. What only the endpoint can show is the seam: that the two
-    /// reads line up into cells the nester accepts, that the workspace in the path
-    /// NAMES the view without scoping it, and that an unknown grouping is a 400
-    /// rather than a silent fall back to the default — which is how a control
-    /// comes to look like it works while answering a different question.
-    ///
-    /// Mutation that must break this test: make `GroupFirst::from_label`
-    /// return `Some(Workspace)` for an unknown label, or filter `world_cells` by
-    /// workspace.
-    #[tokio::test]
-    async fn the_world_endpoint_nests_every_workspace_and_refuses_an_unknown_grouping() {
-        let (app, state) = test_app().await;
-        let pg = &state.pg;
-        let tag = uuid::Uuid::new_v4();
-        let mine = pg.create_workspace(&format!("_test:world:{tag}"), None, None).await.unwrap();
-        let root = format!("/_test/world/{tag}");
-        let root_id = pg.add_watch_root(&root, "world-wt", &serde_json::json!([])).await.unwrap();
-        let fid = pg.upsert_repo(&root_id, &format!("w-{tag}"), &root).await.unwrap();
-        crate::tasks::test_support::place_folder_in_workspace(pg, &fid, &mine, &format!("w-{tag}"))
-            .await
-            .unwrap();
-        pg.upsert_file_row(
-            &crate::db::pg_store::FileFingerprint {
-                folder_id: &fid,
-                file_path: "a.rs",
-                mtime: 1,
-                content_hash: "seed",
-            },
-            None,
-        )
-        .await
-        .unwrap();
-        let def = crate::db::pg_store::FqnDef {
-            file_path: "a.rs",
-            signature: None,
-            line_start: Some(1),
-            line_end: Some(2),
-            is_exported: true,
-            parent_id: None,
-        };
-        pg.seed_node_by_fqn(&fid, "rust·w·m·one", "function", "one", Some("rust"), Some(def))
-            .await
-            .unwrap();
-
-        let url = format!("/api/workspaces/{mine}/diagrams/world?groupBy=workspace");
-        let (status, body) = req(app.clone(), "GET", &url, None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["groupBy"], "workspace");
-
-        // The path's workspace NAMES the view and does not scope it. The corpus
-        // this runs against holds other workspaces, and the picture is "all
-        // indexed code" — a payload holding only one workspace's circle would mean
-        // the outermost ring had been filtered away.
-        let name = format!("_test:world:{tag}");
-        assert_eq!(body["viewing"], name, "the payload says which circle you are standing in");
-
-        let units = body["units"].as_array().expect("units");
-        assert!(!units.is_empty(), "the fixture declares a symbol, so something is nested");
-        let roots: Vec<&str> = units
-            .iter()
-            .filter(|u| u["path"].as_array().unwrap().len() == 1)
-            .filter_map(|u| u["label"].as_str())
-            .collect();
-        assert!(roots.contains(&name.as_str()), "the seeded workspace is a circle: {roots:?}");
-
-        // Every unit carries the three things the layout and the shade control
-        // read. A missing `path` nests nothing; a missing `measures` leaves the
-        // shade control with nothing to colour by.
-        for u in units {
-            assert!(u["path"].is_array(), "every unit carries its own path: {u}");
-            assert!(u["weight"].is_i64(), "{u}");
-            assert!(u["measures"]["documentedShare"].is_number(), "{u}");
-        }
-
-        // A grouping that does not exist is a refusal, not a default.
-        let (status, _) =
-            req(app, "GET", &format!("/api/workspaces/{mine}/diagrams/world?groupBy=docs"), None)
-                .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "there is no docs grouping");
-
-        pg.delete_workspace(&mine).await.ok();
     }
 
     /// **THE NEIGHBOURHOOD ENDPOINT WALKS RINGS BY DEPTH, AND REFUSES WHAT IT

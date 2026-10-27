@@ -44,13 +44,6 @@ export const DIAGRAM_VIEWS: DiagramView[] = [
     icon: 'i-solar-layers-minimalistic-bold-duotone',
   },
   {
-    id: 'world',
-    label: 'World',
-    question: 'How much is here, and where it sits',
-    kanji: '界',
-    icon: 'i-solar-global-bold-duotone',
-  },
-  {
     id: 'cycles',
     label: 'Cycles',
     question: 'What depends on itself, and where to cut',

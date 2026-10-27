@@ -14,4 +14,3 @@ pub mod rule_consolidation;
 pub mod schema_model;
 pub mod session_metric_note;
 pub mod workspace_icon;
-pub mod world;

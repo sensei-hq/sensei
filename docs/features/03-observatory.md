@@ -71,7 +71,7 @@ previewed: nothing is shared without a confirmation.
 
 - [x] **Sessions** (録) — review how work actually went: the digest of assistant sessions — prompts, tool calls, outcomes.
 - [x] **Libraries** (庫) — ground the assistant in the libraries it uses: docs + code indexed and wrapped with sensei's tools.
-- [~] **Atlas** (図) — see the shape of the codebase: the code + architecture graph — structure, calls, communities.
+- [~] **Code map** (図) — see the shape of the codebase: modules, then their files, then their symbols (Atlas retired).
 - [~] **Instruments** (具) — see and try the MCP tools sensei can reach for: a playground, replay of real use, and health.
 - [x] **Logs** (診) — see what sensei is doing: background activity and diagnostics.
 - [~] **Dōjō** (結) — join the shared plane: connect to an employer / client / community dōjō (addition).
@@ -110,7 +110,7 @@ That observation is what lets it answer the questions that matter:
 Capture is the raw signal. Three stages turn it into the findings the sections
 above surface (per-capability statuses live in the [capability map](README.md)):
 
-- **The map** — the code + activity graph, kept live by the watcher, plus semantic search and context assembly. → powers **Atlas** and **Libraries**.
+- **The map** — the code + activity graph, kept live by the watcher, plus semantic search and context assembly. → powers the **Code map** and **Libraries**.
 - **Synthetic analysis** — the analyzer runs passes over each project: duplicates, communities, document drift, architecture, traceability, and metrics (FTR · churn · correction-prone). → powers **Insights**, **Traceability**, and **Impact**.
 - **Knowledge** — what the analysis keeps: memories (with promotion), patterns and anti-patterns, and conventions. → powers **Memories**.
 
@@ -128,7 +128,7 @@ above surface (per-capability statuses live in the [capability map](README.md)):
 | Upgrades | Partial | dōjō distribution back, opt-in accept |
 | Sessions | Done | assistant-session digest |
 | Libraries | Partial | docs + code indexed and wrapped; a library's own docs/skills/agents (`sensei.library.json`) are ingested on self-scan but not shown, nor found for dependencies (#341) |
-| Atlas | Partial | code + architecture graph |
+| Code map | Partial | modules → files → symbols, four lenses |
 | Instruments | Partial | playground / replay / health in flight |
 | Logs | Done | activity + diagnostics |
 | Dōjō connections (addition) | Partial | connect screens shipped; membership validation not built |
@@ -137,5 +137,5 @@ above surface (per-capability statuses live in the [capability map](README.md)):
 | Dōjō discovery | Not started | screens mocked; build is future |
 | Capture (sessions · transcripts · events · MCP) | Done | Claude + Zed; prompts · tool calls · edits · outcomes |
 | Project-level observation | Partial | scaffold done; stack tooling + project knowledge partial |
-| Map · analysis · knowledge pipeline | Done | powers Atlas · Insights · Traceability · Impact · Memories (statuses in the capability map) |
+| Map · analysis · knowledge pipeline | Done | powers the Code map · Insights · Traceability · Impact · Memories (statuses in the capability map) |
 </content>

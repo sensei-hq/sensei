@@ -94,7 +94,7 @@ data contract — is the [playbook design module](../design/playbook.md).
 ### What sensei knows about this project
 
 - [x] **Overview** (全) — the project at a glance, and the one thing to act on now
-- [~] **Atlas** (図) — this project's code + architecture graph (structure · calls · communities)
+- [~] **Code map** (図) — modules → files → symbols on one canvas, with Structure · Cycles · Matrix · Zones lenses (M17; Atlas and World retired)
 - [x] **Sessions** (録) — assistant sessions in this project
 - [x] **Memories** (覚) — what sensei has learned about this project
 - [~] **Traceability** (巻) — this project's requirement / doc ↔ code linkage
@@ -116,7 +116,7 @@ data contract — is the [playbook design module](../design/playbook.md).
 | Intake (front door) | Partial | recommend-and-confirm engine shipped; project-scoped placement is the intended home |
 | Tasks / plan | Not started | needs the planner |
 | Overview | Done | at-a-glance + one action |
-| Atlas / graph | Partial | code + architecture graph |
+| Code map | Partial | modules → files → symbols; lenses Structure · Cycles · Matrix · Zones; Wheel, Hidden coupling, Complexity to come |
 | Sessions | Done | per-project session digest |
 | Memories | Done | per-project learnings |
 | Traceability | Partial | requirement / doc ↔ code linkage |
