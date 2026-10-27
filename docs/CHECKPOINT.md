@@ -1,24 +1,28 @@
-# Checkpoint — 2026-10-26
+# Checkpoint — 2026-10-27
 
-**Slice:** the user's demo build (sensei + dōjō): libraries → instruments → diagrams (Code map, M17), then
-the dōjō embed of the same Code map from a shared package; rokkit changes filed, built and released from
-rokkit when the canvas needs them (user, 2026-10-26).
+**Slice:** the demo build (sensei + dōjō): Code map (M17) from the shared `packages/codemap`, then its
+dōjō embed; #133 glyphs (user decisions 2026-10-27: one rule — kanji mode kanji, icon mode icons,
+everywhere; default kanji; the preference syncs).
 
-**Done (develop, pushed, daemon installed locally):**
-- #341 libraries, #343 manual MCP registration, Instruments through the real servers — closed with evidence.
-- Code map backend: `/api/workspaces/{id}/diagrams/codemap?groupBy=layers|folders` (L0),
-  `/codemap/module?id=` (L1), `/codemap/file?id=` (L2); `analysis::codemap` is the pure core.
-  `module_of` splits container folders; reconciled live. `/workspaces/{id}/graph` repos=0 fixed.
+**Done (develop, pushed; daemon installed locally):**
+- Code map: daemon L0/L1/L2 endpoints; `module_of` splits container folders; `@sensei/codemap`
+  (state, layout, Structure/Cycles/Matrix lenses, list mode under 640px, 16 specs); the app's
+  workspace Diagrams opens on it (`test:inspect -- codemap` green: 60 blocks, drill to symbols, back).
+- #133: one rule in both apps (no `icon={null}` opt-outs; `KIND_ICONS`); sync via
+  `dojo.user_preferences` + `/v1/you/preferences`, the account menu, and the daemon's sync tick
+  (`ui.glyphs.set_at`, later choice wins). Local dōjō reconciled; access test 62/62.
 
-**Next:** `packages/codemap` — CodeMapState (level, path/breadcrumb, groupBy, role filter, lens,
-selection), a data port the app and the dōjō each implement, the L0 band canvas, L1 role columns, L2
-symbol view, lenses (Structure, Cycles, Matrix from rokkit's DependencyMatrix, Zones from the existing
-endpoint), and a list mode under 640px. Wire into the app's workspace Diagrams (retire World/Atlas
-entries per M17), then the dōjō Code health tab (needs the graph synced to the dōjō).
+**Next:**
+1. Code map lenses still missing: Zones (daemon endpoint exists), Wheel, Hidden coupling (needs
+   co-change from `commit_files`), Complexity (needs stored complexity); retire World and Atlas (M17).
+2. The dōjō Code health tab: a dōjō port for `@sensei/codemap` over the graph it already syncs.
+3. A visual look at the Code map: the inspect harness's screenshot is blank (the bundle lacks Screen
+   Recording permission) — the user eyeballs it in the app.
 
-**Open (the user's):** #133 — the dōjō default glyph mode (recommend kanji) and workspace glyphs in icon
-mode (recommend keep each workspace's inferred kanji).
+**Open (the user's):** none.
 
-**Known:** Keychain tests (`dojo_client::session` discard, `gateway_keys`) fail on rebuilt test binaries
-(#282, environmental). After a DDL change run `make test-template`; reconcile live with dbd. fmt +
-workspace clippy before every Rust commit.
+**Not live yet:** the glyph sync needs `dojo.user_preferences` in production (next release's
+`deploy-dojo`).
+
+**Known:** Keychain tests fail on rebuilt test binaries (#282, environmental). After a DDL change run
+`make test-template`; reconcile live with dbd. fmt + workspace clippy before every Rust commit.
