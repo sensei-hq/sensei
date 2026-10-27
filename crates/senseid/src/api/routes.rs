@@ -1058,6 +1058,60 @@ mod tests {
         assert_eq!(body["commits"], 10, "{body}");
     }
 
+    /// The Complexity lens (M17): each module block carries its functions and
+    /// how many are over cyclomatic 10, from local qlty's measurement; a module
+    /// never measured carries null — not zero, which would read as simple.
+    #[tokio::test]
+    async fn the_code_map_carries_each_modules_complexity_or_says_it_was_not_measured() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, fid) = seed_two_modules(&state).await;
+        let repo = state
+            .pg
+            .repository_id_for_folder(&fid)
+            .await
+            .unwrap()
+            .expect("the fixture's repository");
+        let measured: std::collections::HashMap<String, crate::qlty::FileComplexity> = [
+            (
+                "alpha/a.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 4, complex: 1, max_cyclo: 14 },
+            ),
+            (
+                "alpha/tests/a_test.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 2, complex: 0, max_cyclo: 3 },
+            ),
+            (
+                "beta/b.rs".to_string(),
+                crate::qlty::FileComplexity { functions: 1, complex: 0, max_cyclo: 2 },
+            ),
+        ]
+        .into_iter()
+        .collect();
+        state.pg.replace_file_complexity(&repo, "abc123", &measured).await.unwrap();
+        assert_eq!(state.pg.complexity_sha(&repo).await.unwrap().as_deref(), Some("abc123"));
+
+        let (st, body) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?groupBy=folders"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let block = |m: &str| {
+            body["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|b| b["id"] == format!("{pkg}/{m}"))
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(block("alpha")["complexity"], serde_json::json!({"functions": 6, "complex": 1}));
+        assert_eq!(block("beta")["complexity"], serde_json::json!({"functions": 1, "complex": 0}));
+        assert!(block("gamma")["complexity"].is_null(), "gamma was never measured");
+    }
+
     /// The Code map's L0 (M17): modules as blocks grouped by layer or folder,
     /// one band per module pair, and a budget readout. An unknown grouping is
     /// refused rather than answered as some other one.

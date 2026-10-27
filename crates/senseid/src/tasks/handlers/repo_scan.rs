@@ -858,6 +858,17 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             "",
         ))
         .await;
+    // AND ITS COMPLEXITY, by local qlty (Code map). The task measures only when
+    // HEAD moved, so a re-scan costs a `git rev-parse`.
+    if let Some(rid) = repository_id {
+        ctx.queue
+            .enqueue_unique(crate::tasks::Task::new(
+                crate::tasks::TaskKind::MeasureComplexity,
+                &task.folder_path,
+                &rid.to_string(),
+            ))
+            .await;
+    }
 
     // The indexed git branch, in the TYPED column. Preferred from the
     // `BranchSwitch` task that triggered this re-index, else read from
@@ -1291,6 +1302,33 @@ mod scan_tests {
                     &format!("https://github.com/acme/{dep}")
                 )
                 .await
+        );
+    }
+
+    /// A scanned repository's complexity is measured by local qlty (Code map,
+    /// Complexity lens): the scan queues it, for the repository it resolved.
+    #[tokio::test]
+    async fn a_scanned_repository_is_queued_for_its_complexity() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join(format!("cx{}", &uuid::Uuid::new_v4().simple().to_string()[..10]));
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"cx\"\n").unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        ctx.pg().upsert_repo_kind(&root_id, "git", "cx", &repo.to_string_lossy()).await.unwrap();
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo.to_string_lossy(), "");
+        super::process_git_folder(&ctx, &task).await.unwrap();
+
+        assert!(
+            ctx.queue
+                .has_pending_kind_folder(TaskKind::MeasureComplexity, &repo.to_string_lossy())
+                .await,
+            "the repository's complexity is queued"
         );
     }
 

@@ -172,6 +172,9 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             }
             TaskKind::TrackerDiscover => crate::tracker::discover::run_task(ctx, task).await,
             TaskKind::DiscoverLibrary => handlers::discover_library(ctx, task).await,
+            TaskKind::MeasureComplexity => {
+                handlers::complexity::measure_complexity(ctx, task).await
+            }
         }
     };
     let cap = task.kind.watchdog_timeout();

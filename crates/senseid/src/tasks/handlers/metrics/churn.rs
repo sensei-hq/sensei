@@ -116,7 +116,7 @@ const GIT_DATE_FMT: &str = "%Y-%m-%d";
 /// `indexer/cross_repo` and `tasks/handlers/scan` (shell out, tolerate absence).
 /// Shared with the `quality` group (worktree/commit resolution) so the git shell-out
 /// helper lives in exactly one place.
-pub(super) fn run_git(root: &str, args: &[&str]) -> Option<String> {
+pub(crate) fn run_git(root: &str, args: &[&str]) -> Option<String> {
     let out = std::process::Command::new("git").args(args).current_dir(root).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }

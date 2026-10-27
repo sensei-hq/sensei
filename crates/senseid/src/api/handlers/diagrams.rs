@@ -541,11 +541,12 @@ pub(crate) async fn codemap(
     let workspace_id = resolve_workspace_id(&state, &id).await?;
 
     cached(&state, "codemap", &workspace_id, group_by.clone(), async {
-        let (nodes, edges, deps, unplaced) = tokio::try_join!(
+        let (nodes, edges, deps, unplaced, complexity) = tokio::try_join!(
             state.pg.structure_nodes(&workspace_id, "module"),
             state.pg.structure_edges(&workspace_id, "module", &kinds),
             state.pg.dependency_graph(&workspace_id, "module", &kinds),
             state.pg.structure_unplaced(&workspace_id, &kinds),
+            state.pg.codemap_module_complexity(&workspace_id),
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -574,6 +575,9 @@ pub(crate) async fn codemap(
                 },
                 files: n.files,
                 symbols: n.symbols,
+                complexity: complexity.get(&n.id).map(|&(functions, complex)| {
+                    crate::analysis::codemap::Complexity { functions, complex }
+                }),
             })
             .collect();
         let module_edges: Vec<ModuleEdge> = edges

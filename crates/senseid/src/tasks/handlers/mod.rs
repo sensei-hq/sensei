@@ -5,6 +5,7 @@
 pub(crate) mod advance_run;
 mod analyze;
 mod community;
+pub(crate) mod complexity;
 mod consolidate;
 mod consolidate_governance;
 mod corrections;

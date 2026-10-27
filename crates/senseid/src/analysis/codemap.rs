@@ -38,6 +38,16 @@ pub struct Module {
     pub group: String,
     pub files: i64,
     pub symbols: i64,
+    /// Functions, and how many exceed cyclomatic 10 — `None` when none of the
+    /// module's files was measured.
+    pub complexity: Option<Complexity>,
+}
+
+/// A module's functions and how many are over cyclomatic 10 (local qlty).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub struct Complexity {
+    pub functions: i64,
+    pub complex: i64,
 }
 
 /// One edge between two modules, of one kind, with the count behind it.
@@ -62,6 +72,8 @@ pub struct Block {
     pub weight_out: i64,
     /// For a "+N more" block: the modules folded into it.
     pub folded: Vec<String>,
+    /// Summed over what it holds; `None` when nothing in it was measured.
+    pub complexity: Option<Complexity>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -153,9 +165,15 @@ pub fn level0(modules: &[Module], edges: &[ModuleEdge], budget: usize) -> Level0
             weight_in: 0,
             weight_out: 0,
             folded: Vec::new(),
+            complexity: None,
         });
         block.files += m.files;
         block.symbols += m.symbols;
+        if let Some(c) = m.complexity {
+            let sum = block.complexity.get_or_insert_with(Complexity::default);
+            sum.functions += c.functions;
+            sum.complex += c.complex;
+        }
         if block.id != m.id {
             block.folded.push(m.id.clone());
         }
@@ -368,7 +386,14 @@ mod tests {
     use super::*;
 
     fn m(id: &str, group: &str, symbols: i64) -> Module {
-        Module { id: id.into(), label: id.into(), group: group.into(), files: 1, symbols }
+        Module {
+            id: id.into(),
+            label: id.into(),
+            group: group.into(),
+            files: 1,
+            symbols,
+            complexity: None,
+        }
     }
     fn e(source: &str, target: &str, kind: &str, count: i64) -> ModuleEdge {
         ModuleEdge { source: source.into(), target: target.into(), kind: kind.into(), count }

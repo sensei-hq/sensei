@@ -675,6 +675,7 @@ Enum "sensei"."task_execution_kind" {
   "publish_run"
   "tracker_discover"
   "discover_library"
+  "measure_complexity"
   "build_connections"
   "resolve_edges"
   "plan_metric_days"
@@ -2354,6 +2355,23 @@ Table "sensei"."extension_workspaces" {
 workspace_id NULL = global (active in every workspace).
 workspace_id = X  = active only in that workspace.
 extensions.scope column is a seeding hint only; this table is authoritative at runtime.'''
+}
+
+Table "sensei"."file_complexity" {
+  "repository_id" uuid [pk, not null, note: 'The repository measured.']
+  "path" text [pk, not null, note: 'Repository-relative path, as git and qlty name it.']
+  "functions" int [not null, note: 'Functions and methods qlty counted in the file.']
+  "complex" int [not null, note: 'Of those, how many exceed cyclomatic complexity 10.']
+  "max_cyclo" int [not null, note: 'The largest cyclomatic complexity of any function in the file.']
+  "measured_sha" text [not null, note: 'The HEAD commit measured; a scan re-measures only when HEAD moved.']
+  "measured_at" timestamptz [not null, default: `now()`, note: 'When it was measured.']
+
+  Note: '''Per-file function complexity as local `qlty metrics --functions` measures it (user,
+2026-10-27: rely on local qlty rather than re-deriving what it measures), for the Code
+map's Complexity lens (M17). Measured at the repository's HEAD in a temporary worktree
+against the pinned qlty ruler — never in the working copy. Replaced whole per
+repository at each measurement; one HEAD per repository, so every row of a repository
+carries the same `measured_sha`.'''
 }
 
 Table "sensei"."folders" {
@@ -4379,6 +4397,7 @@ Ref: "sensei"."dojo_membership_personas"."membership_id" > "sensei"."dojo_member
 Ref: "sensei"."dojo_membership_personas"."persona_id" > "sensei"."personas"."id" [delete: cascade]
 Ref: "sensei"."extension_workspaces"."extension_id" > "sensei"."extensions"."id" [delete: cascade]
 Ref: "sensei"."extension_workspaces"."workspace_id" > "sensei"."workspaces"."id" [delete: cascade]
+Ref: "sensei"."file_complexity"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
 Ref: "sensei"."folders"."root_id" > "sensei"."folders_to_watch"."id" [delete: cascade]
 Ref: "sensei"."folders"."parent_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."folders"."repository_id" > "sensei"."repositories"."id" [delete: set null]

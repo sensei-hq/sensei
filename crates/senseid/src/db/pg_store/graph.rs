@@ -3728,6 +3728,27 @@ pub struct StructureEdge {
 /// so the plan is unchanged; its doc comment carries the measurements behind the
 /// first-segment choice (150 groups over 1,751 files against 1,446 whole-path
 /// ones) and behind taking the package as well as the module.
+/// The CTE `ws_files(m, repository_id, path)`: every file of workspace `$1`
+/// with its module and its REPOSITORY-relative path. A file's own path is
+/// relative to its folder, which for a monorepo member sits below the
+/// repository root, so the folder's offset from the root is put back — the
+/// spelling git and qlty use. Shared by the co-change and complexity reads.
+fn workspace_file_paths_cte() -> String {
+    let module = structure_group_sql("module", "sg.");
+    format!(
+        "ws_files AS (
+           SELECT DISTINCT {module} AS m, f.repository_id,
+                  CASE WHEN f.abs_path = root.abs_path THEN fi.file_path
+                       ELSE substr(f.abs_path, length(root.abs_path) + 2) || '/' || fi.file_path END AS path
+             FROM sensei.structure_graph sg
+             JOIN sensei.files fi ON fi.id = sg.file_id
+             JOIN sensei.folders f ON f.id = fi.folder_id
+             JOIN sensei.folders root ON root.repository_id = f.repository_id AND root.kind = 'git'
+            WHERE sg.workspace_id = $1 AND f.repository_id IS NOT NULL
+         )"
+    )
+}
+
 fn structure_group_sql(level: &str, prefix: &str) -> String {
     match level {
         "package" => format!("{prefix}package"),
@@ -3875,6 +3896,83 @@ impl PgStore {
             .map_err(|e| format!("codemap_module_files: {e}"))
     }
 
+    /// Each module's functions and how many exceed cyclomatic 10, from local
+    /// qlty's last measurement (Code map, Complexity). A module none of whose
+    /// files were measured is absent — not zero.
+    pub async fn codemap_module_complexity(
+        &self,
+        workspace_id: &uuid::Uuid,
+    ) -> Result<std::collections::HashMap<String, (i64, i64)>, String> {
+        let ws_files = workspace_file_paths_cte();
+        let sql = format!(
+            "WITH {ws_files}
+             SELECT w.m, sum(c.functions)::bigint, sum(c.complex)::bigint
+               FROM ws_files w
+               JOIN sensei.file_complexity c ON c.repository_id = w.repository_id AND c.path = w.path
+              GROUP BY w.m"
+        );
+        let rows: Vec<(String, i64, i64)> = sqlx_core::query_as::query_as(&sql)
+            .bind(workspace_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_module_complexity: {e}"))?;
+        Ok(rows.into_iter().map(|(m, f, c)| (m, (f, c))).collect())
+    }
+
+    /// Replace a repository's measured complexity with one HEAD's measurement.
+    pub async fn replace_file_complexity(
+        &self,
+        repository_id: &uuid::Uuid,
+        sha: &str,
+        files: &std::collections::HashMap<String, crate::qlty::FileComplexity>,
+    ) -> Result<u64, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx_core::query::query("DELETE FROM sensei.file_complexity WHERE repository_id = $1")
+            .bind(repository_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("replace_file_complexity: clear: {e}"))?;
+        let (paths, functions, complex, max): (Vec<&str>, Vec<i32>, Vec<i32>, Vec<i32>) =
+            files.iter().fold((vec![], vec![], vec![], vec![]), |mut acc, (p, f)| {
+                acc.0.push(p.as_str());
+                acc.1.push(f.functions);
+                acc.2.push(f.complex);
+                acc.3.push(f.max_cyclo);
+                acc
+            });
+        let res = sqlx_core::query::query(
+            "INSERT INTO sensei.file_complexity (repository_id, path, functions, complex, max_cyclo, measured_sha)
+             SELECT $1, p, f, c, m, $6
+               FROM unnest($2::text[], $3::int[], $4::int[], $5::int[]) AS t(p, f, c, m)",
+        )
+        .bind(repository_id)
+        .bind(&paths)
+        .bind(&functions)
+        .bind(&complex)
+        .bind(&max)
+        .bind(sha)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("replace_file_complexity: insert: {e}"))?;
+        tx.commit().await.map_err(|e| format!("replace_file_complexity: commit: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
+    /// The HEAD a repository's complexity was last measured at, if ever.
+    pub async fn complexity_sha(
+        &self,
+        repository_id: &uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT measured_sha FROM sensei.file_complexity WHERE repository_id = $1 LIMIT 1",
+        )
+        .bind(repository_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("complexity_sha: {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
     /// Module pairs that changed in the same commits (Code map, Hidden coupling):
     /// `(a, b, together, a's changes, b's changes)` for pairs together at least
     /// `min_together` times, and how many commits touched the workspace's code.
@@ -3890,18 +3988,9 @@ impl PgStore {
         max_modules: i64,
         min_together: i64,
     ) -> Result<(Vec<(String, String, i64, i64, i64)>, i64), String> {
-        let module = structure_group_sql("module", "sg.");
+        let ws_files = workspace_file_paths_cte();
         let touched = format!(
-            "WITH ws_files AS (
-               SELECT DISTINCT {module} AS m, f.repository_id,
-                      CASE WHEN f.abs_path = root.abs_path THEN fi.file_path
-                           ELSE substr(f.abs_path, length(root.abs_path) + 2) || '/' || fi.file_path END AS path
-                 FROM sensei.structure_graph sg
-                 JOIN sensei.files fi ON fi.id = sg.file_id
-                 JOIN sensei.folders f ON f.id = fi.folder_id
-                 JOIN sensei.folders root ON root.repository_id = f.repository_id AND root.kind = 'git'
-                WHERE sg.workspace_id = $1 AND f.repository_id IS NOT NULL
-             ), touched AS (
+            "WITH {ws_files}, touched AS (
                SELECT DISTINCT cf.repository_id, cf.sha, w.m
                  FROM sensei.commit_files cf
                  JOIN ws_files w ON w.repository_id = cf.repository_id AND w.path = cf.path
