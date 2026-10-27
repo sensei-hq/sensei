@@ -1,29 +1,24 @@
 # Checkpoint — 2026-10-26
 
-**Slice:** the user's demo build (sensei + dōjō): libraries → instruments → diagrams, then a shared
-diagrams library for app and dōjō with the dōjō diagram sync, then the kanji/icons setting (#133).
+**Slice:** the user's demo build (sensei + dōjō): libraries → instruments → diagrams (Code map, M17), then
+the dōjō embed of the same Code map from a shared package; rokkit changes filed, built and released from
+rokkit when the canvas needs them (user, 2026-10-26).
 
-**v0.21.0** fully released: `deploy-dojo` and `deploy-worker` approved and green.
+**Done (develop, pushed, daemon installed locally):**
+- #341 libraries, #343 manual MCP registration, Instruments through the real servers — closed with evidence.
+- Code map backend: `/api/workspaces/{id}/diagrams/codemap?groupBy=layers|folders` (L0),
+  `/codemap/module?id=` (L1), `/codemap/file?id=` (L2); `analysis::codemap` is the pure core.
+  `module_of` splits container folders; reconciled live. `/workspaces/{id}/graph` repos=0 fixed.
 
-**Done today (develop, pushed; daemon installed locally from develop):**
-- #341 closed: libraries register from `sensei.library.json` in the real scan; dependencies are discovered
-  from their GitHub repository at the pinned ref (`discover_library`, new enum value, reconciled live).
-  Live: rokkit 15 packages / 95 pages / 5 skills / 3 agents, dbd 2/50/1/1, kavach 13/15/4/2. #342 filed
-  (site `.well-known` discovery).
-- Instruments: Playground = discovered servers, tools from each server, schema-built forms, Execute through
-  the server (`/api/instruments/mcp-servers/{id}/call`); `/api/mcp/tools` retired; MCP refuses a missing
-  required arg; Health no longer draws a server twice (that blanked the grid). `test:inspect -- libraries
-  instruments-store` green (3/3).
+**Next:** `packages/codemap` — CodeMapState (level, path/breadcrumb, groupBy, role filter, lens,
+selection), a data port the app and the dōjō each implement, the L0 band canvas, L1 role columns, L2
+symbol view, lenses (Structure, Cycles, Matrix from rokkit's DependencyMatrix, Zones from the existing
+endpoint), and a list mode under 640px. Wire into the app's workspace Diagrams (retire World/Atlas
+entries per M17), then the dōjō Code health tab (needs the graph synced to the dōjō).
 
-**Next:** Diagrams — the Code map per `docs/mockups/Sensei/docs/prd-drafts/M17-code-map.md`: L0 modules
-(≤ 60, group bands, "+N more", hub lane) → L1 files by role → L2 symbols; lenses on one canvas; what the
-daemon, indexer (`module_of`, file roles) and `@rokkit/graph` need. Start by measuring what the current
-Structure/World/Atlas views draw on sensei.
+**Open (the user's):** #133 — the dōjō default glyph mode (recommend kanji) and workspace glyphs in icon
+mode (recommend keep each workspace's inferred kanji).
 
-**Open (the user's):** #133's two decisions (dōjō default glyph mode; workspace glyphs in icon mode).
-
-**Known:**
-- Keychain tests (`gateway_keys`, `dojo_client::session` discard) fail on rebuilt test binaries: test-owned
-  items partitioned by an older cdhash (#282). Environmental, not code.
-- After a DDL change run `make test-template`; fmt + workspace clippy before every Rust commit.
-- Daemon reinstalls revoke keychain approval (once per identity).
+**Known:** Keychain tests (`dojo_client::session` discard, `gateway_keys`) fail on rebuilt test binaries
+(#282, environmental). After a DDL change run `make test-template`; reconcile live with dbd. fmt +
+workspace clippy before every Rust commit.

@@ -296,9 +296,19 @@ The settings screen lists them as repositories.
   Live: 56 sensei tools, `list_workspaces` through the server, 6 Health sources, `test:inspect` green. Left:
   the two zed context servers carry no command (extension-provided), and Health reads "not connected"
   for the seconds the inventory capture takes after a restart.
-- **Next (user's order): Diagrams** — the Code map per M17 (L0 modules ≤ 60 in bands → L1 files by role →
-  L2 symbols; lenses), then a shared diagrams library for app and dōjō, and the dōjō diagram sync; then the
-  kanji/icons setting (#133).
+- ~~#343~~ **closed 2026-10-26** (151cd001, 5770a91b, c680010d): register an MCP server by hand in the
+  Playground (family `manual`, kept by the discovery prune, removable here); the client now answers a
+  server's own requests mid-call (semgrep asked `roots/list` and every call hung 60s). Live: semgrep
+  registered by hand, 7 tools listed, removed; `get_supported_languages` answers in 9.5s.
+- **Diagrams — the Code map (M17; user: shared components and state in a new `packages/` package; file,
+  build and release rokkit changes as needed).** Step 1 (daemon) done: cb50502a `/workspaces/{id}/graph`
+  had `repos` 0 (filtered on a field the repo list never returns); ca7953e8 `analysis::codemap` +
+  `/diagrams/codemap` (L0: ≤ 60 blocks, "+N more" per group, hubs need share AND breadth, one band per
+  pair, layering direction), `/codemap/module` (L1: role columns from the path, ≤ 12 each) and
+  `/codemap/file` (L2: symbols, callers/callees ≤ 7); `module_of` splits container folders (lib, routes,
+  src, app, ddl) — sensei went from 145 modules (largest 458 files) to 325 (largest 199). Live: L0 60 of
+  325 modules, 154 bands for 6,186 edges, 1.6s uncached. Next: step 3, `packages/codemap` (state + canvas
+  + lenses + list mode) in the app, then the dōjō embed; rokkit issues as the canvas needs them.
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
   signing, notarization, and a first-start Permissions step. Needs the user's Apple Developer account.
