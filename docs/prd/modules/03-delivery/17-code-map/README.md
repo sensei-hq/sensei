@@ -29,11 +29,11 @@ not the call graph.
 > |---|---|
 > | L0 · L1 · L2 levels | **built** — `/workspace/[id]/diagrams/codemap` over `GET …/diagrams/codemap` (L0: ≤ 60 blocks, "+N more" per group, hub lane, one band per pair), `/codemap/module` (L1: role columns ≤ 12) and `/codemap/file` (L2: symbols, callers/callees ≤ 7); breadcrumb; list mode under 640px. Atlas and World are retired. |
 > | Structure | **built** on the canvas: group by Layers or Folders, bands coloured by the layering's direction (upward red, skip amber). The role bar on L0 blocks is not built (roles exist at L1). The older Structure and Layers diagrams remain beside it. |
-> | Wheel | **not built**. Communities grouping needs Fix 2 (M4). |
+> | Wheel | **built** as a lens: modules on a ring per group, bands bundled through group anchors. Grouping by Communities still needs Fix 2 (M4). |
 > | Zones | **built** as a lens over `GET …/diagrams/zones`. Illustrative until abstractness is defined per language (see Open gaps). |
 > | Dependency matrix | **built** as the Matrix lens over L0's bands, ordered by group so upward sits below the diagonal. |
 > | Cycles | **built** as a lens (only bands inside a cycle; members tinted), and still as `diagrams/cycles`. |
-> | Hidden coupling | **not built**. The commit facts exist (`sensei.commits`, `sensei.commit_files`, written by `ScanGitHistory`); co-change mining (M4) does not. |
+> | Hidden coupling | **built** — `GET …/diagrams/codemap/cochange` mines `commit_files` (5+ together, sweeps of 20+ modules left out), drops pairs with a static edge either way, ranks by how often the rarer changes with the other; drawn as dashed bands. |
 > | Complexity | **not built**. Per-function complexity is parsed into the indexer IR (`ir.rs`) but no table stores it. |
 > | File roles | **built at read time** — `analysis::codemap::file_role` (code · test · docs · config · generated, from the path); not stored. |
 
