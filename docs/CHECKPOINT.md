@@ -24,8 +24,8 @@ Replay's scrolling and an easier call history; Svelte components as search symbo
 
 **Supabase advisor (production dōjō):** fixed in DDL (0bbbc75c) — RLS on all 13 tables, search_path pinned,
 guarded by database/tests/dojo/advisor_guards.sql; reaches production with the next release's dōjō deploy.
-Open: the production project's API "Exposed schemas" may include `sensei` (repo: public, graphql_public, dojo)
-— the user checks the dashboard. The 47 SECURITY DEFINER warnings are the dōjō's caller-gated API + RLS
+Production's Data API exposed `sensei`, unlike the repo (public, graphql_public, dojo); the user removed it
+(2026-10-27) — no code reads sensei through the API. The 47 SECURITY DEFINER warnings are the dōjō's caller-gated API + RLS
 helpers (by design); a test that calls each as a non-member is the proposed hardening.
 
 **Known:** CI qlty workflows disabled (out of minutes; `gh workflow enable` restores). Long-lived Claude
