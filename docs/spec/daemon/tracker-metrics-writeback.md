@@ -105,34 +105,63 @@ never written, or that sync never writes):
 
 ### W2 · When, lock, deadline
 
-- `runtime::sync_stored`, the one path for the scheduled tick (`tracker_sync`, 1800 s),
-  "Sync now" and the first sync, calls `writeback::run(pg, rt, &row, adapter)` after the
-  sync returns `Ok`. Its outcome doesn't change `sync_stored`'s return value or the "Sync
-  now" response. The result is visible through `GET …/trackers` and the task reads (W8).
-  Discovery doesn't trigger it.
-- `run` takes `rt.locks.try_lock(tracker_id)`. If the lock is busy, it returns at once with
-  no request and no error. This guard is the sync's, re-taken after the sync dropped it, so
-  a manual sync can't run during a pass.
-- The whole pass runs under `WRITEBACK_DEADLINE = 5 min`, including every 429 sleep.
-  Writes use `WRITE_RETRIES = 3`, the same budget as `SYNC_RETRIES`. When the deadline is
-  hit, tasks not yet written keep their state.
-- Discovery takes the same guard, so it is also locked out during a pass. A discovery
-  that finds the guard busy returns `Busy`, as it does today against a sync.
-- **The pass's own credential.** `run` builds its write transport with
-  `rt.transports.write_transport(...)`. If the keyring read fails (`TokenMissing`,
-  `CredentialStore`), it sets `trackers.writeback_error` to that code and returns, with
-  no task status written. A pass that gets a transport clears `writeback_error` first.
-  This is the only place `writeback_error` is written, and `last_error` is never touched.
-- **Before every task's write**, one read (`writeback_target(task_id)`) re-checks four things:
+- **Spawned, not awaited.** `runtime::sync_stored` is the one path for the scheduled tick
+  (`tracker_sync`, 1800 s), "Sync now" and the first sync. After its sync returns `Ok`, it
+  calls `writeback::spawn_after_sync(pg, rt, tracker_id, adapter)`, which:
+  - takes `rt.locks.try_lock(tracker_id)` synchronously (busy → no pass this round, no error)
+  - `tokio::spawn`s the pass with the owned guard moved into it, and returns at once.
+
+  So `sync_stored`, the "Sync now" response and the tick never wait for a pass. The tick's
+  next tracker starts immediately (C40). A second "Sync now" during a pass gets 409 `busy`,
+  because the guard is held. Discovery during a pass gets `Busy`, as it does against a sync.
+  Discovery doesn't trigger a pass. The outcome is visible only through `GET …/trackers` and
+  the task reads (W8).
+- **`writeback::run(pg, rt, tracker_id, adapter, guard)`** is the pass itself; tests call it
+  directly. It re-reads the tracker row **at pass start** for `owner_ref`,
+  `writeback_enabled` and `secret_service`. The sync may have just backfilled the owner
+  (W1), and the row `sync_stored` was given predates that. It skips with no request when
+  the tracker is gone, `writeback_enabled = false`, or `owner_ref IS NULL`.
+- **Credential, once.** The pass reads the token once (bounded by `KEYRING_TIMEOUT`, as
+  `transport_for` does). It builds both transports from it:
+  - a GET transport, `SYNC_RETRIES`, for `find_comment` and `issue_exists`
+  - a write transport, `WRITE_RETRIES = 3`
+
+  If the read or either build fails, it sets `writeback_error` to the code and ends.
+- **Every pass write is bound to the pass's token.** Each statement the pass makes carries
+  `AND secret_service = $pass_service` on the tracker, through a join for task rows. That
+  covers recording a write, recording a status, and setting or clearing `writeback_error`.
+  A statement that touches 0 rows means a re-connect or re-key happened, so the pass ends
+  **superseded** and writes nothing more (C22). So a write in flight during a re-connect can
+  never land the old owner's comment id, hash or status on the reset row.
+- **Deadline.** The whole pass runs under `WRITEBACK_DEADLINE = 5 min`, including every 429
+  sleep. When it fires:
+  - the task in flight is recorded `error` (its request may or may not have reached Jira;
+    the next pass's `find_comment` adopts a comment that did land)
+  - tasks not yet started keep their status
+  - the pass sets `writeback_error = 'transport'`
+- **Fair order.** Candidates are processed oldest `writeback_at` first, never-written
+  (NULL) first, then by task id. A pass cut short therefore resumes with the tickets it
+  skipped.
+- **Pass-level failure channel: `trackers.writeback_error`** (`tracker_error` codes). It is
+  set when the pass can't run or ends early:
+  - `token_missing` / `credential_store`: the credential
+  - `db`: any pass read, or a record after a 2xx fails. The pass stops at the first record
+    failure, so a write that landed but couldn't be recorded is never re-sent across the
+    rest of the pass.
+  - `rate_limited`: five consecutive `rate_limited` tasks
+  - `transport`: the deadline
+
+  A pass that gets both transports clears it first, under the token condition. It is the
+  only writer of `writeback_error`, and `last_error` is never touched.
+- **Before every task's write**, one read (`writeback_target(task_id, pass_service)`)
+  re-checks four things:
   - the tracker still exists
   - `writeback_enabled` is true
-  - `secret_service` is unchanged since the pass started
+  - `secret_service` is unchanged
   - the task is still `assigned_to_me`
-  
+
   If any fails, the pass stops (tracker gone, disabled, re-keyed) or skips the task
   (reassigned). A switch-off or disconnect therefore takes effect before the next request.
-- The pass is skipped entirely, with no request, when `writeback_enabled = false` or
-  `owner_ref IS NULL`.
 
 ### W3 · What (the metrics)
 
@@ -157,8 +186,15 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
 | `metered_cost` | `metered_cost`, in the source's own currency units, with no currency named (`sessions.metered_cost` comment) | decimal |
 | `api_cost` | `api_cost`, US dollars (`model_prices`) | decimal |
 
-- **Decimals** are rounded to 2 dp with `f64::round` (half away from zero) on
-  `x * 100.0`. The **canonical value** is the string `format!("{:.2}", rounded)`.
+- **Decimals** are rounded to 2 dp, half away from zero, with the division last, so an
+  exact half stays exact (C41):
+  - hours: `(secs * 100.0 / 3600.0).round() / 100.0`, so 3618 s gives `1.01` and 522 s
+    gives `0.15`
+  - costs: `(x * 100.0).round() / 100.0`
+  - `-0.0` is normalised to `0.0`. A negative span (`cycle_hours` when `last_at < first_at`,
+    or any negative duration sum) is **null**: hours elapsed are never negative.
+
+  The **canonical value** is the string `format!("{:.2}", rounded)`.
   **Integers** are written as JSON integers, with the canonical value `i64::to_string`.
   Both the hash and the request body use the canonical value (a field body parses the
   decimal string back into a JSON number).
@@ -174,7 +210,9 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   The second case is a ticket that has lost all its sessions, for example its repo left
   the workspace. It is written as `sessions = 0` with every other metric null, so the
   ticket stops showing stale figures. The usage comes from one
-  `ticket_usages(pg, tracker_id, Some(&ids))` call per pass.
+  `ticket_usages(pg, tracker_id, Some(&ids))` call per pass. A candidate **absent from
+  that map** has no candidate sessions, the genuinely empty set, so it takes
+  `Usage::default()` (`sessions = 0`, every value `None`), as `backlog_usage` does (C42).
 - **Sticky statuses are skipped.** A candidate is skipped while its `writeback_status` is
   `forbidden`, `not_found` or `field_invalid`, or `comment_removed` on the comment surface
   only. Those clear as W9 says. `rate_limited` and `error` retry on the next pass.
@@ -191,6 +229,7 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
 - After a write succeeds, `writeback_hash`, `writeback_at = now()` and
   `writeback_status = 'ok'` are set in one statement. After a failure, only
   `writeback_status` is set, so the hash stays as it was and a transient failure retries.
+  Both are bound to the pass's token (W2).
 
 ### W5 · Surface: comment (no mappings)
 
@@ -199,10 +238,16 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   into the provider's format. For Jira that is an ADF `doc` with one `paragraph` (the title
   in `strong`) and one `bulletList` with a `listItem` per line. Every string goes in as a
   `text` node through `serde_json`, never by interpolation.
-- **Golden example.** 3 sessions; active 7380 s over 3 sessions, split Claude 4680 s and
-  you 2700 s; wall 14400 s; first-to-last 2 days; tokens fresh 120000, cache read
-  900000, cache write 30000, out 45000, reasoning null; metered null; API 4.317 with
-  `api_cost_n = 3` and `api_cost_partial = 1`; `shared = 1`. It renders exactly:
+- **Golden example 1.** `sessions = 3`, `shared = 1`:
+  - active 7380 s, `active_n = 3`, split Claude 4680 s (`claude_n = 3`) and you 2700 s
+    (`user_n = 3`)
+  - wall 14400 s, `wall_n = 3`
+  - first-to-last 2 days
+  - tokens fresh 120000, cache read 900000, cache write 30000, out 45000, each with `_n = 3`
+  - reasoning `None` (`_n = 0`), metered `None` (`_n = 0`)
+  - API 4.317, `api_cost_n = 3`, `api_cost_partial = 1`
+
+  It renders exactly:
   ```
   Sensei · AI usage from the assignee's sessions (updated 2026-10-26 14:30 UTC)
   Sessions: 3 (1 shared with other tickets)
@@ -212,12 +257,35 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   Tokens: fresh 120000 · cache read 900000 · cache write 30000 · out 45000 · reasoning —
   Cost: metered — · API $4.32 (partly priced for 1 session)
   ```
+- **Golden example 2** (the coverage marks). `sessions = 3`, `shared = 0`:
+  - active 7380 s (`_n = 3`), Claude 4680 s (`claude_n = 2`), you 2700 s (`user_n = 3`)
+  - wall 14400 s, `wall_n = 1`
+  - first-to-last 2 days
+  - tokens fresh 120000 (`_n = 3`), cache read 900000 (`_n = 2`), cache write `None`,
+    out 45000 (`_n = 3`), reasoning `None`
+  - metered 1.5 (`_n = 1`)
+  - API 30.0, `api_cost_n = 2`, `api_cost_partial = 2`
+
+  It renders exactly:
+  ```
+  Sessions: 3
+  Active time: 2.05 h (Claude 1.30 h [2 of 3 sessions], you 0.75 h)
+  Wall-clock time: 4.00 h [1 of 3 sessions]
+  Cycle time: 48.00 h
+  Tokens: fresh 120000 · cache read 900000 [2 of 3 sessions] · cache write — · out 45000 · reasoning —
+  Cost: metered 1.50 [1 of 3 sessions] · API $30.00 [2 of 3 sessions] (partly priced for 2 sessions)
+  ```
+  (The title line is as in example 1.)
+
   The rules:
-  - A null value is `—`.
-  - A value whose `_n` satisfies `0 < _n < sessions` is followed by ` (N of M sessions)`,
-    attached to that value, not to the line.
-  - ` (N shared with other tickets)` appears when `shared > 0`.
-  - The `partly priced` note appears when `api_cost_partial > 0`.
+  - A null value is `—`, with no mark or note after it.
+  - A value whose `_n` satisfies `0 < _n < sessions` is followed by ` [N of M sessions]`
+    (square brackets, so it never nests inside the active line's parentheses), right after
+    that value.
+  - ` (N shared with other tickets)` follows the session count when `shared > 0`.
+  - The ` (partly priced for N session|sessions)` note follows the API value, after any
+    coverage mark, when `api_cost_partial > 0` **and** `api_cost` is a value. An unpriced
+    `API —` carries no note. "session" is used for N = 1, "sessions" otherwise.
   - Only `api_cost` carries `$`.
   - Numbers have no thousands separator.
   - No summary, prompt, branch, repo, session id or person name ever appears.
@@ -298,17 +366,23 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   tracker's tasks, and with `comment_removed` it also sets `writeback_comment_ref = NULL`
   and `writeback_hash = NULL`. The next pass therefore posts a new comment.
 - `GET …/trackers`: each tracker gains
-  `"writeback": {"enabled", "state", "surface": "comment"|"fields", "mapped": <rows>, "assigned": <live tasks with assigned_to_me>, "failing": <tasks in a non-ok status>, "error": <writeback_error|null>}`.
+  `"writeback": {"enabled", "state", "surface": "comment"|"fields", "mapped": <rows>, "assigned": <n>, "failing": <n>, "error": <code|null>}`:
+  - `assigned`: live tasks (`removed_at IS NULL`) with `assigned_to_me = true`
+  - `failing`: the subset of `assigned` whose `writeback_status` is set and isn't `ok`.
+    Never-written (NULL) and reassigned or removed tickets don't count, so
+    `failing ≤ assigned`.
+
+  Both come from one `PgStore::writeback_counts(tracker_id) -> (assigned, failing)`.
   `state` is the first of these that applies:
   1. `disabled`
-  2. `credential_failed` (`writeback_error` not NULL)
+  2. `pass_failed` (`writeback_error` not NULL)
   3. `owner_not_a_person` (`owner_state = not_a_person`)
   4. `owner_lookup_failed` (`owner_ref` NULL and `owner_error` not NULL; `error` carries the code)
   5. `owner_unknown` (`owner_ref` NULL otherwise)
   6. `nothing_assigned` (`assigned = 0`)
   7. `active`
   
-  `error` is `writeback_error` when the state is `credential_failed`, `owner_error` when
+  `error` is `writeback_error` when the state is `pass_failed`, `owner_error` when
   it's `owner_lookup_failed`, and otherwise `null`.
 - `GET …/tasks` and `GET …/tracker-tasks/{key}`: each task gains `assigned_to_me`,
   `writeback_status`, `writeback_at`.
@@ -329,15 +403,20 @@ The mapping covers every `TrackerError` and every operation:
 | `Forbidden` (403), `Unauthorized` (401) on any write | `forbidden` | toggle on, re-connect |
 | `BadRequest` (400) on a field write | `field_invalid` | mapping PUT, toggle on, re-connect |
 | `NotFound` on a field write or a comment create; the W5 404 check | `not_found` | toggle on, re-connect |
+| on the W5 comment-list read (`find_comment`): `Unauthorized`/`Forbidden` → `forbidden`, `NotFound` → `not_found`, any other → `error` | as named | as named |
 | the W5 404 check finds the issue | `comment_removed` | toggle on, re-connect (both clear the ref) |
 | `RateLimited` after `WRITE_RETRIES` | `rate_limited` | not sticky |
-| `BadRequest` on a comment write, `HttpError`, `Transport`, `Decode`, `Redirect`, `Db`, deadline, an id failing W10's shape check | `error` | not sticky |
-| `TokenMissing`, `CredentialStore` (no write transport) | no task status; `trackers.writeback_error` = the code (W2) | cleared by the next pass that gets a transport |
+| `BadRequest` on a comment write, `HttpError`, `Transport`, `Decode`, `Redirect`, the task in flight at the deadline, an id failing W10's shape check | `error` | not sticky |
+| a pass-level failure: credential, a failed read or record (`Db`), five `rate_limited` in a row, the deadline | no extra task status; `trackers.writeback_error` = the code (W2) | cleared by the next pass that gets both transports |
+
+`status_for(op, TrackerError) -> WritebackStatus` is total. `op` is one of `FindComment`,
+`CreateComment`, `UpdateComment`, `IssueCheck` or `WriteFields`, and its test iterates every
+`op` × `TrackerError::ALL` with no wildcard arm.
 
 - A write failure **never** writes `trackers.last_error` or changes the sync's result. The
   success apply clears `last_error` before the pass runs (C17). One task's failure doesn't
   stop the others.
-- Five consecutive `rate_limited` results end the pass.
+- Five consecutive `rate_limited` results end the pass (W2: `writeback_error = 'rate_limited'`).
 - No response body, URL or account id is stored or logged. A log line carries only
   `tracker_id`, `task_id` and the status code.
 
@@ -356,7 +435,8 @@ pub enum WriteMethod { Post, Put }
 }
 ```
 
-- `PolicyTransport<R>` implements `WriteTransport` for `R: RawWrite`. The 429 loop
+- `PolicyTransport<R>` loses its `R: RawGet` struct bound. The bound moves onto the impls,
+  so a write-only `RawWrite` fits (C43). It implements `WriteTransport` for `R: RawWrite`. The 429 loop
   is **one** generic function used by both the GET and the write impls, not a copy. It
   takes the response mapper as a parameter.
   - GET keeps `map_response` unchanged: an empty 2xx is still `Decode` (C10).
@@ -370,8 +450,11 @@ pub enum WriteMethod { Post, Put }
   so no new host is possible.
 - `TransportFactory` gains
   `write_transport(base_url, auth, retries) -> Result<Arc<dyn WriteTransport>, TrackerError>`,
-  and `FakeFactory` gains a recording fake. `write_transport(` is called **only** from
-  `tracker/writeback.rs`.
+  and `FakeFactory` gains a recording fake. That fake is a `RawWrite` with scripted
+  responses and a call log, wrapped in the real `PolicyTransport` with the `retries` it is
+  given, so the 429 loop and `Retry-After` are exercised and `WRITE_RETRIES` is asserted.
+  `MemoryStore` gains a per-call `get` failure injection (gate 22a). `write_transport(` is
+  called **only** from `tracker/writeback.rs`.
 - `TrackerAdapter` gains these methods. `t` is `&dyn GetTransport` and `w` is
   `&dyn WriteTransport`:
   - `owner(t) -> Result<OwnerLookup, TrackerError>`
@@ -388,6 +471,8 @@ pub enum WriteMethod { Post, Put }
   `task_ext_id` and `comment_ref` against the adapter's id shape (Jira: `^[0-9]{1,18}$`)
   and every `field_ref` against `field_ref_shape`. Anything that fails returns
   `BadRequest`, mapped to `error`, without sending a request.
+- `TrackerRow.owner_ref` becomes `Option<AccountRef>`, so a `{:?}` of the row the pass
+  carries can't print the owner's id (gate 5).
 - `tracker/writeback.rs` holds the pass, the payload, the hash, `render` and the status
   mapping, and knows nothing about Jira. Its SQL lives in `db::pg_store`, in `trackers.rs`
   for tracker and task state and in `tracker_usage.rs` for usage reads.
@@ -437,7 +522,11 @@ pub enum WriteMethod { Post, Put }
     - `active`: "Writing to N tickets assigned to you." N is `writeback.assigned`. With
       `failing > 0` it adds " K couldn't be written."
     - `disabled`: "Write-back is off."
-    - `credential_failed`: "Couldn't read the Jira token to write back. Replace the token."
+    - `pass_failed`, by `error` code:
+      - `token_missing` / `credential_store`: "Couldn't read the Jira token to write back. Replace the token."
+      - `db`: "Couldn't record what was written. Write-back retries on each sync."
+      - `rate_limited`: "Jira is rate-limiting writes. Write-back resumes on the next sync."
+      - `transport`: "Writing didn't finish in time. Write-back resumes on the next sync."
     - `owner_not_a_person`: "This token belongs to an app account, so sensei can't tell
       which tickets are yours. Nothing is written."
     - `owner_lookup_failed`: "Couldn't check which tickets are yours: <error text>.
@@ -466,7 +555,7 @@ pub enum WriteMethod { Post, Put }
 - **App wrappers** go on `senseiApi` in `app/src/lib/api.ts`, beside `tryListTrackers`
   and the others, following their `try*` convention (C29): `trySetTrackerWriteback`,
   `tryGetTrackerFields`, `tryPutTrackerFields`. They're tested in
-  `app/src/lib/api-trackers.spec.ts`. The W7/W8 codes and `credential_failed` are added to
+  `app/src/lib/api-trackers.spec.ts`. The W7/W8 codes and the `pass_failed` texts are added to
   `tracker-errors.ts`.
 - **Disconnect copy** stays "Jira itself is not changed." It's still true: disconnect never
   deletes what was written.
@@ -576,9 +665,13 @@ and the test DB unless marked *(tenant)*.
    reassign AUTH-1 to `zz-sentinel-b2` and sync: the next pass sends 0 requests.
 5. **No identity stored or logged**: after gate 4, no row in any `sensei` table contains
    `zz-sentinel-b2` (`pg_dump --data-only -n sensei | grep -c zz-sentinel-b2` → 0). `format!("{:?}", task_row)` and
-   `format!("{:?}", validated)` contain neither `A1` nor `zz-sentinel-b2`.
-6. **Comment golden**: `render` of the W5 golden `Usage` equals the seven golden lines
-   exactly (unit test).
+   `format!("{:?}", validated)` contain neither `A1` nor `zz-sentinel-b2`. *(F2)* Neither
+   does `format!("{:?}", tracker_row)`.
+6. **Comment golden**: `render` of each W5 golden `Usage` equals its lines exactly (unit
+   tests). Unit tests also cover:
+   - `canonical` for 3618 s → `1.01`, 522 s → `0.15`
+   - a negative cycle → `—`
+   - `-0.0` → `0.00`
 7. **Comment lifecycle**:
    - The first pass makes 1 comment-list GET, then 1 POST with an ADF body whose text nodes
      are the rendered lines, and stores the id.
@@ -587,13 +680,14 @@ and the test DB unless marked *(tenant)*.
 8. **Adopt, no duplicate**: if the list GET returns a comment by `A1` starting with
    `Sensei · AI usage`, the pass PUTs to that comment, doesn't POST, and stores its id.
 9. **Null is not 0**: metered and API cost both `None` → `Cost: metered — · API —`. A
-   session whose only messages are unpriced (`api_cost_n = 1`, `api_cost = None`) gives
-   `API —`. On a mapped field the body has `null`.
+   session whose only messages are unpriced (`api_cost_n = 1`, `api_cost = None`,
+   `api_cost_partial = 1`) gives exactly `Cost: metered — · API —`, with no note.
+   *(F4)* On a mapped field the body has `null`.
 10. **Change detection**: two `Usage`s differing only in `tokens_reasoning_n` (2 vs 3, same
     sum) give different comment hashes. With only `metered_cost` mapped, adding a cost-less
     session sends 0 requests.
 11. **Lost sessions**: after the only repo leaves the workspace, the next pass sends 1
-    write with `Sessions: 0` and every other value `—`, or `null` in mapped fields.
+    write with `Sessions: 0` and every other value `—`. *(F4)* On mapped fields, `null`.
 12. **Comment removed**:
     - A 404 on the comment PUT, then a 2xx on the issue check → `comment_removed`, and the
       next pass sends 0 requests for that task.
@@ -608,8 +702,9 @@ and the test DB unless marked *(tenant)*.
     - `rg -n 'WriteMethod|WriteTransport|write_transport' crates/senseid/src/tracker/{sync,discover,connect}.rs crates/senseid/src/api`
       → no output. These are forbidden where they mustn't appear; tests elsewhere may
       use them freely.
-14. **Isolation from Jira wording**: `rg -n -i 'jira|atlassian' crates/senseid/src/tracker/writeback.rs`
-    outside `#[cfg(test)]` → no output.
+14. **Isolation from Jira wording**:
+    `sed '/#\[cfg(test)\]/q' crates/senseid/src/tracker/writeback.rs | rg -n -i 'jira|atlassian'`
+    → no output. The pass's tests may use `JiraAdapter`.
 15. **Fields path**: with `active_hours → customfield_10050`, a pass sends exactly
     `PUT /rest/api/3/issue/{id}` with body `{"fields":{"customfield_10050":2.05}}` for the
     golden usage, and no comment request.
@@ -620,26 +715,50 @@ and the test DB unless marked *(tenant)*.
     - A field with values on the board → `field_in_use`, and re-PUTting an already-mapped
       field doesn't make that check.
     - Success → 200, every task's hash NULL, and `field_invalid` cleared.
-17. **Status table**: the fake returns each W9 outcome in turn: 401, 403, 400 on a field,
-    400 on a comment, 404 on field/create, 429×4, 500, a 302 and a malformed id. Each yields
-    the W9 status. Sticky ones send 0 requests on the next pass, and transient ones retry.
-    Five 429 tasks in a row end the pass.
+17. **Status table**:
+    - Unit: `status_for` over every `op` × `TrackerError::ALL`.
+    - Pass, comment rows *(F2)*, fake returns each in turn:
+      - 401, 403, 400 on a comment, 404 on create, 500, a 302, a malformed id
+      - 429×4, which is exactly 4 raw sends, sleeping `Retry-After`, with `WRITE_RETRIES`
+      - a 403 / 404 on the comment-list read
+
+      Each yields the W9 status. Sticky ones send 0 requests on the next pass; transient
+      ones retry. Five 429 tasks in a row end the pass with `writeback_error = 'rate_limited'`.
+    - *(F4)* The field rows (400 on a field, 404 on a field write).
 18. **Isolation from the sync**: a 403 on a write leaves `trackers.last_error` NULL and the
     sync `Ok`. That task is `forbidden` and the others are written.
 19. **Redirect**: a 307 on a write is `error` with exactly 1 request to the base URL, and no
     request elsewhere (the `ReqwestRaw` test server records it).
-20. **Mid-pass switch-off**: PATCH `writeback_enabled:false` after task 1 of 3 is written →
-    tasks 2 and 3 get 0 requests. A disconnect mid-pass → 0 further requests.
-21. **Lock and deadline**: a pass while a sync holds the guard → 0 requests and no error.
-    A pass whose fake sleeps past `WRITEBACK_DEADLINE` stops, and unwritten tasks keep
-    their prior status.
+20. **Mid-pass switch-off**: `writeback_enabled` set false after task 1 of 3 is written
+    (F2 sets the column directly; F3 repeats it through PATCH) → tasks 2 and 3 get 0
+    requests. A disconnect mid-pass → 0 further requests.
+20a. **Re-connect mid-write**: a hook on the fake's POST re-connects the board with a new
+    token. Afterwards the task's `writeback_comment_ref`, hash and status are all NULL, and
+    `writeback_error` is NULL. The pass recorded nothing and ended superseded.
+20b. **Record failure**: with the record refused (a trigger in the test's database) and 2
+    candidates, the pass sends exactly 1 write. `writeback_error = 'db'` is set if the
+    database allows, and `writeback.state = pass_failed`.
+20c. **Spawned**: `sync_stored`, with a write fake that sleeps 4 min (paused clock), returns
+    in under 1 s of virtual time, and a second sync of the same tracker during the pass is
+    `Busy`. A two-tracker `tick_scoped` starts the second tracker's fetch without waiting
+    for the first pass.
+20d. **Backfilled owner writes in the same sync**: a tracker with no owner whose `/myself`
+    gives `A1`, with AUTH-1 assigned to A1 → one `sync_stored` leads to exactly 1 comment POST.
+21. **Lock, deadline and order**:
+    - A pass while a sync holds the guard → 0 requests and no error.
+    - A pass whose fake sleeps past `WRITEBACK_DEADLINE` on task 1 of 3: task 1 `error`;
+      tasks 2 and 3 keep their prior status; `writeback_error = 'transport'`.
+    - The next pass starts with task 2 or 3, oldest `writeback_at` first.
+21a. **Counts**: with A `ok` + assigned, B NULL + assigned, C `forbidden` + reassigned, and
+    D `error` + assigned + removed → `assigned = 2`, `failing = 0`. Set A to `error` →
+    `failing = 1`.
 22. **Re-connect and re-key**: for both a re-connect and a **new** board on a site with an
     existing sibling board, the connected and sibling rows have
     `owner_ref`/`owner_state`/`writeback_error` reset as W11 says, and each of their tasks'
     `writeback_comment_ref`, hash, status and `assigned_to_me` are NULL.
-22a. **Pass credential**: a keyring failure when building the write transport → no
-    request, `writeback_error = credential_store`, `writeback.state = credential_failed`,
-    and `last_error` still NULL. The next pass that gets a transport clears it.
+22a. **Pass credential**: `MemoryStore` fails only the pass's `get` → no request,
+    `writeback_error = credential_store`, `writeback.state = pass_failed`, and `last_error`
+    still NULL. The next pass that gets both transports clears it.
 22b. **GET unchanged**: an empty 200 on a GET is still `Decode` (the existing transport
     test is extended), and an empty 204 on a write is `Ok(Value::Null)`.
 23. **Toggle and PATCH**: `{writeback_enabled:false}` → 200 and the next sync sends 0
@@ -741,6 +860,12 @@ The rows marked *(rewrite)* were added by the rewrite and verified in a second p
 | C37 *(build F1)* | `until` is computed after `mark_tracker_attempt`, so a step-1 call made before it isn't covered by `SYNC_DEADLINE`; the 429 loop sleeps up to `MAX_RETRY_AFTER` = 60 s per retry with `SYNC_RETRIES` = 3 | sync.rs:103-111; transport.rs 429 loop; http.rs; runtime.rs:15 | as stated | CONFIRMED *(found by the F1 failure-mode pre-audit; W1 now starts the deadline first)* |
 | C38 *(build F1)* | `TrackerTuple` has 14 fields; sqlx-core 0.8.6 implements `FromRow` for tuples up to 16 | trackers.rs:130-145; sqlx-core-0.8.6 `from_row.rs` | as stated | CONFIRMED *(W11 switches `TrackerRow` to a derived struct)* |
 | C39 *(build F1)* | `FakeBoard::get_json` ignores the `fields` query; `FakeBoard::standard`'s `/myself` has no `accountType` | tracker/mod.rs:519, 540-573 | as stated | CONFIRMED *(gate 4's fake now honours `fields`; the standard fixture gains `accountType`)* |
+| C40 *(build F2)* | `tracker_sync` loops trackers sequentially and "Sync now" awaits `sync_current` inline, so a pass awaited inside `sync_stored` would delay both | tracker_sync.rs:49-50; api/handlers/trackers.rs:211, 279 | as stated | CONFIRMED *(F2 pre-audit; W2 now spawns the pass)* |
+| C41 *(build F2)* | `(x*100.0).round()` rounds exact decimal halves of an hour down (e.g. 3618 s gives 1.00); `secs*100.0/3600.0` keeps them exact | scratch Rust run (F2 pre-audit): 135 of 2000 half-hundredth durations differ | as stated | CONFIRMED *(W3 now divides last)* |
+| C42 *(build F2)* | `ticket_usages` has no entry for a task with no sessions; `backlog_usage` uses `unwrap_or_default()` for the genuinely empty set | usage.rs:228-229, 560 | as stated | CONFIRMED *(W4 maps absent to `Usage::default()`)* |
+| C43 *(build F2)* | `PolicyTransport` is declared `struct PolicyTransport<R: RawGet>` with `impl<R: RawGet>` | transport.rs:25, 30 | as stated | CONFIRMED *(W10 moves the bound to the impls)* |
+| C44 *(build F2)* | `MemoryStore::get` can only fail with `TokenMissing`; it has no get-failure injection | secret.rs:124-131 | as stated | CONFIRMED *(W10 adds one)* |
+| C45 *(build F2)* | No `PgStore` method counts a tracker's assigned or failing tasks (`tracker_counts` returns tasks and sprints) | pg_store/trackers.rs `tracker_counts` | as stated | CONFIRMED *(W8 adds `writeback_counts`)* |
 
 ## Related
 

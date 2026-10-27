@@ -119,12 +119,17 @@ tree moves. Any `FALSE` stops the build.
   - **12:** comment removed vs not found
   - **13:** GET-only commands
   - **14:** no Jira wording in `writeback.rs`
-  - **17:** the full W9 status table
+  - **17** (comment rows and the `status_for` unit table)
   - **18:** write failure never touches `last_error`
   - **19:** 307 is not followed
-  - **20:** switch-off and disconnect mid-pass
   - **21:** lock and deadline
-  - **22a:** pass credential → `credential_failed`
+  - **22a:** pass credential → `pass_failed`
+  - **20 (column set directly), 20a–20d, 21a:** switch-off, re-connect mid-write, record
+    failure, spawned pass, backfilled owner, counts
+  - **1** (write-back half): `tracker_writeback_status` = `ALL`, `writeback_enabled` defaults
+    to true, the write-back columns
+  - **5** (F2 half): `{:?}` of `TrackerRow`
+  - **9, 11** (comment half)
   - **2** (state half): `owner_not_a_person`, `owner_unknown`, `owner_lookup_failed`
   - **22** (write-back half): re-connect and new-sibling reset of the `writeback_*` columns
   - **22b:** GET empty-200 still `Decode`
@@ -155,7 +160,7 @@ tree moves. Any `FALSE` stops the build.
   - API: `PATCH /api/workspaces/{id}/trackers/{tracker}` inside `tracker_routes()`
   - app:
     - `senseiApi.trySetTrackerWriteback`
-    - `tracker-errors.ts` codes and `credential_failed`
+    - `tracker-errors.ts` codes and the `pass_failed` texts
     - the Integrations card toggle (`data-action="writeback"`) and state line
       (`data-writeback-state`)
     - the new Integrations and Tickets sub-lines
