@@ -55,6 +55,9 @@ export interface PersonaListDeps {
   /** `POST /api/auth/keychain/approve` (#283). Resolves `null` when approved,
    *  otherwise why not. */
   approveKeychain: (persona: string) => Promise<string | null>;
+  /** `POST /api/auth/personas/{label}/default` — Make default. Resolves `null`
+   *  when done, otherwise why not. */
+  makeDefault: (label: string) => Promise<string | null>;
 }
 
 /** How often, and how many times, the list is re-read while a sign-in is open. */
@@ -251,6 +254,23 @@ export class PersonaList {
     }
   }
 
+  /** Make this identity the default (user, 2026-10-27), then re-read the list
+   *  — the daemon decides which identity is the default, and says so. */
+  async makeDefault(p: PersonaWire): Promise<void> {
+    if (this.#busy.has(p.label)) return;
+    this.#busy = new Set(this.#busy).add(p.label);
+    try {
+      this.error = await this.#deps
+        .makeDefault(p.label)
+        .catch((e) => (e instanceof Error ? e.message : `could not make ${p.label} the default`));
+    } finally {
+      const next = new Set(this.#busy);
+      next.delete(p.label);
+      this.#busy = next;
+    }
+    if (!this.error) await this.load();
+  }
+
   /**
    * Start a sign-in for one persona, in the system browser (#300).
    *
@@ -314,6 +334,14 @@ export const personaList = new PersonaList({
     const res = await senseiApi(appState.port).tryApproveKeychain(persona);
     if (!res.ok) return res.error.message || 'the daemon did not answer';
     return res.data.ok ? null : (res.data.error ?? 'keychain access was not approved');
+  },
+  makeDefault: async (label) => {
+    const [{ senseiApi }, { appState }] = await Promise.all([
+      import('./api.js'),
+      import('./appstate.svelte.js')
+    ]);
+    const res = await senseiApi(appState.port).tryMakeDefaultPersona(label);
+    return res.ok ? null : res.error.message || 'the daemon did not answer';
   },
   openAuth: async (url) => {
     // The system browser, for every sign-in (#300): it holds the user's GitHub

@@ -47,7 +47,8 @@ function harness(
     approveKeychain,
     openAuth: vi.fn(async (u: string) => {
       opened.push(u);
-    })
+    }),
+    makeDefault: vi.fn(async () => null)
   });
   return { list, opened, startSignIn, approveKeychain };
 }
@@ -144,7 +145,8 @@ describe('PersonaList.signIn', () => {
       fetchPersonas: vi.fn(async () => payload as never),
       startSignIn: vi.fn(async () => 'https://github.test/authorize'),
       approveKeychain: vi.fn(async () => null),
-      openAuth: vi.fn(async () => {})
+      openAuth: vi.fn(async () => {}),
+      makeDefault: vi.fn(async () => null),
     });
     await list.load();
     await list.signIn(list.personas[0]);
@@ -166,7 +168,8 @@ describe('PersonaList.signIn', () => {
         fetchPersonas,
         startSignIn: vi.fn(async () => 'https://github.test/authorize'),
         approveKeychain: vi.fn(async () => null),
-        openAuth: vi.fn(async () => {})
+        openAuth: vi.fn(async () => {}),
+        makeDefault: vi.fn(async () => null),
       });
       await list.load();
       await list.signIn(list.personas[0]);
@@ -234,7 +237,8 @@ describe('PersonaList.signIn', () => {
         return 'https://github.test/a';
       },
       approveKeychain: async () => null,
-      openAuth: async () => {}
+      openAuth: async () => {},
+      makeDefault: vi.fn(async () => null),
     });
     await slow.load();
     const p = slow.signIn(slow.personas[0]);
@@ -394,5 +398,44 @@ describe('PersonaList approve', () => {
     await list.act(list.personas[0]);
     expect(startSignIn).toHaveBeenCalled();
     expect(approveKeychain).not.toHaveBeenCalled();
+  });
+});
+
+describe('PersonaList.makeDefault', () => {
+  // The user (2026-10-27): one identity is tagged default; another becomes it
+  // with Make default. The daemon decides; the list re-reads what it decided.
+  it('asks the daemon to make the identity the default, then re-reads the list', async () => {
+    const made: string[] = [];
+    let payload: unknown = { ...LIST, default: 'devuser' };
+    const fetchPersonas = vi.fn(async () => payload as never);
+    const list = new PersonaList({
+      fetchPersonas,
+      startSignIn: vi.fn(async () => null),
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async () => {}),
+      makeDefault: vi.fn(async (label: string) => {
+        made.push(label);
+        payload = { ...LIST, default: label };
+        return null;
+      }),
+    });
+    await list.load();
+    await list.makeDefault(list.personas[0]);
+    expect(made).toEqual(['sensei-hq-org']);
+    expect(fetchPersonas).toHaveBeenCalledTimes(2);
+    expect(list.error).toBeNull();
+  });
+
+  it('a refusal is said', async () => {
+    const list = new PersonaList({
+      fetchPersonas: vi.fn(async () => LIST as never),
+      startSignIn: vi.fn(async () => null),
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async () => {}),
+      makeDefault: vi.fn(async () => 'no identity x'),
+    });
+    await list.load();
+    await list.makeDefault(list.personas[0]);
+    expect(list.error).toBe('no identity x');
   });
 });

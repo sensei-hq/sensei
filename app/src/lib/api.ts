@@ -227,6 +227,9 @@ export function senseiApi(port: number) {
 
     /** Let the daemon read a persona's stored session, with the Keychain's
      *  dialog allowed — the user clicked, so it has someone to answer it (#283). */
+    /** Make default (user, 2026-10-27): this identity is the default from now on. */
+    tryMakeDefaultPersona: (label: string) =>
+      tryPost<{ ok: boolean; default: string }>(`/api/auth/personas/${enc(label)}/default`, {}),
     tryApproveKeychain: (persona: string) =>
       tryPost<{ ok: boolean; error?: string }>(
         `/api/auth/keychain/approve?persona=${encodeURIComponent(persona)}`,

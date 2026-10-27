@@ -152,3 +152,60 @@ export function summarise(counts: Record<string, number>): string {
 
   return `${total} tracked · all agreed`;
 }
+
+/** An identity's own sync entities — about the identity, not a repository. */
+const IDENTITY_ENTITIES = new Set(['forge_mirror', 'dojo_sync_plan']);
+
+export type SyncItem = { row: SyncStateRow; branch: string | null };
+export type SyncDay = {
+  /** `YYYY-MM-DD` it last agreed, else last tried; `null` for neither. */
+  day: string | null;
+  /** The identity's own entities that day (its sync plan, forge mirror). */
+  own: SyncItem[];
+  repositories: { name: string; items: SyncItem[] }[];
+};
+export type SyncIdentity = {
+  /** The identity's NAME; `null` for rows no sync has attributed yet. */
+  label: string | null;
+  slot: string | null;
+  days: SyncDay[];
+};
+
+/**
+ * Pure: the sync rows as identity → day → repository (user, 2026-10-27).
+ *
+ * An identity is named by its label, never its Keychain slot (`default` is a
+ * slot, and read as "the default identity"). A repository's branches fold into
+ * it: `repo` and `repo@develop` are one repository, the branch on its line.
+ * Within a day rows keep the order they came in — worst first. Identities by
+ * name; rows not yet attributed last.
+ */
+export function groupSync(rows: SyncStateRow[], identities: { slot: string | null; label: string }[]): SyncIdentity[] {
+  const labelOf = (slot: string | null) =>
+    slot === null ? null : identities.find((i) => i.slot === slot)?.label ?? slot;
+  const groups = new Map<string, SyncIdentity>();
+  for (const row of rows) {
+    const label = labelOf(row.persona);
+    const key = label ?? '\u0000';
+    const identity = groups.get(key) ?? { label, slot: row.persona, days: [] };
+    groups.set(key, identity);
+    const day = isoDay(row.synced_at) ?? isoDay(row.attempted_at) ?? null;
+    let d = identity.days.find((x) => x.day === day);
+    if (!d) identity.days.push((d = { day, own: [], repositories: [] }));
+    if (IDENTITY_ENTITIES.has(row.entity)) {
+      d.own.push({ row, branch: null });
+      continue;
+    }
+    const at = row.entity_key.lastIndexOf('@');
+    const [name, branch] = at > 0 ? [row.entity_key.slice(0, at), row.entity_key.slice(at + 1)] : [row.entity_key, null];
+    let r = d.repositories.find((x) => x.name === name);
+    if (!r) d.repositories.push((r = { name, items: [] }));
+    r.items.push({ row, branch });
+  }
+  const out = [...groups.values()];
+  for (const g of out) {
+    g.days.sort((a, b) => (a.day === b.day ? 0 : a.day === null ? 1 : b.day === null ? -1 : a.day < b.day ? 1 : -1));
+    for (const d of g.days) d.repositories.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return out.sort((a, b) => (a.label === null ? 1 : b.label === null ? -1 : a.label.localeCompare(b.label)));
+}

@@ -1646,6 +1646,9 @@ export interface SyncStateRow {
   attempted_at: string | null;
   synced_at: string | null;
   updated_at: string;
+  /** The identity (its Keychain session slot) whose sync last wrote this row;
+   *  null on a row no sync has written since identities were recorded. */
+  persona: string | null;
 }
 
 /** `GET /api/dojo/sync-state`. Rows arrive worst-first (error, pending, partial, skipped,
