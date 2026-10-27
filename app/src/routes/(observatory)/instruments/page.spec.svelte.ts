@@ -67,3 +67,24 @@ describe('Instruments /+page — the Playground', () => {
     expect(m.container.textContent).toContain('"name": "dbd"');
   });
 });
+
+// A source is an assistant's: Claude and Zed can both configure a server under
+// one key. Keyed without the family, the second was a duplicate key that
+// blanked the whole Health grid.
+describe('Instruments /+page — Health', () => {
+  it('shows a card per assistant for a server two assistants share', async () => {
+    const source = (assistant_family: string) => ({
+      assistant_family, source_type: 'mcp', source_key: 'context7', name: 'context7', connected: true,
+      connection_state: 'connected', server_id: null, tools_registered: 2, tools_invoked_14d: 1, calls_14d: 3, share_invoked: 0.5,
+    });
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) =>
+      json(url.includes('/tools-health') ? { sources: [source('claude'), source('zed')] } : {}),
+    ));
+    const m = mountComponent(Page, {});
+    cleanup.push(m.destroy);
+    (m.container.querySelector('[data-testid="instrument-tab-insights"]') as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(m.container.querySelectorAll('[data-testid="tool-health-card-context7"]').length).toBe(2),
+    );
+  });
+});

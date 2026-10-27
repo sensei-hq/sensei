@@ -608,6 +608,8 @@ impl PgStore {
     /// The Instruments · Health L1 grid — one row per tool source. Unions the
     /// inventory (registered known) with usage-observed MCP sources not yet in
     /// the inventory (registered unknown → null share, never a fabricated bar).
+    /// Calls to a tool an inventoried server no longer lists count on that
+    /// server's row (its calls, not its share).
     pub async fn get_tools_health(&self) -> Result<Vec<serde_json::Value>, String> {
         #[allow(clippy::type_complexity)]
         let rows: Vec<(String, String, String, Option<i64>, Option<uuid::Uuid>, i64, i64, Option<String>)> =
@@ -643,19 +645,38 @@ impl PgStore {
                  FROM evt e
                 WHERE e.tool_name LIKE 'mcp__%'
                   AND NOT EXISTS (SELECT 1 FROM sensei.assistant_tools at WHERE at.invoked_name = e.tool_name)
-                GROUP BY split_part(e.tool_name,'__',2) )
+                GROUP BY split_part(e.tool_name,'__',2) ),
+             -- The prefix each inventoried source is called under. Usage of a
+             -- tool its server no longer lists (renamed, retired) carries the
+             -- same prefix: those calls are that source's, on its row — a
+             -- second row under the same key drew the server twice.
+             prefix AS (
+               SELECT DISTINCT assistant_family, source_type, source_key,
+                      split_part(invoked_name,'__',2) AS prefix
+                 FROM sensei.assistant_tools
+                WHERE invoked_name LIKE 'mcp__%' ),
+             retired AS (
+               SELECT p.assistant_family, p.source_type, p.source_key,
+                      sum(u.calls_14d)::bigint AS calls_14d
+                 FROM uncovered u
+                 JOIN prefix p ON p.prefix = u.source_key
+                GROUP BY p.assistant_family, p.source_type, p.source_key )
              SELECT r.assistant_family, r.source_type, r.source_key,
                     r.registered, r.server_id,
-                    coalesce(i.invoked_14d,0)::bigint, coalesce(i.calls_14d,0)::bigint,
+                    coalesce(i.invoked_14d,0)::bigint,
+                    (coalesce(i.calls_14d,0) + coalesce(t.calls_14d,0))::bigint,
                     s.connection_state
                FROM reg r
                LEFT JOIN inv i ON i.assistant_family=r.assistant_family
                               AND i.source_type=r.source_type AND i.source_key=r.source_key
+               LEFT JOIN retired t ON t.assistant_family=r.assistant_family
+                              AND t.source_type=r.source_type AND t.source_key=r.source_key
                LEFT JOIN sensei.mcp_servers s ON s.id = r.server_id
              UNION ALL
              SELECT assistant_family, source_type, source_key,
                     NULL::bigint, NULL::uuid, invoked_14d, calls_14d, NULL::text
-               FROM uncovered
+               FROM uncovered u
+              WHERE NOT EXISTS (SELECT 1 FROM prefix p WHERE p.prefix = u.source_key)
              ORDER BY 7 DESC"
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 

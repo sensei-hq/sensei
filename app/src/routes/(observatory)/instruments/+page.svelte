@@ -742,7 +742,7 @@
             style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));"
             data-testid="tool-health-grid"
         >
-            {#each toolsHealth as source (source.source_type + ':' + source.source_key)}
+            {#each toolsHealth as source (`${source.assistant_family}:${source.source_type}:${source.source_key}`)}
                 <ToolHealthCard
                     {source}
                     active={ins.activeSource?.source_type === source.source_type
