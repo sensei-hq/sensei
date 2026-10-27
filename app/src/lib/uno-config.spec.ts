@@ -9,7 +9,7 @@ describe('uno.config content pipeline', () => {
 
   it('scans the .ts data files that carry icon classes', () => {
     expect(scans('/app/src/routes/(observatory)/observatory-nav.ts')).toBe(true);
-    expect(scans('/app/src/routes/(observatory)/settings/settings-nav.ts')).toBe(true);
+    expect(scans('/app/src/routes/(preferences)/settings/settings-nav.ts')).toBe(true);
   });
 
   it('still scans components', () => {

@@ -1,5 +1,6 @@
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { emit } from '@tauri-apps/api/event';
+import { emit, emitTo } from '@tauri-apps/api/event';
+export { isSettingsPath } from '$lib/settings-path.js';
 
 export interface OpenWindow {
   workspaceId: string;
@@ -64,5 +65,31 @@ export async function openWorkspaceWindow(workspaceId: string, workspaceName: st
   await win.once('tauri://destroyed', () => {
     openWindowsState.delete(workspaceId);
     syncWindowMenu(); // window gone — drop it from the Window menu
+  });
+}
+
+/** The settings window's label: one at a time. */
+const SETTINGS_LABEL = 'settings';
+
+/** Open Settings as its own window at `path` (user, 2026-10-27: ⌘, or the app
+ *  menu's Preferences…, as in a Mac app), or bring the open one forward. */
+export async function openSettingsWindow(path = '/settings/general'): Promise<void> {
+  const existing = await WebviewWindow.getByLabel(SETTINGS_LABEL);
+  if (existing) {
+    await existing.setFocus();
+    // The root layout's `dev-navigate` listener turns this into a goto.
+    await emitTo(SETTINGS_LABEL, 'dev-navigate', path);
+    return;
+  }
+  new WebviewWindow(SETTINGS_LABEL, {
+    url: path,
+    title: 'Sensei · Settings',
+    width: 1000,
+    height: 720,
+    minWidth: 760,
+    minHeight: 520,
+    // The main and workspace windows' chrome: overlay titlebar, no OS title.
+    titleBarStyle: 'overlay',
+    hiddenTitle: true,
   });
 }
