@@ -3981,6 +3981,98 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// One module's files, for the Code map's L1: `(file id, path, symbols)`,
+    /// largest first. The module is matched by the same `module_of` identity
+    /// the module level groups by, so L0's block and L1's files agree.
+    pub async fn codemap_module_files(
+        &self,
+        workspace_id: &uuid::Uuid,
+        module: &str,
+    ) -> Result<Vec<(uuid::Uuid, String, i64)>, String> {
+        let group = structure_group_sql("module", "");
+        let sql = format!(
+            "SELECT file_id, file_path, symbols::bigint
+               FROM sensei.structure_graph
+              WHERE workspace_id = $1 AND {group} = $2
+              ORDER BY symbols DESC, file_path"
+        );
+        sqlx_core::query_as::query_as(&sql)
+            .bind(workspace_id)
+            .bind(module)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_module_files: {e}"))
+    }
+
+    /// A file's path, when the file is this workspace's (Code map L2).
+    pub async fn codemap_file_path(
+        &self,
+        workspace_id: &uuid::Uuid,
+        file_id: &uuid::Uuid,
+    ) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT fi.file_path FROM sensei.files fi
+               JOIN sensei.folder_workspaces fw ON fw.folder_id = fi.folder_id
+              WHERE fi.id = $2 AND fw.workspace_id = $1
+              LIMIT 1",
+        )
+        .bind(workspace_id)
+        .bind(file_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("codemap_file_path: {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// A file's symbols, in source order: `(id, name, kind, line)`.
+    pub async fn codemap_file_symbols(
+        &self,
+        file_id: &uuid::Uuid,
+    ) -> Result<Vec<(uuid::Uuid, String, String, Option<i32>)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT id, name, kind::text, line_start FROM sensei.nodes
+              WHERE file_id = $1 ORDER BY line_start NULLS LAST, name",
+        )
+        .bind(file_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("codemap_file_symbols: {e}"))
+    }
+
+    /// The symbols one call away from a file, outside it and inside the
+    /// workspace: its callers (`inbound`) or callees, heaviest first, at most
+    /// `limit`. Each row is `(id, name, file, calls, how many there are in all)`.
+    pub async fn codemap_file_neighbours(
+        &self,
+        workspace_id: &uuid::Uuid,
+        file_id: &uuid::Uuid,
+        inbound: bool,
+        limit: i64,
+    ) -> Result<Vec<(uuid::Uuid, String, Option<String>, i64, i64)>, String> {
+        let (inside, outside) =
+            if inbound { ("target_id", "source_id") } else { ("source_id", "target_id") };
+        let sql = format!(
+            "SELECT o.id, o.name, ofi.file_path, count(*)::bigint AS calls,
+                    count(*) OVER ()::bigint AS total
+               FROM sensei.edges e
+               JOIN sensei.nodes i ON i.id = e.{inside}
+               JOIN sensei.nodes o ON o.id = e.{outside}
+               JOIN sensei.folder_workspaces fw ON fw.folder_id = o.folder_id AND fw.workspace_id = $1
+               LEFT JOIN sensei.files ofi ON ofi.id = o.file_id
+              WHERE i.file_id = $2 AND o.file_id IS DISTINCT FROM $2 AND e.kind = 'calls'
+              GROUP BY o.id, o.name, ofi.file_path
+              ORDER BY calls DESC, o.name
+              LIMIT $3"
+        );
+        sqlx_core::query_as::query_as(&sql)
+            .bind(workspace_id)
+            .bind(file_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_file_neighbours: {e}"))
+    }
+
     pub async fn structure_edges(
         &self,
         workspace_id: &uuid::Uuid,

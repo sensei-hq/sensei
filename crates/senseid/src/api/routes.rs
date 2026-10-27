@@ -134,6 +134,9 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/workspaces/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
         .route("/api/workspaces/{id}/diagrams/structure", get(diagrams::structure))
+        .route("/api/workspaces/{id}/diagrams/codemap", get(diagrams::codemap))
+        .route("/api/workspaces/{id}/diagrams/codemap/module", get(diagrams::codemap_module))
+        .route("/api/workspaces/{id}/diagrams/codemap/file", get(diagrams::codemap_file))
         .route("/api/workspaces/{id}/diagrams/layering", get(diagrams::layering))
         .route("/api/workspaces/{id}/diagrams/zones", get(diagrams::zones))
         .route("/api/workspaces/{id}/diagrams/world", get(diagrams::world))
@@ -893,6 +896,213 @@ mod tests {
         assert_eq!(st, StatusCode::OK);
         let (st, _) = req(app, "DELETE", &format!("/api/instruments/mcp-servers/{id}"), None).await;
         assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+
+    /// A workspace with two modules, `{pkg}/alpha` calling `{pkg}/beta`; alpha
+    /// also has a test file.
+    async fn seed_two_modules(state: &AppState) -> (uuid::Uuid, String) {
+        use crate::db::pg_store::graph_seed::SeedGraph;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        let pkg = format!("cm{}", uniq.simple());
+        let def = |file: &'static str| crate::db::pg_store::FqnDef {
+            file_path: file,
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: None,
+        };
+        let node = |fqn: String, name: &'static str, file: &'static str| {
+            let pg = &state.pg;
+            async move {
+                pg.seed_node_by_fqn(&fid, &fqn, "function", name, Some("rust"), Some(def(file)))
+                    .await
+                    .unwrap()
+            }
+        };
+        let a = node(format!("rust·{pkg}·alpha·a"), "a", "alpha/a.rs").await;
+        let b = node(format!("rust·{pkg}·beta·b"), "b", "beta/b.rs").await;
+        node(format!("rust·{pkg}·alpha·t"), "t", "alpha/tests/a_test.rs").await;
+        state
+            .pg
+            .insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls")
+            .await
+            .unwrap();
+        (pid, pkg)
+    }
+
+    /// The Code map's L1 (M17): one module's files in role columns, and the
+    /// modules it depends on and is used by, with weight and direction.
+    #[tokio::test]
+    async fn the_code_map_opens_a_module_into_its_files_by_role() {
+        let (app, state) = test_app().await;
+        let (pid, pkg) = seed_two_modules(&state).await;
+        let alpha = format!("{pkg}/alpha");
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap/module?id={alpha}"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let cols: Vec<(String, Vec<String>)> = body["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                let files = c["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|f| f["path"].as_str().unwrap().to_string())
+                    .collect();
+                (c["role"].as_str().unwrap().to_string(), files)
+            })
+            .collect();
+        assert_eq!(
+            cols,
+            vec![
+                ("code".to_string(), vec!["alpha/a.rs".to_string()]),
+                ("test".to_string(), vec!["alpha/tests/a_test.rs".to_string()]),
+            ]
+        );
+        assert_eq!(body["dependsOn"][0]["module"], format!("{pkg}/beta"));
+        assert_eq!(body["dependsOn"][0]["weight"], 1);
+        assert_eq!(body["dependsOn"][0]["direction"], "down");
+        assert_eq!(body["usedBy"].as_array().unwrap().len(), 0);
+
+        let (st, _) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap/module?id={pkg}/nowhere"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "a module this workspace does not have");
+    }
+
+    /// The Code map's L2 (M17): one file's symbols, and the symbols that call
+    /// into it and that it calls, one hop out.
+    #[tokio::test]
+    async fn the_code_map_opens_a_file_into_its_symbols_and_their_neighbours() {
+        let (app, state) = test_app().await;
+        let (pid, pkg) = seed_two_modules(&state).await;
+        let file_id = |module: String, path: &'static str| {
+            let app = app.clone();
+            async move {
+                let (_, l1) = req(
+                    app,
+                    "GET",
+                    &format!("/api/workspaces/{pid}/diagrams/codemap/module?id={module}"),
+                    None,
+                )
+                .await;
+                l1["columns"][0]["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|f| f["path"] == path)
+                    .unwrap()["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            }
+        };
+        let a_rs = file_id(format!("{pkg}/alpha"), "alpha/a.rs").await;
+        let b_rs = file_id(format!("{pkg}/beta"), "beta/b.rs").await;
+
+        let (st, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap/file?id={a_rs}"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["path"], "alpha/a.rs");
+        assert_eq!(body["symbols"][0]["name"], "a");
+        assert_eq!(body["callees"][0]["name"], "b");
+        assert_eq!(body["callees"][0]["file"], "beta/b.rs");
+        assert_eq!(body["callees"][0]["weight"], 1);
+        assert_eq!(body["callers"].as_array().unwrap().len(), 0);
+
+        let (_, body) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap/file?id={b_rs}"),
+            None,
+        )
+        .await;
+        assert_eq!(body["callers"][0]["name"], "a");
+
+        let (st, _) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap/file?id={}", uuid::Uuid::new_v4()),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+
+    /// The Code map's L0 (M17): modules as blocks grouped by layer or folder,
+    /// one band per module pair, and a budget readout. An unknown grouping is
+    /// refused rather than answered as some other one.
+    #[tokio::test]
+    async fn the_code_map_opens_on_modules_with_one_band_per_pair() {
+        let (app, state) = test_app().await;
+        let (pid, pkg) = seed_two_modules(&state).await;
+        for group_by in ["layers", "folders"] {
+            let (st, body) = req(
+                app.clone(),
+                "GET",
+                &format!("/api/workspaces/{pid}/diagrams/codemap?groupBy={group_by}"),
+                None,
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "{body}");
+            let ids: Vec<&str> = body["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|b| b["id"].as_str())
+                .collect();
+            let (alpha, beta) = (format!("{pkg}/alpha"), format!("{pkg}/beta"));
+            assert!(ids.contains(&alpha.as_str()) && ids.contains(&beta.as_str()), "{ids:?}");
+            let bands = body["bands"].as_array().unwrap();
+            assert_eq!(bands.len(), 1, "{body}");
+            assert_eq!(
+                (bands[0]["source"].as_str(), bands[0]["target"].as_str()),
+                (Some(alpha.as_str()), Some(beta.as_str()))
+            );
+            assert_eq!(body["budget"]["drawn"], 2);
+            assert_eq!(body["groupBy"], group_by);
+        }
+        let (_, by_layer) =
+            req(app.clone(), "GET", &format!("/api/workspaces/{pid}/diagrams/codemap"), None).await;
+        let groups: Vec<&str> = by_layer["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|b| b["group"].as_str())
+            .collect();
+        assert_ne!(
+            groups[0], groups[1],
+            "a caller and its callee sit in different layers: {groups:?}"
+        );
+        assert_eq!(by_layer["bands"][0]["direction"], "down", "{by_layer}");
+
+        let (st, _) = req(
+            app,
+            "GET",
+            &format!("/api/workspaces/{pid}/diagrams/codemap?groupBy=astrology"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
     }
 
     /// A request as the CLI or the app sends it: addressed to loopback, which
