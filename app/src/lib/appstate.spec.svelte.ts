@@ -224,6 +224,18 @@ describe('AppState', () => {
     expect(state.config['user_name']).toBe('Pre');
   });
 
+  // Settings is its own window (2026-10-27): a change made there must reach the
+  // main window, which holds its own copy of the config.
+  it('setConfigs tells the other windows what it saved — and nothing when the daemon refused', async () => {
+    const told: string[][] = [];
+    state.onConfigSaved = (keys) => told.push(keys);
+    await state.setConfigs({ 'ui.glyphs': 'icon' });
+    apiMock.trySetConfig.mockResolvedValueOnce({ ok: false, error: { status: 500, message: 'boom' } });
+    await expect(state.setConfigs({ user_name: 'x' })).rejects.toThrow();
+    expect(told).toEqual([['ui.glyphs']]);
+    state.onConfigSaved = null;
+  });
+
   it('setConfigs throws (not silent) on daemon error so callers can react', async () => {
     apiMock.trySetConfig.mockResolvedValueOnce({ ok: false, error: { status: 503, message: 'unreachable' } });
     await expect(state.setConfigs({ setup_complete: '1' })).rejects.toThrow();
