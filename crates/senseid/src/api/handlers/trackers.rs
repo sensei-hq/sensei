@@ -158,8 +158,9 @@ pub(crate) async fn connect_tracker(
     };
     let (base_url, board_ref) = (params.base_url.clone(), params.board_ref.clone());
     let rt = state.trackers.clone();
+    let pg = &state.pg;
     let connected = match connect(
-        &state.pg,
+        pg,
         rt.secrets.clone(),
         adapter,
         transport.as_ref(),
@@ -172,14 +173,14 @@ pub(crate) async fn connect_tracker(
         Ok(c) => c,
         Err(e) => return connect_failure(e, &base_url, &board_ref).into_response(),
     };
-    let row = match state.pg.tracker_by_id(connected.tracker_id).await {
+    let row = match pg.tracker_by_id(connected.tracker_id).await {
         Ok(Some(row)) => row,
         _ => return internal().into_response(),
     };
     // The first sync runs in the background: connect never waits on a sync. The
     // site's other boards moved to this token, so they sync again too.
     for id in std::iter::once(row.id).chain(connected.rekeyed.iter().copied()) {
-        spawn_first_sync(state.pg.clone(), rt.clone(), id);
+        spawn_first_sync(pg.clone(), rt.clone(), id);
     }
     match view(&state, &row).await {
         Ok(v) => (
@@ -283,6 +284,40 @@ pub(crate) async fn disconnect_tracker(
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => fail(StatusCode::NOT_FOUND, "tracker_not_found").into_response(),
         Err(_) => internal().into_response(),
+    }
+}
+
+/// `PATCH /api/workspaces/{id}/trackers/{tracker}` — exactly `{"writeback_enabled": bool}` (W8).
+pub(crate) async fn patch_tracker(
+    State(state): State<AppState>,
+    Path((id, tracker)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let enabled = match body.as_object() {
+        Some(o) if o.len() == 1 => o.get("writeback_enabled").and_then(|v| v.as_bool()),
+        _ => None,
+    };
+    let Some(enabled) = enabled else {
+        return fail(StatusCode::UNPROCESSABLE_ENTITY, "invalid_body").into_response();
+    };
+    let row = match known_tracker(&state, &id, &tracker).await {
+        Ok(row) => row,
+        Err(r) => return r.into_response(),
+    };
+    let pg = &state.pg;
+    match pg.set_writeback_enabled(row.id, enabled).await {
+        Ok(true) => {}
+        Ok(false) => return fail(StatusCode::NOT_FOUND, "tracker_not_found").into_response(),
+        Err(_) => return internal().into_response(),
+    }
+    let row = match pg.tracker_by_id(row.id).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return fail(StatusCode::NOT_FOUND, "tracker_not_found").into_response(),
+        Err(_) => return internal().into_response(),
+    };
+    match view(&state, &row).await {
+        Ok(v) => Json(v).into_response(),
+        Err(r) => r.into_response(),
     }
 }
 
@@ -1147,6 +1182,102 @@ mod tests {
             task.get("writeback_status").is_some() && task.get("writeback_at").is_some(),
             "{b}"
         );
+    }
+
+    #[tokio::test]
+    async fn write_back_is_switched_with_a_patch_that_says_nothing_else() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().with_assignees([Some("A1"), None, None]).with_comment_reads(),
+        );
+        let writes = h.factory.serve_writes(
+            &format!("https://{s}"),
+            crate::tracker::test_support::RecordingWrites::default(),
+        );
+        // A linked session, so a sync with write-back on writes AUTH-1.
+        let repo = crate::tracker::test_support::repo_in(&h.state.pg, p).await;
+        crate::tracker::test_support::session_with(&h.state.pg, Some(repo), &["fix/AUTH-1"], &[])
+            .await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{t}");
+        let wrote = |n: usize| {
+            let writes = writes.clone();
+            async move {
+                for _ in 0..50 {
+                    if writes.sent().len() >= n {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                writes.sent().len()
+            }
+        };
+        assert_eq!(wrote(1).await, 1, "with write-back on, the first sync's pass writes AUTH-1");
+        for bad in [
+            json!({"foo": 1}),
+            json!({}),
+            json!({"writeback_enabled": "no"}),
+            json!({"writeback_enabled": true, "x": 1}),
+            json!([true]),
+        ] {
+            let (st, b) = call(&h, "PATCH", &uri, Some(bad.clone()), None).await;
+            assert_eq!(
+                (st, json(&b)["error"].clone()),
+                (StatusCode::UNPROCESSABLE_ENTITY, json!("invalid_body")),
+                "{bad}"
+            );
+        }
+        let (st, b) =
+            call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": false})), None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let card = json(&b);
+        assert_eq!(card["id"], json!(t), "the tracker, in the listing's shape");
+        assert_eq!(
+            (card["writeback"]["enabled"].clone(), card["writeback"]["state"].clone()),
+            (json!(false), json!("disabled"))
+        );
+        // A sync with a new linked session, while off, writes nothing.
+        crate::tracker::test_support::session_with(&h.state.pg, Some(repo), &["fix/AUTH-1"], &[])
+            .await;
+        let (st, _) = call(&h, "POST", &format!("{uri}/sync"), None, None).await;
+        assert_eq!(st, StatusCode::OK);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(writes.sent().len(), 1, "write-back is off");
+        // Switched back on, it answers active, and the next sync writes the change.
+        let (st, b) = call(&h, "PATCH", &uri, Some(json!({"writeback_enabled": true})), None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let wb = &json(&b)["writeback"];
+        assert_eq!((wb["enabled"].clone(), wb["state"].clone()), (json!(true), json!("active")));
+        let (st, _) = call(&h, "POST", &format!("{uri}/sync"), None, None).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(wrote(2).await, 2, "the change is written once write-back is on again");
+        let ghost = uuid::Uuid::new_v4();
+        let (st, b) = call(
+            &h,
+            "PATCH",
+            &format!("/api/workspaces/{p}/trackers/{ghost}"),
+            Some(json!({"writeback_enabled": true})),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("tracker_not_found"))
+        );
+        let (st, _) = call(
+            &h,
+            "PATCH",
+            &uri,
+            Some(json!({"writeback_enabled": true})),
+            Some("https://evil.example"),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "a foreign page cannot switch write-back");
     }
 
     #[tokio::test]

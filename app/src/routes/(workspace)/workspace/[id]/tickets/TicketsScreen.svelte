@@ -37,7 +37,7 @@
       icon="i-solar-ticket-bold-duotone"
       eyebrow="Tickets"
       title={screen.boardTitle || 'Tickets'}
-      description="Active AI time and tokens per ticket and sprint, from AI sessions whose branch or prompt names the ticket. Read from Jira; nothing is changed there."
+      description="Active AI time and tokens per ticket and sprint, from AI sessions whose branch or prompt names the ticket. Read from Jira. On tickets assigned to you, sensei writes these numbers back, as set on Integrations."
     />
   {/snippet}
 <section data-screen="tickets" class="flex flex-col">

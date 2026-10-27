@@ -10,8 +10,9 @@ and the connected-state line of the Dōjō mockup's Integrations tab
 - the sidebar entry `{ id: 'integrations', kanji: '繋', label: 'Integrations' }` in
   `project-sidebar-view.ts` `SECTIONS`, after `sprints` and before `about`
   (`isSectionActive` matches it by the `/integrations` route prefix)
-- `app/src/lib/api.ts` wrappers: `listTrackers`, `connectTracker`, `syncTracker`,
-  `disconnectTracker`
+- `app/src/lib/api.ts` wrappers on `senseiApi`: `tryListTrackers`, `tryConnectTracker`,
+  `trySyncTracker`, `tryDisconnectTracker`, and `trySetTrackerWriteback` (usage write-back,
+  [`tracker-metrics-writeback.md`](../daemon/tracker-metrics-writeback.md) W8)
 
 **Daemon contract:** [`spec/daemon/tracker-jira-linkage.md`](../daemon/tracker-jira-linkage.md) R3, R4, R8, R9.
 
@@ -43,9 +44,34 @@ Where a user **connects this project to its issue tracker**: Jira today, GitLab
 later. One project has one tracker (spec R1), so this is a per-project screen, not
 a global setting.
 
-**Eyebrow:** `繋 · INTEGRATIONS`. **Header:** "Issue tracker". **Sub-line:** "Connect
-this project's Jira board so sensei can link AI sessions to tickets and report time
-and tokens per ticket. Read-only: sensei never changes anything in Jira."
+**Eyebrow:** `繋 · INTEGRATIONS`. **Header:** "Issue trackers". **Sub-line** (superseded
+2026-10-26 by tracker-metrics-writeback W-UI): "Connect this workspace's Jira boards, each
+at a level, so sensei can link AI sessions to tickets and report time, tokens and cost
+per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a
+comment or in the fields you map."
+
+## Write-back on each board card (tracker-metrics-writeback W-UI)
+
+- **Write back to Jira**: a labelled checkbox (`data-action="writeback"`) that sends
+  `PATCH …/trackers/{tracker}` `{writeback_enabled}`. It is disabled while any request
+  runs. The card shows the tracker the daemon returns, so a refused switch stays as it
+  was and the alert says why.
+- **A state line** (`data-writeback-state=<state>`), from `writeback.state`:
+  - `active`: "Writing to N tickets assigned to you." (N = `writeback.assigned`; "1
+    ticket"), plus " K couldn't be written." when `failing > 0`
+  - `disabled`: "Write-back is off."
+  - `pass_failed`, by `error`: token → "Couldn't read the Jira token to write back.
+    Replace the token."; `db` → "Couldn't record what was written. Write-back retries
+    on each sync."; `rate_limited` → "Jira is rate-limiting writes. Write-back resumes
+    on the next sync."; `transport` → "Writing didn't finish in time. Write-back resumes
+    on the next sync."
+  - `owner_not_a_person`: "This token belongs to an app account, so sensei can't tell
+    which tickets are yours. Nothing is written."
+  - `owner_lookup_failed`: "Couldn't check which tickets are yours: <error text>.
+    Retrying on each sync."
+  - `owner_unknown`: "Checking which tickets are yours on the next sync."
+  - `nothing_assigned`: "No tickets on this board are assigned to you."
+- The Fields section (mapped custom fields) arrives with the write-back spec's F4.
 
 ## States
 
@@ -130,6 +156,7 @@ failure, focus moves to the alert.
 | `db` (a sync's `last_error`) | "sensei hit a database error while syncing." | **Retry sync** |
 | `unsupported_tracker` | "This tracker type isn't available in this version of sensei." | none |
 | `busy` | "A sync is already running." | none |
+| `invalid_body` (a refused write-back PATCH) | "sensei refused that change." | none |
 | any other code | "Unexpected error from sensei (<code>)." | **Retry** |
 | daemon unreachable (network error to `127.0.0.1`) | "The sensei daemon didn't respond." | **Retry**. Never shown as "not connected". |
 
@@ -160,6 +187,7 @@ failure, focus moves to the alert.
 4. Disconnect: the dialog opens with Cancel focused and Esc cancels. Confirming returns to the not-connected state, and `GET …/trackers` returns `[]`.
 5. Daemon stopped → the daemon-error state with Retry, never the not-connected form.
 6. a11y: every input has a programmatic label; the status and alert regions are announced (axe check passes on all three states).
+7. Write-back: each card's checkbox reflects `writeback.enabled` and sends one PATCH; the state line has the text above for its state; a refused PATCH leaves the checkbox as it was and shows the alert (component tests).
 
 ## Wrong gate
 
@@ -169,7 +197,8 @@ failure, focus moves to the alert.
 - UI-side URL parsing (a second parser beside the daemon's).
 - GitLab selectable before an adapter is registered.
 - Status conveyed by colour alone; a destructive action without a confirming dialog.
-- Per-person data (assignee, author) shown.
+- Per-person data (assignee, author) shown. (`assigned_to_me` and the write-back state are not person data; showing them is allowed.)
+- The write-back checkbox flipping on a click the daemon refused.
 
 ## Related
 

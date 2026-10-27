@@ -47,6 +47,17 @@ const WORDS: Record<string, string> = {
   superseded: 'The board’s token changed while it synced. Sync again.',
   task_not_found: 'No ticket with that key in sensei.',
   bad_request: 'Jira rejected the request.',
+  invalid_body: 'sensei refused that change.',
+};
+
+/** Why a write-back pass could not run or stopped (tracker-metrics-writeback W-UI), by its
+ *  `writeback_error` code. Apart from `WORDS`: the same codes mean something else for a sync. */
+export const WRITEBACK_STOPPED: Record<string, string> = {
+  token_missing: 'Couldn’t read the Jira token to write back. Replace the token.',
+  credential_store: 'Couldn’t read the Jira token to write back. Replace the token.',
+  db: 'Couldn’t record what was written. Write-back retries on each sync.',
+  rate_limited: 'Jira is rate-limiting writes. Write-back resumes on the next sync.',
+  transport: 'Writing didn’t finish in time. Write-back resumes on the next sync.',
 };
 
 const FIELD: Record<string, TrackerAlert['field']> = {

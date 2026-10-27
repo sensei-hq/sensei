@@ -1266,6 +1266,76 @@ mod pass_tests {
         assert!(!format!("{row:?}").contains("A1"), "{row:?}");
     }
 
+    #[tokio::test]
+    async fn switching_write_back_off_and_on_posts_a_new_comment_where_one_was_deleted() {
+        let f = fixture([Some("A1"), None, None]).await;
+        let w = f.writes(RecordingWrites::default().respond(
+            WriteMethod::Put,
+            "/rest/api/3/issue/10001/comment/20000",
+            404,
+            1,
+        ));
+        f.pass().await;
+        f.new_session("AUTH-1").await;
+        f.pass().await;
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("comment_removed"));
+        assert_eq!(f.pg.set_writeback_enabled(f.t, false).await, Ok(true));
+        assert_eq!(f.pg.set_writeback_enabled(f.t, true).await, Ok(true));
+        assert_eq!(
+            f.state().await[0],
+            ("10001".into(), None, None, false),
+            "the removed comment is forgotten"
+        );
+        f.pass().await;
+        let posts: Vec<_> =
+            w.sent().into_iter().filter(|s| s.method == WriteMethod::Post).collect();
+        assert_eq!(posts.len(), 2, "a fresh comment, after the one the user deleted");
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn switching_write_back_on_clears_only_what_was_waiting_for_it() {
+        let f = fixture([Some("A1"), Some("A1"), Some("A1")]).await;
+        f.sql(
+            "UPDATE sensei.tracker_tasks SET writeback_comment_ref = '9', writeback_hash = 'h',
+                    writeback_status = CASE external_id WHEN '10001' THEN 'forbidden'::sensei.tracker_writeback_status
+                                                       WHEN '10002' THEN 'ok'
+                                                       ELSE 'error' END
+              WHERE tracker_id = $1",
+        )
+        .await;
+        f.sql(
+            "INSERT INTO sensei.tracker_tasks (tracker_id, external_id, key, assigned_to_me,
+                    writeback_comment_ref, writeback_hash, writeback_status)
+             VALUES ($1, '10007', 'AUTH-7', true, '9', 'h', 'not_found'),
+                    ($1, '10008', 'AUTH-8', true, '9', 'h', 'field_invalid')",
+        )
+        .await;
+        // Switching on while already on changes nothing.
+        f.pg.set_writeback_enabled(f.t, true).await.unwrap();
+        assert_eq!(f.state().await[0].1.as_deref(), Some("forbidden"), "it was already on");
+        f.pg.set_writeback_enabled(f.t, false).await.unwrap();
+        assert_eq!(
+            f.state().await[0].1.as_deref(),
+            Some("forbidden"),
+            "switching off clears nothing"
+        );
+        f.pg.set_writeback_enabled(f.t, true).await.unwrap();
+        assert_eq!(
+            f.state().await,
+            vec![
+                ("10001".into(), None, Some("9".into()), true),
+                ("10002".into(), Some("ok".into()), Some("9".into()), true),
+                ("10003".into(), Some("error".into()), Some("9".into()), true),
+                ("10007".into(), None, Some("9".into()), true),
+                ("10008".into(), None, Some("9".into()), true),
+            ],
+            "every sticky status is cleared; ok and a retryable error stay"
+        );
+        f.pg.set_writeback_enabled(f.t, true).await.unwrap();
+        assert_eq!(f.pg.set_writeback_enabled(uuid::Uuid::new_v4(), true).await, Ok(false));
+    }
+
     /// Give the tracker's tickets an explicit pass order (oldest attempt first).
     async fn order(f: &Fixture, exts: &[&str]) {
         for (i, ext) in exts.iter().enumerate() {

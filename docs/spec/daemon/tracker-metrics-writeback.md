@@ -559,7 +559,7 @@ pub enum WriteMethod { Post, Put }
 - **Per-ticket write status** on the Tickets screen stays out of this slice. The state
   line's `failing` count is the only aggregate.
 - **Scheduled tasks**: the `tracker_sync` description (`api/handlers/scheduled_tasks.rs:63`)
-  becomes "Tracker sync: mirrors each connected Jira board's sprints and tickets, writes
+  becomes "Tracker sync — mirrors each connected Jira board's sprints and tickets, writes
   usage metrics back to tickets assigned to you, and drains removed credentials".
 - **Tickets screen sub-line** (`TicketsScreen.svelte:40`, `workspace-tickets.md:45-47`):
   "… Read from Jira. On tickets assigned to you, sensei writes these numbers back, as set
@@ -847,7 +847,7 @@ The rows marked *(rewrite)* were added by the rewrite and verified in a second p
 | C10 | `map_response` makes a 2xx empty body a `Decode` error | transport.rs:40; scratch `from_slice(b"")` | Err | CONFIRMED |
 | C11 | `sha2`, `hex` are `senseid` deps | Cargo.toml:101-102 | present | CONFIRMED |
 | C12 | All tracker routes sit in `tracker_routes()` behind one `route_layer(local_caller_guard)` | routes.rs:47-65 | as stated | CONFIRMED |
-| C13 | `…/trackers/{tracker}` has only `DELETE` | routes.rs:54 | as stated | CONFIRMED |
+| C13 | `…/trackers/{tracker}` has only `DELETE` | routes.rs:54 | as stated | CONFIRMED *(F3 adds PATCH, W8)* |
 | C14 | Tracker SQL lives in `db::pg_store` (`trackers.rs` and `tracker_usage.rs`); none in `tracker/` outside tests | `rg sqlx crates/senseid/src/tracker`; tracker_usage.rs | as stated | CONFIRMED *(was FALSE: draft said all of it is in `trackers.rs`; W10 corrected)* |
 | C15 | `tracker_error` labels are pinned to `TrackerError::ALL` by a test | mod.rs tests | as stated | CONFIRMED |
 | C16 | Discovery builds `TaskRow`s with `task_row` and inserts via `apply_discovered` → `upsert_tasks`, the function the snapshot apply also uses | jira.rs:334; discover.rs:161, 204; trackers.rs:531, 847 | as stated | CONFIRMED |

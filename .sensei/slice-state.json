@@ -4,15 +4,26 @@
   "plan_path": "docs/plans/2026-10-26-tracker-metrics-writeback.md",
   "branch": "feature/tracker_metrics_writeback",
   "mode": "unattended",
-  "phases": ["F1", "F2", "F3", "F4", "F5", "F6"],
-  "current_phase": "F2",
-  "completed": ["F1 (4794e815b, 079f0cc81)"],
-  "gate_status": "pending: F2 full suite + whole-slice review",
+  "phases": [
+    "F1",
+    "F2",
+    "F3",
+    "F4",
+    "F5",
+    "F6"
+  ],
+  "current_phase": "F4",
+  "completed": [
+    "F1 (4794e815b, 079f0cc81)",
+    "F2 (ac7822d2b, 0dc79d0cb)",
+    "F3 (this commit)"
+  ],
+  "gate_status": "F3 pass",
   "open_questions": [],
   "known_broken": [],
   "notes": [
     "build with cargo -j 2 (OOM at -j 4); run make test-template after any database/ change",
     "F6 is live verification against a Jira tenant: needs the user (person token, app token, two assignees)"
   ],
-  "next_command": "finish F2 verify -> /sensei:review F2 -> commit; then F3 (toggle + status UI), F4 (mapped fields), F5 (W-DOCS)"
+  "next_command": "F4 mapped fields, then F5 W-DOCS; F6 needs the user"
 }

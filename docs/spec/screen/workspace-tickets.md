@@ -42,9 +42,10 @@ tickets by key (R6). Connecting the board is the Integrations screen's job; this
 only reads.
 
 **Eyebrow:** `札 · TICKETS`. **Header:** the board name (`board_name`, else
-`board #<board_ref>`). **Sub-line:** "Active AI time and tokens per sprint and ticket,
-from AI sessions whose branch or prompt names the ticket. Read from Jira; nothing is
-changed there."
+`board #<board_ref>`). **Sub-line:** "Active AI time and tokens per ticket and sprint,
+from AI sessions whose branch or prompt names the ticket. Read from Jira. On tickets
+assigned to you, sensei writes these numbers back, as set on Integrations." (Superseded
+2026-10-26 by tracker-metrics-writeback W-UI; the screen itself still calls no write route.)
 
 ## States
 
@@ -130,7 +131,7 @@ message (same words as the Integrations screen's table; one shared mapping) and 
 - A sprint total computed by adding its tickets.
 - "hours" or "time spent" without "active AI time".
 - A cycle time computed by adding session times, or session time by adding active times.
-- Any assignee, author or other person attribute shown.
+- Any assignee, author or other person attribute shown. (`assigned_to_me` and the write-back state are not person data; showing them is allowed.)
 - Any request that changes Jira, or any write route called from this screen.
 
 ## Related

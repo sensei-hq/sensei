@@ -9,7 +9,7 @@
 // is never stored, logged, or read back.
 import type { ApiResult } from '$lib/api.js';
 import type { TrackerConnection, TrackerLevel, TrackerSyncCounts } from '$lib/types.js';
-import { errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
+import { WRITEBACK_STOPPED, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
 
 export { CREATE_TOKEN_URL, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
 
@@ -26,6 +26,11 @@ export interface TrackerApi {
     trackerId: string,
   ) => Promise<ApiResult<{ counts: TrackerSyncCounts }>>;
   tryDisconnectTracker: (workspaceId: string, trackerId: string) => Promise<ApiResult<void>>;
+  trySetTrackerWriteback: (
+    workspaceId: string,
+    trackerId: string,
+    enabled: boolean,
+  ) => Promise<ApiResult<TrackerConnection>>;
 }
 
 /** The levels a board can serve, in the order the screen lists them (D40). */
@@ -52,6 +57,31 @@ export function elapsedLabel(iso: string, now: Date): string {
 
 const lastErrorText = (code: string | null) => (code ? errorFor(502, { error: code }).text : '');
 
+/** A board's write-back state as the card says it (W-UI). */
+export function writebackText(w: TrackerConnection['writeback']): string {
+  const tickets = (n: number) => `${n} ${n === 1 ? 'ticket' : 'tickets'}`;
+  switch (w.state) {
+    case 'active': {
+      const failing = w.failing > 0 ? ` ${w.failing} couldn’t be written.` : '';
+      return `Writing to ${tickets(w.assigned)} assigned to you.${failing}`;
+    }
+    case 'disabled':
+      return 'Write-back is off.';
+    case 'pass_failed':
+      return (w.error && WRITEBACK_STOPPED[w.error]) || `Write-back stopped (${w.error ?? 'unknown'}).`;
+    case 'owner_not_a_person':
+      return 'This token belongs to an app account, so sensei can’t tell which tickets are yours. Nothing is written.';
+    case 'owner_lookup_failed':
+      return w.error
+        ? `Couldn’t check which tickets are yours: ${lastErrorText(w.error).replace(/\.$/, '')}. Retrying on each sync.`
+        : 'Couldn’t check which tickets are yours. Retrying on each sync.';
+    case 'owner_unknown':
+      return 'Checking which tickets are yours on the next sync.';
+    case 'nothing_assigned':
+      return 'No tickets on this board are assigned to you.';
+  }
+}
+
 export type View = 'loading' | 'daemon_error' | 'not_connected' | 'connected';
 
 export class TrackerIntegration {
@@ -76,7 +106,7 @@ export class TrackerIntegration {
   siteUrl = $state('');
   boardId = $state('');
 
-  busy = $state<null | 'connect' | 'sync' | 'disconnect'>(null);
+  busy = $state<null | 'connect' | 'sync' | 'disconnect' | 'writeback'>(null);
   /** The board a sync or disconnect is running for. */
   busyTracker = $state<string | null>(null);
   /** The live `role="status"` line. */
@@ -131,6 +161,27 @@ export class TrackerIntegration {
     const site = t.base_url.replace(/^https:\/\//, '');
     const board = t.board_name ? `board "${t.board_name}" (#${t.board_ref})` : `board #${t.board_ref}`;
     return `Jira · ${site} · project ${t.external_scope} · ${board}`;
+  }
+
+  /** The board's write-back state as text (W-UI). */
+  writebackLine(t: TrackerConnection): string {
+    return writebackText(t.writeback);
+  }
+
+  /** Switch write-back on or off; the card shows what the daemon returns, or stays as it was. */
+  async toggleWriteback(t: TrackerConnection) {
+    if (this.busy) return;
+    this.busy = 'writeback';
+    this.busyTracker = t.id;
+    this.alert = null;
+    const res = await this.#api.trySetTrackerWriteback(this.#workspaceId, t.id, !t.writeback.enabled);
+    this.busy = null;
+    this.busyTracker = null;
+    if (!res.ok) {
+      this.#fail(res.error);
+      return;
+    }
+    this.trackers = this.trackers.map((x) => (x.id === res.data.id ? res.data : x));
   }
 
   /** The status as text (R9); the dot beside it is decoration. */

@@ -1293,6 +1293,52 @@ impl PgStore {
         .map_err(|e| e.to_string())
     }
 
+    /// Switch write-back on or off (W8). Switching it on clears what was waiting
+    /// for that: the sticky statuses, and a removed comment's id and hash, so the
+    /// next pass posts a new one. `Ok(false)` when there is no such tracker.
+    pub async fn set_writeback_enabled(
+        &self,
+        tracker_id: uuid::Uuid,
+        enabled: bool,
+    ) -> Result<bool, String> {
+        let err = |e: sqlx_core::Error| e.to_string();
+        let mut tx = self.pool.begin().await.map_err(err)?;
+        let Some((was,)) = sqlx_core::query_as::query_as::<_, (bool,)>(
+            "SELECT writeback_enabled FROM sensei.trackers WHERE id = $1 FOR UPDATE",
+        )
+        .bind(tracker_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(err)?
+        else {
+            return Ok(false);
+        };
+        sqlx_core::query::query("UPDATE sensei.trackers SET writeback_enabled = $2 WHERE id = $1")
+            .bind(tracker_id)
+            .bind(enabled)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+        if !was && enabled {
+            sqlx_core::query::query(
+                "UPDATE sensei.tracker_tasks
+                    SET writeback_comment_ref = CASE WHEN writeback_status = 'comment_removed' THEN NULL
+                                                     ELSE writeback_comment_ref END,
+                        writeback_hash = CASE WHEN writeback_status = 'comment_removed' THEN NULL
+                                              ELSE writeback_hash END,
+                        writeback_status = NULL
+                  WHERE tracker_id = $1
+                    AND writeback_status IN ('comment_removed', 'forbidden', 'not_found', 'field_invalid')",
+            )
+            .bind(tracker_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(err)?;
+        }
+        tx.commit().await.map_err(err)?;
+        Ok(true)
+    }
+
     /// `(assigned, failing)` for the board card (W8).
     pub async fn writeback_counts(&self, tracker_id: uuid::Uuid) -> Result<(i64, i64), String> {
         sqlx_core::query_as::query_as(

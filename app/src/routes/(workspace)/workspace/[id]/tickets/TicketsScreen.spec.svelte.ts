@@ -169,6 +169,14 @@ const settle = async () => {
 };
 
 describe('ready', () => {
+  it('the header says the numbers are written back to tickets assigned to you (W-UI)', async () => {
+    const { m } = await open();
+    expect(m.container.textContent).toContain(
+      'Read from Jira. On tickets assigned to you, sensei writes these numbers back, as set on Integrations.',
+    );
+    expect(m.container.textContent).not.toContain('nothing is changed there');
+  });
+
   it('starts with every ticket and a sprint filter, not a sprint list', async () => {
     const { q, m } = await open();
     expect(m.container.querySelectorAll('button[data-sprint]').length).toBe(0);

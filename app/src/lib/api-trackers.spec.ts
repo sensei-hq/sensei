@@ -52,6 +52,16 @@ describe('tracker wrappers', () => {
     expect(JSON.parse(init.body)).toEqual({ kind: 'jira', level: 'epic', ...body });
   });
 
+  it('write-back is switched with a PATCH of only {writeback_enabled} to …/trackers/{tracker}', async () => {
+    const fetch = stub(200, { id: T, writeback: { enabled: false } });
+    const res = await api().trySetTrackerWriteback(P, T, false);
+    expect(res.ok).toBe(true);
+    const [url, init] = fetch.mock.calls[0];
+    expect(url).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers/${T}`);
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body)).toEqual({ writeback_enabled: false });
+  });
+
   it('sync POSTs …/trackers/{tracker}/sync and disconnect DELETEs …/trackers/{tracker} (204, no body)', async () => {
     const fetch = stub(200, { counts: { sprints: 1 } });
     expect((await api().trySyncTracker(P, T)).ok).toBe(true);

@@ -47,6 +47,7 @@ function api(over: Partial<TrackerApi> = {}): TrackerApi {
       data: { counts: { sprints: 6, tasks: 142, removed: 0, links: 0, skipped_members: 0 } },
     }),
     tryDisconnectTracker: async () => ({ ok: true, data: undefined }),
+    trySetTrackerWriteback: async () => ({ ok: true, data: connected }),
     ...over,
   };
 }
@@ -256,4 +257,94 @@ describe('accessibility (axe, structural rules; contrast is checked in the e2e s
       expect(bad).toEqual([]);
     });
   }
+});
+
+describe('write-back on the board card (W-UI)', () => {
+  const active = { ...connected, writeback: { ...connected.writeback, state: 'active' as const, assigned: 2 } };
+
+  it('the header says what sensei writes back, and where', async () => {
+    const { m } = await open({ tryListTrackers: async () => ({ ok: true, data: [active] }) });
+    expect(m.container.textContent).toContain(
+      'Connect this workspace’s Jira boards, each at a level, so sensei can link AI sessions to tickets and report time, tokens and cost per ticket. On tickets assigned to you, sensei writes these numbers back to Jira, as a comment or in the fields you map.',
+    );
+    expect(m.container.textContent).not.toContain('never changes anything in Jira');
+  });
+
+  it('each card shows its write-back state and a labelled switch that sends one request', async () => {
+    const calls: Array<boolean> = [];
+    const { q } = await open({
+      tryListTrackers: async () => ({ ok: true, data: [active] }),
+      trySetTrackerWriteback: async (_p, _t, enabled) => {
+        calls.push(enabled);
+        return { ok: true, data: { ...active, writeback: { ...active.writeback, enabled, state: 'disabled' } } };
+      },
+    });
+    const line = q('[data-tracker="t-1"] [data-writeback-state]');
+    expect(line?.getAttribute('data-writeback-state')).toBe('active');
+    expect(line?.textContent?.trim()).toBe('Writing to 2 tickets assigned to you.');
+    const toggle = q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]');
+    expect(toggle?.type).toBe('checkbox');
+    expect(toggle?.checked).toBe(true);
+    expect(toggle?.labels?.[0]?.textContent).toContain('Write back to Jira');
+    toggle!.click();
+    await settle();
+    expect(calls).toEqual([false]);
+    expect(q('[data-tracker="t-1"] [data-writeback-state]')?.getAttribute('data-writeback-state')).toBe('disabled');
+    expect(q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]')?.checked).toBe(false);
+  });
+
+  it.each([
+    ['active', { assigned: 2 }, 'Writing to 2 tickets assigned to you.'],
+    ['disabled', { enabled: false }, 'Write-back is off.'],
+    ['pass_failed', { error: 'db' }, 'Couldn’t record what was written. Write-back retries on each sync.'],
+    [
+      'owner_not_a_person',
+      {},
+      'This token belongs to an app account, so sensei can’t tell which tickets are yours. Nothing is written.',
+    ],
+    [
+      'owner_lookup_failed',
+      { error: 'forbidden' },
+      'Couldn’t check which tickets are yours: This account can’t read that board. Retrying on each sync.',
+    ],
+    ['owner_unknown', {}, 'Checking which tickets are yours on the next sync.'],
+    ['nothing_assigned', { assigned: 0 }, 'No tickets on this board are assigned to you.'],
+  ] as const)('the card says %s in words', async (state, over, text) => {
+    const card = { ...connected, writeback: { ...connected.writeback, state, ...over } };
+    const { q } = await open({ tryListTrackers: async () => ({ ok: true, data: [card] }) });
+    const line = q('[data-tracker="t-1"] [data-writeback-state]');
+    expect(line?.getAttribute('data-writeback-state')).toBe(state);
+    expect(line?.textContent?.trim()).toBe(text);
+  });
+
+  it('the switch is disabled while a request runs and keeps its place until the daemon answers', async () => {
+    let answer: (r: { ok: true; data: TrackerConnection }) => void = () => {};
+    const { q } = await open({
+      tryListTrackers: async () => ({ ok: true, data: [active] }),
+      trySetTrackerWriteback: () => new Promise((r) => (answer = r)),
+    });
+    const toggle = () => q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]')!;
+    toggle().click();
+    flushSync();
+    expect(toggle().checked).toBe(true);
+    expect(toggle().disabled).toBe(true);
+    answer({ ok: true, data: { ...active, writeback: { ...active.writeback, enabled: false, state: 'disabled' } } });
+    await settle();
+    expect(toggle().checked).toBe(false);
+    expect(toggle().disabled).toBe(false);
+  });
+
+  it('a refused switch flips back and the alert says why', async () => {
+    const { q } = await open({
+      tryListTrackers: async () => ({ ok: true, data: [active] }),
+      trySetTrackerWriteback: async () => ({
+        ok: false,
+        error: { status: 403, message: 'forbidden_caller', body: { error: 'forbidden_caller' } },
+      }),
+    });
+    q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]')!.click();
+    await settle();
+    expect(q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]')?.checked).toBe(true);
+    expect(q('[role="alert"]')?.textContent).toContain('refused this window’s request');
+  });
 });

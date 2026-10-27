@@ -773,6 +773,11 @@ export function senseiApi(port: number) {
       ),
     tryDisconnectTracker: (workspaceId: string, trackerId: string) =>
       tryJson<void>('DELETE', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}`),
+    // Switch usage write-back on or off (tracker-metrics-writeback W8): the tracker, as listed.
+    trySetTrackerWriteback: (workspaceId: string, trackerId: string, enabled: boolean) =>
+      tryJson<TrackerConnection>(
+        'PATCH', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}`, { writeback_enabled: enabled },
+      ),
     // Usage reads (spec R7/R8), one board each (D40). Result-based: a failed read
     // must never pass for "no tracker" or an empty sprint.
     tryListSprints: (workspaceId: string, trackerId: string) =>

@@ -56,6 +56,10 @@ function daemon(lists: Array<ApiResult<TrackerConnection[]>>, over: Partial<Trac
       calls.push(['disconnect', { p, t }]);
       return { ok: true, data: undefined };
     },
+    trySetTrackerWriteback: async (p, t, enabled) => {
+      calls.push(['writeback', { p, t, enabled }]);
+      return { ok: true, data: row({ writeback: { ...row().writeback, enabled } }) };
+    },
     ...over,
   };
   return { api, calls };
@@ -486,5 +490,97 @@ describe('elapsedLabel', () => {
     expect(ago(2 * 60_000)).toBe('2 min ago');
     expect(ago(3 * 3_600_000)).toBe('3 h ago');
     expect(ago(50 * 3_600_000)).toBe('2 days ago');
+  });
+});
+
+describe('write-back (tracker-metrics-writeback W8, W-UI)', () => {
+  const wb = (over: Partial<TrackerConnection['writeback']> = {}): TrackerConnection['writeback'] => ({
+    enabled: true,
+    state: 'active',
+    surface: 'comment',
+    mapped: 0,
+    assigned: 2,
+    failing: 0,
+    error: null,
+    ...over,
+  });
+
+  it('says what write-back is doing, in words, for every state', () => {
+    const s = new TrackerIntegration(daemon([{ ok: true, data: [] }]).api, P);
+    const line = (w: Partial<TrackerConnection['writeback']>) => s.writebackLine(row({ writeback: wb(w) }));
+    expect(line({})).toBe('Writing to 2 tickets assigned to you.');
+    expect(line({ assigned: 1 })).toBe('Writing to 1 ticket assigned to you.');
+    expect(line({ failing: 1 })).toBe('Writing to 2 tickets assigned to you. 1 couldn’t be written.');
+    expect(line({ enabled: false, state: 'disabled' })).toBe('Write-back is off.');
+    expect(line({ state: 'owner_not_a_person' })).toBe(
+      'This token belongs to an app account, so sensei can’t tell which tickets are yours. Nothing is written.',
+    );
+    expect(line({ state: 'owner_unknown' })).toBe('Checking which tickets are yours on the next sync.');
+    expect(line({ state: 'nothing_assigned', assigned: 0 })).toBe('No tickets on this board are assigned to you.');
+    expect(line({ state: 'owner_lookup_failed', error: 'forbidden' })).toBe(
+      'Couldn’t check which tickets are yours: This account can’t read that board. Retrying on each sync.',
+    );
+    const passFailed = (error: string) => line({ state: 'pass_failed', error });
+    expect(passFailed('token_missing')).toBe('Couldn’t read the Jira token to write back. Replace the token.');
+    expect(passFailed('credential_store')).toBe('Couldn’t read the Jira token to write back. Replace the token.');
+    expect(passFailed('db')).toBe('Couldn’t record what was written. Write-back retries on each sync.');
+    expect(passFailed('rate_limited')).toBe('Jira is rate-limiting writes. Write-back resumes on the next sync.');
+    expect(passFailed('transport')).toBe('Writing didn’t finish in time. Write-back resumes on the next sync.');
+    expect(passFailed('decode')).toBe('Write-back stopped (decode).');
+    expect(line({ state: 'pass_failed', error: null })).toBe('Write-back stopped (unknown).');
+    expect(line({ state: 'owner_lookup_failed', error: null })).toBe(
+      'Couldn’t check which tickets are yours. Retrying on each sync.',
+    );
+  });
+
+  it('the board stays as it was until the daemon answers, and a second click sends nothing', async () => {
+    let answer: (r: ApiResult<TrackerConnection>) => void = () => {};
+    let requests = 0;
+    const { api } = daemon([{ ok: true, data: [row()] }], {
+      trySetTrackerWriteback: () => {
+        requests += 1;
+        return new Promise((r) => (answer = r));
+      },
+    });
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    const first = s.toggleWriteback(s.trackers[0]);
+    expect(s.busy).toBe('writeback');
+    expect(s.trackers[0].writeback.enabled).toBe(true);
+    await s.toggleWriteback(s.trackers[0]);
+    expect(requests).toBe(1);
+    answer({ ok: true, data: row({ writeback: wb({ enabled: false, state: 'disabled' }) }) });
+    await first;
+    expect(s.trackers[0].writeback.enabled).toBe(false);
+  });
+
+  it('switches write-back with one request and shows the tracker the daemon returns', async () => {
+    const off = row({ writeback: wb({ enabled: false, state: 'disabled' }) });
+    const seen: Array<[string, string, boolean]> = [];
+    const { api } = daemon([{ ok: true, data: [row()] }], {
+      trySetTrackerWriteback: async (p, t, enabled) => {
+        seen.push([p, t, enabled]);
+        return { ok: true, data: off };
+      },
+    });
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    const pending = s.toggleWriteback(s.trackers[0]);
+    expect(s.busy).toBe('writeback');
+    await pending;
+    expect(seen).toEqual([[P, 't-1', false]]);
+    expect(s.busy).toBe(null);
+    expect(s.trackers[0].writeback.enabled).toBe(false);
+  });
+
+  it('a refused switch leaves the board as it was and says why', async () => {
+    const { api } = daemon([{ ok: true, data: [row()] }], {
+      trySetTrackerWriteback: async () => fail(403, 'forbidden_caller', { error: 'forbidden_caller' }),
+    });
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    await s.toggleWriteback(s.trackers[0]);
+    expect(s.trackers[0].writeback.enabled).toBe(true);
+    expect(s.alert?.code).toBe('forbidden_caller');
   });
 });
