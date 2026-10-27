@@ -29,6 +29,8 @@
     // A deep link from the Sessions digest — /instruments?tab=replay&session={id} —
     // opens Replay with that session preselected once the list loads.
     const sessionParam = untrack(() => page.url.searchParams.get("session"));
+    // /instruments?workspace={id} opens the Playground running in that workspace.
+    const workspaceParam = untrack(() => page.url.searchParams.get("workspace"));
     const ins = new InstrumentsState(initialTab(untrack(() => page.url.searchParams.get("tab"))));
     let honoredSessionParam = false;
 
@@ -71,7 +73,7 @@
     const heroCopy = $derived(heroCopyFor(ins.tab));
 
     function pickToolDefaults(tool: PlaygroundTool): Record<string, string> {
-        return initialValues(formFields(tool.schema), appState.activeWorkspaceId || null);
+        return initialValues(formFields(tool.schema), ins.runIn);
     }
 
     function openSource(source: ToolHealthSource) {
@@ -130,7 +132,10 @@
     $effect(() => {
         const current = ins.tab;
         untrack(() => {
-            if (current === 'playground') void mcp.loadMcpServers();
+            if (current === 'playground') {
+                void mcp.loadMcpServers();
+                void ins.loadWorkspaces(api, workspaceParam || appState.activeWorkspaceId || null);
+            }
             if (current === 'replay') void ins.loadReplaySessions(api);
             if (current === 'insights') {
                 void mcp.loadCatalog();
@@ -414,6 +419,20 @@
                                 <span class="text-xs uppercase tracking-wide text-ink-mute">Inputs</span>
                                 <span class="text-xs text-ink-faint">{kindHint}</span>
                             </div>
+                            <label class="flex items-center gap-2 text-xs text-ink-soft mb-2" data-testid="run-in">
+                                <span>Runs in</span>
+                                <Select
+                                    items={[
+                                        { label: "the daemon's folder (no workspace)", value: '' },
+                                        ...ins.workspaces.map((w) => ({ label: w.name, value: w.id })),
+                                    ]}
+                                    value={ins.runIn ?? ''}
+                                    onchange={(v) => (ins.runIn = (v as string) || null)}
+                                />
+                            </label>
+                            {#if ins.workspacesError}
+                                <p class="text-xs text-danger m-0 mb-2" data-testid="run-in-error">{ins.workspacesError}</p>
+                            {/if}
 
                             {#if fields.length === 0}
                                 <div class="text-sm text-ink-mute mb-2">No inputs — just call it.</div>
@@ -444,6 +463,7 @@
                                                     rows="2"
                                                     placeholder="JSON"
                                                     bind:value={ins.toolParams[field.name]}
+                                                    data-testid={`tool-input-${field.name}`}
                                                 ></textarea>
                                             {:else}
                                                 <input

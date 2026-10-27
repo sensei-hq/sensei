@@ -189,6 +189,10 @@ pub(crate) struct CallBody {
     pub tool: String,
     #[serde(default)]
     pub arguments: serde_json::Value,
+    /// The workspace the call is made for: the server runs in its root, as it
+    /// would for an assistant working there.
+    #[serde(default)]
+    pub workspace_id: Option<uuid::Uuid>,
 }
 
 /// POST /api/instruments/mcp-servers/{id}/call — run one tool through the
@@ -207,10 +211,28 @@ pub(crate) async fn call(
     }
     let (command, args, env) = server_launch(&state, &uuid).await?;
     let arguments = if body.arguments.is_null() { serde_json::json!({}) } else { body.arguments };
+    let cwd = match body.workspace_id {
+        Some(ws) => Some(
+            state
+                .pg
+                .workspace_root_path(&ws)
+                .await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+                .map(std::path::PathBuf::from)
+                .ok_or_else(|| err(StatusCode::NOT_FOUND, "the workspace has no root folder"))?,
+        ),
+        None => None,
+    };
     let started = std::time::Instant::now();
-    let outcome =
-        crate::tasks::mcp_probe::call_tool(&command, &args, &env, None, &body.tool, &arguments)
-            .await;
+    let outcome = crate::tasks::mcp_probe::call_tool(
+        &command,
+        &args,
+        &env,
+        cwd.as_deref(),
+        &body.tool,
+        &arguments,
+    )
+    .await;
     let duration_ms = started.elapsed().as_millis() as u64;
     match outcome {
         crate::tasks::mcp_probe::CallOutcome::Ok { result, is_error } => Ok(Json(

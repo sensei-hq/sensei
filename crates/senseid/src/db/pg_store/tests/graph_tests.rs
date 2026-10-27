@@ -38,6 +38,38 @@ async fn rank_bm25_returns_results() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// A node that belongs to no file — a package, a module — matches the query
+/// like any other, but it names no file to rank: it is left out, not ranked as
+/// a file with no path (which failed the whole read).
+#[tokio::test]
+async fn rank_bm25_ranks_only_nodes_in_a_file() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("bm25_fileless_{}", uuid::Uuid::new_v4())).await;
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "authenticate_user",
+        "src/auth.rs",
+        None,
+        Some("fn authenticate_user(token: &str)"),
+        Some(1),
+        Some(20),
+    )
+    .await
+    .unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.nodes(folder_id, kind, name) VALUES($1, 'package', 'authenticate-kit')",
+    )
+    .bind(fid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    let results = s.rank_bm25(&fid, "authenticate").await.unwrap();
+    assert_eq!(results.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), ["src/auth.rs"]);
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
 #[tokio::test]
 async fn rank_bm25_empty_folder() {
     let s = pg_store().await;

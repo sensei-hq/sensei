@@ -78,6 +78,24 @@ impl DaemonRequest {
 /// This is the anti-drift seam: the contract test builds requests here and
 /// issues them against the real daemon router, so a renamed path, a changed
 /// query key, or a dropped tool fails the suite.
+/// The workspace list the MCP resolves a name, and the current folder, against:
+/// every workspace with its repo-root folders only — enough for the longest-prefix
+/// cwd match, and a fraction of the full tree the app's list carries.
+pub const WORKSPACES_FOR_RESOLUTION: &str = "/api/workspaces?folders=roots";
+
+/// The tools that name their workspace in the daemon path. With none resolved
+/// they are not sent (an empty path segment read as a workspace with nothing in
+/// it); the binary answers that no workspace was resolved.
+pub const NEEDS_WORKSPACE: &[&str] = &[
+    "update_phase",
+    "get_workflow_state",
+    "match_pattern",
+    "get_pattern_for",
+    "get_duplicates",
+    "get_workspace_conventions",
+    "get_commands",
+];
+
 pub fn daemon_request_for(
     tool: &str,
     args: &Value,
@@ -86,6 +104,10 @@ pub fn daemon_request_for(
 ) -> Option<DaemonRequest> {
     // The binary's `repo_id`: the resolved workspace NAME, or "" when unresolved.
     let repo_id = resolved_workspace.unwrap_or("");
+    let named = args["workspace"].as_str().is_some_and(|s| !s.is_empty());
+    if repo_id.is_empty() && !named && NEEDS_WORKSPACE.contains(&tool) {
+        return None;
+    }
 
     match tool {
         // ── Handled inline by the binary (custom client / response / no-op) ──
@@ -636,10 +658,11 @@ pub fn handle_list_tools() -> Value {
             tool("list_library_agents", "List the review agents a library provides (declared in its sensei.library.json manifest) — e.g. a config/pattern reviewer for that library. Use during /sensei:review when the repository depends on the library.", &[
                 ("name", "string", "Library name (e.g. 'rokkit'); one two ecosystems share is named as ecosystem:name (e.g. 'cargo:uuid')"),
             ], &[]),
-            tool("get_communities", "Get code architecture — clusters of related functions detected by community analysis.", &[], &[
+            tool("get_communities", "Get code architecture — clusters of related functions detected by community analysis, largest first, with the total.", &[], &[
                 ("workspace", "string", "Workspace name. Defaults to current workspace."),
+                ("limit", "integer", "How many to return, largest first (default 50)."),
             ]),
-            tool("get_patterns", "Get files tagged with a framework pattern (e.g. 'hook', 'middleware', 'route', 'component').", &[
+            tool("get_patterns", "Get files tagged with a framework pattern (e.g. 'hook', 'middleware', 'route', 'component') — up to 200, by path, with the total.", &[
                 ("pattern", "string", "Pattern to search for"),
             ], &[
                 ("workspace", "string", "Workspace name. Defaults to current workspace."),
@@ -921,7 +944,8 @@ pub fn handle_list_tools() -> Value {
             tool("get_pending_nudges",
                 "Pull the pending human→agent steer for a run from Dōjō — the 'check in' pull side of the \
                  contract. Poll it each executor loop and act on any nudge/chat the human sent. Read-only \
-                 and fail-soft (empty list if there's no dojo or the poll fails). Steer, not drive.",
+                 and fail-soft (empty list if there's no dojo or the poll fails); a run the daemon \
+                 has no record of is an error. Steer, not drive.",
                 &[("run_id", "string", "The run's UUID.")],
                 &[]),
             // ── Front-door intake ────────────────────────────────────────────
@@ -1677,6 +1701,31 @@ mod tests {
             daemon_request_for("get_layered_context", &json!({}), "/cwd", Some("sensei")).unwrap();
         assert_eq!(q(&no_slot, "slot"), None, "no slot arg → no slot query param");
         assert_eq!(q(&no_slot, "feature"), None, "no feature arg → no feature query param");
+    }
+
+    /// A tool that names its workspace in the daemon path, with none resolved,
+    /// is not sent as `/api/patterns//match` — the daemon read that as a
+    /// workspace with nothing in it and answered an empty success.
+    #[test]
+    fn a_tool_that_needs_a_workspace_is_not_sent_without_one() {
+        for t in NEEDS_WORKSPACE {
+            assert_eq!(daemon_request_for(t, &json!({}), "/cwd", None), None, "{t}");
+            assert!(daemon_request_for(t, &json!({}), "/cwd", Some("sensei")).is_some(), "{t}");
+        }
+        assert_eq!(
+            NEEDS_WORKSPACE.iter().copied().collect::<std::collections::BTreeSet<_>>(),
+            [
+                "get_commands",
+                "get_duplicates",
+                "get_pattern_for",
+                "get_workflow_state",
+                "get_workspace_conventions",
+                "match_pattern",
+                "update_phase",
+            ]
+            .into_iter()
+            .collect()
+        );
     }
 
     #[test]

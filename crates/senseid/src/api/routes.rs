@@ -779,6 +779,215 @@ mod tests {
         assert_eq!(st, StatusCode::NOT_FOUND);
     }
 
+    /// A large workspace has thousands of communities, most of a node or two;
+    /// all of them was half a megabyte no assistant could read. The largest
+    /// come first, `limit` of them (50 unless asked), with the total beside
+    /// them so the cut is visible.
+    #[tokio::test]
+    async fn communities_come_largest_first_with_the_total() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (ws, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        let name = state.pg.get_workspace(&ws).await.unwrap().unwrap()["name"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        for i in 0..60 {
+            sqlx_core::query::query(
+                "INSERT INTO inference.communities(folder_id, community_id, label, node_count) VALUES($1, $2, $3, $2)",
+            )
+            .bind(fid)
+            .bind(i)
+            .bind(format!("c{i}"))
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        }
+        let call = |limit: Option<&str>| {
+            let mut params = serde_json::json!({"repoId": name});
+            if let Some(l) = limit {
+                params["limit"] = serde_json::json!(l);
+            }
+            serde_json::json!({"tool": "get_communities", "params": params})
+        };
+        let (st, body) = req(app.clone(), "POST", "/api/mcp/call", Some(call(None))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let sizes: Vec<i64> = body["communities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["node_count"].as_i64().unwrap())
+            .collect();
+        assert_eq!(sizes, (10..60).rev().collect::<Vec<_>>());
+        assert_eq!(body["total"], 60);
+
+        let (_, body) = req(app.clone(), "POST", "/api/mcp/call", Some(call(Some("3")))).await;
+        assert_eq!(body["communities"].as_array().map(Vec::len), Some(3), "{body}");
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+    }
+
+    /// Nudges for a run the daemon has no record of: a 404 that names the run,
+    /// so an assistant reads why, not a bare status.
+    #[tokio::test]
+    async fn nudges_for_an_unknown_run_say_so() {
+        let (app, _) = test_app().await;
+        let run = uuid::Uuid::new_v4();
+        let (st, body) = req(app.clone(), "GET", &format!("/api/runs/{run}/nudges"), None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+        assert!(body["error"].as_str().unwrap_or_default().contains(&run.to_string()), "{body}");
+        let (st, body) = req(app, "GET", "/api/runs/not-a-uuid/nudges", None).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["error"].as_str().is_some(), "{body}");
+    }
+
+    /// The files under a tag are capped (an assistant reads the answer whole),
+    /// and the total rides beside them so the cut is visible, not silent.
+    #[tokio::test]
+    async fn files_by_tag_say_how_many_there_are() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (ws, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        for i in 0..201 {
+            crate::tasks::test_support::seed_file(
+                &state.pg,
+                &fid,
+                &format!("src/routes/r{i:03}/+page.svelte"),
+            )
+            .await
+            .unwrap();
+        }
+        sqlx_core::query::query("UPDATE sensei.files SET tags = '{route}' WHERE folder_id = $1")
+            .bind(fid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        let name = state.pg.get_workspace(&ws).await.unwrap().unwrap()["name"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let call = serde_json::json!({"tool": "get_file_tags", "params": {"repoId": name, "tag": "route"}});
+        let (st, body) = req(app.clone(), "POST", "/api/mcp/call", Some(call)).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["files"].as_array().map(Vec::len), Some(200));
+        assert_eq!(body["total"], 201, "{}", body["total"]);
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+    }
+
+    /// A workspace's conventions count ITS files, by their repo-relative paths.
+    #[tokio::test]
+    async fn conventions_count_the_workspaces_files() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (ws, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        for path in ["src/a.rs", "src/b.rs", "ui/App.svelte"] {
+            crate::tasks::test_support::seed_file(&state.pg, &fid, path).await.unwrap();
+        }
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/patterns/{ws}/conventions"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["structure"]["file_count"], 3, "{body}");
+        assert_eq!(body["structure"]["languages"]["rust"], 2, "{body}");
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+    }
+
+    /// A workspace the daemon does not know is a 404 on every pattern read —
+    /// not an empty answer that reads as "this workspace has none".
+    #[tokio::test]
+    async fn the_pattern_reads_refuse_an_unknown_workspace() {
+        let (app, _) = test_app().await;
+        let ws = format!("no-such-{}", uuid::Uuid::new_v4().simple());
+        for path in ["match?description=x", "for/codemap", "duplicates", "conventions"] {
+            let (st, body) =
+                req(app.clone(), "GET", &format!("/api/patterns/{ws}/{path}"), None).await;
+            assert_eq!(st, StatusCode::NOT_FOUND, "{path}: {body}");
+        }
+    }
+
+    /// A recommendation it cannot make is refused, saying why — never a 200
+    /// whose body is an error a caller reads as a recommendation. An axis value
+    /// the recommender does not know is named, with the values it does.
+    #[tokio::test]
+    async fn a_playbook_recommendation_it_cannot_make_is_refused() {
+        let (app, _) = test_app().await;
+        let ask = |body: serde_json::Value| {
+            req(app.clone(), "POST", "/api/playbook/recommend", Some(body))
+        };
+
+        let (st, body) = ask(serde_json::json!({
+            "lifecycle": "stable", "intent": "fix a bug", "risk": "low", "workspace": "sensei", "preview": true
+        }))
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+        let said = body["error"].as_str().unwrap_or_default();
+        assert!(
+            said.contains("intent") && said.contains("fix a bug") && said.contains("enhancement"),
+            "{body}"
+        );
+
+        let (st, body) = ask(serde_json::json!({"workspace": "sensei", "preview": true})).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+
+        let (st, body) =
+            ask(serde_json::json!({"lifecycle": "stable", "intent": "bug", "risk": "low", "preview": true})).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "no workspace: {body}");
+
+        let (st, body) = ask(serde_json::json!({
+            "lifecycle": "stable", "intent": "bug", "risk": "low", "preview": true,
+            "workspace": format!("no-such-{}", uuid::Uuid::new_v4().simple())
+        }))
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+    }
+
+    /// A tool that takes no workspace answers about the folder its server runs
+    /// in, as it does for an assistant working in a repository. So a Playground
+    /// call made for a workspace runs the server in that workspace's root; a
+    /// workspace with no root on record is refused, not run from somewhere else.
+    #[tokio::test]
+    async fn a_tool_runs_in_the_workspace_it_is_called_for() {
+        let (app, state) = test_app().await;
+        let (command, args) = crate::tasks::mcp_probe::fake::cwd_server();
+        let key = format!("cwd-{}", uuid::Uuid::new_v4().simple());
+        let args = serde_json::json!(args);
+        let env = serde_json::json!({});
+        let id = state
+            .pg
+            .upsert_mcp_server(&crate::db::pg_store::McpServerRow {
+                acp_family: "claude",
+                mcp_key: &key,
+                workspace_id: None,
+                config_source: "/tmp/fake-mcp.json",
+                command: &command,
+                args: &args,
+                env: &env,
+            })
+            .await
+            .unwrap();
+        let uri = format!("/api/instruments/mcp-servers/{id}/call");
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap().to_string_lossy().to_string();
+        let uniq = uuid::Uuid::new_v4();
+        let (ws, fid) =
+            crate::tasks::test_support::seed_workspace_folder_at(&state.pg, &uniq, &root).await;
+
+        let call = |ws: uuid::Uuid| serde_json::json!({"tool": "where", "arguments": {}, "workspace_id": ws});
+        let (st, body) = req(app.clone(), "POST", &uri, Some(call(ws))).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["content"][0]["text"], root.as_str());
+
+        let rootless =
+            state.pg.create_workspace(&format!("_test:rootless:{uniq}"), None, None).await.unwrap();
+        let (st, body) = req(app.clone(), "POST", &uri, Some(call(rootless))).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
+        state.pg.delete_workspace(&rootless).await.unwrap();
+    }
+
     /// #343: a server registered by hand is listed, inspected and run like a
     /// discovered one; the discovery prune never removes it (no config file
     /// will ever name it); a second registration under its name is refused, not
@@ -5172,15 +5381,13 @@ mod tests {
             .await
             .unwrap();
 
-        // A tagged `file` node so get_patterns (→ get_file_tags) resolves a hit.
+        // A tagged file so get_patterns (→ get_file_tags) resolves a hit — the
+        // tags live on `sensei.files`; the indexer writes no `file` node.
         let file_path = "src/widget.rs".to_string();
-        let file_id = state
-            .pg
-            .seed_node(&folder_id, "file", "widget.rs", &file_path, None, None, None, None)
-            .await
-            .unwrap();
+        let file_id =
+            crate::tasks::test_support::seed_file(&state.pg, &folder_id, &file_path).await.unwrap();
         let tag = "route";
-        sqlx_core::query::query("UPDATE sensei.nodes SET tags = $2 WHERE id = $1")
+        sqlx_core::query::query("UPDATE sensei.files SET tags = $2 WHERE id = $1")
             .bind(file_id)
             .bind(vec![tag.to_string()])
             .execute(state.pg.pool())
@@ -5706,6 +5913,30 @@ mod tests {
             app_folders.iter().any(|f| f["kind"].as_str() == Some("folder")),
             "app path must still expose the nested `kind:'folder'` descendants",
         );
+
+        // `?folders=roots` — what the MCP resolves a workspace name, and the
+        // current folder, against: every workspace, each with its repo roots
+        // only (the full tree made that lookup outlast the MCP's patience).
+        let resp = app
+            .clone()
+            .oneshot(
+                local_request()
+                    .uri(sensei_mcp::WORKSPACES_FOR_RESOLUTION)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let roots: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mine = roots
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"].as_str() == Some(&pname))
+            .expect("every workspace is listed, not only those under a folder");
+        assert_eq!(mine["folders"].as_array().map(Vec::len), Some(1), "{mine}");
 
         state.pg.delete_workspace(&pid).await.unwrap();
     }

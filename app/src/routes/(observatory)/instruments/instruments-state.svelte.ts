@@ -12,9 +12,15 @@ import { parseServerForm, type ServerBody, type ServerForm } from './server-form
 
 /** The reads the screen makes — injected so a spec can fail them. */
 export interface InstrumentsApi {
-  tryCallServerTool: (serverId: string, tool: string, args: Record<string, unknown>) => Promise<ApiResult<McpToolCallResult>>;
+  tryCallServerTool: (
+    serverId: string,
+    tool: string,
+    args: Record<string, unknown>,
+    workspaceId: string | null,
+  ) => Promise<ApiResult<McpToolCallResult>>;
   tryGetSessions: () => Promise<ApiResult<Pick<SessionData, 'sessions'> & Partial<SessionData>>>;
   tryGetObservatoryFtr: () => Promise<ApiResult<ObservatoryFtr>>;
+  tryListWorkspaces: () => Promise<ApiResult<Array<{ id: string; name: string }>>>;
 }
 
 type ReplaySummary = { used: number; partial: number; ignored: number; total: number };
@@ -44,6 +50,12 @@ export class InstrumentsState {
   /** The last call's round trip, as the daemon measured it. */
   durationMs = $state<number | null>(null);
   executing = $state(false);
+  /** The workspace a call runs in — its server starts in that workspace's
+   *  root, as it would for an assistant working there. None: the daemon's own
+   *  folder, which the screen says. */
+  runIn = $state<string | null>(null);
+  workspaces = $state<Array<{ id: string; name: string }>>([]);
+  workspacesError = $state<string | null>(null);
   refreshingServers = $state(false);
   /** The last refused toggle or failed scan, in words; cleared on success. */
   serversError = $state<string | null>(null);
@@ -84,12 +96,24 @@ export class InstrumentsState {
     this.durationMs = null;
   }
 
+  /** The workspaces a call can run in, by name; the active one is chosen when
+   *  it is among them. */
+  async loadWorkspaces(api: InstrumentsApi, active: string | null): Promise<void> {
+    const read = await api.tryListWorkspaces();
+    if (!read.ok) {
+      this.workspaces = [];
+      this.workspacesError = `Could not list the workspaces: ${failureReason(read.error)}`;
+      return;
+    }
+    this.workspacesError = null;
+    this.workspaces = read.data.map(({ id, name }) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+    this.runIn = this.workspaces.some((w) => w.id === active) ? active : null;
+  }
+
   /** Run a tool through its server with the form's values, typed by its
-   *  schema, and show its answer — or why there is none. */
-  async execute(
-    api: InstrumentsApi,
-    tool: { serverId: string; name: string; schema: unknown },
-  ): Promise<void> {
+   *  schema, in the chosen workspace, and show its answer — or why there is
+   *  none. */
+  async execute(api: InstrumentsApi, tool: { serverId: string; name: string; schema: unknown }): Promise<void> {
     this.toolResult = '';
     this.toolError = null;
     this.durationMs = null;
@@ -99,7 +123,7 @@ export class InstrumentsState {
       return;
     }
     this.executing = true;
-    const read = await api.tryCallServerTool(tool.serverId, tool.name, args.args);
+    const read = await api.tryCallServerTool(tool.serverId, tool.name, args.args, this.runIn);
     if (read.ok) {
       this.toolResult = resultText(read.data.result);
       this.durationMs = read.data.duration_ms;

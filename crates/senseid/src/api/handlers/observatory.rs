@@ -23,6 +23,10 @@ use crate::api::util::resolve_workspace_uuid;
 pub(crate) struct ListSolutionsQuery {
     #[serde(default)]
     under: Option<String>,
+    /// `roots`: each workspace with its repo-root folders only — what a
+    /// name or current-folder lookup needs (the sensei MCP sends it).
+    #[serde(default)]
+    folders: Option<String>,
 }
 
 pub(crate) async fn list_solutions(
@@ -43,11 +47,11 @@ pub(crate) async fn list_solutions(
     // Folder-scope matters here: the `?under=` call is the MCP `find_workspaces`
     // discovery path, which only needs the repo-root folders — attaching the
     // hundreds of nested `kind:'folder'` descendants blew the response past the
-    // MCP client's token cap (~72K chars for sensei). So when `under` is set we
-    // send only the compact repo roots (still enough for cwd→workspace
-    // resolution). The un-scoped app path (`GET /api/workspaces`, no `under`)
-    // keeps the full folder tree — unchanged.
-    let compact = under.is_some();
+    // MCP client's token cap (~72K chars for sensei). So when `under` is set, or
+    // `folders=roots` asks for the MCP's name/cwd lookup, we send only the
+    // compact repo roots (still enough for cwd→workspace resolution). The app
+    // path (`GET /api/workspaces`, neither) keeps the full folder tree.
+    let compact = under.is_some() || q.folders.as_deref() == Some("roots");
     let mut enriched = Vec::with_capacity(workspaces.len());
     for mut workspace in workspaces {
         // A uuid read back out of a DB row, NOT the `{id}` of a route — this

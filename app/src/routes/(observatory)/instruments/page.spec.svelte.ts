@@ -44,6 +44,7 @@ describe('Instruments /+page — the Playground', () => {
       if (url.includes('/mcp-servers/se/call')) return json(call);
       if (url.includes('/mcp-servers/se/tools')) return json(tools);
       if (url.includes('/mcp-servers')) return json(servers);
+      if (url.includes('/api/workspaces')) return json([{ id: 'ws-1', name: 'sensei' }]);
       return json({});
     });
     vi.stubGlobal('fetch', fetch);
@@ -78,7 +79,7 @@ describe('Instruments /+page — Health', () => {
       connection_state: 'connected', server_id: null, tools_registered: 2, tools_invoked_14d: 1, calls_14d: 3, share_invoked: 0.5,
     });
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) =>
-      json(url.includes('/tools-health') ? { sources: [source('claude'), source('zed')] } : {}),
+      json(url.includes('/tools-health') ? { sources: [source('claude'), source('zed')] } : url.includes('/api/workspaces') ? [] : {}),
     ));
     const m = mountComponent(Page, {});
     cleanup.push(m.destroy);
@@ -101,6 +102,7 @@ describe('Instruments /+page — adding a server', () => {
       }
       if (url.includes('/mcp-servers/m1/tools')) return json({ tools: [], error: null });
       if (url.includes('/mcp-servers')) return json({ servers });
+      if (url.includes('/api/workspaces')) return json([{ id: 'ws-1', name: 'sensei' }]);
       return json({});
     });
     vi.stubGlobal('fetch', fetch);

@@ -11,6 +11,7 @@ function api(over: Partial<InstrumentsApi> = {}): InstrumentsApi {
     ),
     tryGetSessions: vi.fn().mockResolvedValue(ok({ sessions: [{ id: 's1', task: 't', startedAt: '2026-10-20T00:00:00Z', ftr: 1 }] })),
     tryGetObservatoryFtr: vi.fn().mockResolvedValue(ok({ rate: 0.5 })),
+    tryListWorkspaces: vi.fn().mockResolvedValue(ok([{ id: 'ws-2', name: 'zeta' }, { id: 'ws-1', name: 'alpha' }])),
     ...over,
   } as InstrumentsApi;
 }
@@ -30,12 +31,37 @@ const tool = {
 };
 
 describe('InstrumentsState — the playground', () => {
+  it('runs in the active workspace by default, and lists the workspaces to pick from', async () => {
+    const s = new InstrumentsState('playground');
+    await s.loadWorkspaces(api(), 'ws-1');
+    expect(s.workspaces.map((w) => w.name)).toEqual(['alpha', 'zeta']);
+    expect(s.runIn).toBe('ws-1');
+  });
+
+  it('runs in no workspace when none is active, or the active one is not listed', async () => {
+    const s = new InstrumentsState('playground');
+    await s.loadWorkspaces(api(), null);
+    expect(s.runIn).toBeNull();
+    await s.loadWorkspaces(api(), 'ws-gone');
+    expect(s.runIn).toBeNull();
+  });
+
+  it('says why the workspaces could not be listed', async () => {
+    const s = new InstrumentsState('playground');
+    await s.loadWorkspaces(api({ tryListWorkspaces: vi.fn().mockResolvedValue(fail(500, 'boom')) }), 'ws-1');
+    expect(s.workspaces).toEqual([]);
+    expect(s.workspacesError).toMatch(/boom/);
+  });
+
   it('runs a tool through its server with typed arguments, and shows its answer', async () => {
     const s = new InstrumentsState('playground');
     s.toolParams = { name: 'scan_root', depth: '2' };
     const a = api();
+    s.runIn = 'ws-1';
     await s.execute(a, tool);
-    expect(a.tryCallServerTool).toHaveBeenCalledWith('srv', 'get_callers', { name: 'scan_root', depth: 2 });
+    // In the workspace the person is in: a tool that takes no workspace answers
+    // about the folder its server runs in.
+    expect(a.tryCallServerTool).toHaveBeenCalledWith('srv', 'get_callers', { name: 'scan_root', depth: 2 }, 'ws-1');
     expect(JSON.parse(s.toolResult)).toEqual({ callers: ['a'] });
     expect(s.durationMs).toBe(42);
     expect(s.toolError).toBeNull();

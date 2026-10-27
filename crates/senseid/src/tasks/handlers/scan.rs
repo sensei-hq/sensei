@@ -334,14 +334,15 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         tracing::warn!(error = %e, "scan_root: prune_empty_workspaces failed");
         0
     });
-    // Tag file nodes with the framework kinds of the symbols they contain
-    // (hook/component) so `get_patterns` / `get_file_tags` return real files.
-    let tagged = ctx.pg().tag_file_nodes_by_framework_kind(&root_id).await.unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "scan_root: tag_file_nodes_by_framework_kind failed");
+    // Tag files with the framework kinds of the symbols they contain
+    // (hook/component) and their role by path (route/middleware), so
+    // `get_patterns` / `get_file_tags` return real files.
+    let tagged = ctx.pg().tag_files_by_framework_kind(&root_id).await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "scan_root: tag_files_by_framework_kind failed");
         0
     });
     if tagged > 0 {
-        tracing::info!("scan_root reconcile: framework-tagged {tagged} file node(s)");
+        tracing::info!("scan_root reconcile: framework-tagged {tagged} file(s)");
     }
     if reabsorbed > 0 {
         tracing::info!(

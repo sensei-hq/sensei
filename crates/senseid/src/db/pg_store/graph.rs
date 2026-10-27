@@ -162,6 +162,9 @@ struct FqnNodeRow<'a> {
     parent_id: Option<&'a uuid::Uuid>,
 }
 
+/// How many files [`PgStore::get_files_by_tag`] returns; the total rides beside them.
+pub const FILES_BY_TAG_LIMIT: i64 = 200;
+
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
     pub async fn rank_bm25(
@@ -2742,26 +2745,50 @@ impl PgStore {
             .collect())
     }
 
-    /// Get files matching a tag via the file_tags view.
+    /// Every file in the given folders, by its repo-relative path.
+    pub async fn list_file_paths_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT sensei.repo_relative_path(f.kind, f.path, fi.file_path)
+               FROM sensei.files fi
+               JOIN sensei.folders f ON f.id = fi.folder_id
+              WHERE fi.folder_id = ANY($1)
+              ORDER BY 1",
+        )
+        .bind(folder_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("list_file_paths_scoped: {e}"))?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
+    }
+
+    /// The files a workspace holds under a tag, by repo-relative path — at most
+    /// [`FILES_BY_TAG_LIMIT`], with how many there are in all.
     pub async fn get_files_by_tag(
         &self,
-        folder_name: &str,
+        workspace: &str,
         tag: &str,
-    ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, Vec<String>)> = sqlx_core::query_as::query_as(
-            "SELECT id, file_path, tags FROM sensei.file_tags
-              WHERE folder = $1 AND $2 = ANY(tags)
-              ORDER BY file_path LIMIT 200",
+    ) -> Result<(Vec<serde_json::Value>, i64), String> {
+        let rows: Vec<(uuid::Uuid, String, Vec<String>, i64)> = sqlx_core::query_as::query_as(
+            "SELECT id, file_path, tags, count(*) OVER () FROM sensei.file_tags
+              WHERE $1 = ANY(workspaces) AND $2 = ANY(tags)
+              ORDER BY file_path LIMIT $3",
         )
-        .bind(folder_name)
+        .bind(workspace)
         .bind(tag)
+        .bind(FILES_BY_TAG_LIMIT)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(|(id, fp, tags)| serde_json::json!({ "id": id, "file_path": fp, "tags": tags }))
-            .collect())
+        let total = rows.first().map_or(0, |r| r.3);
+        Ok((
+            rows.into_iter()
+                .map(|(id, fp, tags, _)| serde_json::json!({ "id": id, "file_path": fp, "tags": tags }))
+                .collect(),
+            total,
+        ))
     }
 
     /// Get doc coverage with drift detection via the doc_coverage view.
@@ -3431,21 +3458,19 @@ impl PgStore {
         Ok(res.rows_affected())
     }
 
-    /// Populate framework-pattern tags on file nodes so `get_patterns` /
-    /// `get_file_tags` return real files (they read `sensei.file_tags`, a view
-    /// over `nodes.tags` for `kind='file'` — previously always empty).
+    /// Populate framework-pattern tags on files (`sensei.files.tags`) so
+    /// `get_patterns` / `get_file_tags` return real files — they read
+    /// `sensei.file_tags`, the view over them. (They were written to `kind='file'`
+    /// nodes until the indexer stopped writing any, and were empty since.)
     ///
     /// The signal is the classifier's own node kinds: a file is tagged with the
     /// framework kinds of the symbols it contains (`hook`, `component`). This
     /// reuses the existing per-node classification — no separate tagger — and
     /// recomputes the full set per file (so a file that loses its last hook is
     /// cleared), scoped to one watch root. Runs in the scan reconcile. Returns
-    /// file nodes whose tags changed.
-    pub async fn tag_file_nodes_by_framework_kind(
-        &self,
-        root_id: &uuid::Uuid,
-    ) -> Result<u64, String> {
-        // Tag each `file` node with the framework roles it plays, so `get_patterns`
+    /// files whose tags changed.
+    pub async fn tag_files_by_framework_kind(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
+        // Tag each file (`sensei.files`) with the framework roles it plays, so `get_patterns`
         // / `get_file_tags` answer "which files are components / hooks / routes /
         // middleware". Two signals, merged into `tags` and recomputed each scan
         // (self-correcting — adds AND removes):
@@ -3461,41 +3486,38 @@ impl PgStore {
         // actually changes are written (idempotent, accurate `rows_affected`).
         let res = sqlx_core::query::query(
             r"WITH desired AS (
-                SELECT fn.id,
+                SELECT fi.id,
                        COALESCE((
                          SELECT array_agg(DISTINCT tag ORDER BY tag) FROM (
                            SELECT s.kind::text AS tag
                              FROM sensei.nodes s
-                            WHERE s.folder_id = fn.folder_id
-                              AND s.file_id = fn.file_id
+                            WHERE s.file_id = fi.id
                               AND s.kind IN ('hook','component')
                            UNION ALL
                            SELECT 'route'
-                            WHERE fp.file_path ~ '(^|/)\+(page|layout|server|error)\.'
-                               OR fp.file_path ~ '(^|/)(page|route)\.(tsx?|jsx?)$'
+                            WHERE fi.file_path ~ '(^|/)\+(page|layout|server|error)\.'
+                               OR fi.file_path ~ '(^|/)(page|route)\.(tsx?|jsx?)$'
                            UNION ALL
                            SELECT 'middleware'
-                            WHERE fp.file_path ~ '(^|/)hooks\.(server|client)\.(tsx?|jsx?)$'
-                               OR fp.file_path ~ '(^|/)hooks\.(tsx?|jsx?)$'
-                               OR fp.file_path ~ '(^|/)middleware\.(tsx?|jsx?)$'
+                            WHERE fi.file_path ~ '(^|/)hooks\.(server|client)\.(tsx?|jsx?)$'
+                               OR fi.file_path ~ '(^|/)hooks\.(tsx?|jsx?)$'
+                               OR fi.file_path ~ '(^|/)middleware\.(tsx?|jsx?)$'
                          ) src
                        ), '{}') AS tags
-                  FROM sensei.nodes fn
-                  JOIN sensei.node_paths fp ON fp.node_id = fn.id
-                  JOIN sensei.folders f ON f.id = fn.folder_id
+                  FROM sensei.files fi
+                  JOIN sensei.folders f ON f.id = fi.folder_id
                  WHERE f.root_id = $1
-                   AND fn.kind = 'file'
               )
-              UPDATE sensei.nodes n
+              UPDATE sensei.files fi
                  SET tags = d.tags
                 FROM desired d
-               WHERE n.id = d.id
-                 AND n.tags IS DISTINCT FROM d.tags",
+               WHERE fi.id = d.id
+                 AND fi.tags IS DISTINCT FROM d.tags",
         )
         .bind(root_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| format!("tag_file_nodes_by_framework_kind: {e}"))?;
+        .map_err(|e| format!("tag_files_by_framework_kind: {e}"))?;
         Ok(res.rows_affected())
     }
 

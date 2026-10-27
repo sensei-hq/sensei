@@ -810,10 +810,15 @@ export function senseiApi(port: number) {
     tryScanFolder: (root: string, maxDepth = 3) =>
       tryPost<{ ok: boolean; scanning: boolean }>('/api/scan', { root, max_depth: maxDepth }),
 
-    /** Run one tool through its MCP server, as an assistant would: the tool's
-     *  result and its own `isError`, or why the server could not answer. */
-    tryCallServerTool: (serverId: string, tool: string, args: Record<string, unknown>) =>
-      tryPost<McpToolCallResult>(`/api/instruments/mcp-servers/${enc(serverId)}/call`, { tool, arguments: args }),
+    /** Run one tool through its MCP server, as an assistant would — in the
+     *  workspace's root when one is given: the tool's result and its own
+     *  `isError`, or why the server could not answer. */
+    tryCallServerTool: (serverId: string, tool: string, args: Record<string, unknown>, workspaceId: string | null) =>
+      tryPost<McpToolCallResult>(`/api/instruments/mcp-servers/${enc(serverId)}/call`, {
+        tool,
+        arguments: args,
+        ...(workspaceId ? { workspace_id: workspaceId } : {}),
+      }),
 
     // #84 T2 Slice C — Replay timeline with #90 verdicts joined + session
     // summary. Set `classify: true` to run the classifier before the read

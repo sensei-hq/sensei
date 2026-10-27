@@ -306,6 +306,16 @@ esac"#;
         ("sh".into(), vec!["-c".into(), script.into()])
     }
 
+    /// A server whose tool answers with the folder it was started in.
+    pub(crate) fn cwd_server() -> (String, Vec<String>) {
+        let script = r#"read l
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"cwd"}}}'
+read l
+read l
+printf '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"%s"}]}}\n' "$(pwd -P)""#;
+        ("sh".into(), vec!["-c".into(), script.into()])
+    }
+
     /// A server that, like semgrep's, asks the client for its roots and answers
     /// the tool call only once that request has an answer.
     pub(crate) fn asking_server() -> (String, Vec<String>) {

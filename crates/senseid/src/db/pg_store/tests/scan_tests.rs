@@ -80,11 +80,44 @@ async fn prune_empty_workspaces_grace_protects_fresh() {
         .unwrap();
 }
 
+/// The files a workspace holds under a tag, by their repo-relative path — the
+/// workspace's, not those of a folder that happens to share its name (which
+/// missed every module folder), and not another workspace's.
 #[tokio::test]
-async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
-    // G5b: a file node gets tagged with the framework kinds of the symbols it
-    // contains, so `get_patterns`/`get_file_tags` return real files. A file
-    // with no framework symbols stays untagged; a stale tag is cleared.
+async fn files_by_tag_are_the_workspaces() {
+    let s = pg_store().await;
+    let (mine, theirs) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+    let (ws, fid) = crate::tasks::test_support::seed_metrics_workspace_folder(&s, &mine).await;
+    let (other, ofid) =
+        crate::tasks::test_support::seed_metrics_workspace_folder(&s, &theirs).await;
+    for (folder, path) in [(fid, "app/src/routes/+page.svelte"), (ofid, "src/routes/+page.svelte")]
+    {
+        crate::tasks::test_support::seed_file(&s, &folder, path).await.unwrap();
+        sqlx_core::query::query("UPDATE sensei.files SET tags = '{route}' WHERE folder_id = $1")
+            .bind(folder)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+    let name = s.get_workspace(&ws).await.unwrap().unwrap()["name"].as_str().unwrap().to_string();
+    let (files, total) = s.get_files_by_tag(&name, "route").await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(
+        files.iter().map(|f| f["file_path"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["app/src/routes/+page.svelte"]
+    );
+    for (w, f) in [(ws, fid), (other, ofid)] {
+        crate::tasks::test_support::cleanup_metrics_fixture(&s, &w, Some(&f), &[]).await;
+    }
+}
+
+#[tokio::test]
+async fn tag_files_by_framework_kind_aggregates_symbol_kinds() {
+    // G5b: a FILE is tagged with the framework kinds of the symbols it holds,
+    // and with its role by path (route, middleware), so `get_patterns` returns
+    // real files. A file with no framework symbol stays untagged; a re-run
+    // changes nothing. Files are `sensei.files` rows — the indexer writes no
+    // `kind = 'file'` node, and the tags written to one were never read.
     let s = pg_store().await;
     let uniq = uuid::Uuid::new_v4();
     let root_id = s
@@ -95,148 +128,67 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
         .upsert_repo_kind(&root_id, "git", "repo", &format!("/_test/tag/{uniq}/repo"))
         .await
         .unwrap();
-
-    // A .svelte file that defines a component and uses a hook.
-    let widget = s
-        .seed_node(&fid, "file", "Widget.svelte", "src/Widget.svelte", None, None, None, None)
-        .await
-        .unwrap();
-    crate::tasks::test_support::seed_node(
-        &s,
-        &fid,
-        "component",
-        "Widget",
-        "src/Widget.svelte",
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    crate::tasks::test_support::seed_node(
-        &s,
-        &fid,
-        "hook",
-        "effect",
-        "src/Widget.svelte",
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    // A plain file with only a function → no framework tag.
-    let util =
-        s.seed_node(&fid, "file", "util.rs", "src/util.rs", None, None, None, None).await.unwrap();
-    crate::tasks::test_support::seed_node(
-        &s,
-        &fid,
-        "function",
-        "helper",
-        "src/util.rs",
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-
-    // File-role by path convention (no symbols needed): SvelteKit routes +
-    // middleware, and a Next-style middleware file.
-    let page = s
-        .seed_node(
-            &fid,
-            "file",
-            "+page.svelte",
-            "src/routes/blog/+page.svelte",
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    let endpoint = s
-        .seed_node(&fid, "file", "+server.ts", "src/routes/api/+server.ts", None, None, None, None)
-        .await
-        .unwrap();
-    let hooks = s
-        .seed_node(&fid, "file", "hooks.server.ts", "src/hooks.server.ts", None, None, None, None)
-        .await
-        .unwrap();
-    let mw = s
-        .seed_node(&fid, "file", "middleware.ts", "middleware.ts", None, None, None, None)
-        .await
-        .unwrap();
-
-    let changed = s.tag_file_nodes_by_framework_kind(&root_id).await.unwrap();
-    assert!(changed >= 1, "at least the component/hook file is tagged");
-
-    let (widget_tags,): (Vec<String>,) =
-        sqlx_core::query_as::query_as("SELECT tags FROM sensei.nodes WHERE id=$1")
-            .bind(widget)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
-    assert_eq!(
-        widget_tags,
-        vec!["component".to_string(), "hook".to_string()],
-        "file tagged with its symbol kinds (sorted)"
-    );
-    let (util_tags,): (Vec<String>,) =
-        sqlx_core::query_as::query_as("SELECT tags FROM sensei.nodes WHERE id=$1")
-            .bind(util)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
-    assert!(util_tags.is_empty(), "a file with no framework symbols stays untagged");
-
-    // File-role tags come from the path convention alone.
-    let pool_ref = s.pool();
-    let tags_of = |id: uuid::Uuid| async move {
-        let (t,): (Vec<String>,) =
-            sqlx_core::query_as::query_as("SELECT tags FROM sensei.nodes WHERE id=$1")
-                .bind(id)
-                .fetch_one(pool_ref)
+    let seed = |kind: &'static str, name: &'static str, path: &'static str| {
+        let s = &s;
+        async move {
+            crate::tasks::test_support::seed_node(s, &fid, kind, name, path, None, None, None, None)
                 .await
-                .unwrap();
-        t
+                .unwrap()
+        }
     };
-    assert_eq!(tags_of(page).await, vec!["route".to_string()], "+page.svelte → route");
-    assert_eq!(tags_of(endpoint).await, vec!["route".to_string()], "+server.ts → route");
+    seed("component", "Widget", "src/Widget.svelte").await;
+    seed("hook", "effect", "src/Widget.svelte").await;
+    seed("function", "helper", "src/util.rs").await;
+    for path in [
+        "src/routes/blog/+page.svelte",
+        "src/routes/api/+server.ts",
+        "src/hooks.server.ts",
+        "middleware.ts",
+    ] {
+        crate::tasks::test_support::seed_file(&s, &fid, path).await.unwrap();
+    }
+
+    let changed = s.tag_files_by_framework_kind(&root_id).await.unwrap();
+    assert_eq!(changed, 5, "the five framework files are tagged");
+
+    let tags_of = |path: &'static str| {
+        let pool = s.pool();
+        async move {
+            let (t,): (Vec<String>,) = sqlx_core::query_as::query_as(
+                "SELECT tags FROM sensei.files WHERE folder_id = $1 AND file_path = $2",
+            )
+            .bind(fid)
+            .bind(path)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            t
+        }
+    };
     assert_eq!(
-        tags_of(hooks).await,
-        vec!["middleware".to_string()],
-        "hooks.server.ts → middleware"
+        tags_of("src/Widget.svelte").await,
+        ["component", "hook"],
+        "its symbols' kinds, sorted"
     );
-    assert_eq!(tags_of(mw).await, vec!["middleware".to_string()], "middleware.ts → middleware");
+    assert!(tags_of("src/util.rs").await.is_empty(), "no framework symbol, no tag");
+    assert_eq!(tags_of("src/routes/blog/+page.svelte").await, ["route"]);
+    assert_eq!(tags_of("src/routes/api/+server.ts").await, ["route"]);
+    assert_eq!(tags_of("src/hooks.server.ts").await, ["middleware"]);
+    assert_eq!(tags_of("middleware.ts").await, ["middleware"]);
 
-    // Idempotent: a second run changes nothing.
-    assert_eq!(s.tag_file_nodes_by_framework_kind(&root_id).await.unwrap(), 0, "no-op on re-run");
+    assert_eq!(s.tag_files_by_framework_kind(&root_id).await.unwrap(), 0, "no-op on re-run");
 
-    // cleanup
-    let pool = s.pool();
-    sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id=$1")
+    sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1")
         .bind(fid)
-        .execute(pool)
+        .execute(s.pool())
         .await
-        .ok();
-    sqlx_core::query::query("DELETE FROM sensei.folders WHERE root_id=$1")
-        .bind(root_id)
-        .execute(pool)
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.files WHERE folder_id = $1")
+        .bind(fid)
+        .execute(s.pool())
         .await
-        .ok();
-    sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id=$1")
-        .bind(root_id)
-        .execute(pool)
-        .await
-        .ok();
+        .unwrap();
 }
-
-// ── Folders tests ────────────────────────────────────────────────
 
 #[tokio::test]
 async fn folder_upsert_and_list() {

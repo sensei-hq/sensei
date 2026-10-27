@@ -2,9 +2,10 @@ use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 
 use sensei_mcp::{
-    ActiveWorkspace, DaemonRequest, HttpMethod, WorkspaceResolution, build_log_event_body,
-    daemon_request_for, handle_initialize, handle_list_tools, resolve_active_workspace_in,
-    resolve_default_workspace, resolve_from_cwd_in, resolve_workspace_in,
+    ActiveWorkspace, DaemonRequest, HttpMethod, NEEDS_WORKSPACE, WORKSPACES_FOR_RESOLUTION,
+    WorkspaceResolution, build_log_event_body, daemon_request_for, handle_initialize,
+    handle_list_tools, resolve_active_workspace_in, resolve_default_workspace, resolve_from_cwd_in,
+    resolve_workspace_in,
 };
 
 /// The active-workspace pin for THIS MCP session, held in memory — NOT a file.
@@ -441,9 +442,9 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             daemon_result(result)
         }
 
-        "get_layered_context" => {
-            // Reached only when the library returned `None` — i.e. neither an
-            // explicit workspace_id nor a resolved workspace name is available.
+        // Reached only when the library returned `None` — no workspace given
+        // and none resolved.
+        t if t == "get_layered_context" || NEEDS_WORKSPACE.contains(&t) => {
             json!({"content":[{"type":"text","text":"No workspace resolved. Pass workspace_id or run from a workspace directory."}], "isError": true})
         }
 
@@ -529,7 +530,7 @@ fn resolve_workspace_from_cwd(cwd: &str, client: &reqwest::blocking::Client) -> 
 /// nonexistent during a daemon bounce (a fabricated "workspace not found"). Mirrors
 /// `send_daemon_request`'s connect-retry so an upgrade restart is survived.
 fn get_workspaces(client: &reqwest::blocking::Client) -> Result<Vec<Value>, String> {
-    let url = format!("{}/api/workspaces", daemon_url());
+    let url = format!("{}{WORKSPACES_FOR_RESOLUTION}", daemon_url());
     let resp = match client.get(&url).send() {
         Err(e) if e.is_connect() => {
             std::thread::sleep(std::time::Duration::from_millis(300));
