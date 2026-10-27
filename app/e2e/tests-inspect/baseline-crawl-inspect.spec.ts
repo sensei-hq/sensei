@@ -11,7 +11,7 @@
  *
  * Run: `bun run test:inspect -- baseline-crawl` (long: a few seconds per click).
  */
-import { readdirSync, statSync, appendFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, statSync, appendFileSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from '../fixtures';
 import { DAEMON_URL, navigateTo, takeConsoleErrors, watchConsole } from '../helpers';
@@ -41,8 +41,16 @@ function routes(): string[] {
   return [...new Set(out)].sort();
 }
 
-const ALL = routes();
-writeFileSync(OUT, '');
+// CRAWL_RESUME=1 keeps what earlier runs recorded and crawls only the rest;
+// CRAWL_ONLY=/a,/b re-crawls just those routes (their new rows supersede the old).
+const only = process.env.CRAWL_ONLY?.split(',').filter(Boolean);
+const done = new Set(
+  process.env.CRAWL_RESUME && existsSync(OUT)
+    ? readFileSync(OUT, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).route)
+    : [],
+);
+if (!process.env.CRAWL_RESUME && !only) writeFileSync(OUT, '');
+const ALL = routes().filter((r) => (only ? only.includes(r) : !done.has(r)));
 
 let wsId = '';
 let metricKey = '';
@@ -76,7 +84,17 @@ const CLICKABLES = (linksOnly: boolean) => `JSON.stringify((() => {
   });
 })())`;
 
-test.describe.configure({ mode: 'serial' });
+
+async function clickByLabel(
+  tauriPage: { evaluate: (script: string) => Promise<unknown> },
+  linksOnly: boolean,
+  label: string,
+): Promise<boolean> {
+  await tauriPage.evaluate(CLICKABLES(linksOnly));
+  return (await tauriPage.evaluate(
+    `(() => { const e = [...document.querySelectorAll('[data-crawl]')].find((x) => (x.getAttribute('data-testid') || x.getAttribute('aria-label') || x.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 60) === ${JSON.stringify(label)}); if (!e) return false; e.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); return true; })()`,
+  )) as boolean;
+}
 
 test.beforeAll(async () => {
   const workspaces = await (await fetch(`${DAEMON_URL}/api/workspaces`)).json();
@@ -108,17 +126,23 @@ for (const pattern of ALL) {
         await navigateTo(tauriPage, route);
         await new Promise((r) => setTimeout(r, 1500));
       }
-      await tauriPage.evaluate(CLICKABLES(linksOnly));
       await takeConsoleErrors(tauriPage);
-      const found = (await tauriPage.evaluate(
-        `(() => { const e = [...document.querySelectorAll('[data-crawl]')].find((x) => (x.getAttribute('data-testid') || x.getAttribute('aria-label') || x.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 60) === ${JSON.stringify(c.label)}); if (!e) return false; e.click(); return true; })()`,
-      )) as boolean;
+      let found = await clickByLabel(tauriPage, linksOnly, c.label);
+      if (!found) {
+        // An earlier click changed the page in place (a tab, a filter): start
+        // again from the route as loaded — by way of another screen, since a
+        // goto to the URL already showing keeps the page's state.
+        await navigateTo(tauriPage, '/help');
+        await navigateTo(tauriPage, route);
+        await new Promise((r) => setTimeout(r, 1500));
+        found = await clickByLabel(tauriPage, linksOnly, c.label);
+      }
       await new Promise((r) => setTimeout(r, 1800));
       const after = JSON.parse((await tauriPage.evaluate(PROBE)) as string);
       const errs = await takeConsoleErrors(tauriPage);
       await tauriPage.evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
       clicks.push({ ...c, found, after, errors: errs });
     }
-    appendFileSync(OUT, JSON.stringify({ route: pattern, page, errors, clickables: list.length, clicks }) + '\n');
+    appendFileSync(OUT, JSON.stringify({ route: pattern, resolved: route, page, errors, clickables: list.length, clicks }) + '\n');
   });
 }
