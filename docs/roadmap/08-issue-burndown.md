@@ -399,6 +399,8 @@ reason); the ResizeObserver console error on workspace metrics; an ambiguous lib
    (serde_json: 0 pages) — say what is held, not what might be.
 5. Settings · Instruments: the switch does not look like rokkit's Switch.
 6. Settings sidebar: not styled like the main sidebar — is it rokkit List? Make it one component.
+7. Settings layout: opening Settings shows only the settings sidebar, with a close button back — or Settings
+   as its own child window, as the workspace window is (the user's choice when it is built).
 
 ## Expected closures
 
