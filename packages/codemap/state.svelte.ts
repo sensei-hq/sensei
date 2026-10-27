@@ -1,10 +1,10 @@
 // The Code map's state (M17): which level is open and how it was reached, the
 // grouping, the roles shown, the lens and the selection. Host-agnostic — every
 // read goes through the CodeMapPort the host passes in.
-import type { CodeMapPort, Column, GroupBy, Level0, Level1, Level2, Read, Role, Zones } from './types';
+import type { CoChange, CodeMapPort, Column, GroupBy, Level0, Level1, Level2, Read, Role, Zones } from './types';
 
 export type Level = 'modules' | 'files' | 'symbols';
-export type Lens = 'structure' | 'cycles' | 'matrix' | 'zones';
+export type Lens = 'structure' | 'cycles' | 'matrix' | 'zones' | 'coupling';
 export const ROLES: Role[] = ['code', 'test', 'docs', 'config', 'generated'];
 
 export interface Crumb {
@@ -25,6 +25,7 @@ export class CodeMapState {
   l1 = $state<Level1 | null>(null);
   l2 = $state<Level2 | null>(null);
   zones = $state<Zones | null>(null);
+  cochange = $state<CoChange | null>(null);
   loading = $state(false);
   /** Why the last read failed; cleared by the next that succeeds. */
   error = $state<string | null>(null);
@@ -56,12 +57,18 @@ export class CodeMapState {
     await this.load(port);
   }
 
-  /** Switch lens; the Zones lens reads its points the first time it opens. */
+  /** Switch lens; Zones and Hidden coupling read their data the first time
+   *  they open. */
   async showLens(port: CodeMapPort, lens: Lens): Promise<void> {
     this.lens = lens;
-    if (lens !== 'zones' || this.zones) return;
-    const data = await this.#read(() => port.zones());
-    if (data) this.zones = data;
+    if (lens === 'zones' && !this.zones) {
+      const data = await this.#read(() => port.zones());
+      if (data) this.zones = data;
+    }
+    if (lens === 'coupling' && !this.cochange) {
+      const data = await this.#read(() => port.cochange());
+      if (data) this.cochange = data;
+    }
   }
 
   select(id: string | null): void {

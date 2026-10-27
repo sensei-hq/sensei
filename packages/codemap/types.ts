@@ -105,6 +105,24 @@ export interface Zones {
   coverage: { points: number; unplaceable: number };
 }
 
+/** Two modules that change together with no static dependency (Hidden coupling). */
+export interface Coupling {
+  a: string;
+  b: string;
+  together: number;
+  /** How often the rarer of the two changes with the other (0–1). */
+  strength: number;
+}
+
+export interface CoChange {
+  hidden: Coupling[];
+  /** Pairs that changed together often enough to count, coupled or not. */
+  pairs: number;
+  /** Commits read — none means no history, not no coupling. */
+  commits: number;
+  minTogether: number;
+}
+
 /** A read: the answer, or why there is none — never an empty stand-in. */
 export type Read<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -115,4 +133,5 @@ export interface CodeMapPort {
   module(id: string): Promise<Read<Level1>>;
   file(id: string): Promise<Read<Level2>>;
   zones(): Promise<Read<Zones>>;
+  cochange(): Promise<Read<CoChange>>;
 }

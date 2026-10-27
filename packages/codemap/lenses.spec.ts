@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cycleBands, matrix, zonesView } from './lenses';
+import { couplingBands, cycleBands, matrix, zonesView } from './lenses';
 import type { Band, Block, Level0, ZonePoint } from './types';
 
 const block = (id: string, group: string, symbols = 1): Block => ({
@@ -41,5 +41,20 @@ describe('zonesView', () => {
     expect(v.unplaceable).toBe(1);
     expect(v.furthest.map((p) => p.component)).toEqual(['b', 'd']);
     expect(v.byZone).toEqual({ main: 1, pain: 1, useless: 0, risk: 1 });
+  });
+});
+
+describe('couplingBands', () => {
+  it('draws each hidden coupling between the blocks that hold its modules', () => {
+    const folded: Level0 = { ...l0, blocks: [...l0.blocks, block('fold:L2', 'L2'), ] };
+    folded.blocks[folded.blocks.length - 1].folded = ['x', 'y'];
+    const bands = couplingBands(folded, [
+      { a: 'top', b: 'x', together: 6, strength: 1 },
+      { a: 'top', b: 'y', together: 4, strength: 0.5 },
+      { a: 'x', b: 'y', together: 9, strength: 1 },
+      { a: 'top', b: 'gone', together: 9, strength: 1 },
+    ]);
+    expect(bands.map((b) => [b.source, b.target, b.weight])).toEqual([['top', 'fold:L2', 10]]);
+    expect(bands[0].direction).toBeNull();
   });
 });

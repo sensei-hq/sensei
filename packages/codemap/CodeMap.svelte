@@ -5,7 +5,7 @@
   // fetches on its own.
   import { onMount } from 'svelte';
   import { ROLES, type CodeMapState, type Lens } from './state.svelte';
-  import { cycleBands, cycleOf } from './lenses';
+  import { couplingBands, cycleBands, cycleOf } from './lenses';
   import type { CodeMapPort, GroupBy } from './types';
   import ModuleMap from './ModuleMap.svelte';
   import MatrixLens from './MatrixLens.svelte';
@@ -25,6 +25,7 @@
     { id: 'cycles', label: 'Cycles' },
     { id: 'matrix', label: 'Matrix' },
     { id: 'zones', label: 'Zones' },
+    { id: 'coupling', label: 'Hidden coupling' },
   ];
   const GROUPINGS: { id: GroupBy; label: string }[] = [
     { id: 'layers', label: 'Layers' },
@@ -35,7 +36,9 @@
   // An unmeasured width (0) is not a narrow screen.
   const narrow = $derived(width > 0 && width < 640);
   const l0 = $derived(map.l0);
-  const bands = $derived(l0 ? (map.lens === 'cycles' ? cycleBands(l0) : l0.bands) : []);
+  const bands = $derived(
+    !l0 ? [] : map.lens === 'cycles' ? cycleBands(l0) : map.lens === 'coupling' ? couplingBands(l0, map.cochange?.hidden ?? []) : l0.bands,
+  );
   const cycles = $derived(l0 && map.lens === 'cycles' ? cycleOf(l0) : null);
   const picked = $derived(l0?.blocks.find((b) => b.id === map.selected) ?? null);
   const open = (id: string) => void map.openModule(port, id);
@@ -100,7 +103,16 @@
         {:else if map.lens === 'matrix'}
           <MatrixLens data={l0} onopen={open} />
         {:else}
-          <ModuleMap data={l0} {bands} selected={map.selected} cycle={cycles} onselect={(id) => map.select(id)} onopen={open} />
+          <div class="flex flex-col gap-2">
+            {#if map.lens === 'coupling' && map.cochange}
+              <p class="m-0 text-xs text-ink-mute" data-testid="coupling-summary">
+                {map.cochange.commits
+                  ? `${map.cochange.hidden.length} pairs change together with no dependency between them · from ${map.cochange.commits} commits, ${map.cochange.minTogether}+ changes together`
+                  : 'No commit history read for this workspace yet.'}
+              </p>
+            {/if}
+            <ModuleMap data={l0} {bands} selected={map.selected} cycle={cycles} dashed={map.lens === 'coupling'} onselect={(id) => map.select(id)} onopen={open} />
+          </div>
         {/if}
         {#if !narrow}
           <aside class="text-xs flex flex-col gap-2" data-testid="codemap-inspector">

@@ -1,5 +1,5 @@
 // Lens views of L0 (M17), pure: which bands a lens draws, and the Matrix.
-import type { Band, Level0, ZonePoint, Zones } from './types';
+import type { Band, Coupling, Level0, ZonePoint, Zones } from './types';
 import { groupOrder } from './layout';
 
 /** The modules in each cycle, as a lookup: module → its cycle's index. */
@@ -60,4 +60,26 @@ export function zonesView(z: Zones, top = 10): ZonesView {
   for (const p of placed) byZone[p.zone!] += 1;
   const furthest = [...placed].sort((a, b) => b.distance - a.distance || a.component.localeCompare(b.component)).slice(0, top);
   return { placed, unplaceable: z.points.length - placed.length, furthest, byZone };
+}
+
+/** The Hidden coupling lens (M17): each coupling as a band between the blocks
+ *  that hold its two modules (a folded module is drawn as its "+N more");
+ *  couplings inside one block, or naming a module the map lacks, are not drawn. */
+export function couplingBands(l0: Level0, couplings: Coupling[]): Band[] {
+  const drawnAs = new Map<string, string>();
+  for (const b of l0.blocks) {
+    drawnAs.set(b.id, b.id);
+    for (const m of b.folded) drawnAs.set(m, b.id);
+  }
+  const bands = new Map<string, Band>();
+  for (const c of couplings) {
+    const [s, t] = [drawnAs.get(c.a), drawnAs.get(c.b)];
+    if (!s || !t || s === t) continue;
+    const key = s < t ? `${s}|${t}` : `${t}|${s}`;
+    const band = bands.get(key) ?? { source: s, target: t, weight: 0, kinds: {}, direction: null };
+    band.weight += c.together;
+    band.kinds.cochange = band.weight;
+    bands.set(key, band);
+  }
+  return [...bands.values()].sort((a, b) => b.weight - a.weight);
 }

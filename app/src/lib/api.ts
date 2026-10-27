@@ -1,4 +1,4 @@
-import type { Level0, Level1, Level2, Zones } from '@sensei/codemap';
+import type { CoChange, Level0, Level1, Level2, Zones } from '@sensei/codemap';
 import type {
   ServerWorkspace,
   SolutionAnalysis,
@@ -481,6 +481,7 @@ export function senseiApi(port: number) {
     tryGetCodemapFile: (id: string, file: string) =>
       tryGet<Level2>(`/api/workspaces/${enc(id)}/diagrams/codemap/file?id=${enc(file)}`),
     tryGetZones: (id: string) => tryGet<Zones>(`/api/workspaces/${enc(id)}/diagrams/zones`),
+    tryGetCochange: (id: string) => tryGet<CoChange>(`/api/workspaces/${enc(id)}/diagrams/codemap/cochange`),
 
     /** #232 — the Layers/Cycles payload, one request serving both screens.
      *

@@ -35,6 +35,7 @@ const ZONES = {
 };
 const port = (): CodeMapPort => ({
   level0: vi.fn(() => ok(L0)), module: vi.fn(() => ok(L1)), file: vi.fn(() => ok(L2)), zones: vi.fn(() => ok(ZONES)),
+  cochange: vi.fn(() => ok({ hidden: [{ a: 'p/a', b: 'p/c', together: 7, strength: 0.7 }], pairs: 3, commits: 40, minTogether: 5 })),
 });
 
 let target: HTMLElement;
@@ -100,6 +101,17 @@ describe('CodeMap', () => {
     expect(q('[data-testid="zone-p/b"]')).toBeNull();
     expect(q('[data-testid="zones-summary"]')?.textContent).toContain('1 components placed · mean distance 0.40 · pain 1');
     expect(q('[data-testid="zones-summary"]')?.textContent).toContain('1 without enough to place');
+  });
+
+  it('Hidden coupling draws co-change as dashed bands, a folded module to its block', async () => {
+    render(port());
+    await settle();
+    (q('[data-testid="codemap-lens-coupling"]') as HTMLButtonElement).click();
+    await settle();
+    const band = q('[data-testid="band-p/a>fold:L1"]');
+    expect(band?.getAttribute('stroke-dasharray')).toBe('6 4');
+    expect(q('[data-testid="band-p/a>p/b"]')).toBeNull();
+    expect(q('[data-testid="coupling-summary"]')?.textContent).toContain('1 pairs change together with no dependency between them · from 40 commits');
   });
 
   it('says why the map could not be read', async () => {

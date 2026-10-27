@@ -9,6 +9,7 @@
     bands,
     selected = null,
     cycle = null,
+    dashed = false,
     onselect,
     onopen,
   }: {
@@ -18,6 +19,8 @@
     selected?: string | null;
     /** Cycles lens: module → its cycle, to tint the members. */
     cycle?: Map<string, number> | null;
+    /** Hidden coupling: the bands are co-change, not dependencies. */
+    dashed?: boolean;
     onselect: (id: string | null) => void;
     onopen: (id: string) => void;
   } = $props();
@@ -45,6 +48,7 @@
         stroke={tone(b.direction)}
         stroke-width={b.width}
         stroke-opacity={touches(b.source, b.target) ? 0.85 : 0.08}
+        stroke-dasharray={dashed ? '6 4' : undefined}
         data-testid={`band-${b.source}>${b.target}`}
       ><title>{b.source} → {b.target}: {b.weight}</title></path>
     {/each}

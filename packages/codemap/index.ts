@@ -3,8 +3,8 @@ export { default as CodeMap } from './CodeMap.svelte';
 export { CodeMapState, ROLES } from './state.svelte';
 export type { Level, Lens, Crumb } from './state.svelte';
 export { layoutLevel0, groupOrder } from './layout';
-export { matrix, cycleBands, cycleOf, zonesView } from './lenses';
+export { matrix, cycleBands, cycleOf, zonesView, couplingBands } from './lenses';
 export type {
   GroupBy, Direction, Role, Block, Band, Level0, ModuleFile, Column, Neighbour, Level1, SymbolRef, Level2, Read,
-  CodeMapPort, ZonePoint, Zones,
+  CodeMapPort, ZonePoint, Zones, Coupling, CoChange,
 } from './types';

@@ -8,6 +8,7 @@ describe('codemapPort', () => {
       tryGetCodemapModule: vi.fn().mockResolvedValue({ ok: false, error: { status: 503, message: 'Service Unavailable' } }),
       tryGetCodemapFile: vi.fn(),
       tryGetZones: vi.fn().mockResolvedValue({ ok: true, data: { points: [] } }),
+      tryGetCochange: vi.fn().mockResolvedValue({ ok: true, data: { hidden: [] } }),
     };
     const port = codemapPort(api, () => 'ws1');
     expect(await port.level0('folders')).toEqual({ ok: true, data: { blocks: [] } });
@@ -16,5 +17,7 @@ describe('codemapPort', () => {
     expect(api.tryGetCodemapModule).toHaveBeenCalledWith('ws1', 'p/a');
     expect(await port.zones()).toEqual({ ok: true, data: { points: [] } });
     expect(api.tryGetZones).toHaveBeenCalledWith('ws1');
+    expect(await port.cochange()).toEqual({ ok: true, data: { hidden: [] } });
+    expect(api.tryGetCochange).toHaveBeenCalledWith('ws1');
   });
 });

@@ -21,7 +21,8 @@ const ok = <T>(data: T) => Promise.resolve({ ok: true as const, data });
 function port(over: Partial<CodeMapPort> = {}): CodeMapPort {
   return {
     level0: vi.fn((g) => ok(L0(g))), module: vi.fn(() => ok(L1)), file: vi.fn(() => ok(L2)),
-    zones: vi.fn(() => ok({ points: [], meanDistance: 0, coverage: { points: 0, unplaceable: 0 } })), ...over,
+    zones: vi.fn(() => ok({ points: [], meanDistance: 0, coverage: { points: 0, unplaceable: 0 } })),
+    cochange: vi.fn(() => ok({ hidden: [], pairs: 0, commits: 12, minTogether: 5 })), ...over,
   };
 }
 
@@ -78,6 +79,15 @@ describe('CodeMapState', () => {
     await s.showLens(p, 'zones');
     expect([s.lens, s.zones?.meanDistance, p.zones]).toEqual(['zones', 0, p.zones]);
     expect(p.zones).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads co-change once, when the Hidden coupling lens first opens', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.showLens(p, 'coupling');
+    await s.showLens(p, 'coupling');
+    expect([s.lens, s.cochange?.commits]).toEqual(['coupling', 12]);
+    expect(p.cochange).toHaveBeenCalledTimes(1);
   });
 
   it('drops an answer that a later request overtook', async () => {
