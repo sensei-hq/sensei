@@ -291,7 +291,7 @@ export interface WorkspaceListItem {
   /** Small icon union. `kind:"kanji"` → `value` is a single glyph;
    *  `kind:"image"` → `value` is a URL/path from the workspace-icon pipeline.
    *  The wire may send an empty `{}` (nothing inferred yet) or `null`. */
-  icon?: { kind?: string; value?: string } | null;
+  icon?: { kind?: string; value?: string; /** For an image: whether the daemon can serve it. */ available?: boolean } | null;
   preferred_acp?: string;
   /** Workspace "purpose" text — sourced from `sensei.workspaces.goal` and
    *  exposed by the list endpoint as `vision`. Null when absent. */

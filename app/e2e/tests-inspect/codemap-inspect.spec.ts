@@ -19,7 +19,7 @@ test('the code map drills from modules to files to symbols', async ({ tauriPage 
 
   await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/codemap`);
   await expect
-    .poll(() => tauriPage.evaluate(`document.querySelectorAll('[data-testid^="block-"]').length`), { timeout: 60_000 })
+    .poll(() => tauriPage.evaluate(`document.querySelectorAll('g[data-testid^="block-"]').length`), { timeout: 60_000 })
     .toBe(l0.blocks.length);
   const budget = (await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-budget"]')?.textContent ?? ''`)) as string;
   expect(budget).toContain(`drawing ${l0.budget.drawn} blocks for ${l0.budget.modules} modules`);
@@ -52,7 +52,7 @@ test('each lens draws against the real daemon', async ({ tauriPage }) => {
 
   await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/codemap`);
   await expect
-    .poll(() => tauriPage.evaluate(`document.querySelectorAll('[data-testid^="block-"]').length`), { timeout: 60_000 })
+    .poll(() => tauriPage.evaluate(`document.querySelectorAll('g[data-testid^="block-"]').length`), { timeout: 60_000 })
     .toBeGreaterThan(0);
   const seen: Record<string, number> = {};
   for (const [lens, sel] of [

@@ -154,7 +154,8 @@ export function workspaceIcon(
   mode: GlyphMode = 'kanji',
 ): WorkspaceIcon {
   const icon = p.icon;
-  if (icon && icon.kind === 'image' && icon.value) {
+  // An image the daemon says it cannot serve is no image: asking would 404.
+  if (icon && icon.kind === 'image' && icon.value && icon.available !== false) {
     const src = isDirectUrl(icon.value)
       ? icon.value
       : `${base}/api/workspaces/${encodeURIComponent(p.id)}/icon`;

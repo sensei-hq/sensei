@@ -158,6 +158,13 @@ describe('workspaceIcon', () => {
     expect(workspaceIcon(p({ icon: null }), '', 'kanji')).toEqual({ kind: 'kanji', glyph: '場' });
   });
 
+  // The daemon says when an image cannot be served (its repository is not on
+  // disk, or the logo is gone): no request that would answer 404.
+  it('shows the glyph, not an image, when the daemon says the image is unavailable', () => {
+    expect(workspaceIcon(p({ icon: { kind: 'image', value: 'logo.svg', available: false } }))).toEqual({ kind: 'kanji', glyph: '場' });
+    expect(workspaceIcon(p({ icon: { kind: 'image', value: 'logo.svg', available: true } })).kind).toBe('image');
+  });
+
   it('falls back to 場 for an image icon with no value', () => {
     expect(workspaceIcon(p({ icon: { kind: 'image' } }))).toEqual({ kind: 'kanji', glyph: '場' });
   });

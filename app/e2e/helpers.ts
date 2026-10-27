@@ -429,3 +429,50 @@ export async function dismissSignIn(tauriPage: TauriPageLike) {
     })
     .toBe(false);
 }
+
+/**
+ * Record what the browser console would show as an error (user, 2026-10-27:
+ * keep track of console errors): `console.error`, uncaught errors, unhandled
+ * rejections, a fetch that fails or answers non-2xx, and a resource (an `<img>`,
+ * a script) that fails to load. Installed once per window — SvelteKit routes on
+ * the client, so the window and its hooks survive navigation. Idempotent.
+ */
+export async function watchConsole(tauriPage: { evaluate: (script: string) => Promise<unknown> }): Promise<void> {
+  await tauriPage.evaluate(`(function () {
+    if (window.__consoleWatch) return 1;
+    window.__consoleWatch = true;
+    window.__consoleErrors = [];
+    const push = (kind, text) => window.__consoleErrors.push({ kind, text: String(text).slice(0, 300), at: location.pathname });
+    const err = console.error.bind(console);
+    console.error = (...a) => { push('console', a.map((x) => (x && x.message) || x).join(' ')); err(...a); };
+    window.addEventListener('error', (e) => {
+      const t = e.target;
+      if (t && t !== window && (t.src || t.href)) push('resource', (t.tagName || '') + ' ' + (t.src || t.href));
+      else push('error', e.message);
+    }, true);
+    window.addEventListener('unhandledrejection', (e) => push('rejection', (e.reason && e.reason.message) || e.reason));
+    const f = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input.url;
+      try {
+        const r = await f(input, init);
+        if (!r.ok) push('fetch', r.status + ' ' + url);
+        return r;
+      } catch (e) {
+        push('fetch', 'failed ' + url + ': ' + (e && e.message));
+        throw e;
+      }
+    };
+    return 1;
+  })()`);
+}
+
+/** The console errors recorded since the last call (which clears them). */
+export async function takeConsoleErrors(
+  tauriPage: { evaluate: (script: string) => Promise<unknown> },
+): Promise<Array<{ kind: string; text: string; at: string }>> {
+  const json = (await tauriPage.evaluate(
+    `JSON.stringify((window.__consoleErrors || []).splice(0))`,
+  )) as string;
+  return JSON.parse(json || '[]');
+}
