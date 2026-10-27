@@ -100,6 +100,10 @@
         ins.serversError = await mcp.toggleMcpServer(serverId, enabled);
     }
 
+    async function removeServer(serverId: string) {
+        ins.serversError = await mcp.removeMcpServer(serverId);
+    }
+
     function executeTool() {
         if (focusedTool) void ins.execute(api, focusedTool);
     }
@@ -254,6 +258,14 @@
                                         onclick={() => void toggleServer(server.id, !server.enabled)}
                                         data-testid={`server-toggle-${server.mcp_key}`}
                                     >{server.enabled ? 'on' : 'off'}</button>
+                                    {#if server.acp_family === 'manual'}
+                                        <button
+                                            class="mr-3 px-2 py-0.5 text-xs font-mono rounded border border-paper-edge bg-transparent cursor-pointer text-ink-mute"
+                                            aria-label={`Remove ${server.mcp_key}`}
+                                            onclick={() => void removeServer(server.id)}
+                                            data-testid={`server-remove-${server.mcp_key}`}
+                                        >remove</button>
+                                    {/if}
                                 {/if}
                             </div>
 
@@ -299,7 +311,31 @@
                         {/each}
 
                         <section class="mt-3 pt-3 border-t border-paper-edge" data-testid="discovered-servers">
-                            <div class="px-3 pb-1"><Eyebrow>Discovered MCP servers</Eyebrow></div>
+                            <div class="px-3 pb-1 flex items-center justify-between">
+                                <Eyebrow>MCP servers</Eyebrow>
+                                <button
+                                    class="text-xs text-ink-mute bg-transparent border-none cursor-pointer"
+                                    onclick={() => { ins.addingServer = !ins.addingServer; ins.serverFormError = null; }}
+                                    aria-expanded={ins.addingServer}
+                                    data-testid="add-server"
+                                >{ins.addingServer ? 'cancel' : '+ add'}</button>
+                            </div>
+                            {#if ins.addingServer}
+                                <form
+                                    class="px-3 pb-3 flex flex-col gap-2 text-xs"
+                                    data-testid="add-server-form"
+                                    onsubmit={(e) => { e.preventDefault(); void ins.addServer(mcp); }}
+                                >
+                                    <input class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" placeholder="name" bind:value={ins.serverForm.name} data-testid="add-server-name" />
+                                    <input class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" placeholder="command, e.g. npx" bind:value={ins.serverForm.command} data-testid="add-server-command" />
+                                    <textarea class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" rows="2" placeholder="arguments, one per line" bind:value={ins.serverForm.args} data-testid="add-server-args"></textarea>
+                                    <textarea class="py-1 px-2 border border-paper-edge rounded bg-paper text-ink font-mono outline-none" rows="2" placeholder="environment, KEY=VALUE per line" bind:value={ins.serverForm.env}></textarea>
+                                    {#if ins.serverFormError}
+                                        <p class="m-0 text-danger" data-testid="add-server-error">{ins.serverFormError}</p>
+                                    {/if}
+                                    <Button variant="primary" size="sm" type="submit" data-testid="add-server-submit">Add server</Button>
+                                </form>
+                            {/if}
                             {#if ins.serversError}
                                 <p class="px-3 py-1 text-xs text-danger" data-testid="servers-error">{ins.serversError}</p>
                             {/if}
@@ -309,7 +345,7 @@
                                 </p>
                             {:else if discoveredServers.length === 0 && mcp.mcpServersStatus === 'ready'}
                                 <p class="px-3 py-2 text-xs text-ink-soft">
-                                    No MCP servers discovered yet. Configure one in Claude Code, Cursor or Zed, then scan.
+                                    No MCP servers yet. Configure one in Claude Code, Cursor or Zed and scan, or add one here.
                                 </p>
                             {/if}
                             {#each discoveredByFamily as fam (fam.family)}

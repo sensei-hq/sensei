@@ -223,6 +223,25 @@ async function toggleMcpServer(serverId: string, enabled: boolean): Promise<stri
   return null;
 }
 
+/** Register a server by hand (#343), then reload the list. Returns `null` on
+ *  success, else the daemon's reason in words. */
+async function registerMcpServer(server: {
+  name: string; command: string; args: string[]; env: Record<string, string>;
+}): Promise<string | null> {
+  const res = await senseiApi(appState.port).tryRegisterMcpServer(server);
+  if (!res.ok) return `The server was not added: ${failureReason(res.error)}`;
+  await loadMcpServers(undefined, true);
+  return null;
+}
+
+/** Remove a hand-registered server; the row goes only once the daemon removed it. */
+async function removeMcpServer(serverId: string): Promise<string | null> {
+  const res = await senseiApi(appState.port).tryRemoveMcpServer(serverId);
+  if (!res.ok) return `The server was not removed (${res.error.status} ${res.error.message})`;
+  mcpServers = mcpServers.filter((s) => s.id !== serverId);
+  return null;
+}
+
 /** Trigger a full discovery pass across $HOME + registered workspaces, then
  *  reload the list. Returns `null` on success, else the failure in words. */
 async function refreshMcpServers(): Promise<string | null> {
@@ -285,5 +304,7 @@ export const mcp = {
   loadServerTools,
   toggleMcpServer,
   refreshMcpServers,
+  registerMcpServer,
+  removeMcpServer,
   refresh,
 };

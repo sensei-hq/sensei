@@ -8,6 +8,7 @@ import type { McpToolCallResult, ObservatoryFtr, SessionData, SessionReplayCall,
 import { loadReplaySessions, type ReplaySession } from './replay-sessions';
 import type { InstrumentsTab } from './instruments-view';
 import { formFields, resultText, toArguments } from './tool-form';
+import { parseServerForm, type ServerBody, type ServerForm } from './server-form';
 
 /** The reads the screen makes — injected so a spec can fail them. */
 export interface InstrumentsApi {
@@ -24,6 +25,7 @@ export interface InstrumentsStore {
     sessionId: string,
     opts: { classify?: boolean },
   ) => Promise<{ replay: { calls: SessionReplayCall[]; summary: ReplaySummary } | null; error: string | null }>;
+  registerMcpServer: (server: ServerBody) => Promise<string | null>;
 }
 
 const NO_CALLS: ReplaySummary = { used: 0, partial: 0, ignored: 0, total: 0 };
@@ -45,6 +47,10 @@ export class InstrumentsState {
   refreshingServers = $state(false);
   /** The last refused toggle or failed scan, in words; cleared on success. */
   serversError = $state<string | null>(null);
+  /** The "add a server" form (#343), and why it was last refused. */
+  addingServer = $state(false);
+  serverForm = $state<ServerForm>({ name: '', command: '', args: '', env: '' });
+  serverFormError = $state<string | null>(null);
 
   // Replay — the session list, the open session, the selected call.
   replaySessions = $state<ReplaySession[]>([]);
@@ -102,6 +108,20 @@ export class InstrumentsState {
       this.toolError = `The call failed: ${failureReason(read.error)}`;
     }
     this.executing = false;
+  }
+
+  /** Register the form's server; the form closes only once the daemon took it. */
+  async addServer(store: Pick<InstrumentsStore, 'registerMcpServer'>): Promise<void> {
+    const parsed = parseServerForm(this.serverForm);
+    if (!parsed.ok) {
+      this.serverFormError = parsed.error;
+      return;
+    }
+    const refused = await store.registerMcpServer(parsed.server);
+    this.serverFormError = refused;
+    if (refused) return;
+    this.addingServer = false;
+    this.serverForm = { name: '', command: '', args: '', env: '' };
   }
 
   /** Read the session list the first time Replay opens. */

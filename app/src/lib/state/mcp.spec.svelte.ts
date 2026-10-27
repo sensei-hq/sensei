@@ -18,6 +18,8 @@ const mocks = {
     getMcpServers: vi.fn(),
     setMcpServerEnabled: vi.fn(),
     refreshMcpServers: vi.fn(),
+    tryRegisterMcpServer: vi.fn(),
+    tryRemoveMcpServer: vi.fn(),
 };
 
 // A representative slice of the tools-health wire: two connected probed
@@ -248,6 +250,32 @@ describe('discovered MCP servers', () => {
         await mcp.loadMcpServers();
         expect(await mcp.toggleMcpServer('srv-1', false)).toMatch(/500/);
         expect(mcp.mcpServers[0].enabled).toBe(true);
+    });
+
+    // #343: a server added by hand is the daemon's row once it took it.
+    it('registerMcpServer reloads the list once the daemon took it, and says why it did not', async () => {
+        const server = { name: 'gh', command: 'npx', args: [], env: {} };
+        mocks.tryRegisterMcpServer.mockResolvedValueOnce({ ok: true, data: { id: 'm1' } });
+        mocks.getMcpServers.mockResolvedValue({ ok: true, data: { servers: [{ ...SERVER, id: 'm1', acp_family: 'manual' }] } });
+        const mcp = await freshStore();
+        expect(await mcp.registerMcpServer(server)).toBeNull();
+        expect(mocks.tryRegisterMcpServer).toHaveBeenCalledWith(server);
+        expect(mcp.mcpServers.map((s) => s.id)).toEqual(['m1']);
+
+        mocks.tryRegisterMcpServer.mockResolvedValueOnce({ ok: false, error: { status: 409, message: 'a server is already registered under that name' } });
+        expect(await mcp.registerMcpServer(server)).toMatch(/already registered/);
+    });
+
+    it('removeMcpServer drops the row once the daemon removed it, and keeps it when refused', async () => {
+        mocks.getMcpServers.mockResolvedValue({ ok: true, data: { servers: [SERVER] } });
+        const mcp = await freshStore();
+        await mcp.loadMcpServers();
+        mocks.tryRemoveMcpServer.mockResolvedValueOnce(fail);
+        expect(await mcp.removeMcpServer('srv-1')).toMatch(/500/);
+        expect(mcp.mcpServers).toHaveLength(1);
+        mocks.tryRemoveMcpServer.mockResolvedValueOnce({ ok: true, data: { removed: true } });
+        expect(await mcp.removeMcpServer('srv-1')).toBeNull();
+        expect(mcp.mcpServers).toHaveLength(0);
     });
 });
 

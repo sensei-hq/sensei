@@ -84,6 +84,31 @@ describe('InstrumentsState — picking a tool', () => {
   });
 });
 
+describe('InstrumentsState — adding a server (#343)', () => {
+  it('registers the form, then closes and clears it', async () => {
+    const s = new InstrumentsState('playground');
+    s.addingServer = true;
+    s.serverForm = { name: 'gh', command: 'npx', args: '-y\npkg', env: 'T=1' };
+    const registerMcpServer = vi.fn().mockResolvedValue(null);
+    await s.addServer(store({ registerMcpServer }));
+    expect(registerMcpServer).toHaveBeenCalledWith({ name: 'gh', command: 'npx', args: ['-y', 'pkg'], env: { T: '1' } });
+    expect([s.addingServer, s.serverForm.name, s.serverFormError]).toEqual([false, '', null]);
+  });
+
+  it('keeps the form open with the reason when the form or the daemon refuses', async () => {
+    const s = new InstrumentsState('playground');
+    s.addingServer = true;
+    s.serverForm = { name: '', command: 'npx', args: '', env: '' };
+    const registerMcpServer = vi.fn().mockResolvedValue('The server was not added: taken');
+    await s.addServer(store({ registerMcpServer }));
+    expect(registerMcpServer).not.toHaveBeenCalled();
+    expect(s.serverFormError).toBe('A name is required');
+    s.serverForm = { name: 'gh', command: 'npx', args: '', env: '' };
+    await s.addServer(store({ registerMcpServer }));
+    expect([s.addingServer, s.serverFormError]).toEqual([true, 'The server was not added: taken']);
+  });
+});
+
 describe('InstrumentsState — replay', () => {
   it('reads the session list once', async () => {
     const s = new InstrumentsState('replay');

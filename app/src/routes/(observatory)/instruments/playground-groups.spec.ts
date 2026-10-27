@@ -21,6 +21,10 @@ describe('serversByFamily', () => {
     expect(groups.flatMap((g) => g.servers)).toHaveLength(2);
   });
 
+  it('names the servers added by hand (#343)', () => {
+    expect(serversByFamily([server('1', 'manual', 'gh')])[0].label).toBe('Added in sensei');
+  });
+
   it('is empty for no servers', () => {
     expect(serversByFamily([])).toEqual([]);
   });

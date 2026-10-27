@@ -123,7 +123,7 @@ export function serversByFamily<S extends DiscoveredServer>(
     .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
     .map(([family, rows]) => ({
       family,
-      label: FAMILIES.find((f) => f.family === family)?.label ?? family,
+      label: FAMILIES.find((f) => f.family === family)?.label ?? (family === 'manual' ? 'Added in sensei' : family),
       servers: [...rows].sort((a, b) => a.mcp_key.localeCompare(b.mcp_key)),
     }));
 }

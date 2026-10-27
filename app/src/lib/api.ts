@@ -860,6 +860,12 @@ export function senseiApi(port: number) {
       tryPut(`/api/instruments/mcp-servers/${enc(id)}/enabled`, { enabled }),
     refreshMcpServers: () =>
       tryPost<{ discovered: number; pruned: number }>('/api/instruments/mcp-servers/refresh', {}),
+    /** Register a stdio MCP server by hand (#343); 409 when the name is taken. */
+    tryRegisterMcpServer: (server: { name: string; command: string; args: string[]; env: Record<string, string> }) =>
+      tryPost<{ id: string }>('/api/instruments/mcp-servers', server),
+    /** Remove a hand-registered server; a discovered one is refused (409). */
+    tryRemoveMcpServer: (id: string) =>
+      tryDeleteJson<{ removed: boolean }>(`/api/instruments/mcp-servers/${enc(id)}`),
 
     // #84 T2 Slice B — cached tool manifest per server. `?refresh=true`
     // forces a re-probe; `?probe=false` returns stale-badged cache without

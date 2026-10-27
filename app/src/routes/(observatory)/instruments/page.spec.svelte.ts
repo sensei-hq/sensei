@@ -88,3 +88,43 @@ describe('Instruments /+page — Health', () => {
     );
   });
 });
+
+// #343: a server added by hand is registered with the daemon and listed.
+describe('Instruments /+page — adding a server', () => {
+  it('registers the server from the form and lists it', async () => {
+    let servers: unknown[] = [];
+    const fetch = vi.fn().mockImplementation(async (url: string, init?: { method?: string; body?: string }) => {
+      if (url.endsWith('/mcp-servers') && init?.method === 'POST') {
+        const b = JSON.parse(init.body!);
+        servers = [{ id: 'm1', acp_family: 'manual', mcp_key: b.name, enabled: true }];
+        return json({ id: 'm1' });
+      }
+      if (url.includes('/mcp-servers/m1/tools')) return json({ tools: [], error: null });
+      if (url.includes('/mcp-servers')) return json({ servers });
+      return json({});
+    });
+    vi.stubGlobal('fetch', fetch);
+    const m = mountComponent(Page, {});
+    cleanup.push(m.destroy);
+    await vi.waitFor(() => expect(m.container.querySelector('[data-testid="add-server"]')).not.toBeNull());
+    (m.container.querySelector('[data-testid="add-server"]') as HTMLButtonElement).click();
+    const set = async (testid: string, value: string) => {
+      const el = await vi.waitFor(() => {
+        const e = m.container.querySelector(`[data-testid="${testid}"]`) as HTMLInputElement | null;
+        expect(e).not.toBeNull();
+        return e!;
+      });
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    await set('add-server-name', 'github');
+    await set('add-server-command', 'npx');
+    await set('add-server-args', '-y\nserver-github');
+    (m.container.querySelector('[data-testid="add-server-form"]') as HTMLFormElement).requestSubmit();
+
+    await vi.waitFor(() => expect(m.container.querySelector('[data-testid="servers-family-manual"]')?.textContent).toContain('Added in sensei'));
+    const sent = fetch.mock.calls.find(([u, i]) => String(u).endsWith('/mcp-servers') && i?.method === 'POST')!;
+    expect(JSON.parse(sent[1].body)).toEqual({ name: 'github', command: 'npx', args: ['-y', 'server-github'], env: {} });
+    expect(m.container.querySelector('[data-testid="server-remove-github"]')).not.toBeNull();
+  });
+});
