@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { KIND_ICONS } from '$lib/glyph-vocabulary';
     import Kanji from '$lib/components/Kanji.svelte';
   import type { InsightWorkspaceRef } from '$lib/types.js';
   import { chipWorkspaces, matchWorkspaces } from './workspace-filter.js';
@@ -61,7 +62,7 @@
       class:bg-paper-soft={!active}
       onclick={() => pick(p.id)}
     >
-      <Kanji char={p.kanji} icon={null} size="inherit" tone="inherit" class="text-xs {active ? 'text-accent' : 'text-ink-mute'}" />
+      <Kanji char={p.kanji} icon={KIND_ICONS.workspace} size="inherit" tone="inherit" class="text-xs {active ? 'text-accent' : 'text-ink-mute'}" />
       <span>{p.name}</span>
     </button>
   {/each}
@@ -92,7 +93,7 @@
               class="w-full text-left flex items-center gap-2 rounded px-2 py-1.5 text-xs text-ink bg-transparent border-none cursor-pointer hover:bg-paper-mute"
               onclick={() => pick(p.id)}
             >
-              <Kanji char={p.kanji} icon={null} size="inherit" tone="inherit" class="text-xs text-ink-mute" />
+              <Kanji char={p.kanji} icon={KIND_ICONS.workspace} size="inherit" tone="inherit" class="text-xs text-ink-mute" />
               <span class="truncate">{p.name}</span>
             </button>
           </li>

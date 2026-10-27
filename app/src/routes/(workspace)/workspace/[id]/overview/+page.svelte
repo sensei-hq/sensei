@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { KIND_ICONS } from '$lib/glyph-vocabulary';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import { invalidateAll } from '$app/navigation';
@@ -70,7 +71,7 @@
     <!-- Pane header — kanji · eyebrow (+ repo chip) · name · FTR·14d -->
     <header class="flex items-end gap-4 pt-8 px-10 pb-6 max-w-[900px]">
       <!-- The workspace's own mark: an identity, kanji in both modes (#133). -->
-      <Kanji char={workspace.kanji} icon={null} size="4xl" tone="accent" />
+      <Kanji char={workspace.kanji} icon={KIND_ICONS.workspace} size="4xl" tone="accent" />
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 mb-1">
           <Eyebrow>{eyebrow}</Eyebrow>

@@ -56,7 +56,7 @@
 		style="background: linear-gradient(160deg, var(--accent-soft) 0%, var(--paper-soft) 60%)"
 	>
 		<div class="flex items-center gap-3">
-			<KanjiToken char="結" icon={null} size="inherit" toneClass="" class="text-accent text-2xl" />
+			<KanjiToken char="結" size="inherit" toneClass="" class="text-accent text-2xl" />
 			<span class="display text-xl" style="letter-spacing: -0.01em">Dōjō</span>
 			<span
 				class="mono bg-paper border-paper-edge text-ink-mute rounded-full border px-2 py-1 text-xs"
@@ -84,7 +84,7 @@
 		<div class="mt-8 grid grid-cols-3 gap-3">
 			{#each FEATURES as [kanji, title, sub] (kanji)}
 				<div class="bg-paper border-paper-edge rounded-lg border p-4">
-					<KanjiToken char={kanji} icon={null} size="inherit" toneClass="" class="text-accent text-xl" />
+					<KanjiToken char={kanji} size="inherit" toneClass="" class="text-accent text-xl" />
 					<div class="text-ink mt-2 text-sm font-semibold" style="line-height: 1.3">{title}</div>
 					<div class="text-ink-mute mt-1 text-xs">{sub}</div>
 				</div>
@@ -92,7 +92,7 @@
 		</div>
 
 		<div class="bg-paper border-paper-edge mt-3 flex items-center gap-3 rounded-lg border p-4">
-			<KanjiToken char="空" icon={null} size="inherit" toneClass="" class="text-ink-mute text-xl" />
+			<KanjiToken char="空" size="inherit" toneClass="" class="text-ink-mute text-xl" />
 			<div class="min-w-0 flex-1">
 				<div class="text-ink text-sm">Sign in and sensei picks up where you left off.</div>
 				<div class="text-ink-mute mt-1 text-xs">

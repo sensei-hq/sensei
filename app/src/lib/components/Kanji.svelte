@@ -18,8 +18,8 @@
     char: string;
     size?: Size;
     tone?: Tone;
-    /** Icon-mode mark. Omitted: the vocabulary's icon for `char`. `null`: an
-     *  identity mark that stays kanji in both modes (#133). */
+    /** Icon-mode mark. Omitted (or null): the vocabulary's icon for `char`.
+     *  Every mark follows the mode (#133). */
     icon?: string | null;
     mode?: GlyphMode;
     /** Classes the mark carries in both modes. */
@@ -29,7 +29,7 @@
   // The provided mode (#133) unless the caller says otherwise.
   const provided = useGlyphMode();
   const mode = $derived(modeProp ?? provided());
-  const resolved = $derived(icon === null ? undefined : (icon ?? iconForKanji(char)));
+  const resolved = $derived(icon ?? iconForKanji(char));
 
   const sizeClass = $derived(
     ({

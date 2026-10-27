@@ -17,7 +17,7 @@
 		class="bg-paper-soft border-paper-edge flex flex-col items-center rounded-xl border text-center"
 		style="padding: 32px 24px; max-width: 460px"
 	>
-		<KanjiToken char="結" icon={null} size="inherit" toneClass="" class="text-accent text-3xl" />
+		<KanjiToken char="結" size="inherit" toneClass="" class="text-accent text-3xl" />
 		<h2 class="display text-ink text-lg font-normal" style="letter-spacing: -0.01em; margin: 16px 0 0">
 			{what} lives inside a Dōjō
 		</h2>

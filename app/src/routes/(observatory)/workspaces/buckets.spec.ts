@@ -143,19 +143,17 @@ describe('workspaceIcon', () => {
     expect(workspaceIcon(p({ icon: null }))).toEqual({ kind: 'kanji', glyph: '場' });
   });
 
-  // #133: in icon mode only the DEFAULT mark becomes an icon. A logo is the
-  // workspace's own identity and a chosen kanji has no icon to stand for it, so
-  // both stay as they are.
-  it('shows the workspace icon for the default mark in icon mode only', () => {
-    expect(workspaceIcon(p({ icon: null }), '', 'icon')).toEqual({
+  // #133: one rule (user, 2026-10-27) — in icon mode every glyph is an icon,
+  // a workspace's chosen kanji included; it is kept as the fallback glyph. An
+  // uploaded logo is an image, not a glyph, and stays.
+  it('shows the workspace icon for any kanji mark in icon mode', () => {
+    expect(workspaceIcon(p({ icon: null }), '', 'icon')).toEqual({ kind: 'icon', cls: WORKSPACE_ICON, glyph: '場' });
+    expect(workspaceIcon(p({ icon: { kind: 'kanji', value: '禅' } }), '', 'icon')).toEqual({
       kind: 'icon',
       cls: WORKSPACE_ICON,
-      glyph: '場',
-    });
-    expect(workspaceIcon(p({ icon: { kind: 'kanji', value: '禅' } }), '', 'icon')).toEqual({
-      kind: 'kanji',
       glyph: '禅',
     });
+    expect(workspaceIcon(p({ icon: { kind: 'kanji', value: '禅' } }), '', 'kanji')).toEqual({ kind: 'kanji', glyph: '禅' });
     expect(workspaceIcon(p({ icon: { kind: 'image', value: 'http://x/y.png' } }), '', 'icon').kind).toBe('image');
     expect(workspaceIcon(p({ icon: null }), '', 'kanji')).toEqual({ kind: 'kanji', glyph: '場' });
   });

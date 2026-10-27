@@ -1,3 +1,4 @@
+import { KIND_ICONS } from '$lib/glyph-vocabulary';
 import type { GlyphMode } from '$lib/glyphs';
 import type { WorkspaceListItem } from '$lib/types.js';
 import { failureReason, type ApiResult } from '$lib/api.js';
@@ -130,8 +131,8 @@ export type WorkspaceIcon =
   | { kind: 'kanji'; glyph: string }
   | { kind: 'icon'; cls: string; glyph: string };
 
-/** The default workspace mark in icon mode (#133) — the Workspaces rail's icon. */
-export const WORKSPACE_ICON = 'i-solar-folder-with-files-bold-duotone';
+/** A workspace's mark in icon mode (#133) — the kind icon from the shared vocabulary. */
+export const WORKSPACE_ICON = KIND_ICONS.workspace;
 
 /** Pure: does a stored icon value already point somewhere the browser can load
  *  directly? An author/About-form icon may be an absolute URL or a data URI;
@@ -159,10 +160,10 @@ export function workspaceIcon(
       : `${base}/api/workspaces/${encodeURIComponent(p.id)}/icon`;
     return { kind: 'image', src, glyph: DEFAULT_GLYPH };
   }
-  if (icon && icon.kind === 'kanji' && icon.value) return { kind: 'kanji', glyph: icon.value };
-  // Only the default mark has an icon to stand for it (#133).
-  if (mode === 'icon') return { kind: 'icon', cls: WORKSPACE_ICON, glyph: DEFAULT_GLYPH };
-  return { kind: 'kanji', glyph: DEFAULT_GLYPH };
+  const glyph = icon && icon.kind === 'kanji' && icon.value ? icon.value : DEFAULT_GLYPH;
+  // Every glyph follows the mode (#133): a chosen kanji too, kept as the fallback.
+  if (mode === 'icon') return { kind: 'icon', cls: WORKSPACE_ICON, glyph };
+  return { kind: 'kanji', glyph };
 }
 
 /** Pure: compact "last session" label from an ISO timestamp. `now` is

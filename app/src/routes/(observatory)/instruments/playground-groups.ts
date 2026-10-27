@@ -7,6 +7,8 @@
  * Pure — the page passes the store's values in.
  */
 
+import { iconForKanji } from '$lib/glyph-vocabulary';
+
 export type PlaygroundTool = {
   id: string;
   serverId: string;
@@ -20,8 +22,7 @@ export type PlaygroundTool = {
 export type PlaygroundGroup = {
   id: string;
   kanji: string;
-  /** Icon-mode mark (#133); `null` for an assistant's own mark, an identity
-   *  that stays kanji in both modes. */
+  /** Icon-mode mark (#133). */
   icon?: string | null;
   name: string;
   installed: boolean;
@@ -54,8 +55,7 @@ const FAMILIES: Array<{ family: string; label: string; kanji: string }> = [
   { family: 'zed', label: 'Zed', kanji: '禅' },
 ];
 const UNKNOWN_KANJI = '器';
-/** Icon-mode marks (#133). The assistants keep their kanji: they are
- *  identities, and Solar has no logo for them. */
+/** Icon-mode marks (#133); the assistants' come from the shared vocabulary. */
 const SENSEI_ICON = 'i-solar-ruler-pen-bold-duotone';
 const UNKNOWN_ICON = 'i-solar-plug-circle-bold-duotone';
 
@@ -89,7 +89,8 @@ export function buildPlaygroundGroups(
     return {
       id: server.id,
       kanji: primary ? '具' : family?.kanji ?? UNKNOWN_KANJI,
-      icon: primary ? SENSEI_ICON : family ? null : UNKNOWN_ICON,
+      // Every mark follows the mode (#133): an assistant's from the vocabulary.
+      icon: primary ? SENSEI_ICON : family ? (iconForKanji(family.kanji) ?? UNKNOWN_ICON) : UNKNOWN_ICON,
       name: serverName(server.mcp_key),
       installed: server.enabled,
       primary,
