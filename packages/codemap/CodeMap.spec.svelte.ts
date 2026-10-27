@@ -114,6 +114,19 @@ describe('CodeMap', () => {
     expect(q('[data-testid="coupling-summary"]')?.textContent).toContain('1 pairs change together with no dependency between them · from 40 commits');
   });
 
+  it('the Wheel puts the modules on a ring and opens one on double-click', async () => {
+    const p = port();
+    render(p);
+    await settle();
+    (q('[data-testid="codemap-lens-wheel"]') as HTMLButtonElement).click();
+    flushSync();
+    expect(target.querySelectorAll('[data-testid^="wheel-node-"]').length).toBe(3);
+    expect(q('[data-testid="wheel-band-p/a>p/b"]')).not.toBeNull();
+    (q('[data-testid="wheel-node-p/a"]') as SVGElement).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await settle();
+    expect(p.module).toHaveBeenCalledWith('p/a');
+  });
+
   it('says why the map could not be read', async () => {
     render({ ...port(), level0: vi.fn(() => Promise.resolve({ ok: false as const, error: 'Service Unavailable' })) });
     await settle();

@@ -4,7 +4,7 @@
 import type { CoChange, CodeMapPort, Column, GroupBy, Level0, Level1, Level2, Read, Role, Zones } from './types';
 
 export type Level = 'modules' | 'files' | 'symbols';
-export type Lens = 'structure' | 'cycles' | 'matrix' | 'zones' | 'coupling';
+export type Lens = 'structure' | 'wheel' | 'cycles' | 'matrix' | 'zones' | 'coupling';
 export const ROLES: Role[] = ['code', 'test', 'docs', 'config', 'generated'];
 
 export interface Crumb {

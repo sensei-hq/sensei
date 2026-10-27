@@ -10,6 +10,7 @@
   import ModuleMap from './ModuleMap.svelte';
   import MatrixLens from './MatrixLens.svelte';
   import ZonesLens from './ZonesLens.svelte';
+  import WheelLens from './WheelLens.svelte';
   import ModuleList from './ModuleList.svelte';
   import FileColumns from './FileColumns.svelte';
   import SymbolView from './SymbolView.svelte';
@@ -22,6 +23,7 @@
 
   const LENSES: { id: Lens; label: string }[] = [
     { id: 'structure', label: 'Structure' },
+    { id: 'wheel', label: 'Wheel' },
     { id: 'cycles', label: 'Cycles' },
     { id: 'matrix', label: 'Matrix' },
     { id: 'zones', label: 'Zones' },
@@ -100,6 +102,8 @@
           <ModuleList data={l0} onopen={open} />
         {:else if map.lens === 'zones'}
           {#if map.zones}<ZonesLens data={map.zones} />{:else}<p class="text-sm text-ink-soft">Placing components…</p>{/if}
+        {:else if map.lens === 'wheel'}
+          <WheelLens data={l0} selected={map.selected} onselect={(id) => map.select(id)} onopen={open} />
         {:else if map.lens === 'matrix'}
           <MatrixLens data={l0} onopen={open} />
         {:else}
