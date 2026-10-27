@@ -377,6 +377,15 @@ work (#307 and the gaps #309–#321).
 - **How:** build the website from the new mocks. Each feature reads *coming soon* until it ships;
   flip it to *available* in the change that releases it, not afterwards.
 
+## Baseline — 2026-10-27 (user: every screen, every tool, verified)
+
+`docs/baseline/2026-10-27-app.md`. 31 of 32 read-only sensei tools answer right against independent oracles;
+12 defects fixed (a4f9659e, 14535af6). Open, in order: the Layers diagram freezes (profile in the webview);
+`get_duplicates` over 200s (precompute at index time); unwatched repositories read as `behind` (a not-watched
+reason); the ResizeObserver console error on workspace metrics; an ambiguous library name answers a bare 500
+(type the error, 409); `dbd reconcile` misses function-body drift (file with dbd); the 19 write tools
+(the user's call: a scratch workspace); the dōjō screens (after a local sign-in); the dōjō sync (Keychain, #282).
+
 ## Expected closures
 
 | Wave | Issues closed | Rough effort |

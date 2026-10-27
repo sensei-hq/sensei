@@ -1,23 +1,22 @@
 # Checkpoint — 2026-10-27
 
-**Slice:** the Code map (M17) — app done; the dōjō's Code health embed next. Decisions (user, 2026-10-27):
-the dōjō map is computed by the DAEMON and pushed with the graph sync; complexity comes from LOCAL QLTY.
+**Slice:** the baseline (user, 2026-10-27) — every screen, every clickable, the console, and every sensei MCP
+tool run and its answer checked against what is true. Report: `docs/baseline/2026-10-27-app.md`.
 
-**Done (develop, pushed; daemon installed locally; live DB reconciled):**
-- Code map in the app (`@sensei/codemap`): L0 modules → L1 files by role → L2 symbols; lenses Structure,
-  Wheel, Cycles, Matrix, Zones, Hidden coupling (co-change from `commit_files`), Complexity (local qlty,
-  `measure_complexity` task, `sensei.file_complexity`). `test:inspect -- codemap` green for every lens.
-- World and Atlas retired (routes, state, `/diagrams/world`, `/workspaces/{id}/graph`).
-- `module_of`: container folders split one level deeper, files directly in one stay in it (185 modules).
-- `crate::qlty` shared by the quality metric and complexity.
-- #133 one rule + preference sync (live check after the next release deploys `dojo.user_preferences`).
+**Done (develop):** 31 of 32 read-only sensei tools right, each held to an oracle worked out without the tool
+(`app/e2e/tests-inspect/tool-oracles.ts`; `bun run test:inspect -- tool-calls`). 12 defects fixed red-first:
+a4f9659e (Playground runs in the workspace — "Runs in" picker, `?workspace=`; file tags on `sensei.files`;
+conventions from files; rank_bm25; pattern reads refuse no/unknown workspace; playbook refusals; nudges;
+communities capped with total; MCP lookup on `?folders=roots`), 14535af6 (library refs by id /
+`ecosystem:name`; `dbd`, `cmake` ecosystems). Live DB converged (dbd reconcile + `apply -n`), release
+daemon installed, sensei rescanned (224 route files tagged).
 
-**Next — the dōjō embed:**
-1. Daemon: compute the Code map L0 PER REPOSITORY + branch (today's queries are workspace-scoped; add a
-   repository scope) and push it with `dojo_sync`'s graph push.
-2. dōjō: a table for the pushed L0 (per repository, branch; RLS = `can_read_repository`), SQL functions for
-   L1/L2 over `graph_nodes`/`graph_edges`, `/v1` routes, a port for `@sensei/codemap`, and a Code health tab
-   on the dōjō workspace page (repository picker).
+**Next:** profile the Layers diagram freeze in the webview (payload is small; jsdom does not freeze).
+Then `get_duplicates` precomputed; a not-watched metric reason; the dōjō crawl once signed in locally.
 
-**Known:** Keychain tests fail on rebuilt test binaries (#282, environmental). After a DDL change run
-`make test-template`; reconcile live with dbd. fmt + workspace clippy before every Rust commit.
+**Open questions (user):** run the 19 write tools against a scratch workspace and clean up? Approve Keychain
+("Always Allow" in Identities) so the dōjō sync resumes; #282 when the Developer ID arrives (2026-10-28).
+
+**Known broken:** dōjō sync since 10-22 (Keychain) → production dōjō empty. A long-lived Claude session keeps
+its old sensei-mcp (this one predates the workspace rename): its `update_phase` 404s — `/mcp` reconnect.
+Keychain tests fail on rebuilt test binaries (#282). `dbd reconcile` misses function-body drift.
