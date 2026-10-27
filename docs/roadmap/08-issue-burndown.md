@@ -279,11 +279,26 @@ The settings screen lists them as repositories.
 - **v0.21.0 released 2026-10-26** (user go): carries the demo prep, #123's fixes, #161, #338, #190 (dbd
   0.27.8: table comments converge, design.yaml read through dbd incl. workspace designs) and Tokens without
   cache reads (user: cache reads counted apart; 64.3B → 1.44B over 90 days). `deploy-dojo` awaits approval.
-- #341 (user, 2026-10-26): the Libraries screens show a library's own docs, skills and agents from its
-  `sensei.library.json`, for a scanned library (dbd) and a dependency (rokkit). Self-scan ingest already works
-  (dbd 1/1/43, rokkit 5/3/94); missing: the UI, `/api/libs` hides manifest-only libraries, a package name
-  resolves to an empty row, dependency discovery (node_modules / cargo / site), and half the manifest fields.
-  Slice 1 (show what is stored) is quick and demo-worthy; then the parser, then dependencies. PRD updated.
+- v0.21.0's `deploy-dojo` and `deploy-worker` approved (user) and green.
+- ~~#341~~ **closed 2026-10-26** (f33ff30e, ad78c727, 9a0d6f1a): the production scan registers a library's
+  `sensei.library.json` (it lived in a test-only stage); a dependency's repository is asked for its manifest
+  at the pinned ref (`discover_library`, daily, never for a watched working copy); `/api/libs` folds packages
+  into their library; the Libraries screen shows packages, skills, agents and docs. Live: rokkit 15/95/5/3,
+  dbd 2/50/1/1, kavach 13/15/4/2 (packages/pages/skills/agents); `test:inspect` shows rokkit 5,3,95. Site
+  discovery (`.well-known`) filed as #342.
+- **Instruments (user, 2026-10-26: list every MCP; the UI sees what an assistant sees).** cb7ca987, ef296c15:
+  the Playground's groups are the discovered servers (sensei's first), tools as each server lists them, the
+  form is the tool's `inputSchema`, and Execute runs `tools/call` through the server
+  (`POST /api/instruments/mcp-servers/{id}/call`); the hand-kept 20-tool catalog (`/api/mcp/tools`) is
+  retired. c28cd21b: the MCP refuses a missing required argument (`[]` before). 88277ea7, the next commit:
+  Health stayed "Loading…": sensei and playwright were drawn twice (calls to retired tools; a plugin key
+  vs a bridged prefix) and the duplicate key stopped the grid. Probe cap 10s → 30s (semgrep 5.6s warm).
+  Live: 56 sensei tools, `list_workspaces` through the server, 6 Health sources, `test:inspect` green. Left:
+  the two zed context servers carry no command (extension-provided), and Health reads "not connected"
+  for the seconds the inventory capture takes after a restart.
+- **Next (user's order): Diagrams** — the Code map per M17 (L0 modules ≤ 60 in bands → L1 files by role →
+  L2 symbols; lenses), then a shared diagrams library for app and dōjō, and the dōjō diagram sync; then the
+  kanji/icons setting (#133).
 - #281: Zed threads over 64 MB, parsed straight from the zstd stream into typed messages.
 - #282: releases are ad-hoc signed, so keychain and folder grants reset on every upgrade. Developer ID
   signing, notarization, and a first-start Permissions step. Needs the user's Apple Developer account.
