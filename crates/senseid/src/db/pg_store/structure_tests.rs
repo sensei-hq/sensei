@@ -91,7 +91,10 @@ async fn a_container_folder_is_not_a_module() {
         }
     };
     assert_eq!(answer("web", "lib/server/rules-data").await, "web/lib/server");
-    assert_eq!(answer("app", "routes/(observatory)/instruments/+page").await, "app/routes/(observatory)");
+    assert_eq!(
+        answer("app", "routes/(observatory)/instruments/+page").await,
+        "app/routes/(observatory)"
+    );
     assert_eq!(answer("sensei", "ddl/table/sensei/nodes").await, "sensei/ddl/table");
     assert_eq!(answer("app", "lib").await, "app/lib", "a lone container is itself");
     // Not a container: the first segment, as before.

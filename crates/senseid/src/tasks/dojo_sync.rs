@@ -187,6 +187,12 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
     for persona in personas {
         let outcome = match persona_token(&persona).await {
             Ok(token) => {
+                // The glyph choice (#133) syncs for every persona with a
+                // session, with repositories or without; a failure is logged,
+                // never a failed persona.
+                if let Err(e) = crate::dojo_client::glyph_sync::sync(&pg, &token, &plane).await {
+                    tracing::warn!(persona, error = %e, "dojo_sync: glyph choice not synced");
+                }
                 plan_persona(&pg, &persona, &token, &plane).await.map(|p| p.map(|p| (token, p)))
             }
             Err(e) => Err(e),
@@ -1247,6 +1253,8 @@ mod tests {
         /// What `GET /v1/you/memberships` answers — `None` is an empty list.
         memberships: Option<Result<Vec<MyMembership>, String>>,
         membership_calls: Mutex<usize>,
+        /// What the dōjō holds of the glyph choice; `None`: never chosen.
+        glyphs: Mutex<Option<crate::dojo_client::glyph_sync::GlyphPref>>,
         /// What `GET /v1/you/graph` answers, per (repo_key, branch); absent → {}.
         graph_remote:
             std::collections::HashMap<(String, String), std::collections::HashMap<String, String>>,
@@ -1293,6 +1301,25 @@ mod tests {
         async fn my_memberships(&self, _t: &str) -> Result<Vec<MyMembership>, String> {
             *self.membership_calls.lock().unwrap() += 1;
             self.memberships.clone().unwrap_or(Ok(vec![]))
+        }
+        async fn preferences(
+            &self,
+            _t: &str,
+        ) -> Result<crate::dojo_client::glyph_sync::GlyphPref, String> {
+            Ok(self.glyphs.lock().unwrap().clone().unwrap_or(
+                crate::dojo_client::glyph_sync::GlyphPref {
+                    glyphs: "kanji".into(),
+                    glyphs_set_at: None,
+                },
+            ))
+        }
+        async fn put_glyphs(
+            &self,
+            _t: &str,
+            choice: &crate::dojo_client::glyph_sync::GlyphPref,
+        ) -> Result<crate::dojo_client::glyph_sync::GlyphPref, String> {
+            *self.glyphs.lock().unwrap() = Some(choice.clone());
+            Ok(choice.clone())
         }
         async fn sync_plan(&self, _t: &str) -> Result<SyncPlan, String> {
             *self.plan_calls.lock().unwrap() += 1;
@@ -1395,6 +1422,51 @@ mod tests {
                 // Nothing switched off: the default every dōjō starts in.
                 disabled_metrics: vec![],
                 graph_branches: vec![],
+            }
+        }
+
+        /// #133: the glyph choice syncs both ways through the dōjō, the later
+        /// winning — sent when this machine's is later, taken when the dōjō's is.
+        /// One test, because both halves write the same two config keys.
+        #[tokio::test]
+        async fn the_glyph_choice_syncs_both_ways_the_later_winning() {
+            use crate::dojo_client::glyph_sync::{
+                self, GLYPHS_KEY, GLYPHS_SET_AT_KEY, GlyphPref, Sync,
+            };
+            let pg = PgStore::connect_test().await.unwrap();
+            let before = (
+                pg.get_config(GLYPHS_KEY).await.unwrap(),
+                pg.get_config(GLYPHS_SET_AT_KEY).await.unwrap(),
+            );
+
+            pg.set_config(GLYPHS_KEY, "icon").await.unwrap();
+            pg.set_config(GLYPHS_SET_AT_KEY, "2026-10-27T10:00:00Z").await.unwrap();
+            let plane = StubPlane::default();
+            *plane.glyphs.lock().unwrap() = Some(GlyphPref {
+                glyphs: "kanji".into(),
+                glyphs_set_at: Some("2026-10-27T09:00:00Z".into()),
+            });
+            let pushed = glyph_sync::sync(&pg, "t", &plane).await.unwrap();
+            assert!(matches!(pushed, Sync::Push(_)), "{pushed:?}");
+            assert_eq!(plane.glyphs.lock().unwrap().as_ref().unwrap().glyphs, "icon");
+
+            *plane.glyphs.lock().unwrap() = Some(GlyphPref {
+                glyphs: "kanji".into(),
+                glyphs_set_at: Some("2026-10-27T11:00:00Z".into()),
+            });
+            let pulled = glyph_sync::sync(&pg, "t", &plane).await.unwrap();
+            assert!(matches!(pulled, Sync::Pull(_)), "{pulled:?}");
+            assert_eq!(pg.get_config(GLYPHS_KEY).await.unwrap().as_deref(), Some("kanji"));
+            assert_eq!(
+                pg.get_config(GLYPHS_SET_AT_KEY).await.unwrap().as_deref(),
+                Some("2026-10-27T11:00:00Z")
+            );
+
+            for (key, value) in [(GLYPHS_KEY, before.0), (GLYPHS_SET_AT_KEY, before.1)] {
+                match value {
+                    Some(v) => pg.set_config(key, &v).await.unwrap(),
+                    None => pg.delete_config(key).await.unwrap(),
+                }
             }
         }
 

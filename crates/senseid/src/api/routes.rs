@@ -1105,6 +1105,31 @@ mod tests {
         assert_eq!(st, StatusCode::BAD_REQUEST);
     }
 
+    /// #133: choosing a glyph mode in Settings stamps when it was chosen, so
+    /// the sync with the dōjō can tell the later choice.
+    #[tokio::test]
+    async fn choosing_a_glyph_mode_records_when() {
+        use crate::dojo_client::glyph_sync::{GLYPHS_KEY, GLYPHS_SET_AT_KEY};
+        let (app, state) = test_app().await;
+        let before = (
+            state.pg.get_config(GLYPHS_KEY).await.unwrap(),
+            state.pg.get_config(GLYPHS_SET_AT_KEY).await.unwrap(),
+        );
+        let start = chrono::Utc::now();
+        let (st, _) =
+            req(app, "PUT", "/api/config", Some(serde_json::json!({ GLYPHS_KEY: "icon" }))).await;
+        assert_eq!(st, StatusCode::OK);
+        let at = state.pg.get_config(GLYPHS_SET_AT_KEY).await.unwrap().expect("stamped");
+        let at = chrono::DateTime::parse_from_rfc3339(&at).expect("RFC 3339");
+        assert!(at >= start - chrono::Duration::seconds(1), "{at} is when it was chosen");
+        for (key, value) in [(GLYPHS_KEY, before.0), (GLYPHS_SET_AT_KEY, before.1)] {
+            match value {
+                Some(v) => state.pg.set_config(key, &v).await.unwrap(),
+                None => state.pg.delete_config(key).await.unwrap(),
+            }
+        }
+    }
+
     /// A request as the CLI or the app sends it: addressed to loopback, which
     /// `caller_guard` requires of every request (#334).
     fn local_request() -> axum::http::request::Builder {
