@@ -206,6 +206,11 @@ tree moves. Any `FALSE` stops the build.
   - **24:** foreign Origin → 403 on PUT fields
   - **25:** `field_in_use` text shown on its row
   - **1:** `tracker_fields` unique constraints; `tracker_metric` `ALL`
+  - **9, 11** (fields half): `null` in the PUT body, never `0`
+  - retired fields (W6/W7): cleared by the next write, re-mappable without `field_in_use`
+  - `GET …/trackers` reports `surface` and `mapped` from the mapped rows
+  - docs: the linkage R8 rows for `GET/PUT …/fields`, the screen spec's Fields section
+    and its error-table rows
 - **Test scenarios:**
   ```gherkin
   Given customfield_10060 already has values on the board
@@ -213,6 +218,7 @@ tree moves. Any `FALSE` stops the build.
   Then the response is 422 field_in_use and nothing is saved
 
   Given only metered_cost is mapped
+  And AUTH-1 was written after the mapping was saved
   When a session with no cost is linked to AUTH-1
   Then no write request is sent
   ```

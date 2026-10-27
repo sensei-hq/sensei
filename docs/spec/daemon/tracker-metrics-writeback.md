@@ -199,7 +199,9 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
     gives `0.15`
   - costs: `(x * 100.0).round() / 100.0`
   - `-0.0` is normalised to `0.0`. A negative span (`cycle_hours` when `last_at < first_at`,
-    or any negative duration sum) is **null**: hours elapsed are never negative.
+    by however little, or any negative duration sum) is **null**: hours elapsed are never
+    negative. One `cycle_secs(&Usage)` computes it for both surfaces, testing the sign of
+    the duration itself.
 
   The **canonical value** is the string `format!("{:.2}", rounded)`.
   **Integers** are written as JSON integers, with the canonical value `i64::to_string`.
@@ -213,7 +215,8 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
 ### W4 · Which tasks, payload, change detection
 
 - **Candidates for a pass** are the tracker's tasks with `assigned_to_me = true`,
-  `removed_at IS NULL`, and either `Usage.sessions ≥ 1` or `writeback_hash IS NOT NULL`.
+  `removed_at IS NULL`, and either `Usage.sessions ≥ 1` or `writeback_at IS NOT NULL` (written
+  before: a mapping change clears the hash, never `writeback_at`).
   The second case is a ticket that has lost all its sessions, for example its repo left
   the workspace. It is written as `sessions = 0` with every other metric null, so the
   ticket stops showing stale figures. The usage comes from one
@@ -229,7 +232,8 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
     enum order
   
   `writeback_hash` is the lowercase hex SHA-256 (`sha2`, `hex`) of those strings joined
-  with `\n`, prefixed by the surface name. A change to an unmapped metric therefore sends
+  with `\n`, prefixed by the surface name. On the fields surface each pair is the string
+  `{field_ref}={canonical value}`, or `{field_ref}=null`. A change to an unmapped metric therefore sends
   nothing on the fields surface. A changed `_n`, `shared` or `api_cost_partial` that
   changes a comment line does send.
 - When the hash equals the stored one **and the last write was `ok`**, the task is skipped
@@ -318,48 +322,70 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
 
 ### W6 · Surface: mapped fields
 
-- `sensei.tracker_fields (tracker_id, metric, field_ref)`, unique on `(tracker_id, metric)`
-  and on `(tracker_id, field_ref)`, FK → `trackers` on delete cascade. When a tracker has
-  ≥ 1 row, only mapped metrics are written, in **one** request per task. No comment is
-  created or edited.
+- `sensei.tracker_fields (tracker_id, metric, field_ref, retired_at)`, unique on
+  `(tracker_id, metric)` and on `(tracker_id, field_ref)`, FK → `trackers` on delete
+  cascade. A row with a `metric` is **mapped**. A row with `metric` NULL is **retired**: a
+  field sensei wrote before that is no longer mapped, kept so sensei can clear it.
+  `retired_at` is when it was retired.
+- When a tracker has ≥ 1 mapped row, the surface is **fields**: only mapped metrics are
+  written, in **one** request per task, and no comment is created or edited. Otherwise
+  the surface is **comment**.
+- **Retired fields are cleared.** A ticket last written before a retired row's `retired_at`
+  (its `writeback_at` is older, or NULL) gets `null` written to that field on its next
+  write:
+  - on the fields surface, in the same request
+  - on the comment surface, in one extra field write after the comment
+  
+  That cleanup is not part of the hash. A ticket with a field still to clear is written
+  even when its hash matches. A failure of the extra field write is recorded as the
+  ticket's status (`status_for(WriteFields, e)`), as any failed write is.
 - Jira: `PUT /rest/api/3/issue/{id}` `{"fields": {"<field_ref>": <number|null>, …}}`. A
   null is JSON `null`, which clears the field. No `notifyUsers` parameter is sent (X3). A
-  2xx (Jira: 204) is success.
+  2xx (Jira: 204) is success. A task id that fails the id shape is `Decode` (→ `error`)
+  before any request, so a real Jira 400 stays the only `field_invalid`.
 - Switching comment → fields leaves an existing comment untouched. Switching fields →
   comment edits the same `writeback_comment_ref` again (W7 nulls the hashes, so it is
-  rewritten).
+  rewritten) and retires every field, so each one is cleared.
 
 ### W7 · Field mapping
 
 - `PUT /api/workspaces/{id}/trackers/{tracker}/fields` with body
-  `{"fields": [{"metric": "...", "field_ref": "..."}…]}` **replaces** the whole set, and
-  `[]` clears it. It's accepted in every write-back state (disabled included). The checks
-  run in this order, stopping at the first failure:
+  `{"fields": [{"metric": "...", "field_ref": "..."}…]}` **replaces** the mapped set, and
+  `[]` clears it. The body must be JSON; a non-JSON body gets axum's own 400/415. It's
+  accepted in every write-back state (disabled included). The checks run in this order,
+  stopping at the first failure:
   1. The body isn't an object with a `fields` array of `{metric, field_ref}` strings → 422
      `invalid_body`.
   2. Unknown metric → 422 `unknown_metric` `{metric}`.
-  3. A metric or `field_ref` appears twice → 422 `duplicate_mapping` `{metric|field_ref}`.
+  3. A metric or `field_ref` appears twice → 422 `duplicate_mapping` `{metric|field_ref}`
+     (the second occurrence's value).
   4. `field_ref` fails `adapter.field_ref_shape` (Jira: `^customfield_[1-9][0-9]{0,9}$`)
      → 422 `invalid_field_ref` `{field_ref}`. No network request has been made yet.
-  5. `adapter.check_fields(t, refs) -> Result<Vec<FieldCheck>, TrackerError>`, where
+  5. Unknown workspace or tracker → 404 (`workspace_not_found` / `tracker_not_found`).
+  6. `adapter.check_fields(t, refs) -> Result<Vec<FieldCheck>, TrackerError>`, where
      `FieldCheck { field_ref, exists: bool, numeric: bool }`. Jira does this with one
      `GET /rest/api/3/field` and checks `schema.type == "number"`. Missing → 422
      `field_not_found` `{field_ref}`. Not numeric → 422 `field_not_number` `{field_ref}`.
-  6. **Fields already in use.** For each `field_ref` not already mapped on this tracker,
-     `adapter.field_in_use(t, board, field_ref) -> Result<bool, TrackerError>`. Jira: the
-     board issue endpoint with `jql=cf[N] is not EMPTY&maxResults=1&fields=none`. `true` →
-     422 `field_in_use` `{field_ref}`, so a mapping can't take over Story Points or any
-     field people fill in.
-  7. Transport and credential failures use the statuses connect returns for the same
-     `TrackerError` (C26): `Unauthorized` → 401 `unauthorized`, `Forbidden` → 403
-     `forbidden`, `TokenMissing`/`CredentialStore` → 500 with their code, and any other →
-     502 with its code. The handler maps `TrackerError` directly. It doesn't go through
-     `connect_failure`, which matches `ConnectError`. The status table is factored into
-     one `fn tracker_error_status(TrackerError) -> StatusCode` that both use.
-- On success, one transaction replaces the set, sets `writeback_hash = NULL` on every task
-  of the tracker, and clears `field_invalid`. The route returns 200 with the
-  `GET …/fields` body.
-- `GET …/fields` → 200 `{"fields": [{metric, field_ref}]}` in enum order.
+  7. **Fields already in use.** For each `field_ref` the tracker has no row for (mapped or
+     retired), `adapter.field_in_use(t, board, field_ref) -> Result<bool, TrackerError>`.
+     Jira: the board issue endpoint with `jql=cf[N] is not EMPTY&maxResults=1&fields=none`.
+     `true` → 422 `field_in_use` `{field_ref}`, so a mapping can't take over Story Points or
+     any field people fill in. A field the tracker already has a row for holds sensei's
+     own values, so it is never refused.
+  8. Transport and credential failures map through `fn tracker_error_status(TrackerError)
+     -> StatusCode`: `Unauthorized` → 401 `unauthorized`, `Forbidden` → 403 `forbidden`,
+     `TokenMissing`/`CredentialStore` (the route's own keyring read, `transport_for`) → 500
+     with their code, and any other → 502 with its code. The checks use a transport with
+     **0 retries**, as connect does, so Save never waits out a 429. Connect's
+     `Validate(Tracker(e))` arm uses the same function; the keyring codes can't reach it,
+     so connect's answers don't change.
+- On success, one transaction:
+  - replaces the mapped set: a field no longer mapped is **retired** (`metric` NULL,
+    `retired_at = now()`); a retired field mapped again is un-retired
+  - sets `writeback_hash = NULL` on every task of the tracker, and clears `field_invalid`
+  
+  The route returns 200 with the `GET …/fields` body.
+- `GET …/fields` → 200 `{"fields": [{metric, field_ref}]}`: the mapped rows only, in enum order.
 - Whether a field is on an issue's edit screen can't be checked in advance. A write
   rejected with 400 is `field_invalid` (X4).
 
@@ -375,7 +401,8 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   tracker's tasks, and with `comment_removed` it also sets `writeback_comment_ref = NULL`
   and `writeback_hash = NULL`. The next pass therefore posts a new comment.
 - `GET …/trackers`: each tracker gains
-  `"writeback": {"enabled", "state", "surface": "comment"|"fields", "mapped": <rows>, "assigned": <n>, "failing": <n>, "error": <code|null>}`:
+  `"writeback": {"enabled", "state", "surface": "comment"|"fields", "mapped": <n>, "assigned": <n>, "failing": <n>, "error": <code|null>}`:
+  - `mapped`: the number of mapped `tracker_fields` rows; `surface` is `fields` when it is > 0
   - `assigned`: live tasks (`removed_at IS NULL`) with `assigned_to_me = true`
   - `failing`: the subset of `assigned` whose `writeback_status` is set and isn't `ok`.
     Never-written (NULL) and reassigned or removed tickets don't count, so
@@ -556,6 +583,11 @@ pub enum WriteMethod { Post, Put }
     - `field_not_number` "That field isn't a number field."
     - `field_in_use` "That field already has values on this board. Pick an empty field."
     - `invalid_body` "Couldn't save the mapping."
+
+    These texts are their own map in `tracker-errors.ts` (`FIELD_MAPPING_ERRORS`), apart from
+    `WORDS`, where `invalid_body` reads "sensei refused that change." (the PATCH). A failure
+    that names no row (401/403/500/502, `tracker_not_found`) shows as the card alert with
+    `errorFor`'s text. A duplicate marks the second row.
 - **Per-ticket write status** on the Tickets screen stays out of this slice. The state
   line's `failing` count is the only aggregate.
 - **Scheduled tasks**: the `tracker_sync` description (`api/handlers/scheduled_tasks.rs:63`)
@@ -634,7 +666,7 @@ The X1–X8 fixture checks run against a real tenant before step 5 is merged.
 | X5 | board issues return `fields.assignee.accountId` when `assignee` is requested | W1 | `assigned_to_me` false, so nothing is written |
 | X6 | `/rest/api/3/field` lists custom fields with `id` and `schema.type` | W7 | the mapping PUT fails closed (`field_not_found`) |
 | X7 | issue comments list `author.accountId`, and `orderBy=-created` is accepted | W5 | drop `orderBy` and scan the last page |
-| X8 | the board issue endpoint accepts `jql=cf[N] is not EMPTY` | W7 | `field_in_use` check falls back to the `/rest/api/3/search/jql` endpoint scoped to the board's project |
+| X8 | the board issue endpoint accepts `jql=cf[N] is not EMPTY` | W7 | `field_in_use` check falls back to the `/rest/api/3/search/jql` endpoint scoped to the board's project; a board spanning several projects (no single key) fails closed: the mapping is refused with the tracker error |
 
 ## Done gate
 
@@ -729,6 +761,11 @@ and the test DB unless marked *(tenant)*.
     - A field with values on the board → `field_in_use`, and re-PUTting an already-mapped
       field doesn't make that check.
     - Success → 200, every task's hash NULL, and `field_invalid` cleared.
+    - After a PUT of n rows, `GET …/trackers` shows `surface: "fields"` and `mapped: n`;
+      after `[]`, `comment` and `0`.
+    - A field unmapped after sensei wrote it is retired, its next write sends it `null`,
+      and mapping it again is accepted (no `field_in_use`).
+    - A 429 on `/rest/api/3/field` → 502 `rate_limited` after exactly 1 request.
 17. **Status table**:
     - Unit: `status_for` over every `op` × `TrackerError::ALL`.
     - Pass, comment rows *(F2)*, fake returns each in turn:
