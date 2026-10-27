@@ -73,6 +73,8 @@ const task = (over: Partial<TrackerTaskRow> = {}): TrackerTaskRow => ({
   sprints: [{ id: 's12', name: 'Sprint 12' }],
   removed: false,
   assigned_to_me: null,
+  writeback_status: null,
+  writeback_at: null,
   usage: usage({ sessions: 3, by_source: { branch: 3, prompt: 1 }, active_secs: 3840, active_n: 2, tokens_fresh: 7700, tokens_fresh_n: 2 }),
   ...over,
 });
@@ -90,6 +92,7 @@ const tracker: TrackerConnection = {
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
   counts: { tasks: 3, sprints: 2 },
+  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
 };
 
 const ok = <T,>(data: T): ApiResult<T> => ({ ok: true, data });
@@ -114,7 +117,7 @@ function daemon(over: Partial<SprintsApi> = {}) {
     tryGetTrackerTask: async (_p, key) => {
       calls.push(`task:${key}`);
       return ok<TrackerTaskDetail>({
-        task: { key: 'IAM-5', summary: 'Login', issue_type: 'Story', status: 'Done', removed: false, assigned_to_me: null },
+        task: { key: 'IAM-5', summary: 'Login', issue_type: 'Story', status: 'Done', removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null },
         usage: usage({ sessions: 2 }),
         by_repo: [{ repository_id: 'r1', name: 'backend', usage: usage({ sessions: 2 }) }],
         sessions: [

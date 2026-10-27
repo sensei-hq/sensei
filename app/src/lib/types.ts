@@ -2163,7 +2163,43 @@ export interface TrackerConnection {
   /** A fixed `tracker_error` code, never a raw message. */
   last_error: string | null;
   counts: { tasks: number; sprints: number };
+  /** Usage write-back (tracker-metrics-writeback W8). */
+  writeback: TrackerWriteback;
 }
+
+/** A board's write-back state, first that applies (W8). */
+export type TrackerWritebackState =
+  | 'disabled'
+  | 'pass_failed'
+  | 'owner_not_a_person'
+  | 'owner_lookup_failed'
+  | 'owner_unknown'
+  | 'nothing_assigned'
+  | 'active';
+
+export interface TrackerWriteback {
+  enabled: boolean;
+  state: TrackerWritebackState;
+  surface: 'comment' | 'fields';
+  /** Mapped custom fields; `fields` surface when > 0. */
+  mapped: number;
+  /** Live tickets assigned to the token owner. */
+  assigned: number;
+  /** The assigned tickets whose last write failed. */
+  failing: number;
+  /** A fixed `tracker_error` code for `pass_failed` / `owner_lookup_failed`, else null. */
+  error: string | null;
+}
+
+/** A ticket's last write-back outcome: the `sensei.tracker_writeback_status` enum. */
+export type TrackerWritebackStatus =
+  | 'ok'
+  | 'forbidden'
+  | 'field_invalid'
+  | 'comment_removed'
+  | 'not_found'
+  | 'rate_limited'
+  | 'error';
 
 /** What `POST …/trackers/sync` counted. */
 export interface TrackerSyncCounts {
@@ -2247,6 +2283,10 @@ export interface TrackerTaskRow {
   removed: boolean;
   /** Whether the token owner is the assignee; `null` while the owner is unknown. */
   assigned_to_me: boolean | null;
+  /** The last write-back outcome; `null` when never attempted. */
+  writeback_status: TrackerWritebackStatus | null;
+  /** When a write-back last landed. */
+  writeback_at: string | null;
   usage: TrackerUsage;
 }
 
@@ -2260,6 +2300,8 @@ export interface TrackerTaskDetail {
     removed: boolean;
     /** Whether the token owner is the assignee; `null` while the owner is unknown. */
     assigned_to_me: boolean | null;
+    writeback_status: TrackerWritebackStatus | null;
+    writeback_at: string | null;
   };
   usage: TrackerUsage;
   by_repo: Array<{ repository_id: string; name: string; usage: TrackerUsage }>;

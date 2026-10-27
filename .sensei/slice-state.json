@@ -1,113 +1,18 @@
 {
-  "slice_id": "tracker-jira-linkage",
-  "branch": "feature/jira_ticket_linkage",
-  "spec_path": "docs/spec/daemon/tracker-jira-linkage.md",
-  "screen_spec_path": "docs/spec/screen/project-integrations.md",
-  "plan_path": "docs/plans/2026-10-15-tracker-jira-linkage.md",
-  "mode": "attended",
-  "phases": [
-    "F1.2 schema",
-    "F1.3 pure core",
-    "F1.4 jira adapter + sync coordinator",
-    "F1.5 api + guards + cli",
-    "F2 scheduled sync",
-    "F3 linking",
-    "F4 usage",
-    "F6 app screen",
-    "F7 sprints screen",
-    "F8 on-demand discovery",
-    "F9 backlog",
-    "F5 live verification"
-  ],
-  "current_phase": "F5 live verification",
-  "completed": [
-    "F1.2 schema (7 DB tests green; deployed to sensei_test)",
-    "F1.3 pure core (21 tests green; http::bounded_builder extracted, federation uses it)",
-    "F1.4 jira adapter + transport + secret + sync coordinator + connect/drain (39 tests green; 70 tracker tests total, 5/5 repeat runs)",
-    "F1.5 api + guards + cli (24 senseid + 7 cli tests) and F2 scheduled sync (folded in: status needs the tracker_sync interval)",
-    "Review (approve depth) of 403b303a^..6bd154ca: 5 reviewers; fixes G1 sync data, G2 credential lifecycle, G3 transport tests, G4 guard tests, G5 docs — uncommitted pending user",
-    "develop (incl. linux_support #270) merged in 5ddb6df0; rustup-less rust-analyzer fallback 2b0edf95 fixes the 6 baseline failures",
-    "F3 linking (20 tests red-first incl. owner-rank gap found by mutation; 120 tracker tests green; full suite 3643 pass / 1 known load flake; mutations M1,M3-M8 caught, M2 equivalent: prefixes are '-'-terminated so order cannot change a match)",
-    "F4 usage (12 tests red-first + 1 by_source assertion added after mutation N8 survived; tracker 128/128, cli 70/70; mutations N1-N8 caught); live board got_a_guy↔senecaglobal.jira.com #333 connected (12 sprints, 728 tickets) after *.jira.com host fix",
-    "F6 app screen (50 unit tests red-first: state 24, panel 13 incl. axe x3, ModalShell 6, api 6, sidebar 1; app 1837/1837; svelte-check 0; verified live in headless chromium against senecaglobal board)",
-    "F7 sprints screen (asked for by the user after F6; 27 tests red-first: state 15, panel 11 incl. axe x4, api 1; app 1864/1864; svelte-check 0; live on senecaglobal board)",
-    "F8 on-demand discovery (17 tests red-first + 2 updated to the R11 contract; tracker 143/143; app 1865/1865; cli 70/70)",
-    "F9 backlog (9 tests red-first + 1 row expectation updated; tracker 146/146, cli 79/79, app 2338/2338; live 199 backlog tickets)",
-    "Live R11 check 2026-10-21: lookup of P057542601-782 discovered in 1.6 s; session naming P057542601-783 linked 0.7 s after ingest (prompt; branch was main). C34 still unchecked (both test tickets backlog)"
-  ],
-  "decomposition_approved": "2026-10-16 (user)",
-  "gate_status": "pass",
-  "preflight": "GO 2026-10-16 after disk cleanup (430G free); WARN: daemon /api/health 404, app e2e globalSetup macOS-only, website node_modules missing",
-  "test_db": "sensei_test created 2026-10-16 (user approved); TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test",
+  "slice_id": "tracker-metrics-writeback",
+  "spec_path": "docs/spec/daemon/tracker-metrics-writeback.md",
+  "plan_path": "docs/plans/2026-10-26-tracker-metrics-writeback.md",
+  "branch": "feature/tracker_metrics_writeback",
+  "mode": "unattended",
+  "phases": ["F1", "F2", "F3", "F4", "F5", "F6"],
+  "current_phase": "F2",
+  "completed": ["F1 (4794e815b, 079f0cc81)"],
+  "gate_status": "pending: F2 full suite + whole-slice review",
   "open_questions": [],
-  "known_broken": [
-    "sensei MCP index: 'folder not indexed' for this repo — grep fallback",
-    "update_phase MCP returns 404",
-    "2 indexer corpus tests flake only under full-suite load (a_scanned_repository_records_its_project_in_the_junction, every_stage_reaches_the_progress_stream); pass in isolation and with tracker tests; ruled out: env mutation, scan config, fd limit (524288), Postgres connections (no 'too many clients'). Root cause open.",
-    "app e2e (Tauri Playwright) runs only on macOS; F6 route added to zz-a11y.spec.ts but not run here. Logs report modal (moved onto ModalShell) not exercised live: its sessions come from a Tauri command"
+  "known_broken": [],
+  "notes": [
+    "build with cargo -j 2 (OOM at -j 4); run make test-template after any database/ change",
+    "F6 is live verification against a Jira tenant: needs the user (person token, app token, two assignees)"
   ],
-  "blocked": [
-    "F5 needs P0 = setup, not code: consent to Claude Code transcripts + watch the repos (2026-10-17 diagnosis)",
-    "F1.1 fixture capture: tenant now connected (senecaglobal.jira.com #333); live sync parsed 12 sprints/728 issues with the assumed C11 shapes — record as evidence"
-  ],
-  "next_command": "Deploy F8 DDL to the live sensei DB (user ok), restart the daemon, check C33/C34 on senecaglobal.jira.com; then F5 once transcript consent is on; then /sensei:review of F3-F8",
-  "spec_audit_4_5": "2026-10-16: 3 reviewers (conformance, failure-mode, data-correctness) → 14 findings; spec corrected (3-phase→5-step sync, no tx across I/O, atomic relink in apply tx, async first sync, keyring spawn_blocking+timeout, board-id canonicalisation, URL policy on require_secure_url). Re-audit → 7 contradictions fixed. Awaiting user confirmation of corrections.",
-  "baseline": {
-    "date": "2026-10-16",
-    "cmd": "TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test cargo test -p senseid --bin senseid",
-    "passed": 3511,
-    "failed": 7,
-    "ignored": 57,
-    "failures_preexisting": {
-      "rustup_missing_on_nix (rust-analyzer session shells to rustup)": [
-        "indexer::compiler_session::tests::rust_references_are_placed_by_rust_analyzer",
-        "indexer::pipeline::parse_task::a_parsed_file_reaches_the_database",
-        "tasks::handlers::process::tests::a_file_edited_after_its_compile_waits_for_a_fresh_one",
-        "tasks::handlers::process::tests::every_call_emit_arm_fires",
-        "tasks::handlers::process::tests::external_calls_link_to_lib_nodes",
-        "tasks::handlers::process::tests::graph_scan_end_to_end"
-      ],
-      "flaky_passes_in_isolation": [
-        "tasks::index_audit::tests::audit_repairs_nested_standalone"
-      ]
-    },
-    "load_flaky_preexisting": [
-      "db::pg_store::tool_calls_tests::* (rotating case; fails with tracker tests SKIPPED too — verified 2026-10-16)",
-      "indexer::pipeline::corpus::a_scanned_repository_records_its_project_in_the_junction",
-      "tasks::index_audit::tests::audit_repairs_nested_standalone"
-    ]
-  },
-  "last_verify": "2026-10-18 F7: app unit 135 files / 1864 pass; svelte-check 0 errors 0 warnings",
-  "checkpoint_path": "docs/checkpoints/tracker-jira-linkage.md",
-  "committed": "F1.2+F1.3 committed by user in 403b303a (2026-10-16 19:52)",
-  "workarounds": [
-    "tracker/transport.rs tests: impl RawGet for Ref<'_> instead of &Scripted — Rust indexer miscounts impl-for-&T (backlog)"
-  ],
-  "spec_amendments_during_build": [
-    "gate 2a scoped to non-test code",
-    "Snapshot.board_name added (spec R5 refreshes board_name each sync)",
-    "connect param codes email_required/token_required added; screen error table updated",
-    "due_tombstones takes a service prefix (test isolation; production prefix com.sensei.tracker.)",
-    "guard 403 body code `forbidden_caller` (distinct from Jira `forbidden`)",
-    "tick_scoped(only) for test isolation; production tick = all trackers",
-    "F2 folded into F1.5",
-    "known_project() 404s unknown uuids (resolve_project_uuid accepts any uuid)",
-    "R6 boundary: `_` separates again (3db9cee9 had made it part of a word, contradicting gate 1a `feature_AUTH-420`); consumed spans still stop MY_PROJ-12 -> PROJ-12 when MY_PROJ is known",
-    "KnownTask gains `current: bool` (the alias tie-break needs the task's current key)",
-    "GET tracker-tasks/{key}: 404 code `task_not_found`; sessions limited to current candidates (R1)",
-    "tracker adapter registry is `&'static [&'static dyn TrackerAdapter]` (house shape of registered_adapters) so match_links can run in spawn_blocking",
-    "R11 on-demand ticket discovery (user request 2026-10-19): ingest + lookup triggers, board-scoped fetch, negative cache 6 h, add-only apply; tracker_unknown_keys table, trackers.discovered_through; 404 task_not_on_board; claims C33-C36"
-  ],
-  "gate_1l": "sync part done (FakeAdapter seam test); link + usage parts land with F3/F4",
-  "corrections": [
-    "F1 was marked complete without the 1l seam test and two 1k tests — corrected in review (added); 1l link/usage parts belong to F3/F4",
-    "coordinator no longer upper-cases keys (Jira logic had leaked into pg_store; found by the seam test)"
-  ],
-  "review_low_findings": [
-    "keyring set that times out can complete after the 10 min grace → orphaned entry; abandoned spawn_blocking threads uncapped",
-    "DB tests skip silently without a DB (`let Ok(pg) = connect_test() else return`) — CI must set TEST_DATABASE_URL",
-    "CLI connect help lacks the env-var visibility caveat"
-  ],
-  "fixed_during_f4": "tracker test isolation: SecretStore::namespace() — production keeps com.sensei.tracker., each MemoryStore gets its own; connect names secrets and drains match on the store's namespace (was: parallel tests drained each other's tombstones)",
-  "f6_visual_check": "2026-10-18: user checked the Integrations screen in the running Tauri app (process-compose desktop on feature/jira_ticket_linkage) — shows fine"
+  "next_command": "finish F2 verify -> /sensei:review F2 -> commit; then F3 (toggle + status UI), F4 (mapped fields), F5 (W-DOCS)"
 }

@@ -95,6 +95,7 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
           last_success_at: null,
           last_error: null,
           counts: { tasks: 2, sprints: 2 },
+          writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
         },
       ],
     }),
@@ -111,6 +112,8 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
           sprints: [{ id: 's13', name: 'Sprint 13' }],
           removed: false,
           assigned_to_me: null,
+          writeback_status: null,
+          writeback_at: null,
           usage: usage({ sessions: 1, by_source: { branch: 1, prompt: 0 }, active_secs: 600, active_n: 1 }),
         },
       ],
@@ -118,7 +121,7 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
     tryGetTrackerTask: async () => ({
       ok: true,
       data: {
-        task: { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', removed: false, assigned_to_me: null },
+        task: { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null },
         usage: usage({ sessions: 1 }),
         by_repo: [{ repository_id: 'r1', name: 'backend', usage: usage({ sessions: 1 }) }],
         sessions: [
@@ -140,6 +143,8 @@ function api(over: Partial<SprintsApi> = {}): SprintsApi {
           sprints: [],
           removed: false,
           assigned_to_me: null,
+          writeback_status: null,
+          writeback_at: null,
           usage: usage({ sessions: 1 }),
         },
       ],
@@ -200,8 +205,8 @@ describe('ready', () => {
       tryListTrackerTasks: async () => ({
         ok: true,
         data: [
-          { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', current_sprint: { id: 's13', name: 'Sprint 13' }, sprints: [], removed: false, assigned_to_me: null, usage: usage({ sessions: 1 }) },
-          { key: 'AUTH-9', summary: 'Idle', issue_type: 'Story', status: 'To Do', current_sprint: null, sprints: [], removed: false, assigned_to_me: null, usage: usage() },
+          { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', current_sprint: { id: 's13', name: 'Sprint 13' }, sprints: [], removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null, usage: usage({ sessions: 1 }) },
+          { key: 'AUTH-9', summary: 'Idle', issue_type: 'Story', status: 'To Do', current_sprint: null, sprints: [], removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null, usage: usage() },
         ],
       }),
     });
@@ -245,7 +250,7 @@ describe('ready', () => {
       tryGetTrackerTask: async () => ({
         ok: true,
         data: {
-          task: { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', removed: false, assigned_to_me: null },
+          task: { key: 'AUTH-2', summary: 'Login', issue_type: 'Story', status: 'To Do', removed: false, assigned_to_me: null, writeback_status: null, writeback_at: null },
           usage: usage({
             sessions: 2,
             active_secs: 2400,

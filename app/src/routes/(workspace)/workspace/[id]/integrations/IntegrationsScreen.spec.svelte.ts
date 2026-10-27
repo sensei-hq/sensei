@@ -32,6 +32,7 @@ const connected: TrackerConnection = {
   last_success_at: '2026-10-18T11:58:00Z',
   last_error: null,
   counts: { tasks: 142, sprints: 6 },
+  writeback: { enabled: true, state: 'nothing_assigned', surface: 'comment', mapped: 0, assigned: 0, failing: 0, error: null },
 };
 
 function api(over: Partial<TrackerApi> = {}): TrackerApi {

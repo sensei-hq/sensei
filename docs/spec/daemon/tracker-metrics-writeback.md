@@ -116,11 +116,15 @@ never written, or that sync never writes):
   because the guard is held. Discovery during a pass gets `Busy`, as it does against a sync.
   Discovery doesn't trigger a pass. The outcome is visible only through `GET …/trackers` and
   the task reads (W8).
-- **`writeback::run(pg, rt, tracker_id, adapter, guard)`** is the pass itself; tests call it
-  directly. It re-reads the tracker row **at pass start** for `owner_ref`,
-  `writeback_enabled` and `secret_service`. The sync may have just backfilled the owner
-  (W1), and the row `sync_stored` was given predates that. It skips with no request when
-  the tracker is gone, `writeback_enabled = false`, or `owner_ref IS NULL`.
+- **`writeback::run(pg, io, tracker_id, secret_service, adapter, deadline, guard)`** is the
+  pass itself; tests call it directly. `secret_service` is the token the sync ran on, and
+  `io` (`PassIo`) carries the keyring and transport factory. It re-reads the tracker row
+  **at pass start** for `owner_ref` and `writeback_enabled`, because the sync may have just
+  backfilled the owner (W1).
+  - It skips with no request when the tracker is gone, `writeback_enabled = false`, or
+    `owner_ref IS NULL`.
+  - It ends superseded when the row's token is no longer the sync's.
+  - If the row read fails, it records `writeback_error = 'db'` under the sync's token.
 - **Credential, once.** The pass reads the token once (bounded by `KEYRING_TIMEOUT`, as
   `transport_for` does). It builds both transports from it:
   - a GET transport, `SYNC_RETRIES`, for `find_comment` and `issue_exists`
@@ -139,9 +143,12 @@ never written, or that sync never writes):
     the next pass's `find_comment` adopts a comment that did land)
   - tasks not yet started keep their status
   - the pass sets `writeback_error = 'transport'`
-- **Fair order.** Candidates are processed oldest `writeback_at` first, never-written
-  (NULL) first, then by task id. A pass cut short therefore resumes with the tickets it
-  skipped.
+- **Fair order.** Candidates are processed by `writeback_tried_at`, the time of the last
+  attempt, landed or not: never-tried (NULL) first, then oldest attempt, then task id.
+  Every recorded attempt sets it (`record_write_ok` and `record_write_status`). A ticket
+  that keeps failing or being rate-limited therefore goes behind the others rather than
+  starving them. (`writeback_at` records only successes, so ordering by it would put a
+  failing ticket first again on every pass.)
 - **Pass-level failure channel: `trackers.writeback_error`** (`tracker_error` codes). It is
   set when the pass can't run or ends early:
   - `token_missing` / `credential_store`: the credential
@@ -225,7 +232,9 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   with `\n`, prefixed by the surface name. A change to an unmapped metric therefore sends
   nothing on the fields surface. A changed `_n`, `shared` or `api_cost_partial` that
   changes a comment line does send.
-- When the hash equals the stored one, the task is skipped and **no request is sent**.
+- When the hash equals the stored one **and the last write was `ok`**, the task is skipped
+  and **no request is sent**. A failed write keeps the old hash, so a hash match alone
+  doesn't mean the tracker shows it.
 - After a write succeeds, `writeback_hash`, `writeback_at = now()` and
   `writeback_status = 'ok'` are set in one statement. After a failure, only
   `writeback_status` is set, so the hash stays as it was and a transient failure retries.
@@ -408,6 +417,8 @@ The mapping covers every `TrackerError` and every operation:
 | `RateLimited` after `WRITE_RETRIES` | `rate_limited` | not sticky |
 | `BadRequest` on a comment write, `HttpError`, `Transport`, `Decode`, `Redirect`, the task in flight at the deadline, an id failing W10's shape check | `error` | not sticky |
 | a pass-level failure: credential, a failed read or record (`Db`), five `rate_limited` in a row, the deadline | no extra task status; `trackers.writeback_error` = the code (W2) | cleared by the next pass that gets both transports |
+| an update's `NotFound` never stands alone: the issue check above decides it | (`status_for(UpdateComment, NotFound)` is `error`, unreachable from the pass) | n/a |
+| `Db`, `TokenMissing`, `CredentialStore`, `UnsupportedTracker` from a single request | `error` | not sticky |
 
 `status_for(op, TrackerError) -> WritebackStatus` is total. `op` is one of `FindComment`,
 `CreateComment`, `UpdateComment`, `IssueCheck` or `WriteFields`, and its test iterates every
@@ -417,8 +428,8 @@ The mapping covers every `TrackerError` and every operation:
   success apply clears `last_error` before the pass runs (C17). One task's failure doesn't
   stop the others.
 - Five consecutive `rate_limited` results end the pass (W2: `writeback_error = 'rate_limited'`).
-- No response body, URL or account id is stored or logged. A log line carries only
-  `tracker_id`, `task_id` and the status code.
+- No response body, URL, account id or database error text is stored or logged. A log
+  line carries only `tracker_id`, `task_id` and a fixed status or error code.
 
 ### W10 · Seams (provider-neutral)
 
@@ -492,8 +503,9 @@ pub enum WriteMethod { Post, Put }
   for …" becomes "Mirror source for …; writes back usage metrics only, to tickets
   assigned to the token owner (spec tracker-metrics-writeback)".
 - `tracker_tasks` gains `assigned_to_me boolean`, `writeback_hash text`,
-  `writeback_comment_ref text`, `writeback_status tracker_writeback_status` and
-  `writeback_at timestamptz`. The header line and table comment change "mirrored
+  `writeback_comment_ref text`, `writeback_status tracker_writeback_status`,
+  `writeback_at timestamptz` (last success) and `writeback_tried_at timestamptz` (last
+  attempt, the pass order). The header line and table comment change "mirrored
   read-only" to "mirrored from the tracker", and "No assignee or other person data, by
   design" to "No assignee identity: only whether the token owner is the assignee".
 - `database/design.dbml` gets the same comments, columns and table.
@@ -696,12 +708,14 @@ and the test DB unless marked *(tenant)*.
 13. **GET-only stays GET-only** (replaces linkage gate 2):
     - `rg -n 'write_transport\(' crates/senseid/src` → only the trait method and impls in
       `tracker/runtime.rs`, and calls in `tracker/writeback.rs`.
-    - `rg -n 'client\.(post|put|patch|delete|request)\(|reqwest::Method' crates/senseid/src/tracker`
-      → only the `RawWrite` impl in `transport.rs`. Today it gives no output: the keyring
-      `s.delete(` at connect.rs:177 doesn't match, because it isn't a `client.` call.
-    - `rg -n 'WriteMethod|WriteTransport|write_transport' crates/senseid/src/tracker/{sync,discover,connect}.rs crates/senseid/src/api`
-      → no output. These are forbidden where they mustn't appear; tests elsewhere may
-      use them freely.
+    - `rg -n -U 'client\s*\.\s*(post|put|patch|delete|request)\(|reqwest::Method' crates/senseid/src/tracker`
+      → only the `RawWrite` impl in `transport.rs`. `-U` and `\s*` catch a call rustfmt
+      splits across lines. The keyring `s.delete(` at connect.rs:177 doesn't match, because
+      it isn't a `client.` call.
+    - `for f in sync discover connect; do sed -E '/^(pub(\(crate\))? )?mod tests/q' crates/senseid/src/tracker/$f.rs | rg -n 'WriteMethod|WriteTransport|write_transport'; done; rg -n 'WriteMethod|WriteTransport|write_transport' crates/senseid/src/api`
+      → no output. These names are forbidden in the production code of sync, discover and
+      connect and in the API. Their test modules implement the adapter trait, so they
+      name `WriteTransport`.
 14. **Isolation from Jira wording**:
     `sed '/#\[cfg(test)\]/q' crates/senseid/src/tracker/writeback.rs | rg -n -i 'jira|atlassian'`
     → no output. The pass's tests may use `JiraAdapter`.
@@ -740,8 +754,8 @@ and the test DB unless marked *(tenant)*.
     database allows, and `writeback.state = pass_failed`.
 20c. **Spawned**: `sync_stored`, with a write fake that sleeps 4 min (paused clock), returns
     in under 1 s of virtual time, and a second sync of the same tracker during the pass is
-    `Busy`. A two-tracker `tick_scoped` starts the second tracker's fetch without waiting
-    for the first pass.
+    `Busy`. (The tick awaits only `sync_stored`, so this also shows it never waits for a
+    pass before syncing the next tracker.)
 20d. **Backfilled owner writes in the same sync**: a tracker with no owner whose `/myself`
     gives `A1`, with AUTH-1 assigned to A1 → one `sync_stored` leads to exactly 1 comment POST.
 21. **Lock, deadline and order**:
