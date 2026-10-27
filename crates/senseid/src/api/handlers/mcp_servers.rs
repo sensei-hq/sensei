@@ -220,6 +220,65 @@ pub(crate) async fn call(
     }
 }
 
+#[derive(Deserialize)]
+pub(crate) struct RegisterBody {
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+/// POST /api/instruments/mcp-servers — register a stdio server by hand
+/// (#343). 409 when a server is already registered under the name.
+pub(crate) async fn register(
+    State(state): State<AppState>,
+    Json(body): Json<RegisterBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let name = body.name.trim();
+    let command = body.command.trim();
+    if name.is_empty() || command.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "name and command are required"));
+    }
+    let id = state
+        .pg
+        .register_manual_mcp_server(
+            name,
+            command,
+            &serde_json::json!(body.args),
+            &serde_json::json!(body.env),
+        )
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| {
+            err(StatusCode::CONFLICT, "a server is already registered under that name")
+        })?;
+    Ok(Json(serde_json::json!({"id": id})))
+}
+
+/// DELETE /api/instruments/mcp-servers/{id} — remove a hand-registered
+/// server. A discovered one is refused (409): its config file owns it.
+pub(crate) async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    match state
+        .pg
+        .remove_manual_mcp_server(&uuid)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+    {
+        None => Err(err(StatusCode::NOT_FOUND, "mcp server not found")),
+        Some(false) => Err(err(
+            StatusCode::CONFLICT,
+            "a discovered server is removed from its assistant's config, not here",
+        )),
+        Some(true) => Ok(Json(serde_json::json!({"id": uuid, "removed": true}))),
+    }
+}
+
 pub(crate) async fn refresh(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {

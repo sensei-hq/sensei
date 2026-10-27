@@ -360,7 +360,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/instruments/verdicts", get(verdicts::list))
         .route("/api/instruments/verdicts/summary", get(verdicts::summary))
         // Instruments — discovered MCP servers (#84 T2 Slice A)
-        .route("/api/instruments/mcp-servers", get(mcp_servers_handler::list))
+        .route(
+            "/api/instruments/mcp-servers",
+            get(mcp_servers_handler::list).post(mcp_servers_handler::register),
+        )
+        .route("/api/instruments/mcp-servers/{id}", delete(mcp_servers_handler::remove))
         .route("/api/instruments/mcp-servers/{id}/enabled", put(mcp_servers_handler::set_enabled))
         .route("/api/instruments/mcp-servers/{id}/tools", get(mcp_servers_handler::get_tools))
         .route("/api/instruments/mcp-servers/{id}/call", post(mcp_servers_handler::call))
@@ -770,6 +774,124 @@ mod tests {
             Some(call(1)),
         )
         .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+
+    /// A workspace's graph carries its repositories and their code. It filtered
+    /// every repository by a `workspace_id` the repository list never returns,
+    /// so `repos` was always 0 and the graph held only the workspace node.
+    #[tokio::test]
+    async fn a_workspace_graph_holds_its_repositories_and_their_code() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        let caller = state
+            .pg
+            .seed_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(3))
+            .await
+            .unwrap();
+        let callee = state
+            .pg
+            .seed_node(&fid, "function", "callee", "src/b.rs", None, None, Some(1), Some(3))
+            .await
+            .unwrap();
+        state
+            .pg
+            .insert_edge(&fid, &caller, crate::db::pg_store::EdgeTarget::Node(&callee), "calls")
+            .await
+            .unwrap();
+
+        let (st, body) = req(app, "GET", &format!("/api/workspaces/{pid}/graph"), None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["repos"], 1, "{body}");
+        let names: Vec<&str> = body["graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|n| n["name"].as_str())
+            .collect();
+        assert!(names.contains(&"caller") && names.contains(&"callee"), "{names:?}");
+        let calls = body["graph"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["type"] == "calls")
+            .count();
+        assert_eq!(calls, 1);
+    }
+
+    /// #343: a server registered by hand is listed, inspected and run like a
+    /// discovered one; the discovery prune never removes it (no config file
+    /// will ever name it); a second registration under its name is refused, not
+    /// an overwrite; and only a hand-registered server can be removed here.
+    #[tokio::test]
+    async fn a_hand_registered_mcp_server_is_listed_run_and_kept() {
+        let (app, state) = test_app().await;
+        let (command, args) = crate::tasks::mcp_probe::fake::server();
+        let name = format!("manual-{}", uuid::Uuid::new_v4().simple());
+        let body = serde_json::json!({"name": name, "command": command, "args": args, "env": {}});
+
+        let (st, made) =
+            req(app.clone(), "POST", "/api/instruments/mcp-servers", Some(body.clone())).await;
+        assert_eq!(st, StatusCode::OK, "{made}");
+        let id = made["id"].as_str().unwrap().to_string();
+        let (st, _) = req(app.clone(), "POST", "/api/instruments/mcp-servers", Some(body)).await;
+        assert_eq!(st, StatusCode::CONFLICT, "a name already registered is not overwritten");
+
+        let (_, list) = req(app.clone(), "GET", "/api/instruments/mcp-servers", None).await;
+        let row =
+            list["servers"].as_array().unwrap().iter().find(|s| s["id"] == id.as_str()).cloned();
+        assert_eq!(
+            row.as_ref().map(|r| r["acp_family"].clone()),
+            Some(serde_json::json!("manual"))
+        );
+
+        let call = serde_json::json!({"tool": "echo", "arguments": {"x": 1}});
+        let (st, ran) = req(
+            app.clone(),
+            "POST",
+            &format!("/api/instruments/mcp-servers/{id}/call"),
+            Some(call),
+        )
+        .await;
+        assert_eq!(
+            (st, ran["result"]["content"][0]["text"].clone()),
+            (StatusCode::OK, serde_json::json!("echoed"))
+        );
+
+        state
+            .pg
+            .prune_stale_mcp_servers(chrono::Utc::now() + chrono::Duration::days(1))
+            .await
+            .unwrap();
+        let (_, list) = req(app.clone(), "GET", "/api/instruments/mcp-servers", None).await;
+        assert!(
+            list["servers"].as_array().unwrap().iter().any(|s| s["id"] == id.as_str()),
+            "the discovery prune keeps a hand-registered server"
+        );
+
+        let found = state
+            .pg
+            .upsert_mcp_server(&crate::db::pg_store::McpServerRow {
+                acp_family: "claude",
+                mcp_key: &format!("found-{}", uuid::Uuid::new_v4().simple()),
+                workspace_id: None,
+                config_source: "/tmp/found.json",
+                command: "npx",
+                args: &serde_json::json!([]),
+                env: &serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        let (st, _) =
+            req(app.clone(), "DELETE", &format!("/api/instruments/mcp-servers/{found}"), None)
+                .await;
+        assert_eq!(st, StatusCode::CONFLICT, "a discovered server is its config file's to remove");
+        let (st, _) =
+            req(app.clone(), "DELETE", &format!("/api/instruments/mcp-servers/{id}"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        let (st, _) = req(app, "DELETE", &format!("/api/instruments/mcp-servers/{id}"), None).await;
         assert_eq!(st, StatusCode::NOT_FOUND);
     }
 

@@ -502,6 +502,58 @@ impl PgStore {
         Ok(row.map(|(e,)| e))
     }
 
+    /// Register a stdio MCP server by hand (#343), under family `manual`.
+    /// `None` when a server is already registered under that name — a second
+    /// registration is the caller's to resolve, never a silent overwrite.
+    pub async fn register_manual_mcp_server(
+        &self,
+        name: &str,
+        command: &str,
+        args: &serde_json::Value,
+        env: &serde_json::Value,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.mcp_servers (acp_family, mcp_key, scope, config_source, command, args, env)
+             VALUES ('manual', $1, 'user', 'sensei', $2, $3, $4)
+             ON CONFLICT (acp_family, mcp_key) WHERE scope = 'user' DO NOTHING
+             RETURNING id",
+        )
+        .bind(name)
+        .bind(command)
+        .bind(args)
+        .bind(env)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("register_manual_mcp_server: {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// Remove a hand-registered server. `None`: no such server; `Some(false)`:
+    /// it was discovered, so its assistant's config is what removes it.
+    pub async fn remove_manual_mcp_server(&self, id: &uuid::Uuid) -> Result<Option<bool>, String> {
+        let family: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT acp_family FROM sensei.mcp_servers WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("remove_manual_mcp_server: {e}"))?;
+        match family {
+            None => Ok(None),
+            Some((f,)) if f != "manual" => Ok(Some(false)),
+            Some(_) => {
+                sqlx_core::query::query(
+                    "DELETE FROM sensei.mcp_servers WHERE id = $1 AND acp_family = 'manual'",
+                )
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| format!("remove_manual_mcp_server: {e}"))?;
+                Ok(Some(true))
+            }
+        }
+    }
+
     /// Delete rows the current scan did NOT touch — servers that no longer
     /// appear in any ACP config. Compares against `not_seen_before` so a
     /// row scanned after the cutoff survives. Returns the number of rows
@@ -510,11 +562,15 @@ impl PgStore {
         &self,
         not_seen_before: chrono::DateTime<chrono::Utc>,
     ) -> Result<u64, String> {
-        let res = sqlx_core::query::query("DELETE FROM sensei.mcp_servers WHERE last_seen_at < $1")
-            .bind(not_seen_before)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        // A hand-registered server (#343) is in no config file, so no scan
+        // ever sees it: it leaves only when its owner removes it.
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.mcp_servers WHERE last_seen_at < $1 AND acp_family <> 'manual'",
+        )
+        .bind(not_seen_before)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
