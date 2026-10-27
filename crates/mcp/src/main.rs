@@ -160,6 +160,18 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     let tool_name = params["name"].as_str().unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
+    // A required argument that is missing is the caller's mistake, said as one —
+    // sent on as an empty value it came back as an empty, plausible answer.
+    let missing = sensei_mcp::missing_required(tool_name, &args);
+    if !missing.is_empty() {
+        return json!({
+            "content": [{"type": "text", "text": format!(
+                "{tool_name}: missing required argument(s): {}", missing.join(", ")
+            )}],
+            "isError": true
+        });
+    }
+
     // `use_workspace` pins the named workspace; its `workspace` arg is the pin TARGET,
     // not a scoping hint, so handle it before the generic resolution below.
     if tool_name == "use_workspace" {

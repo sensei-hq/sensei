@@ -561,6 +561,30 @@ pub fn handle_initialize() -> Value {
     })
 }
 
+/// The arguments `tool_name` declares required that `args` does not give: absent,
+/// null, or an empty string. A tool this server does not list requires nothing.
+pub fn missing_required(tool_name: &str, args: &Value) -> Vec<String> {
+    let tools = handle_list_tools();
+    let Some(tool) = tools["tools"]
+        .as_array()
+        .and_then(|ts| ts.iter().find(|t| t["name"].as_str() == Some(tool_name)))
+    else {
+        return Vec::new();
+    };
+    tool["inputSchema"]["required"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|name| match args.get(*name) {
+            None | Some(Value::Null) => true,
+            Some(Value::String(s)) => s.is_empty(),
+            Some(_) => false,
+        })
+        .map(str::to_string)
+        .collect()
+}
+
 pub fn handle_list_tools() -> Value {
     json!({
         "tools": [
@@ -1475,6 +1499,21 @@ mod tests {
         let ts = tools();
         let req = tool_named(&ts, "update_session")["inputSchema"]["required"].clone();
         assert_eq!(req, json!(["sessionId", "outcome"]));
+    }
+
+    /// A call missing an argument its tool declares required is refused with
+    /// the names it lacks — never sent on as an empty value. `list_library_skills`
+    /// without `name` asked the daemon for `/api/libs//skills` and answered `[]`,
+    /// an empty list that reads as "this library provides nothing".
+    #[test]
+    fn a_call_missing_a_required_argument_names_what_it_lacks() {
+        assert_eq!(missing_required("list_library_skills", &json!({})), vec!["name"]);
+        assert_eq!(missing_required("list_library_skills", &json!({"name": ""})), vec!["name"]);
+        assert_eq!(missing_required("list_library_skills", &json!({"name": null})), vec!["name"]);
+        assert!(missing_required("list_library_skills", &json!({"name": "dbd"})).is_empty());
+        assert_eq!(missing_required("get_library_skill", &json!({"name": "dbd"})), vec!["focus"]);
+        assert!(missing_required("list_workspaces", &json!({})).is_empty(), "nothing required");
+        assert!(missing_required("no_such_tool", &json!({})).is_empty());
     }
 
     #[test]
