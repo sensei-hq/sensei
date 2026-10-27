@@ -3,7 +3,7 @@ import type {
   GraphSymbolNode, GraphCallEdge,
   WorkspaceGraphResponse, SolutionAnalysis,
   FunctionMatch, CommunityInfo,
-  LibEntry, SessionData, SessionsDigest,
+  LibEntry, LibCapability, LibPage, SessionData, SessionsDigest,
   WorkspaceMemory, DriftItem, PatternEntry, Recommendation,
   CallFlowModule, CallFlowCall,
   WorkspaceListItem,
@@ -620,6 +620,13 @@ export function senseiApi(port: number) {
     tryGetToolsHealth: () => tryGet<ToolsHealth>('/api/instruments/tools-health'),
 
     /** Where a library is used (#288: a failure is an error, not "unused"). */
+    /** What a library provides — read by its name or one of its packages' (#341). */
+    tryGetLibrarySkills: (name: string) =>
+      tryGet<LibCapability[]>(`/api/libs/${enc(name)}/skills`),
+    tryGetLibraryAgents: (name: string) =>
+      tryGet<LibCapability[]>(`/api/libs/${enc(name)}/agents`),
+    tryGetLibraryDocs: (name: string) =>
+      tryGet<LibPage[]>(`/api/libs/${enc(name)}/docs`),
     tryGetLibraryUsage: (id: string) =>
       tryGet<{ usage: Array<{ library_name: string; folder: string; version_used: string | null; import_count: number }> }>(
         `/api/libs/${enc(id)}/usage`,

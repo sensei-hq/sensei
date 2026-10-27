@@ -526,6 +526,28 @@ export interface LibEntry {
   pageCount?: number;
   repos: string[];
   repoCount: number;
+  /** The packages the library publishes (from its manifest), folded into it. */
+  packages?: string[];
+  skillCount?: number;
+  agentCount?: number;
+}
+
+/** A skill or agent a library provides (its `sensei.library.json`). */
+export interface LibCapability {
+  name: string;
+  focus: string | null;
+  body: string | null;
+  source?: string | null;
+  version_range?: string | null;
+}
+
+/** One doc page a library's docs hold. */
+export interface LibPage {
+  title: string;
+  component: string | null;
+  description?: string | null;
+  content: string | null;
+  location?: string | null;
 }
 
 export interface LibDoc {
