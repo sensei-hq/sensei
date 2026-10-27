@@ -3,7 +3,7 @@
     import { onMount, untrack } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { PageHeader, Screen, ScreenState, Switch } from "$lib/components";
-    import { Select } from "@rokkit/ui";
+    import { Toggle } from "@rokkit/ui";
     import { invalidateAll } from "$app/navigation";
     import { PreferencesState, type SaveConfig } from "./general-state.svelte.js";
     import { GLYPH_OPTIONS, type GlyphMode } from "$lib/glyphs";
@@ -103,11 +103,12 @@
                                 The Today view cadence. Off keeps the dashboard quiet.
                             </div>
                         </div>
-                        <!-- testid on wrapper: rokkit Select doesn't forward data-* to the DOM. -->
+                        <!-- testid on wrapper: rokkit Toggle doesn't forward data-* to the DOM. -->
                         <div data-testid="pref-digest-cadence">
-                            <Select
+                            <Toggle
                                 size="sm"
-                                items={DIGEST_OPTIONS}
+                                options={DIGEST_OPTIONS}
+                                label="Morning digest"
                                 value={st.prefs.digestCadence}
                                 onchange={(v) => {
                                     st.prefs.digestCadence = v as string;
@@ -125,9 +126,10 @@
                             </div>
                         </div>
                         <div data-testid="pref-correction-aggressiveness">
-                            <Select
+                            <Toggle
                                 size="sm"
-                                items={TONE_OPTIONS}
+                                options={TONE_OPTIONS}
+                                label="Correction tone"
                                 value={st.prefs.correctionAggressiveness}
                                 onchange={(v) => {
                                     st.prefs.correctionAggressiveness = v as string;
@@ -145,9 +147,10 @@
                             </div>
                         </div>
                         <div data-testid="pref-glyphs">
-                            <Select
+                            <Toggle
                                 size="sm"
-                                items={GLYPH_OPTIONS}
+                                options={GLYPH_OPTIONS}
+                                label="Glyphs"
                                 value={st.prefs.glyphs}
                                 onchange={(v) => {
                                     st.prefs.glyphs = v as GlyphMode;

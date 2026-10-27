@@ -55,4 +55,32 @@ describe('Settings → General', () => {
     expect(field.value).toBe('Jerry');
     expect(puts.some((b) => b.includes('"user_name"') && b.includes('Jerry'))).toBe(true);
   });
+
+  // The user (2026-10-27): the three short choices — digest, tone, glyphs — as
+  // a toggle group (rokkit Toggle), every option in view, not a dropdown.
+  it('offers the three short choices as toggle groups, and saves the one picked', async () => {
+    const puts: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT') puts.push(String(init.body));
+        return new Response(JSON.stringify({}), { status: 200 });
+      }),
+    );
+    const m = mountComponent(Page, { data: await loaded() });
+    destroy = m.destroy;
+    await new Promise((r) => setTimeout(r, 100));
+    const options = (id: string) =>
+      [...m.container.querySelectorAll(`[data-testid="${id}"] [role="radio"]`)].map((b) => b.textContent?.trim());
+    expect(options('pref-digest-cadence')).toEqual(['Off', 'Daily', 'Weekly']);
+    expect(options('pref-correction-aggressiveness')).toEqual(['Gentle', 'Balanced', 'Direct']);
+    expect(options('pref-glyphs')).toEqual(['Kanji', 'Icons']);
+    const weekly = [...m.container.querySelectorAll('[data-testid="pref-digest-cadence"] [role="radio"]')].find(
+      (b) => b.textContent?.trim() === 'Weekly',
+    ) as HTMLElement;
+    weekly.click();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(puts.some((b) => b.includes('weekly'))).toBe(true);
+  });
 });
+
