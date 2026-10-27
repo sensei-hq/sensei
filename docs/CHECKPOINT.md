@@ -1,4 +1,4 @@
-# Checkpoint — 2026-10-27 (end of day)
+# Checkpoint — 2026-10-27 (end of day; v0.21.1 tagged)
 
 **Agenda — 2026-10-28 (user):**
 1. **Apple Developer ID → #282.** Sign senseid/sensei/sensei-mcp with it, so a reinstall stops revoking Keychain
@@ -7,13 +7,14 @@
 2. **Screen-by-screen feedback walk.** One screen at a time; the user gives feedback, changes are made, verified,
    next. Start from the queue in `docs/roadmap/08-issue-burndown.md` (UI walk).
 
-**Built, pushed, NOT installed (waiting for the signed install):** ebcfe469 sync rows name their identity;
-f5eaa279 Make default; 02444525 Settings · Dōjō by identity → day → repository; 140e28d7 get_duplicates from
-qlty's scan; 4db76bd8 dead credential → Sign in, no Keychain read; 8b2dc94f General's choices as toggle groups;
-1d084c72 no "sensei speaks" caption; be2f37f0 no stray mark before a root's path; 72052d8a Playground sends
-what is typed; 3b8017ed "Runs in" lists watched workspaces only; 2677767a Settings as its own window (⌘,);
-05cfb84c rokkit 1.9.1. The app must go with the
-daemon (the dōjō screen reads the identity the new daemon writes). Live DB already converged.
+**v0.21.1 tagged on main (PR #344) and installed locally (ad-hoc signed, so Keychain approval is asked again).**
+It carries everything built today: sync rows by identity, Make default, Settings · Dōjō by identity → day →
+repository, get_duplicates from qlty, dead credential → Sign in, General toggles, Settings as its own window
+(⌘,), Playground runs in watched workspaces, rokkit 1.9.1, the Supabase advisor fixes. The tag's release.yml
+waits on the user's approval of `deploy-dojo` (production DB), then deploys the Worker; done when
+dojo.sensei-hq.com/version reports v0.21.1. Live verify of the list above happens after the #282 signed install.
+The review index (docs/review/README.md) and the signing steps (docs/ops/apple-signing.md) are committed.
+Cloudflare's git integration for the dojo Worker: recommended disconnect (release.yml deploys it).
 
 **Done today, rokkit:** #173 and #174 fixed and released as 1.9.1, bumped here (05cfb84c). glyphs-inspect
 stays red on its overview step until the daemon with `?watched=true` is installed.
