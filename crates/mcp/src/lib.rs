@@ -618,7 +618,7 @@ pub fn handle_list_tools() -> Value {
                 ("workspace", "string", "Workspace name. Defaults to current workspace."),
             ]),
             tool("get_lib_docs", "Get indexed documentation for a library. Without component param returns the index/overview. With component returns that specific component's docs (e.g. 'list', 'select', 'button').", &[
-                ("name", "string", "Library name (e.g. 'bits-ui', 'rokkit', 'hono')"),
+                ("name", "string", "Library name (e.g. 'bits-ui', 'rokkit', 'hono'); one two ecosystems share is named as ecosystem:name (e.g. 'cargo:uuid')"),
             ], &[
                 ("component", "string", "Specific component name to get docs for (e.g. 'list', 'select', 'button'). Omit for the library index."),
                 ("folder", "string", "Absolute path of the repository folder asking. Defaults to the current working directory. Used to serve docs matching the version YOUR repository pins, and to label the answer when none match."),
@@ -627,14 +627,14 @@ pub fn handle_list_tools() -> Value {
                 ("query", "string", "What to search for in library docs"),
             ], &[]),
             tool("list_library_skills", "List the focused skills a library provides (declared in its sensei.library.json manifest, or generated). Call when working with a library to see what curated how-to skills exist for it.", &[
-                ("name", "string", "Library name (e.g. 'rokkit')"),
+                ("name", "string", "Library name (e.g. 'rokkit'); one two ecosystems share is named as ecosystem:name (e.g. 'cargo:uuid')"),
             ], &[]),
             tool("get_library_skill", "Get one library-provided skill by its topic focus (e.g. 'styling'). Returns the skill body to load. Use after list_library_skills.", &[
-                ("name", "string", "Library name (e.g. 'rokkit')"),
+                ("name", "string", "Library name (e.g. 'rokkit'); one two ecosystems share is named as ecosystem:name (e.g. 'cargo:uuid')"),
                 ("focus", "string", "Topic focus of the skill (e.g. 'styling')"),
             ], &[]),
             tool("list_library_agents", "List the review agents a library provides (declared in its sensei.library.json manifest) — e.g. a config/pattern reviewer for that library. Use during /sensei:review when the repository depends on the library.", &[
-                ("name", "string", "Library name (e.g. 'rokkit')"),
+                ("name", "string", "Library name (e.g. 'rokkit'); one two ecosystems share is named as ecosystem:name (e.g. 'cargo:uuid')"),
             ], &[]),
             tool("get_communities", "Get code architecture — clusters of related functions detected by community analysis.", &[], &[
                 ("workspace", "string", "Workspace name. Defaults to current workspace."),

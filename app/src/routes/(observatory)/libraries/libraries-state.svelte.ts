@@ -11,9 +11,9 @@ export type UsageEntry = { library_name: string; folder: string; version_used: s
 export interface LibrariesApi {
   tryGetLibs: (params?: { repoId?: string; workspaceId?: string; shared?: boolean }) => Promise<ApiResult<{ total: number; libs: LibEntry[] }>>;
   tryGetLibraryUsage: (id: string) => Promise<ApiResult<{ usage: UsageEntry[] }>>;
-  tryGetLibrarySkills: (name: string) => Promise<ApiResult<LibCapability[]>>;
-  tryGetLibraryAgents: (name: string) => Promise<ApiResult<LibCapability[]>>;
-  tryGetLibraryDocs: (name: string) => Promise<ApiResult<LibPage[]>>;
+  tryGetLibrarySkills: (ref: string) => Promise<ApiResult<LibCapability[]>>;
+  tryGetLibraryAgents: (ref: string) => Promise<ApiResult<LibCapability[]>>;
+  tryGetLibraryDocs: (ref: string) => Promise<ApiResult<LibPage[]>>;
 }
 
 /** What a library provides from its own `sensei.library.json` (#341): its docs,
@@ -72,9 +72,10 @@ export class LibrariesState {
    *  section an error, never a library that looks as if it provides nothing. */
   private async readProvided(api: LibrariesApi, lib: LibEntry): Promise<void> {
     const [docs, skills, agents] = await Promise.all([
-      api.tryGetLibraryDocs(lib.name),
-      api.tryGetLibrarySkills(lib.name),
-      api.tryGetLibraryAgents(lib.name),
+      // By id: a name can be two libraries (`uuid` is a crate and an npm package).
+      api.tryGetLibraryDocs(lib.id),
+      api.tryGetLibrarySkills(lib.id),
+      api.tryGetLibraryAgents(lib.id),
     ]);
     if (this.selected?.id !== lib.id) return;
     const failed = [docs, skills, agents].find((r) => !r.ok);

@@ -615,13 +615,14 @@ export function senseiApi(port: number) {
     tryGetToolsHealth: () => tryGet<ToolsHealth>('/api/instruments/tools-health'),
 
     /** Where a library is used (#288: a failure is an error, not "unused"). */
-    /** What a library provides — read by its name or one of its packages' (#341). */
-    tryGetLibrarySkills: (name: string) =>
-      tryGet<LibCapability[]>(`/api/libs/${enc(name)}/skills`),
-    tryGetLibraryAgents: (name: string) =>
-      tryGet<LibCapability[]>(`/api/libs/${enc(name)}/agents`),
-    tryGetLibraryDocs: (name: string) =>
-      tryGet<LibPage[]>(`/api/libs/${enc(name)}/docs`),
+    /** What a library provides — read by its id, `ecosystem:name`, or a name
+     *  (its own or one of its packages', #341) that only one library holds. */
+    tryGetLibrarySkills: (ref: string) =>
+      tryGet<LibCapability[]>(`/api/libs/${enc(ref)}/skills`),
+    tryGetLibraryAgents: (ref: string) =>
+      tryGet<LibCapability[]>(`/api/libs/${enc(ref)}/agents`),
+    tryGetLibraryDocs: (ref: string) =>
+      tryGet<LibPage[]>(`/api/libs/${enc(ref)}/docs`),
     tryGetLibraryUsage: (id: string) =>
       tryGet<{ usage: Array<{ library_name: string; folder: string; version_used: string | null; import_count: number }> }>(
         `/api/libs/${enc(id)}/usage`,

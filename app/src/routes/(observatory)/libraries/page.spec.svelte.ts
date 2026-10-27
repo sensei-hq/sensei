@@ -28,9 +28,9 @@ describe('Libraries /+page — what a library provides', () => {
     const answers: Record<string, unknown> = {
       '/api/libs?': libs,
       '/api/libs/r/usage': { usage: [] },
-      '/api/libs/rokkit/skills': [{ name: 'styling', focus: 'styling', body: '# Styling with rokkit' }],
-      '/api/libs/rokkit/agents': [{ name: 'rokkit-styles-reviewer', focus: 'styles', body: '# Review' }],
-      '/api/libs/rokkit/docs': [{ title: 'Button', component: 'Button', content: '# Button' }],
+      '/api/libs/r/skills': [{ name: 'styling', focus: 'styling', body: '# Styling with rokkit' }],
+      '/api/libs/r/agents': [{ name: 'rokkit-styles-reviewer', focus: 'styles', body: '# Review' }],
+      '/api/libs/r/docs': [{ title: 'Button', component: 'Button', content: '# Button' }],
     };
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => {
       const key = Object.keys(answers).find((k) => new URL(url).pathname + (url.includes('?') && k.endsWith('?') ? '?' : '') === k);

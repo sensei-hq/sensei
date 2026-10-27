@@ -59,17 +59,21 @@ describe('LibrariesState', () => {
   });
 
   // #341: what the library itself provides — its sensei.library.json docs,
-  // skills and agents — read by its name when it is selected.
+  // skills and agents — read when it is selected, by its id: a name can be two
+  // libraries (`uuid` is a crate and an npm package).
   it('selecting a library reads the docs, skills and agents it provides', async () => {
     const s = new LibrariesState();
     const asked: string[] = [];
+    const ask = (ref: string) => (asked.push(ref), ok([]));
     await s.select(
       api({
-        tryGetLibrarySkills: async (name) => (asked.push(name), ok(skills)),
+        tryGetLibrarySkills: async (ref) => (ask(ref), ok(skills)),
+        tryGetLibraryAgents: async (ref) => (ask(ref), ok(agents)),
+        tryGetLibraryDocs: async (ref) => (ask(ref), ok(docs)),
       }),
       lib('a', 'rokkit'),
     );
-    expect(asked).toEqual(['rokkit']);
+    expect(asked).toEqual(['a', 'a', 'a']);
     expect([s.provided.skills, s.provided.agents, s.provided.docs, s.provided.error]).toEqual([skills, agents, docs, null]);
   });
 
@@ -83,7 +87,7 @@ describe('LibrariesState', () => {
     const s = new LibrariesState();
     let release!: () => void;
     const slow = api({
-      tryGetLibrarySkills: (name) => (name === 'rokkit' ? new Promise((r) => (release = () => r(ok(skills)))) : Promise.resolve(ok([]))),
+      tryGetLibrarySkills: (ref) => (ref === 'a' ? new Promise((r) => (release = () => r(ok(skills)))) : Promise.resolve(ok([]))),
     });
     const first = s.select(slow, lib('a', 'rokkit'));
     await s.select(slow, lib('b', 'zod'));

@@ -746,27 +746,76 @@ impl PgStore {
     ///    row won, so it returned no skills, agents or docs while `rokkit` held
     ///    5, 3 and 94).
     ///
+    /// A reference is the library's id, `ecosystem:name` (`cargo:uuid`), or a
+    /// bare name. A bare name two ecosystems share (`uuid` is a crate and an npm
+    /// package) names no one library: it is refused, saying which ecosystems
+    /// hold it — an error, not a pick, and not the whole read failing.
+    ///
     /// `None` on a genuine miss; propagates a read failure, because "no such
     /// library" and "the lookup broke" lead a caller to different places.
     pub async fn library_id_for(&self, reference: &str) -> Result<Option<uuid::Uuid>, String> {
-        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "SELECT id FROM (
-                 SELECT COALESCE(
-                          (SELECT l.id FROM sensei.libraries l
-                            WHERE l.name = $1
-                              AND (EXISTS (SELECT 1 FROM sensei.library_packages o WHERE o.library_id = l.id)
-                                   OR NOT EXISTS (SELECT 1 FROM sensei.library_packages c
-                                                   WHERE c.package_name = $1 AND c.library_id <> l.id))),
-                          (SELECT library_id FROM sensei.library_packages WHERE package_name = $1)
-                        ) AS id
-             ) r
-             WHERE id IS NOT NULL",
+        let fail = |e: sqlx_core::Error| format!("library_id_for({reference}): {e}");
+        if let Ok(id) = uuid::Uuid::parse_str(reference) {
+            let row: Option<(uuid::Uuid,)> =
+                sqlx_core::query_as::query_as("SELECT id FROM sensei.libraries WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(fail)?;
+            return Ok(row.map(|r| r.0));
+        }
+        // `ecosystem:name` only where the prefix IS an ecosystem — a name may
+        // hold a colon of its own.
+        let (ecosystem, name) = match reference.split_once(':') {
+            Some((eco, name)) => {
+                let (known,): (bool,) = sqlx_core::query_as::query_as(
+                    "SELECT $1 = ANY(enum_range(NULL::sensei.library_ecosystem)::text[])",
+                )
+                .bind(eco)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(fail)?;
+                if known { (Some(eco), name) } else { (None, reference) }
+            }
+            None => (None, reference),
+        };
+        let candidates = |sql: &'static str| {
+            sqlx_core::query_as::query_as::<_, (uuid::Uuid, String)>(sql)
+                .bind(name)
+                .bind(ecosystem)
+                .fetch_all(&self.pool)
+        };
+        let mut found = candidates(
+            "SELECT l.id, l.ecosystem::text FROM sensei.libraries l
+              WHERE l.name = $1
+                AND ($2::text IS NULL OR l.ecosystem::text = $2)
+                AND (EXISTS (SELECT 1 FROM sensei.library_packages o WHERE o.library_id = l.id)
+                     OR NOT EXISTS (SELECT 1 FROM sensei.library_packages c
+                                     WHERE c.package_name = $1 AND c.library_id <> l.id))
+              ORDER BY l.ecosystem::text",
         )
-        .bind(reference)
-        .fetch_optional(&self.pool)
         .await
-        .map_err(|e| format!("library_id_for({reference}): {e}"))?;
-        Ok(row.map(|r| r.0))
+        .map_err(fail)?;
+        if found.is_empty() {
+            found = candidates(
+                "SELECT DISTINCT l.id, l.ecosystem::text FROM sensei.library_packages p
+                   JOIN sensei.libraries l ON l.id = p.library_id
+                  WHERE p.package_name = $1
+                    AND ($2::text IS NULL OR l.ecosystem::text = $2)
+                  ORDER BY 2",
+            )
+            .await
+            .map_err(fail)?;
+        }
+        match found.as_slice() {
+            [] => Ok(None),
+            [(id, _)] => Ok(Some(*id)),
+            many => Err(format!(
+                "'{name}' is a library in {} — name one, as {}:{name}",
+                many.iter().map(|(_, e)| e.as_str()).collect::<Vec<_>>().join(", "),
+                many[0].1
+            )),
+        }
     }
 
     /// Replace the packages a library declares it publishes.
