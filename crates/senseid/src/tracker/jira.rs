@@ -4,9 +4,9 @@
 use crate::tracker::http::{InvalidBaseUrl, normalize_base_url};
 use crate::tracker::sprint::SprintState;
 use crate::tracker::{
-    ApiToken, AuthScheme, BoardScope, ConnectParams, Discovered, GetTransport, KnownTask, Link,
-    LinkSource, ParamError, PrevState, SessionText, Snapshot, SprintRow, TaskRow, TrackerAdapter,
-    TrackerError, TrackerKind, ValidateError, Validated,
+    AccountRef, ApiToken, AuthScheme, BoardScope, ConnectParams, Discovered, GetTransport,
+    KnownTask, Link, LinkSource, OwnerLookup, ParamError, PrevState, SessionText, Snapshot,
+    SprintRow, TaskRow, TrackerAdapter, TrackerError, TrackerKind, ValidateError, Validated,
 };
 
 /// Jira Cloud's site domains: `atlassian.net`, and `jira.com` for older sites.
@@ -111,12 +111,16 @@ impl TrackerAdapter for JiraAdapter {
         AuthScheme::Basic { user: account.to_string(), token: token.clone() }
     }
 
+    async fn owner(&self, t: &dyn GetTransport) -> Result<OwnerLookup, TrackerError> {
+        t.get_json(MYSELF, &[]).await.map(|v| owner_from_myself(&v))
+    }
+
     async fn validate(
         &self,
         t: &dyn GetTransport,
         p: &ConnectParams,
     ) -> Result<Validated, ValidateError> {
-        t.get_json("/rest/api/3/myself", &[]).await.map_err(ValidateError::Tracker)?;
+        let owner = self.owner(t).await.map_err(ValidateError::Tracker)?;
         let board = match t.get_json(&board_path(&p.board_ref), &[]).await {
             Ok(b) => b,
             Err(TrackerError::NotFound) => return Err(ValidateError::BoardNotFound),
@@ -138,6 +142,7 @@ impl TrackerAdapter for JiraAdapter {
             // A board spanning several projects has no single key; its name is the scope shown.
             external_scope: board_project.unwrap_or(board_name).to_string(),
             board_name: board_name.to_string(),
+            owner,
         })
     }
 
@@ -317,7 +322,7 @@ async fn search_keys(
 ) -> Result<Discovered, TrackerError> {
     let query = [
         ("jql", format!("key in ({})", keys.join(","))),
-        ("fields", "summary,issuetype,status,sprint,closedSprints".to_string()),
+        ("fields", SEARCH_FIELDS.to_string()),
         ("maxResults", crate::tracker::discover::DISCOVER_MAX_KEYS.to_string()),
     ];
     let page = t.get_json(&format!("{}/issue", board_path(&board.board_ref)), &query).await?;
@@ -410,7 +415,11 @@ fn keys_in(text: &[u8], prefixes: &[String]) -> Vec<String> {
     keys
 }
 
-const ISSUE_FIELDS: [(&str, &str); 1] = [("fields", "summary,issuetype,status")];
+const ISSUE_FIELDS: [(&str, &str); 1] = [("fields", "summary,issuetype,status,assignee")];
+/// The fields R11's board search asks for.
+const SEARCH_FIELDS: &str = "summary,issuetype,status,assignee,sprint,closedSprints";
+/// Who the token belongs to (W1).
+const MYSELF: &str = "/rest/api/3/myself";
 /// A listing that never signals its end is a provider fault, not a reason to loop.
 const MAX_PAGES: usize = 1000;
 
@@ -495,6 +504,17 @@ fn issue_id(v: &serde_json::Value) -> Result<String, TrackerError> {
     v.get("id").and_then(|x| x.as_str()).map(String::from).ok_or(TrackerError::Decode)
 }
 
+/// Who `/myself` says the token belongs to (spec W1): the rules in order, first
+/// match wins. Only `NotAPerson` is final; `Unknown` is asked again.
+pub fn owner_from_myself(v: &serde_json::Value) -> OwnerLookup {
+    let text = |k: &str| v.get(k).and_then(|x| x.as_str());
+    match (text("accountType").map(str::to_lowercase), text("accountId")) {
+        (Some(t), _) if t != "atlassian" => OwnerLookup::NotAPerson,
+        (Some(_), Some(id)) if !id.is_empty() => OwnerLookup::Person(AccountRef::new(id)),
+        _ => OwnerLookup::Unknown,
+    }
+}
+
 fn task_row(v: &serde_json::Value) -> Result<TaskRow, TrackerError> {
     let field = |path: &str| v.pointer(path).and_then(|x| x.as_str()).map(String::from);
     Ok(TaskRow {
@@ -504,6 +524,9 @@ fn task_row(v: &serde_json::Value) -> Result<TaskRow, TrackerError> {
         summary: field("/fields/summary"),
         issue_type: field("/fields/issuetype/name"),
         status: field("/fields/status/name"),
+        assignee: field("/fields/assignee/accountId")
+            .filter(|a| !a.is_empty())
+            .map(AccountRef::new),
     })
 }
 
@@ -697,11 +720,75 @@ mod adapter_tests {
     async fn validate_derives_scope_and_name_from_the_board() {
         let board = FakeBoard::standard();
         let v = JiraAdapter.validate(&board, &cp(None)).await.unwrap();
-        assert_eq!(v, Validated { external_scope: "AUTH".into(), board_name: "AUTH Scrum".into() });
+        assert_eq!(
+            v,
+            Validated {
+                external_scope: "AUTH".into(),
+                board_name: "AUTH Scrum".into(),
+                owner: OwnerLookup::Person(AccountRef::new("A1")),
+            }
+        );
         assert_eq!(
             JiraAdapter.validate(&board, &cp(Some("AUTH"))).await.unwrap().external_scope,
             "AUTH"
         );
+    }
+
+    #[test]
+    fn the_owner_is_read_from_myself_by_the_ordered_rules() {
+        let person = |id: &str| OwnerLookup::Person(AccountRef::new(id));
+        let cases = [
+            (json!({"accountType": "atlassian", "accountId": "A1"}), person("A1")),
+            (json!({"accountType": "Atlassian", "accountId": "A1"}), person("A1")),
+            (json!({"accountType": "atlassian", "accountId": " A1 "}), person(" A1 ")),
+            (json!({"accountType": "app"}), OwnerLookup::NotAPerson),
+            (json!({"accountType": "customer", "accountId": "C1"}), OwnerLookup::NotAPerson),
+            (json!({}), OwnerLookup::Unknown),
+            (json!({"accountId": "A1"}), OwnerLookup::Unknown),
+            (json!({"accountType": "atlassian"}), OwnerLookup::Unknown),
+            (json!({"accountType": "atlassian", "accountId": ""}), OwnerLookup::Unknown),
+            (json!({"accountType": "atlassian", "accountId": 123}), OwnerLookup::Unknown),
+            (json!({"accountType": null, "accountId": "A1"}), OwnerLookup::Unknown),
+            (json!({"accountType": 7, "accountId": "A1"}), OwnerLookup::Unknown),
+            (json!("not an object"), OwnerLookup::Unknown),
+        ];
+        for (body, want) in cases {
+            assert_eq!(owner_from_myself(&body), want, "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn owner_asks_myself_once() {
+        let board = FakeBoard::standard().with(
+            "/rest/api/3/myself",
+            0,
+            json!({"accountType": "app", "accountId": "x"}),
+        );
+        assert_eq!(JiraAdapter.owner(&board).await, Ok(OwnerLookup::NotAPerson));
+        assert_eq!(board.calls(), vec!["/rest/api/3/myself".to_string()]);
+        let denied = FakeBoard::standard().fail("/rest/api/3/myself", TrackerError::Forbidden);
+        assert_eq!(JiraAdapter.owner(&denied).await, Err(TrackerError::Forbidden));
+    }
+
+    #[test]
+    fn a_task_row_carries_its_assignee_when_jira_sent_one() {
+        let assigned = json!({"id": "10001", "key": "AUTH-1",
+            "fields": {"assignee": {"accountId": "A1", "displayName": "Dev"}}});
+        assert_eq!(task_row(&assigned).unwrap().assignee, Some(AccountRef::new("A1")));
+        for none in [
+            json!({"id": "10002", "key": "AUTH-2", "fields": {"assignee": null}}),
+            json!({"id": "10003", "key": "AUTH-3", "fields": {}}),
+            json!({"id": "10004", "key": "AUTH-4", "fields": {"assignee": {"accountId": ""}}}),
+        ] {
+            assert_eq!(task_row(&none).unwrap().assignee, None, "{none}");
+        }
+    }
+
+    #[test]
+    fn both_issue_reads_ask_for_the_assignee() {
+        let asks = |fields: &str| fields.split(',').any(|f| f == "assignee");
+        assert!(asks(ISSUE_FIELDS[0].1), "board issues: {}", ISSUE_FIELDS[0].1);
+        assert!(asks(SEARCH_FIELDS), "board search (R11): {SEARCH_FIELDS}");
     }
 
     #[tokio::test]

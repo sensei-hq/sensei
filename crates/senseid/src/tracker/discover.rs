@@ -391,6 +391,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_discovered_ticket_is_mine_by_the_same_rule_as_a_synced_one() {
+        use crate::tracker::test_support::assigned;
+        let pg = PgStore::test_store().await;
+        let (t, _p, repo) = synced(&pg).await;
+        session_with(&pg, Some(repo), &["fix/AUTH-900", "fix/AUTH-901"], &[]).await;
+        let mut mine = issue("10900", "AUTH-900", Some(101), &[]);
+        mine["fields"]["assignee"] = json!({"accountId": "A1"});
+        let mut theirs = issue("10901", "AUTH-901", Some(101), &[]);
+        theirs["fields"]["assignee"] = json!({"accountId": "B2"});
+        let board =
+            FakeBoard::standard().with_jql("key in (AUTH-900,AUTH-901)", json!([mine, theirs]));
+        run(&pg, t, &board, &DiscoverBackoff::default(), Scope::Ingested).await.unwrap();
+        let got: Vec<_> =
+            assigned(&pg, t).await.into_iter().filter(|(e, _)| e.starts_with("109")).collect();
+        assert_eq!(got, vec![("10900".into(), Some(true)), ("10901".into(), Some(false))]);
+    }
+
+    #[tokio::test]
     async fn a_session_with_only_known_keys_asks_nothing() {
         let pg = PgStore::test_store().await;
         let (t, _p, repo) = synced(&pg).await;

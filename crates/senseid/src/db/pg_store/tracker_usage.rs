@@ -40,6 +40,8 @@ pub struct TaskListRow {
     pub issue_type: Option<String>,
     pub status: Option<String>,
     pub removed: bool,
+    /// Whether the token owner is the assignee (W1); NULL while the owner is unknown.
+    pub assigned_to_me: Option<bool>,
     pub current_sprint: Option<(uuid::Uuid, String)>,
     pub sprints: Vec<(uuid::Uuid, String)>,
 }
@@ -289,6 +291,7 @@ impl PgStore {
             Option<String>,
             Option<String>,
             bool,
+            Option<bool>,
             Option<uuid::Uuid>,
             Option<String>,
             Vec<uuid::Uuid>,
@@ -296,7 +299,7 @@ impl PgStore {
         );
         let rows = sqlx_core::query_as::query_as::<_, Row>(
             "SELECT t.id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL,
-                    cur.id, cur.name,
+                    t.assigned_to_me, cur.id, cur.name,
                     coalesce(array_agg(sp.id ORDER BY sp.seq) FILTER (WHERE sp.id IS NOT NULL), '{}'),
                     coalesce(array_agg(sp.name ORDER BY sp.seq) FILTER (WHERE sp.id IS NOT NULL), '{}')
                FROM sensei.tracker_tasks t
@@ -330,6 +333,7 @@ impl PgStore {
                     issue_type,
                     status,
                     removed,
+                    assigned_to_me,
                     cur_id,
                     cur_name,
                     sp_ids,
@@ -342,6 +346,7 @@ impl PgStore {
                         issue_type,
                         status,
                         removed,
+                        assigned_to_me,
                         current_sprint: cur_id.zip(cur_name),
                         sprints: sp_ids.into_iter().zip(sp_names).collect(),
                     }

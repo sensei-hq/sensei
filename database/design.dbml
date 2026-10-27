@@ -733,6 +733,11 @@ Enum "sensei"."tracker_level" {
   "task"
 }
 
+Enum "sensei"."tracker_owner_state" {
+  "unknown"
+  "not_a_person"
+}
+
 Enum "sensei"."watch_status" {
   "scanning"
   "watching"
@@ -2772,6 +2777,9 @@ Table "sensei"."trackers" {
   "last_success_at" timestamptz [note: 'When a sync last committed in full. NULL = never (status pending), also reset by a re-connect.']
   "last_error" sensei.tracker_error [note: 'Failure code of the last sync or connect; NULL after a success. Never a raw message.']
   "discovered_through" timestamptz [not null, default: `now()`, note: 'R11 watermark: transcript turns ingested up to here have been checked for ticket keys the tracker does not have yet. Starts at connect time; the first full sync covers what came before.']
+  "owner_ref" text [note: 'The token owner\'s id at the provider (Jira: accountId of /myself, a person only). Compared with each ticket\'s assignee to set tracker_tasks.assigned_to_me; never an assignee\'s id. NULL until known (owner_state says why). Spec tracker-metrics-writeback W1.']
+  "owner_state" sensei.tracker_owner_state [note: 'Why owner_ref is NULL: unknown (asked again each sync) or not_a_person (an app token; never asked again until a re-connect). NULL when owner_ref is set, or for a tracker not yet asked.']
+  "owner_error" sensei.tracker_error [note: 'Failure code of the last owner lookup (W1 backfill); NULL after a successful one. Kept apart from last_error: the read sync never fails because of the lookup.']
   "created_at" timestamptz [not null, default: `now()`, note: 'When the connection was first made.']
 
   indexes {
@@ -4126,13 +4134,14 @@ Table "sensei"."tracker_tasks" {
   "current_sprint_id" uuid [note: 'The sprint the ticket is in now: among non-removed sprints listing it, active > future > closed (crate::tracker::sprint::pick_current_sprint). NULL = backlog.']
   "removed_at" timestamptz [note: 'When a full sync stopped seeing it. Set once.']
   "last_seen_at" timestamptz [not null, default: `now()`, note: 'When a sync last saw it.']
+  "assigned_to_me" boolean [note: 'Whether the ticket\'s assignee is the tracker\'s owner (trackers.owner_ref), set on every upsert; false when unassigned or someone else\'s, NULL while the owner is unknown. The assignee itself is compared, never stored. Spec tracker-metrics-writeback W1.']
 
   indexes {
     (tracker_id, external_id) [unique, note: 'unique constraint']
     (tracker_id, key) [name: 'tracker_tasks_tracker_id_key_idx']
   }
 
-  Note: 'Tickets (issues) of a tracker board, mirrored read-only. Keyed on the provider\'s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee or other person data, by design.'
+  Note: 'Tickets (issues) of a tracker board, mirrored read-only. Keyed on the provider\'s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).'
 }
 
 Table "inference"."drift_items" {

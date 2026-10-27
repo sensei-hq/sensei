@@ -18,6 +18,9 @@ create table if not exists trackers (
 , last_success_at  timestamptz
 , last_error       tracker_error
 , discovered_through timestamptz not null default now()
+, owner_ref        text
+, owner_state      tracker_owner_state
+, owner_error      tracker_error
 , created_at       timestamptz   not null default now()
 , unique (kind, base_url, board_ref)
 );
@@ -51,5 +54,11 @@ comment on column trackers.last_error
      is 'Failure code of the last sync or connect; NULL after a success. Never a raw message.';
 comment on column trackers.discovered_through
      is 'R11 watermark: transcript turns ingested up to here have been checked for ticket keys the tracker does not have yet. Starts at connect time; the first full sync covers what came before.';
+comment on column trackers.owner_ref
+     is 'The token owner''s id at the provider (Jira: accountId of /myself, a person only). Compared with each ticket''s assignee to set tracker_tasks.assigned_to_me; never an assignee''s id. NULL until known (owner_state says why). Spec tracker-metrics-writeback W1.';
+comment on column trackers.owner_state
+     is 'Why owner_ref is NULL: unknown (asked again each sync) or not_a_person (an app token; never asked again until a re-connect). NULL when owner_ref is set, or for a tracker not yet asked.';
+comment on column trackers.owner_error
+     is 'Failure code of the last owner lookup (W1 backfill); NULL after a successful one. Kept apart from last_error: the read sync never fails because of the lookup.';
 comment on column trackers.created_at
      is 'When the connection was first made.';

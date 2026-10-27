@@ -334,7 +334,7 @@ pub(crate) async fn get_tracker_task(
     Json(serde_json::json!({
         "task": {
             "tracker_id": task.tracker_id, "key": task.key, "summary": task.summary, "issue_type": task.issue_type,
-            "status": task.status, "removed": task.removed,
+            "status": task.status, "removed": task.removed, "assigned_to_me": task.assigned_to_me,
         },
         "usage": usage,
         "by_repo": by_repo,
@@ -557,7 +557,7 @@ pub(crate) async fn list_tracker_tasks(
         .map(|t| {
             serde_json::json!({
                 "key": t.key, "summary": t.summary, "issue_type": t.issue_type,
-                "status": t.status, "removed": t.removed,
+                "status": t.status, "removed": t.removed, "assigned_to_me": t.assigned_to_me,
                 "current_sprint": t.current_sprint.as_ref().map(named),
                 "sprints": t.sprints.iter().map(named).collect::<Vec<_>>(),
                 // No linked sessions is a genuinely empty set: zero sessions, null sums.
@@ -1008,6 +1008,36 @@ mod tests {
         drop(held);
         let listed = settled(&h, p).await;
         assert_eq!(listed[0]["status"], json!("connected"), "{listed}");
+    }
+
+    #[tokio::test]
+    async fn the_task_routes_say_whether_a_ticket_is_assigned_to_the_token_owner() {
+        let h = harness().await;
+        let p = workspace(&h).await;
+        let s = site();
+        h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().with_assignees([Some("A1"), Some("B2"), None]),
+        );
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let (st, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/trackers/{t}/tasks"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let mine: Vec<(Value, Value)> = json(&b)
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["key"].clone(), r["assigned_to_me"].clone()))
+            .collect();
+        for (key, want) in [("AUTH-1", true), ("AUTH-2", false), ("AUTH-3", false)] {
+            assert!(mine.contains(&(json!(key), json!(want))), "{key}: {mine:?}");
+        }
+        let (_, b) =
+            call(&h, "GET", &format!("/api/workspaces/{p}/tracker-tasks/auth-1"), None, None).await;
+        assert_eq!(json(&b)["task"]["assigned_to_me"], json!(true), "{b}");
+        assert!(!b.contains("B2") && !b.contains("A1"), "no account id in a response: {b}");
     }
 
     #[tokio::test]

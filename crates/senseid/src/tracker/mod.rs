@@ -77,6 +77,75 @@ impl std::fmt::Debug for ApiToken {
     }
 }
 
+/// A person's id at the provider (Jira: `accountId`). Its `Debug` never prints
+/// the value, so an id cannot reach a log line through `{:?}` on any struct that
+/// carries it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AccountRef(String);
+
+impl AccountRef {
+    pub fn new(id: impl Into<String>) -> Self {
+        AccountRef(id.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for AccountRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AccountRef(***)")
+    }
+}
+
+/// Why a tracker has no owner on record — the `sensei.tracker_owner_state` enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackerOwnerState {
+    Unknown,
+    NotAPerson,
+}
+
+impl TrackerOwnerState {
+    /// In the enum's declared order.
+    pub const ALL: [TrackerOwnerState; 2] =
+        [TrackerOwnerState::Unknown, TrackerOwnerState::NotAPerson];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrackerOwnerState::Unknown => "unknown",
+            TrackerOwnerState::NotAPerson => "not_a_person",
+        }
+    }
+    pub fn parse(s: &str) -> Option<TrackerOwnerState> {
+        TrackerOwnerState::ALL.into_iter().find(|o| o.as_str() == s)
+    }
+}
+
+/// Who the token belongs to (spec W1): only a `Person` can be an assignee.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnerLookup {
+    Person(AccountRef),
+    NotAPerson,
+    Unknown,
+}
+
+impl OwnerLookup {
+    /// The `(owner_ref, owner_state)` a tracker row stores for this lookup.
+    pub fn columns(&self) -> (Option<&str>, Option<TrackerOwnerState>) {
+        match self {
+            OwnerLookup::Person(r) => (Some(r.as_str()), None),
+            OwnerLookup::NotAPerson => (None, Some(TrackerOwnerState::NotAPerson)),
+            OwnerLookup::Unknown => (None, Some(TrackerOwnerState::Unknown)),
+        }
+    }
+}
+
+/// Whether a sync looks the owner up before fetching (W1 backfill): no owner on
+/// record, and not already known to be an app account.
+pub fn needs_owner_backfill(owner_ref: Option<&str>, owner_state: Option<&str>) -> bool {
+    owner_ref.is_none() && owner_state != Some(TrackerOwnerState::NotAPerson.as_str())
+}
+
 /// How the shared transport authenticates, chosen by the adapter.
 #[derive(Clone, PartialEq, Eq)]
 pub enum AuthScheme {
@@ -134,6 +203,8 @@ impl ParamError {
 pub struct Validated {
     pub external_scope: String,
     pub board_name: String,
+    /// Who the token belongs to (W1).
+    pub owner: OwnerLookup,
 }
 
 /// Why `validate` refused.
@@ -172,6 +243,8 @@ pub struct TaskRow {
     pub summary: Option<String>,
     pub issue_type: Option<String>,
     pub status: Option<String>,
+    /// Compared with the tracker's owner on apply (W1), never stored.
+    pub assignee: Option<AccountRef>,
 }
 
 /// A complete, all-or-nothing read of a board.
@@ -257,6 +330,8 @@ pub trait TrackerAdapter: Send + Sync {
     fn connect_params(&self, body: &serde_json::Value) -> Result<ConnectParams, ParamError>;
     /// The auth scheme the transport uses for this account.
     fn auth(&self, account: &str, token: &ApiToken) -> AuthScheme;
+    /// Who the token belongs to (W1).
+    async fn owner(&self, t: &dyn GetTransport) -> Result<OwnerLookup, TrackerError>;
     /// Prove the credential and the board.
     async fn validate(
         &self,
@@ -362,23 +437,7 @@ mod tests {
 
     #[test]
     fn every_error_code_is_a_label_of_the_ddl_enum_and_vice_versa() {
-        let ddl = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../database/ddl/enum/sensei/tracker_error.ddl"
-        ))
-        .expect("tracker_error.ddl exists");
-        let body = ddl
-            .split_once("as enum (")
-            .and_then(|(_, rest)| rest.split_once(");"))
-            .map(|(body, _)| body)
-            .expect("an `as enum ( ... );` block");
-        let labels: Vec<&str> = body
-            .lines()
-            .filter_map(|l| {
-                let l = l.trim_start_matches([',', ' ']);
-                l.strip_prefix('\'').and_then(|r| r.split('\'').next())
-            })
-            .collect();
+        let labels = test_support::ddl_enum_labels("tracker_error");
         let codes: Vec<&str> = TrackerError::ALL.iter().map(|e| e.code()).collect();
         assert_eq!(
             labels, codes,
@@ -393,6 +452,74 @@ mod tests {
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), TrackerError::ALL.len());
+    }
+
+    #[test]
+    fn owner_states_are_exactly_the_ddl_enum_labels() {
+        let labels = test_support::ddl_enum_labels("tracker_owner_state");
+        let ours: Vec<&str> = TrackerOwnerState::ALL.iter().map(|o| o.as_str()).collect();
+        assert_eq!(labels, ours);
+        for o in TrackerOwnerState::ALL {
+            assert_eq!(TrackerOwnerState::parse(o.as_str()), Some(o));
+        }
+        assert_eq!(TrackerOwnerState::parse("person"), None);
+    }
+
+    #[test]
+    fn the_design_dbml_lists_each_tracker_table_with_the_columns_of_its_ddl() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../database");
+        let dbml = std::fs::read_to_string(format!("{root}/design.dbml")).unwrap();
+        for table in ["trackers", "tracker_tasks", "sprints", "tracker_task_sprints"] {
+            let ddl =
+                std::fs::read_to_string(format!("{root}/ddl/table/sensei/{table}.ddl")).unwrap();
+            assert_eq!(
+                test_support::dbml_columns(&dbml, table),
+                test_support::ddl_columns(&ddl, table),
+                "design.dbml's sensei.{table} must list the DDL's columns, in order"
+            );
+        }
+    }
+
+    #[test]
+    fn an_owner_lookup_maps_onto_the_stored_columns() {
+        let person = OwnerLookup::Person(AccountRef::new("A1"));
+        assert_eq!(person.columns(), (Some("A1"), None));
+        assert_eq!(OwnerLookup::NotAPerson.columns(), (None, Some(TrackerOwnerState::NotAPerson)));
+        assert_eq!(OwnerLookup::Unknown.columns(), (None, Some(TrackerOwnerState::Unknown)));
+    }
+
+    #[test]
+    fn the_owner_is_looked_up_only_while_none_is_on_record_and_not_ruled_out() {
+        assert!(needs_owner_backfill(None, None), "a tracker from before owners");
+        assert!(needs_owner_backfill(None, Some("unknown")), "unknown is retried");
+        assert!(
+            !needs_owner_backfill(None, Some("not_a_person")),
+            "an app token is never re-asked"
+        );
+        assert!(!needs_owner_backfill(Some("A1"), None));
+    }
+
+    #[test]
+    fn no_account_id_reaches_a_debug_print() {
+        let id = AccountRef::new("SENTINEL-ACCOUNT-ID");
+        let task = TaskRow {
+            external_id: "10001".into(),
+            key: "AUTH-1".into(),
+            scope: None,
+            summary: None,
+            issue_type: None,
+            status: None,
+            assignee: Some(AccountRef::new("SENTINEL-ACCOUNT-ID")),
+        };
+        let validated = Validated {
+            external_scope: "AUTH".into(),
+            board_name: "AUTH Scrum".into(),
+            owner: OwnerLookup::Person(AccountRef::new("SENTINEL-ACCOUNT-ID")),
+        };
+        for printed in [format!("{id:?}"), format!("{task:?}"), format!("{validated:?}")] {
+            assert!(!printed.contains("SENTINEL-ACCOUNT-ID"), "{printed}");
+        }
+        assert_eq!(format!("{id:?}"), "AccountRef(***)");
     }
 }
 
@@ -414,6 +541,77 @@ pub mod test_support {
         /// finds nothing.
         jql: HashMap<String, Result<serde_json::Value, TrackerError>>,
         jql_calls: Mutex<Vec<String>>,
+    }
+
+    /// The labels of `database/ddl/enum/sensei/<name>.ddl`, in declared order.
+    pub fn ddl_enum_labels(name: &str) -> Vec<String> {
+        let path =
+            format!("{}/../../database/ddl/enum/sensei/{name}.ddl", env!("CARGO_MANIFEST_DIR"));
+        let ddl = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let body = ddl
+            .split_once("as enum (")
+            .and_then(|(_, rest)| rest.split_once(");"))
+            .map(|(body, _)| body)
+            .expect("an `as enum ( ... );` block");
+        body.lines()
+            .filter_map(|l| {
+                let l = l.trim_start_matches([',', ' ']);
+                l.strip_prefix('\'').and_then(|r| r.split('\'').next()).map(String::from)
+            })
+            .collect()
+    }
+
+    /// The column names of `create table … <table> ( … );`, in declared order.
+    pub fn ddl_columns(ddl: &str, table: &str) -> Vec<String> {
+        let start = format!("create table if not exists {table} (");
+        let body = ddl
+            .split_once(&start)
+            .and_then(|(_, rest)| rest.split_once("\n);"))
+            .map(|(body, _)| body)
+            .unwrap_or_else(|| panic!("no `{start}` block"));
+        body.lines()
+            .map(|l| l.trim_start_matches([',', ' ']))
+            .filter(|l| {
+                !l.is_empty()
+                    && !l.starts_with("--")
+                    && !l.starts_with("unique")
+                    && !l.starts_with("primary key (")
+            })
+            .filter_map(|l| l.split_whitespace().next().map(String::from))
+            .collect()
+    }
+
+    /// The column names `database/design.dbml` lists for `sensei.<table>`, in order.
+    pub fn dbml_columns(dbml: &str, table: &str) -> Vec<String> {
+        let start = format!("Table \"sensei\".\"{table}\" {{\n");
+        let body = dbml
+            .split_once(&start)
+            .map(|(_, rest)| rest.split("\n}").next().unwrap_or(""))
+            .unwrap_or_else(|| panic!("no `{start}` block"));
+        body.lines()
+            .take_while(|l| {
+                !l.trim_start().starts_with("indexes") && !l.trim_start().starts_with("Note")
+            })
+            .filter_map(|l| {
+                l.strip_prefix("  \"").and_then(|r| r.split('"').next()).map(String::from)
+            })
+            .collect()
+    }
+
+    /// Drop `fields.assignee` from every issue unless the request's `fields` asks
+    /// for it, as Jira does — so a read that forgets to ask sees no assignee.
+    fn honour_fields(mut body: serde_json::Value, query: &[(&str, String)]) -> serde_json::Value {
+        let asked = query
+            .iter()
+            .any(|(k, v)| *k == "fields" && v.split(',').any(|f| f.trim() == "assignee"));
+        if !asked && let Some(issues) = body.get_mut("issues").and_then(|i| i.as_array_mut()) {
+            for issue in issues {
+                if let Some(fields) = issue.get_mut("fields").and_then(|f| f.as_object_mut()) {
+                    fields.remove("assignee");
+                }
+            }
+        }
+        body
     }
 
     /// Runs on every call, before the response — e.g. to delete the tracker
@@ -517,7 +715,7 @@ pub mod test_support {
                     "issuetype": {"name": "Story"}, "status": {"name": "To Do"}}})
             };
             FakeBoard::empty()
-                .with("/rest/api/3/myself", 0, json!({"accountId": "a1", "emailAddress": "dev@example.com"}))
+                .with("/rest/api/3/myself", 0, json!({"accountId": "A1", "accountType": "atlassian", "emailAddress": "dev@example.com"}))
                 .with("/rest/agile/1.0/board/42", 0, json!({"id": 42, "name": "AUTH Scrum", "location": {"projectKey": "AUTH"}}))
                 .with("/rest/agile/1.0/board/42/sprint", 0, json!({"startAt": 0, "isLast": true, "values": [
                     {"id": 100, "name": "Sprint 1", "state": "closed",
@@ -552,9 +750,14 @@ pub mod test_support {
             }
             if let Some((_, jql)) = query.iter().find(|(k, _)| *k == "jql") {
                 self.jql_calls.lock().unwrap().push(jql.clone());
-                return self.jql.get(jql).cloned().unwrap_or_else(|| {
-                    Ok(serde_json::json!({"startAt": 0, "total": 0, "issues": []}))
-                });
+                return self
+                    .jql
+                    .get(jql)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        Ok(serde_json::json!({"startAt": 0, "total": 0, "issues": []}))
+                    })
+                    .map(|b| honour_fields(b, query));
             }
             let start: u32 = query
                 .iter()
@@ -568,8 +771,106 @@ pub mod test_support {
             {
                 return Err(*e);
             }
-            self.pages.get(&(path.to_string(), start)).cloned().ok_or(TrackerError::NotFound)
+            self.pages
+                .get(&(path.to_string(), start))
+                .cloned()
+                .map(|b| honour_fields(b, query))
+                .ok_or(TrackerError::NotFound)
         }
+    }
+
+    /// A board issue as Jira returns it, assigned to `assignee` (`None` = unassigned).
+    pub fn assigned_issue(id: &str, key: &str, assignee: Option<&str>) -> serde_json::Value {
+        serde_json::json!({"id": id, "key": key, "fields": {
+            "summary": format!("summary {key}"),
+            "issuetype": {"name": "Story"}, "status": {"name": "To Do"},
+            "assignee": assignee.map(|a| serde_json::json!({"accountId": a, "displayName": "Someone"}))}})
+    }
+
+    impl FakeBoard {
+        /// The standard board (owner `A1`) with its three issues assigned as given,
+        /// in order AUTH-1, AUTH-2, AUTH-3.
+        pub fn with_assignees(self, assignees: [Option<&str>; 3]) -> Self {
+            use serde_json::json;
+            let [a1, a2, a3] = assignees;
+            self.with("/rest/agile/1.0/board/42/issue", 0, json!({"startAt": 0, "maxResults": 2, "total": 3,
+                "issues": [assigned_issue("10001", "auth-1", a1), assigned_issue("10002", "AUTH-2", a2)]}))
+                .with("/rest/agile/1.0/board/42/issue", 2, json!({"startAt": 2, "maxResults": 2, "total": 3,
+                    "issues": [assigned_issue("10003", "AUTH-3", a3)]}))
+        }
+        /// The standard board whose `/myself` answers `body`.
+        pub fn with_myself(self, body: serde_json::Value) -> Self {
+            self.with("/rest/api/3/myself", 0, body)
+        }
+        /// How many times `/myself` was asked.
+        pub fn myself_calls(&self) -> usize {
+            self.calls().iter().filter(|c| *c == "/rest/api/3/myself").count()
+        }
+    }
+
+    /// `(owner_ref, owner_state, owner_error)` of a tracker row.
+    pub async fn owner_of(
+        pg: &crate::db::pg_store::PgStore,
+        t: uuid::Uuid,
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        sqlx_core::query_as::query_as(
+            "SELECT owner_ref, owner_state::text, owner_error::text FROM sensei.trackers WHERE id = $1",
+        )
+        .bind(t)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    /// Forget a tracker's owner, as a tracker connected before owners has none.
+    pub async fn forget_owner(pg: &crate::db::pg_store::PgStore, t: uuid::Uuid) {
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET owner_ref = NULL, owner_state = NULL, owner_error = NULL WHERE id = $1",
+        )
+        .bind(t)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+
+    /// `(external_id, assigned_to_me)` of every ticket of a tracker, by external id.
+    pub async fn assigned(
+        pg: &crate::db::pg_store::PgStore,
+        t: uuid::Uuid,
+    ) -> Vec<(String, Option<bool>)> {
+        sqlx_core::query_as::query_as(
+            "SELECT external_id, assigned_to_me FROM sensei.tracker_tasks WHERE tracker_id = $1 ORDER BY 1",
+        )
+        .bind(t)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    /// Rows of any `sensei` table whose text contains `needle` — proves a value
+    /// was never persisted anywhere.
+    pub async fn rows_containing(pg: &crate::db::pg_store::PgStore, needle: &str) -> Vec<String> {
+        let tables: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT table_name::text FROM information_schema.tables
+              WHERE table_schema = 'sensei' AND table_type = 'BASE TABLE' ORDER BY 1",
+        )
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        let mut hits = vec![];
+        for (table,) in tables {
+            let (n,): (i64,) = sqlx_core::query_as::query_as(&format!(
+                "SELECT count(*) FROM sensei.\"{table}\" r WHERE strpos(row_to_json(r)::text, $1) > 0"
+            ))
+            .bind(needle)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            if n > 0 {
+                hits.push(format!("{table}: {n}"));
+            }
+        }
+        hits
     }
 
     /// A repository folder that belongs to workspace `p` (a fresh repository each call).
@@ -649,13 +950,7 @@ mod seam_tests {
 
     #[test]
     fn tracker_levels_are_exactly_the_ddl_enum_labels() {
-        let ddl = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../database/ddl/enum/sensei/tracker_level.ddl"
-        ))
-        .unwrap();
-        let body = ddl.split("as enum (").nth(1).and_then(|b| b.split(");").next()).unwrap();
-        let labels: Vec<&str> = body.lines().filter_map(|l| l.split('\'').nth(1)).collect();
+        let labels = test_support::ddl_enum_labels("tracker_level");
         let ours: Vec<&str> = TrackerLevel::ALL.iter().map(|l| l.as_str()).collect();
         assert_eq!(labels, ours);
         for l in TrackerLevel::ALL {

@@ -27,6 +27,37 @@ pub struct TrackerRow {
     pub last_error: Option<String>,
     /// R11: transcript turns ingested up to here have been checked for unknown keys.
     pub discovered_through: chrono::DateTime<chrono::Utc>,
+    /// The token owner's provider id (W1); NULL until known.
+    pub owner_ref: Option<String>,
+    /// Why `owner_ref` is NULL (`sensei.tracker_owner_state`).
+    pub owner_state: Option<String>,
+    /// The last owner lookup's failure code (`sensei.tracker_error`).
+    pub owner_error: Option<String>,
+}
+
+impl<'r> sqlx_core::from_row::FromRow<'r, sqlx_postgres::PgRow> for TrackerRow {
+    fn from_row(r: &'r sqlx_postgres::PgRow) -> Result<Self, sqlx_core::Error> {
+        use sqlx_core::row::Row;
+        Ok(TrackerRow {
+            id: r.try_get("id")?,
+            workspace_id: r.try_get("workspace_id")?,
+            kind: r.try_get("kind")?,
+            level: r.try_get("level")?,
+            base_url: r.try_get("base_url")?,
+            account: r.try_get("account")?,
+            external_scope: r.try_get("external_scope")?,
+            board_ref: r.try_get("board_ref")?,
+            params: r.try_get("params")?,
+            secret_service: r.try_get("secret_service")?,
+            last_attempt_at: r.try_get("last_attempt_at")?,
+            last_success_at: r.try_get("last_success_at")?,
+            last_error: r.try_get("last_error")?,
+            discovered_through: r.try_get("discovered_through")?,
+            owner_ref: r.try_get("owner_ref")?,
+            owner_state: r.try_get("owner_state")?,
+            owner_error: r.try_get("owner_error")?,
+        })
+    }
 }
 
 /// The workspace that already owns a board.
@@ -49,6 +80,8 @@ pub struct NewTracker {
     pub board_ref: String,
     pub params: serde_json::Value,
     pub secret_service: String,
+    /// Who the token belongs to, from `validate` (W1).
+    pub owner: crate::tracker::OwnerLookup,
 }
 
 /// Why persisting a connect failed.
@@ -99,6 +132,8 @@ pub struct TaskDetail {
     pub issue_type: Option<String>,
     pub status: Option<String>,
     pub removed: bool,
+    /// Whether the token owner is the assignee (W1); NULL while the owner is unknown.
+    pub assigned_to_me: Option<bool>,
     pub sessions: Vec<LinkedSession>,
 }
 
@@ -122,46 +157,11 @@ pub enum ApplyError {
 }
 
 const TRACKER_SELECT: &str =
-    "SELECT id, workspace_id, kind::text, level::text, base_url, account, external_scope, board_ref,
-        params, secret_service, last_attempt_at, last_success_at, last_error::text,
-        discovered_through
+    "SELECT id, workspace_id, kind::text AS kind, level::text AS level, base_url, account,
+        external_scope, board_ref, params, secret_service, last_attempt_at, last_success_at,
+        last_error::text AS last_error, discovered_through, owner_ref,
+        owner_state::text AS owner_state, owner_error::text AS owner_error
    FROM sensei.trackers";
-
-type TrackerTuple = (
-    uuid::Uuid,
-    uuid::Uuid,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    serde_json::Value,
-    String,
-    Option<chrono::DateTime<chrono::Utc>>,
-    Option<chrono::DateTime<chrono::Utc>>,
-    Option<String>,
-    chrono::DateTime<chrono::Utc>,
-);
-
-fn tracker_row(t: TrackerTuple) -> TrackerRow {
-    TrackerRow {
-        id: t.0,
-        workspace_id: t.1,
-        kind: t.2,
-        level: t.3,
-        base_url: t.4,
-        account: t.5,
-        external_scope: t.6,
-        board_ref: t.7,
-        params: t.8,
-        secret_service: t.9,
-        last_attempt_at: t.10,
-        last_success_at: t.11,
-        last_error: t.12,
-        discovered_through: t.13,
-    }
-}
 
 /// Last occurrence wins, so overlapping provider pages never make one upsert touch a row twice.
 fn dedupe_by<T: Clone, K: std::hash::Hash + Eq>(items: &[T], key: impl Fn(&T) -> K) -> Vec<T> {
@@ -205,16 +205,22 @@ async fn upsert_tasks(
     let t_summary: Vec<Option<String>> = tasks.iter().map(|t| t.summary.clone()).collect();
     let t_type: Vec<Option<String>> = tasks.iter().map(|t| t.issue_type.clone()).collect();
     let t_status: Vec<Option<String>> = tasks.iter().map(|t| t.status.clone()).collect();
+    // Compared with the owner here, in the apply's transaction; never stored (W1).
+    let t_assignee: Vec<Option<&str>> =
+        tasks.iter().map(|t| t.assignee.as_ref().map(|a| a.as_str())).collect();
     sqlx_core::query::query(
         "INSERT INTO sensei.tracker_tasks
-                (tracker_id, external_id, key, scope, summary, issue_type, status, removed_at, last_seen_at)
-         SELECT $1, x.e, x.k, x.sc, x.su, x.ty, x.st, NULL, now()
-           FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
-                AS x(e, k, sc, su, ty, st)
+                (tracker_id, external_id, key, scope, summary, issue_type, status, removed_at, last_seen_at,
+                 assigned_to_me)
+         SELECT $1, x.e, x.k, x.sc, x.su, x.ty, x.st, NULL, now(),
+                CASE WHEN o.owner_ref IS NULL THEN NULL ELSE coalesce(x.a = o.owner_ref, false) END
+           FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[])
+                AS x(e, k, sc, su, ty, st, a)
+          CROSS JOIN (SELECT owner_ref FROM sensei.trackers WHERE id = $1) o
          ON CONFLICT (tracker_id, external_id) DO UPDATE
             SET key = excluded.key, scope = excluded.scope, summary = excluded.summary,
                 issue_type = excluded.issue_type, status = excluded.status,
-                removed_at = NULL, last_seen_at = now()",
+                removed_at = NULL, last_seen_at = now(), assigned_to_me = excluded.assigned_to_me",
     )
     .bind(id)
     .bind(&t_ext)
@@ -223,6 +229,7 @@ async fn upsert_tasks(
     .bind(&t_summary)
     .bind(&t_type)
     .bind(&t_status)
+    .bind(&t_assignee)
     .execute(&mut *c)
     .await
     .map(|_| ())
@@ -348,11 +355,10 @@ async fn write_links(
 
 impl PgStore {
     pub async fn tracker_by_id(&self, id: uuid::Uuid) -> Result<Option<TrackerRow>, String> {
-        sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!("{TRACKER_SELECT} WHERE id = $1"))
+        sqlx_core::query_as::query_as::<_, TrackerRow>(&format!("{TRACKER_SELECT} WHERE id = $1"))
             .bind(id)
             .fetch_optional(&self.pool)
             .await
-            .map(|r| r.map(tracker_row))
             .map_err(|e| e.to_string())
     }
 
@@ -361,13 +367,12 @@ impl PgStore {
         &self,
         workspace_id: uuid::Uuid,
     ) -> Result<Vec<TrackerRow>, String> {
-        sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!(
+        sqlx_core::query_as::query_as::<_, TrackerRow>(&format!(
             "{TRACKER_SELECT} WHERE workspace_id = $1 ORDER BY level, created_at, id"
         ))
         .bind(workspace_id)
         .fetch_all(&self.pool)
         .await
-        .map(|rows| rows.into_iter().map(tracker_row).collect())
         .map_err(|e| e.to_string())
     }
 
@@ -712,12 +717,22 @@ impl PgStore {
         key: &str,
     ) -> Result<Option<TaskDetail>, String> {
         let err = |e: sqlx_core::Error| e.to_string();
-        let Some((task_id, tracker_id, key, summary, issue_type, status, removed)) =
+        let Some((task_id, tracker_id, key, summary, issue_type, status, removed, assigned_to_me)) =
             sqlx_core::query_as::query_as::<
                 _,
-                (uuid::Uuid, uuid::Uuid, String, Option<String>, Option<String>, Option<String>, bool),
+                (
+                    uuid::Uuid,
+                    uuid::Uuid,
+                    String,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                    bool,
+                    Option<bool>,
+                ),
             >(
-                "SELECT t.id, t.tracker_id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL
+                "SELECT t.id, t.tracker_id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL,
+                        t.assigned_to_me
                    FROM sensei.tracker_tasks t JOIN sensei.trackers tr ON tr.id = t.tracker_id
                   WHERE tr.workspace_id = $1
                     AND (upper(t.key) = upper($2)
@@ -768,6 +783,7 @@ impl PgStore {
             summary,
             issue_type,
             status,
+            assigned_to_me,
             removed,
             sessions,
         }))
@@ -955,6 +971,8 @@ impl PgStore {
         .await
         .map_err(db)?;
 
+        let (owner_ref, owner_state) = t.owner.columns();
+        let owner_state = owner_state.map(|s| s.as_str());
         let outcome = match existing {
             Some((id,)) => {
                 // The secret_service update fires the swap trigger, tombstoning the old secret.
@@ -962,7 +980,8 @@ impl PgStore {
                     "UPDATE sensei.trackers
                         SET level = $2::sensei.tracker_level, account = $3, external_scope = $4,
                             params = params || $5, secret_service = $6,
-                            last_success_at = NULL, last_error = NULL
+                            last_success_at = NULL, last_error = NULL,
+                            owner_ref = $7, owner_state = $8::sensei.tracker_owner_state, owner_error = NULL
                       WHERE id = $1",
                 )
                 .bind(id)
@@ -971,6 +990,8 @@ impl PgStore {
                 .bind(&t.external_scope)
                 .bind(&t.params)
                 .bind(&t.secret_service)
+                .bind(owner_ref)
+                .bind(owner_state)
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
@@ -979,8 +1000,10 @@ impl PgStore {
             None => {
                 let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
                     "INSERT INTO sensei.trackers
-                            (workspace_id, kind, level, base_url, account, external_scope, board_ref, params, secret_service)
-                     VALUES ($1, $2::sensei.tracker_kind, $3::sensei.tracker_level, $4, $5, $6, $7, $8, $9)
+                            (workspace_id, kind, level, base_url, account, external_scope, board_ref, params,
+                             secret_service, owner_ref, owner_state)
+                     VALUES ($1, $2::sensei.tracker_kind, $3::sensei.tracker_level, $4, $5, $6, $7, $8, $9,
+                             $10, $11::sensei.tracker_owner_state)
                      RETURNING id",
                 )
                 .bind(t.workspace_id)
@@ -992,6 +1015,8 @@ impl PgStore {
                 .bind(&t.board_ref)
                 .bind(&t.params)
                 .bind(&t.secret_service)
+                .bind(owner_ref)
+                .bind(owner_state)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?;
@@ -1003,7 +1028,8 @@ impl PgStore {
         // move to the new token; the swap trigger tombstones each old secret. The
         // old token's failure no longer describes them; the caller re-syncs them.
         let rekeyed: Vec<uuid::Uuid> = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
-            "UPDATE sensei.trackers SET account = $4, secret_service = $5, last_error = NULL
+            "UPDATE sensei.trackers SET account = $4, secret_service = $5, last_error = NULL,
+                    owner_ref = NULL, owner_state = NULL, owner_error = NULL
               WHERE workspace_id = $1 AND kind = $2::sensei.tracker_kind AND base_url = $3
                 AND secret_service <> $5
              RETURNING id",
@@ -1020,6 +1046,16 @@ impl PgStore {
         .map(|(id,)| id)
         .collect();
 
+        // Whose tickets these are was decided against the old owner (W11).
+        let reset: Vec<uuid::Uuid> = rekeyed.iter().copied().chain(Some(outcome.0)).collect();
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks SET assigned_to_me = NULL WHERE tracker_id = ANY($1)",
+        )
+        .bind(&reset)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+
         let cleared = sqlx_core::query::query(
             "DELETE FROM sensei.tracker_secret_tombstones WHERE secret_service = $1",
         )
@@ -1035,14 +1071,59 @@ impl PgStore {
         Ok((outcome.0, outcome.1, rekeyed))
     }
 
+    /// Store the owner a sync looked up (W1 backfill), only while the row still
+    /// names the token it was looked up with and still has none. `Ok(false)` when a
+    /// re-key or re-connect got there first.
+    pub async fn set_tracker_owner(
+        &self,
+        id: uuid::Uuid,
+        secret_service: &str,
+        owner: &crate::tracker::OwnerLookup,
+    ) -> Result<bool, String> {
+        let (owner_ref, owner_state) = owner.columns();
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers
+                SET owner_ref = $3, owner_state = $4::sensei.tracker_owner_state, owner_error = NULL
+              WHERE id = $1 AND secret_service = $2
+                AND owner_ref IS NULL AND owner_state IS DISTINCT FROM 'not_a_person'",
+        )
+        .bind(id)
+        .bind(secret_service)
+        .bind(owner_ref)
+        .bind(owner_state.map(|s| s.as_str()))
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
+    /// Record why the owner lookup failed (W1), under the same conditions.
+    pub async fn set_tracker_owner_error(
+        &self,
+        id: uuid::Uuid,
+        secret_service: &str,
+        code: &str,
+    ) -> Result<bool, String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET owner_error = $3::sensei.tracker_error
+              WHERE id = $1 AND secret_service = $2 AND owner_ref IS NULL",
+        )
+        .bind(id)
+        .bind(secret_service)
+        .bind(code)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .map_err(|e| e.to_string())
+    }
+
     /// Every tracker, for the scheduled sync.
     pub async fn list_trackers(&self) -> Result<Vec<TrackerRow>, String> {
-        sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!(
+        sqlx_core::query_as::query_as::<_, TrackerRow>(&format!(
             "{TRACKER_SELECT} ORDER BY created_at"
         ))
         .fetch_all(&self.pool)
         .await
-        .map(|rows| rows.into_iter().map(tracker_row).collect())
         .map_err(|e| e.to_string())
     }
 

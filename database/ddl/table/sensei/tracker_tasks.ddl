@@ -13,6 +13,7 @@ create table if not exists tracker_tasks (
 , current_sprint_id  uuid         references sensei.sprints(id) on delete set null
 , removed_at         timestamptz
 , last_seen_at       timestamptz  not null default now()
+, assigned_to_me     boolean
 , unique (tracker_id, external_id)
 );
 
@@ -20,7 +21,7 @@ create index if not exists tracker_tasks_tracker_id_key_idx
     on tracker_tasks(tracker_id, key);
 
 comment on table tracker_tasks is
-'Tickets (issues) of a tracker board, mirrored read-only. Keyed on the provider''s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee or other person data, by design.';
+'Tickets (issues) of a tracker board, mirrored read-only. Keyed on the provider''s immutable issue id so a renamed key updates in place. A ticket missing from a full sync gets removed_at; its session links survive. No assignee identity: only whether the token owner is the assignee (assigned_to_me).';
 
 comment on column tracker_tasks.tracker_id
      is 'The board this ticket belongs to.';
@@ -42,3 +43,5 @@ comment on column tracker_tasks.removed_at
      is 'When a full sync stopped seeing it. Set once.';
 comment on column tracker_tasks.last_seen_at
      is 'When a sync last saw it.';
+comment on column tracker_tasks.assigned_to_me
+     is 'Whether the ticket''s assignee is the tracker''s owner (trackers.owner_ref), set on every upsert; false when unassigned or someone else''s, NULL while the owner is unknown. The assignee itself is compared, never stored. Spec tracker-metrics-writeback W1.';
