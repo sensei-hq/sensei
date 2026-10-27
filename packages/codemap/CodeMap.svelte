@@ -9,6 +9,7 @@
   import type { CodeMapPort, GroupBy } from './types';
   import ModuleMap from './ModuleMap.svelte';
   import MatrixLens from './MatrixLens.svelte';
+  import ZonesLens from './ZonesLens.svelte';
   import ModuleList from './ModuleList.svelte';
   import FileColumns from './FileColumns.svelte';
   import SymbolView from './SymbolView.svelte';
@@ -23,6 +24,7 @@
     { id: 'structure', label: 'Structure' },
     { id: 'cycles', label: 'Cycles' },
     { id: 'matrix', label: 'Matrix' },
+    { id: 'zones', label: 'Zones' },
   ];
   const GROUPINGS: { id: GroupBy; label: string }[] = [
     { id: 'layers', label: 'Layers' },
@@ -67,7 +69,7 @@
           <button class="px-2 py-1 text-xs rounded border-none cursor-pointer"
             class:bg-paper-mute={map.lens === l.id} class:bg-transparent={map.lens !== l.id}
             role="tab" aria-selected={map.lens === l.id}
-            onclick={() => (map.lens = l.id)} data-testid={`codemap-lens-${l.id}`}>{l.label}</button>
+            onclick={() => void map.showLens(port, l.id)} data-testid={`codemap-lens-${l.id}`}>{l.label}</button>
         {/each}
       </div>
     {:else if map.level === 'files'}
@@ -93,6 +95,8 @@
       <div class="grid gap-4" style={narrow ? '' : 'grid-template-columns: 1fr 240px;'}>
         {#if narrow}
           <ModuleList data={l0} onopen={open} />
+        {:else if map.lens === 'zones'}
+          {#if map.zones}<ZonesLens data={map.zones} />{:else}<p class="text-sm text-ink-soft">Placing components…</p>{/if}
         {:else if map.lens === 'matrix'}
           <MatrixLens data={l0} onopen={open} />
         {:else}

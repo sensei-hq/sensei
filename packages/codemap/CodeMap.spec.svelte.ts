@@ -26,7 +26,16 @@ const L2: Level2 = {
   callers: [{ id: 'c1', name: 'main', file: 'm.rs', weight: 2 }], callersTotal: 9, callees: [], calleesTotal: 0,
 };
 const ok = <T>(data: T) => Promise.resolve({ ok: true as const, data });
-const port = (): CodeMapPort => ({ level0: vi.fn(() => ok(L0)), module: vi.fn(() => ok(L1)), file: vi.fn(() => ok(L2)) });
+const ZONES = {
+  meanDistance: 0.4, coverage: { points: 2, unplaceable: 1 },
+  points: [
+    { component: 'p/a', types: 2, abstractTypes: 0, ca: 3, ce: 0, abstractness: 0, instability: 0, distance: 1, zone: 'pain' as const },
+    { component: 'p/b', types: 0, abstractTypes: 0, ca: 0, ce: 0, abstractness: 0, instability: 0, distance: 0, zone: null },
+  ],
+};
+const port = (): CodeMapPort => ({
+  level0: vi.fn(() => ok(L0)), module: vi.fn(() => ok(L1)), file: vi.fn(() => ok(L2)), zones: vi.fn(() => ok(ZONES)),
+});
 
 let target: HTMLElement;
 let app: Record<string, unknown> | null = null;
@@ -80,6 +89,17 @@ describe('CodeMap', () => {
     flushSync();
     expect(q('[data-testid="codemap-inspector"]')?.textContent).toContain('p/c');
     expect(q('[data-testid="codemap-open"]')).toBeNull();
+  });
+
+  it('the Zones lens places components and names the furthest', async () => {
+    render(port());
+    await settle();
+    (q('[data-testid="codemap-lens-zones"]') as HTMLButtonElement).click();
+    await settle();
+    expect(q('[data-testid="zone-p/a"]')).not.toBeNull();
+    expect(q('[data-testid="zone-p/b"]')).toBeNull();
+    expect(q('[data-testid="zones-summary"]')?.textContent).toContain('1 components placed · mean distance 0.40 · pain 1');
+    expect(q('[data-testid="zones-summary"]')?.textContent).toContain('1 without enough to place');
   });
 
   it('says why the map could not be read', async () => {

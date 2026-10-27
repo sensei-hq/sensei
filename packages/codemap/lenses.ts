@@ -1,5 +1,5 @@
 // Lens views of L0 (M17), pure: which bands a lens draws, and the Matrix.
-import type { Band, Level0 } from './types';
+import type { Band, Level0, ZonePoint, Zones } from './types';
 import { groupOrder } from './layout';
 
 /** The modules in each cycle, as a lookup: module → its cycle's index. */
@@ -43,4 +43,21 @@ export function matrix(l0: Level0): Matrix {
     max = Math.max(max, weight[i][j]);
   }
   return { ids, weight, upward, max };
+}
+
+export interface ZonesView {
+  placed: ZonePoint[];
+  unplaceable: number;
+  /** The components furthest from the main sequence — what to look at. */
+  furthest: ZonePoint[];
+  byZone: Record<'main' | 'pain' | 'useless' | 'risk', number>;
+}
+
+/** The Zones lens (M17): what can be placed, how many cannot, the furthest. */
+export function zonesView(z: Zones, top = 10): ZonesView {
+  const placed = z.points.filter((p) => p.zone !== null);
+  const byZone = { main: 0, pain: 0, useless: 0, risk: 0 };
+  for (const p of placed) byZone[p.zone!] += 1;
+  const furthest = [...placed].sort((a, b) => b.distance - a.distance || a.component.localeCompare(b.component)).slice(0, top);
+  return { placed, unplaceable: z.points.length - placed.length, furthest, byZone };
 }

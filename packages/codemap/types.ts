@@ -84,6 +84,27 @@ export interface Level2 {
   calleesTotal: number;
 }
 
+/** One component on the Zones lens (Martin's metrics): instability
+ *  Ce ÷ (Ca + Ce) against abstractness, its distance from the main sequence,
+ *  and the zone it falls in — null when it cannot be placed. */
+export interface ZonePoint {
+  component: string;
+  types: number;
+  abstractTypes: number;
+  ca: number;
+  ce: number;
+  abstractness: number;
+  instability: number;
+  distance: number;
+  zone: 'main' | 'pain' | 'useless' | 'risk' | null;
+}
+
+export interface Zones {
+  points: ZonePoint[];
+  meanDistance: number;
+  coverage: { points: number; unplaceable: number };
+}
+
 /** A read: the answer, or why there is none — never an empty stand-in. */
 export type Read<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -93,4 +114,5 @@ export interface CodeMapPort {
   level0(groupBy: GroupBy): Promise<Read<Level0>>;
   module(id: string): Promise<Read<Level1>>;
   file(id: string): Promise<Read<Level2>>;
+  zones(): Promise<Read<Zones>>;
 }

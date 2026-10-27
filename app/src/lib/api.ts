@@ -1,4 +1,4 @@
-import type { Level0, Level1, Level2 } from '@sensei/codemap';
+import type { Level0, Level1, Level2, Zones } from '@sensei/codemap';
 import type {
   ServerWorkspace,
   GraphSymbolNode, GraphCallEdge,
@@ -483,6 +483,7 @@ export function senseiApi(port: number) {
       tryGet<Level1>(`/api/workspaces/${enc(id)}/diagrams/codemap/module?id=${enc(module)}`),
     tryGetCodemapFile: (id: string, file: string) =>
       tryGet<Level2>(`/api/workspaces/${enc(id)}/diagrams/codemap/file?id=${enc(file)}`),
+    tryGetZones: (id: string) => tryGet<Zones>(`/api/workspaces/${enc(id)}/diagrams/zones`),
 
     /** #232 — the Layers/Cycles payload, one request serving both screens.
      *

@@ -1,7 +1,7 @@
 // The Code map's state (M17): which level is open and how it was reached, the
 // grouping, the roles shown, the lens and the selection. Host-agnostic — every
 // read goes through the CodeMapPort the host passes in.
-import type { CodeMapPort, Column, GroupBy, Level0, Level1, Level2, Read, Role } from './types';
+import type { CodeMapPort, Column, GroupBy, Level0, Level1, Level2, Read, Role, Zones } from './types';
 
 export type Level = 'modules' | 'files' | 'symbols';
 export type Lens = 'structure' | 'cycles' | 'matrix' | 'zones';
@@ -24,6 +24,7 @@ export class CodeMapState {
   l0 = $state<Level0 | null>(null);
   l1 = $state<Level1 | null>(null);
   l2 = $state<Level2 | null>(null);
+  zones = $state<Zones | null>(null);
   loading = $state(false);
   /** Why the last read failed; cleared by the next that succeeds. */
   error = $state<string | null>(null);
@@ -53,6 +54,14 @@ export class CodeMapState {
   async setGroupBy(port: CodeMapPort, groupBy: GroupBy): Promise<void> {
     this.groupBy = groupBy;
     await this.load(port);
+  }
+
+  /** Switch lens; the Zones lens reads its points the first time it opens. */
+  async showLens(port: CodeMapPort, lens: Lens): Promise<void> {
+    this.lens = lens;
+    if (lens !== 'zones' || this.zones) return;
+    const data = await this.#read(() => port.zones());
+    if (data) this.zones = data;
   }
 
   select(id: string | null): void {

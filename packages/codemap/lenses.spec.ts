@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { cycleBands, matrix } from './lenses';
-import type { Band, Block, Level0 } from './types';
+import { cycleBands, matrix, zonesView } from './lenses';
+import type { Band, Block, Level0, ZonePoint } from './types';
 
 const block = (id: string, group: string, symbols = 1): Block => ({
   id, label: id, group, files: 1, symbols, hub: false, weight_in: 0, weight_out: 0, folded: [],
@@ -27,5 +27,19 @@ describe('lenses', () => {
     const [i, j] = [m.ids.indexOf('base'), m.ids.indexOf('top')];
     expect([m.weight[i][j], m.upward[i][j], i > j]).toEqual([3, true, true]);
     expect(m.max).toBe(3);
+  });
+});
+
+describe('zonesView', () => {
+  const pt = (component: string, distance: number, zone: ZonePoint['zone']): ZonePoint => ({
+    component, types: 1, abstractTypes: 0, ca: 1, ce: 1, abstractness: 0, instability: 0.5, distance, zone,
+  });
+  it('places what it can, counts what it cannot, and lists the furthest first', () => {
+    const v = zonesView({ points: [pt('a', 0.1, 'main'), pt('b', 0.9, 'pain'), pt('c', 0.5, null), pt('d', 0.7, 'risk')],
+      meanDistance: 0.5, coverage: { points: 4, unplaceable: 1 } }, 2);
+    expect(v.placed.map((p) => p.component)).toEqual(['a', 'b', 'd']);
+    expect(v.unplaceable).toBe(1);
+    expect(v.furthest.map((p) => p.component)).toEqual(['b', 'd']);
+    expect(v.byZone).toEqual({ main: 1, pain: 1, useless: 0, risk: 1 });
   });
 });

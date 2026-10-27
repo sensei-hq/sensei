@@ -19,7 +19,10 @@ const L2: Level2 = {
 };
 const ok = <T>(data: T) => Promise.resolve({ ok: true as const, data });
 function port(over: Partial<CodeMapPort> = {}): CodeMapPort {
-  return { level0: vi.fn((g) => ok(L0(g))), module: vi.fn(() => ok(L1)), file: vi.fn(() => ok(L2)), ...over };
+  return {
+    level0: vi.fn((g) => ok(L0(g))), module: vi.fn(() => ok(L1)), file: vi.fn(() => ok(L2)),
+    zones: vi.fn(() => ok({ points: [], meanDistance: 0, coverage: { points: 0, unplaceable: 0 } })), ...over,
+  };
 }
 
 describe('CodeMapState', () => {
@@ -65,6 +68,16 @@ describe('CodeMapState', () => {
     await s.load(p);
     await s.openModule(p, 'p/a');
     expect([s.level, s.error]).toEqual(['modules', 'Service Unavailable']);
+  });
+
+  it('reads zones once, when the Zones lens first opens', async () => {
+    const s = new CodeMapState();
+    const p = port();
+    await s.showLens(p, 'zones');
+    await s.showLens(p, 'structure');
+    await s.showLens(p, 'zones');
+    expect([s.lens, s.zones?.meanDistance, p.zones]).toEqual(['zones', 0, p.zones]);
+    expect(p.zones).toHaveBeenCalledTimes(1);
   });
 
   it('drops an answer that a later request overtook', async () => {
