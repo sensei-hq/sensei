@@ -1,3 +1,4 @@
+import type { Level0, Level1, Level2 } from '@sensei/codemap';
 import type {
   ServerWorkspace,
   GraphSymbolNode, GraphCallEdge,
@@ -474,6 +475,14 @@ export function senseiApi(port: number) {
       tryGet<StructurePayload>(
         `/api/workspaces/${enc(id)}/diagrams/structure?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
       ),
+
+    /** The Code map (M17): L0 modules, one module's files, one file's symbols. */
+    tryGetCodemap: (id: string, groupBy: 'layers' | 'folders') =>
+      tryGet<Level0>(`/api/workspaces/${enc(id)}/diagrams/codemap?groupBy=${enc(groupBy)}`),
+    tryGetCodemapModule: (id: string, module: string) =>
+      tryGet<Level1>(`/api/workspaces/${enc(id)}/diagrams/codemap/module?id=${enc(module)}`),
+    tryGetCodemapFile: (id: string, file: string) =>
+      tryGet<Level2>(`/api/workspaces/${enc(id)}/diagrams/codemap/file?id=${enc(file)}`),
 
     /** #232 — the Layers/Cycles payload, one request serving both screens.
      *

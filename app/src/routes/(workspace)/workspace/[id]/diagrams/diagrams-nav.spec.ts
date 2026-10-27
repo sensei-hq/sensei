@@ -9,7 +9,7 @@ describe('DIAGRAM_VIEWS marks', () => {
     Object.keys(JSON.parse(readFileSync('node_modules/@iconify-json/solar/icons.json', 'utf8')).icons),
   );
   it('gives every view a kanji and a Solar icon', () => {
-    expect(DIAGRAM_VIEWS.length).toBe(6);
+    expect(DIAGRAM_VIEWS.length).toBe(7);
     for (const v of DIAGRAM_VIEWS) {
       expect(v.kanji, v.id).toMatch(/^\p{Script=Han}$/u);
       expect(isSolarBoldDuotone(v.icon, solar), `${v.id}: ${v.icon}`).toBe(true);

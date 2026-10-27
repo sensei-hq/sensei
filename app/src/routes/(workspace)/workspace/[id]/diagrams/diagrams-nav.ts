@@ -23,6 +23,13 @@ export interface DiagramView {
 
 export const DIAGRAM_VIEWS: DiagramView[] = [
   {
+    id: 'codemap',
+    label: 'Code map',
+    question: 'Modules, then their files, then their symbols — drill in by choice',
+    kanji: '図',
+    icon: 'i-solar-chart-square-bold-duotone',
+  },
+  {
     id: 'structure',
     label: 'Structure',
     question: 'What is here, and what touches what',
@@ -66,8 +73,8 @@ export const DIAGRAM_VIEWS: DiagramView[] = [
   },
 ];
 
-/** The view a `diagrams/` URL opens on. Structure, because it is the only one
- *  that assumes nothing about the layering having ranked. */
+/** The view a `diagrams/` URL opens on: the Code map, which opens on modules
+ *  and goes down a level by choice (M17). */
 export const DEFAULT_VIEW = DIAGRAM_VIEWS[0].id;
 
 /** Which tab a pathname is on. Returns null off the section entirely, so a
