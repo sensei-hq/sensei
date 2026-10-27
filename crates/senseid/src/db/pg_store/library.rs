@@ -650,8 +650,8 @@ impl PgStore {
     }
 
     /// Of the dependency repositories given as `(url, owner/repo)`, the keys not
-    /// to ask again (#341): a repository whose library this machine holds as a
-    /// working copy — its own scan registers it — and one a `discover_library`
+    /// to ask again (#341): a repository whose library is a working copy under a
+    /// watched folder — its own scan registers it — and one a `discover_library`
     /// ran for within `within_hours`, whatever it found. A failed run counts too:
     /// a repository that errors is asked again tomorrow, not on every scan.
     pub async fn dependency_repos_settled(
@@ -665,8 +665,9 @@ impl PgStore {
             "SELECT r.key FROM unnest($1::text[], $2::text[]) AS r(url, key)
               WHERE EXISTS (SELECT 1 FROM sensei.libraries l
                               JOIN sensei.library_versions lv ON lv.library_id = l.id
-                             WHERE l.repository_url = r.url
-                               AND lv.local_path IS NOT NULL AND lv.local_path <> '')
+                              JOIN sensei.folders_to_watch w
+                                ON lv.local_path = w.path OR lv.local_path LIKE w.path || '/%'
+                             WHERE l.repository_url = r.url)
                  OR EXISTS (SELECT 1 FROM activity.task_executions t
                              WHERE t.task_kind = 'discover_library' AND t.path = r.key
                                AND t.status IN ('completed', 'failed')

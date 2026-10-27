@@ -174,19 +174,22 @@ mod tests {
     }
 
     /// A scan queues one discovery per dependency repository; a repository
-    /// asked today, or whose library is held locally, is not asked again.
+    /// asked today, or whose library is scanned here from a watched working
+    /// copy, is not asked again. A working copy nothing watches any more is
+    /// not one: kavach's path was recorded by a manual scan and never refreshed.
     #[tokio::test]
-    async fn a_scan_queues_discovery_once_a_day_and_never_for_a_local_library() {
+    async fn a_scan_queues_discovery_once_a_day_and_never_for_a_watched_library() {
         let ctx = make_ctx().await;
         let uniq = uuid::Uuid::new_v4().simple().to_string();
-        let (fresh, asked, local) = (
+        let (fresh, asked, local, stale) = (
             format!("fresh{}", &uniq[..10]),
             format!("asked{}", &uniq[..10]),
             format!("local{}", &uniq[..10]),
+            format!("stale{}", &uniq[..10]),
         );
         let t = tempfile::tempdir().unwrap();
         let root = t.path();
-        let names = [&fresh, &asked, &local];
+        let names = [&fresh, &asked, &local, &stale];
         let deps: serde_json::Map<String, serde_json::Value> =
             names.iter().map(|n| (n.to_string(), serde_json::json!("^1"))).collect();
         std::fs::write(
@@ -217,28 +220,37 @@ mod tests {
             .await
             .unwrap();
         pg.complete_task_execution(&run, 0, 10).await.unwrap();
-        // `local`: a library this machine scans from its own working copy.
-        let id = pg
-            .upsert_library(&crate::db::pg_store::LibraryRow {
-                name: &local,
-                ecosystem: "npm",
-                version: None,
-                description: None,
-                source_type: None,
-                base_url: None,
-            })
-            .await
-            .unwrap();
-        pg.set_library_local_path(&id, "/tmp/local-checkout").await.unwrap();
-        pg.set_library_repository_url(&id, &format!("https://github.com/acme/{local}"))
-            .await
-            .unwrap();
+        // `local`: a library this machine scans, from a working copy under a
+        // watched folder. `stale`: a working copy no watched folder holds.
+        let watched = format!("/tmp/watched-{uniq}");
+        pg.add_watch_root(&watched, "watched", &serde_json::json!([])).await.unwrap();
+        for (name, path) in
+            [(&local, format!("{watched}/{local}")), (&stale, format!("/tmp/gone-{uniq}"))]
+        {
+            let id = pg
+                .upsert_library(&crate::db::pg_store::LibraryRow {
+                    name,
+                    ecosystem: "npm",
+                    version: None,
+                    description: None,
+                    source_type: None,
+                    base_url: None,
+                })
+                .await
+                .unwrap();
+            pg.set_library_local_path(&id, &path).await.unwrap();
+            pg.set_library_repository_url(&id, &format!("https://github.com/acme/{name}"))
+                .await
+                .unwrap();
+        }
 
         let queued =
             enqueue_dependency_discovery(&ctx, root, &[root.join("package.json")]).await.unwrap();
 
-        assert_eq!(queued, 1, "only the repository nobody has asked");
-        let fresh_url = format!("https://github.com/acme/{fresh}");
-        assert!(ctx.queue.has_pending_kind_folder(TaskKind::DiscoverLibrary, &fresh_url).await);
+        assert_eq!(queued, 2, "the repository nobody has asked, and the unwatched copy's");
+        for name in [&fresh, &stale] {
+            let url = format!("https://github.com/acme/{name}");
+            assert!(ctx.queue.has_pending_kind_folder(TaskKind::DiscoverLibrary, &url).await);
+        }
     }
 }
