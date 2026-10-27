@@ -841,6 +841,18 @@ pub fn resolve_local_llms_root(path: &str) -> std::path::PathBuf {
     }
     p.join("docs").join("llms")
 }
+/// The pages of a local llms root — `root` read as given, never guessed: a
+/// manifest that STATES its docs folder (`llms.path`, #341) is read there, and
+/// `LibSource::LocalDir` reaches here after resolving its guess.
+pub fn local_llms_pages(
+    root: &std::path::Path,
+    lib_name: &str,
+) -> Result<Vec<ResolvedPage>, String> {
+    let files = read_local_source_files(root)?;
+    let docs = docs_from_source_files(&files, lib_name);
+    Ok(pages_from(docs, &files, "local"))
+}
+
 /// Whether a discovered file is part of an llms corpus.
 ///
 /// ONE rule, three discoverers. Local walks a directory, github calls the
@@ -1081,12 +1093,7 @@ pub async fn resolve_library_pages(
     lib_name: &str,
 ) -> Result<Vec<ResolvedPage>, String> {
     match source {
-        LibSource::LocalDir(path) => {
-            let root = resolve_local_llms_root(path);
-            let files = read_local_source_files(&root)?;
-            let docs = docs_from_source_files(&files, lib_name);
-            Ok(pages_from(docs, &files, "local"))
-        }
+        LibSource::LocalDir(path) => local_llms_pages(&resolve_local_llms_root(path), lib_name),
         LibSource::Website(url) => {
             let files = fetch_website_source_files(url).await?;
             let docs = docs_from_source_files(&files, lib_name);

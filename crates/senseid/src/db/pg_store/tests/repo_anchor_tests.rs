@@ -362,6 +362,160 @@ async fn update_folder_remotes_populates_and_is_matchable() {
     );
 }
 
+/// #341: a package a manifest library claims resolves to that library EVEN when
+/// detection made a row of its own for the package — the real state: sensei's
+/// package.json makes `@rokkit/ui` a library row, and that empty row won, so
+/// asking for `@rokkit/ui` returned 0 skills, 0 agents, 0 docs while `rokkit`
+/// held 5, 3 and 94. A library that owns packages still resolves to itself.
+#[tokio::test]
+async fn a_claimed_package_resolves_to_its_library_over_its_own_detected_row() {
+    use crate::libraries::manifest::ProvidedSkill;
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let parent = format!("_testlib_claim_{uniq}");
+    let pkg = format!("@{parent}/ui");
+    let mut row = crate::db::pg_store::LibraryRow {
+        name: &parent,
+        ecosystem: "npm",
+        version: Some(">=1.0"),
+        description: None,
+        source_type: None,
+        base_url: None,
+    };
+    let lid = s.upsert_library(&row).await.unwrap();
+    row.name = &pkg;
+    let detected = s.upsert_library(&row).await.unwrap();
+    assert_ne!(lid, detected);
+    s.replace_library_packages(&lid, "manifest", std::slice::from_ref(&pkg)).await.unwrap();
+    s.replace_library_capabilities(
+        &lid,
+        &crate::db::pg_store::LibraryCapabilities {
+            source: "manifest",
+            version_range: Some(">=1.0"),
+            skills: &[ProvidedSkill {
+                url: None,
+                name: "styling".into(),
+                focus: "styling".into(),
+                path: None,
+                body: Some("# styling".into()),
+            }],
+            agents: &[],
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(s.library_id_for(&pkg).await.unwrap(), Some(lid), "the claiming library wins");
+    assert_eq!(
+        s.library_id_for(&parent).await.unwrap(),
+        Some(lid),
+        "a library owning packages is itself"
+    );
+    assert_eq!(s.list_library_skills(&pkg).await.unwrap().len(), 1);
+
+    // The docs too: they were read by exact name alone.
+    sqlx_core::query::query(
+        "INSERT INTO sensei.library_content (library_version_id, kind, name, body, source)
+         SELECT v.id, 'page', 'Overview', '# overview', 'manifest'
+           FROM sensei.library_versions v WHERE v.library_id = $1 AND v.is_latest",
+    )
+    .bind(lid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        s.get_library_pages(&pkg, None).await.unwrap().len(),
+        1,
+        "a package name reaches the docs"
+    );
+    assert_eq!(s.get_library_pages(&format!("{pkg}-nope"), None).await.unwrap().len(), 0);
+
+    for id in [lid, detected] {
+        sqlx_core::query::query("DELETE FROM sensei.libraries WHERE id = $1")
+            .bind(id)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+}
+
+/// #341: the libraries list is one row per LIBRARY. A package a library claims
+/// folds into it (its repos count for the library), and a library known only from
+/// its manifest is listed — dbd and rokkit were absent from all 322 rows, because
+/// the list was built from repo references alone and nothing references `rokkit`.
+#[tokio::test]
+async fn the_library_list_is_libraries_with_their_packages_and_content() {
+    use crate::libraries::manifest::ProvidedSkill;
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (parent, pkg, solo) =
+        (format!("_tl_parent_{uniq}"), format!("@_tl_{uniq}/ui"), format!("_tl_solo_{uniq}"));
+    let mut row = crate::db::pg_store::LibraryRow {
+        name: &parent,
+        ecosystem: "npm",
+        version: Some("1.0.0"),
+        description: None,
+        source_type: None,
+        base_url: None,
+    };
+    let lid = s.upsert_library(&row).await.unwrap();
+    row.name = &pkg;
+    let pkg_id = s.upsert_library(&row).await.unwrap();
+    row.name = &solo;
+    let solo_id = s.upsert_library(&row).await.unwrap();
+    s.replace_library_packages(&lid, "manifest", std::slice::from_ref(&pkg)).await.unwrap();
+    let skill = |name: &str| ProvidedSkill {
+        url: None,
+        name: name.into(),
+        focus: name.into(),
+        path: None,
+        body: Some("#".into()),
+    };
+    for (id, skills) in [(lid, vec![skill("a"), skill("b")]), (solo_id, vec![skill("c")])] {
+        s.replace_library_capabilities(
+            &id,
+            &crate::db::pg_store::LibraryCapabilities {
+                source: "manifest",
+                version_range: None,
+                skills: &skills,
+                agents: &[],
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let fid = create_test_folder(&s, &format!("tl-{uniq}")).await;
+    s.upsert_referenced_library(&fid, &pkg_id, Some("1.0.0"), None).await.unwrap();
+
+    let libs = s.list_libraries_with_usage(None, None, 1).await.unwrap();
+    let find = |n: &str| libs.iter().find(|l| l["name"] == n).cloned();
+    let p = find(&parent).expect("the library is listed");
+    assert_eq!(p["repoCount"], 1, "its package's repo counts for it: {p}");
+    assert_eq!(p["skillCount"], 2, "{p}");
+    assert_eq!(p["packages"], serde_json::json!([pkg]), "{p}");
+    assert!(find(&pkg).is_none(), "a claimed package is not a library of its own");
+    let solo_row = find(&solo).expect("a manifest-only library is listed");
+    assert_eq!(solo_row["repoCount"], 0);
+    assert_eq!(solo_row["skillCount"], 1);
+
+    // Its usage is its packages' usage, each row naming the package used.
+    let usage = s.get_library_usage(&lid).await.unwrap();
+    assert_eq!(usage.len(), 1, "{usage:?}");
+    assert_eq!(usage[0]["library_name"], serde_json::json!(pkg));
+
+    // Scoped to repos (or shared across 2+), a library must be used there.
+    let shared = s.list_libraries_with_usage(None, None, 2).await.unwrap();
+    assert!(!shared.iter().any(|l| l["name"] == parent || l["name"] == solo));
+
+    for id in [lid, pkg_id, solo_id] {
+        sqlx_core::query::query("DELETE FROM sensei.libraries WHERE id = $1")
+            .bind(id)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+}
+
 #[tokio::test]
 async fn a_declared_package_resolves_to_its_parent_library() {
     // Two identities for one library never met. Detection reads package.json and
@@ -391,6 +545,7 @@ async fn a_declared_package_resolves_to_its_parent_library() {
             source: "manifest",
             version_range: Some(">=1.0"),
             skills: &[ProvidedSkill {
+                url: None,
                 name: "styling".into(),
                 focus: "styling".into(),
                 path: Some("p/s.md".into()),
@@ -455,12 +610,14 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
         .await
         .unwrap();
     let sk = |n: &str, f: &str| ProvidedSkill {
+        url: None,
         name: n.into(),
         focus: f.into(),
         path: Some(format!("p/{n}.md")),
         body: Some(format!("# {n}")),
     };
     let ag = ProvidedAgent {
+        url: None,
         name: "rev".into(),
         focus: "review".into(),
         path: Some("a/rev.md".into()),
@@ -510,7 +667,8 @@ async fn replace_library_capabilities_is_manifest_authoritative() {
     assert_eq!(s.list_library_agents(&lib).await.unwrap().len(), 0);
 
     // A path/body-less entry is not persisted (no fabricated body).
-    let bodyless = ProvidedSkill { name: "x".into(), focus: "x".into(), path: None, body: None };
+    let bodyless =
+        ProvidedSkill { url: None, name: "x".into(), focus: "x".into(), path: None, body: None };
     let (ns3, _) = s
         .replace_library_capabilities(
             &lid,
@@ -550,6 +708,7 @@ async fn list_workspace_library_capabilities_suggests_from_a_workspaces_deps() {
             source: "manifest",
             version_range: Some("1"),
             skills: &[ProvidedSkill {
+                url: None,
                 name: "semantic-styles-rokkit".into(),
                 focus: "styling".into(),
                 path: Some("p".into()),

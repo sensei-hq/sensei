@@ -3561,6 +3561,7 @@ mod tests {
                     source: "manifest",
                     version_range: Some("1"),
                     skills: &[ProvidedSkill {
+                        url: None,
                         name: "semantic-styles-rokkit".into(),
                         focus: "styling".into(),
                         path: Some("p.md".into()),

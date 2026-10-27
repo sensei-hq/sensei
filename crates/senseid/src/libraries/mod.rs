@@ -7,6 +7,7 @@
 //! HTTP handlers) and `crate::adapters::manifest` (per-ecosystem dependency parsing).
 
 pub mod advisory;
+pub mod dependencies;
 pub mod docs_source;
 pub mod manifest;
 pub mod registry;
@@ -32,6 +33,16 @@ pub struct ResolvedManifest {
     pub agents: Vec<manifest::ProvidedAgent>,
     /// Packages this library publishes under other names. Empty is the common case.
     pub packages: Vec<String>,
+    /// The docs folder `llms.path` names, relative to the library's root (#341).
+    pub llms_path: Option<String>,
+    /// The library's site, and the release its docs describe.
+    pub site: Option<String>,
+    pub documents: Option<String>,
+    /// The ecosystem the manifest states, when it does.
+    pub ecosystem: Option<String>,
+    /// Its GitHub repository, as `https://github.com/owner/repo` — the spelling
+    /// a dependency's repository is compared in.
+    pub repository: Option<String>,
 }
 
 /// How deep to look for `sensei.library.json` under a scanned root.
@@ -108,19 +119,13 @@ pub async fn ingest_manifest_at(
     if let Err(e) = pg.set_library_local_path(library_id, &root.to_string_lossy()).await {
         tracing::warn!(error = %e, root = %root.display(), "ingest_manifest: set_library_local_path failed");
     }
-
-    let (ns, na) = match pg
-        .replace_library_capabilities(
-            library_id,
-            &crate::db::pg_store::LibraryCapabilities {
-                source: "manifest",
-                version_range: Some(&m.version),
-                skills: &m.skills,
-                agents: &m.agents,
-            },
-        )
-        .await
+    if let Some(url) = &m.repository
+        && let Err(e) = pg.set_library_repository_url(library_id, url).await
     {
+        tracing::warn!(error = %e, root = %root.display(), "ingest_manifest: set_library_repository_url failed");
+    }
+
+    let (ns, na) = match write_capabilities(pg, library_id, &m).await {
         Ok(counts) => counts,
         Err(e) => {
             tracing::warn!(error = %e, root = %root.display(), "ingest_manifest: replace_library_capabilities failed");
@@ -174,6 +179,54 @@ pub async fn ingest_manifest_at(
     Some((ns, na, np))
 }
 
+/// A manifest's skills and agents, replacing what the manifest said before.
+async fn write_capabilities(
+    pg: &crate::db::pg_store::PgStore,
+    library_id: &uuid::Uuid,
+    m: &ResolvedManifest,
+) -> Result<(u32, u32), String> {
+    pg.replace_library_capabilities(
+        library_id,
+        &crate::db::pg_store::LibraryCapabilities {
+            source: "manifest",
+            version_range: Some(&m.version),
+            skills: &m.skills,
+            agents: &m.agents,
+        },
+    )
+    .await
+}
+
+/// Register a dependency's library from the manifest its repository ships
+/// (#341): the library, its skills and agents, the packages the manifest names
+/// and the ones that led here (source `dependency`), and its repository. Its
+/// docs are not read here — they are a separate fetch.
+pub async fn register_dependency_library(
+    pg: &crate::db::pg_store::PgStore,
+    dep: &dependencies::DependencyRepo,
+    m: &ResolvedManifest,
+) -> Result<uuid::Uuid, String> {
+    let id = pg
+        .upsert_library(&crate::db::pg_store::LibraryRow {
+            name: &m.library,
+            ecosystem: m.ecosystem.as_deref().unwrap_or(&dep.ecosystem),
+            version: m.documents.as_deref(),
+            description: None,
+            source_type: None,
+            base_url: m.site.as_deref(),
+        })
+        .await?;
+    write_capabilities(pg, &id, m).await?;
+    pg.replace_library_packages(&id, "manifest", &m.packages).await?;
+    // Those the manifest does not already name: a package has one row, and a
+    // second writer would take the manifest's claim over.
+    let led_here: Vec<String> =
+        dep.packages.iter().filter(|p| !m.packages.contains(p)).cloned().collect();
+    pg.replace_library_packages(&id, "dependency", &led_here).await?;
+    pg.set_library_repository_url(&id, &dep.url()).await?;
+    Ok(id)
+}
+
 /// Read and resolve a library's `sensei.library.json` from its local source root.
 ///
 /// Capability bodies are filled from their `path` (relative to `root`). An entry
@@ -190,43 +243,60 @@ pub fn read_manifest(root: &Path) -> Option<ResolvedManifest> {
             return None;
         }
     };
+    Some(resolved_from(m, &|path: &str| {
+        std::fs::read_to_string(root.join(path))
+            .map_err(|e| tracing::warn!(path, error = %e, "load_manifest: could not read manifest entry file, skipping it"))
+            .ok()
+    }))
+}
+
+/// A parsed manifest with each skill's and agent's `body` filled from its `path`
+/// by `read` — a file read under the library's root, or (for a dependency read
+/// from its repository) a lookup of what was fetched. A path escaping the root
+/// (`..`) is never read; an entry whose body cannot be had keeps `None`.
+pub fn resolved_from(
+    m: manifest::LibraryManifest,
+    read: &dyn Fn(&str) -> Option<String>,
+) -> ResolvedManifest {
+    let fill = |body: &mut Option<String>, path: Option<&str>, name: &str| {
+        if body.is_some() {
+            return;
+        }
+        let Some(p) = path else { return };
+        if p.contains("..") {
+            tracing::warn!(
+                entry = name,
+                path = p,
+                "load_manifest: refusing a manifest path that escapes the library root"
+            );
+            return;
+        }
+        *body = read(p);
+    };
     let mut skills = m.skills;
     for s in &mut skills {
-        resolve_body(root, &mut s.body, s.path.as_deref(), &s.name);
+        fill(&mut s.body, s.path.as_deref(), &s.name);
     }
     let mut agents = m.agents;
     for a in &mut agents {
-        resolve_body(root, &mut a.body, a.path.as_deref(), &a.name);
+        fill(&mut a.body, a.path.as_deref(), &a.name);
     }
-    Some(ResolvedManifest {
+    ResolvedManifest {
         library: m.library,
         version: m.version,
         skills,
         agents,
         packages: m.packages,
-    })
-}
-
-/// Fill `body` from `path` (relative to `root`) if `body` is empty. A `..` in the
-/// path or an unreadable file leaves `body` as `None` (a warning is logged).
-fn resolve_body(root: &Path, body: &mut Option<String>, path: Option<&str>, name: &str) {
-    if body.is_some() {
-        return;
-    }
-    let Some(p) = path else { return };
-    if p.contains("..") {
-        tracing::warn!(
-            entry = name,
-            path = p,
-            "load_manifest: refusing a manifest path that escapes the library root"
-        );
-        return;
-    }
-    match std::fs::read_to_string(root.join(p)) {
-        Ok(text) => *body = Some(text),
-        Err(e) => {
-            tracing::warn!(entry = name, path = p, error = %e, "load_manifest: could not read manifest entry file, skipping it")
-        }
+        llms_path: m.llms.and_then(|l| l.path),
+        site: m.site,
+        documents: m.documents,
+        ecosystem: m.ecosystem,
+        repository: m
+            .repo
+            .map(serde_json::Value::String)
+            .as_ref()
+            .and_then(dependencies::github_repository)
+            .map(|(owner, repo)| format!("https://github.com/{owner}/{repo}")),
     }
 }
 
