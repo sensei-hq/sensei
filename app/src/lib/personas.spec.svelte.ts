@@ -126,11 +126,62 @@ describe('PersonaList.signIn', () => {
     const { list } = harness(LIST);
     await list.load();
     await list.signIn(list.personas[0]);
-    expect(list.pending).toEqual({
+    expect(list.pending).toMatchObject({
       label: 'sensei-hq-org',
       expectedLogin: 'sensei-hq-org',
       url: 'https://github.test/authorize'
     });
+  });
+
+  it('a finished sign-in clears the notice, once the identity holds a NEW credential', async () => {
+    // The browser said "Signed in as …" while the app went on saying "Your
+    // browser is open" and "credential expired" (2026-10-27): nothing re-read
+    // the list or cleared the notice. A re-read that finds the same credential
+    // (the sign-in still open) keeps it; a new one — matched by the Keychain
+    // slot, since the label becomes the verified login — clears it.
+    let payload: unknown = LIST;
+    const list = new PersonaList({
+      fetchPersonas: vi.fn(async () => payload as never),
+      startSignIn: vi.fn(async () => 'https://github.test/authorize'),
+      approveKeychain: vi.fn(async () => null),
+      openAuth: vi.fn(async () => {})
+    });
+    await list.load();
+    await list.signIn(list.personas[0]);
+    await list.load();
+    expect(list.pending).not.toBeNull();
+
+    const fresh = { ...LIST.personas[0], label: 'renamed', forgeToken: { state: 'active', expiresAt: 1_900_000_000 } };
+    payload = { personas: [fresh, LIST.personas[1]] };
+    await list.load();
+    expect(list.pending).toBeNull();
+  });
+
+  it('follows a sign-in by re-reading the list until it finishes', async () => {
+    vi.useFakeTimers();
+    try {
+      let payload: unknown = LIST;
+      const fetchPersonas = vi.fn(async () => payload as never);
+      const list = new PersonaList({
+        fetchPersonas,
+        startSignIn: vi.fn(async () => 'https://github.test/authorize'),
+        approveKeychain: vi.fn(async () => null),
+        openAuth: vi.fn(async () => {})
+      });
+      await list.load();
+      await list.signIn(list.personas[0]);
+      const before = fetchPersonas.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(fetchPersonas.mock.calls.length).toBeGreaterThan(before);
+      payload = { personas: [{ ...LIST.personas[0], forgeToken: { state: 'active', expiresAt: 1_900_000_000 } }] };
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(list.pending).toBeNull();
+      const settled = fetchPersonas.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(fetchPersonas.mock.calls.length).toBe(settled);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a first connect expects no particular account', async () => {
