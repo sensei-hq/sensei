@@ -42,3 +42,34 @@ test('the code map drills from modules to files to symbols', async ({ tauriPage 
   console.log(`\n[inspect] codemap ${ws.name}: ${l0.blocks.length} blocks, ${l0.bands.length} bands; opened ${biggest.id} → ${file.slice(5)}; crumbs ${crumbs}; back ${back}; errors ${errors}`);
   expect([back, errors]).toEqual([true, 0]);
 });
+
+// Every lens draws on the same canvas without an error, against the daemon's data.
+test('each lens draws against the real daemon', async ({ tauriPage }) => {
+  const workspaces = await json('/api/workspaces');
+  const rows = Array.isArray(workspaces) ? workspaces : workspaces.workspaces;
+  const ws = rows.find((w: { name: string }) => w.name === 'sensei') ?? rows[0];
+  const cochange = await json(`/api/workspaces/${ws.id}/diagrams/codemap/cochange`);
+
+  await navigateTo(tauriPage, `/workspace/${ws.id}/diagrams/codemap`);
+  await expect
+    .poll(() => tauriPage.evaluate(`document.querySelectorAll('[data-testid^="block-"]').length`), { timeout: 60_000 })
+    .toBeGreaterThan(0);
+  const seen: Record<string, number> = {};
+  for (const [lens, sel] of [
+    ['wheel', '[data-testid^="wheel-node-"]'],
+    ['matrix', '[data-testid="codemap-matrix"] rect'],
+    ['zones', '[data-testid^="zone-"]'],
+    ['coupling', '[data-testid^="band-"]'],
+  ] as const) {
+    await tauriPage.evaluate(`document.querySelector('[data-testid="codemap-lens-${lens}"]')?.click()`);
+    await expect
+      .poll(() => tauriPage.evaluate(`document.querySelectorAll('${sel}').length`), { timeout: 30_000 })
+      .toBeGreaterThan(0);
+    seen[lens] = (await tauriPage.evaluate(`document.querySelectorAll('${sel}').length`)) as number;
+  }
+  const summary = (await tauriPage.evaluate(`document.querySelector('[data-testid="coupling-summary"]')?.textContent ?? ''`)) as string;
+  const errors = (await tauriPage.evaluate(`document.querySelectorAll('[data-testid="codemap-error"]').length`)) as number;
+  console.log(`\n[inspect] codemap lenses ${JSON.stringify(seen)}; coupling: ${summary.trim()}; errors ${errors}`);
+  expect(summary).toContain(`from ${cochange.commits} commits`);
+  expect(errors).toBe(0);
+});
