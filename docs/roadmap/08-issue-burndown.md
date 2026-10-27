@@ -404,8 +404,15 @@ reason); the ResizeObserver console error on workspace metrics; an ambiguous lib
    (serde_json: 0 pages) — say what is held, not what might be.
 5. Settings · Instruments: the switch does not look like rokkit's Switch.
 6. Settings sidebar: not styled like the main sidebar — is it rokkit List? Make it one component.
-7. Settings layout: opening Settings shows only the settings sidebar, with a close button back — or Settings
-   as its own child window, as the workspace window is (the user's choice when it is built).
+7. Settings layout: its own window, Preferences… (⌘,) — done (2677767a); the settings sidebar is the main
+   sidebar's rokkit List at its density. rokkit 1.9.1 (switch off state, sizes) — done (05cfb84c).
+8. Instruments · Replay: the whole screen scrolls, so the call list carries the call's inputs and response
+   out of view — the list and the detail each scroll on their own; and an easier way to read the history
+   of calls.
+9. Search: a Svelte component is not a symbol — `CodeMap` finds the functions inside CodeMap.svelte, not the
+   component; index each .svelte file as a component under its name. (Case and "Sensei"/"sensei" are fine;
+   rokkit is not under a watched root, so nothing of it is indexed.)
+10. Instruments · "Runs in" offered all 133 workspaces — done: only those under a watched root (3b8017ed).
 
 ## Expected closures
 
