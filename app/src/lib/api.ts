@@ -285,6 +285,10 @@ export function senseiApi(port: number) {
     // One read of the list, typed as the wire carries it: the settings and
     // setup view (`DaemonWorkspace`) and the workspaces-index view (`WorkspaceListItem`).
     tryListWorkspaces: () => tryGet<Array<DaemonWorkspace & WorkspaceListItem>>('/api/workspaces'),
+    /** The workspaces under a watched root — the ones whose code is current, so
+     *  the ones a tool can run in. Repo roots only. */
+    tryListWatchedWorkspaces: () =>
+      tryGet<Array<DaemonWorkspace & WorkspaceListItem>>('/api/workspaces?watched=true&folders=roots'),
     /** Update a single folder. Currently only `role` is honored daemon-side. */
     tryUpdateFolder: (id: string, patch: { role?: string | null }) =>
       tryPut(`/api/folders/${enc(id)}`, patch),

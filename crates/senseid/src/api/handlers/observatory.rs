@@ -27,6 +27,10 @@ pub(crate) struct ListSolutionsQuery {
     /// name or current-folder lookup needs (the sensei MCP sends it).
     #[serde(default)]
     folders: Option<String>,
+    /// `true`: only the workspaces with a folder under a watched root — the
+    /// ones a tool can run in.
+    #[serde(default)]
+    watched: Option<bool>,
 }
 
 pub(crate) async fn list_solutions(
@@ -34,11 +38,24 @@ pub(crate) async fn list_solutions(
     Query(q): Query<ListSolutionsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let under = q.under.as_deref().filter(|s| !s.is_empty());
-    let workspaces = state
+    let mut workspaces = state
         .pg
         .list_workspaces_under(under)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if q.watched == Some(true) {
+        let watched = state
+            .pg
+            .watched_workspace_ids()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        workspaces.retain(|w| {
+            w["id"]
+                .as_str()
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                .is_some_and(|id| watched.contains(&id))
+        });
+    }
 
     // Enrich each workspace with its folder membership so the Workspaces setup
     // page (and any future workspace detail view) can render folder names,

@@ -11,7 +11,7 @@ function api(over: Partial<InstrumentsApi> = {}): InstrumentsApi {
     ),
     tryGetSessions: vi.fn().mockResolvedValue(ok({ sessions: [{ id: 's1', task: 't', startedAt: '2026-10-20T00:00:00Z', ftr: 1 }] })),
     tryGetObservatoryFtr: vi.fn().mockResolvedValue(ok({ rate: 0.5 })),
-    tryListWorkspaces: vi.fn().mockResolvedValue(ok([{ id: 'ws-2', name: 'zeta' }, { id: 'ws-1', name: 'alpha' }])),
+    tryListWatchedWorkspaces: vi.fn().mockResolvedValue(ok([{ id: 'ws-2', name: 'zeta' }, { id: 'ws-1', name: 'alpha' }])),
     ...over,
   } as InstrumentsApi;
 }
@@ -48,7 +48,7 @@ describe('InstrumentsState — the playground', () => {
 
   it('says why the workspaces could not be listed', async () => {
     const s = new InstrumentsState('playground');
-    await s.loadWorkspaces(api({ tryListWorkspaces: vi.fn().mockResolvedValue(fail(500, 'boom')) }), 'ws-1');
+    await s.loadWorkspaces(api({ tryListWatchedWorkspaces: vi.fn().mockResolvedValue(fail(500, 'boom')) }), 'ws-1');
     expect(s.workspaces).toEqual([]);
     expect(s.workspacesError).toMatch(/boom/);
   });

@@ -20,7 +20,7 @@ export interface InstrumentsApi {
   ) => Promise<ApiResult<McpToolCallResult>>;
   tryGetSessions: () => Promise<ApiResult<Pick<SessionData, 'sessions'> & Partial<SessionData>>>;
   tryGetObservatoryFtr: () => Promise<ApiResult<ObservatoryFtr>>;
-  tryListWorkspaces: () => Promise<ApiResult<Array<{ id: string; name: string }>>>;
+  tryListWatchedWorkspaces: () => Promise<ApiResult<Array<{ id: string; name: string }>>>;
 }
 
 type ReplaySummary = { used: number; partial: number; ignored: number; total: number };
@@ -96,10 +96,10 @@ export class InstrumentsState {
     this.durationMs = null;
   }
 
-  /** The workspaces a call can run in, by name; the active one is chosen when
-   *  it is among them. */
+  /** The workspaces a call can run in — those under a watched root, by name;
+   *  the active one is chosen when it is among them. */
   async loadWorkspaces(api: InstrumentsApi, active: string | null): Promise<void> {
-    const read = await api.tryListWorkspaces();
+    const read = await api.tryListWatchedWorkspaces();
     if (!read.ok) {
       this.workspaces = [];
       this.workspacesError = `Could not list the workspaces: ${failureReason(read.error)}`;

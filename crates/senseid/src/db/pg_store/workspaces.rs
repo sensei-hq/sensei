@@ -347,6 +347,24 @@ impl PgStore {
         self.list_workspaces_under(None).await
     }
 
+    /// The workspaces with a folder under a root that is being watched — the
+    /// ones whose code is current, and so the ones a tool can run in.
+    pub async fn watched_workspace_ids(
+        &self,
+    ) -> Result<std::collections::HashSet<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT fw.workspace_id
+               FROM sensei.folder_workspaces fw
+               JOIN sensei.folders f ON f.id = fw.folder_id
+               JOIN sensei.folders_to_watch w ON w.id = f.root_id
+              WHERE w.status::text = 'watching'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("watched_workspace_ids: {e}"))?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     /// Like [`list_workspaces`], optionally scoped to a folder. When `under` is
     /// `Some(path)`, only workspaces that own at least one folder whose `abs_path`
     /// is `path` itself OR lives beneath `path` are returned — path-boundary-safe,

@@ -877,6 +877,31 @@ mod tests {
         crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &ws, Some(&fid), &[]).await;
     }
 
+    /// `?watched=true` lists only the workspaces with a folder under a root
+    /// that is being watched — what a tool can run in (user, 2026-10-27: the
+    /// Playground offered 133, of which 4 are watched).
+    #[tokio::test]
+    async fn the_watched_workspaces_are_those_under_a_watched_root() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (watched, fid) =
+            crate::tasks::test_support::seed_metrics_workspace_folder(&state.pg, &uniq).await;
+        let orphan =
+            state.pg.create_workspace(&format!("_test:orphan:{uniq}"), None, None).await.unwrap();
+        let (st, body) = req(app.clone(), "GET", "/api/workspaces?watched=true", None).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let ids: Vec<&str> =
+            body.as_array().unwrap().iter().filter_map(|w| w["id"].as_str()).collect();
+        assert!(ids.contains(&watched.to_string().as_str()), "the watched workspace is listed");
+        assert!(
+            !ids.contains(&orphan.to_string().as_str()),
+            "a workspace with no watched root is not"
+        );
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &watched, Some(&fid), &[])
+            .await;
+        state.pg.delete_workspace(&orphan).await.unwrap();
+    }
+
     /// Make default: the identity becomes the default the list reports; an
     /// identity this machine does not have is a 404 (user, 2026-10-27).
     #[tokio::test]
