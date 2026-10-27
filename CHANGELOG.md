@@ -53,6 +53,8 @@ are marked **BREAKING**.
 - An expired credential asks for a sign-in, not a Keychain approval first; a
   finished sign-in clears "your browser is open".
 - No request for a workspace icon the daemon cannot serve.
+- Only the main window renews credentials and answers the menu; a setting saved
+  in one window reaches the others.
 
 ### Changed
 
@@ -65,7 +67,8 @@ are marked **BREAKING**.
   none, among them `sensei.metrics` and `sensei.reason_codes`, which production
   exposed through its API); every function pins its `search_path`; a test holds
   that each SECURITY DEFINER function a signed-in person can call answers only
-  for the caller.
+  for the caller. A stale copy of `dojo.upsert_repository_metrics`, renamed long
+  ago, is dropped.
 
 ## [0.21.0] — 2026-10-26
 
