@@ -352,7 +352,8 @@ describe('PersonaList.tone', () => {
 // cannot read after a rebuild waits for the user's click. That click is an
 // approval, not a sign-in: no browser, no OAuth round trip.
 describe('PersonaList approve', () => {
-  const withheld = { ...LIST.personas[0], action: 'approve' };
+  // A live credential the Keychain withholds: approving is all it needs.
+  const withheld = { ...LIST.personas[0], action: 'approve', forgeToken: { state: 'active', expiresAt: 4_000_000_000 } };
 
   it('opens the overlay unasked: sync is down until it is done', async () => {
     const { list } = harness({ personas: [withheld] });
@@ -384,6 +385,37 @@ describe('PersonaList approve', () => {
     await list.load();
     await list.act(list.personas[0]);
     expect(list.error).toBe('keychain access needs approval');
+  });
+
+  // 2026-10-27: approving a dead credential only revealed that it was dead —
+  // a second click for a fact the daemon already knew. The sign-in has to
+  // replace the withheld item, so the approval stays; the second click goes.
+  const expired = { ...withheld, forgeToken: { state: 'dead', expiresAt: 1_700_000_000 } };
+
+  it('a withheld credential that has expired says both, up front', async () => {
+    const { list } = harness({ personas: [expired] });
+    await list.load();
+    const p = list.personas[0];
+    expect(list.describe(p, 1_788_000_000)).toBe('credential expired — approve keychain access, then sign in');
+    expect(list.actionLabel(p)).toBe('Approve and sign in');
+    expect(list.tone(p, 1_788_000_000)).toBe('dead');
+  });
+
+  it('approves, then goes straight into the sign-in', async () => {
+    const { list, startSignIn, approveKeychain, opened } = harness({ personas: [expired] });
+    await list.load();
+    await list.act(list.personas[0]);
+    expect(approveKeychain).toHaveBeenCalledWith('default');
+    expect(startSignIn).toHaveBeenCalledWith('default', 'sensei-hq-org');
+    expect(opened).toEqual(['https://github.test/authorize']);
+  });
+
+  it('a declined approval does not start the sign-in', async () => {
+    const { list, startSignIn } = harness({ personas: [expired] }, 'https://github.test/authorize', 'declined');
+    await list.load();
+    await list.act(list.personas[0]);
+    expect(startSignIn).not.toHaveBeenCalled();
+    expect(list.error).toBe('declined');
   });
 
   it('any other action is still a sign-in', async () => {

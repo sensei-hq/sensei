@@ -57,6 +57,13 @@ export interface PersonaListDeps {
   approveKeychain: (persona: string) => Promise<string | null>;
 }
 
+/** Whether a persona's forge credential is past its life — known to the daemon
+ *  without the Keychain, so it can be said before an approval. */
+function expired(p: PersonaWire, now: number): boolean {
+  const exp = p.forgeToken.expiresAt;
+  return p.forgeToken.state === 'dead' || (exp !== null && exp <= now);
+}
+
 /** How often, and how many times, the list is re-read while a sign-in is open. */
 const FOLLOW_MS = 3_000;
 const FOLLOW_TICKS = 200;
@@ -181,7 +188,7 @@ export class PersonaList {
       case 'renew':
         return 'Renew';
       case 'approve':
-        return 'Approve keychain access';
+        return expired(p, Date.now() / 1000) ? 'Approve and sign in' : 'Approve keychain access';
       default:
         return 'Sign in';
     }
@@ -190,7 +197,8 @@ export class PersonaList {
   /** One line describing where this persona stands. */
   describe(p: PersonaWire, now: number): string {
     if (!p.connected) return 'never signed in on this machine';
-    if (p.action === 'approve') return 'keychain access needs approval';
+    if (p.action === 'approve')
+      return expired(p, now) ? 'credential expired — approve keychain access, then sign in' : 'keychain access needs approval';
     const exp = p.forgeToken.expiresAt;
     if (p.forgeToken.state === 'dead') return 'credential expired';
     if (exp === null) return 'signed in — expiry not yet known';
@@ -223,7 +231,7 @@ export class PersonaList {
    */
   tone(p: PersonaWire, now: number): 'idle' | 'ok' | 'warn' | 'dead' {
     if (!p.connected) return 'idle';
-    if (p.action === 'approve') return 'warn';
+    if (p.action === 'approve') return expired(p, now) ? 'dead' : 'warn';
     if (p.forgeToken.state === 'dead') return 'dead';
     const exp = p.forgeToken.expiresAt;
     if (exp === null) return 'idle';
@@ -249,6 +257,9 @@ export class PersonaList {
       next.delete(p.label);
       this.#busy = next;
     }
+    // An expired credential is replaced by a sign-in, which can write the item
+    // only once it is approved — so the approval leads straight into it.
+    if (!this.error && expired(p, Date.now() / 1000)) await this.signIn({ ...p, action: 'signIn' });
   }
 
   /**
