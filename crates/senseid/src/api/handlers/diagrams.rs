@@ -736,6 +736,62 @@ pub(crate) async fn codemap_file(
     .await
 }
 
+/// A pair changed together at least this many times to count (M17).
+const COCHANGE_MIN: i64 = 5;
+/// A commit touching more modules than this is a sweep, not a coupling.
+const COCHANGE_MAX_MODULES: i64 = 20;
+/// The most hidden couplings the lens draws.
+const COCHANGE_LIMIT: usize = 40;
+
+/// GET /api/workspaces/{id}/diagrams/codemap/cochange
+///
+/// The Hidden coupling lens (M17): module pairs that change in the same commits
+/// with no static dependency either way, strongest first — `strength` is how
+/// often the rarer of the two changes with the other. Answers how many commits
+/// were read, so an empty list over no history reads as no history.
+pub(crate) async fn codemap_cochange(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::codemap::{CoChange, ModuleEdge, hidden_coupling};
+    let kinds: Vec<String> = CODEMAP_KINDS.iter().map(|k| k.to_string()).collect();
+    let workspace_id = resolve_workspace_id(&state, &id).await?;
+
+    cached(&state, "codemap-cochange", &workspace_id, String::new(), async {
+        let ((pairs, commits), edges) = tokio::try_join!(
+            state.pg.codemap_cochange(&workspace_id, COCHANGE_MAX_MODULES, COCHANGE_MIN),
+            state.pg.structure_edges(&workspace_id, "module", &kinds),
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let pairs: Vec<CoChange> = pairs
+            .into_iter()
+            .map(|(a, b, together, a_changes, b_changes)| CoChange {
+                a,
+                b,
+                together,
+                a_changes,
+                b_changes,
+            })
+            .collect();
+        let edges: Vec<ModuleEdge> = edges
+            .into_iter()
+            .map(|e| ModuleEdge {
+                source: e.source,
+                target: e.target,
+                kind: e.kind,
+                count: e.occurrences,
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "hidden": hidden_coupling(&pairs, &edges, COCHANGE_LIMIT),
+            "pairs": pairs.len(),
+            "commits": commits,
+            "minTogether": COCHANGE_MIN,
+        }))
+    })
+    .await
+}
+
 pub(crate) async fn zones(
     State(state): State<AppState>,
     Path(id): Path<String>,

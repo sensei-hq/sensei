@@ -33,9 +33,12 @@ as $$
            -- A CONTAINER FOLDER IS NOT A MODULE (M17): SvelteKit's `lib/` and
            -- `routes/`, a `src/` or `app/` root, dbd's `ddl/`. Read as the
            -- module they made `sensei-dojo-web/lib` one module of 405 files.
-           -- The module under one is its first two segments.
+           -- The module under one is its first two segments — when there is a
+           -- third: a TypeScript module path ends in the file's own stem, so
+           -- `lib/personas.svelte` is a file directly in `lib`, and its module
+           -- is `lib` (the arm below), not a module of one file.
            when split_part(mod, '/', 1) in ('lib', 'routes', 'src', 'app', 'ddl')
-                and split_part(mod, '/', 2) <> ''
+                and split_part(mod, '/', 3) <> ''
              then pkg || '/' || split_part(mod, '/', 1) || '/' || split_part(mod, '/', 2)
            else pkg || '/' || split_part(split_part(mod, '/', 1), '::', 1)
          end

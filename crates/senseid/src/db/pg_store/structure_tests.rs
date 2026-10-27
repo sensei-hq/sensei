@@ -54,9 +54,9 @@ async fn a_package_root_symbol_belongs_to_its_package() {
         Some("senseid/tasks".into())
     );
     assert_eq!(answer(&pg, Some("app"), Some("store/triage")).await, Some("app/store".into()));
-    // Under a container folder the module is two segments deep — see
+    // A file directly under a container folder is in the container — see
     // `a_container_folder_is_not_a_module`.
-    assert_eq!(answer(&pg, Some("app"), Some("lib/triage")).await, Some("app/lib/triage".into()));
+    assert_eq!(answer(&pg, Some("app"), Some("lib/triage")).await, Some("app/lib".into()));
     // ...and the absence stays an absence.
     assert_eq!(answer(&pg, None, Some("tasks")).await, None, "no package is no module identity");
     assert_eq!(
@@ -97,6 +97,10 @@ async fn a_container_folder_is_not_a_module() {
     );
     assert_eq!(answer("sensei", "ddl/table/sensei/nodes").await, "sensei/ddl/table");
     assert_eq!(answer("app", "lib").await, "app/lib", "a lone container is itself");
+    // A FILE directly in a container is the container's, not a module of one
+    // file: a TypeScript module path ends in the file's own stem.
+    assert_eq!(answer("web", "lib/personas.svelte").await, "web/lib");
+    assert_eq!(answer("app", "routes/+layout").await, "app/routes");
     // Not a container: the first segment, as before.
     assert_eq!(answer("senseid", "tasks::handlers").await, "senseid/tasks");
     assert_eq!(answer("app", "components/Button").await, "app/components");

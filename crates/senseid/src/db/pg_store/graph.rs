@@ -3875,6 +3875,69 @@ impl PgStore {
             .map_err(|e| format!("codemap_module_files: {e}"))
     }
 
+    /// Module pairs that changed in the same commits (Code map, Hidden coupling):
+    /// `(a, b, together, a's changes, b's changes)` for pairs together at least
+    /// `min_together` times, and how many commits touched the workspace's code.
+    ///
+    /// A commit's paths are relative to its REPOSITORY; a file's to its folder,
+    /// which for a monorepo member sits below the repository root — so the
+    /// folder's own offset from the root is put back before matching. A commit
+    /// that touched more than `max_modules` modules (a rename sweep, a format
+    /// pass) says nothing about which modules belong together and is left out.
+    pub async fn codemap_cochange(
+        &self,
+        workspace_id: &uuid::Uuid,
+        max_modules: i64,
+        min_together: i64,
+    ) -> Result<(Vec<(String, String, i64, i64, i64)>, i64), String> {
+        let module = structure_group_sql("module", "sg.");
+        let touched = format!(
+            "WITH ws_files AS (
+               SELECT DISTINCT {module} AS m, f.repository_id,
+                      CASE WHEN f.abs_path = root.abs_path THEN fi.file_path
+                           ELSE substr(f.abs_path, length(root.abs_path) + 2) || '/' || fi.file_path END AS path
+                 FROM sensei.structure_graph sg
+                 JOIN sensei.files fi ON fi.id = sg.file_id
+                 JOIN sensei.folders f ON f.id = fi.folder_id
+                 JOIN sensei.folders root ON root.repository_id = f.repository_id AND root.kind = 'git'
+                WHERE sg.workspace_id = $1 AND f.repository_id IS NOT NULL
+             ), touched AS (
+               SELECT DISTINCT cf.repository_id, cf.sha, w.m
+                 FROM sensei.commit_files cf
+                 JOIN ws_files w ON w.repository_id = cf.repository_id AND w.path = cf.path
+             )"
+        );
+        let pairs_sql = format!(
+            "{touched}, sized AS (
+               SELECT t.*, count(*) OVER (PARTITION BY t.repository_id, t.sha) AS n FROM touched t
+             ), pairs AS (
+               SELECT a.m AS a, b.m AS b, count(*)::bigint AS together
+                 FROM sized a
+                 JOIN sized b ON a.repository_id = b.repository_id AND a.sha = b.sha AND a.m < b.m
+                WHERE a.n <= $2
+                GROUP BY 1, 2
+             ), changes AS (SELECT m, count(*)::bigint AS n FROM touched GROUP BY m)
+             SELECT p.a, p.b, p.together, ca.n, cb.n
+               FROM pairs p JOIN changes ca ON ca.m = p.a JOIN changes cb ON cb.m = p.b
+              WHERE p.together >= $3"
+        );
+        let pairs: Vec<(String, String, i64, i64, i64)> = sqlx_core::query_as::query_as(&pairs_sql)
+            .bind(workspace_id)
+            .bind(max_modules)
+            .bind(min_together)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_cochange: {e}"))?;
+        let count_sql =
+            format!("{touched} SELECT count(DISTINCT (repository_id, sha))::bigint FROM touched");
+        let (commits,): (i64,) = sqlx_core::query_as::query_as(&count_sql)
+            .bind(workspace_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| format!("codemap_cochange: {e}"))?;
+        Ok((pairs, commits))
+    }
+
     /// A file's path, when the file is this workspace's (Code map L2).
     pub async fn codemap_file_path(
         &self,

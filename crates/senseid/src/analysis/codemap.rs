@@ -316,6 +316,53 @@ pub fn level1(files: &[ModuleFile]) -> Vec<Column> {
         .collect()
 }
 
+/// Two modules changed in the same commits, with how often each changed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoChange {
+    pub a: String,
+    pub b: String,
+    pub together: i64,
+    pub a_changes: i64,
+    pub b_changes: i64,
+}
+
+/// A pair that changes together and has no static dependency either way (M17
+/// Hidden coupling), with `strength` = together ÷ the rarer one's changes: 1.0
+/// means the rarer never changes without the other.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Coupling {
+    pub a: String,
+    pub b: String,
+    pub together: i64,
+    pub strength: f64,
+}
+
+/// The hidden couplings among `pairs`: those with no edge between them in
+/// either direction in `edges`, strongest first, at most `limit`.
+pub fn hidden_coupling(pairs: &[CoChange], edges: &[ModuleEdge], limit: usize) -> Vec<Coupling> {
+    let linked: std::collections::HashSet<(&str, &str)> = edges
+        .iter()
+        .flat_map(|e| {
+            [(e.source.as_str(), e.target.as_str()), (e.target.as_str(), e.source.as_str())]
+        })
+        .collect();
+    let mut out: Vec<Coupling> = pairs
+        .iter()
+        .filter(|p| !linked.contains(&(p.a.as_str(), p.b.as_str())))
+        .map(|p| Coupling {
+            a: p.a.clone(),
+            b: p.b.clone(),
+            together: p.together,
+            strength: p.together as f64 / p.a_changes.min(p.b_changes).max(1) as f64,
+        })
+        .collect();
+    out.sort_by(|x, y| {
+        y.strength.total_cmp(&x.strength).then(y.together.cmp(&x.together)).then(x.a.cmp(&y.a))
+    });
+    out.truncate(limit);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,6 +514,32 @@ mod tests {
         assert_eq!(code.files[0].path, "src/f0.rs", "largest first");
         assert_eq!((code.more, code.more_symbols), (3, 88 + 87 + 86));
         assert_eq!(cols.iter().map(|c| c.files.len() + c.more).sum::<usize>(), files.len());
+    }
+
+    /// Co-change with a static edge either way is ordinary; without one it is
+    /// hidden coupling, strongest first.
+    #[test]
+    fn hidden_coupling_is_co_change_with_no_static_edge() {
+        let c = |a: &str, b: &str, together, a_changes, b_changes| CoChange {
+            a: a.into(),
+            b: b.into(),
+            together,
+            a_changes,
+            b_changes,
+        };
+        let pairs = vec![
+            c("p/a", "p/b", 9, 10, 40), // a → b statically: ordinary
+            c("p/c", "p/d", 6, 12, 6),  // no edge: the rarer (d) never changes alone
+            c("p/e", "p/f", 5, 20, 25), // no edge: 5 of e's 20
+            c("p/g", "p/h", 8, 8, 8),   // h → g statically: ordinary, the other way
+        ];
+        let edges = vec![e("p/a", "p/b", "calls", 1), e("p/h", "p/g", "imports", 1)];
+        let hidden = hidden_coupling(&pairs, &edges, 10);
+        assert_eq!(
+            hidden.iter().map(|h| (h.a.as_str(), h.b.as_str(), h.strength)).collect::<Vec<_>>(),
+            vec![("p/c", "p/d", 1.0), ("p/e", "p/f", 0.25)]
+        );
+        assert_eq!(hidden_coupling(&pairs, &edges, 1).len(), 1);
     }
 
     /// Under budget, nothing folds.

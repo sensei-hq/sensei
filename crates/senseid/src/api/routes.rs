@@ -137,6 +137,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/workspaces/{id}/diagrams/codemap", get(diagrams::codemap))
         .route("/api/workspaces/{id}/diagrams/codemap/module", get(diagrams::codemap_module))
         .route("/api/workspaces/{id}/diagrams/codemap/file", get(diagrams::codemap_file))
+        .route("/api/workspaces/{id}/diagrams/codemap/cochange", get(diagrams::codemap_cochange))
         .route("/api/workspaces/{id}/diagrams/layering", get(diagrams::layering))
         .route("/api/workspaces/{id}/diagrams/zones", get(diagrams::zones))
         .route("/api/workspaces/{id}/diagrams/neighbourhood", get(diagrams::neighbourhood))
@@ -854,7 +855,7 @@ mod tests {
 
     /// A workspace with two modules, `{pkg}/alpha` calling `{pkg}/beta`; alpha
     /// also has a test file.
-    async fn seed_two_modules(state: &AppState) -> (uuid::Uuid, String) {
+    async fn seed_two_modules(state: &AppState) -> (uuid::Uuid, String, uuid::Uuid) {
         use crate::db::pg_store::graph_seed::SeedGraph;
         let uniq = uuid::Uuid::new_v4();
         let (pid, fid) =
@@ -879,12 +880,13 @@ mod tests {
         let a = node(format!("rust·{pkg}·alpha·a"), "a", "alpha/a.rs").await;
         let b = node(format!("rust·{pkg}·beta·b"), "b", "beta/b.rs").await;
         node(format!("rust·{pkg}·alpha·t"), "t", "alpha/tests/a_test.rs").await;
+        node(format!("rust·{pkg}·gamma·g"), "g", "gamma/g.rs").await;
         state
             .pg
             .insert_edge(&fid, &a, crate::db::pg_store::EdgeTarget::Node(&b), "calls")
             .await
             .unwrap();
-        (pid, pkg)
+        (pid, pkg, fid)
     }
 
     /// The Code map's L1 (M17): one module's files in role columns, and the
@@ -892,7 +894,7 @@ mod tests {
     #[tokio::test]
     async fn the_code_map_opens_a_module_into_its_files_by_role() {
         let (app, state) = test_app().await;
-        let (pid, pkg) = seed_two_modules(&state).await;
+        let (pid, pkg, _) = seed_two_modules(&state).await;
         let alpha = format!("{pkg}/alpha");
         let (st, body) = req(
             app.clone(),
@@ -943,7 +945,7 @@ mod tests {
     #[tokio::test]
     async fn the_code_map_opens_a_file_into_its_symbols_and_their_neighbours() {
         let (app, state) = test_app().await;
-        let (pid, pkg) = seed_two_modules(&state).await;
+        let (pid, pkg, _) = seed_two_modules(&state).await;
         let file_id = |module: String, path: &'static str| {
             let app = app.clone();
             async move {
@@ -1002,13 +1004,67 @@ mod tests {
         assert_eq!(st, StatusCode::NOT_FOUND);
     }
 
+    /// Hidden coupling (M17): modules that change in the same commits with no
+    /// static dependency either way. alpha calls beta, so their co-change is
+    /// ordinary; beta and gamma change together and share no edge.
+    #[tokio::test]
+    async fn the_code_map_finds_modules_that_change_together_with_no_edge() {
+        let (app, state) = test_app().await;
+        let (pid, pkg, fid) = seed_two_modules(&state).await;
+        let repo = state
+            .pg
+            .repository_id_for_folder(&fid)
+            .await
+            .unwrap()
+            .expect("the fixture's repository");
+        let at = chrono::DateTime::parse_from_rfc3339("2026-10-01T10:00:00+00:00").unwrap();
+        let touch = |path: &str| crate::indexer::git_history::FileTouch {
+            path: crate::indexer::git_history::GitBytes::from(path.as_bytes()),
+            lines_changed: Some(1),
+            renamed_from: None,
+        };
+        let commits: Vec<_> = (0..10)
+            .map(|i| crate::indexer::git_history::Commit {
+                sha: format!("{i:040x}"),
+                authored_at: at,
+                committed_at: at,
+                author_email: None,
+                files: if i < 5 {
+                    vec![touch("beta/b.rs"), touch("gamma/g.rs")]
+                } else {
+                    vec![touch("alpha/a.rs"), touch("beta/b.rs")]
+                },
+            })
+            .collect();
+        state.pg.insert_commits(&repo, &commits).await.unwrap();
+
+        let (st, body) =
+            req(app, "GET", &format!("/api/workspaces/{pid}/diagrams/codemap/cochange"), None)
+                .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let pairs: Vec<(String, String, i64)> = body["hidden"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| {
+                (
+                    h["a"].as_str().unwrap().to_string(),
+                    h["b"].as_str().unwrap().to_string(),
+                    h["together"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(pairs, vec![(format!("{pkg}/beta"), format!("{pkg}/gamma"), 5)], "{body}");
+        assert_eq!(body["commits"], 10, "{body}");
+    }
+
     /// The Code map's L0 (M17): modules as blocks grouped by layer or folder,
     /// one band per module pair, and a budget readout. An unknown grouping is
     /// refused rather than answered as some other one.
     #[tokio::test]
     async fn the_code_map_opens_on_modules_with_one_band_per_pair() {
         let (app, state) = test_app().await;
-        let (pid, pkg) = seed_two_modules(&state).await;
+        let (pid, pkg, _) = seed_two_modules(&state).await;
         for group_by in ["layers", "folders"] {
             let (st, body) = req(
                 app.clone(),
@@ -1032,20 +1088,20 @@ mod tests {
                 (bands[0]["source"].as_str(), bands[0]["target"].as_str()),
                 (Some(alpha.as_str()), Some(beta.as_str()))
             );
-            assert_eq!(body["budget"]["drawn"], 2);
+            assert_eq!(body["budget"]["drawn"], 3, "alpha, beta, gamma");
             assert_eq!(body["groupBy"], group_by);
         }
         let (_, by_layer) =
             req(app.clone(), "GET", &format!("/api/workspaces/{pid}/diagrams/codemap"), None).await;
-        let groups: Vec<&str> = by_layer["blocks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|b| b["group"].as_str())
-            .collect();
+        let layer_of = |id: String| {
+            by_layer["blocks"].as_array().unwrap().iter().find(|b| b["id"] == id.as_str()).unwrap()
+                ["group"]
+                .clone()
+        };
         assert_ne!(
-            groups[0], groups[1],
-            "a caller and its callee sit in different layers: {groups:?}"
+            layer_of(format!("{pkg}/alpha")),
+            layer_of(format!("{pkg}/beta")),
+            "a caller and its callee sit in different layers"
         );
         assert_eq!(by_layer["bands"][0]["direction"], "down", "{by_layer}");
 
