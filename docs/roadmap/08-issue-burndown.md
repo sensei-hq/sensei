@@ -386,6 +386,20 @@ reason); the ResizeObserver console error on workspace metrics; an ambiguous lib
 (type the error, 409); `dbd reconcile` misses function-body drift (file with dbd); the 19 write tools
 (the user's call: a scratch workspace); the dōjō screens (after a local sign-in); the dōjō sync (Keychain, #282).
 
+## UI walk — 2026-10-27 (user, in order of report)
+
+1. Settings · Dōjō sync list: group by identity → day → repository; `repo` and `repo@branch` one repository;
+   identity named (not its slot), tagged default, others "Make default". Daemon side done (ebcfe469,
+   f5eaa279); the screen is next.
+2. Settings · General: the switch's off state is near invisible (rokkit zen-sumi: paper thumb on paper-mute
+   track, no edge) — fix in rokkit, release; the three choices (digest, tone, glyphs) as rokkit `Toggle`.
+3. Settings · Roots: an extra `.` before the root path; removing a root shows no progress — stream it over
+   the SSE event stream as indexing does.
+4. Settings · Libraries: "199 · sensei will wrap" for libraries whose docs and code sensei does not hold
+   (serde_json: 0 pages) — say what is held, not what might be.
+5. Settings · Instruments: the switch does not look like rokkit's Switch.
+6. Settings sidebar: not styled like the main sidebar — is it rokkit List? Make it one component.
+
 ## Expected closures
 
 | Wave | Issues closed | Rough effort |
