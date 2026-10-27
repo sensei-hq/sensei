@@ -107,6 +107,12 @@ select pg_temp.snap('before');
 create temp table definer_leaks (fn text, what text);
 grant all on definer_leaks to authenticated;
 
+-- A metric to name in bob's calls, read here as the owner: a signed-in person
+-- has no use of the sensei schema (CI's fresh dōjō refuses it).
+select set_config('definer_test.metric_id', id::text, true),
+       set_config('definer_test.metric_key', key, true)
+  from sensei.metrics order by key limit 1;
+
 -- ── Bob, signed in, a member of nothing ───────────────────────────────────
 set local role authenticated;
 select set_config('request.jwt.claims',
@@ -123,8 +129,9 @@ declare
     carol constant text := '''a0000000-0000-4000-8000-0000000000c1''::uuid';
     mid constant text := '''e0000000-0000-4000-8000-0000000000a1''::uuid';
     rkey constant text := '''github.com/ztest-definer/r''';
+    metric_key constant text := quote_literal(current_setting('definer_test.metric_key'));
     rows constant text := format('''[{"repository_id":"90000000-0000-4000-8000-0000000000a1","metric_id":"%s","computed_on":"2026-01-02","value":9}]''::jsonb',
-                                 (select id from sensei.metrics order by key limit 1));
+                                 current_setting('definer_test.metric_id'));
     call text;
     b boolean;
     n bigint;
@@ -161,7 +168,7 @@ begin
         'dojo.my_graph_branches()',
         'dojo.my_repositories()',
         format('dojo.peer_run_status(%s)', t),
-        format('dojo.team_metric_totals(%s, array(select key from sensei.metrics), ''2000-01-01'')', t),
+        format('dojo.team_metric_totals(%s, array[%s], ''2000-01-01'')', t, metric_key),
         format('dojo.tenant_pack_rules(%s, null)', t),
         format('dojo.tenant_shared_rules(%s, 0)', t)] loop
         begin
@@ -198,7 +205,7 @@ begin
         format('dojo.rename_team(%s, ''bob was here'')', tm),
         format('dojo.revoke_workspace_viewer(%s, %s)', w, carol),
         format('dojo.set_graph_branch(%s, ''main'', true, null)', rkey),
-        format('dojo.set_metric_activation(%s, (select key from sensei.metrics order by key limit 1), false)', rkey),
+        format('dojo.set_metric_activation(%s, %s, false)', rkey, metric_key),
         format('dojo.set_pack_adoption(''ztest-no-such-pack'', ''bob'', true)'),
         format('dojo.set_repository_election(%s, false)', rkey),
         format('dojo.set_repository_role_override(%s, %s, ''admin'')', r, bob)] loop
