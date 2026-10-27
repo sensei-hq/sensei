@@ -633,13 +633,15 @@ pub(crate) async fn solution_graph(
 
     let workspace_name = workspace["name"].as_str().unwrap_or("unknown");
 
-    // Get all repos (folders) and filter those belonging to this workspace.
-    // Fail closed on a read error (500) — an empty repo list here would render
-    // as an empty solution graph, indistinguishable from a real single-node one.
-    let all_repos =
-        state.pg.list_repositories().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let workspace_repos: Vec<&serde_json::Value> =
-        all_repos.iter().filter(|r| r["workspace_id"].as_str() == Some(&id)).collect();
+    // The workspace's repositories. Fail closed on a read error (500) — an
+    // empty repo list here would render as an empty solution graph,
+    // indistinguishable from a real single-node one.
+    let repos = state
+        .pg
+        .get_workspace_repos(&workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let workspace_repos: Vec<&serde_json::Value> = repos.iter().collect();
 
     let mut all_nodes = Vec::new();
     let mut all_edges = Vec::new();
@@ -713,7 +715,7 @@ pub(crate) async fn solution_graph(
         let repo_node_id = format!("repo:{}", repo_name);
         if !all_nodes.iter().any(|n| n.get("id").and_then(|v| v.as_str()) == Some(&repo_node_id)) {
             let label = repo["label"].as_str().unwrap_or(repo_name);
-            let abs_path = repo["abs_path"].as_str().unwrap_or("");
+            let abs_path = repo["path"].as_str().unwrap_or("");
             let role = repo["role"].as_str().unwrap_or("unknown");
             all_nodes.push(serde_json::json!({
                 "id": &repo_node_id, "name": label, "kind": "repo",
