@@ -1,5 +1,5 @@
 // Lens views of L0 (M17), pure: which bands a lens draws, and the Matrix.
-import type { Band, Coupling, Level0, ZonePoint, Zones } from './types';
+import type { Band, Block, Coupling, Level0, ZonePoint, Zones } from './types';
 import { groupOrder } from './layout';
 
 /** The modules in each cycle, as a lookup: module → its cycle's index. */
@@ -82,4 +82,11 @@ export function couplingBands(l0: Level0, couplings: Coupling[]): Band[] {
     bands.set(key, band);
   }
   return [...bands.values()].sort((a, b) => b.weight - a.weight);
+}
+
+/** The Complexity lens (M17): a block's share of functions over cyclomatic 10;
+ *  null when it was not measured — never 0, which would read as simple. */
+export function complexityShare(b: Block): number | null {
+  if (!b.complexity) return null;
+  return b.complexity.functions ? b.complexity.complex / b.complexity.functions : 0;
 }

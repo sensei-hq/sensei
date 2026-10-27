@@ -10,7 +10,7 @@ const block = (id: string, extra = {}) => ({
 });
 const L0: Level0 = {
   level: 'module', groupBy: 'layers', cycles: [], coverage: { unplaced: 4 },
-  blocks: [block('p/a'), block('p/b', { group: 'L1' }), block('fold:L1', { group: 'L1', label: '+2 more', folded: ['p/c', 'p/d'] })],
+  blocks: [block('p/a', { complexity: { functions: 10, complex: 3 } }), block('p/b', { group: 'L1', complexity: null }), block('fold:L1', { group: 'L1', label: '+2 more', folded: ['p/c', 'p/d'] })],
   bands: [{ source: 'p/a', target: 'p/b', weight: 5, kinds: { calls: 5 }, direction: 'up' }],
   budget: { drawn: 3, modules: 4, bands: 1, edges: 7 },
 };
@@ -125,6 +125,16 @@ describe('CodeMap', () => {
     (q('[data-testid="wheel-node-p/a"]') as SVGElement).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     await settle();
     expect(p.module).toHaveBeenCalledWith('p/a');
+  });
+
+  it('Complexity tints each block by its share over cyclomatic 10, and names the unmeasured', async () => {
+    render(port());
+    await settle();
+    (q('[data-testid="codemap-lens-complexity"]') as HTMLButtonElement).click();
+    flushSync();
+    expect(q('[data-testid="block-note-p/a"]')?.textContent?.trim()).toBe('30% over cx 10');
+    expect(q('[data-testid="block-note-p/b"]')?.textContent?.trim()).toBe('not measured');
+    expect(q('[data-testid="complexity-summary"]')?.textContent).toContain('3 of 10 functions over cyclomatic 10 · 1 of 3 blocks measured');
   });
 
   it('says why the map could not be read', async () => {

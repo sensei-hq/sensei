@@ -5,7 +5,7 @@
   // fetches on its own.
   import { onMount } from 'svelte';
   import { ROLES, type CodeMapState, type Lens } from './state.svelte';
-  import { couplingBands, cycleBands, cycleOf } from './lenses';
+  import { complexityShare, couplingBands, cycleBands, cycleOf } from './lenses';
   import type { CodeMapPort, GroupBy } from './types';
   import ModuleMap from './ModuleMap.svelte';
   import MatrixLens from './MatrixLens.svelte';
@@ -28,7 +28,17 @@
     { id: 'matrix', label: 'Matrix' },
     { id: 'zones', label: 'Zones' },
     { id: 'coupling', label: 'Hidden coupling' },
+    { id: 'complexity', label: 'Complexity' },
   ];
+
+  // Complexity (M17): tinted by the share of functions over cyclomatic 10;
+  // a block never measured stays neutral and says so.
+  const complexityFill = (b: import('./types').Block) => {
+    const share = complexityShare(b);
+    return share === null
+      ? { color: 'var(--paper-mute)', opacity: 1, label: 'not measured' }
+      : { color: 'var(--danger)', opacity: 0.08 + 0.72 * Math.min(1, share * 4), label: `${Math.round(share * 100)}% over cx 10` };
+  };
   const GROUPINGS: { id: GroupBy; label: string }[] = [
     { id: 'layers', label: 'Layers' },
     { id: 'folders', label: 'Folders' },
@@ -115,7 +125,16 @@
                   : 'No commit history read for this workspace yet.'}
               </p>
             {/if}
-            <ModuleMap data={l0} {bands} selected={map.selected} cycle={cycles} dashed={map.lens === 'coupling'} onselect={(id) => map.select(id)} onopen={open} />
+            {#if map.lens === 'complexity'}
+              {@const measured = l0.blocks.filter((b) => b.complexity)}
+              <p class="m-0 text-xs text-ink-mute" data-testid="complexity-summary">
+                {measured.length
+                  ? `${measured.reduce((n, b) => n + b.complexity!.complex, 0)} of ${measured.reduce((n, b) => n + b.complexity!.functions, 0)} functions over cyclomatic 10 · ${measured.length} of ${l0.blocks.length} blocks measured (local qlty)`
+                  : 'Not measured yet: complexity is measured by local qlty after a scan.'}
+              </p>
+            {/if}
+            <ModuleMap data={l0} {bands} selected={map.selected} cycle={cycles} dashed={map.lens === 'coupling'}
+              fill={map.lens === 'complexity' ? complexityFill : null} onselect={(id) => map.select(id)} onopen={open} />
           </div>
         {/if}
         {#if !narrow}

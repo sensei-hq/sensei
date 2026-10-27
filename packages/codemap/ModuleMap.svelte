@@ -10,6 +10,7 @@
     selected = null,
     cycle = null,
     dashed = false,
+    fill = null,
     onselect,
     onopen,
   }: {
@@ -21,6 +22,8 @@
     cycle?: Map<string, number> | null;
     /** Hidden coupling: the bands are co-change, not dependencies. */
     dashed?: boolean;
+    /** A lens's own block fill (Complexity); null leaves the default. */
+    fill?: ((b: import('./types').Block) => { color: string; opacity: number; label: string }) | null;
     onselect: (id: string | null) => void;
     onopen: (id: string) => void;
   } = $props();
@@ -69,7 +72,8 @@
           width={p.w}
           height={p.h}
           rx="4"
-          fill={cycle?.has(p.id) ? 'var(--warning-soft)' : 'var(--paper)'}
+          fill={fill ? fill(p.block).color : cycle?.has(p.id) ? 'var(--warning-soft)' : 'var(--paper)'}
+          fill-opacity={fill ? fill(p.block).opacity : 1}
           stroke={selected === p.id ? 'var(--accent)' : 'var(--paper-edge)'}
           stroke-width={selected === p.id ? 2 : 1}
           stroke-dasharray={folded ? '4 3' : undefined}
@@ -77,8 +81,8 @@
         <text x={p.x + 8} y={p.y + 15} class="text-xs" fill="var(--ink)">
           {folded ? p.block.label : p.block.label.split('/').slice(-1)[0]}
         </text>
-        <text x={p.x + 8} y={p.y + 29} class="text-xs" fill="var(--ink-mute)">
-          {p.block.hub ? `${p.block.weight_in} in` : `${p.block.files} files`}
+        <text x={p.x + 8} y={p.y + 29} class="text-xs" fill="var(--ink-mute)" data-testid={`block-note-${p.id}`}>
+          {fill ? fill(p.block).label : p.block.hub ? `${p.block.weight_in} in` : `${p.block.files} files`}
         </text>
         <title>{p.block.id} — {p.block.symbols} symbols, {p.block.files} files</title>
       </g>

@@ -18,6 +18,8 @@ export interface Block {
   weight_out: number;
   /** For a "+N more" block, the modules folded into it. */
   folded: string[];
+  /** Functions and how many exceed cyclomatic 10 (local qlty); null: not measured. */
+  complexity?: { functions: number; complex: number } | null;
 }
 
 export interface Band {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { couplingBands, cycleBands, matrix, zonesView } from './lenses';
+import { complexityShare, couplingBands, cycleBands, matrix, zonesView } from './lenses';
 import type { Band, Block, Level0, ZonePoint } from './types';
 
 const block = (id: string, group: string, symbols = 1): Block => ({
@@ -56,5 +56,14 @@ describe('couplingBands', () => {
     ]);
     expect(bands.map((b) => [b.source, b.target, b.weight])).toEqual([['top', 'fold:L2', 10]]);
     expect(bands[0].direction).toBeNull();
+  });
+});
+
+describe('complexityShare', () => {
+  it('is the share of functions over cyclomatic 10, and null when not measured', () => {
+    expect(complexityShare({ ...block('a', 'L0'), complexity: { functions: 8, complex: 2 } })).toBe(0.25);
+    expect(complexityShare({ ...block('a', 'L0'), complexity: { functions: 0, complex: 0 } })).toBe(0);
+    expect(complexityShare({ ...block('a', 'L0'), complexity: null })).toBeNull();
+    expect(complexityShare(block('a', 'L0'))).toBeNull();
   });
 });
