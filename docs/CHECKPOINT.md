@@ -28,8 +28,15 @@
 - An empty-body 2xx is mapped for writes only.
 - A keyring failure in the pass is now recorded in `writeback_error`.
 
-**Next:** `/sensei:build` F1 (`AccountRef`, `OwnerLookup`, Jira `owner()`), red-first against gate 2.
-Re-run the claims ledger first.
+**F1 done (2026-10-27):** `4794e815b` (feature) and `079f0cc81` (docs and app types). It passed the approve-depth
+review: 5 reviewers plus 8 mutations, all caught. senseid has 3872 tests, the app 2473, all passing.
+The review found the DBML column on the wrong table, and a new parity test now guards the tracker tables.
+
+**Next:** `/sensei:build` F2 (the write seam and the comment surface). Re-run the claims ledger first.
+- After any `database/` change, run `make test-template`.
+- Build with `cargo … -j 4`.
+- F2 also adds the `connect_tracker` reset of the `writeback_*` columns (gate 22, write-back half) and the
+  gate-2 `writeback.state` half, and updates the linkage R8 route table and `types.ts`.
 
 **Blocks the F2 merge:** a Jira tenant for gate 27 (X1–X8). It needs a person token, an app token and two assignees.
 
