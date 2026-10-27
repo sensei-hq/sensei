@@ -1,6 +1,6 @@
 -- Every SECURITY DEFINER function a signed-in person can call answers ONLY for
 -- the caller (user, 2026-10-27; the Supabase advisor warns on each of them,
--- 46 in production, by design: they are the dōjō's API and the helpers its
+-- 46 in production, one of them a stale copy since dropped, by design: they are the dōjō's API and the helpers its
 -- RLS policies call, and each must gate on the caller itself).
 --
 -- Held here: bob — signed in, a member of nothing — calls each one with ALICE's
@@ -71,7 +71,7 @@ declare
       'revoke_workspace_viewer','set_graph_branch','set_metric_activation','set_pack_adoption',
       'set_repository_election','set_repository_role_override','team_metric_totals',
       'team_tenant_member','tenant_live_session_count','tenant_pack_rules','tenant_role_at_least',
-      'tenant_shared_rules','upsert_repository_metrics','workspace_in_my_dojo_or_none'];
+      'tenant_shared_rules','workspace_in_my_dojo_or_none'];
     unlisted text;
     gone text;
 begin
@@ -201,8 +201,7 @@ begin
         format('dojo.set_metric_activation(%s, (select key from sensei.metrics order by key limit 1), false)', rkey),
         format('dojo.set_pack_adoption(''ztest-no-such-pack'', ''bob'', true)'),
         format('dojo.set_repository_election(%s, false)', rkey),
-        format('dojo.set_repository_role_override(%s, %s, ''admin'')', r, bob),
-        format('dojo.upsert_repository_metrics(%s)', rows)] loop
+        format('dojo.set_repository_role_override(%s, %s, ''admin'')', r, bob)] loop
         begin
             execute 'select * from ' || call;
         exception when others then null; -- refused: its effects are rolled back
