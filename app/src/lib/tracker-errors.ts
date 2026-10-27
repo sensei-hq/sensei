@@ -60,6 +60,19 @@ export const WRITEBACK_STOPPED: Record<string, string> = {
   transport: 'Writing didn’t finish in time. Write-back resumes on the next sync.',
 };
 
+/** Why the Fields editor's save was refused (W7), shown on the row it names (W-UI). Apart
+ *  from `WORDS`: there `invalid_body` is the write-back switch's text. */
+export const FIELD_MAPPING_ERRORS: Record<string, string> = {
+  unknown_metric: 'Unknown metric.',
+  duplicate_mapping: 'Already mapped.',
+  invalid_field_ref: 'Use a custom field id like customfield_10050.',
+  field_not_found: 'No such field on this Jira site.',
+  field_not_number: 'That field isn’t a number field.',
+  field_in_use: 'That field already has values on this board. Pick an empty field.',
+  invalid_body: 'Couldn’t save the mapping.',
+  busy: 'The board is syncing or writing back. Save again in a moment.',
+};
+
 const FIELD: Record<string, TrackerAlert['field']> = {
   invalid_base_url: 'board_url',
   board_not_found: 'board_url',

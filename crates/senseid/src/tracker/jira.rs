@@ -4,10 +4,10 @@
 use crate::tracker::http::{InvalidBaseUrl, normalize_base_url};
 use crate::tracker::sprint::SprintState;
 use crate::tracker::{
-    AccountRef, ApiToken, AuthScheme, BoardScope, ConnectParams, Discovered, GetTransport,
-    KnownTask, Link, LinkSource, OwnerLookup, ParamError, PrevState, SessionText, Snapshot,
-    SprintRow, TaskRow, TrackerAdapter, TrackerError, TrackerKind, ValidateError, Validated,
-    WriteMethod, WriteTransport,
+    AccountRef, ApiToken, AuthScheme, BoardScope, ConnectParams, Discovered, FieldCheck,
+    FieldValue, GetTransport, KnownTask, Link, LinkSource, OwnerLookup, ParamError, PrevState,
+    SessionText, Snapshot, SprintRow, TaskRow, TrackerAdapter, TrackerError, TrackerKind,
+    ValidateError, Validated, WriteMethod, WriteTransport,
 };
 
 /// Jira Cloud's site domains: `atlassian.net`, and `jira.com` for older sites.
@@ -169,6 +169,73 @@ impl TrackerAdapter for JiraAdapter {
         w.send_json(WriteMethod::Put, &path, &query, &serde_json::json!({"body": adf(report)}))
             .await
             .map(|_| ())
+    }
+
+    fn field_ref_shape(&self, field_ref: &str) -> bool {
+        field_number(field_ref).is_some()
+    }
+
+    async fn check_fields(
+        &self,
+        t: &dyn GetTransport,
+        field_refs: &[String],
+    ) -> Result<Vec<FieldCheck>, TrackerError> {
+        let all = t.get_json("/rest/api/3/field", &[]).await?;
+        let all = all.as_array().ok_or(TrackerError::Decode)?;
+        Ok(field_refs
+            .iter()
+            .map(|r| {
+                let found = all.iter().find(|f| f.get("id").and_then(|i| i.as_str()) == Some(r));
+                FieldCheck {
+                    field_ref: r.clone(),
+                    exists: found.is_some(),
+                    numeric: found
+                        .and_then(|f| f.pointer("/schema/type"))
+                        .and_then(|kind| kind.as_str())
+                        == Some("number"),
+                }
+            })
+            .collect())
+    }
+
+    async fn field_in_use(
+        &self,
+        t: &dyn GetTransport,
+        board: &BoardScope,
+        field_ref: &str,
+    ) -> Result<bool, TrackerError> {
+        // Only a validated field number reaches the JQL string.
+        let n = field_number(field_ref).ok_or(TrackerError::BadRequest)?;
+        let query = [
+            ("jql", format!("cf[{n}] is not EMPTY")),
+            ("maxResults", "1".to_string()),
+            ("fields", "none".to_string()),
+        ];
+        let page = t.get_json(&format!("{}/issue", board_path(&board.board_ref)), &query).await?;
+        let issues = page.get("issues").and_then(|i| i.as_array()).ok_or(TrackerError::Decode)?;
+        Ok(!issues.is_empty())
+    }
+
+    async fn write_fields(
+        &self,
+        w: &dyn WriteTransport,
+        task_external_id: &str,
+        fields: &[(String, FieldValue)],
+    ) -> Result<(), TrackerError> {
+        // Refused before any request, as `Decode`: a Jira 400 is the only `field_invalid` (W6).
+        if !is_jira_id(task_external_id) || !fields.iter().all(|(r, _)| field_number(r).is_some()) {
+            return Err(TrackerError::Decode);
+        }
+        let body: serde_json::Map<String, serde_json::Value> =
+            fields.iter().map(|(r, v)| (r.clone(), v.to_json())).collect();
+        w.send_json(
+            WriteMethod::Put,
+            &format!("/rest/api/3/issue/{task_external_id}"),
+            &[],
+            &serde_json::json!({"fields": body}),
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn issue_exists(
@@ -606,6 +673,15 @@ pub fn is_jira_id(id: &str) -> bool {
     (1..=18).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// The number of a Jira custom field id `customfield_<n>` (`n` from 1, up to ten
+/// digits, no leading zero), or `None` for anything else.
+fn field_number(field_ref: &str) -> Option<&str> {
+    let n = field_ref.strip_prefix("customfield_")?;
+    let ok =
+        (1..=10).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit()) && !n.starts_with('0');
+    ok.then_some(n)
+}
+
 /// `/rest/api/3/issue/{id}`, only for an id that passes [`is_jira_id`].
 fn issue_path(task_external_id: &str) -> Result<String, TrackerError> {
     if !is_jira_id(task_external_id) {
@@ -917,6 +993,104 @@ mod adapter_tests {
                     {"type": "text", "text": "T \"quoted\" <b>", "marks": [{"type": "strong"}]}]},
                 {"type": "bulletList", "content": [item("a"), item("b")]}]})
         );
+    }
+
+    #[test]
+    fn only_custom_field_ids_can_be_mapped() {
+        for ok in ["customfield_10050", "customfield_1", "customfield_1234567890"] {
+            assert!(JiraAdapter.field_ref_shape(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "customfield_",
+            "customfield_0",
+            "customfield_012",
+            "customfield_12345678901",
+            "summary",
+            "Customfield_10050",
+            "customfield_10050 ",
+            "customfield_1/x",
+            "cf[10050]",
+        ] {
+            assert!(!JiraAdapter.field_ref_shape(bad), "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn fields_are_checked_against_the_sites_field_list() {
+        let board = FakeBoard::standard().with(
+            "/rest/api/3/field",
+            0,
+            json!([
+            {"id": "customfield_10050", "name": "AI hours", "schema": {"type": "number"}},
+            {"id": "customfield_10051", "name": "Notes", "schema": {"type": "string"}},
+            {"id": "summary", "name": "Summary", "schema": {"type": "string"}}]),
+        );
+        let refs =
+            ["customfield_10050", "customfield_10051", "customfield_10099"].map(String::from);
+        assert_eq!(
+            JiraAdapter.check_fields(&board, &refs).await,
+            Ok(vec![
+                FieldCheck { field_ref: "customfield_10050".into(), exists: true, numeric: true },
+                FieldCheck { field_ref: "customfield_10051".into(), exists: true, numeric: false },
+                FieldCheck { field_ref: "customfield_10099".into(), exists: false, numeric: false },
+            ])
+        );
+        assert_eq!(board.calls(), ["/rest/api/3/field"], "one request for every ref");
+    }
+
+    #[tokio::test]
+    async fn a_field_is_in_use_when_any_ticket_on_the_board_has_a_value() {
+        let jql = "cf[10050] is not EMPTY";
+        let used = FakeBoard::standard()
+            .with_jql(jql, json!([{"id": "10001", "key": "AUTH-1", "fields": {}}]));
+        assert_eq!(JiraAdapter.field_in_use(&used, &scope(), "customfield_10050").await, Ok(true));
+        assert_eq!(used.jql_calls(), [jql]);
+        let q = used.query_of("/rest/agile/1.0/board/42/issue").unwrap();
+        assert!(
+            q.contains(&("maxResults".into(), "1".into()))
+                && q.contains(&("fields".into(), "none".into())),
+            "{q:?}"
+        );
+        let empty = FakeBoard::standard();
+        assert_eq!(
+            JiraAdapter.field_in_use(&empty, &scope(), "customfield_10050").await,
+            Ok(false)
+        );
+        assert_eq!(
+            JiraAdapter.field_in_use(&empty, &scope(), "summary").await,
+            Err(TrackerError::BadRequest),
+            "only a valid custom field id reaches a JQL string"
+        );
+    }
+
+    #[tokio::test]
+    async fn mapped_fields_are_written_in_one_request_and_null_clears() {
+        let w = PolicyTransport::new(RecordingWrites::default(), 0);
+        let fields = vec![
+            ("customfield_10050".to_string(), FieldValue::Dec("2.05".into())),
+            ("customfield_10051".to_string(), FieldValue::Null),
+            ("customfield_10052".to_string(), FieldValue::Int(3)),
+        ];
+        JiraAdapter.write_fields(&w, "10001", &fields).await.unwrap();
+        let sent = w.raw().sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            (sent[0].method, sent[0].path.as_str()),
+            (WriteMethod::Put, "/rest/api/3/issue/10001")
+        );
+        assert!(sent[0].query.is_empty(), "no notifyUsers on an issue edit (X3)");
+        assert_eq!(
+            sent[0].body,
+            json!({"fields": {"customfield_10050": 2.05, "customfield_10051": null, "customfield_10052": 3}})
+        );
+        let bad_ref = vec![("summary".to_string(), FieldValue::Int(1))];
+        assert_eq!(
+            JiraAdapter.write_fields(&w, "10001", &bad_ref).await,
+            Err(TrackerError::Decode)
+        );
+        assert_eq!(JiraAdapter.write_fields(&w, "1/x", &fields).await, Err(TrackerError::Decode));
+        assert_eq!(w.raw().sent().len(), 1, "a refused id or field never reaches a request");
     }
 
     #[test]

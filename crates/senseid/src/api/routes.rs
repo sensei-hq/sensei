@@ -56,6 +56,10 @@ fn tracker_routes() -> Router<AppState> {
             delete(trackers::disconnect_tracker).patch(trackers::patch_tracker),
         )
         .route("/api/workspaces/{id}/trackers/{tracker}/sync", post(trackers::sync_tracker))
+        .route(
+            "/api/workspaces/{id}/trackers/{tracker}/fields",
+            get(trackers::get_tracker_fields).put(trackers::put_tracker_fields),
+        )
         .route("/api/workspaces/{id}/trackers/{tracker}/sprints", get(trackers::list_sprints))
         .route("/api/workspaces/{id}/trackers/{tracker}/tasks", get(trackers::list_tracker_tasks))
         .route(

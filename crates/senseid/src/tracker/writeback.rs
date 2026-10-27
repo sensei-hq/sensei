@@ -68,13 +68,19 @@ pub enum WriteOp {
     CreateComment,
     UpdateComment,
     IssueCheck,
+    WriteFields,
 }
 
 impl WriteOp {
     /// Every operation, for the exhaustive status table test.
     #[cfg(test)]
-    pub const ALL: [WriteOp; 4] =
-        [WriteOp::FindComment, WriteOp::CreateComment, WriteOp::UpdateComment, WriteOp::IssueCheck];
+    pub const ALL: [WriteOp; 5] = [
+        WriteOp::FindComment,
+        WriteOp::CreateComment,
+        WriteOp::UpdateComment,
+        WriteOp::IssueCheck,
+        WriteOp::WriteFields,
+    ];
 }
 
 /// The W9 table: what a failed request leaves on the ticket. Total over every
@@ -86,6 +92,8 @@ pub fn status_for(op: WriteOp, e: TrackerError) -> WritebackStatus {
         // The issue check only tells which object a 404 meant (W5).
         (WriteOp::IssueCheck, E::NotFound) => WritebackStatus::NotFound,
         (WriteOp::IssueCheck, _) => WritebackStatus::Error,
+        // A mapped-field write: a 400 is the field the tracker refused (W6, W9).
+        (WriteOp::WriteFields, E::BadRequest) => WritebackStatus::FieldInvalid,
         // The comment-list read (W9).
         (WriteOp::FindComment, E::Forbidden | E::Unauthorized) => WritebackStatus::Forbidden,
         (WriteOp::FindComment, E::NotFound) => WritebackStatus::NotFound,
@@ -118,6 +126,103 @@ pub fn is_sticky(status: WritebackStatus) -> bool {
             | WritebackStatus::CommentRemoved
             | WritebackStatus::NotFound
     )
+}
+
+/// A usage metric a field can be mapped to — the `sensei.tracker_metric` enum (W3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TrackerMetric {
+    Sessions,
+    ActiveHours,
+    ClaudeHours,
+    UserHours,
+    WallHours,
+    CycleHours,
+    TokensFresh,
+    CacheRead,
+    CacheWrite,
+    TokensOut,
+    TokensReasoning,
+    MeteredCost,
+    ApiCost,
+}
+
+impl TrackerMetric {
+    /// In the enum's declared order, the order fields are written and hashed in.
+    pub const ALL: [TrackerMetric; 13] = [
+        TrackerMetric::Sessions,
+        TrackerMetric::ActiveHours,
+        TrackerMetric::ClaudeHours,
+        TrackerMetric::UserHours,
+        TrackerMetric::WallHours,
+        TrackerMetric::CycleHours,
+        TrackerMetric::TokensFresh,
+        TrackerMetric::CacheRead,
+        TrackerMetric::CacheWrite,
+        TrackerMetric::TokensOut,
+        TrackerMetric::TokensReasoning,
+        TrackerMetric::MeteredCost,
+        TrackerMetric::ApiCost,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrackerMetric::Sessions => "sessions",
+            TrackerMetric::ActiveHours => "active_hours",
+            TrackerMetric::ClaudeHours => "claude_hours",
+            TrackerMetric::UserHours => "user_hours",
+            TrackerMetric::WallHours => "wall_hours",
+            TrackerMetric::CycleHours => "cycle_hours",
+            TrackerMetric::TokensFresh => "tokens_fresh",
+            TrackerMetric::CacheRead => "cache_read",
+            TrackerMetric::CacheWrite => "cache_write",
+            TrackerMetric::TokensOut => "tokens_out",
+            TrackerMetric::TokensReasoning => "tokens_reasoning",
+            TrackerMetric::MeteredCost => "metered_cost",
+            TrackerMetric::ApiCost => "api_cost",
+        }
+    }
+    pub fn parse(s: &str) -> Option<TrackerMetric> {
+        TrackerMetric::ALL.into_iter().find(|m| m.as_str() == s)
+    }
+}
+
+/// The span from the first session's start to the last one's end; `None` when
+/// either is unknown or it is negative, by however little (W3).
+pub fn cycle_secs(u: &Usage) -> Option<f64> {
+    let span = u.last_at? - u.first_at?;
+    (span >= chrono::TimeDelta::zero()).then(|| span.as_seconds_f64())
+}
+
+/// What a field mapped to `metric` is written for this usage (W3): the comment's
+/// numbers, as numbers.
+pub fn metric_value(metric: TrackerMetric, u: &Usage) -> crate::tracker::FieldValue {
+    use crate::tracker::FieldValue as V;
+    let h = |secs: Option<f64>| secs.and_then(hours).map_or(V::Null, V::Dec);
+    let n = |x: Option<i64>| x.map_or(V::Null, V::Int);
+    let money = |x: Option<f64>| x.map(amount).map_or(V::Null, V::Dec);
+    match metric {
+        TrackerMetric::Sessions => V::Int(u.sessions),
+        TrackerMetric::ActiveHours => h(u.active_secs),
+        TrackerMetric::ClaudeHours => h(u.claude_secs),
+        TrackerMetric::UserHours => h(u.user_secs),
+        TrackerMetric::WallHours => h(u.wall_secs),
+        TrackerMetric::CycleHours => h(cycle_secs(u)),
+        TrackerMetric::TokensFresh => n(u.tokens_fresh),
+        TrackerMetric::CacheRead => n(u.cache_read),
+        TrackerMetric::CacheWrite => n(u.cache_write),
+        TrackerMetric::TokensOut => n(u.tokens_out),
+        TrackerMetric::TokensReasoning => n(u.tokens_reasoning),
+        TrackerMetric::MeteredCost => money(u.metered_cost),
+        TrackerMetric::ApiCost => money(u.api_cost),
+    }
+}
+
+/// The fields surface's change key (W4): the pairs as written, in metric order.
+pub fn fields_hash(pairs: &[(String, crate::tracker::FieldValue)]) -> String {
+    use sha2::Digest;
+    let lines = pairs.iter().map(|(r, v)| format!("{r}={}", v.canonical()));
+    let payload: Vec<String> = std::iter::once("fields".to_string()).chain(lines).collect();
+    hex::encode(sha2::Sha256::digest(payload.join("\n")))
 }
 
 /// How every report's title starts: what marks a comment as sensei's (W5 adoption).
@@ -164,10 +269,8 @@ pub fn render(u: &Usage, updated_at: chrono::DateTime<chrono::Utc>) -> Report {
     if u.shared > 0 {
         sessions.push_str(&format!(" ({} shared with other tickets)", u.shared));
     }
-    let cycle = u
-        .first_at
-        .zip(u.last_at)
-        .and_then(|(first, last)| hours((last - first).num_milliseconds() as f64 / 1000.0))
+    let cycle = cycle_secs(u)
+        .and_then(hours)
         .map(|v| format!("{v} h"))
         .unwrap_or_else(|| MISSING.to_string());
     let mut api = marked(u.api_cost.map(|c| format!("${}", amount(c))), u.api_cost_n);
@@ -258,6 +361,19 @@ impl PassIo {
 }
 
 /// One write-back pass over a tracker, holding its guard (W2–W5, W9).
+/// Whether `task` may still hold a value sensei wrote to a field retired at
+/// `retired_at` (W6): nothing has landed on it since, and it was tried at all. A
+/// ticket last tried before then may have taken the write even if it failed.
+pub(crate) fn clear_pending(
+    task: &WritebackTask,
+    retired_at: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    match task.written_at {
+        Some(w) => w < retired_at,
+        None => task.tried_at.is_some(),
+    }
+}
+
 pub async fn run(
     pg: &PgStore,
     io: &PassIo,
@@ -356,6 +472,24 @@ impl Pass<'_> {
         let Ok(tasks) = self.pg.writeback_candidates(self.tracker_id).await else {
             return self.stop(TrackerError::Db.code()).await;
         };
+        let Ok(rows) = self.pg.tracker_fields(self.tracker_id).await else {
+            return self.stop(TrackerError::Db.code()).await;
+        };
+        // Mapped fields in metric order make the fields surface (W6); retired ones
+        // are cleared on each ticket written before they were retired.
+        let mut mapped: Vec<(TrackerMetric, String)> = rows
+            .iter()
+            .filter_map(|r| {
+                Some((TrackerMetric::parse(r.metric.as_deref()?)?, r.field_ref.clone()))
+            })
+            .collect();
+        mapped.sort();
+        let mut retired: Vec<(String, chrono::DateTime<chrono::Utc>)> = rows
+            .iter()
+            .filter(|r| r.metric.is_none())
+            .filter_map(|r| Some((r.field_ref.clone(), r.retired_at?)))
+            .collect();
+        let on_fields = !mapped.is_empty();
         let ids: Vec<uuid::Uuid> = tasks.iter().map(|t| t.id).collect();
         let Ok(mut usages) =
             crate::tracker::usage::ticket_usages(self.pg, self.tracker_id, Some(&ids)).await
@@ -365,19 +499,34 @@ impl Pass<'_> {
 
         let (mut written, mut unchanged, mut failed, mut rate_limited) = (0, 0, 0, 0);
         for task in tasks {
-            if task.status.as_deref().and_then(WritebackStatus::parse).is_some_and(is_sticky) {
+            let status = task.status.as_deref().and_then(WritebackStatus::parse);
+            // A deleted comment holds back the comment surface only (W4).
+            let sticky = status.is_some_and(|s| {
+                is_sticky(s) && !(on_fields && s == WritebackStatus::CommentRemoved)
+            });
+            if sticky {
                 continue;
             }
-            // A ticket with no candidate sessions is the genuinely empty set (W4).
+            // A ticket with no candidate sessions is the genuinely empty set (W4); it is
+            // written only if something was written to it before.
             let usage = usages.remove(&task.id).unwrap_or_default();
-            if usage.sessions == 0 && task.hash.is_none() {
+            if usage.sessions == 0 && task.written_at.is_none() {
                 continue;
             }
+            let clears: Vec<(String, crate::tracker::FieldValue)> = retired
+                .iter()
+                .filter(|(_, retired_at)| clear_pending(&task, *retired_at))
+                .map(|(r, _)| (r.clone(), crate::tracker::FieldValue::Null))
+                .collect();
             let report = render(&usage, chrono::Utc::now());
-            let hash = comment_hash(&report);
-            // Unchanged only if that hash is what last landed: a failed write keeps the old one.
+            let pairs: Vec<(String, crate::tracker::FieldValue)> =
+                mapped.iter().map(|(m, r)| (r.clone(), metric_value(*m, &usage))).collect();
+            let hash = if on_fields { fields_hash(&pairs) } else { comment_hash(&report) };
+            // Unchanged only if that hash is what last landed (a failed write keeps the old
+            // one) and no retired field is left to clear.
             if task.hash.as_deref() == Some(hash.as_str())
-                && task.status.as_deref() == Some(WritebackStatus::Ok.as_str())
+                && status == Some(WritebackStatus::Ok)
+                && clears.is_empty()
             {
                 unchanged += 1;
                 continue;
@@ -389,12 +538,55 @@ impl Pass<'_> {
                 Err(_) => return self.stop(TrackerError::Db.code()).await,
             }
             *in_flight.lock().unwrap() = Some(task.id);
-            let result =
-                self.write_comment(get.as_ref(), write.as_ref(), &task, owner, &report).await;
+            let clear_refs: Vec<String> = clears.iter().map(|(r, _)| r.clone()).collect();
+            let write_fields = |fields: Vec<(String, crate::tracker::FieldValue)>| {
+                let (write, ext) = (write.as_ref(), task.external_id.as_str());
+                async move { self.adapter.write_fields(write, ext, &fields).await }
+            };
+            // A retired field the tracker refuses to clear (deleted, say) is dropped rather
+            // than holding the ticket back for good (W6).
+            let (result, unclearable) = if on_fields {
+                match write_fields(pairs.iter().cloned().chain(clears).collect()).await {
+                    Err(TrackerError::BadRequest) if !clear_refs.is_empty() => {
+                        match write_fields(pairs).await {
+                            Ok(()) => (Ok(None), true),
+                            Err(e) => (Err(status_for(WriteOp::WriteFields, e)), false),
+                        }
+                    }
+                    other => (
+                        other.map(|()| None).map_err(|e| status_for(WriteOp::WriteFields, e)),
+                        false,
+                    ),
+                }
+            } else {
+                match self.write_comment(get.as_ref(), write.as_ref(), &task, owner, &report).await
+                {
+                    Ok(comment_ref) if clears.is_empty() => (Ok(Some(comment_ref)), false),
+                    Ok(comment_ref) => match write_fields(clears).await {
+                        Ok(()) => (Ok(Some(comment_ref)), false),
+                        Err(TrackerError::BadRequest) => (Ok(Some(comment_ref)), true),
+                        Err(e) => (Err(status_for(WriteOp::WriteFields, e)), false),
+                    },
+                    Err(status) => (Err(status), false),
+                }
+            };
             *in_flight.lock().unwrap() = None;
+            if unclearable {
+                tracing::warn!(tracker_id = %self.tracker_id, task_id = %task.id, "write-back: a retired field could not be cleared; dropped");
+                match self
+                    .pg
+                    .delete_retired_fields(self.tracker_id, &self.service, &clear_refs)
+                    .await
+                {
+                    Ok(_) => retired.retain(|(r, _)| !clear_refs.contains(r)),
+                    Err(_) => return self.stop(TrackerError::Db.code()).await,
+                }
+            }
             let recorded = match &result {
                 Ok(comment_ref) => {
-                    self.pg.record_write_ok(task.id, &self.service, &hash, Some(comment_ref)).await
+                    self.pg
+                        .record_write_ok(task.id, &self.service, &hash, comment_ref.as_deref())
+                        .await
                 }
                 Err(status) => {
                     self.pg.record_write_status(task.id, &self.service, status.as_str()).await
@@ -670,10 +862,95 @@ mod tests {
                     // An update's 404 goes to the issue check first (W5).
                     (WriteOp::UpdateComment, E::NotFound) => S::Error,
                     (WriteOp::CreateComment | WriteOp::UpdateComment, _) => S::Error,
+                    // A mapped-field write (W6, W9): a 400 is the field the tracker refused.
+                    (WriteOp::WriteFields, E::BadRequest) => S::FieldInvalid,
+                    (WriteOp::WriteFields, E::NotFound) => S::NotFound,
+                    (WriteOp::WriteFields, E::Forbidden | E::Unauthorized) => S::Forbidden,
+                    (WriteOp::WriteFields, E::RateLimited) => S::RateLimited,
+                    (WriteOp::WriteFields, _) => S::Error,
                 };
                 assert_eq!(status_for(op, e), want, "{op:?} × {e:?}");
             }
         }
+    }
+
+    #[test]
+    fn metrics_are_exactly_the_ddl_enum_labels() {
+        let labels = crate::tracker::test_support::ddl_enum_labels("tracker_metric");
+        let ours: Vec<&str> = TrackerMetric::ALL.iter().map(|m| m.as_str()).collect();
+        assert_eq!(labels, ours);
+        for m in TrackerMetric::ALL {
+            assert_eq!(TrackerMetric::parse(m.as_str()), Some(m));
+        }
+        assert_eq!(TrackerMetric::parse("active_secs"), None);
+    }
+
+    #[test]
+    fn a_field_carries_the_comments_number_as_a_number() {
+        use crate::tracker::FieldValue as V;
+        let u = golden_1();
+        let dec = |s: &str| V::Dec(s.into());
+        let want = [
+            (TrackerMetric::Sessions, V::Int(3)),
+            (TrackerMetric::ActiveHours, dec("2.05")),
+            (TrackerMetric::ClaudeHours, dec("1.30")),
+            (TrackerMetric::UserHours, dec("0.75")),
+            (TrackerMetric::WallHours, dec("4.00")),
+            (TrackerMetric::CycleHours, dec("48.00")),
+            (TrackerMetric::TokensFresh, V::Int(120000)),
+            (TrackerMetric::CacheRead, V::Int(900000)),
+            (TrackerMetric::CacheWrite, V::Int(30000)),
+            (TrackerMetric::TokensOut, V::Int(45000)),
+            (TrackerMetric::TokensReasoning, V::Null),
+            (TrackerMetric::MeteredCost, V::Null),
+            (TrackerMetric::ApiCost, dec("4.32")),
+        ];
+        for (m, v) in want {
+            assert_eq!(metric_value(m, &u), v, "{m:?}");
+        }
+        assert_eq!(metric_value(TrackerMetric::Sessions, &Usage::default()), V::Int(0));
+        assert_eq!(metric_value(TrackerMetric::ApiCost, &Usage::default()), V::Null);
+        assert_eq!(V::Dec("2.05".into()).to_json(), serde_json::json!(2.05));
+        assert_eq!(V::Int(120000).to_json(), serde_json::json!(120000));
+        assert_eq!(V::Null.to_json(), serde_json::Value::Null);
+        assert_eq!(
+            (V::Dec("2.05".into()).canonical(), V::Int(3).canonical(), V::Null.canonical()),
+            ("2.05".to_string(), "3".to_string(), "null".to_string())
+        );
+    }
+
+    #[test]
+    fn the_fields_hash_is_the_pairs_as_written() {
+        use crate::tracker::FieldValue as V;
+        let pairs = |v: V| vec![("customfield_10050".to_string(), v)];
+        use sha2::Digest;
+        let expected = hex::encode(sha2::Sha256::digest("fields\ncustomfield_10050=2.05"));
+        assert_eq!(fields_hash(&pairs(V::Dec("2.05".into()))), expected);
+        assert_ne!(fields_hash(&pairs(V::Null)), fields_hash(&pairs(V::Dec("0.00".into()))));
+        assert_ne!(
+            fields_hash(&pairs(V::Dec("2.05".into()))),
+            comment_hash(&Report {
+                title: String::new(),
+                lines: vec!["customfield_10050=2.05".into()]
+            }),
+            "a surface never matches the other"
+        );
+    }
+
+    #[test]
+    fn a_cycle_that_ends_a_moment_before_it_starts_is_missing() {
+        let t = at("2026-10-22T10:00:00Z");
+        let u = Usage {
+            sessions: 1,
+            first_at: Some(t),
+            last_at: Some(t - chrono::Duration::microseconds(500)),
+            ..Default::default()
+        };
+        assert_eq!(cycle_secs(&u), None);
+        assert_eq!(render(&u, at(UPDATED)).lines[3], "Cycle time: —");
+        assert_eq!(metric_value(TrackerMetric::CycleHours, &u), crate::tracker::FieldValue::Null);
+        let same = Usage { last_at: Some(t), ..u };
+        assert_eq!(cycle_secs(&same), Some(0.0));
     }
 
     #[test]
@@ -1334,6 +1611,297 @@ mod pass_tests {
         );
         f.pg.set_writeback_enabled(f.t, true).await.unwrap();
         assert_eq!(f.pg.set_writeback_enabled(uuid::Uuid::new_v4(), true).await, Ok(false));
+    }
+
+    // ── Mapped fields (W6, W7) ─────────────────────────────────────────────
+
+    impl Fixture {
+        async fn map(&self, mapping: &[(&str, &str)]) {
+            let rows: Vec<(String, String)> =
+                mapping.iter().map(|(m, r)| (m.to_string(), r.to_string())).collect();
+            self.pg.replace_tracker_fields(self.t, &rows).await.unwrap();
+        }
+        /// Give the fixture's sessions 7380 s of active time (2.05 h).
+        async fn active(&self) {
+            sqlx_core::query::query(
+                "UPDATE activity.sessions SET duration = interval '7380 seconds' WHERE repo_folder_id = $1",
+            )
+            .bind(self.repo)
+            .execute(self.pg.pool())
+            .await
+            .unwrap();
+        }
+    }
+
+    const ISSUE_1: &str = "/rest/api/3/issue/10001";
+
+    #[tokio::test]
+    async fn a_mapped_field_gets_the_number_in_one_request_and_no_comment() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.active().await;
+        f.map(&[("active_hours", "customfield_10050")]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        let sent = w.sent();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!((sent[0].method, sent[0].path.as_str()), (WriteMethod::Put, ISSUE_1));
+        assert_eq!(sent[0].body, json!({"fields": {"customfield_10050": 2.05}}));
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn a_change_to_an_unmapped_metric_sends_nothing() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.map(&[("metered_cost", "customfield_10051")]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        assert_eq!(
+            w.sent()[0].body,
+            json!({"fields": {"customfield_10051": null}}),
+            "no value is null, never 0"
+        );
+        f.new_session("AUTH-1").await;
+        f.pass().await;
+        assert_eq!(w.sent().len(), 1, "sessions changed, the mapped metric did not");
+    }
+
+    #[tokio::test]
+    async fn a_ticket_that_lost_its_sessions_gets_null_in_its_fields() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.active().await;
+        f.map(&[("active_hours", "customfield_10050"), ("sessions", "customfield_10052")]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE repo_folder_id = $1")
+            .bind(f.repo)
+            .execute(f.pg.pool())
+            .await
+            .unwrap();
+        f.pass().await;
+        assert_eq!(
+            w.sent()[1].body,
+            json!({"fields": {"customfield_10052": 0, "customfield_10050": null}}),
+            "fields follow the metric enum order"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_field_waits_for_the_mapping_to_change() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.map(&[("sessions", "customfield_10052")]).await;
+        let w = f.writes(RecordingWrites::default().respond(WriteMethod::Put, ISSUE_1, 400, 1));
+        f.pass().await;
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("field_invalid"));
+        f.new_session("AUTH-1").await;
+        f.pass().await;
+        assert_eq!(w.sent().len(), 1, "field_invalid is sticky");
+        f.map(&[("sessions", "customfield_10053")]).await;
+        f.pass().await;
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"), "a mapping change clears it");
+        assert_eq!(w.sent().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_field_write_to_a_ticket_that_is_gone_is_not_found() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.map(&[("sessions", "customfield_10052")]).await;
+        f.writes(RecordingWrites::default().respond(WriteMethod::Put, ISSUE_1, 404, 1));
+        f.pass().await;
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("not_found"));
+    }
+
+    #[tokio::test]
+    async fn a_deleted_comment_does_not_hold_back_the_fields() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.sql("UPDATE sensei.tracker_tasks SET writeback_status = 'comment_removed' WHERE tracker_id = $1").await;
+        f.map(&[("sessions", "customfield_10052")]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        assert_eq!(w.sent().len(), 1, "comment_removed is sticky on the comment surface only");
+        assert_eq!(w.sent()[0].path, ISSUE_1);
+    }
+
+    #[tokio::test]
+    async fn an_unmapped_field_is_cleared_once_then_left_alone() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.active().await;
+        f.map(&[("active_hours", "customfield_10050")]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        f.map(&[]).await;
+        f.pass().await;
+        let sent = w.sent();
+        let methods: Vec<_> = sent.iter().map(|s| (s.method, s.path.as_str())).collect();
+        assert_eq!(
+            methods,
+            [
+                (WriteMethod::Put, ISSUE_1),
+                (WriteMethod::Post, "/rest/api/3/issue/10001/comment"),
+                (WriteMethod::Put, ISSUE_1),
+            ],
+            "the comment, then the retired field cleared"
+        );
+        assert_eq!(sent[2].body, json!({"fields": {"customfield_10050": null}}));
+        f.pass().await;
+        assert_eq!(w.sent().len(), 3, "cleared once; nothing changed since");
+    }
+
+    #[tokio::test]
+    async fn a_remapped_metric_moves_and_its_old_field_is_cleared_in_the_same_request() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.active().await;
+        f.map(&[("active_hours", "customfield_10050")]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        f.map(&[("active_hours", "customfield_10051")]).await;
+        f.pass().await;
+        assert_eq!(w.sent().len(), 2);
+        assert_eq!(
+            w.sent()[1].body,
+            json!({"fields": {"customfield_10051": 2.05, "customfield_10050": null}})
+        );
+        f.pass().await;
+        assert_eq!(w.sent().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn switching_back_to_the_comment_rewrites_a_ticket_that_lost_its_sessions() {
+        let f = fixture([Some("A1"), None, None]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        f.map(&[("sessions", "customfield_10052")]).await;
+        sqlx_core::query::query("DELETE FROM activity.sessions WHERE repo_folder_id = $1")
+            .bind(f.repo)
+            .execute(f.pg.pool())
+            .await
+            .unwrap();
+        f.pass().await;
+        f.map(&[]).await;
+        f.pass().await;
+        let comment_puts: Vec<_> = w
+            .sent()
+            .into_iter()
+            .filter(|s| s.path == "/rest/api/3/issue/10001/comment/20000")
+            .collect();
+        assert_eq!(comment_puts.len(), 1, "{:?}", w.sent());
+        assert_eq!(lines_of(&comment_puts[0].body)[0], "Sessions: 0");
+    }
+
+    #[tokio::test]
+    async fn a_malformed_ticket_id_never_reaches_a_field_write() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.sql("UPDATE sensei.tracker_tasks SET external_id = 'abc' WHERE tracker_id = $1 AND external_id = '10001'").await;
+        f.map(&[("sessions", "customfield_10052")]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        assert!(w.sent().is_empty());
+        assert_eq!(
+            f.status_of("abc").await.as_deref(),
+            Some("error"),
+            "not field_invalid: no field was refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_retired_field_is_cleared_on_tickets_tried_before_it_was_retired_only() {
+        let f = fixture([Some("A1"), Some("A1"), None]).await;
+        f.map(&[("sessions", "customfield_10052")]).await;
+        f.writes(RecordingWrites::default());
+        // 10001 is written; 10002's write fails, so it was tried but never recorded ok.
+        f.writes(RecordingWrites::default().respond(
+            WriteMethod::Put,
+            "/rest/api/3/issue/10002",
+            500,
+            1,
+        ));
+        f.pass().await;
+        assert_eq!(f.status_of("10002").await.as_deref(), Some("error"));
+        // A ticket never tried at all: 10003, assigned now.
+        f.sql("UPDATE sensei.tracker_tasks SET assigned_to_me = true WHERE tracker_id = $1 AND external_id = '10003'").await;
+        f.map(&[]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        let clears: Vec<_> = w
+            .sent()
+            .into_iter()
+            .filter(|s| s.body == json!({"fields": {"customfield_10052": null}}))
+            .map(|s| s.path)
+            .collect();
+        assert!(
+            clears.contains(&"/rest/api/3/issue/10001".to_string()),
+            "written before: {clears:?}"
+        );
+        assert!(
+            clears.contains(&"/rest/api/3/issue/10002".to_string()),
+            "tried before, may have landed: {clears:?}"
+        );
+        assert!(!clears.iter().any(|p| p.contains("10003")), "never tried: nothing to clear");
+    }
+
+    #[tokio::test]
+    async fn a_retired_field_the_tracker_refuses_to_clear_is_dropped_not_a_poison() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.map(&[("sessions", "customfield_10052")]).await;
+        f.writes(RecordingWrites::default());
+        f.pass().await;
+        f.map(&[]).await;
+        // The comment lands; clearing the retired field is refused (deleted in Jira).
+        let w = f.writes(RecordingWrites::default().respond(WriteMethod::Put, ISSUE_1, 400, 1));
+        f.pass().await;
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"), "the comment landed");
+        assert!(f.state().await[0].2.is_some(), "and its id is kept");
+        assert!(
+            f.pg.tracker_fields(f.t).await.unwrap().is_empty(),
+            "the unclearable field is dropped"
+        );
+        f.new_session("AUTH-1").await;
+        f.pass().await;
+        assert_eq!(w.count(WriteMethod::Put), 2, "the comment update only; no more clears");
+    }
+
+    #[tokio::test]
+    async fn a_refused_clear_does_not_hold_back_the_mapped_fields() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.map(&[("sessions", "customfield_10052")]).await;
+        f.writes(RecordingWrites::default());
+        f.pass().await;
+        f.map(&[("sessions", "customfield_10053")]).await;
+        // The combined write (10053 value + 10052 null) is refused; alone, 10053 is fine.
+        let w = f.writes(RecordingWrites::default().respond(WriteMethod::Put, ISSUE_1, 400, 1));
+        f.pass().await;
+        assert_eq!(w.sent().len(), 2);
+        assert_eq!(w.sent()[1].body, json!({"fields": {"customfield_10053": 1}}));
+        assert_eq!(f.status_of("10001").await.as_deref(), Some("ok"));
+        assert_eq!(
+            f.pg.tracker_fields(f.t)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|r| r.field_ref)
+                .collect::<Vec<_>>(),
+            ["customfield_10053"],
+            "the retired field it could not clear is dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn saving_the_same_mapping_again_rewrites_every_ticket() {
+        let f = fixture([Some("A1"), None, None]).await;
+        f.map(&[("sessions", "customfield_10052")]).await;
+        let w = f.writes(RecordingWrites::default());
+        f.pass().await;
+        f.map(&[("sessions", "customfield_10052")]).await;
+        f.pass().await;
+        assert_eq!(
+            w.sent().len(),
+            2,
+            "a saved mapping clears every hash, so each ticket is written again"
+        );
+        assert_eq!(
+            w.sent()[1].body,
+            json!({"fields": {"customfield_10052": 1}}),
+            "and nothing is cleared"
+        );
     }
 
     /// Give the tracker's tickets an explicit pass order (oldest attempt first).

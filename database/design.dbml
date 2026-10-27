@@ -743,6 +743,22 @@ Enum "sensei"."tracker_writeback_status" {
   "error"
 }
 
+Enum "sensei"."tracker_metric" {
+  "sessions"
+  "active_hours"
+  "claude_hours"
+  "user_hours"
+  "wall_hours"
+  "cycle_hours"
+  "tokens_fresh"
+  "cache_read"
+  "cache_write"
+  "tokens_out"
+  "tokens_reasoning"
+  "metered_cost"
+  "api_cost"
+}
+
 Enum "sensei"."tracker_owner_state" {
   "unknown"
   "not_a_person"
@@ -4317,6 +4333,20 @@ Table "sensei"."tracker_task_keys" {
   Note: 'Key aliases of tracker tickets: the current key plus every former one (rename, move). Written by each sync\'s apply (on conflict do nothing), read when matching session text, so history survives a rename.'
 }
 
+Table "sensei"."tracker_fields" {
+  "tracker_id" uuid [not null, note: 'The board the field belongs to.']
+  "metric" sensei.tracker_metric [note: 'The metric written into the field; NULL once the field is no longer mapped (retired).']
+  "field_ref" text [not null, note: 'The tracker\'s field id (Jira: customfield_<n>).']
+  "retired_at" timestamptz [note: 'When the field stopped being mapped: a ticket last written before it gets null in the field. NULL while mapped.']
+
+  indexes {
+    (tracker_id, metric) [unique, note: 'unique constraint']
+    (tracker_id, field_ref) [unique, note: 'unique constraint']
+  }
+
+  Note: 'A tracker\'s custom fields for usage write-back. A row with a metric is mapped: that metric is written into the field. A row without one is retired: sensei wrote the field before, so it clears it on each ticket\'s next write. Replaced by PUT …/trackers/{tracker}/fields.'
+}
+
 Table "sensei"."tracker_task_sprints" {
   "task_id" uuid [pk, not null, note: 'The ticket.']
   "sprint_id" uuid [pk, not null, note: 'A sprint that lists it.']
@@ -4514,6 +4544,7 @@ Ref: "sensei"."session_task_links"."task_id" > "sensei"."tracker_tasks"."id" [de
 Ref: "sensei"."tracker_task_keys"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
 Ref: "sensei"."tracker_task_sprints"."task_id" > "sensei"."tracker_tasks"."id" [delete: cascade]
 Ref: "sensei"."tracker_task_sprints"."sprint_id" > "sensei"."sprints"."id" [delete: cascade]
+Ref: "sensei"."tracker_fields"."tracker_id" > "sensei"."trackers"."id" [delete: cascade]
 Ref: "sensei"."schema_columns"."node_id" > "sensei"."schema_entities"."node_id" [delete: cascade]
 Ref: "sensei"."schema_indexes"."node_id" > "sensei"."schema_entities"."node_id" [delete: cascade]
 Ref: "sensei"."schema_refs"."from_node_id" > "sensei"."schema_entities"."node_id" [delete: cascade]

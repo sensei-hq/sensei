@@ -671,6 +671,32 @@ mod tests {
         ) -> Result<bool, TrackerError> {
             Err(TrackerError::UnsupportedTracker)
         }
+        fn field_ref_shape(&self, _f: &str) -> bool {
+            false
+        }
+        async fn check_fields(
+            &self,
+            _t: &dyn GetTransport,
+            _f: &[String],
+        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn field_in_use(
+            &self,
+            _t: &dyn GetTransport,
+            _b: &BoardScope,
+            _f: &str,
+        ) -> Result<bool, TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
+        async fn write_fields(
+            &self,
+            _w: &dyn crate::tracker::WriteTransport,
+            _task: &str,
+            _f: &[(String, crate::tracker::FieldValue)],
+        ) -> Result<(), TrackerError> {
+            Err(TrackerError::UnsupportedTracker)
+        }
         async fn validate(
             &self,
             _t: &dyn GetTransport,
@@ -1246,6 +1272,32 @@ mod tests {
             task: &str,
         ) -> Result<bool, TrackerError> {
             JiraAdapter.issue_exists(t, task).await
+        }
+        fn field_ref_shape(&self, f: &str) -> bool {
+            JiraAdapter.field_ref_shape(f)
+        }
+        async fn check_fields(
+            &self,
+            t: &dyn GetTransport,
+            f: &[String],
+        ) -> Result<Vec<crate::tracker::FieldCheck>, TrackerError> {
+            JiraAdapter.check_fields(t, f).await
+        }
+        async fn field_in_use(
+            &self,
+            t: &dyn GetTransport,
+            b: &BoardScope,
+            f: &str,
+        ) -> Result<bool, TrackerError> {
+            JiraAdapter.field_in_use(t, b, f).await
+        }
+        async fn write_fields(
+            &self,
+            w: &dyn crate::tracker::WriteTransport,
+            task: &str,
+            f: &[(String, crate::tracker::FieldValue)],
+        ) -> Result<(), TrackerError> {
+            JiraAdapter.write_fields(w, task, f).await
         }
         async fn validate(
             &self,

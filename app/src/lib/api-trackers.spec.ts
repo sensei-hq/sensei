@@ -62,6 +62,19 @@ describe('tracker wrappers', () => {
     expect(JSON.parse(init.body)).toEqual({ writeback_enabled: false });
   });
 
+  it('field mappings are read with GET and replaced with a PUT of {fields} at …/trackers/{tracker}/fields', async () => {
+    const fetch = stub(200, { fields: [] });
+    expect((await api().tryGetTrackerFields(P, T)).ok).toBe(true);
+    expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers/${T}/fields`);
+    expect(fetch.mock.calls[0][1].method).toBe('GET');
+    const rows = [{ metric: 'active_hours' as const, field_ref: 'customfield_10050' }];
+    await api().tryPutTrackerFields(P, T, rows);
+    const [url, init] = fetch.mock.calls[1];
+    expect(url).toBe(`http://127.0.0.1:7744/api/workspaces/${P}/trackers/${T}/fields`);
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(init.body)).toEqual({ fields: rows });
+  });
+
   it('sync POSTs …/trackers/{tracker}/sync and disconnect DELETEs …/trackers/{tracker} (204, no body)', async () => {
     const fetch = stub(200, { counts: { sprints: 1 } });
     expect((await api().trySyncTracker(P, T)).ok).toBe(true);

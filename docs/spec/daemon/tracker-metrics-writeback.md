@@ -330,15 +330,25 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
 - When a tracker has ≥ 1 mapped row, the surface is **fields**: only mapped metrics are
   written, in **one** request per task, and no comment is created or edited. Otherwise
   the surface is **comment**.
-- **Retired fields are cleared.** A ticket last written before a retired row's `retired_at`
-  (its `writeback_at` is older, or NULL) gets `null` written to that field on its next
-  write:
+- **Retired fields are cleared.** A ticket has a clear **pending** for a retired row
+  (`clear_pending(task, retired_at)`) while nothing has landed on it since the field was
+  retired and it was tried at all: its `writeback_at` is older than `retired_at`, or it
+  is NULL and `writeback_tried_at` is not. A write that was tried may have landed even if
+  it failed, and a failed clear stays pending, so it is retried. A pending ticket gets
+  `null` written to that field on its next write:
   - on the fields surface, in the same request
   - on the comment surface, in one extra field write after the comment
   
   That cleanup is not part of the hash. A ticket with a field still to clear is written
   even when its hash matches. A failure of the extra field write is recorded as the
-  ticket's status (`status_for(WriteFields, e)`), as any failed write is.
+  ticket's status (`status_for(WriteFields, e)`), as any failed write is, except a 400.
+- **A field the tracker refuses to clear** (`BadRequest`: deleted in Jira, say) is
+  dropped, not a poison pill. On the comment surface the comment is recorded as written
+  (`ok`, its id kept). On the fields surface a 400 on a request that carries clears is
+  retried once with the mapped fields alone: if that lands, the ticket is `ok`; if not,
+  its status is that retry's. When the ticket ends `ok`, the retired rows it carried are
+  deleted (`delete_retired_fields`, under the token condition), and no later ticket
+  tries them.
 - Jira: `PUT /rest/api/3/issue/{id}` `{"fields": {"<field_ref>": <number|null>, …}}`. A
   null is JSON `null`, which clears the field. No `notifyUsers` parameter is sent (X3). A
   2xx (Jira: 204) is success. A task id that fails the id shape is `Decode` (→ `error`)
@@ -353,25 +363,31 @@ value is `None`**, never decided by an `_n` count (an unpriced session has
   `{"fields": [{"metric": "...", "field_ref": "..."}…]}` **replaces** the mapped set, and
   `[]` clears it. The body must be JSON; a non-JSON body gets axum's own 400/415. It's
   accepted in every write-back state (disabled included). The checks run in this order,
-  stopping at the first failure:
+  each over the whole body, stopping at the first failure:
   1. The body isn't an object with a `fields` array of `{metric, field_ref}` strings → 422
      `invalid_body`.
   2. Unknown metric → 422 `unknown_metric` `{metric}`.
   3. A metric or `field_ref` appears twice → 422 `duplicate_mapping` `{metric|field_ref}`
      (the second occurrence's value).
-  4. `field_ref` fails `adapter.field_ref_shape` (Jira: `^customfield_[1-9][0-9]{0,9}$`)
+  4. Unknown workspace or tracker → 404 (`workspace_not_found` / `tracker_not_found`). This
+     comes first because the tracker's adapter owns the field-id shape; it is a database
+     read, not a network call.
+  5. `field_ref` fails `adapter.field_ref_shape` (Jira: `^customfield_[1-9][0-9]{0,9}$`)
      → 422 `invalid_field_ref` `{field_ref}`. No network request has been made yet.
-  5. Unknown workspace or tracker → 404 (`workspace_not_found` / `tracker_not_found`).
+     Then the Save takes the board's lock (`TrackerLocks`, the one sync and the pass
+     hold) until it has replaced the set, or answers 409 `busy`. A mapping never changes
+     under a running pass, and two Saves never race.
   6. `adapter.check_fields(t, refs) -> Result<Vec<FieldCheck>, TrackerError>`, where
      `FieldCheck { field_ref, exists: bool, numeric: bool }`. Jira does this with one
      `GET /rest/api/3/field` and checks `schema.type == "number"`. Missing → 422
      `field_not_found` `{field_ref}`. Not numeric → 422 `field_not_number` `{field_ref}`.
-  7. **Fields already in use.** For each `field_ref` the tracker has no row for (mapped or
-     retired), `adapter.field_in_use(t, board, field_ref) -> Result<bool, TrackerError>`.
+  7. **Fields already in use.** For each `field_ref` whose values aren't sensei's own, `adapter.field_in_use(t, board, field_ref) -> Result<bool, TrackerError>`.
      Jira: the board issue endpoint with `jql=cf[N] is not EMPTY&maxResults=1&fields=none`.
      `true` → 422 `field_in_use` `{field_ref}`, so a mapping can't take over Story Points or
-     any field people fill in. A field the tracker already has a row for holds sensei's
-     own values, so it is never refused.
+     any field people fill in. A field's values are sensei's own while it is mapped, or
+     while it is retired and some ticket on the board (assigned or not) still has a clear
+     pending for it. Such a field is never refused. A retired field with no pending clear
+     holds no value of sensei's, so it is checked like a new one.
   8. Transport and credential failures map through `fn tracker_error_status(TrackerError)
      -> StatusCode`: `Unauthorized` → 401 `unauthorized`, `Forbidden` → 403 `forbidden`,
      `TokenMissing`/`CredentialStore` (the route's own keyring read, `transport_for`) → 500
@@ -508,7 +524,8 @@ pub enum WriteMethod { Post, Put }
 - **Path safety.** Before any path is built, each adapter write method checks
   `task_ext_id` and `comment_ref` against the adapter's id shape (Jira: `^[0-9]{1,18}$`)
   and every `field_ref` against `field_ref_shape`. Anything that fails returns
-  `BadRequest`, mapped to `error`, without sending a request.
+  `Decode`, mapped to `error`, without sending a request, so a real 400 stays the only
+  `field_invalid`.
 - `TrackerRow.owner_ref` becomes `Option<AccountRef>`, so a `{:?}` of the row the pass
   carries can't print the owner's id (gate 5).
 - `tracker/writeback.rs` holds the pass, the payload, the hash, `render` and the status

@@ -54,6 +54,8 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
     let pg = &state.pg;
     let (tasks, sprints) = pg.tracker_counts(row.id).await.map_err(|_| internal())?;
     let (assigned, failing) = pg.writeback_counts(row.id).await.map_err(|_| internal())?;
+    let fields = pg.tracker_fields(row.id).await.map_err(|_| internal())?;
+    let mapped = fields.iter().filter(|f| f.metric.is_some()).count();
     let (wb_state, wb_error) = writeback_state(&WritebackFacts {
         enabled: row.writeback_enabled,
         writeback_error: row.writeback_error.as_deref(),
@@ -85,12 +87,12 @@ async fn view(state: &AppState, row: &TrackerRow) -> Result<serde_json::Value, A
         "last_success_at": row.last_success_at,
         "last_error": row.last_error,
         "counts": {"tasks": tasks, "sprints": sprints},
-        // W8. F2 writes comments only; mapped fields arrive with F4.
+        // W8: mapped fields make the fields surface.
         "writeback": {
             "enabled": row.writeback_enabled,
             "state": wb_state.as_str(),
-            "surface": "comment",
-            "mapped": 0,
+            "surface": if mapped > 0 { "fields" } else { "comment" },
+            "mapped": mapped,
             "assigned": assigned,
             "failing": failing,
             "error": wb_error,
@@ -237,7 +239,6 @@ async fn sync_current(
 }
 
 fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
-    use crate::tracker::TrackerError;
     match e {
         ConnectError::BoardAlreadyConnected { workspace_id, workspace_name } => (
             StatusCode::CONFLICT,
@@ -255,19 +256,168 @@ fn connect_failure(e: ConnectError, base_url: &str, board_ref: &str) -> ApiErr {
         ConnectError::Validate(ValidateError::BoardProjectMismatch) => {
             fail(StatusCode::UNPROCESSABLE_ENTITY, "board_project_mismatch")
         }
-        ConnectError::Validate(ValidateError::Tracker(TrackerError::Unauthorized)) => {
-            fail(StatusCode::UNAUTHORIZED, "unauthorized")
-        }
-        ConnectError::Validate(ValidateError::Tracker(TrackerError::Forbidden)) => {
-            fail(StatusCode::FORBIDDEN, "forbidden")
-        }
         ConnectError::Validate(ValidateError::Tracker(e)) => {
-            fail(StatusCode::BAD_GATEWAY, e.code())
+            fail(tracker_error_status(e), e.code())
         }
         ConnectError::CredentialStore => {
             fail(StatusCode::INTERNAL_SERVER_ERROR, "credential_store")
         }
         ConnectError::Db(_) => internal(),
+    }
+}
+
+/// The status a tracker route answers a `TrackerError` with (W7): the credential was
+/// refused (401/403), sensei could not read its own keyring (500), or the tracker
+/// failed (502).
+fn tracker_error_status(e: crate::tracker::TrackerError) -> StatusCode {
+    use crate::tracker::TrackerError as E;
+    match e {
+        E::Unauthorized => StatusCode::UNAUTHORIZED,
+        E::Forbidden => StatusCode::FORBIDDEN,
+        E::TokenMissing | E::CredentialStore => StatusCode::INTERNAL_SERVER_ERROR,
+        _ => StatusCode::BAD_GATEWAY,
+    }
+}
+
+/// The mapped fields as the routes return them, in metric order (W7).
+fn fields_body(rows: &[crate::db::pg_store::trackers::FieldRow]) -> serde_json::Value {
+    let mapped: Vec<_> = rows
+        .iter()
+        .filter_map(|r| {
+            Some(serde_json::json!({"metric": r.metric.as_deref()?, "field_ref": r.field_ref}))
+        })
+        .collect();
+    serde_json::json!({"fields": mapped})
+}
+
+/// `GET /api/workspaces/{id}/trackers/{tracker}/fields`
+pub(crate) async fn get_tracker_fields(
+    State(state): State<AppState>,
+    Path((id, tracker)): Path<(String, String)>,
+) -> Response {
+    let row = match known_tracker(&state, &id, &tracker).await {
+        Ok(row) => row,
+        Err(r) => return r.into_response(),
+    };
+    match state.pg.tracker_fields(row.id).await {
+        Ok(rows) => Json(fields_body(&rows)).into_response(),
+        Err(_) => internal().into_response(),
+    }
+}
+
+/// `PUT /api/workspaces/{id}/trackers/{tracker}/fields` — replace the mapped set (W7),
+/// refused with the first failing check, in order.
+pub(crate) async fn put_tracker_fields(
+    State(state): State<AppState>,
+    Path((id, tracker)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    use crate::tracker::writeback::TrackerMetric;
+    let refuse = |code: &str, key: &str, value: &str| {
+        let mut b = serde_json::json!({"error": code});
+        b[key] = serde_json::json!(value);
+        (StatusCode::UNPROCESSABLE_ENTITY, Json(b)).into_response()
+    };
+    // 1. The body's shape.
+    let entries: Option<Vec<(String, String)>> =
+        body.get("fields").and_then(|f| f.as_array()).and_then(|a| {
+            a.iter()
+                .map(|e| {
+                    Some((
+                        e.get("metric")?.as_str()?.to_string(),
+                        e.get("field_ref")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        });
+    let Some(entries) = entries.filter(|_| body.as_object().is_some_and(|o| o.len() == 1)) else {
+        return fail(StatusCode::UNPROCESSABLE_ENTITY, "invalid_body").into_response();
+    };
+    // 2. Known metrics, then 3. each metric and field once: each check over the whole body.
+    if let Some((metric, _)) = entries.iter().find(|(m, _)| TrackerMetric::parse(m).is_none()) {
+        return refuse("unknown_metric", "metric", metric);
+    }
+    let (mut metrics, mut refs) =
+        (std::collections::HashSet::new(), std::collections::HashSet::new());
+    for (metric, field_ref) in &entries {
+        if !metrics.insert(metric.clone()) {
+            return refuse("duplicate_mapping", "metric", metric);
+        }
+        if !refs.insert(field_ref.clone()) {
+            return refuse("duplicate_mapping", "field_ref", field_ref);
+        }
+    }
+    // 4. The tracker (its adapter owns the field-id shape); 5. that shape, before any
+    // network call.
+    let row = match known_tracker(&state, &id, &tracker).await {
+        Ok(row) => row,
+        Err(r) => return r.into_response(),
+    };
+    let Some(adapter) =
+        crate::tracker::TrackerKind::parse(&row.kind).and_then(crate::tracker::adapter_for_kind)
+    else {
+        return fail(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_tracker").into_response();
+    };
+    if let Some((_, bad)) = entries.iter().find(|(_, r)| !adapter.field_ref_shape(r)) {
+        return refuse("invalid_field_ref", "field_ref", bad);
+    }
+    // The board's lock, as sync and the pass hold it: a mapping never changes under a pass.
+    let Some(_guard) = state.trackers.locks.try_lock(row.id) else {
+        return fail(StatusCode::CONFLICT, "busy").into_response();
+    };
+    // 6–7. What the tracker says, with no 429 retries: Save never waits one out.
+    let pg = &state.pg;
+    let (known, tasks) =
+        match (pg.tracker_fields(row.id).await, pg.writeback_tasks(row.id, false).await) {
+            (Ok(rows), Ok(tasks)) => (rows, tasks),
+            _ => return internal().into_response(),
+        };
+    // A field's values are sensei's own while it is mapped, or retired with a clear
+    // still pending on some ticket; any other value on the board is someone else's.
+    let ours = |field_ref: &str| {
+        known.iter().filter(|k| k.field_ref == field_ref).any(|k| match k.retired_at {
+            Some(at) if k.metric.is_none() => {
+                tasks.iter().any(|t| crate::tracker::writeback::clear_pending(t, at))
+            }
+            _ => true,
+        })
+    };
+    let tracker_failed =
+        |e: crate::tracker::TrackerError| fail(tracker_error_status(e), e.code()).into_response();
+    let t = match crate::tracker::runtime::transport_for(&state.trackers, adapter, &row, 0).await {
+        Ok(t) => t,
+        Err(e) => return tracker_failed(e),
+    };
+    let wanted: Vec<String> = entries.iter().map(|(_, r)| r.clone()).collect();
+    if !wanted.is_empty() {
+        let checks = match adapter.check_fields(t.as_ref(), &wanted).await {
+            Ok(c) => c,
+            Err(e) => return tracker_failed(e),
+        };
+        if let Some(c) = checks.iter().find(|c| !c.exists) {
+            return refuse("field_not_found", "field_ref", &c.field_ref);
+        }
+        if let Some(c) = checks.iter().find(|c| !c.numeric) {
+            return refuse("field_not_number", "field_ref", &c.field_ref);
+        }
+        let board = crate::tracker::BoardScope {
+            base_url: row.base_url.clone(),
+            board_ref: row.board_ref.clone(),
+        };
+        for field_ref in wanted.iter().filter(|r| !ours(r)) {
+            match adapter.field_in_use(t.as_ref(), &board, field_ref).await {
+                Ok(false) => {}
+                Ok(true) => return refuse("field_in_use", "field_ref", field_ref),
+                Err(e) => return tracker_failed(e),
+            }
+        }
+    }
+    if pg.replace_tracker_fields(row.id, &entries).await.is_err() {
+        return internal().into_response();
+    }
+    match pg.tracker_fields(row.id).await {
+        Ok(rows) => Json(fields_body(&rows)).into_response(),
+        Err(_) => internal().into_response(),
     }
 }
 
@@ -353,7 +503,8 @@ pub(crate) async fn get_tracker_task(
         Ok(p) => p,
         Err(r) => return r.into_response(),
     };
-    let task = match state.pg.tracker_task_detail(workspace, &key).await {
+    let pg = &state.pg;
+    let task = match pg.tracker_task_detail(workspace, &key).await {
         Ok(Some(task)) => task,
         Ok(None) => match discover_on_miss(&state, workspace, &key).await {
             Ok(task) => task,
@@ -361,11 +512,11 @@ pub(crate) async fn get_tracker_task(
         },
         Err(_) => return internal().into_response(),
     };
-    let usage = match ticket_usages(&state.pg, task.tracker_id, Some(&[task.id])).await {
+    let usage = match ticket_usages(pg, task.tracker_id, Some(&[task.id])).await {
         Ok(mut u) => u.remove(&task.id).unwrap_or_default(),
         Err(_) => return internal().into_response(),
     };
-    let by_repo = match ticket_usage_by_repo(&state.pg, task.tracker_id, task.id).await {
+    let by_repo = match ticket_usage_by_repo(pg, task.tracker_id, task.id).await {
         Ok(r) => r,
         Err(_) => return internal().into_response(),
     };
@@ -597,12 +748,13 @@ pub(crate) async fn list_tracker_tasks(
         (None, true) => TaskScope::Backlog,
         (None, false) => TaskScope::All,
     };
-    let tasks = match state.pg.tracker_task_rows(tracker.id, scope, q.include_removed).await {
+    let pg = &state.pg;
+    let tasks = match pg.tracker_task_rows(tracker.id, scope, q.include_removed).await {
         Ok(t) => t,
         Err(_) => return internal().into_response(),
     };
     let ids: Vec<uuid::Uuid> = tasks.iter().map(|t| t.id).collect();
-    let mut usage = match ticket_usages(&state.pg, tracker.id, Some(&ids)).await {
+    let mut usage = match ticket_usages(pg, tracker.id, Some(&ids)).await {
         Ok(u) => u,
         Err(_) => return internal().into_response(),
     };
@@ -1278,6 +1430,314 @@ mod tests {
         )
         .await;
         assert_eq!(st, StatusCode::FORBIDDEN, "a foreign page cannot switch write-back");
+    }
+
+    /// A site field list: 10050 and 10051 numbers, 10060 a number someone already
+    /// fills in, 10070 text.
+    fn field_board() -> FakeBoard {
+        FakeBoard::standard()
+            .with(
+                "/rest/api/3/field",
+                0,
+                json!([
+                {"id": "customfield_10050", "schema": {"type": "number"}},
+                {"id": "customfield_10051", "schema": {"type": "number"}},
+                {"id": "customfield_10060", "schema": {"type": "number"}},
+                {"id": "customfield_10070", "schema": {"type": "string"}}]),
+            )
+            .with_jql(
+                "cf[10060] is not EMPTY",
+                json!([{"id": "10001", "key": "AUTH-1", "fields": {}}]),
+            )
+    }
+
+    #[tokio::test]
+    async fn a_field_mapping_is_refused_with_the_first_reason_in_order() {
+        let h = harness().await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let p = workspace(&h).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let board = h.factory.serve(&format!("https://{s}"), field_board());
+        let uri = format!("/api/workspaces/{p}/trackers/{t}/fields");
+        let put = |body: Value| {
+            let (h, uri) = (&h, uri.clone());
+            async move {
+                let (st, b) = call(h, "PUT", &uri, Some(body), None).await;
+                (st, json(&b))
+            }
+        };
+        let m = |metric: &str, field: &str| json!({"metric": metric, "field_ref": field});
+        for bad in [
+            json!([]),
+            json!({"fields": "x"}),
+            json!({"fields": [{"metric": "sessions"}]}),
+            json!({"fields": [{"metric": 1, "field_ref": "customfield_1"}]}),
+        ] {
+            let (st, b) = put(bad.clone()).await;
+            assert_eq!(
+                (st, b["error"].clone()),
+                (StatusCode::UNPROCESSABLE_ENTITY, json!("invalid_body")),
+                "{bad}"
+            );
+        }
+        let (st, b) = put(json!({"fields": [m("active_secs", "summary")]})).await;
+        assert_eq!(
+            (st, b["error"].clone(), b["metric"].clone()),
+            (StatusCode::UNPROCESSABLE_ENTITY, json!("unknown_metric"), json!("active_secs"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "customfield_10050"), m("sessions", "customfield_10051")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["metric"].clone()),
+            (json!("duplicate_mapping"), json!("sessions"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "customfield_10050"), m("api_cost", "customfield_10050")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("duplicate_mapping"), json!("customfield_10050"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "summary")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("invalid_field_ref"), json!("summary"))
+        );
+        assert!(board.calls().is_empty(), "every check so far needs no network");
+        let ghost = uuid::Uuid::new_v4();
+        let (st, b) = call(
+            &h,
+            "PUT",
+            &format!("/api/workspaces/{p}/trackers/{ghost}/fields"),
+            Some(json!({"fields": [m("sessions", "customfield_10050")]})),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("tracker_not_found"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "customfield_10099")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("field_not_found"), json!("customfield_10099"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "customfield_10070")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("field_not_number"), json!("customfield_10070"))
+        );
+        let (_, b) = put(json!({"fields": [m("sessions", "customfield_10060")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("field_in_use"), json!("customfield_10060"))
+        );
+        let (st, _) = call(
+            &h,
+            "PUT",
+            &uri,
+            Some(json!({"fields": [m("sessions", "customfield_10050")]})),
+            Some("https://evil.example"),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "a foreign page cannot map fields");
+    }
+
+    #[tokio::test]
+    async fn a_saved_mapping_drives_the_card_and_an_unmapped_field_can_come_back() {
+        let h = harness().await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let p = workspace(&h).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let board = h.factory.serve(&format!("https://{s}"), field_board());
+        let uri = format!("/api/workspaces/{p}/trackers/{t}/fields");
+        let m = |metric: &str, field: &str| json!({"metric": metric, "field_ref": field});
+        let (st, b) = call(&h, "PUT", &uri,
+            Some(json!({"fields": [m("api_cost", "customfield_10051"), m("active_hours", "customfield_10050")]})), None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let listed = json!({"fields": [m("active_hours", "customfield_10050"), m("api_cost", "customfield_10051")]});
+        assert_eq!(json(&b), listed, "the GET body, in metric order");
+        assert_eq!(json(&call(&h, "GET", &uri, None, None).await.1), listed);
+        let card = |b: String| json(&b)[0]["writeback"].clone();
+        let wb =
+            card(call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await.1);
+        assert_eq!((wb["surface"].clone(), wb["mapped"].clone()), (json!("fields"), json!(2)));
+        assert_eq!(
+            call(&h, "PUT", &uri, Some(json!({"fields": []})), None).await.0,
+            StatusCode::OK
+        );
+        let wb =
+            card(call(&h, "GET", &format!("/api/workspaces/{p}/trackers"), None, None).await.1);
+        assert_eq!((wb["surface"].clone(), wb["mapped"].clone()), (json!("comment"), json!(0)));
+        // A ticket was tried before 10050 was retired, so its values may be sensei's own:
+        // mapping it again is not "in use".
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks SET writeback_tried_at = now() - interval '1 day' WHERE tracker_id = $1::uuid",
+        )
+        .bind(&t)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let in_use = h.factory.serve(
+            &format!("https://{s}"),
+            field_board().with_jql(
+                "cf[10050] is not EMPTY",
+                json!([{"id": "10001", "key": "AUTH-1", "fields": {}}]),
+            ),
+        );
+        let (st, b) = call(
+            &h,
+            "PUT",
+            &uri,
+            Some(json!({"fields": [m("sessions", "customfield_10050")]})),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert!(
+            in_use.jql_calls().is_empty(),
+            "a field the board already has a row for is never refused"
+        );
+        drop(board);
+    }
+
+    #[tokio::test]
+    async fn the_mapping_checks_run_one_at_a_time_and_a_refusal_saves_nothing() {
+        let h = harness().await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let p = workspace(&h).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        h.factory.serve(&format!("https://{s}"), field_board());
+        let uri = format!("/api/workspaces/{p}/trackers/{t}/fields");
+        let m = |metric: &str, field: &str| json!({"metric": metric, "field_ref": field});
+        let put = |body: Value| {
+            let (h, uri) = (&h, uri.clone());
+            async move { json(&call(h, "PUT", &uri, Some(body), None).await.1) }
+        };
+        // An unknown metric anywhere beats a duplicate earlier on.
+        let b = put(json!({"fields": [m("sessions", "customfield_1"), m("sessions", "customfield_2"), m("nope", "customfield_3")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["metric"].clone()),
+            (json!("unknown_metric"), json!("nope"))
+        );
+        // A missing field beats one that is not a number, whatever their order.
+        let b = put(json!({"fields": [m("sessions", "customfield_10070"), m("api_cost", "customfield_10099")]})).await;
+        assert_eq!(
+            (b["error"].clone(), b["field_ref"].clone()),
+            (json!("field_not_found"), json!("customfield_10099"))
+        );
+        // Nothing was saved by any refusal, nor by a foreign page.
+        put(json!({"fields": [m("sessions", "customfield_10060")]})).await;
+        call(
+            &h,
+            "PUT",
+            &uri,
+            Some(json!({"fields": [m("sessions", "customfield_10050")]})),
+            Some("https://evil.example"),
+        )
+        .await;
+        assert_eq!(json(&call(&h, "GET", &uri, None, None).await.1), json!({"fields": []}));
+        // While a pass (or a sync) holds the board, a save waits for it.
+        let held = h.rt.locks.try_lock(t.parse().unwrap()).unwrap();
+        let (st, b) = call(
+            &h,
+            "PUT",
+            &uri,
+            Some(json!({"fields": [m("sessions", "customfield_10050")]})),
+            None,
+        )
+        .await;
+        assert_eq!((st, json(&b)["error"].clone()), (StatusCode::CONFLICT, json!("busy")));
+        drop(held);
+        assert_eq!(json(&call(&h, "GET", &uri, None, None).await.1), json!({"fields": []}));
+    }
+
+    #[tokio::test]
+    async fn a_field_already_mapped_is_not_checked_again_and_a_cleared_retired_one_is() {
+        let h = harness().await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let p = workspace(&h).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{t}/fields");
+        let body = json!({"fields": [{"metric": "sessions", "field_ref": "customfield_10050"}]});
+        h.factory.serve(&format!("https://{s}"), field_board());
+        assert_eq!(call(&h, "PUT", &uri, Some(body.clone()), None).await.0, StatusCode::OK);
+        // Now 10050 has values on the board (sensei's own).
+        let used = || {
+            field_board().with_jql(
+                "cf[10050] is not EMPTY",
+                json!([{"id": "10001", "key": "AUTH-1", "fields": {}}]),
+            )
+        };
+        let again = h.factory.serve(&format!("https://{s}"), used());
+        assert_eq!(call(&h, "PUT", &uri, Some(body.clone()), None).await.0, StatusCode::OK);
+        assert!(again.jql_calls().is_empty(), "a mapped field is never refused as in use");
+        // Unmapped with no ticket ever written: nothing of sensei's is left there, so
+        // the values on the board are someone else's.
+        assert_eq!(
+            call(&h, "PUT", &uri, Some(json!({"fields": []})), None).await.0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            json(&call(&h, "GET", &uri, None, None).await.1),
+            json!({"fields": []}),
+            "retired rows are not listed"
+        );
+        h.factory.serve(&format!("https://{s}"), used());
+        let (st, b) = call(&h, "PUT", &uri, Some(body.clone()), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::UNPROCESSABLE_ENTITY, json!("field_in_use"))
+        );
+        // With a ticket tried before the field was retired, the values may be sensei's: allowed.
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks SET writeback_tried_at = now() - interval '1 day' WHERE tracker_id = $1::uuid",
+        )
+        .bind(&t)
+        .execute(h.state.pg.pool())
+        .await
+        .unwrap();
+        let pending = h.factory.serve(&format!("https://{s}"), used());
+        assert_eq!(call(&h, "PUT", &uri, Some(body), None).await.0, StatusCode::OK);
+        assert!(pending.jql_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failing_field_check_says_why_without_waiting() {
+        let h = harness().await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let p = workspace(&h).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        let t = tracker(&h, p).await;
+        let uri = format!("/api/workspaces/{p}/trackers/{t}/fields");
+        let body = json!({"fields": [{"metric": "sessions", "field_ref": "customfield_10050"}]});
+        let limited = h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().fail("/rest/api/3/field", TrackerError::RateLimited),
+        );
+        let (st, b) = call(&h, "PUT", &uri, Some(body.clone()), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::BAD_GATEWAY, json!("rate_limited"))
+        );
+        assert_eq!(limited.calls(), ["/rest/api/3/field"], "one request, no 429 retries");
+        *h.store.fail_get.lock().unwrap() = true;
+        let (st, b) = call(&h, "PUT", &uri, Some(body), None).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::INTERNAL_SERVER_ERROR, json!("credential_store"))
+        );
     }
 
     #[tokio::test]

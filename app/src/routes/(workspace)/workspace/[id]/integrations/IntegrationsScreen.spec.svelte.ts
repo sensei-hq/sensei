@@ -48,6 +48,8 @@ function api(over: Partial<TrackerApi> = {}): TrackerApi {
     }),
     tryDisconnectTracker: async () => ({ ok: true, data: undefined }),
     trySetTrackerWriteback: async () => ({ ok: true, data: connected }),
+    tryGetTrackerFields: async () => ({ ok: true, data: { fields: [] } }),
+    tryPutTrackerFields: async (_p, _t, fields) => ({ ok: true, data: { fields } }),
     ...over,
   };
 }
@@ -346,5 +348,40 @@ describe('write-back on the board card (W-UI)', () => {
     await settle();
     expect(q<HTMLInputElement>('[data-tracker="t-1"] input[data-action="writeback"]')?.checked).toBe(true);
     expect(q('[role="alert"]')?.textContent).toContain('refused this window’s request');
+  });
+});
+
+describe('the Fields section (W-UI)', () => {
+  it('lists the mapping, says not to sum the fields, and names a refused field on its row', async () => {
+    const { q, state } = await open({
+      tryListTrackers: async () => ({ ok: true, data: [connected] }),
+      tryGetTrackerFields: async () => ({
+        ok: true,
+        data: { fields: [{ metric: 'active_hours', field_ref: 'customfield_10050' }] },
+      }),
+      tryPutTrackerFields: async () => ({
+        ok: false,
+        error: {
+          status: 422,
+          message: 'field_in_use',
+          body: { error: 'field_in_use', field_ref: 'customfield_10050' },
+        },
+      }),
+    });
+    q<HTMLButtonElement>('[data-tracker="t-1"] [data-action="fields"]')!.click();
+    await settle();
+    const section = q('[data-tracker="t-1"] [data-section="fields"]');
+    expect(section).not.toBe(null);
+    expect(section!.textContent).toContain(
+      'Each ticket counts its own sessions in full; don’t sum these fields across tickets.',
+    );
+    expect(q<HTMLInputElement>('[data-section="fields"] input[data-field-ref]')?.value).toBe('customfield_10050');
+    expect(q<HTMLSelectElement>('[data-section="fields"] select[data-field-metric]')?.value).toBe('active_hours');
+    q<HTMLButtonElement>('[data-section="fields"] [data-action="save-fields"]')!.click();
+    await settle();
+    expect(q('[data-section="fields"] [data-field-row="0"] [data-field-error]')?.textContent?.trim()).toBe(
+      'That field already has values on this board. Pick an empty field.',
+    );
+    expect(state.alert).toBe(null);
   });
 });

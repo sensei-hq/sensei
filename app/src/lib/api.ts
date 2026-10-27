@@ -28,6 +28,7 @@ import type {
   TranscriptSourceConsent,
   TrackerConnection, TrackerLevel, TrackerSyncCounts,
   SprintUsageRow, TrackerTaskRow, TrackerTaskDetail, UnlinkedSession, BacklogUsage,
+  TrackerFieldMapping,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -773,6 +774,15 @@ export function senseiApi(port: number) {
       ),
     tryDisconnectTracker: (workspaceId: string, trackerId: string) =>
       tryJson<void>('DELETE', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}`),
+    // The board's mapped fields (W7): read, and replaced as a whole set.
+    tryGetTrackerFields: (workspaceId: string, trackerId: string) =>
+      tryJson<{ fields: TrackerFieldMapping[] }>(
+        'GET', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/fields`,
+      ),
+    tryPutTrackerFields: (workspaceId: string, trackerId: string, fields: TrackerFieldMapping[]) =>
+      tryJson<{ fields: TrackerFieldMapping[] }>(
+        'PUT', `/api/workspaces/${enc(workspaceId)}/trackers/${enc(trackerId)}/fields`, { fields },
+      ),
     // Switch usage write-back on or off (tracker-metrics-writeback W8): the tracker, as listed.
     trySetTrackerWriteback: (workspaceId: string, trackerId: string, enabled: boolean) =>
       tryJson<TrackerConnection>(

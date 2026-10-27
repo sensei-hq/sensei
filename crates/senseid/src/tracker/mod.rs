@@ -190,6 +190,44 @@ pub trait WriteTransport: Send + Sync {
     ) -> Result<serde_json::Value, TrackerError>;
 }
 
+/// One mapped field's value as written (spec W3): an integer, a 2-dp decimal, or
+/// `null`, which clears the field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldValue {
+    Int(i64),
+    Dec(String),
+    Null,
+}
+
+impl FieldValue {
+    /// The JSON a field write sends.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            FieldValue::Int(n) => serde_json::Value::from(*n),
+            FieldValue::Dec(d) => {
+                d.parse::<f64>().map_or(serde_json::Value::Null, serde_json::Value::from)
+            }
+            FieldValue::Null => serde_json::Value::Null,
+        }
+    }
+    /// The canonical text the hash covers (`null` for no value).
+    pub fn canonical(&self) -> String {
+        match self {
+            FieldValue::Int(n) => n.to_string(),
+            FieldValue::Dec(d) => d.clone(),
+            FieldValue::Null => "null".to_string(),
+        }
+    }
+}
+
+/// What the tracker says about a field a mapping names (W7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldCheck {
+    pub field_ref: String,
+    pub exists: bool,
+    pub numeric: bool,
+}
+
 /// Validated connect input, in canonical form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectParams {
@@ -375,6 +413,28 @@ pub trait TrackerAdapter: Send + Sync {
         comment_ref: &str,
         report: &writeback::Report,
     ) -> Result<(), TrackerError>;
+    /// Pure: whether `field_ref` is a field id this tracker can write (W7).
+    fn field_ref_shape(&self, field_ref: &str) -> bool;
+    /// What the tracker says about each of these fields (W7).
+    async fn check_fields(
+        &self,
+        t: &dyn GetTransport,
+        field_refs: &[String],
+    ) -> Result<Vec<FieldCheck>, TrackerError>;
+    /// Whether any ticket on the board already has a value in this field (W7).
+    async fn field_in_use(
+        &self,
+        t: &dyn GetTransport,
+        board: &BoardScope,
+        field_ref: &str,
+    ) -> Result<bool, TrackerError>;
+    /// Write these fields of the ticket in one request (W6); a `Null` clears one.
+    async fn write_fields(
+        &self,
+        w: &dyn WriteTransport,
+        task_external_id: &str,
+        fields: &[(String, FieldValue)],
+    ) -> Result<(), TrackerError>;
     /// Whether the ticket itself still exists (W5: which object a 404 meant).
     async fn issue_exists(
         &self,
@@ -518,7 +578,9 @@ mod tests {
     fn the_design_dbml_lists_each_tracker_table_with_the_columns_of_its_ddl() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../database");
         let dbml = std::fs::read_to_string(format!("{root}/design.dbml")).unwrap();
-        for table in ["trackers", "tracker_tasks", "sprints", "tracker_task_sprints"] {
+        for table in
+            ["trackers", "tracker_tasks", "sprints", "tracker_task_sprints", "tracker_fields"]
+        {
             let ddl =
                 std::fs::read_to_string(format!("{root}/ddl/table/sensei/{table}.ddl")).unwrap();
             assert_eq!(

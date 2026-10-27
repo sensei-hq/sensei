@@ -2191,6 +2191,28 @@ export interface TrackerWriteback {
   error: string | null;
 }
 
+/** A metric a tracker field can be mapped to: the `sensei.tracker_metric` enum (W3). */
+export type TrackerMetric =
+  | 'sessions'
+  | 'active_hours'
+  | 'claude_hours'
+  | 'user_hours'
+  | 'wall_hours'
+  | 'cycle_hours'
+  | 'tokens_fresh'
+  | 'cache_read'
+  | 'cache_write'
+  | 'tokens_out'
+  | 'tokens_reasoning'
+  | 'metered_cost'
+  | 'api_cost';
+
+/** One mapped field (W7): `metric` is written into the tracker field `field_ref`. */
+export interface TrackerFieldMapping {
+  metric: TrackerMetric;
+  field_ref: string;
+}
+
 /** A ticket's last write-back outcome: the `sensei.tracker_writeback_status` enum. */
 export type TrackerWritebackStatus =
   | 'ok'

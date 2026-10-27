@@ -77,6 +77,19 @@ pub struct WritebackTask {
     pub hash: Option<String>,
     /// `sensei.tracker_writeback_status`, NULL when never attempted.
     pub status: Option<String>,
+    /// When a write last landed (W4 "written before"); a mapping change never clears it.
+    pub written_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When a write was last attempted, landed or not.
+    pub tried_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// One `sensei.tracker_fields` row (W6): mapped when it has a metric, retired when not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldRow {
+    /// `sensei.tracker_metric`; NULL for a retired field.
+    pub metric: Option<String>,
+    pub field_ref: String,
+    pub retired_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// What the per-ticket re-check (W2) found just before a write.
@@ -1176,26 +1189,49 @@ impl PgStore {
         &self,
         tracker_id: uuid::Uuid,
     ) -> Result<Vec<WritebackTask>, String> {
+        self.writeback_tasks(tracker_id, true).await
+    }
+
+    /// Every live ticket's write-back state; with `assigned_only`, the pass's candidates.
+    pub async fn writeback_tasks(
+        &self,
+        tracker_id: uuid::Uuid,
+        assigned_only: bool,
+    ) -> Result<Vec<WritebackTask>, String> {
         sqlx_core::query_as::query_as::<
             _,
-            (uuid::Uuid, String, Option<String>, Option<String>, Option<String>),
+            (
+                uuid::Uuid,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<chrono::DateTime<chrono::Utc>>,
+                Option<chrono::DateTime<chrono::Utc>>,
+            ),
         >(
-            "SELECT id, external_id, writeback_comment_ref, writeback_hash, writeback_status::text
+            "SELECT id, external_id, writeback_comment_ref, writeback_hash, writeback_status::text,
+                    writeback_at, writeback_tried_at
                FROM sensei.tracker_tasks
-              WHERE tracker_id = $1 AND assigned_to_me AND removed_at IS NULL
+              WHERE tracker_id = $1 AND (assigned_to_me OR NOT $2) AND removed_at IS NULL
               ORDER BY writeback_tried_at NULLS FIRST, id",
         )
         .bind(tracker_id)
+        .bind(assigned_only)
         .fetch_all(&self.pool)
         .await
         .map(|rows| {
             rows.into_iter()
-                .map(|(id, external_id, comment_ref, hash, status)| WritebackTask {
-                    id,
-                    external_id,
-                    comment_ref,
-                    hash,
-                    status,
+                .map(|(id, external_id, comment_ref, hash, status, written_at, tried_at)| {
+                    WritebackTask {
+                        id,
+                        external_id,
+                        comment_ref,
+                        hash,
+                        status,
+                        written_at,
+                        tried_at,
+                    }
                 })
                 .collect()
         })
@@ -1273,6 +1309,28 @@ impl PgStore {
         .map_err(|e| e.to_string())
     }
 
+    /// Drop retired fields the tracker refuses to clear (W6), under the token condition.
+    pub async fn delete_retired_fields(
+        &self,
+        tracker_id: uuid::Uuid,
+        secret_service: &str,
+        field_refs: &[String],
+    ) -> Result<bool, String> {
+        sqlx_core::query::query(
+            "DELETE FROM sensei.tracker_fields f
+              USING sensei.trackers tr
+              WHERE f.tracker_id = $1 AND f.metric IS NULL AND f.field_ref = ANY($3)
+                AND tr.id = f.tracker_id AND tr.secret_service = $2",
+        )
+        .bind(tracker_id)
+        .bind(secret_service)
+        .bind(field_refs)
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() > 0)
+        .map_err(|e| e.to_string())
+    }
+
     /// Set (or, with `None`, clear) the pass-level failure (W2), under the token condition.
     pub async fn set_writeback_error(
         &self,
@@ -1337,6 +1395,73 @@ impl PgStore {
         }
         tx.commit().await.map_err(err)?;
         Ok(true)
+    }
+
+    /// The tracker's field rows: mapped ones in metric order, then retired ones (W6).
+    pub async fn tracker_fields(&self, tracker_id: uuid::Uuid) -> Result<Vec<FieldRow>, String> {
+        sqlx_core::query_as::query_as::<
+            _,
+            (Option<String>, String, Option<chrono::DateTime<chrono::Utc>>),
+        >(
+            "SELECT metric::text, field_ref, retired_at FROM sensei.tracker_fields
+              WHERE tracker_id = $1 ORDER BY metric NULLS LAST, field_ref",
+        )
+        .bind(tracker_id)
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(metric, field_ref, retired_at)| FieldRow { metric, field_ref, retired_at })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    /// Replace the mapped set (W7): a field no longer mapped is retired, a retired
+    /// one mapped again comes back, every task's hash is cleared and so is
+    /// `field_invalid` — in one transaction.
+    pub async fn replace_tracker_fields(
+        &self,
+        tracker_id: uuid::Uuid,
+        mapping: &[(String, String)],
+    ) -> Result<(), String> {
+        let err = |e: sqlx_core::Error| e.to_string();
+        let mut tx = self.pool.begin().await.map_err(err)?;
+        // Retire everything first, so a metric can move to another field without a
+        // unique clash; a field mapped again comes back below.
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_fields SET metric = NULL, retired_at = now()
+              WHERE tracker_id = $1 AND metric IS NOT NULL",
+        )
+        .bind(tracker_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(err)?;
+        let metrics: Vec<&str> = mapping.iter().map(|(m, _)| m.as_str()).collect();
+        let refs: Vec<&str> = mapping.iter().map(|(_, r)| r.as_str()).collect();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.tracker_fields (tracker_id, metric, field_ref, retired_at)
+             SELECT $1, x.m::sensei.tracker_metric, x.r, NULL FROM unnest($2::text[], $3::text[]) AS x(m, r)
+             ON CONFLICT (tracker_id, field_ref) DO UPDATE SET metric = excluded.metric, retired_at = NULL",
+        )
+        .bind(tracker_id)
+        .bind(&metrics)
+        .bind(&refs)
+        .execute(&mut *tx)
+        .await
+        .map_err(err)?;
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks
+                SET writeback_hash = NULL,
+                    writeback_status = CASE WHEN writeback_status = 'field_invalid' THEN NULL
+                                            ELSE writeback_status END
+              WHERE tracker_id = $1",
+        )
+        .bind(tracker_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(err)?;
+        tx.commit().await.map_err(err)
     }
 
     /// `(assigned, failing)` for the board card (W8).

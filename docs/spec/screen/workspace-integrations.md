@@ -71,7 +71,17 @@ comment or in the fields you map."
     Retrying on each sync."
   - `owner_unknown`: "Checking which tickets are yours on the next sync."
   - `nothing_assigned`: "No tickets on this board are assigned to you."
-- The Fields section (mapped custom fields) arrives with the write-back spec's F4.
+- **Fields** (`data-action="fields"`, "Fields (N mapped)") opens the board's mapping in a
+  `data-section="fields"` editor:
+  - one row per mapped field (`data-field-row=<i>`): a metric select and a "Jira field
+    id" input
+  - Remove per row, **Add a field**, and **Save fields**, which sends the whole set with
+    `PUT …/fields`
+  - under the rows: "Each ticket counts its own sessions in full; don't sum these fields
+    across tickets."
+  - a refused save names its row (`data-field-error`): the W7 code's text from
+    `FIELD_MAPPING_ERRORS`; a duplicate marks the second row. A failure that names no
+    row is the card alert.
 
 ## States
 
@@ -157,6 +167,14 @@ failure, focus moves to the alert.
 | `unsupported_tracker` | "This tracker type isn't available in this version of sensei." | none |
 | `busy` | "A sync is already running." | none |
 | `invalid_body` (a refused write-back PATCH) | "sensei refused that change." | none |
+| Fields editor (`FIELD_MAPPING_ERRORS`, on the row it names; a duplicate names its second row): `unknown_metric` | "Unknown metric." | none |
+| `duplicate_mapping` | "Already mapped." | none |
+| `invalid_field_ref` | "Use a custom field id like customfield_10050." | none |
+| `field_not_found` | "No such field on this Jira site." | none |
+| `field_not_number` | "That field isn't a number field." | none |
+| `field_in_use` | "That field already has values on this board. Pick an empty field." | none |
+| `invalid_body` (a refused Fields save) | "Couldn't save the mapping." | none |
+| `busy` (a Fields save while a sync or write-back pass holds the board; on the card) | "The board is syncing or writing back. Save again in a moment." | none; the editor stays open |
 | any other code | "Unexpected error from sensei (<code>)." | **Retry** |
 | daemon unreachable (network error to `127.0.0.1`) | "The sensei daemon didn't respond." | **Retry**. Never shown as "not connected". |
 

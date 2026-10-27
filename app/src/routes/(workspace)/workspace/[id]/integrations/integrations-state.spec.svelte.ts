@@ -60,6 +60,8 @@ function daemon(lists: Array<ApiResult<TrackerConnection[]>>, over: Partial<Trac
       calls.push(['writeback', { p, t, enabled }]);
       return { ok: true, data: row({ writeback: { ...row().writeback, enabled } }) };
     },
+    tryGetTrackerFields: async () => ({ ok: true, data: { fields: [] } }),
+    tryPutTrackerFields: async (_p, _t, fields) => ({ ok: true, data: { fields } }),
     ...over,
   };
   return { api, calls };
@@ -582,5 +584,105 @@ describe('write-back (tracker-metrics-writeback W8, W-UI)', () => {
     await s.toggleWriteback(s.trackers[0]);
     expect(s.trackers[0].writeback.enabled).toBe(true);
     expect(s.alert?.code).toBe('forbidden_caller');
+  });
+});
+
+describe('field mapping (tracker-metrics-writeback W7, W-UI)', () => {
+  type Rows = Array<{ metric: string; field_ref: string }>;
+  const fieldsApi = (put: (rows: Rows) => ApiResult<{ fields: Rows }>) => {
+    const sent: Rows[] = [];
+    const { api } = daemon([{ ok: true, data: [row()] }], {
+      tryGetTrackerFields: async () => ({
+        ok: true,
+        data: { fields: [{ metric: 'active_hours', field_ref: 'customfield_10050' }] },
+      }),
+      tryPutTrackerFields: async (_p, _t, rows) => {
+        sent.push(rows);
+        return put(rows) as never;
+      },
+    } as Partial<TrackerApi>);
+    return { api, sent };
+  };
+
+  it('opens the board’s mapping, edits it and saves the whole set', async () => {
+    const { api, sent } = fieldsApi((rows) => ({ ok: true, data: { fields: rows } }));
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    await s.openFields(s.trackers[0]);
+    expect(s.editingFields).toBe('t-1');
+    expect(s.fieldRows).toEqual([{ metric: 'active_hours', field_ref: 'customfield_10050' }]);
+    s.addFieldRow();
+    s.fieldRows[1] = { metric: 'api_cost', field_ref: ' customfield_10051 ' };
+    await s.saveFields();
+    expect(sent).toEqual([
+      [
+        { metric: 'active_hours', field_ref: 'customfield_10050' },
+        { metric: 'api_cost', field_ref: 'customfield_10051' },
+      ],
+    ]);
+    expect(s.fieldError).toBe(null);
+    s.removeFieldRow(0);
+    expect(s.fieldRows).toEqual([{ metric: 'api_cost', field_ref: 'customfield_10051' }]);
+  });
+
+  it('a refused field is named on its row, a duplicate on the second one', async () => {
+    const refusal = (body: Record<string, unknown>) => () => fail(422, String(body.error), body);
+    const { api } = fieldsApi(refusal({ error: 'field_in_use', field_ref: 'customfield_10051' }));
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    await s.openFields(s.trackers[0]);
+    s.fieldRows = [
+      { metric: 'active_hours', field_ref: 'customfield_10050' },
+      { metric: 'api_cost', field_ref: 'customfield_10051' },
+    ];
+    await s.saveFields();
+    expect(s.fieldError).toEqual({
+      row: 1,
+      text: 'That field already has values on this board. Pick an empty field.',
+    });
+    expect(s.alert).toBe(null);
+
+    const dup = fieldsApi(refusal({ error: 'duplicate_mapping', metric: 'sessions' }));
+    const d = new TrackerIntegration(dup.api, P);
+    await d.load();
+    await d.openFields(d.trackers[0]);
+    d.fieldRows = [
+      { metric: 'sessions', field_ref: 'customfield_1' },
+      { metric: 'sessions', field_ref: 'customfield_2' },
+    ];
+    await d.saveFields();
+    expect(d.fieldError).toEqual({ row: 1, text: 'Already mapped.' });
+  });
+
+  it('a failure that names no row is the card alert', async () => {
+    const { api } = fieldsApi(() => fail(502, 'rate_limited', { error: 'rate_limited' }));
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    await s.openFields(s.trackers[0]);
+    await s.saveFields();
+    expect(s.fieldError).toBe(null);
+    expect(s.alert?.code).toBe('rate_limited');
+  });
+
+  it('a save while the board is busy says so and keeps the rows', async () => {
+    const { api } = fieldsApi(() => fail(409, 'busy', { error: 'busy' }));
+    const s = new TrackerIntegration(api, P);
+    await s.load();
+    await s.openFields(s.trackers[0]);
+    await s.saveFields();
+    expect(s.alert?.text).toBe('The board is syncing or writing back. Save again in a moment.');
+    expect(s.editingFields).toBe(s.trackers[0].id);
+  });
+});
+
+describe('refusedRow', () => {
+  it('a duplicate names the second of its rows, whatever comes after', async () => {
+    const { refusedRow } = await import('./integrations-state.svelte.js');
+    const rows = [1, 2, 3].map((n) => ({ metric: 'sessions' as const, field_ref: `customfield_${n}` }));
+    expect(refusedRow(rows, { error: 'duplicate_mapping', metric: 'sessions' })).toBe(1);
+    const sameRef = [1, 2, 3].map(() => ({ metric: 'sessions' as const, field_ref: 'customfield_9' }));
+    expect(refusedRow(sameRef, { error: 'duplicate_mapping', field_ref: 'customfield_9' })).toBe(1);
+    expect(refusedRow(rows, { error: 'field_in_use', field_ref: 'customfield_3' })).toBe(2);
+    expect(refusedRow(rows, { error: 'rate_limited' })).toBe(null);
   });
 });

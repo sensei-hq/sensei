@@ -8,8 +8,14 @@
 // has. And the token lives only in `token`, only until its request returns: it
 // is never stored, logged, or read back.
 import type { ApiResult } from '$lib/api.js';
-import type { TrackerConnection, TrackerLevel, TrackerSyncCounts } from '$lib/types.js';
-import { WRITEBACK_STOPPED, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
+import type {
+  TrackerConnection,
+  TrackerFieldMapping,
+  TrackerLevel,
+  TrackerMetric,
+  TrackerSyncCounts,
+} from '$lib/types.js';
+import { FIELD_MAPPING_ERRORS, WRITEBACK_STOPPED, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
 
 export { CREATE_TOKEN_URL, errorFor, type TrackerAlert } from '$lib/tracker-errors.js';
 
@@ -31,6 +37,44 @@ export interface TrackerApi {
     trackerId: string,
     enabled: boolean,
   ) => Promise<ApiResult<TrackerConnection>>;
+  tryGetTrackerFields: (
+    workspaceId: string,
+    trackerId: string,
+  ) => Promise<ApiResult<{ fields: TrackerFieldMapping[] }>>;
+  tryPutTrackerFields: (
+    workspaceId: string,
+    trackerId: string,
+    fields: TrackerFieldMapping[],
+  ) => Promise<ApiResult<{ fields: TrackerFieldMapping[] }>>;
+}
+
+/** The metrics a field can carry, in the order the daemon writes them (W3), with labels. */
+export const METRICS: ReadonlyArray<{ metric: TrackerMetric; label: string }> = [
+  { metric: 'sessions', label: 'Sessions' },
+  { metric: 'active_hours', label: 'Active hours' },
+  { metric: 'claude_hours', label: 'Claude hours' },
+  { metric: 'user_hours', label: 'Your hours' },
+  { metric: 'wall_hours', label: 'Wall-clock hours' },
+  { metric: 'cycle_hours', label: 'Cycle hours' },
+  { metric: 'tokens_fresh', label: 'Fresh tokens' },
+  { metric: 'cache_read', label: 'Cache-read tokens' },
+  { metric: 'cache_write', label: 'Cache-write tokens' },
+  { metric: 'tokens_out', label: 'Output tokens' },
+  { metric: 'tokens_reasoning', label: 'Reasoning tokens' },
+  { metric: 'metered_cost', label: 'Metered cost' },
+  { metric: 'api_cost', label: 'API cost (USD)' },
+];
+
+/** The row a refused save names (a duplicate names its second row), or `null`. */
+export function refusedRow(rows: TrackerFieldMapping[], body: Record<string, unknown> | undefined): number | null {
+  const ref = typeof body?.field_ref === 'string' ? body.field_ref : null;
+  const metric = typeof body?.metric === 'string' ? body.metric : null;
+  const hits = rows
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => (ref !== null && r.field_ref === ref) || (ref === null && metric !== null && r.metric === metric));
+  if (hits.length === 0) return null;
+  // The daemon refuses a duplicate at its second occurrence.
+  return body?.error === 'duplicate_mapping' && hits.length > 1 ? hits[1].i : hits[0].i;
 }
 
 /** The levels a board can serve, in the order the screen lists them (D40). */
@@ -106,7 +150,13 @@ export class TrackerIntegration {
   siteUrl = $state('');
   boardId = $state('');
 
-  busy = $state<null | 'connect' | 'sync' | 'disconnect' | 'writeback'>(null);
+  busy = $state<null | 'connect' | 'sync' | 'disconnect' | 'writeback' | 'fields'>(null);
+  /** The board whose Fields editor is open. */
+  editingFields = $state<string | null>(null);
+  /** The editor's rows: the whole mapping, saved as one set. */
+  fieldRows = $state<TrackerFieldMapping[]>([]);
+  /** A refused save's reason, on the row it names. */
+  fieldError = $state<{ row: number; text: string } | null>(null);
   /** The board a sync or disconnect is running for. */
   busyTracker = $state<string | null>(null);
   /** The live `role="status"` line. */
@@ -161,6 +211,63 @@ export class TrackerIntegration {
     const site = t.base_url.replace(/^https:\/\//, '');
     const board = t.board_name ? `board "${t.board_name}" (#${t.board_ref})` : `board #${t.board_ref}`;
     return `Jira · ${site} · project ${t.external_scope} · ${board}`;
+  }
+
+  /** Open (or close) the board's Fields editor with its saved mapping. */
+  async openFields(t: TrackerConnection) {
+    if (this.editingFields === t.id) {
+      this.editingFields = null;
+      return;
+    }
+    this.fieldError = null;
+    this.alert = null;
+    const res = await this.#api.tryGetTrackerFields(this.#workspaceId, t.id);
+    if (!res.ok) {
+      this.#fail(res.error);
+      return;
+    }
+    this.fieldRows = res.data.fields.map((f) => ({ ...f }));
+    this.editingFields = t.id;
+  }
+
+  addFieldRow() {
+    this.fieldRows = [...this.fieldRows, { metric: 'sessions', field_ref: '' }];
+  }
+
+  removeFieldRow(i: number) {
+    this.fieldRows = this.fieldRows.filter((_, j) => j !== i);
+    this.fieldError = null;
+  }
+
+  /** Save the editor's rows as the board's whole mapping. */
+  async saveFields() {
+    const id = this.editingFields;
+    if (!id || this.busy) return;
+    const rows = this.fieldRows.map((r) => ({ metric: r.metric, field_ref: r.field_ref.trim() }));
+    this.busy = 'fields';
+    this.busyTracker = id;
+    this.fieldError = null;
+    this.alert = null;
+    const res = await this.#api.tryPutTrackerFields(this.#workspaceId, id, rows);
+    this.busy = null;
+    this.busyTracker = null;
+    if (!res.ok) {
+      const body = 'body' in res.error ? res.error.body : undefined;
+      const code = typeof body?.error === 'string' ? body.error : res.error.message;
+      const row = refusedRow(rows, body);
+      if (row !== null && FIELD_MAPPING_ERRORS[code]) {
+        this.fieldError = { row, text: FIELD_MAPPING_ERRORS[code] };
+      } else if ((res.error.status === 422 || code === 'busy') && FIELD_MAPPING_ERRORS[code]) {
+        this.alert = { code, text: FIELD_MAPPING_ERRORS[code], field: null, link: null };
+        this.alertSeq += 1;
+      } else {
+        this.#fail(res.error);
+      }
+      return;
+    }
+    this.fieldRows = res.data.fields.map((f) => ({ ...f }));
+    this.statusText = 'Fields saved.';
+    await this.load();
   }
 
   /** The board's write-back state as text (W-UI). */
